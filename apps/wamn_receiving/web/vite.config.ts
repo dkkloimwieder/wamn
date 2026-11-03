@@ -1,8 +1,7 @@
 import { fileURLToPath } from "node:url";
 import solid from "@solidjs/vite-plugin";
 import { defineConfig } from "vitest/config";
-import { applicationConfig, precacheManifest } from "../../../web/shell/vite";
-import { vendorTransforms } from "../../../web/wfe/scripts/vendor-transforms.mjs";
+import { applicationConfig, precacheManifest } from "@wamn/vite";
 
 export default defineConfig(({ command, mode }) => {
   const application = applicationConfig({
@@ -27,8 +26,6 @@ export default defineConfig(({ command, mode }) => {
       },
     },
     plugins: [
-      // The wfe source carries a captured engine with standard decorators.
-      vendorTransforms(),
       solid({ performanceTracks: false }),
       ...application.plugins,
       precacheManifest(["config.json"]),
@@ -52,13 +49,6 @@ export default defineConfig(({ command, mode }) => {
     resolve: {
       conditions: ["browser", "development|production"],
       dedupe: ["solid-js", "@solidjs/web", "@solidjs/signals"],
-      alias: [
-        ...application.resolve.alias,
-        {
-          find: "@wamn/platform-ui",
-          replacement: fileURLToPath(new URL("../../platform_ui/src/index.ts", import.meta.url)),
-        },
-      ],
     },
     test: { environment: "jsdom", server: { deps: { inline: true } } },
   };

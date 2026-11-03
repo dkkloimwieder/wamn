@@ -3,6 +3,9 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
   "scripts": {
     "check": "pnpm --workspace-root run wfe:build && node ../../web/host-route-clients.mjs && tsc --noEmit",
     "test": "pnpm --workspace-root run wfe:build && node ../../web/host-route-clients.mjs && vitest run",
@@ -20,7 +23,8 @@
     "@wfe/generator": "workspace:*",
     "@wfe/shell": "workspace:*",
     "@solidjs/web": "2.0.0-rc.18",
-    "solid-js": "2.0.0-rc.18"
+    "solid-js": "2.0.0-rc.18",
+    "@wamn/web-runtime": "workspace:*"
   },
   "devDependencies": {
     "@solidjs/testing-library": "1.0.0-beta.3",

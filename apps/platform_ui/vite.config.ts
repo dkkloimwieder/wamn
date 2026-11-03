@@ -1,4 +1,3 @@
-import { fileURLToPath } from "node:url";
 import solid from "@solidjs/vite-plugin";
 import { defineConfig } from "vitest/config";
 
@@ -25,9 +24,6 @@ export default defineConfig({
   resolve: {
     conditions: ["browser", "development|production"],
     dedupe: ["solid-js", "@solidjs/web", "@solidjs/signals"],
-    alias: {
-      "@wamn/web-runtime": fileURLToPath(new URL("../../web/runtime/src/index.ts", import.meta.url)),
-    },
   },
   test: { environment: "jsdom", testTimeout: 15_000, server: { deps: { inline: true } } },
 });

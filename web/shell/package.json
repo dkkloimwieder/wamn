@@ -4,6 +4,9 @@
   "type": "module",
   "private": true,
   "sideEffects": false,
+  "exports": {
+    ".": "./vite.ts"
+  },
   "scripts": {
     "check": "pnpm --workspace-root run wfe:build && tsc --project tsconfig.json",
     "test": "pnpm --workspace-root run wfe:build && vitest run"

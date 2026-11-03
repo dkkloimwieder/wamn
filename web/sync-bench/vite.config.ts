@@ -2,7 +2,7 @@ import { fileURLToPath } from "node:url";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import solid from "@solidjs/vite-plugin";
 import { defineConfig } from "vitest/config";
-import { applicationConfig, precacheManifest } from "../shell/vite.js";
+import { applicationConfig, precacheManifest } from "@wamn/vite";
 
 /** Serve the live page and install assets at the application's audience path. */
 export function livePage(request: IncomingMessage, _response: ServerResponse, next: () => void) {
@@ -55,7 +55,6 @@ export default defineConfig(() => {
     resolve: {
       conditions: ["browser", "development|production"],
       dedupe: ["solid-js", "@solidjs/web", "@solidjs/signals", "@tanstack/db"],
-      alias: application.resolve.alias.filter(({ find }) => find === "@wamn/web-runtime"),
     },
     test: { environment: "jsdom", server: { deps: { inline: true as const } } },
   };

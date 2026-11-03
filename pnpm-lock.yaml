@@ -208,6 +208,9 @@ importers:
       '@solidjs/web':
         specifier: 2.0.0-rc.18
         version: 2.0.0-rc.18(solid-js@2.0.0-rc.18)
+      '@wamn/web-runtime':
+        specifier: workspace:*
+        version: link:../../web/runtime
       '@wfe/components':
         specifier: workspace:*
         version: link:../../web/wfe/packages/components
@@ -254,6 +257,9 @@ importers:
       '@solidjs/web':
         specifier: 2.0.0-rc.18
         version: 2.0.0-rc.18(solid-js@2.0.0-rc.18)
+      '@wamn/platform-ui':
+        specifier: workspace:*
+        version: link:../../platform_ui
       '@wamn/web-runtime':
         specifier: workspace:*
         version: link:../../../web/runtime
@@ -285,6 +291,9 @@ importers:
       '@types/node':
         specifier: ^24.19.1
         version: 24.19.1
+      '@wamn/vite':
+        specifier: workspace:*
+        version: link:../../../web/shell
       fake-indexeddb:
         specifier: 6.2.5
         version: 6.2.5
@@ -390,6 +399,9 @@ importers:
       '@types/node':
         specifier: ^24.19.1
         version: 24.19.1
+      '@wamn/vite':
+        specifier: workspace:*
+        version: link:../shell
       fake-indexeddb:
         specifier: 6.2.5
         version: 6.2.5

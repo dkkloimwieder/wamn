@@ -41,7 +41,6 @@ export interface ApplicationConfig {
   /** The dev server answers `/config.json` from `dev.json`. A build has none. */
   readonly plugins: DevPlugin[];
   readonly resolve: {
-    readonly alias: { find: string | RegExp; replacement: string }[];
     readonly dedupe: string[];
   };
   readonly server: {
@@ -126,11 +125,7 @@ export function applicationConfig(options: ApplicationOptions): ApplicationConfi
   const dev = options.command === "serve" ? devConfiguration() : undefined;
   return {
     plugins: dev === undefined ? [] : [scopePlugin(dev)],
-    // The runtime lives outside the application.
-    resolve: {
-      alias: [{ find: "@wamn/web-runtime", replacement: `${web}runtime/src/index.ts` }],
-      dedupe: [],
-    },
+    resolve: { dedupe: [] },
     server: {
       port: options.port,
       ...(dev === undefined ? {} : { proxy: proxy(dev) }),
