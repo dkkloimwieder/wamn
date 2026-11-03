@@ -29,7 +29,6 @@ use std::time::Duration;
 use anyhow::{Context as _, ensure};
 use futures_util::FutureExt as _;
 use serde_json::json;
-use tokio::process::Command;
 use wamn_control::delivery::Candidate;
 use wamn_control::release_chart::{self, ImageSet, ValuesInput};
 use wamn_control_provision::events::{advisory_stream_config, source_stream_config};
@@ -109,8 +108,7 @@ async fn run_case(case: Case) -> anyhow::Result<()> {
     // The published attachments accept sessions, so every case starts the
     // session issuer from this image, as the Receiving cases do.
     let identity_image = crate::delivery::image_reference(&candidate.qualification.identity)?;
-    let lifecycle = repository.join("tools/wms-cluster-journey-run");
-    deployment::preflight(&lifecycle, &cluster, &image, &[]).await?;
+
     // WAMN_WMS_EVIDENCE_DIR names an existing parent directory. The parent is
     // the system temporary directory when the variable is not set.
     let parent =
@@ -132,6 +130,7 @@ async fn run_case(case: Case) -> anyhow::Result<()> {
         .create(&work_path)
         .context("create the private owned WMS directory")?;
     let work = ScratchRoot(work_path);
+    let mut lifecycle = wamn_test_infrastructure::cluster::Cluster::new(&cluster, work.path())?;
     let mut run = Box::pin(
         std::panic::AssertUnwindSafe(async {
             // The WMS package of the candidate, from its artifact.
@@ -142,7 +141,7 @@ async fn run_case(case: Case) -> anyhow::Result<()> {
             let consumers = crate::environment::declared_consumers(
                 &crate::environment::package_manifest_at(package.root())?,
             );
-            let files = bootstrap::prepare(&repository, work.path())?;
+            let files = bootstrap::prepare(work.path()).await?;
             let scope = Triple::new(
                 crate::environment::identity().org.as_str(),
                 crate::environment::identity().project.as_str(),
@@ -151,25 +150,23 @@ async fn run_case(case: Case) -> anyhow::Result<()> {
             let source = source_stream_config(&scope, 1, Duration::from_secs(120));
             crate::delivery::registry_files(&candidate, work.path(), &[&image, &identity_image])
                 .await?;
-            checked(
-                Command::new(&lifecycle)
-                    .arg("create")
-                    .arg(&cluster)
-                    .arg(work.path())
-                    .arg(&repository)
-                    .arg(&image)
-                    .arg(&identity_image),
+            lifecycle.create(&repository).await?;
+            lifecycle.import_images(&[&image, &identity_image]).await?;
+            lifecycle.start_postgres(&repository).await?;
+            lifecycle.start_registry().await?;
+            wamn_test_infrastructure::cluster::sidecar(
+                &format!("{cluster}-minio"),
+                [
+                    "--env-file",
+                    &work.path().join("minio.env").to_string_lossy(),
+                    "minio/minio:RELEASE.2025-09-07T16-13-09Z",
+                    "server",
+                    "/data",
+                ],
             )
             .await?;
-            let digest = workload::image_ready(
-                &lifecycle,
-                &cluster,
-                work.path(),
-                &image,
-                "release",
-                &evidence,
-            )
-            .await?;
+            let digest =
+                workload::image_ready(&cluster, work.path(), &image, "release", &evidence).await?;
             checked(kubectl(&cluster, work.path()).args(["create", "namespace", &cluster])).await?;
             // The operator release, every environment release and its hosts
             // live in the operator namespace (R6).
@@ -226,13 +223,11 @@ async fn run_case(case: Case) -> anyhow::Result<()> {
             Err(error) => Err(error),
         }
     };
-    let removed = checked(
-        Command::new(&lifecycle)
-            .arg("remove")
-            .arg(&cluster)
-            .arg(work.path()),
-    )
-    .await;
+    if !matches!(&run, Ok(Ok(()))) {
+        lifecycle.inspect(NAMESPACE, &evidence).await;
+    }
+    let teardown = lifecycle.cleanup().await;
+    let removed = teardown.result();
     let teardown_leftovers: Vec<String> =
         fs::read_to_string(work.path().join("kind-teardown-leftovers"))
             .unwrap_or_default()
@@ -242,7 +237,7 @@ async fn run_case(case: Case) -> anyhow::Result<()> {
     if !teardown_leftovers.is_empty() {
         eprintln!("WMS leftover kind resources: {teardown_leftovers:?}");
     }
-    let absent = deployment::preflight(&lifecycle, &cluster, &image, &teardown_leftovers).await;
+    let absent = lifecycle.absent(&teardown_leftovers).await;
     let work_path = work.path().to_path_buf();
     drop(work);
     let private_files_removed = !work_path.exists();
@@ -291,7 +286,7 @@ async fn run_case(case: Case) -> anyhow::Result<()> {
 /// the same set, so it travels as one argument.
 struct CaseContext<'a> {
     repository: &'a Path,
-    lifecycle: &'a Path,
+    lifecycle: &'a wamn_test_infrastructure::cluster::Cluster,
     cluster: &'a str,
     work: &'a Path,
     evidence: &'a Path,
@@ -323,7 +318,6 @@ async fn start_session_issuer(
             work: context.work,
             evidence: context.evidence,
             repository: context.repository,
-            lifecycle: context.lifecycle,
             system_database_url: &document.system_pg_url,
             identity_image: Some(context.identity_image),
             org: identity.org.as_str(),
@@ -359,24 +353,18 @@ async fn run_created(
     let (manifest, manifest_digest) = candidate.manifest()?;
     let partial_completion = matches!(case, Case::PartialCompletion);
     let measure_startup = matches!(case, Case::Startup);
-    let postgres = deployment::inspect(lifecycle, &format!("{cluster}-postgres")).await?;
+    let postgres = deployment::inspect(&format!("{cluster}-postgres")).await?;
     let postgres_ip = bootstrap::kind_address(&postgres)?.to_string();
-    let registry = deployment::inspect(lifecycle, &format!("{cluster}-registry")).await?;
+    let registry = deployment::inspect(&format!("{cluster}-registry")).await?;
     let registry_authority = format!("{}:5000", bootstrap::kind_address(&registry)?);
-    let minio = deployment::inspect(lifecycle, &format!("{cluster}-minio")).await?;
+    let minio = deployment::inspect(&format!("{cluster}-minio")).await?;
     let minio_endpoint = format!("http://{}:9000", bootstrap::kind_address(&minio)?);
     let registry_auth = bootstrap::write_registry_auth(files, work, &registry_authority)?;
     let admin_url = format!("postgresql://postgres:probe@{postgres_ip}:5432/postgres");
     deployment::wait_postgres(&admin_url).await?;
     deployment::wait_registry(&registry_authority, &registry_auth).await?;
     deployment::wait_minio(&minio_endpoint).await?;
-    checked(
-        Command::new(lifecycle)
-            .arg("install-labels")
-            .arg(cluster)
-            .arg(work),
-    )
-    .await?;
+    deployment::labels(cluster, work, true).await?;
     let platform_inputs = wamn_control::platform::journey::cluster(
         repository,
         &wamn_control::platform::journey::ClusterInput {
@@ -386,16 +374,15 @@ async fn run_created(
             environments: std::slice::from_ref(scope),
         },
     )?;
-    platform::install(
-        repository,
-        cluster,
-        work,
-        NAMESPACE,
-        &platform_inputs.prerequisites,
-        &platform_inputs.nats,
-        &platform_inputs.operator,
-    )
-    .await?;
+    lifecycle
+        .install(
+            repository,
+            NAMESPACE,
+            &platform_inputs.prerequisites,
+            &platform_inputs.nats,
+            &platform_inputs.operator,
+        )
+        .await?;
     let nats = platform::cluster_nats(
         work,
         cluster,
@@ -600,25 +587,11 @@ async fn run_created(
             evidence,
         )
         .await?;
-        let endpoint = deployment::expose_route(
-            cluster,
-            work,
-            NAMESPACE,
-            &service,
-            lifecycle,
-            &document.route_host,
-        )
-        .await?;
+        let endpoint =
+            deployment::expose_route(cluster, work, NAMESPACE, &service, &document.route_host)
+                .await?;
         if browser {
-            demo::start(
-                lifecycle,
-                cluster,
-                work,
-                &endpoint,
-                &document.route_host,
-                evidence,
-            )
-            .await?;
+            demo::start(cluster, work, &endpoint, &document.route_host, evidence).await?;
         }
         document.runtime = Some(application::runtime_phase(endpoint));
         let store = bootstrap::object_store(files, &minio_endpoint)?;
@@ -628,22 +601,10 @@ async fn run_created(
         role_placed(&environment, "materializer", &hosts).await?;
         application::released_routes(project.as_ref(), &document, &store, evidence).await?;
         if partial_completion {
-            checked(
-                Command::new(lifecycle)
-                    .arg("remove-labels")
-                    .arg(cluster)
-                    .arg(work),
-            )
-            .await?;
+            deployment::labels(cluster, work, false).await?;
             let result =
                 application::partial_completion(&mut document, project.as_ref(), evidence).await;
-            let restored = checked(
-                Command::new(lifecycle)
-                    .arg("install-labels")
-                    .arg(cluster)
-                    .arg(work),
-            )
-            .await;
+            let restored = deployment::labels(cluster, work, true).await;
             match (result, restored) {
                 (Ok(()), Ok(_)) => {}
                 (Err(error), Ok(_)) | (Ok(()), Err(error)) => return Err(error),

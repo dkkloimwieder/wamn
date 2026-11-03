@@ -83,7 +83,6 @@ async fn run(repository: &Path, kept: &KeptCluster, evidence: &Path) -> anyhow::
     let work = application_directory(kept, "receiving")?;
     share_kubeconfig(kept, &work)?;
     let owner = format!("{}-receiving", kept.name);
-    let lifecycle = repository.join("tools/receiving-cluster-journey-run");
     let artifacts = build::components_and_tools(repository, evidence).await?;
     for directory in ["docker", "host-secrets", "wasmtime-cache"] {
         DirBuilder::new().mode(0o700).create(work.join(directory))?;
@@ -193,7 +192,6 @@ async fn run(repository: &Path, kept: &KeptCluster, evidence: &Path) -> anyhow::
             work: &work,
             evidence,
             repository,
-            lifecycle: &lifecycle,
             system_database_url: &inputs.system_pg_url,
             identity_image: Some(&identity_image),
             org: identity().org.as_str(),

@@ -2,6 +2,7 @@
 //!
 //! MVP outcome: test coverage.
 
+pub mod cluster;
 pub mod ctl_process;
 pub mod declarations;
 pub mod delivery_cluster;
@@ -48,3 +49,6 @@ mod tests {
         assert!(!connection_refused(&denied));
     }
 }
+
+pub mod kubernetes_gate;
+pub mod kubernetes_gate_verdict;

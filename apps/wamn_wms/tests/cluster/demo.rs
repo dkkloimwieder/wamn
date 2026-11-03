@@ -8,13 +8,10 @@ use std::time::Duration;
 
 use anyhow::ensure;
 use serde_json::json;
-use tokio::process::Command;
 
-use super::deployment::checked;
 use crate::wms_runtime_live::write_result;
 
 pub(super) async fn start(
-    lifecycle: &Path,
     cluster: &str,
     work: &Path,
     endpoint: &str,
@@ -25,11 +22,19 @@ pub(super) async fn start(
         "server {{\n  listen 80;\n  location / {{\n    proxy_pass {endpoint};\n    proxy_set_header Host {route_host};\n    proxy_http_version 1.1;\n  }}\n}}\n"
     );
     fs::write(work.join("demo-proxy.conf"), proxy)?;
-    checked(
-        Command::new(lifecycle)
-            .arg("demo-proxy")
-            .arg(cluster)
-            .arg(work),
+    let mount = format!(
+        "{}:/etc/nginx/conf.d/default.conf:ro",
+        work.join("demo-proxy.conf").display()
+    );
+    wamn_test_infrastructure::cluster::sidecar(
+        &format!("{cluster}-demo-proxy"),
+        [
+            "--publish",
+            "127.0.0.1:8080:80",
+            "--volume",
+            &mount,
+            "nginx:1.27-alpine",
+        ],
     )
     .await?;
     let client = reqwest::Client::builder()

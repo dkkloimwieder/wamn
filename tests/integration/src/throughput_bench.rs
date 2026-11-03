@@ -3,7 +3,7 @@
 //! THE LOAD IS NOT GENERATED HERE. A stock generator runs in a pod, pinned by
 //! digest in the disposable cluster -- `oha` for the two HTTP layers, `pgbench`
 //! from the pinned `postgres` image for the direct-PostgreSQL layer -- and
-//! `tools/receiving-cluster-journey-run --throughput` drives the sweep. Owner
+//! `wamn-throughput` drives the sweep against the endpoint supplied by its Rust owner. Owner
 //! ruling on the bead: a standard tool gives comparable numbers and no
 //! generator code to own. This module owns the two things Rust does own: the
 //! PostgreSQL counter sample taken before and after every step, and the report

@@ -78,7 +78,7 @@ impl ReceivingCluster {
 
 async fn start(evidence: &Path, gates_image: bool) -> anyhow::Result<ReceivingCluster> {
     let repository = repository_root()?;
-    let mut cluster = resources::prepare(&repository, evidence, gates_image).await?;
+    let mut cluster = resources::prepare(&repository, evidence, gates_image)?;
     let (candidate, manifest) = cluster
         .candidate
         .as_ref()
@@ -136,16 +136,16 @@ async fn start(evidence: &Path, gates_image: bool) -> anyhow::Result<ReceivingCl
             environments: std::slice::from_ref(&scope),
         },
     )?;
-    wamn_test_infrastructure::platform::install(
-        &cluster.repository,
-        &cluster.name,
-        &cluster.work,
-        NAMESPACE,
-        &platform.prerequisites,
-        &platform.nats,
-        &platform.operator,
-    )
-    .await?;
+    cluster
+        .lifecycle
+        .install(
+            &cluster.repository,
+            NAMESPACE,
+            &platform.prerequisites,
+            &platform.nats,
+            &platform.operator,
+        )
+        .await?;
     let nats = wamn_test_infrastructure::platform::cluster_nats(
         &cluster.work,
         &cluster.name,
@@ -239,11 +239,9 @@ fn declared_consumers<'a>(
 async fn postgres_ready(cluster: &Resources, address: Ipv4Addr, port: u16) -> anyhow::Result<()> {
     let deadline = Instant::now() + Duration::from_secs(90);
     loop {
-        let logs = checked(
-            Command::new(&cluster.lifecycle)
-                .arg("container-logs")
-                .arg(format!("{}-postgres", cluster.name)),
-        )
+        let logs = checked(&mut wamn_test_infrastructure::cluster::container_logs(
+            &format!("{}-postgres", cluster.name),
+        ))
         .await?;
         let markers = String::from_utf8_lossy(&logs)
             .matches("database system is ready to accept connections")
@@ -469,7 +467,6 @@ fn release_name() -> anyhow::Result<String> {
 /// The cluster's host image pinned by the digest its nodes hold, and that digest.
 async fn host_image(resources: &Resources) -> anyhow::Result<(String, String)> {
     let digest = wamn_test_infrastructure::workload::image_ready(
-        &resources.lifecycle,
         &resources.name,
         &resources.work,
         &resources.host_image,
@@ -716,7 +713,6 @@ async fn serve_released_http(
         let gates_evidence = resources.evidence.join("gates-image");
         fs::create_dir(&gates_evidence)?;
         workload::image_ready(
-            &resources.lifecycle,
             &resources.name,
             &resources.work,
             resources

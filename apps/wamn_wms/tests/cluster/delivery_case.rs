@@ -18,7 +18,6 @@ use std::time::{Duration, Instant};
 
 use anyhow::ensure;
 use serde_json::json;
-use tokio::process::Command;
 use wamn_control::environment::{EventBroker, Platform};
 use wamn_control::pat_client::PatIssuerConfig;
 use wamn_control::release_chart::Target;
@@ -34,7 +33,7 @@ use wamn_test_infrastructure::delivery_cluster::{
 };
 use wamn_test_infrastructure::platform;
 
-use super::{application, bootstrap, build, checked, deployment};
+use super::{application, bootstrap, build, deployment};
 use crate::environment::identity;
 use crate::wms_runtime_live::write_result;
 
@@ -102,9 +101,8 @@ async fn run(
     let work = application_directory(kept, "wms")?;
     share_kubeconfig(kept, &work)?;
     let owner = format!("{}-wms", kept.name);
-    let lifecycle = repository.join("tools/wms-cluster-journey-run");
     build::build(repository, target, evidence).await?;
-    let files = bootstrap::prepare(repository, &work)?;
+    let files = bootstrap::prepare(&work).await?;
     fs::copy(&kept.registry_auth, work.join("docker/config.json"))?;
     for directory in ["host-secrets", "wasmtime-cache"] {
         DirBuilder::new().mode(0o700).create(work.join(directory))?;
@@ -135,13 +133,7 @@ async fn run(
     .await?;
     let minio_endpoint = format!("http://{minio}:9000");
     deployment::wait_minio(&minio_endpoint).await?;
-    checked(
-        Command::new(&lifecycle)
-            .arg("install-labels")
-            .arg(&owner)
-            .arg(&work),
-    )
-    .await?;
+    super::deployment::labels(&owner, &work, true).await?;
     let database_inputs = wamn_control::platform::journey::delivery_database(
         repository,
         DATABASE_NAMESPACE,
@@ -257,7 +249,6 @@ async fn run(
             work: &work,
             evidence,
             repository,
-            lifecycle: &lifecycle,
             system_database_url: &document.system_pg_url,
             identity_image: Some(&identity_image),
             org: identity().org.as_str(),

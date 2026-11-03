@@ -102,18 +102,18 @@ const GOVERNED_LITERALS: &[GovernedLiteral] = &[
         expected_count: 1,
     },
     GovernedLiteral {
-        path: "tests/conformance/src/kubernetes_gate_verdict.rs",
+        path: "test-support/infrastructure/kubernetes_gate_verdict.rs",
         exact: r#"pub const PROTOCOL: &str = "wamn-kubernetes-gate-verdict/v0.1";"#,
         expected_count: 1,
     },
     GovernedLiteral {
-        path: "tests/conformance/src/kubernetes_gate_verdict.rs",
+        path: "test-support/infrastructure/kubernetes_gate_verdict.rs",
         exact: r#"if record.schema_version != "0.1" || record.protocol != PROTOCOL {"#,
         expected_count: 1,
     },
     GovernedLiteral {
-        path: "tools/kubernetes-gate-run",
-        exact: r#"--arg schema_version "0.1" --arg protocol "wamn-kubernetes-gate-verdict/v0.1""#,
+        path: "test-support/infrastructure/kubernetes_gate.rs",
+        exact: r#""schema_version":"0.1","protocol":PROTOCOL"#,
         expected_count: 1,
     },
     GovernedLiteral {

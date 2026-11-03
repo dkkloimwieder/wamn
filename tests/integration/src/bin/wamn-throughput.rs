@@ -6,7 +6,7 @@
 //!
 //! The load itself is oha and pgbench in pods; see
 //! `wamn_integration_tests::throughput_bench` and
-//! `tools/receiving-cluster-journey-run --throughput`.
+//! `wamn-throughput` against the endpoint supplied by its Rust owner.
 
 use std::path::PathBuf;
 

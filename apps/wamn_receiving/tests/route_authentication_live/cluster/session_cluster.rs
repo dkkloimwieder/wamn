@@ -15,7 +15,6 @@ fn issuer_cluster(cluster: &ReceivingCluster) -> IssuerCluster<'_> {
         work: &resources.work,
         evidence: &resources.evidence,
         repository: &resources.repository,
-        lifecycle: &resources.lifecycle,
         system_database_url: &cluster.inputs.system_pg_url,
         identity_image: resources.identity_image.as_deref(),
         org: identity().org.as_str(),

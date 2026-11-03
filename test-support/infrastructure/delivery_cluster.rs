@@ -22,13 +22,11 @@
 use std::fs::{self, DirBuilder};
 use std::os::unix::fs::{DirBuilderExt as _, PermissionsExt as _};
 use std::path::{Path, PathBuf};
-use std::process::Stdio;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context as _, bail, ensure};
 use ring::rand::{SecureRandom as _, SystemRandom};
 use serde_json::{Value, json};
-use tokio::io::AsyncWriteExt as _;
 use tokio::process::Command;
 
 /// The operator namespace, which every environment's release chart shares (R6).
@@ -80,35 +78,19 @@ impl KeptCluster {
     /// Apply one object, given on standard input, so a Secret is not written
     /// to a file.
     pub async fn apply(&self, object: &Value) -> anyhow::Result<()> {
-        let mut child = self
-            .kubectl()
-            .args(["apply", "-f", "-"])
-            .stdin(Stdio::piped())
-            .stdout(Stdio::null())
-            .stderr(Stdio::piped())
-            .kill_on_drop(true)
-            .spawn()
-            .context("start kubectl apply")?;
-        let mut input = child.stdin.take().context("open the kubectl input")?;
-        let written = input.write_all(&serde_json::to_vec(object)?).await;
-        drop(input);
-        let output = child.wait_with_output().await?;
-        written.context("write the kubectl input")?;
-        ensure!(
-            output.status.success(),
-            "kubectl apply of {} {} failed: {}",
-            object["kind"],
-            object["metadata"]["name"],
-            String::from_utf8_lossy(&output.stderr)
-        );
-        Ok(())
+        crate::cluster::input(
+            self.kubectl().args(["apply", "-f", "-"]),
+            serde_json::to_vec(object)?,
+        )
+        .await
+        .map(drop)
     }
 
     /// Load a local image into every node of the kept cluster.
     pub async fn load_image(&self, image: &str) -> anyhow::Result<()> {
-        checked(Command::new("kind").args(["load", "docker-image", image, "--name", &self.name]))
+        crate::cluster::Cluster::new(&self.name, &self.work)?
+            .load_local_image(image)
             .await
-            .map(drop)
     }
 
     /// The kind network address of the cluster's control-plane node.
@@ -186,23 +168,14 @@ pub async fn ensure(
         .mode(0o700)
         .create(&work)
         .with_context(|| format!("create {}", work.display()))?;
-    let clusters =
-        String::from_utf8(checked(Command::new("kind").args(["get", "clusters"])).await?)?;
-    let kubeconfig = work.join("kubeconfig");
+    let clusters = String::from_utf8(crate::cluster::run(&mut crate::cluster::clusters()).await?)?;
+    let mut fixture = crate::cluster::Cluster::new(name, &work)?;
     if clusters.lines().any(|line| line == name) {
-        checked(
-            Command::new("kind")
-                .args(["export", "kubeconfig", "--name", name, "--kubeconfig"])
-                .arg(&kubeconfig),
-        )
-        .await?;
+        fixture.attach().await?;
     } else {
-        checked(
-            Command::new("kind")
-                .args(["create", "cluster", "--name", name, "--kubeconfig"])
-                .arg(&kubeconfig),
-        )
-        .await?;
+        fixture
+            .create(&Path::new(env!("CARGO_MANIFEST_DIR")).join("../.."))
+            .await?;
     }
     let mut kept = KeptCluster {
         name: name.to_owned(),
@@ -228,38 +201,25 @@ pub async fn ensure(
         nats,
         operator,
     } = render(&environments)?;
-    crate::platform::apply_objects(
-        &kubeconfig,
-        &kept.context(),
-        &work,
-        "prerequisites",
-        &prerequisites,
-    )
-    .await?;
-    for namespace in ["cert-manager", "cnpg-system"] {
-        checked(kept.kubectl().args([
-            "-n",
-            namespace,
-            "wait",
-            "--for=condition=Available",
-            "deployment",
-            "--all",
-            "--timeout=300s",
-        ]))
+    fixture
+        .install(
+            &Path::new(env!("CARGO_MANIFEST_DIR")).join("../.."),
+            NAMESPACE,
+            &prerequisites,
+            &nats,
+            &operator,
+        )
         .await?;
-    }
-    crate::platform::install_nats(&kubeconfig, &kept.context(), &work, &nats).await?;
-    let status = Command::new("helm")
-        .args(["status", "wamn", "-n", NAMESPACE, "--kubeconfig"])
-        .arg(&kubeconfig)
-        .args(["--kube-context", &kept.context()])
-        .kill_on_drop(true)
-        .output()
-        .await
-        .context("start helm status")?;
-    if !status.status.success() {
-        crate::platform::install_chart(&kubeconfig, &kept.context(), &work, &operator).await?;
-    }
+    checked(kept.kubectl().args([
+        "-n",
+        "cnpg-system",
+        "wait",
+        "--for=condition=Available",
+        "deployment",
+        "--all",
+        "--timeout=300s",
+    ]))
+    .await?;
 
     // The registry, its HTTP twin, and the Secret every host mounts.
     let tls = format!("{name}-registry");
@@ -284,6 +244,7 @@ pub async fn ensure(
         "ca.crt": fs::read_to_string(&kept.ca)?,
     }}))
     .await?;
+    fixture.keep();
     Ok(kept)
 }
 
@@ -368,42 +329,37 @@ async fn create_registry(kept: &KeptCluster, tls: &str, http: &str) -> anyhow::R
             ]);
             // The certificate names the address, which is known only once the
             // container runs; the registry starts after the certificate exists.
-            sign(&directory, tls, "127.0.0.1")?;
+            sign(&directory, tls, "127.0.0.1").await?;
         }
         checked(run.arg("registry:2")).await?;
     }
     let address = container_address(tls).await?;
-    sign(&directory, tls, &address)?;
+    sign(&directory, tls, &address).await?;
     checked(Command::new("docker").args(["restart", tls])).await?;
     Ok(())
 }
 
 /// Sign the registry certificate for its name and `address`.
-fn sign(directory: &Path, name: &str, address: &str) -> anyhow::Result<()> {
+async fn sign(directory: &Path, name: &str, address: &str) -> anyhow::Result<()> {
     let path = |file: &str| directory.join(file);
     fs::write(
         path("san.ext"),
         format!("subjectAltName=DNS:{name},IP:127.0.0.1,IP:{address}\n"),
     )?;
-    let status = std::process::Command::new("openssl")
-        .args(["x509", "-req", "-in"])
-        .arg(path("tls.csr"))
-        .arg("-CA")
-        .arg(path("ca.crt"))
-        .arg("-CAkey")
-        .arg(path("ca.key"))
-        .args(["-CAcreateserial", "-days", "7", "-extfile"])
-        .arg(path("san.ext"))
-        .arg("-out")
-        .arg(path("tls.crt"))
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-        .context("start openssl")?;
-    ensure!(
-        status.success(),
-        "openssl could not sign the registry certificate"
-    );
+    checked(
+        Command::new("openssl")
+            .args(["x509", "-req", "-in"])
+            .arg(path("tls.csr"))
+            .arg("-CA")
+            .arg(path("ca.crt"))
+            .arg("-CAkey")
+            .arg(path("ca.key"))
+            .args(["-CAcreateserial", "-days", "7", "-extfile"])
+            .arg(path("san.ext"))
+            .arg("-out")
+            .arg(path("tls.crt")),
+    )
+    .await?;
     // The registry reads the key as another user.
     fs::set_permissions(path("tls.key"), fs::Permissions::from_mode(0o644))?;
     Ok(())
@@ -524,19 +480,14 @@ pub async fn ensure_database(
 /// with psql, as the PostgreSQL image's initdb step applies it: the file holds
 /// `CREATE DATABASE` and the psql meta-command `\connect`.
 pub async fn apply_postgres_init(repository: &Path, url: &str) -> anyhow::Result<()> {
-    let output = Command::new("/usr/lib/postgresql/18/bin/psql")
-        .env_clear()
-        .args(["-X", "-q", "-v", "ON_ERROR_STOP=1", "-d", url, "-f"])
-        .arg(repository.join("deploy/sql/postgres-init.sql"))
-        .output()
-        .await
-        .context("run psql")?;
-    ensure!(
-        output.status.success(),
-        "psql failed: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    Ok(())
+    checked(
+        Command::new("/usr/lib/postgresql/18/bin/psql")
+            .env_clear()
+            .args(["-X", "-q", "-v", "ON_ERROR_STOP=1", "-d", url, "-f"])
+            .arg(repository.join("deploy/sql/postgres-init.sql")),
+    )
+    .await
+    .map(drop)
 }
 
 /// Start `name` on the kind network with `arguments` after `docker run
@@ -556,14 +507,12 @@ pub async fn start_container(name: &str, arguments: &[&str]) -> anyhow::Result<S
 }
 
 async fn container_exists(name: &str) -> anyhow::Result<bool> {
-    Ok(Command::new("docker")
-        .args(["container", "inspect", name])
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-        .await
-        .context("start docker")?
-        .success())
+    Ok(
+        crate::cluster::output(Command::new("docker").args(["container", "inspect", name]))
+            .await?
+            .status
+            .success(),
+    )
 }
 
 /// The kind network address of one container.
@@ -601,24 +550,7 @@ fn write_private(path: &Path, bytes: &[u8]) -> anyhow::Result<()> {
 }
 
 async fn checked(command: &mut Command) -> anyhow::Result<Vec<u8>> {
-    let program = command
-        .as_std()
-        .get_program()
-        .to_string_lossy()
-        .into_owned();
-    let output = command
-        .stdin(Stdio::null())
-        .kill_on_drop(true)
-        .output()
-        .await
-        .with_context(|| format!("start {program}"))?;
-    ensure!(
-        output.status.success(),
-        "{program} exited {}: {}",
-        output.status,
-        String::from_utf8_lossy(&output.stderr)
-    );
-    Ok(output.stdout)
+    crate::cluster::run(command).await
 }
 
 #[cfg(test)]

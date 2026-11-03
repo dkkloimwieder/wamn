@@ -306,17 +306,14 @@ pub async fn cluster_nats(
     let port = std::net::TcpListener::bind("127.0.0.1:0")?
         .local_addr()?
         .port();
-    let forward = kubectl(&kubeconfig, &context)
-        .args([
-            "-n",
-            SYSTEM_NAMESPACE,
-            "port-forward",
-            "svc/wamn-nats",
-            &format!("{port}:4222"),
-        ])
-        .kill_on_drop(true)
-        .spawn()
-        .context("forward the one NATS")?;
+    let forward = crate::cluster::spawn(kubectl(&kubeconfig, &context).args([
+        "-n",
+        SYSTEM_NAMESPACE,
+        "port-forward",
+        "svc/wamn-nats",
+        &format!("{port}:4222"),
+    ]))
+    .context("forward the one NATS")?;
     let nats = ClusterNats {
         server: format!("nats://127.0.0.1:{port}"),
         provisioning: certificate(
@@ -436,19 +433,7 @@ fn kubectl(kubeconfig: &Path, context: &str) -> Command {
 }
 
 async fn checked(command: &mut Command) -> anyhow::Result<Vec<u8>> {
-    let program = command.as_std().get_program().to_owned();
-    let output = command
-        .output()
-        .await
-        .with_context(|| format!("run {}", program.to_string_lossy()))?;
-    ensure!(
-        output.status.success(),
-        "{} failed with {}: {}",
-        program.to_string_lossy(),
-        output.status,
-        String::from_utf8_lossy(&output.stderr)
-    );
-    Ok(output.stdout)
+    crate::cluster::run(command).await
 }
 
 fn write_private(path: &Path, bytes: &[u8]) -> anyhow::Result<()> {

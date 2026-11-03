@@ -540,3 +540,6 @@ mod tests {
         assert!(!exact_header(&headers, WWW_AUTHENTICATE, "Bearer"));
     }
 }
+
+#[cfg(test)]
+mod journey;

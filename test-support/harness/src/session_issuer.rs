@@ -34,8 +34,6 @@ pub struct IssuerCluster<'a> {
     /// The result directory of the run.
     pub evidence: &'a Path,
     pub repository: &'a Path,
-    /// The lifecycle tool of the application cluster tests.
-    pub lifecycle: &'a Path,
     pub system_database_url: &'a str,
     pub identity_image: Option<&'a str>,
     pub org: &'a str,
@@ -259,56 +257,14 @@ pub async fn prepare(
             )),
     )
     .await?;
-    let entry =
-        wamn_control::platform::journey::identity(&wamn_control::platform::identity::ChartInput {
-            chart: &cluster.repository.join("deploy/platform/identity"),
-            name: IDENTITY,
-            namespace: cluster.namespace,
-            image: identity_image,
-            pull_policy: "Never",
-            issuer: &issuer,
-            database_secret: "host-session-identity-db",
-            tls_secret: "host-session-identity-tls",
-            operator_ca_secret: "",
-            resend_secret: "",
-            resend_from: "",
-            invite_url: "",
-            mode: wamn_control::platform::identity::Mode::Session {
-                targets: vec![target_name],
-                nats: None,
-            },
-        })?;
-    let values = cluster.work.join("session-identity-values.yaml");
-    fs::write(&values, serde_yaml::to_string(&entry["values"])?)?;
-    for install in [false, true] {
-        let mut command = Command::new("helm");
-        if install {
-            command.args(["upgrade", "--install"]);
-        } else {
-            command.arg("template");
-        }
-        command
-            .arg(IDENTITY)
-            .arg(entry["chart"].as_str().context("identity chart")?)
-            .arg("--kubeconfig")
-            .arg(cluster.work.join("kubeconfig"))
-            .arg("--kube-context")
-            .arg(format!("kind-{}", cluster.name))
-            .args(["--namespace", cluster.namespace]);
-        command.arg("-f").arg(&values);
-        if install {
-            command.args(["--wait", "--timeout", "180s"]);
-        }
-        let output = checked(&mut command).await?;
-        fs::write(
-            cluster.evidence.join(if install {
-                "session-identity-install.log"
-            } else {
-                "session-identity-rendered.yaml"
-            }),
-            output,
-        )?;
-    }
+    install_mode(
+        cluster,
+        wamn_control::platform::identity::Mode::Session {
+            targets: vec![target_name],
+            nats: None,
+        },
+    )
+    .await?;
     let deployment = read_object(
         cluster,
         "session-identity-deployment",
@@ -413,11 +369,10 @@ async fn create_tls(cluster: &IssuerCluster<'_>) -> anyhow::Result<()> {
         "subjectAltName=DNS:{hostname},DNS:localhost,IP:127.0.0.1\nbasicConstraints=critical,CA:FALSE\nkeyUsage=critical,digitalSignature,keyEncipherment\nextendedKeyUsage=serverAuth\n"
     ).as_bytes())?;
     for (name, args) in requests {
-        let output = Command::new("openssl")
-            .current_dir(cluster.work)
-            .args(args)
-            .output()
-            .await?;
+        let output = wamn_test_infrastructure::cluster::output(
+            Command::new("openssl").current_dir(cluster.work).args(args),
+        )
+        .await?;
         let mut log = output.stdout;
         log.extend(output.stderr);
         fs::write(
@@ -573,16 +528,15 @@ pub async fn image_loaded(
     name: &str,
     config_fallback: bool,
 ) -> anyhow::Result<(String, String)> {
-    let labels: Value = serde_json::from_slice(
-        &checked(Command::new(cluster.lifecycle).args(["image-labels", image])).await?,
-    )?;
+    let config = wamn_test_infrastructure::cluster::image_config(cluster.name, image).await?;
+    let labels = config["config"]["Labels"].clone();
     save(cluster, &format!("{name}-image-labels"), &labels)?;
     ensure!(
         labels["wamn.dev/build-profile"] == "release",
         "the session image carries the release build profile"
     );
     let nodes = String::from_utf8(
-        checked(Command::new(cluster.lifecycle).args(["nodes", cluster.name])).await?,
+        checked(&mut wamn_test_infrastructure::cluster::nodes(cluster.name)).await?,
     )?;
     let nodes = nodes.lines().collect::<BTreeSet<_>>();
     ensure!(
@@ -593,12 +547,7 @@ pub async fn image_loaded(
     let loaded = session_image_digest(cluster, image, name, &nodes, config_fallback).await;
     if loaded.is_err() {
         let nodes = nodes.iter().map(|node| (*node).to_owned()).collect();
-        wamn_test_infrastructure::workload::capture_node_images(
-            cluster.lifecycle,
-            &nodes,
-            cluster.evidence,
-        )
-        .await;
+        wamn_test_infrastructure::workload::capture_node_images(&nodes, cluster.evidence).await;
     }
     loaded
 }
@@ -615,7 +564,10 @@ async fn session_image_digest(
     let mut rows = Vec::new();
     for node in nodes {
         let observed: Value = serde_json::from_slice(
-            &checked(Command::new(cluster.lifecycle).args(["node-image", node, image])).await?,
+            &checked(&mut wamn_test_infrastructure::cluster::node_image(
+                node, image,
+            ))
+            .await?,
         )?;
         save(cluster, &format!("{name}-image-{node}"), &observed)?;
         let tuple = image_tuple(&observed, config_fallback)?;
@@ -739,17 +691,7 @@ async fn apply(cluster: &IssuerCluster<'_>, path: &Path) -> anyhow::Result<()> {
 }
 
 async fn checked(command: &mut Command) -> anyhow::Result<Vec<u8>> {
-    let output = command
-        .kill_on_drop(true)
-        .output()
-        .await
-        .context("run the session issuer command")?;
-    ensure!(
-        output.status.success(),
-        "session issuer command failed with {}",
-        output.status
-    );
-    Ok(output.stdout)
+    wamn_test_infrastructure::cluster::run(command).await
 }
 
 fn write_private(path: &Path, bytes: &[u8]) -> anyhow::Result<()> {
@@ -760,6 +702,171 @@ fn write_private(path: &Path, bytes: &[u8]) -> anyhow::Result<()> {
         .open(path)?;
     file.write_all(bytes)
         .with_context(|| format!("write private file {}", path.display()))
+}
+
+/// Install the same identity chart with foundation or session inputs.
+pub async fn install_mode(
+    cluster: &IssuerCluster<'_>,
+    mode: wamn_control::platform::identity::Mode,
+) -> anyhow::Result<()> {
+    let identity_image = cluster
+        .identity_image
+        .context("candidate identity image is required")?;
+    let issuer = format!("https://{IDENTITY}.{}.svc.cluster.local", cluster.namespace);
+    let entry =
+        wamn_control::platform::journey::identity(&wamn_control::platform::identity::ChartInput {
+            chart: &cluster.repository.join("deploy/platform/identity"),
+            name: IDENTITY,
+            namespace: cluster.namespace,
+            image: identity_image,
+            pull_policy: "Never",
+            issuer: &issuer,
+            database_secret: "host-session-identity-db",
+            tls_secret: "host-session-identity-tls",
+            operator_ca_secret: "",
+            resend_secret: "",
+            resend_from: "",
+            invite_url: "",
+            mode,
+        })?;
+    let values = cluster.work.join("session-identity-values.yaml");
+    fs::write(&values, serde_yaml::to_string(&entry["values"])?)?;
+    for install in [false, true] {
+        let mut command = Command::new("helm");
+        if install {
+            command.args(["upgrade", "--install"]);
+        } else {
+            command.arg("template");
+        }
+        command
+            .arg(IDENTITY)
+            .arg(entry["chart"].as_str().context("identity chart")?)
+            .arg("--kubeconfig")
+            .arg(cluster.work.join("kubeconfig"))
+            .arg("--kube-context")
+            .arg(format!("kind-{}", cluster.name))
+            .args(["--namespace", cluster.namespace]);
+        command.arg("-f").arg(&values);
+        if install {
+            command.args(["--wait", "--timeout", "180s"]);
+        }
+        let output = checked(&mut command).await?;
+        fs::write(
+            cluster.evidence.join(if install {
+                "session-identity-install.log"
+            } else {
+                "session-identity-rendered.yaml"
+            }),
+            output,
+        )?;
+    }
+    Ok(())
+}
+
+/// Start an unconfigured issuer for the key rotation journey.
+pub async fn foundation(cluster: &IssuerCluster<'_>) -> anyhow::Result<String> {
+    let issuer = format!("https://{IDENTITY}.{}.svc.cluster.local", cluster.namespace);
+    let identity_image = cluster
+        .identity_image
+        .context("candidate identity image is required")?;
+    image_loaded(cluster, identity_image, "identity", false).await?;
+    let secret = cluster.work.join("session-identity-db.json");
+    let database = url::Url::parse(cluster.system_database_url)?;
+    provision_identity_issuer(IdentityIssuerRequest {
+        issuer: issuer.clone(),
+        system_database_url: cluster.system_database_url.into(),
+        prepare_generation: Some(CredentialGeneration::A),
+        retire_generation: None,
+        abort_generation: None,
+        emit_secret: Some(secret.clone()),
+        db_host: database.host_str().map(str::to_owned),
+        db_port: database.port_or_known_default().unwrap_or(5432),
+        namespace: cluster.namespace.into(),
+        secret_name: "host-session-identity-db".into(),
+    })
+    .await?;
+    let document: Value = serde_json::from_slice(&fs::read(&secret)?)?;
+    ensure!(
+        document["kind"] == "Secret"
+            && document["metadata"]["name"] == "host-session-identity-db"
+            && document["metadata"]["namespace"] == cluster.namespace
+            && document["stringData"]["url"].is_string(),
+        "identity credential belongs to its namespace"
+    );
+    apply(cluster, &secret).await?;
+    create_tls(cluster).await?;
+    checked(
+        kubectl(cluster)
+            .args([
+                "-n",
+                cluster.namespace,
+                "create",
+                "secret",
+                "tls",
+                "host-session-identity-tls",
+            ])
+            .arg(format!(
+                "--cert={}",
+                cluster.work.join("session-tls.crt").display()
+            ))
+            .arg(format!(
+                "--key={}",
+                cluster.work.join("session-tls.key").display()
+            )),
+    )
+    .await?;
+    checked(Command::new("openssl").current_dir(cluster.work).args([
+        "req",
+        "-x509",
+        "-newkey",
+        "rsa:2048",
+        "-nodes",
+        "-days",
+        "1",
+        "-subj",
+        "/CN=wrong journey CA",
+        "-keyout",
+        "wrong-ca.key",
+        "-out",
+        "wrong-ca.crt",
+    ]))
+    .await?;
+    checked(
+        kubectl(cluster)
+            .args([
+                "-n",
+                cluster.namespace,
+                "create",
+                "configmap",
+                "host-session-public-ca",
+            ])
+            .arg(format!(
+                "--from-file=ca.crt={}",
+                cluster.work.join("session-ca.crt").display()
+            ))
+            .arg(format!(
+                "--from-file=wrong-ca.crt={}",
+                cluster.work.join("wrong-ca.crt").display()
+            )),
+    )
+    .await?;
+    install_mode(cluster, wamn_control::platform::identity::Mode::Foundation).await?;
+    let deployment = read_object(
+        cluster,
+        "foundation-deployment",
+        &["-n", cluster.namespace, "get", "deployment", IDENTITY],
+    )
+    .await?;
+    ensure!(
+        deployment["spec"]["template"]["spec"]["automountServiceAccountToken"] == false,
+        "identity must not mount a service account token"
+    );
+    let containers = array(&deployment, "/spec/template/spec/containers")?;
+    ensure!(
+        containers.len() == 1 && containers[0]["image"] == identity_image,
+        "identity uses exactly its candidate image"
+    );
+    Ok(issuer)
 }
 
 #[cfg(test)]

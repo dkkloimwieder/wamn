@@ -3,14 +3,14 @@
 use serde_json::{Value, json};
 use std::fs;
 use std::os::unix::fs::PermissionsExt as _;
+use std::os::unix::process::ExitStatusExt as _;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output};
+use std::process::Output;
 use std::sync::atomic::{AtomicU64, Ordering};
 use wamn_conformance_tests::kubernetes_gate_verdict::{Expectation, Verdict, parse_verdict_record};
 
 static NEXT_DIRECTORY: AtomicU64 = AtomicU64::new(0);
 
-const RUNNER: &str = "tools/kubernetes-gate-run";
 const EXPECTED_IMAGE: &str = "wamn-gates:dev";
 
 const FAKE_KUBECTL: &str = r#"#!/usr/bin/env bash
@@ -32,6 +32,7 @@ case "$command" in
         printf '{"metadata":{"uid":"old-%s","creationTimestamp":"2000-01-01T00:00:00Z"}}\n' "$name"
         exit 0
       fi
+      if [[ "$FAKE_SCENARIO" == job-status-missing ]]; then exit 1; fi
       condition=Complete
       if [[ "$name" == *refusal* ]]; then condition=Failed; fi
       uid="new-$name"
@@ -52,6 +53,7 @@ case "$command" in
       printf '{"metadata":{"uid":"%s","creationTimestamp":"%s"},"status":{"conditions":%s}}\n' \
         "$uid" "$created" "$conditions"
     elif [[ "$kind" == pods ]]; then
+      if [[ "$FAKE_SCENARIO" == pod-status-missing ]]; then exit 1; fi
       selector=$2
       name=${selector#job-name=}
       phase=Succeeded
@@ -77,9 +79,11 @@ case "$command" in
     fi
     ;;
   delete)
+    if [[ "$FAKE_SCENARIO" == delete-failure ]]; then exit 1; fi
     : >"$FAKE_DELETED"
     ;;
   apply)
+    if [[ "$FAKE_SCENARIO" == apply-failure ]]; then exit 1; fi
     rm -f "$FAKE_DELETED"
     : >"$FAKE_APPLIED"
     ;;
@@ -93,6 +97,7 @@ case "$command" in
     resource=$1
     name=${resource#job/}
     if [[ "$FAKE_SCENARIO" == missing-logs ]]; then exit 1; fi
+    if [[ "$FAKE_SCENARIO" == empty-logs ]]; then exit 0; fi
     if [[ "$name" == *refusal* ]]; then
       printf 'expected negative gate refused the fixture\n'
     else
@@ -109,6 +114,7 @@ count=0
 if [[ -f "$FAKE_PROBE_COUNT" ]]; then count=$(<"$FAKE_PROBE_COUNT"); fi
 count=$((count + 1))
 printf '%s' "$count" >"$FAKE_PROBE_COUNT"
+if [[ "$FAKE_SCENARIO" == probe-before-failure && "$count" == 1 || "$FAKE_SCENARIO" == probe-after-failure && "$count" == 2 ]]; then exit 7; fi
 if [[ "$FAKE_SCENARIO" == negative-changed && "$count" -gt 1 ]]; then
   printf 'sha256:changed\n'
 else
@@ -139,14 +145,6 @@ impl Drop for TestDirectory {
     fn drop(&mut self) {
         let _ = fs::remove_dir_all(&self.0);
     }
-}
-
-fn repository_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .and_then(Path::parent)
-        .expect("conformance package must live at tests/conformance")
-        .to_path_buf()
 }
 
 fn executable(path: &Path, source: &str) {
@@ -199,36 +197,62 @@ fn run(scenario: &str, jobs: &[String], negative: bool) -> RunResult {
     executable(&probe, SNAPSHOT_PROBE);
     fs::write(&manifest, "apiVersion: batch/v1\nkind: Job\n").expect("write manifest");
 
-    let mut command = Command::new("bash");
-    command
-        .arg(repository_root().join(RUNNER))
-        .arg("--manifest")
-        .arg(&manifest)
-        .arg("--verdict-record")
-        .arg(&record)
-        .arg("--timeout-secs")
-        .arg("3")
-        .env("KUBECTL", &kubectl)
-        .env("FAKE_SCENARIO", scenario)
-        .env("FAKE_EXPECTED_IMAGE", EXPECTED_IMAGE)
-        .env("FAKE_APPLIED", directory.path("applied"))
-        .env("FAKE_DELETED", directory.path("deleted"))
-        .env("FAKE_CALLS", &calls)
-        .env("FAKE_PROBE_CALLS", &probe_calls)
-        .env("FAKE_PROBE_COUNT", directory.path("probe.count"));
-    for job in jobs {
-        command.arg("--job").arg(job);
-    }
-    if negative {
-        command
-            .arg("--snapshot-executable")
-            .arg(&probe)
-            .arg("--snapshot-arg")
-            .arg("registry.example/v2/name:tag")
-            .arg("--snapshot-arg")
-            .arg("literal; never evaluated");
-    }
-    let output = command.output().expect("run verdict protocol");
+    let jobs = jobs
+        .iter()
+        .map(|job| serde_json::from_str(job).unwrap())
+        .collect::<Vec<_>>();
+    let probe = wamn_gate_harness::kubernetes_gate::Probe {
+        executable: probe,
+        argv: vec![
+            "registry.example/v2/name:tag".into(),
+            "literal; never evaluated".into(),
+        ],
+        environment: vec![
+            ("FAKE_SCENARIO".into(), scenario.into()),
+            (
+                "FAKE_PROBE_CALLS".into(),
+                probe_calls.clone().into_os_string(),
+            ),
+            (
+                "FAKE_PROBE_COUNT".into(),
+                directory.path("probe.count").into_os_string(),
+            ),
+        ],
+    };
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let value = runtime.block_on(wamn_gate_harness::kubernetes_gate::run(
+        &wamn_gate_harness::kubernetes_gate::Run {
+            manifest: &manifest,
+            record: &record,
+            namespace: "wamn-system",
+            timeout: std::time::Duration::from_secs(3),
+            jobs: &jobs,
+            probe: negative.then_some(&probe),
+        },
+        || {
+            let mut command = tokio::process::Command::new(&kubectl);
+            command
+                .env("FAKE_SCENARIO", scenario)
+                .env("FAKE_EXPECTED_IMAGE", EXPECTED_IMAGE)
+                .env("FAKE_APPLIED", directory.path("applied"))
+                .env("FAKE_DELETED", directory.path("deleted"))
+                .env("FAKE_CALLS", &calls);
+            command
+        },
+    ));
+    let value = value.expect("run verdict protocol");
+    let output = Output {
+        status: std::process::ExitStatus::from_raw(if value["verdict"] == "pass" {
+            0
+        } else {
+            256
+        }),
+        stdout: Vec::new(),
+        stderr: Vec::new(),
+    };
     let record_bytes = fs::read(&record).unwrap_or_else(|error| {
         panic!(
             "record missing ({error}); stdout={} stderr={}",
@@ -431,4 +455,80 @@ fn changed_negative_side_effect_mutant_is_red() {
         true,
         "negative-side-effect-changed",
     );
+}
+
+#[tokio::test]
+async fn invalid_job_specs_are_refused_before_any_command() {
+    use wamn_gate_harness::kubernetes_gate::{Job, Run};
+    for (field, value) in [
+        ("name", json!("")),
+        ("container", json!("")),
+        ("image", json!("")),
+        ("exit_code", json!(1)),
+        ("expectation", json!("unknown")),
+    ] {
+        let mut job: Value = serde_json::from_str(&positive_job("gate")).unwrap();
+        job[field] = value;
+        let jobs: Vec<Job> = vec![serde_json::from_value(job).unwrap()];
+        let result = wamn_gate_harness::kubernetes_gate::run(
+            &Run {
+                manifest: Path::new("unused"),
+                record: Path::new("unused"),
+                namespace: "test",
+                timeout: std::time::Duration::from_secs(1),
+                jobs: &jobs,
+                probe: None,
+            },
+            || panic!("invalid Job must not execute a command"),
+        )
+        .await;
+        assert!(result.is_err(), "invalid {field}");
+    }
+}
+
+#[tokio::test]
+async fn expected_negative_specs_require_one_exact_refusal_and_one_probe() {
+    use wamn_gate_harness::kubernetes_gate::{Job, Probe, Run};
+    let probe = Probe {
+        executable: "/unused".into(),
+        argv: Vec::new(),
+        environment: Vec::new(),
+    };
+    for (jobs, probe) in [
+        (vec![negative_job()],None),
+        (vec![positive_job("gate")],Some(&probe)),
+        (vec![negative_job(),negative_job()],Some(&probe)),
+        (vec![serde_json::json!({"name":"refusal","container":"refusal","expectation":"expected-negative","exit_code":0,"image":EXPECTED_IMAGE,"log_contains":"reason"}).to_string()],Some(&probe)),
+        (vec![serde_json::json!({"name":"refusal","container":"refusal","expectation":"expected-negative","exit_code":1,"image":EXPECTED_IMAGE,"log_contains":""}).to_string()],Some(&probe)),
+    ] {
+        let jobs = jobs.iter().map(|job| serde_json::from_str::<Job>(job).unwrap()).collect::<Vec<_>>();
+        let result = wamn_gate_harness::kubernetes_gate::run(&Run {
+            manifest:Path::new("unused"),record:Path::new("unused"),namespace:"test",
+            timeout:std::time::Duration::from_secs(1),jobs:&jobs,probe,
+        }, || panic!("invalid aggregate must not execute a command")).await;
+        assert!(result.is_err());
+    }
+}
+
+#[test]
+fn original_command_failure_classes_are_retained() {
+    for (scenario, class) in [
+        ("delete-failure", "delete-failed:gate"),
+        ("apply-failure", "apply-failed"),
+        ("job-status-missing", "job-status-missing"),
+        ("pod-status-missing", "pod-status-missing"),
+        ("empty-logs", "logs-empty"),
+    ] {
+        assert_red(scenario, &[positive_job("gate")], false, class);
+    }
+}
+
+#[test]
+fn original_snapshot_probe_failures_are_retained() {
+    for (scenario, class) in [
+        ("probe-before-failure", "snapshot-probe-before-failed"),
+        ("probe-after-failure", "snapshot-probe-after-failed"),
+    ] {
+        assert_red(scenario, &[negative_job()], true, class);
+    }
 }

@@ -141,14 +141,14 @@ pub struct HostObservation {
 
 /// Check the built host image and the same image loaded on all three nodes.
 pub async fn image_ready(
-    lifecycle: &Path,
     cluster: &str,
     work: &Path,
     image: &str,
     build_profile: &str,
     evidence: &Path,
 ) -> anyhow::Result<String> {
-    let labels = command_json(Command::new(lifecycle).args(["image-labels", image])).await?;
+    let config = crate::cluster::image_config(cluster, image).await?;
+    let labels = config["config"]["Labels"].clone();
     save(evidence, "host-image-labels.json", &labels)?;
     ensure!(
         labels["wamn.dev/build-profile"] == build_profile,
@@ -165,7 +165,7 @@ pub async fn image_ready(
     let nodes = command_json(kubectl(cluster, work).args(["get", "nodes", "-o", "json"])).await?;
     save(evidence, "nodes.json", &nodes)?;
     validate_nodes(&nodes)?;
-    let names = checked(Command::new(lifecycle).args(["nodes", cluster])).await?;
+    let names = checked(&mut crate::cluster::nodes(cluster)).await?;
     let names = String::from_utf8(names)?
         .lines()
         .map(str::to_owned)
@@ -174,23 +174,22 @@ pub async fn image_ready(
         names.len() == 3,
         "kind must report exactly three distinct nodes"
     );
-    let loaded = loaded_image_digest(lifecycle, image, &names, evidence).await;
+    let loaded = loaded_image_digest(image, &names, evidence).await;
     if loaded.is_err() {
-        capture_node_images(lifecycle, &names, evidence).await;
+        capture_node_images(&names, evidence).await;
     }
     loaded
 }
 
 /// The one runtime digest that every node reports for this image.
 async fn loaded_image_digest(
-    lifecycle: &Path,
     image: &str,
     names: &BTreeSet<String>,
     evidence: &Path,
 ) -> anyhow::Result<String> {
     let mut inspections = Vec::new();
     for node in names {
-        let bytes = checked(Command::new(lifecycle).args(["node-image", node, image])).await?;
+        let bytes = checked(&mut crate::cluster::node_image(node, image)).await?;
         fs::write(evidence.join(format!("node-image-{node}.json")), &bytes)?;
         inspections.push((node, bytes));
     }
@@ -222,116 +221,22 @@ async fn loaded_image_digest(
 /// that failed and nothing at all for the nodes after it, and the cause stays
 /// unproven. This runs only on the failure path and keeps its own failures out
 /// of the way, because it is evidence and not a check (wamn-y2ml).
-pub async fn capture_node_images(lifecycle: &Path, names: &BTreeSet<String>, evidence: &Path) {
+pub async fn capture_node_images(names: &BTreeSet<String>, evidence: &Path) {
     for node in names {
-        for (action, file) in [
-            ("node-cri-images", "cri-images.json"),
-            ("node-containerd-images", "containerd-images.txt"),
+        for (mut command, file) in [
+            (crate::cluster::cri_images(node), "cri-images.json"),
+            (
+                crate::cluster::containerd_images(node),
+                "containerd-images.txt",
+            ),
         ] {
-            let Ok(output) = Command::new(lifecycle).args([action, node]).output().await else {
+            let Ok(output) = crate::cluster::output(&mut command).await else {
                 continue;
             };
             let path = evidence.join(format!("failure-{node}-{file}"));
             let _ = fs::write(path, [output.stdout, output.stderr].concat());
         }
     }
-}
-
-/// Where one host-readiness check reads the deployed cluster, and what it expects.
-#[derive(Debug, Clone, Copy)]
-pub struct HostsReadyInput<'a> {
-    pub lifecycle: &'a Path,
-    pub cluster: &'a str,
-    pub work: &'a Path,
-    pub namespace: &'a str,
-    pub image: &'a str,
-    pub runtime_digest: &'a str,
-    pub replicas: u32,
-    pub evidence: &'a Path,
-}
-
-/// Check the deployed chart, ready host pods, and native Host objects.
-pub async fn hosts_ready(input: &HostsReadyInput<'_>) -> anyhow::Result<HostObservation> {
-    let HostsReadyInput {
-        lifecycle,
-        cluster,
-        work,
-        namespace,
-        image,
-        runtime_digest,
-        replicas,
-        evidence,
-    } = *input;
-    let releases = command_json(
-        Command::new(lifecycle)
-            .arg("helm-releases")
-            .arg(cluster)
-            .arg(work),
-    )
-    .await?;
-    save(evidence, "helm-releases.json", &releases)?;
-    validate_releases(&releases, namespace)?;
-    let deployment = command_json(kubectl(cluster, work).args([
-        "-n",
-        namespace,
-        "get",
-        "deployment",
-        "hostgroup-default",
-        "-o",
-        "json",
-    ]))
-    .await?;
-    save(evidence, "host-deployment.json", &deployment)?;
-    validate_host_deployment(&deployment, image, replicas)?;
-    let labels = deployment
-        .pointer("/spec/selector/matchLabels")
-        .and_then(Value::as_object)
-        .context("host deployment has selector labels")?;
-    ensure!(!labels.is_empty(), "host deployment selector is empty");
-    let selector = labels
-        .iter()
-        .map(|(key, value)| {
-            Ok(format!(
-                "{key}={}",
-                value.as_str().context("host selector value is text")?
-            ))
-        })
-        .collect::<anyhow::Result<Vec<_>>>()?
-        .join(",");
-    let pods = command_json(kubectl(cluster, work).args([
-        "-n", namespace, "get", "pods", "-l", &selector, "-o", "json",
-    ]))
-    .await?;
-    save(evidence, "host-pods.json", &pods)?;
-    validate_host_pods(&pods, image, runtime_digest, replicas)?;
-    let mut observed = Value::Null;
-    for _ in 0..120 {
-        if let Ok(hosts) = command_json(kubectl(cluster, work).args([
-            "-n",
-            "wamn-system",
-            "get",
-            "hosts",
-            "-l",
-            "hostgroup=default",
-            "-o",
-            "json",
-        ]))
-        .await
-        {
-            observed = hosts;
-            if validate_hosts(&observed, namespace, replicas).is_ok() {
-                break;
-            }
-        }
-        tokio::time::sleep(Duration::from_secs(2)).await;
-    }
-    save(evidence, "hosts.json", &observed)?;
-    validate_hosts(&observed, namespace, replicas)?;
-    Ok(HostObservation {
-        hosts: observed,
-        pods,
-        runtime_digest: runtime_digest.to_owned(),
-    })
 }
 
 /// Check the native refusal and exact Event for a foreign environment.
@@ -682,98 +587,6 @@ fn image_tuple(image: &Value) -> anyhow::Result<(String, String)> {
     ))
 }
 
-fn validate_releases(releases: &Value, namespace: &str) -> anyhow::Result<()> {
-    let releases = releases
-        .as_array()
-        .context("Helm returns a release array")?;
-    for (name, namespace) in [("wamn", "wamn-system"), ("wamn-host", namespace)] {
-        ensure!(
-            releases
-                .iter()
-                .filter(|release| release["name"] == name
-                    && release["namespace"] == namespace
-                    && release["status"] == "deployed"
-                    && release["chart"] == "runtime-operator-2.11.0"
-                    && release["app_version"] == "2.11.0")
-                .count()
-                == 1,
-            "the declared runtime-operator release is missing or ambiguous"
-        );
-    }
-    Ok(())
-}
-
-fn validate_host_deployment(deployment: &Value, image: &str, replicas: u32) -> anyhow::Result<()> {
-    ensure!(
-        deployment["status"]["observedGeneration"] == deployment["metadata"]["generation"]
-            && deployment["spec"]["replicas"] == replicas
-            && deployment["status"]["updatedReplicas"] == replicas
-            && deployment["status"]["readyReplicas"] == replicas
-            && deployment["status"]["availableReplicas"] == replicas
-            && array_at(deployment, "/spec/template/spec/containers")?
-                .iter()
-                .any(|container| container["image"] == image),
-        "the host deployment does not match its declared generation, replica count, and image"
-    );
-    Ok(())
-}
-
-fn validate_host_pods(
-    pods: &Value,
-    image: &str,
-    digest: &str,
-    replicas: u32,
-) -> anyhow::Result<()> {
-    let pods = items(pods)?;
-    ensure!(
-        pods.len() == replicas as usize,
-        "the host pod count differs from the declared replicas"
-    );
-    for pod in pods {
-        let names = array_at(pod, "/spec/containers")?
-            .iter()
-            .filter(|container| container["image"] == image)
-            .map(|container| text_at(container, "/name"))
-            .collect::<anyhow::Result<Vec<_>>>()?;
-        ensure!(
-            names.len() == 1
-                && array_at(pod, "/status/containerStatuses")?
-                    .iter()
-                    .any(|status| status["name"] == names[0]
-                        && status["ready"] == true
-                        && status["imageID"]
-                            .as_str()
-                            .is_some_and(|id| id.ends_with(digest))),
-            "a host pod is not ready on the exact loaded image"
-        );
-    }
-    Ok(())
-}
-
-fn validate_hosts(hosts: &Value, namespace: &str, replicas: u32) -> anyhow::Result<()> {
-    let hosts = items(hosts)?;
-    let ids = hosts
-        .iter()
-        .map(|host| text_at(host, "/hostId"))
-        .collect::<anyhow::Result<BTreeSet<_>>>()?;
-    ensure!(
-        hosts.len() == replicas as usize && ids.len() == replicas as usize,
-        "native Host count or identity differs from the declared replicas"
-    );
-    for host in hosts {
-        ensure!(
-            host["metadata"]["labels"]["hostgroup"] == "default"
-                && host["environment"] == namespace
-                && !text_at(host, "/hostId")?.is_empty()
-                && !text_at(host, "/hostname")?.is_empty()
-                && host["httpPort"] == 80
-                && condition(&host["status"], "Ready", "True"),
-            "a native Host has the wrong environment, identity, port, or readiness"
-        );
-    }
-    Ok(())
-}
-
 fn validate_cross_environment(workload: &Value, target: &str) -> anyhow::Result<()> {
     ensure!(
         workload["spec"]["environment"] == target
@@ -873,18 +686,7 @@ async fn command_json(command: &mut Command) -> anyhow::Result<Value> {
         .context("read the observed Kubernetes or image JSON")
 }
 async fn checked(command: &mut Command) -> anyhow::Result<Vec<u8>> {
-    let output = command
-        .kill_on_drop(true)
-        .output()
-        .await
-        .context("run the native platform check")?;
-    ensure!(
-        output.status.success(),
-        "native platform command failed ({}): {}",
-        output.status,
-        String::from_utf8_lossy(&output.stderr)
-    );
-    Ok(output.stdout)
+    crate::cluster::run(command).await
 }
 
 #[cfg(test)]

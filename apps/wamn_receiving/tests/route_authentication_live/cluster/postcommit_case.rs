@@ -5,7 +5,6 @@ use std::time::Duration;
 
 use anyhow::{Context as _, ensure};
 use serde_json::{Value, json};
-use tokio::process::Command;
 use wamn_gate_harness::journey::PostcommitPhase;
 use wamn_test_infrastructure::{release_chart, workload};
 
@@ -127,7 +126,6 @@ async fn exercise(cluster: &mut ReceivingCluster) -> anyhow::Result<()> {
     let gates_evidence = resources.evidence.join("gates-image");
     fs::create_dir(&gates_evidence)?;
     workload::image_ready(
-        &resources.lifecycle,
         &resources.name,
         &resources.work,
         resources
@@ -228,13 +226,12 @@ pub(super) async fn assert_gates_layers(resources: &resources::Resources) -> any
         .gates_image
         .as_ref()
         .context("the test built its gates image")?;
-    let host: Vec<String> = serde_json::from_slice(
-        &checked(Command::new(&resources.lifecycle).args(["image-layers", &resources.host_image]))
-            .await?,
-    )?;
-    let gates: Vec<String> = serde_json::from_slice(
-        &checked(Command::new(&resources.lifecycle).args(["image-layers", gates])).await?,
-    )?;
+    let host =
+        wamn_test_infrastructure::cluster::image_config(&resources.name, &resources.host_image)
+            .await?;
+    let gates = wamn_test_infrastructure::cluster::image_config(&resources.name, gates).await?;
+    let host: Vec<String> = serde_json::from_value(host["rootfs"]["diff_ids"].clone())?;
+    let gates: Vec<String> = serde_json::from_value(gates["rootfs"]["diff_ids"].clone())?;
     ensure!(
         gates.starts_with(&host),
         "the gates image must inherit the exact host image layers"

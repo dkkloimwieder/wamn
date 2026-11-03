@@ -18,11 +18,9 @@ pub(super) struct Resources {
     pub work: PathBuf,
     pub evidence: PathBuf,
     pub source: String,
-    pub lifecycle: PathBuf,
-    pub host_image: String,
+    pub lifecycle: wamn_test_infrastructure::cluster::Cluster,
+    pub candidate: Option<wamn_control::delivery::Candidate>,
     pub gates_image: String,
-    pub postgres_image: String,
-    pub owned: bool,
 }
 
 pub(super) async fn clean_source(repository: &Path) -> anyhow::Result<()> {
@@ -50,7 +48,7 @@ pub(super) async fn prepare(
 ) -> anyhow::Result<Resources> {
     ensure!(
         std::env::consts::ARCH == "x86_64",
-        "RC debug images require an x86_64 build host"
+        "the RC candidate images require an x86_64 machine"
     );
     clean_source(repository).await?;
     ensure!(
@@ -81,85 +79,34 @@ pub(super) async fn prepare(
             .file_name()
             .context("evidence directory has a name")?,
     );
-    let tag = format!("rc-{}-{}-debug", &source[..12], std::process::id());
-    let lifecycle = repository.join("tools/rc-gate-run");
-    let host_image = format!("wamn-host:{tag}");
-    let gates_image = format!("wamn-gates:{tag}");
-    let postgres_image = format!("wamn-postgres:rc-{}-{}", &source[..12], std::process::id());
+    let candidate = wamn_control::delivery::Candidate::from_env()?;
+    let gates_image = candidate.qualification.gates.clone();
     DirBuilder::new().mode(0o700).create(&evidence)?;
-    let work = std::env::temp_dir().join(format!("wamn-rc-{}", uuid::Uuid::new_v4().simple()));
+    let work = std::env::temp_dir().join(CLUSTER);
     DirBuilder::new().mode(0o700).create(&work)?;
     let resources = Resources {
         repository: repository.to_owned(),
+        lifecycle: wamn_test_infrastructure::cluster::Cluster::new(CLUSTER, &work)?,
+        candidate: Some(candidate),
         work,
         evidence,
         source: source.into(),
-        lifecycle,
-        host_image,
         gates_image,
-        postgres_image,
-        owned: false,
     };
     save(
         &resources,
         "source.json",
-        &json!({"source":source,"cluster":CLUSTER,"build_profile":"debug"}),
+        &json!({"source":source,"cluster":CLUSTER,"images":"candidate"}),
     )?;
-    recorded(
-        &resources,
-        "preflight-docker",
-        Command::new(&resources.lifecycle).arg("docker-version"),
-    )
-    .await?;
-    let clusters = recorded(
-        &resources,
-        "preflight-clusters",
-        Command::new(&resources.lifecycle).arg("clusters"),
-    )
-    .await?;
-    ensure!(
-        !String::from_utf8_lossy(&clusters)
-            .lines()
-            .any(|line| line == CLUSTER),
-        "refusing pre-existing RC cluster"
-    );
-    let containers = recorded(
-        &resources,
-        "preflight-containers",
-        Command::new(&resources.lifecycle).arg("containers"),
-    )
-    .await?;
-    for name in ["wamn-rc-postgres", "wamn-rc-nats"] {
-        ensure!(
-            !String::from_utf8_lossy(&containers)
-                .lines()
-                .any(|line| line == name),
-            "refusing pre-existing RC container {name}"
-        );
-    }
-    let images = recorded(
-        &resources,
-        "preflight-images",
-        Command::new(&resources.lifecycle).arg("images"),
-    )
-    .await?;
-    for image in [
-        &resources.host_image,
-        &resources.gates_image,
-        &resources.postgres_image,
-    ] {
-        ensure!(
-            !String::from_utf8_lossy(&images)
-                .lines()
-                .any(|line| line == image),
-            "refusing pre-existing RC image {image}"
-        );
-    }
     Ok(resources)
 }
 
 pub(super) async fn diagnostics(resources: &Resources) {
-    if !resources.owned {
+    resources
+        .lifecycle
+        .inspect(super::NAMESPACE, &resources.evidence)
+        .await;
+    if !resources.lifecycle.owned() {
         return;
     }
     for (name, args) in [
@@ -188,97 +135,25 @@ pub(super) async fn diagnostics(resources: &Resources) {
 }
 
 pub(super) async fn cleanup(resources: &mut Resources) -> anyhow::Result<Vec<String>> {
-    let mut teardown_leftovers = Vec::new();
-    if resources.owned {
-        recorded(
-            resources,
-            "remove",
-            Command::new(&resources.lifecycle)
-                .arg("remove")
-                .arg(CLUSTER)
-                .arg(&resources.work)
-                .arg(&resources.host_image)
-                .arg(&resources.gates_image)
-                .arg(&resources.postgres_image),
-        )
-        .await?;
-        teardown_leftovers = fs::read_to_string(resources.work.join("kind-teardown-leftovers"))?
-            .lines()
-            .map(str::to_owned)
-            .collect();
-        if !teardown_leftovers.is_empty() {
-            eprintln!("RC leftover kind resources: {teardown_leftovers:?}");
-        }
-        let clusters = recorded(
-            resources,
-            "cleanup-clusters",
-            Command::new(&resources.lifecycle).arg("clusters"),
-        )
-        .await?;
-        ensure!(
-            !String::from_utf8_lossy(&clusters)
-                .lines()
-                .any(|line| line == CLUSTER
-                    && !teardown_leftovers.iter().any(|leftover| leftover == line)),
-            "RC cluster survived cleanup"
-        );
-        let containers = recorded(
-            resources,
-            "cleanup-containers",
-            Command::new(&resources.lifecycle).arg("containers"),
-        )
-        .await?;
-        for name in ["wamn-rc-postgres", "wamn-rc-nats"] {
-            ensure!(
-                !String::from_utf8_lossy(&containers)
-                    .lines()
-                    .any(|line| line == name),
-                "owned container survived cleanup"
-            );
-        }
-        let images = recorded(
-            resources,
-            "cleanup-images",
-            Command::new(&resources.lifecycle).arg("images"),
-        )
-        .await?;
-        for image in [
-            &resources.host_image,
-            &resources.gates_image,
-            &resources.postgres_image,
-        ] {
-            ensure!(
-                !String::from_utf8_lossy(&images)
-                    .lines()
-                    .any(|line| line == image),
-                "owned image survived cleanup"
-            );
-        }
+    let teardown = resources.lifecycle.cleanup().await;
+    let teardown_leftovers = teardown.leftovers.clone();
+    if !teardown_leftovers.is_empty() {
+        eprintln!("RC leftover kind resources: {teardown_leftovers:?}");
     }
-    resources.owned = false;
-    fs::remove_dir_all(&resources.work)?;
     save(
         resources,
         "cleanup.json",
-        &json!({"passed":teardown_leftovers.is_empty(),"cluster":CLUSTER,"teardown_leftovers":teardown_leftovers,"images":"exact","containers":["wamn-rc-postgres","wamn-rc-nats"]}),
+        &json!({"cluster":CLUSTER,"teardown_leftovers":teardown_leftovers,"failures":teardown.failures}),
     )?;
+    teardown.result()?;
+    fs::remove_dir_all(&resources.work)?;
     Ok(teardown_leftovers)
 }
 
 impl Drop for Resources {
     fn drop(&mut self) {
-        if self.owned {
-            let _ = std::process::Command::new(&self.lifecycle)
-                .arg("remove")
-                .arg(CLUSTER)
-                .arg(&self.work)
-                .arg(&self.host_image)
-                .arg(&self.gates_image)
-                .arg(&self.postgres_image)
-                .stdin(Stdio::null())
-                .stdout(Stdio::null())
-                .stderr(Stdio::inherit())
-                .status();
+        if self.lifecycle.owned() {
+            let _ = self.lifecycle.cleanup_blocking();
             let _ = fs::copy(
                 self.work.join("kind-teardown-leftovers"),
                 self.evidence.join("kind-teardown-leftovers"),

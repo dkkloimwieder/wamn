@@ -1,6 +1,5 @@
 //! RC environment setup and the retained native socket and trace tests.
 
-use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::time::Duration;
@@ -10,7 +9,7 @@ use clap::Args;
 use serde_json::{Value, json};
 use tokio::process::Command;
 use wamn_control_registry::Triple;
-use wamn_test_infrastructure::{platform, rendering, workload};
+use wamn_test_infrastructure::{cluster, platform};
 
 mod bootstrap;
 mod deployment;
@@ -46,7 +45,7 @@ pub async fn run(args: RcArgs) -> anyhow::Result<()> {
             "{}",
             serde_json::to_string_pretty(&json!({
                 "source":source,"cluster":CLUSTER,"context":"kind-wamn-rc",
-                "namespace":NAMESPACE,"build_profile":"debug",
+                "namespace":NAMESPACE,"images":"candidate",
                 "event_stream":declaration,
                 "order":["setup","bootstrap","M2","socket-test","trace-test","cleanup"],
                 "deferred":["wamn-0h0g.15.153"],"deferred_disposition":"post-merge; not claimed",
@@ -116,45 +115,42 @@ async fn execute(
     source: async_nats::jetstream::stream::Config,
 ) -> anyhow::Result<()> {
     let scope = Triple::new("rc", "app", "dev");
-    resources::write_private(
-        &resources.work.join("kind.yaml"),
-        rendering::render_kind_cluster(&fs::read_to_string(
-            resources.repository.join("deploy/infra/kind-config.yaml"),
-        )?)?
-        .as_bytes(),
-    )?;
-    // The separate existing PAT service is a native debug prerequisite.
+    // The protocol Jobs consume the same pinned candidate as the application journeys.
+    let candidate = resources
+        .candidate
+        .as_ref()
+        .context("RC candidate is supplied")?;
+    let image = &candidate.images.host;
+    let (authority, _) = image
+        .split_once('/')
+        .context("candidate registry authority")?;
+    let images = [&resources.gates_image[..]];
+    if let Some(endpoint) = wamn_gate_harness::case_release::registry_endpoint(authority).await? {
+        wamn_gate_harness::case_release::registry_files(&endpoint, image, &resources.work)?;
+    } else {
+        wamn_gate_harness::case_release::node_image_archives(candidate, &images, &resources.work)
+            .await?;
+    }
+    resources.lifecycle.create(&resources.repository).await?;
+    resources.lifecycle.import_images(&images).await?;
+    cluster::sidecar(
+        "wamn-rc-postgres",
+        [
+            "--publish",
+            "127.0.0.1::5432",
+            "--env",
+            "POSTGRES_HOST_AUTH_METHOD=trust",
+            "postgres:18",
+        ],
+    )
+    .await?;
+    // The provisioning assertions retain their native credential service.
     resources::recorded(
         resources,
         "identity-build",
         Command::new("cargo")
             .current_dir(&resources.repository)
             .args(["build", "--locked", "--offline", "-p", "wamn-identity"]),
-    )
-    .await?;
-    resources.owned = true;
-    resources::recorded(
-        resources,
-        "image-build",
-        Command::new(&resources.lifecycle)
-            .arg("build-images")
-            .arg(&resources.repository)
-            .arg(&resources.source)
-            .arg(&resources.host_image)
-            .arg(&resources.gates_image)
-            .arg(&resources.postgres_image),
-    )
-    .await?;
-    resources::recorded(
-        resources,
-        "create",
-        Command::new(&resources.lifecycle)
-            .arg("create")
-            .arg(CLUSTER)
-            .arg(&resources.work)
-            .arg(&resources.host_image)
-            .arg(&resources.gates_image)
-            .arg(&resources.postgres_image),
     )
     .await?;
     deployment::install_platform(resources).await?;
@@ -179,28 +175,7 @@ async fn execute(
         "event-stream.json",
         &serde_json::to_value(&source)?,
     )?;
-    let host_digest = workload::image_ready(
-        &resources.lifecycle,
-        CLUSTER,
-        &resources.work,
-        &resources.host_image,
-        "debug",
-        &resources.evidence,
-    )
-    .await?;
     jobs::inspect_image(resources).await?;
-    deployment::install_host(resources, &source).await?;
-    workload::hosts_ready(&workload::HostsReadyInput {
-        lifecycle: &resources.lifecycle,
-        cluster: CLUSTER,
-        work: &resources.work,
-        namespace: NAMESPACE,
-        image: &resources.host_image,
-        runtime_digest: &host_digest,
-        replicas: 3,
-        evidence: &resources.evidence,
-    })
-    .await?;
     bootstrap::run(resources).await?;
     save(
         resources,

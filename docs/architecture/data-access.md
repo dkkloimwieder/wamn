@@ -882,7 +882,7 @@ The database is the org boundary, so `platform."user"` has no `tenant_id`, no ro
 The [platform principal owner](../../crates/control/provision/src/platform_principals.rs) renders the platform rows of a project database.
 It refuses a platform domain that is not a valid domain name.
 Its SQL binds `wamn:provisioning` first, so the `wamn:provisioning` row stamps itself.
-The development environment, the verification world, and `tools/identity-jwks-journey-run` apply that SQL.
+The development environment, the verification world, and the Rust identity journey apply that SQL.
 
 The [platform configuration writer](../../crates/identity/platform/src/configuration.rs) writes the platform configuration rows of one environment.
 The writer runs on the environment's `wamn_administration` login, in one transaction that binds the caller and the operation, so each row write appends its history entry.

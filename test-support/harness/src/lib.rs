@@ -138,3 +138,5 @@ mod tests {
 }
 
 pub mod workflow;
+
+pub use wamn_test_infrastructure::{kubernetes_gate, kubernetes_gate_verdict};

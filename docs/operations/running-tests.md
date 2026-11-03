@@ -1347,22 +1347,17 @@ For manual fixtures, remove only the exact container, cluster, image, volume, an
 A killed cluster test (SIGKILL) does not run its cleanup, so its cluster and containers stay.
 After a killed run, find the cluster that your run created with `kind get clusters`.
 Its name starts with `wamn-receiving-` or `wamn-wms-`.
-Remove it with the script of its application:
+Remove it with the shared Rust fixture:
 
 ```bash
-tools/receiving-cluster-journey-run remove <cluster>
-tools/wms-cluster-journey-run remove <cluster>
+cargo run --locked --offline -p wamn-test-infrastructure --bin wamn-test-cluster -- <cluster>
 ```
 
-The script deletes the kind cluster and its `<cluster>-postgres`, `-registry` and `-minio` containers.
+The fixture deletes the kind cluster and its owned containers, registry volume, and local image tags.
 Never remove a cluster that another session created.
 
-The cluster journeys keep their built images between runs.
-Each image is named for the source it contains, and a later run of the same source reuses it.
-A run still removes its own per-run image tags at teardown.
-It then keeps the three most recently used identities of each image repository and removes the rest.
-An identity that another run holds is never removed.
-The run records and leases live under `${XDG_CACHE_HOME:-$HOME/.cache}/wamn-journey-images`.
+The cluster journeys import the pinned images from their candidate document.
+They use private image archives or a loopback registry and remove their owned local tags at teardown.
 
 Use explicit cluster names, kubeconfig paths, and contexts for Kubernetes and Helm commands.
 Never use `docker prune`, broad image removal, or name-substring cleanup.

@@ -2,7 +2,7 @@
 # Existing app fixtures own the stores, release publish, assertions, and cleanup.
 set -euo pipefail
 umask 077
-action=${1:?build-native, receiving, wms, load-native, remove-kept, or render-host}
+action=${1:?build-native, receiving, wms, or remove-kept}
 repository=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
 if [[ $action == build-native ]]; then
   target=${2:?absolute native target directory}
@@ -40,73 +40,8 @@ if [[ $action == receiving || $action == wms ]]; then
     cluster::delivery_case::owned_release_delivery -- --exact --ignored --nocapture
 fi
 if [[ $action == remove-kept ]]; then
-  # The kept delivery cluster, its registries, and every container named after it.
-  kept=${2:?kept delivery cluster name}
-  [[ $kept =~ ^wamn-delivery-[a-z0-9]{1,24}$ ]] || { printf 'A kept delivery cluster name is required.\n' >&2; exit 64; }
-  status=0
-  bash "$repository/tools/kind-cluster-delete" "$kept" || status=$?
-  for container in $(docker container ls --all --format '{{.Names}}'); do
-    [[ $container == "$kept"-* ]] || continue
-    docker rm --force --volumes "$container" || status=$?
-  done
-  if docker volume inspect "$kept-registry-data" >/dev/null 2>&1; then
-    docker volume rm "$kept-registry-data" || status=$?
-  fi
-  # Each application's own tags of the release chart's identity and gates images.
-  for image in $(docker image ls --format '{{.Repository}}:{{.Tag}}'); do
-    [[ ${image##*:} == "$kept"-receiving || ${image##*:} == "$kept"-wms ]] || continue
-    docker image rm "$image" || status=$?
-  done
-  rm -rf -- "${TMPDIR:-/tmp}/$kept" || status=$?
-  exit "$status"
+  cd "$repository"
+  exec cargo run --locked --offline -p wamn-test-infrastructure --bin wamn-test-cluster -- "${2:?kept delivery cluster name}"
 fi
-# An application cluster, or one application on the kept delivery cluster.
-cluster=${2:?owned cluster name}
-[[ $cluster =~ ^wamn-(receiving|wms)-[a-f0-9]{32}$ || $cluster =~ ^wamn-delivery-[a-z0-9]{1,24}-(receiving|wms)$ ]] || {
-  printf 'An exact owned application cluster name is required.\n' >&2; exit 64; }
-work=${3:?owned private work directory}
-case "$action" in
-  load-native)
-    # The release chart's host image, from the registry that build-platform
-    # pushed it to, which the nodes reach as native-registry-hosts.toml says.
-    # The kind cluster, when it is not the owned name: the kept delivery cluster.
-    # Only the host image, which the hosts that env apply starts run. The
-    # qualifying cases pull their images on their own clusters, and the session
-    # issuer runs the loaded identity image. A pulled identity or gates image
-    # has the configuration of the loaded one, so CRI would report a second
-    # repository digest for it to the next case on the cluster.
-    kind_cluster=${4:-$cluster}
-    authority=$(cat "$work/native-registry-authority")
-    image=$(cat "$work/native-host-image")
-    # CRI removes a tag when resolving a digest-pinned image.
-    pull_image=${image%@*}
-    if [[ ${pull_image##*/} == *:* ]]; then pull_image=${pull_image%:*}; fi
-    pull_image="$pull_image@${image##*@}"
-    for node in $(kind get nodes --name "$kind_cluster"); do
-      docker exec "$node" mkdir -p "/etc/containerd/certs.d/$authority"
-      docker cp "$work/native-registry-hosts.toml" "$node:/etc/containerd/certs.d/$authority/hosts.toml"
-      timeout 180 docker exec "$node" ctr --namespace k8s.io images pull \
-        --hosts-dir /etc/containerd/certs.d --platform linux/amd64 "$pull_image"
-      # CRI records an image that ctr pulled from an event, after ctr returns.
-      for wait in 1 2 3 4 5 6 7 8 9 10; do
-        docker exec "$node" crictl inspecti -o json "$image" >/dev/null 2>&1 && break
-        if [[ $wait == 10 ]]; then
-          docker exec "$node" crictl images >&2 || true
-          docker exec "$node" ctr --namespace k8s.io images ls -q >&2 || true
-          docker exec "$node" crictl inspecti -o json "$image" >/dev/null
-        fi
-        printf 'CRI shows no %s on %s after %s s\n' "$image" "$node" "$wait" | tee -a "$work/node-image-waits.log" >&2
-        sleep 1
-      done
-    done
-    ;;
-  render-host)
-    # Helm can print OCI pull status on stdout; only rendered documents belong there.
-    helm pull oci://ghcr.io/wasmcloud/charts/runtime-operator --version 2.11.0 \
-      --destination "$work" >&2
-    helm template wamn-host "$work/runtime-operator-2.11.0.tgz" \
-      --namespace "$cluster" --kubeconfig "$work/kubeconfig" \
-      -f "$work/host-base.yaml" -f "$work/host-overlay.yaml"
-    ;;
-  *) printf 'Unknown owned delivery action: %s\n' "$action" >&2; exit 64 ;;
-esac
+printf 'Unknown owned delivery action: %s\n' "$action" >&2
+exit 64

@@ -21,14 +21,12 @@ fn resources(root: &Path) -> Resources {
     fs::create_dir(&evidence).unwrap();
     Resources {
         repository: root.to_owned(),
+        lifecycle: wamn_test_infrastructure::cluster::Cluster::new("wamn-rc", &work).unwrap(),
+        candidate: None,
         work,
         evidence,
         source: "test-source".into(),
-        lifecycle: root.join("unused-lifecycle"),
-        host_image: "unused-host".into(),
         gates_image: "unused-gates".into(),
-        postgres_image: "unused-postgres".into(),
-        owned: false,
     }
 }
 

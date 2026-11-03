@@ -4,15 +4,13 @@ use std::fs::{self, DirBuilder, OpenOptions};
 use std::io::Write as _;
 use std::os::unix::fs::{DirBuilderExt as _, OpenOptionsExt as _};
 use std::path::{Path, PathBuf};
-use std::process::Stdio;
 
 use anyhow::{Context as _, ensure};
 use ring::rand::{SecureRandom as _, SystemRandom};
 use serde_json::{Value, json};
-use tokio::io::AsyncWriteExt as _;
-use tokio::process::Command;
+
 use wamn_gate_harness::case_release::NAMESPACE;
-use wamn_test_infrastructure::rendering::render_kind_cluster;
+use wamn_test_infrastructure::cluster::{self, Cluster};
 pub(super) use wamn_test_infrastructure::workload::{kind_address, postgres_host_port};
 
 const REGISTRY_USERNAME: &str = "wamn-receiving-journey";
@@ -23,7 +21,7 @@ pub(super) struct Resources {
     pub evidence: PathBuf,
     pub teardown_leftovers: Vec<String>,
     pub name: String,
-    pub lifecycle: PathBuf,
+    pub lifecycle: Cluster,
     pub host_image: String,
     pub gates_image: Option<String>,
     pub identity_image: Option<String>,
@@ -35,14 +33,13 @@ pub(super) struct Resources {
         wamn_cdc_reader::ReaderShutdown,
         tokio::task::JoinHandle<anyhow::Result<()>>,
     )>,
-    owned: bool,
     /// A kept cluster outlives this process: the delivery case's.
     kept: bool,
 }
 
 /// Reserve a new name before any lifecycle action can create a resource.
 /// A Receiving cluster case runs the candidate that `qualify-release` names.
-pub(super) async fn prepare(
+pub(super) fn prepare(
     repository: &Path,
     evidence: &Path,
     gates_image: bool,
@@ -53,16 +50,6 @@ pub(super) async fn prepare(
         "the amd64 Receiving images require an x86_64 machine"
     );
     let name = format!("wamn-receiving-{}", uuid::Uuid::new_v4().simple());
-    let lifecycle = repository.join("tools/receiving-cluster-journey-run");
-    for action in ["docker-version", "clusters", "containers", "images"] {
-        let output = checked(Command::new(&lifecycle).args([action, &name])).await?;
-        if action != "docker-version" {
-            ensure!(
-                !String::from_utf8_lossy(&output).contains(&name),
-                "the Receiving resource name already exists"
-            );
-        }
-    }
     ensure!(
         evidence.is_absolute() && evidence.is_dir(),
         "the evidence directory must be an existing absolute path"
@@ -71,6 +58,7 @@ pub(super) async fn prepare(
     DirBuilder::new().mode(0o700).create(&work)?;
     let cluster = Resources {
         repository: repository.to_owned(),
+        lifecycle: Cluster::new(&name, &work)?,
         work,
         evidence: evidence.to_owned(),
         teardown_leftovers: Vec::new(),
@@ -83,9 +71,7 @@ pub(super) async fn prepare(
         )?),
         candidate: Some((candidate, manifest)),
         name,
-        lifecycle,
         reader: None,
-        owned: false,
         kept: false,
     };
     write_private(
@@ -109,13 +95,12 @@ pub(super) fn delivery(repository: &Path, work: &Path, evidence: &Path, name: &s
         evidence: evidence.to_owned(),
         teardown_leftovers: Vec::new(),
         name: name.to_owned(),
-        lifecycle: repository.join("tools/receiving-cluster-journey-run"),
+        lifecycle: Cluster::new(name, work).expect("owned application cluster name"),
         host_image: format!("wamn-host:{name}"),
         gates_image: Some(format!("wamn-gates:{name}")),
         identity_image: Some(format!("wamn-identity:{name}")),
         candidate: None,
         reader: None,
-        owned: false,
         kept: true,
     }
 }
@@ -132,38 +117,13 @@ pub(super) async fn prepare_files(cluster: &Resources) -> anyhow::Result<String>
             .mode(0o700)
             .create(cluster.work.join(directory))?;
     }
-    let kind = render_kind_cluster(&fs::read_to_string(
-        cluster.repository.join("deploy/infra/kind-config.yaml"),
-    )?)?;
-    write_private(&cluster.work.join("kind.yaml"), kind.as_bytes())?;
-
     let mut random = [0u8; 32];
     SystemRandom::new()
         .fill(&mut random)
         .map_err(|_| anyhow::anyhow!("generate the private registry password"))?;
     let password = hex::encode(random);
-    let mut child = Command::new(&cluster.lifecycle)
-        .args(["prepare-registry", &cluster.name, REGISTRY_USERNAME])
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .kill_on_drop(true)
-        .spawn()
-        .context("start the registry password helper")?;
-    let mut input = child
-        .stdin
-        .take()
-        .context("open the registry password input")?;
-    let written = input.write_all(format!("{password}\n").as_bytes()).await;
-    drop(input);
-    let output = child.wait_with_output().await?;
-    written.context("write the registry password input")?;
-    ensure!(
-        output.status.success(),
-        "the registry password helper failed with {}",
-        output.status
-    );
-    write_private(&cluster.work.join("registry/htpasswd"), &output.stdout)?;
+    let hash = cluster::registry_password(REGISTRY_USERNAME, &password).await?;
+    write_private(&cluster.work.join("registry/htpasswd"), &hash)?;
     Ok(password)
 }
 
@@ -176,28 +136,23 @@ pub(super) async fn create(cluster: &mut Resources) -> anyhow::Result<()> {
             .collect::<Vec<_>>();
         super::super::delivery::registry_files(candidate, &cluster.work, &images).await?;
     }
-    cluster.owned = true;
-    checked(
-        Command::new(&cluster.lifecycle)
-            .arg("create")
-            .arg(&cluster.name)
-            .arg(&cluster.work)
-            .arg(&cluster.repository)
-            .arg(&cluster.host_image)
-            .args(cluster.gates_image.iter())
-            .args(cluster.identity_image.iter()),
-    )
-    .await?;
+    cluster.lifecycle.create(&cluster.repository).await?;
+    let images = std::iter::once(&cluster.host_image)
+        .chain(&cluster.gates_image)
+        .chain(&cluster.identity_image)
+        .map(String::as_str)
+        .collect::<Vec<_>>();
+    cluster.lifecycle.import_images(&images).await?;
+    cluster
+        .lifecycle
+        .start_postgres(&cluster.repository)
+        .await?;
+    cluster.lifecycle.start_registry().await?;
     Ok(())
 }
 
 pub(super) async fn inspect(cluster: &Resources, suffix: &str) -> anyhow::Result<Value> {
-    let bytes = checked(
-        Command::new(&cluster.lifecycle)
-            .arg("inspect")
-            .arg(format!("{}-{suffix}", cluster.name)),
-    )
-    .await?;
+    let bytes = checked(&mut cluster::inspect(&format!("{}-{suffix}", cluster.name))).await?;
     let document =
         serde_json::from_slice(&bytes).context("decode the owned container's network settings")?;
     fs::write(
@@ -269,6 +224,10 @@ pub(super) fn write_private(path: &Path, bytes: &[u8]) -> anyhow::Result<()> {
 
 /// Keep the environment release's objects in the operator namespace.
 pub(super) async fn capture_failure(cluster: &Resources) {
+    cluster
+        .lifecycle
+        .inspect(NAMESPACE, &cluster.evidence)
+        .await;
     let host_deployment = super::release_name()
         .map(|name| format!("hostgroup-{name}"))
         .unwrap_or_default();
@@ -365,44 +324,21 @@ pub(super) async fn stop_reader(cluster: &mut Resources) -> anyhow::Result<()> {
 
 pub(super) async fn remove(cluster: &mut Resources) -> anyhow::Result<()> {
     let reader_result = stop_reader(cluster).await;
-    if cluster.owned {
-        checked(
-            Command::new(&cluster.lifecycle)
-                .arg("remove")
-                .arg(&cluster.name)
-                .arg(&cluster.work),
-        )
-        .await?;
-        cluster.teardown_leftovers =
-            fs::read_to_string(cluster.work.join("kind-teardown-leftovers"))?
-                .lines()
-                .map(str::to_owned)
-                .collect();
+    if cluster.lifecycle.owned() {
+        let teardown = cluster.lifecycle.cleanup().await;
+        cluster.teardown_leftovers.clone_from(&teardown.leftovers);
+        teardown.result()?;
         if !cluster.teardown_leftovers.is_empty() {
             eprintln!(
                 "Receiving leftover kind resources: {:?}",
                 cluster.teardown_leftovers
             );
         }
-        cluster.owned = false;
     }
-    for action in ["docker-version", "clusters", "containers", "images"] {
-        let output =
-            checked(Command::new(&cluster.lifecycle).args([action, &cluster.name])).await?;
-        if action != "docker-version" {
-            ensure!(
-                !String::from_utf8_lossy(&output).lines().any(|line| {
-                    let name = line.trim_matches('"');
-                    name.contains(&cluster.name)
-                        && !cluster
-                            .teardown_leftovers
-                            .iter()
-                            .any(|leftover| leftover == name)
-                }),
-                "an owned Receiving resource remains after cleanup"
-            );
-        }
-    }
+    cluster
+        .lifecycle
+        .absent(&cluster.teardown_leftovers)
+        .await?;
     fs::remove_dir_all(&cluster.work).context("remove the private Receiving files")?;
     reader_result
 }
@@ -416,19 +352,13 @@ impl Drop for Resources {
         if self.kept {
             return;
         }
-        if self.owned {
-            let status = std::process::Command::new(&self.lifecycle)
-                .arg("remove")
-                .arg(&self.name)
-                .arg(&self.work)
-                .stdout(Stdio::null())
-                .stderr(Stdio::inherit())
-                .status();
+        if self.lifecycle.owned() {
+            let teardown = self.lifecycle.cleanup_blocking();
             let _ = fs::copy(
                 self.work.join("kind-teardown-leftovers"),
                 self.evidence.join("kind-teardown-leftovers"),
             );
-            if !status.is_ok_and(|status| status.success()) {
+            if teardown.result().is_err() {
                 eprintln!(
                     "Receiving cleanup failed for {}; private files remain at {}",
                     self.name,

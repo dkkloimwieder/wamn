@@ -12,6 +12,11 @@ path = "lib.rs"
 name = "wamn-test-postgres"
 path = "postgres-run.rs"
 
+[[bin]]
+name = "wamn-test-cluster"
+path = "cluster-run.rs"
+test = false
+
 [dependencies]
 wamn-platform-identity = { workspace = true }
 wamn-credential-store = { workspace = true }

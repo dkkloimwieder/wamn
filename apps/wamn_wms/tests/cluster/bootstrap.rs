@@ -4,13 +4,11 @@ use std::fs::{self, DirBuilder, OpenOptions};
 use std::io::Write as _;
 use std::os::unix::fs::{DirBuilderExt as _, OpenOptionsExt as _, PermissionsExt as _};
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
 
 use anyhow::{Context as _, ensure};
 use object_store::aws::{AmazonS3, AmazonS3Builder};
 use ring::rand::{SecureRandom as _, SystemRandom};
 use serde_json::{Value, json};
-use wamn_test_infrastructure::rendering::render_kind_cluster;
 pub(super) use wamn_test_infrastructure::workload::kind_address;
 
 const REGISTRY_USERNAME: &str = "wamn-wms-journey";
@@ -30,51 +28,28 @@ impl std::fmt::Debug for BootstrapFiles {
 }
 
 /// Prepare private files without creating the application service containers.
-pub(super) fn prepare(repository: &Path, work: &Path) -> anyhow::Result<BootstrapFiles> {
+pub(super) async fn prepare(work: &Path) -> anyhow::Result<BootstrapFiles> {
     let metadata = fs::metadata(work).context("read the owned WMS work directory")?;
     ensure!(
         metadata.is_dir() && metadata.permissions().mode().trailing_zeros() >= 6,
         "the WMS work directory must be private"
     );
-    let kind = render_kind_cluster(&fs::read_to_string(
-        repository.join("deploy/infra/kind-config.yaml"),
-    )?)?;
     for directory in ["registry", "docker"] {
         DirBuilder::new()
             .mode(0o700)
             .create(work.join(directory))
             .with_context(|| format!("create the private WMS {directory} directory"))?;
     }
-    write_private(&work.join("kind.yaml"), kind.as_bytes())?;
     let files = BootstrapFiles {
         registry_password: random_password()?,
         minio_password: random_password()?,
     };
-    let mut child = Command::new(repository.join("tools/wms-cluster-journey-run"))
-        .args(["registry-password", REGISTRY_USERNAME])
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .spawn()
-        .context("start the existing registry password helper")?;
-    let written = child
-        .stdin
-        .take()
-        .context("open the registry password input")
-        .and_then(|mut input| {
-            writeln!(input, "{}", files.registry_password)
-                .context("write the registry password input")
-        });
-    let output = child
-        .wait_with_output()
-        .context("wait for the registry password helper")?;
-    written?;
-    ensure!(
-        output.status.success(),
-        "the registry password helper failed: {}",
-        output.status
-    );
-    write_private(&work.join("registry/htpasswd"), &output.stdout)?;
+    let hash = wamn_test_infrastructure::cluster::registry_password(
+        REGISTRY_USERNAME,
+        &files.registry_password,
+    )
+    .await?;
+    write_private(&work.join("registry/htpasswd"), &hash)?;
     write_private(
         &work.join("minio.env"),
         format!(

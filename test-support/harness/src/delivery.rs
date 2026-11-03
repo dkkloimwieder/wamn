@@ -136,10 +136,6 @@ impl Application<'_> {
         self.target.join("debug/wamn-ctl")
     }
 
-    fn adapter(&self) -> PathBuf {
-        self.repository.join("tools/delivery-owned")
-    }
-
     /// Receiving carries a gates image.
     fn gates(&self) -> bool {
         self.owner.ends_with("-receiving")
@@ -268,16 +264,9 @@ async fn qualify(
         .await?
         .with_context(|| format!("the kind nodes reach no loopback registry at {authority}"))?;
     registry_files(&endpoint, host_image, app.work)?;
-    step(
-        app,
-        "load-native",
-        Command::new(app.adapter())
-            .arg("load-native")
-            .arg(app.owner)
-            .arg(app.work)
-            .arg(&app.kept.name),
-    )
-    .await?;
+    wamn_test_infrastructure::cluster::Cluster::new(&app.kept.name, app.work)?
+        .import_images(&[host_image])
+        .await?;
     let ca = app.kept.ca.to_string_lossy().into_owned();
     let mut qualify = Command::new(app.ctl());
     qualify
@@ -694,7 +683,7 @@ pub fn application_directory(kept: &KeptCluster, application: &str) -> anyhow::R
         .with_context(|| {
             format!(
                 "the kept cluster {} already ran the {application} delivery; remove it with \
-                 tools/delivery-owned remove-kept {}",
+                 cargo run -p wamn-test-infrastructure --bin wamn-test-cluster -- {}",
                 kept.name, kept.name
             )
         })?;

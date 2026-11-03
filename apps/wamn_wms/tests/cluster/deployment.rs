@@ -14,59 +14,8 @@ use wamn_gate_harness::journey::JourneyDocument;
 
 use super::bootstrap::{self, BootstrapFiles};
 
-pub(super) async fn preflight(
-    lifecycle: &Path,
-    cluster: &str,
-    image: &str,
-    teardown_leftovers: &[String],
-) -> anyhow::Result<()> {
-    checked(Command::new(lifecycle).args(["docker-version", cluster])).await?;
-    let clusters = checked(Command::new(lifecycle).args(["clusters", cluster])).await?;
-    ensure!(
-        !String::from_utf8(clusters)?
-            .lines()
-            .any(|name| name == cluster
-                && !teardown_leftovers.iter().any(|leftover| leftover == name)),
-        "the requested kind cluster already exists"
-    );
-    let containers = checked(Command::new(lifecycle).args(["containers", cluster])).await?;
-    for line in String::from_utf8(containers)?.lines() {
-        let name: String = serde_json::from_str(line)?;
-        if teardown_leftovers.contains(&name) {
-            continue;
-        }
-        ensure!(
-            ![
-                "postgres",
-                "registry",
-                "minio",
-                "control-plane",
-                "worker",
-                "worker2",
-                "demo-proxy"
-            ]
-            .iter()
-            .any(|suffix| name == format!("{cluster}-{suffix}")),
-            "an exact owned container name already exists"
-        );
-    }
-    let images = checked(Command::new(lifecycle).args(["images", cluster])).await?;
-    for line in String::from_utf8(images)?.lines() {
-        let mut fields = serde_json::Deserializer::from_str(line).into_iter::<String>();
-        let repository = fields
-            .next()
-            .context("Docker names an image repository")??;
-        let tag = fields.next().context("Docker names an image tag")??;
-        ensure!(
-            format!("{repository}:{tag}") != image,
-            "the owned image name already exists"
-        );
-    }
-    Ok(())
-}
-
-pub(super) async fn inspect(lifecycle: &Path, container: &str) -> anyhow::Result<Value> {
-    let bytes = checked(Command::new(lifecycle).args(["inspect", container])).await?;
+pub(super) async fn inspect(container: &str) -> anyhow::Result<Value> {
+    let bytes = checked(&mut wamn_test_infrastructure::cluster::inspect(container)).await?;
     serde_json::from_slice(&bytes).context("read the owned container network settings")
 }
 
@@ -224,7 +173,6 @@ pub(super) async fn expose_route(
     work: &Path,
     namespace: &str,
     service: &str,
-    lifecycle: &Path,
     route_host: &str,
 ) -> anyhow::Result<String> {
     let slices = checked(kubectl(cluster, work).args([
@@ -278,7 +226,7 @@ pub(super) async fn expose_route(
         (1000..=65535).contains(&port),
         "route NodePort is outside the retained port range"
     );
-    let node = inspect(lifecycle, &format!("{cluster}-control-plane")).await?;
+    let node = inspect(&format!("{cluster}-control-plane")).await?;
     let address = bootstrap::kind_address(&node)?;
     let endpoint = format!("http://{address}:{port}");
     let client = reqwest::Client::builder()
@@ -484,4 +432,25 @@ pub(super) async fn capture_failure(
         "failure-capture.json",
         &json!({"errors":failures}),
     )
+}
+
+/// Create or remove the labels bucket for the partial completion assertion.
+pub(super) async fn labels(cluster: &str, work: &Path, install: bool) -> anyhow::Result<Vec<u8>> {
+    let mut command = Command::new("docker");
+    command
+        .args([
+            "run",
+            "--rm",
+            "--network",
+            &format!("container:{cluster}-minio"),
+            "--env-file",
+        ])
+        .arg(work.join("minio.env"))
+        .arg("minio/mc");
+    if install {
+        command.args(["mb", "--ignore-existing", "labels/labels"]);
+    } else {
+        command.args(["rb", "--force", "labels/labels"]);
+    }
+    wamn_test_infrastructure::cluster::run(&mut command).await
 }

@@ -15,7 +15,7 @@ Without the variable, the parent is the system temporary directory, which is `$T
 The results stay on this machine.
 
 The app tests own decisions, provisioning calls, assertions, results, and cleanup.
-The `tools/receiving-cluster-journey-run` and `tools/wms-cluster-journey-run` scripts perform only requested lifecycle actions.
+The shared Rust fixture in `test-support/infrastructure/cluster.rs` creates clusters, imports candidate images, installs operators, records failures, and removes owned resources.
 Run one installation at a time when cases share fixed management ports.
 
 ### Receiving and WMS application cases
@@ -88,7 +88,8 @@ Each case writes `delivery-checks.json`, `environment.k` and one command result 
 
 ### Native RC
 
-Build `wamn-gates`, then inspect its plan before creating the declared cluster:
+Build `wamn-gates` and supply the candidate document in `WAMN_DELIVERY_CANDIDATE`.
+Inspect its plan before creating the declared cluster:
 
 ```bash
 "$CARGO_TARGET_DIR/debug/wamn-gates" rc
@@ -96,8 +97,27 @@ Build `wamn-gates`, then inspect its plan before creating the declared cluster:
 ```
 
 The Rust owner uses `wamn-rc`, refuses existing resources, and runs the retained socket and trace Jobs.
-It preserves exact image assertions and removes only its owned resources.
+It uses the pinned candidate images from `WAMN_DELIVERY_CANDIDATE` and removes only its owned resources.
+The socket and trace Jobs retain their protocol assertions. The RC path installs no separate host release.
 Local unit tests do not replace these deployed checks.
+
+### Identity rotation and session exchange
+
+The Rust identity owner runs the five key rotation stages and then tests session exchange and membership revocation.
+Each stage uses the same pinned candidate images and shared disposable cluster fixture as the application journeys.
+The Jobs assert HTTPS, the public key set, issuer binding, cache evidence, unknown keys, wrong CA refusal, and plaintext refusal.
+The foundation stages also assert that authority routes stay absent.
+The session stages assert signed claims and refuse missing membership, the wrong organization, service PATs, and revoked membership.
+
+Private credentials stay in the private work directory and Kubernetes Secrets. Public results contain only the declared case fields.
+
+The result directory lives in the system temporary directory. The test prints its path and removes its private directory on success or failure.
+With `WAMN_DELIVERY_CANDIDATE` set to the candidate document, run:
+
+```bash
+cargo test --locked --offline -p wamn-integration-tests --lib \
+  identity_session_test::journey::identity_jwks_rotation_tls_and_membership_revocation -- --exact --ignored --nocapture
+```
 
 ### Deployed queue recovery on wamn-dev
 

@@ -7,7 +7,6 @@ use anyhow::{Context as _, ensure};
 use serde::Deserialize as _;
 use serde_json::{Value, json};
 use sha2::Digest as _;
-use tokio::process::Command;
 use tokio::time::Instant;
 
 use super::{
@@ -17,26 +16,27 @@ use super::{
 pub(super) async fn inspect_image(resources: &Resources) -> anyhow::Result<()> {
     let directory = resources.evidence.join("gates-image");
     fs::create_dir(&directory)?;
-    let labels = command_json(
-        Command::new(&resources.lifecycle).args(["image-labels", &resources.gates_image]),
-    )
-    .await?;
+    let config =
+        wamn_test_infrastructure::cluster::image_config(super::CLUSTER, &resources.gates_image)
+            .await?;
+    let labels = config["config"]["Labels"].clone();
     write_private(
         &directory.join("host-image-labels.json"),
         &serde_json::to_vec_pretty(&labels)?,
     )?;
     ensure!(
-        labels["wamn.dev/source-head"] == resources.source
-            && labels["wamn.dev/build-profile"] == "debug",
-        "the native test image does not carry the requested source and build profile"
+        labels["wamn.dev/build-profile"] == "release",
+        "the candidate test image does not carry the release build profile"
     );
-    let nodes = checked(Command::new(&resources.lifecycle).args(["nodes", super::CLUSTER])).await?;
+    let nodes = checked(&mut wamn_test_infrastructure::cluster::nodes(
+        super::CLUSTER,
+    ))
+    .await?;
     for node in std::str::from_utf8(&nodes)?.lines() {
-        let bytes = checked(Command::new(&resources.lifecycle).args([
-            "node-image",
+        let bytes = checked(&mut wamn_test_infrastructure::cluster::node_image(
             node,
             &resources.gates_image,
-        ]))
+        ))
         .await?;
         write_private(&directory.join(format!("node-image-{node}.json")), &bytes)?;
     }

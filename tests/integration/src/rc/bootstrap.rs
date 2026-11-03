@@ -5,7 +5,6 @@ use std::time::Duration;
 
 use anyhow::{Context as _, ensure};
 use serde_json::{Value, json};
-use tokio::process::Command;
 use wamn_control::dev::{environment::connect, pat_issuer};
 use wamn_control::provision_org::{self, OrgRecord, ProvisionOrgRequest};
 use wamn_control::provision_project_env::{self, ProvisionProjectEnvRequest};
@@ -18,7 +17,7 @@ pub(super) async fn run(resources: &Resources) -> anyhow::Result<()> {
         &super::resources::recorded(
             resources,
             "inspect-postgres",
-            Command::new(&resources.lifecycle).args(["inspect", "wamn-rc-postgres"]),
+            &mut wamn_test_infrastructure::cluster::inspect("wamn-rc-postgres"),
         )
         .await?,
     )
