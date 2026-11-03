@@ -9,5 +9,4 @@ environment.Environment {
     route_host = "platform.localhost"
     policy = "dev"
     applications = {orders = {packages = ["platform_fixture"]}}
-    floors = {}
 }

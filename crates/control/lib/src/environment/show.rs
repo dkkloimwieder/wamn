@@ -33,7 +33,6 @@ pub async fn show(platform: &Platform, triple: &Triple) -> anyhow::Result<Enviro
         policy: String::new(),
         applications: BTreeMap::new(),
         integrations: BTreeMap::new(),
-        floors: BTreeMap::new(),
     };
     let system = connect(&platform.system_database_url).await?;
     let row = read_row(&system, &document)

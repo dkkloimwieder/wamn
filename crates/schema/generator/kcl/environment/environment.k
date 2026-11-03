@@ -4,8 +4,7 @@ The schema module of an environment document (docs/architecture/overview.md#envi
 An environment file imports this module, and `wamn-ctl env apply` compiles it
 to canonical JSON. The schema has exactly the fields the reference page names: the
 coordinate, the release digest or "none", the route host, the policy name, the
-applications (docs/plan/platform-config.md), the target, the connection names and
-the floors.
+applications (docs/plan/platform-config.md), the target, and the connection names.
 """
 import regex
 
@@ -43,8 +42,6 @@ schema Environment:
     # to exactly one application.
     applications: {str:Application}
     integrations: {str:Integration} = {}
-    # The package versions to contract to: package id to version (R13).
-    floors: {str:str} = {}
 
     check:
         len(target) > 0, "target is required"

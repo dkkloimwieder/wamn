@@ -3,8 +3,8 @@
 //!
 //! The document names the coordinate, the release digest or `none`, the route
 //! host, the policy by name, the applications and their packages
-//! (docs/architecture/execution.md#workflows), the target, connection names and
-//! floors, and nothing else. It compiles with the `environment` KCL schema
+//! (docs/architecture/execution.md#workflows), the target, and connection names.
+//! It compiles with the `environment` KCL schema
 //! module to JSON, which this module reads into [`EnvironmentDocument`]. Its
 //! canonical form is RFC 8785 JSON, as `wamn.json` is.
 
@@ -38,9 +38,6 @@ pub struct EnvironmentDocument {
     pub applications: EnvironmentApplications,
     #[serde(default)]
     pub integrations: BTreeMap<String, Integration>,
-    /// Package id to the version to contract to (R13).
-    #[serde(default)]
-    pub floors: BTreeMap<String, String>,
 }
 
 /// The package id and immutable web artifact of an environment's client.
@@ -180,12 +177,6 @@ impl EnvironmentDocument {
                 "integration {name} requires a positive version"
             );
         }
-        for (package, version) in &self.floors {
-            ensure!(
-                !package.is_empty() && !version.is_empty(),
-                "a floor has an empty package id or version"
-            );
-        }
         Ok(())
     }
 
@@ -253,11 +244,6 @@ impl EnvironmentDocument {
             ));
         }
         lines.push("    }".to_owned());
-        lines.push("    floors = {".to_owned());
-        for (package, version) in &self.floors {
-            lines.push(format!("        {} = {}", quote(package), quote(version)));
-        }
-        lines.push("    }".to_owned());
         lines.push("}".to_owned());
         let mut out = String::new();
         for line in lines {
@@ -282,8 +268,7 @@ mod tests {
             "policy": "prod",
             "target": "cloud",
             "applications": {"wms": {"packages": ["wamn_wms"], "connections": {"erp": "shared_erp", "files": "files"}}},
-            "integrations": {"shared_erp":{"version":1}, "files":{"version":1}},
-            "floors": {"wamn_wms": "2.4.0"}
+            "integrations": {"shared_erp":{"version":1}, "files":{"version":1}}
         })
     }
 
@@ -311,7 +296,7 @@ mod tests {
             serde_json::from_value::<EnvironmentDocument>(input)
                 .unwrap_err()
                 .to_string(),
-            "unknown field `connections`, expected one of `org`, `project`, `env`, `target`, `release`, `route_host`, `client`, `policy`, `applications`, `integrations`, `floors`"
+            "unknown field `connections`, expected one of `org`, `project`, `env`, `target`, `release`, `route_host`, `client`, `policy`, `applications`, `integrations`"
         );
     }
 

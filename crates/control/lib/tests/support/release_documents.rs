@@ -151,7 +151,6 @@ pub fn fixture_document(env: &str, route_host: &str, digest: &str) -> Environmen
                 ]),
             },
         )]),
-        floors: std::collections::BTreeMap::new(),
     }
 }
 
@@ -1100,7 +1099,6 @@ pub mod workflow {
                         .into(),
                 },
             )]),
-            floors: BTreeMap::new(),
         }
     }
 

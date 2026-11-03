@@ -9,5 +9,4 @@ environment.Environment {
     route_host = "wms.localhost"
     policy = "dev"
     applications = {warehouse = {packages = ["wamn_wms"]}}
-    floors = {}
 }

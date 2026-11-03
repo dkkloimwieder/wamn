@@ -9,5 +9,4 @@ environment.Environment {
     route_host = "receiving.localhost"
     policy = "dev"
     applications = {receiving = {packages = ["wamn_receiving"]}}
-    floors = {}
 }

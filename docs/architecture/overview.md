@@ -137,7 +137,7 @@ The platform image set lives only in the default values of the chart. `wamn-ctl 
 The release is named by its manifest digest alone.
 
 An environment is declared in one `environment.k` document.
-It names the coordinate, the release digest or `none`, the route host, the policy by name, the connection definitions, and the floors.
+It names the coordinate, the release digest or `none`, the route host, the policy by name, and the connection definitions.
 
 Its optional `client` names a package id and an immutable web artifact digest.
 Analysis makes sure that the artifact matches its digest and its package coordinate appears in the release.

@@ -158,7 +158,6 @@ environment.Environment {
         receiving = {packages = ["wamn_receiving", "client_acme_receiving"]}
     }
     connections = {}
-    floors = {}
 }
 ```
 

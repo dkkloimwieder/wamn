@@ -466,7 +466,6 @@ async fn bind_labels(
                     .collect(),
             },
         )]),
-        floors: BTreeMap::new(),
     };
     let packages = [package_manifest()?];
     system.batch_execute("SET ROLE wamn_db_owner").await?;
@@ -792,7 +791,6 @@ pub async fn publish(
                     packages: BTreeSet::from([package.package_id().to_owned()]),
                 },
             )]),
-            floors: BTreeMap::new(),
         },
         &BTreeMap::from([(
             package.package_id().to_owned(),

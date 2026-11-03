@@ -708,7 +708,6 @@ pub async fn install_candidate(
             },
         )]
         .into(),
-        floors: std::collections::BTreeMap::new(),
     };
     stage::stage(
         &platform,

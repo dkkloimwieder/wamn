@@ -6,13 +6,9 @@
 //! come from the registry, so the file does not repeat them. It holds no
 //! credential.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
-use anyhow::{Context as _, ensure};
 use serde::Deserialize;
-
-/// The directory of the environment files, relative to the repository.
-pub const ENVIRONMENTS: &str = "deploy/gcp/environments";
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
@@ -50,91 +46,4 @@ pub struct SystemDatabase {
 pub struct WebClient {
     pub bucket: String,
     pub prefix: String,
-}
-
-impl EnvironmentFile {
-    /// The path of the environment file of one project environment.
-    pub fn path(repository: &Path, org: &str, project: &str, environment: &str) -> PathBuf {
-        repository
-            .join(ENVIRONMENTS)
-            .join(format!("{org}--{project}--{environment}.json"))
-    }
-
-    /// Reads the environment file, and refuses an environment without one.
-    pub fn read(
-        repository: &Path,
-        org: &str,
-        project: &str,
-        environment: &str,
-    ) -> anyhow::Result<Self> {
-        let path = Self::path(repository, org, project, environment);
-        let bytes = std::fs::read(&path).with_context(|| {
-            format!(
-                "the environment {org}/{project}/{environment} has no environment file {}",
-                path.display()
-            )
-        })?;
-        let file: Self = serde_json::from_slice(&bytes)
-            .with_context(|| format!("read the environment file {}", path.display()))?;
-        ensure!(
-            file.gates_image.contains("@sha256:"),
-            "the gates image of {} is not pinned by digest",
-            path.display()
-        );
-        ensure!(
-            !file.packages.is_empty(),
-            "the environment file {} names no package",
-            path.display()
-        );
-        for root in &file.packages {
-            ensure!(
-                repository.join(root).is_dir(),
-                "the environment file {} names the absent package {}",
-                path.display(),
-                root.display()
-            );
-        }
-        Ok(file)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn repository() -> PathBuf {
-        Path::new(env!("CARGO_MANIFEST_DIR"))
-            .ancestors()
-            .nth(3)
-            .expect("repository root")
-            .to_path_buf()
-    }
-
-    #[test]
-    fn the_wamn_dev_environments_read_and_differ_only_in_the_application() {
-        let receiving =
-            EnvironmentFile::read(&repository(), "dkk", "receiving", "dev").expect("Receiving");
-        let wms = EnvironmentFile::read(&repository(), "dkk", "wms", "dev").expect("WMS");
-        assert_eq!(receiving.route_host, "receiving.wamn.dev");
-        assert_eq!(wms.route_host, "wms.wamn.dev");
-        assert_eq!(
-            EnvironmentFile {
-                route_host: wms.route_host.clone(),
-                packages: wms.packages.clone(),
-                ..receiving
-            },
-            wms
-        );
-    }
-
-    #[test]
-    fn an_environment_without_a_file_is_refused() {
-        let error = EnvironmentFile::read(&repository(), "dkk", "receiving", "absent")
-            .expect_err("no file");
-        assert!(
-            format!("{error:#}")
-                .contains("the environment dkk/receiving/absent has no environment file"),
-            "{error:#}"
-        );
-    }
 }
