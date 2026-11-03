@@ -87,18 +87,35 @@ fn fixture(root: &Path) -> anyhow::Result<()> {
         "rust-toolchain.toml",
         "tools/guest-rustflags",
         "apps/platform/no-std/guest_runtime.rs",
-        "integrations/modbus/Cargo.toml",
-        "integrations/modbus/Cargo.lock",
-        "integrations/modbus/src/lib.rs",
-        "integrations/modbus/wit/world.wit",
-        "integrations/modbus/wit/deps/io.wit",
-        "integrations/modbus/wit/deps/sockets.wit",
+        "apps/platform/no-std/modbus/Cargo.toml",
+        "apps/platform/no-std/modbus/src/lib.rs",
+        "apps/platform/no-std/modbus/wit/world.wit",
+        "apps/platform/no-std/modbus/wit/deps/io.wit",
+        "apps/platform/no-std/modbus/wit/deps/sockets.wit",
         "wit/wamn-integration/package.wit",
     ] {
         let target = root.join(file);
         std::fs::create_dir_all(target.parent().unwrap())?;
         std::fs::copy(repository.join(file), target)?;
     }
+    // Keep the fixture independent while inheriting the real workspace identities.
+    let workspace = std::fs::read_to_string(repository.join("apps/platform/no-std/Cargo.toml"))?;
+    let workspace = workspace
+        .lines()
+        .map(|line| {
+            if line.starts_with("members = ") {
+                "members = [\"modbus\"]"
+            } else {
+                line
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    std::fs::write(root.join("apps/platform/no-std/Cargo.toml"), workspace)?;
+    std::fs::copy(
+        repository.join("apps/platform/no-std/Cargo.lock"),
+        root.join("apps/platform/no-std/Cargo.lock"),
+    )?;
     Ok(())
 }
 
@@ -455,7 +472,9 @@ async fn published_modbus_versions_link_before_the_next_call() -> anyhow::Result
     };
     let first = integration::build(scratch.path(), "modbus").await?;
     integration::publish(&first, &configuration, database.url(), &integration::Publication {version:2, parameter_schema:json!({"type":"object","properties":{"authority":{"type":"string","minLength":1,"immutable":true}},"required":["authority"]}),operations:"wamn:modbus/client@1.0.0".into(),write_interfaces:vec!["wamn:modbus/write@1.0.0".into()]}).await?;
-    let source_path = scratch.path().join("integrations/modbus/src/lib.rs");
+    let source_path = scratch
+        .path()
+        .join("apps/platform/no-std/modbus/src/lib.rs");
     let source_bytes = std::fs::read_to_string(&source_path)?;
     std::fs::write(
         &source_path,

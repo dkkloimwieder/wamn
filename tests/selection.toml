@@ -277,6 +277,7 @@ targets = [
   { workspace="no-std", package="http-request", target="cdylib:http_request", tier="contract" },
   { workspace="no-std", package="label-render", target="cdylib:label_render", tier="contract" },
   { workspace="no-std", package="label-render", target="test:golden", tier="contract" },
+  { workspace="no-std", package="wamn-modbus", target="cdylib:wamn_modbus", tier="unit" },
   { workspace="no-std", package="transform", target="cdylib:transform", tier="unit" },
   { workspace="root", package="wamn-control", target="test:file_fixture_live", tier="live-postgres" },
   { workspace="root", package="wamn-control", target="test:install_sequence_live", tier="live-postgres" },
@@ -422,34 +423,34 @@ packages = ["wamn-integration-tests", "wamn-receiving-tests"]
 
 [[preparation]]
 id = "http-route"
-outputs = {WAMN_FLOW_HTTP_COMPONENT = "{target}/apps/wasm32-wasip2/release/http_route.wasm"}
+outputs = {WAMN_FLOW_HTTP_COMPONENT = "{target}/wasm32-wasip2/release/http_route.wasm"}
 aliases = {WAMN_DEV_ENV_FLOW_HTTP_COMPONENT = "WAMN_FLOW_HTTP_COMPONENT"}
 commands = [
-  ["env", "RUSTFLAGS={guest-rustflags}", "cargo", "build", "--locked", "--offline", "--release", "--manifest-path", "apps/Cargo.toml", "--target-dir", "{target}/apps", "--target", "wasm32-wasip2", "-p", "http-route"],
+  ["env", "RUSTFLAGS={guest-rustflags}", "cargo", "build", "--locked", "--offline", "--release", "--manifest-path", "apps/Cargo.toml", "--target-dir", "{target}", "--target", "wasm32-wasip2", "-p", "http-route"],
 ]
 packages = ["wamn-control", "wamn-integration-tests", "wamn-receiving-tests", "wamn-wms-tests"]
 
 [[preparation]]
 id = "materializer"
-outputs = {WAMN_MATERIALIZER_COMPONENT = "{target}/apps/wasm32-wasip2/debug/materializer.wasm"}
+outputs = {WAMN_MATERIALIZER_COMPONENT = "{target}/wasm32-wasip2/debug/materializer.wasm"}
 aliases = {WAMN_DEV_ENV_MATERIALIZER_COMPONENT = "WAMN_MATERIALIZER_COMPONENT"}
 commands = [
-  ["env", "RUSTFLAGS={guest-rustflags}", "cargo", "build", "--locked", "--offline", "--manifest-path", "apps/Cargo.toml", "--target-dir", "{target}/apps", "--target", "wasm32-wasip2", "-p", "materializer"],
+  ["env", "RUSTFLAGS={guest-rustflags}", "cargo", "build", "--locked", "--offline", "--manifest-path", "apps/Cargo.toml", "--target-dir", "{target}", "--target", "wasm32-wasip2", "-p", "materializer"],
 ]
 packages = ["wamn-control", "wamn-receiving-tests"]
 
 [[preparation]]
 id = "blob-put"
-outputs = {WAMN_BLOB_PUT_COMPONENT = "{target}/apps/wasm32-wasip2/debug/blob_put.wasm"}
+outputs = {WAMN_BLOB_PUT_COMPONENT = "{target}/wasm32-wasip2/debug/blob_put.wasm"}
 commands = [
-  ["env", "RUSTFLAGS={guest-rustflags}", "cargo", "build", "--locked", "--offline", "--manifest-path", "apps/Cargo.toml", "--target-dir", "{target}/apps", "--target", "wasm32-wasip2", "-p", "blob-put"],
+  ["env", "RUSTFLAGS={guest-rustflags}", "cargo", "build", "--locked", "--offline", "--manifest-path", "apps/Cargo.toml", "--target-dir", "{target}", "--target", "wasm32-wasip2", "-p", "blob-put"],
 ]
 
 [[preparation]]
 id = "sqlx-command"
-outputs = {WAMN_SQLX_TRANSACTION_COMPONENT = "{target}/apps/wasm32-wasip2/debug/sqlx_command.wasm"}
+outputs = {WAMN_SQLX_TRANSACTION_COMPONENT = "{target}/wasm32-wasip2/debug/sqlx_command.wasm"}
 commands = [
-  ["env", "RUSTFLAGS={guest-rustflags}", "cargo", "build", "--locked", "--offline", "--manifest-path", "apps/Cargo.toml", "--target-dir", "{target}/apps", "--target", "wasm32-wasip2", "-p", "sqlx-command"],
+  ["env", "RUSTFLAGS={guest-rustflags}", "cargo", "build", "--locked", "--offline", "--manifest-path", "apps/Cargo.toml", "--target-dir", "{target}", "--target", "wasm32-wasip2", "-p", "sqlx-command"],
 ]
 packages = ["wamn-runtime"]
 
@@ -458,12 +459,9 @@ id = "workflow-guests"
 outputs = {}
 commands = [
   ["mkdir", "-p", "{target}/wasm32-wasip2/debug"],
-  ["env", "RUSTFLAGS={guest-rustflags}", "cargo", "build", "--locked", "--offline", "--manifest-path", "apps/platform/no-std/Cargo.toml", "--target-dir", "{target}/no-std", "--target", "wasm32-wasip2", "-p", "transform"],
-  ["cp", "{target}/no-std/wasm32-wasip2/debug/transform.wasm", "{target}/wasm32-wasip2/debug/transform.wasm"],
-  ["env", "RUSTFLAGS={guest-rustflags}", "cargo", "build", "--locked", "--offline", "--manifest-path", "apps/platform/no-std/Cargo.toml", "--target-dir", "{target}/no-std", "--target", "wasm32-wasip2", "-p", "http-request"],
-  ["cp", "{target}/no-std/wasm32-wasip2/debug/http_request.wasm", "{target}/wasm32-wasip2/debug/http_request.wasm"],
-  ["env", "RUSTFLAGS={guest-rustflags}", "cargo", "build", "--locked", "--offline", "--manifest-path", "apps/platform/no-std/Cargo.toml", "--target-dir", "{target}/no-std", "--target", "wasm32-wasip2", "-p", "http-page"],
-  ["cp", "{target}/no-std/wasm32-wasip2/debug/http_page.wasm", "{target}/wasm32-wasip2/debug/http_page.wasm"],
+  ["env", "RUSTFLAGS={guest-rustflags}", "cargo", "build", "--locked", "--offline", "--manifest-path", "apps/platform/no-std/Cargo.toml", "--target-dir", "{target}", "--target", "wasm32-wasip2", "-p", "transform"],
+  ["env", "RUSTFLAGS={guest-rustflags}", "cargo", "build", "--locked", "--offline", "--manifest-path", "apps/platform/no-std/Cargo.toml", "--target-dir", "{target}", "--target", "wasm32-wasip2", "-p", "http-request"],
+  ["env", "RUSTFLAGS={guest-rustflags}", "cargo", "build", "--locked", "--offline", "--manifest-path", "apps/platform/no-std/Cargo.toml", "--target-dir", "{target}", "--target", "wasm32-wasip2", "-p", "http-page"],
 ]
 
 [[preparation]]

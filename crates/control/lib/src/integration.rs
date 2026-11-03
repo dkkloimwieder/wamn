@@ -71,12 +71,23 @@ fn source_files(
 fn source_digest(root: &Path) -> anyhow::Result<String> {
     let mut files = BTreeMap::new();
     source_files(root, root, &mut files)?;
+    if let Some(workspace) = root
+        .parent()
+        .filter(|path| path.join("Cargo.toml").is_file())
+    {
+        for name in ["Cargo.toml", "Cargo.lock"] {
+            files.insert(
+                format!("../{name}"),
+                sha256_digest(&std::fs::read(workspace.join(name))?),
+            );
+        }
+    }
     Ok(sha256_digest(
         &wamn_execution_contract::canonical_json_bytes(&json!(files)),
     ))
 }
 
-/// Build `integrations/<code>` for `wasm32-wasip2` and write its artifact locally.
+/// Build an integration for `wasm32-wasip2` and write its artifact locally.
 ///
 /// # Errors
 ///
@@ -84,11 +95,15 @@ fn source_digest(root: &Path) -> anyhow::Result<String> {
 pub async fn build(repository: &Path, code: &str) -> anyhow::Result<BuiltIntegration> {
     check_code(code)?;
     let repository = repository.canonicalize()?;
-    let root = repository
-        .join("integrations")
-        .join(code)
+    let guest = repository.join("apps/platform/no-std").join(code);
+    let source = if guest.join("Cargo.toml").is_file() {
+        guest
+    } else {
+        repository.join("integrations").join(code)
+    };
+    let root = source
         .canonicalize()
-        .with_context(|| format!("find integrations/{code}"))?;
+        .with_context(|| format!("find integration {code}"))?;
     let manifest_path = root.join("Cargo.toml");
     let inputs = source_digest(&root)?;
     let flags = Command::new(repository.join("tools/guest-rustflags"))

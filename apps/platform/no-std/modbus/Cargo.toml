@@ -1,0 +1,19 @@
+[package]
+name = "wamn-modbus"
+version.workspace = true
+edition.workspace = true
+description = "Bound Modbus TCP register operations and gateway health."
+license = "Apache-2.0"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[features]
+std = []
+
+[dependencies]
+dlmalloc = { workspace = true }
+wit-bindgen = { workspace = true }
+
+[lints]
+workspace = true

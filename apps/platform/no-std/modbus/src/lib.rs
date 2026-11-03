@@ -3,17 +3,22 @@
 #![cfg_attr(target_arch = "wasm32", no_std)]
 
 extern crate alloc;
+#[cfg(target_arch = "wasm32")]
 use alloc::vec::Vec;
 
 #[cfg(target_arch = "wasm32")]
-#[path = "../../../apps/platform/no-std/guest_runtime.rs"]
+#[path = "../../guest_runtime.rs"]
 mod guest_runtime;
 
 #[cfg(target_arch = "wasm32")]
+#[expect(
+    clippy::same_length_and_capacity,
+    reason = "wit-bindgen emits Vec::from_raw_parts with equal length and capacity"
+)]
 mod component {
     use alloc::{format, string::String, vec::Vec};
     wit_bindgen::generate!({
-        path: ["../../wit/wamn-integration", "wit"],
+        path: ["../../../../wit/wamn-integration", "wit"],
         world: "wamn:modbus/client@1.0.0",
         generate_all,
         std_feature,
@@ -102,6 +107,10 @@ mod component {
             .collect())
     }
 
+    #[expect(
+        clippy::many_single_char_names,
+        reason = "the eight IPv6 segments map directly to the WIT tuple"
+    )]
     fn exchange(frame: Option<&[u8; 12]>) -> Result<Vec<u8>, Error> {
         let authority = wamn::integration::bound::authority();
         // Modbus connections use an explicit IP literal and TCP port.

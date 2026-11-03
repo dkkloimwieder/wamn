@@ -162,7 +162,7 @@ The environment pins the connector digest. A connector is its own artifact and a
 The process, for one of twenty connectors used by many environments:
 
 ```
-integrations/modbus/                 # one crate per connector in the platform repo
+apps/platform/no-std/modbus/                 # one crate per connector in the platform repo
 $ wamn integration build modbus      # local build; the digest is a function of the source bytes
 $ wamn integration publish modbus    # push to the registry; the catalog row gains the digest; nothing runs it yet
 ```
