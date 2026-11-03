@@ -43,7 +43,7 @@ use crate::wms_runtime_live::write_result;
 use deployment::{checked, kubectl};
 
 /// The drain bound of the case environment: the host pods' grace period and
-/// `WAMN_DRAIN_BOUND_SECONDS`, as `deploy/platform/values-host-default.yaml`
+/// `WAMN_DRAIN_BOUND_SECONDS`, as the release chart
 /// sets them (R20).
 const DRAIN_BOUND_SECONDS: u32 = 70;
 
@@ -552,7 +552,9 @@ async fn run_created(
                 roles: release_chart::roles(&manifest, org, project_name, env),
                 drain_bound_seconds: DRAIN_BOUND_SECONDS,
                 actor: "wms cluster case".to_owned(),
-                host_group: case_release::host_group(&fs::read_to_string(&overlay)?)?,
+                host_group: wamn_gate_harness::render_check::host_group(&fs::read_to_string(
+                    &overlay,
+                )?)?,
             },
         )
         .await?;

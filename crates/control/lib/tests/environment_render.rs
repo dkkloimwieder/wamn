@@ -195,10 +195,7 @@ fn prekind_rejects_old_missing_conn_reader() -> anyhow::Result<()> {
 
 fn pat_release(project: &str) -> anyhow::Result<()> {
     use wamn_control::release_chart::ValuesInput;
-    use wamn_test_infrastructure::rendering::{
-        EventIdentity, HostRoleSecret, HostValuesInput, object_store_overlay, render_host_values,
-    };
-    let repository = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
+    use wamn_test_infrastructure::rendering::{EventIdentity, HostRoleSecret, HostValuesInput};
     let scope = Triple::new("acme", project, "dev");
     let secrets = credential_secrets(&scope, NAMESPACE);
     let guest = wamn_control_provision::workload_secret_name(
@@ -227,23 +224,13 @@ fn pat_release(project: &str) -> anyhow::Result<()> {
         environment: "dev".into(),
     };
     let manifest = manifest(&fixture_releases()?[2])?;
-    // Use the application cases' PAT files and fixture object-store mount.
-    let mut overlay = wamn_test_infrastructure::rendering::overlay_values(
-        &std::fs::read_to_string(
-            repository.join(format!("deploy/platform/values-host-{project}-pat.yaml")),
-        )?,
-        &event,
-    )?;
     let object_store_secret_name =
         (project == "wms").then(|| format!("wamn-object-store-credentials-acme--{project}--dev"));
     let mut secrets = secrets;
     if let Some(name) = &object_store_secret_name {
-        overlay = object_store_overlay(&overlay, name)?;
         secrets.push(prerequisite(name, &["credentials.json"], NAMESPACE));
     }
-    let rendered = render_host_values(
-        &std::fs::read_to_string(repository.join("deploy/platform/values-host-default.yaml"))?,
-        &overlay,
+    let rendered = wamn_gate_harness::render_check::host_values(
         &HostValuesInput {
             namespace: NAMESPACE.into(),
             host_tag: "prekind".into(),
@@ -258,6 +245,7 @@ fn pat_release(project: &str) -> anyhow::Result<()> {
             role_secrets: roles,
             object_store_secret_name,
         },
+        project,
     )?;
     let overlay = wamn_gate_harness::session_issuer::adjust_host(
         &rendered.overlay,
@@ -288,9 +276,10 @@ fn pat_release(project: &str) -> anyhow::Result<()> {
         roles,
         drain_bound_seconds: 70,
         actor: "prekind".into(),
-        host_group: wamn_gate_harness::case_release::host_group(&overlay)?,
+        host_group: wamn_gate_harness::render_check::host_group(&overlay)?,
     })?;
     secrets.extend(operator_prerequisites(NAMESPACE));
+    secrets.push(prerequisite("wamn-oauth", &["key"], NAMESPACE));
     // platform fixture startup emits the registry Secret, and cert-manager the
     // environment's NATS certificate, before either application installs its
     // release.
@@ -303,7 +292,7 @@ fn pat_release(project: &str) -> anyhow::Result<()> {
         ),
     ]);
     assert_complete(&template(&values, NAMESPACE)?, &secrets)?;
-    println!("{project}: PAT overlay -> case_release::render -> release chart");
+    println!("{project}: apply host values -> case_release::render -> release chart");
     Ok(())
 }
 

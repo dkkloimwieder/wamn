@@ -9,9 +9,7 @@ use serde::Deserialize as _;
 use serde_json::Value;
 
 const VALUES: &str = "deploy/infra/values-wamn.yaml";
-const HOST_VALUES: &str = "deploy/platform/values-host-default.yaml";
 const EVENTS_RBAC: &str = "deploy/platform/runtime-operator-events-rbac.example.yaml";
-const EXPECTED_CHART_VERSION: &str = "2.11.0";
 static RENDER_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 const DEPLOYMENT: (&str, &str) = ("apps/v1", "Deployment");
 const NETWORK_POLICY: (&str, &str) = ("networking.k8s.io/v1", "NetworkPolicy");
@@ -62,9 +60,7 @@ fn render_chart(root: &Path, release: &str, values: &[&str]) -> RenderDirectory 
     helm.current_dir(root).args([
         "template",
         release,
-        "oci://ghcr.io/wasmcloud/charts/runtime-operator",
-        "--version",
-        EXPECTED_CHART_VERSION,
+        "deploy/platform/release/charts/runtime-operator-2.11.0.tgz",
         "--namespace",
         "wamn-system",
     ]);
@@ -131,8 +127,40 @@ fn rendered_manifest(output: &RenderDirectory, template: &str, expected: &[(&str
     decode_manifest(&manifest, expected)
 }
 
-fn render_host_objects(root: &Path, values: &[&str]) -> (Value, Value) {
-    let output = render_chart(root, "wamn-host", values);
+fn render_host_objects(root: &Path) -> (Value, Value) {
+    use wamn_test_infrastructure::rendering::{EventIdentity, HostValuesInput};
+    let values = wamn_gate_harness::render_check::host_values(
+        &HostValuesInput {
+            namespace: "wamn-system".into(),
+            host_tag: "dev".into(),
+            replicas: 3,
+            component_artifact_base: "registry.example/components".into(),
+            release_artifact_base: "registry.example/releases".into(),
+            manifest_digest: format!("sha256:{}", "a".repeat(64)),
+            stream_replicas: 1,
+            dup_window_secs: 120,
+            event: EventIdentity {
+                org: "acme".into(),
+                project: "wms".into(),
+                environment: "dev".into(),
+            },
+            guest_secret_name: "wamn-guest-acme--wms--dev".into(),
+            role_secrets: Vec::new(),
+            object_store_secret_name: None,
+        },
+        "wms",
+    )
+    .expect("render apply host values");
+    let work = RenderDirectory::create();
+    let base = work.path().join("base.yaml");
+    let overlay = work.path().join("overlay.yaml");
+    fs::write(&base, values.base).expect("write release host defaults");
+    fs::write(&overlay, values.overlay).expect("write apply host values");
+    let output = render_chart(
+        root,
+        "wamn-host",
+        &[base.to_str().unwrap(), overlay.to_str().unwrap()],
+    );
     (
         rendered_manifest(&output, "runtime/deployment.yaml", &[DEPLOYMENT]),
         rendered_manifest(&output, "runtime/networkpolicy.yaml", &[NETWORK_POLICY]),
@@ -274,6 +302,7 @@ fn assert_native_host_controls(
         serde_json::json!([{"ports": [
             {"port": 80, "protocol": "TCP"},
             {"port": 8081, "protocol": "TCP"},
+            {"port": 8082, "protocol": "TCP"},
         ]}]),
         "native policy must allow traffic and probe ports without changing source scope"
     );
@@ -356,7 +385,7 @@ fn assert_events_overlay_remains_namespace_scoped(root: &Path) {
 fn the_host_tier_renders_the_native_host_controls() {
     wamn_test_postgres::require_ignored_prerequisites("requires: bin:helm");
     let root = repository_root();
-    let (base, base_policy) = render_host_objects(&root, &[HOST_VALUES]);
+    let (base, base_policy) = render_host_objects(&root);
     assert_native_host_controls(&base, &base_policy, "4", "2", "6");
     assert_events_overlay_remains_namespace_scoped(&root);
 }

@@ -7,8 +7,8 @@
 #      ONE PER CLUSTER, in `wamn-system`, installed once: the CRDs are
 #      cluster-scoped, so every environment in the cluster shares this one
 #      operator version. It carries NO host groups.
-#   2. THE HOST TIER — `deploy/platform/values-host-default.yaml` plus the
-#      environment's application/release overlay, ONE HELM RELEASE PER
+#   2. THE HOST TIER — the release chart (`deploy/platform/release`) with the
+#      install values that environment apply renders, ONE HELM RELEASE PER
 #      ENVIRONMENT. Host images and host groups are per-environment,
 #      per-release values, which is why they live in the `platform/` tier
 #      (long-lived, per release) and not in `infra/` (install-once).
@@ -18,7 +18,7 @@
 #   helm upgrade --install --create-namespace -n wamn-system wamn \
 #     oci://ghcr.io/wasmcloud/charts/runtime-operator --version 2.11.0 \
 #     -f deploy/infra/values-wamn.yaml
-#   # then this environment's host base plus its application/release overlay
+#   # then this environment's release chart through `wamn-ctl env apply`
 #
 # NATS AND CERTIFICATES (docs/plan/alignment.md R1-R3). The platform runs one
 # NATS (deploy/gcp/nats-jetstream.yaml), so this release renders none. The
@@ -117,8 +117,8 @@ operator:
 
 runtime:
   # -- No host groups in the operator release: the host tier is one Helm release
-  # per environment (ruling wamn-0h0g.13.50), and its values live in
-  # deploy/platform/values-host-<environment>.yaml. `runtime.image` — the
+  # per environment (ruling wamn-0h0g.13.50), rendered by
+  # deploy/platform/release. `runtime.image` — the
   # chart-wide host image, which is the carriage our `wamn-host` image actually
   # rides (chart values.yaml:380-384; `hostGroups[].image` is only an optional
   # per-group override, chart values.yaml:669-674) — moved there with them.

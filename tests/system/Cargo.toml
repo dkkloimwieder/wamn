@@ -19,8 +19,10 @@ tracing-opentelemetry = { workspace = true }
 wamn-runtime = { workspace = true }
 
 [dev-dependencies]
+wamn-gate-harness = { workspace = true }
+wamn-test-infrastructure = { workspace = true }
 opentelemetry_sdk = { workspace = true }
-# The release chart's install values, built from the host tier's values file.
+# The release chart's install values, rendered through environment apply.
 serde_yaml = { workspace = true }
 tracing-subscriber = { workspace = true }
 wamn-run-state = { workspace = true, features = ["test-util"] }

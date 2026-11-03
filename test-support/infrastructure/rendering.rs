@@ -74,6 +74,15 @@ pub struct RenderedHostValues {
     pub overlay: String,
 }
 
+/// The host subchart defaults of the current release chart.
+pub fn host_defaults() -> anyhow::Result<String> {
+    let chart: Value =
+        serde_yaml::from_str(include_str!("../../deploy/platform/release/values.yaml"))?;
+    let mut host = chart["runtime-operator"].clone();
+    host["global"] = chart["global"].clone();
+    serde_yaml::to_string(&host).context("render the release chart host defaults")
+}
+
 /// Add a default tag when a digest-pinned image omits one.
 pub fn image_reference(image: &str) -> anyhow::Result<String> {
     let (repository, digest) = image
@@ -246,9 +255,6 @@ pub fn render_host_values(
             "dataCertSecretName".into(),
             format!("wamn-nats-{env_key}").into(),
         );
-    let base_group = one_mut(&mut base.runtime.host_groups, "host base hostGroups")?;
-    base_group.namespace.clone_from(&input.namespace);
-    base_group.replicas = input.replicas;
     let group = one_mut(&mut overlay.runtime.host_groups, "host overlay hostGroups")?;
     group.namespace.clone_from(&input.namespace);
     group.replicas = input.replicas;

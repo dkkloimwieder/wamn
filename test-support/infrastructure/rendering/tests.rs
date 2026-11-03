@@ -30,7 +30,7 @@ fn host_image_digest_survives_chart_values() {
     }
 }
 
-const BASE: &str = include_str!("../../../deploy/platform/values-host-default.yaml");
+static BASE: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| host_defaults().unwrap());
 const ORG: &str = "example";
 /// The project of the fixture application.
 const FIXTURE: &str = "fixture";
@@ -248,13 +248,12 @@ fn host_values_keep_both_applications_separate_and_preserve_credentials() {
     for project in [FIXTURE, OVERLAY] {
         let template = host_template(project);
         let input = host_input(project);
-        let output = render_host_values(BASE, &template, &input).unwrap();
+        let output = render_host_values(&BASE, &template, &input).unwrap();
         let base: HostValues = serde_yaml::from_str(&output.base).unwrap();
         let overlay: HostValues = serde_yaml::from_str(&output.overlay).unwrap();
         let original: HostValues = serde_yaml::from_str(&template).unwrap();
         assert_eq!(base.runtime.image.as_ref().unwrap().tag, input.host_tag);
-        assert_eq!(base.runtime.host_groups[0].namespace, input.namespace);
-        assert_eq!(base.runtime.host_groups[0].replicas, 3);
+        assert!(base.runtime.host_groups.is_empty());
         let group = &overlay.runtime.host_groups[0];
         let old = &original.runtime.host_groups[0];
         assert_eq!(group.namespace, input.namespace);
@@ -361,23 +360,19 @@ fn host_values_keep_both_applications_separate_and_preserve_credentials() {
 #[test]
 fn startup_host_values_change_only_replica_counts() {
     let normal_input = host_input(FIXTURE);
-    let normal = render_host_values(BASE, &host_template(FIXTURE), &normal_input).unwrap();
+    let normal = render_host_values(&BASE, &host_template(FIXTURE), &normal_input).unwrap();
     let mut startup_input = normal_input.clone();
     startup_input.replicas = 0;
-    let startup = render_host_values(BASE, &host_template(FIXTURE), &startup_input).unwrap();
-    for (normal, startup) in [
-        (normal.base, startup.base),
-        (normal.overlay, startup.overlay),
-    ] {
-        let normal: Value = serde_yaml::from_str(&normal).unwrap();
-        let mut startup: Value = serde_yaml::from_str(&startup).unwrap();
-        assert_eq!(
-            startup["runtime"]["hostGroups"][0]["replicas"],
-            Value::from(0)
-        );
-        startup["runtime"]["hostGroups"][0]["replicas"] = Value::from(3);
-        assert_eq!(startup, normal);
-    }
+    let startup = render_host_values(&BASE, &host_template(FIXTURE), &startup_input).unwrap();
+    assert_eq!(normal.base, startup.base);
+    let normal: Value = serde_yaml::from_str(&normal.overlay).unwrap();
+    let mut startup: Value = serde_yaml::from_str(&startup.overlay).unwrap();
+    assert_eq!(
+        startup["runtime"]["hostGroups"][0]["replicas"],
+        Value::from(0)
+    );
+    startup["runtime"]["hostGroups"][0]["replicas"] = Value::from(3);
+    assert_eq!(startup, normal);
 }
 
 #[test]
@@ -396,7 +391,7 @@ fn host_values_refuse_missing_and_duplicate_owned_fields() {
         document.runtime.host_groups[0]
             .env
             .retain(|entry| entry.name != name);
-        let error = render_host_values(BASE, &serde_yaml::to_string(&document).unwrap(), &input)
+        let error = render_host_values(&BASE, &serde_yaml::to_string(&document).unwrap(), &input)
             .unwrap_err();
         assert!(error.to_string().contains(name), "{error:#}");
     }
@@ -404,7 +399,7 @@ fn host_values_refuse_missing_and_duplicate_owned_fields() {
     let variable = duplicate.runtime.host_groups[0].env[0].clone();
     duplicate.runtime.host_groups[0].env.push(variable);
     assert!(
-        render_host_values(BASE, &serde_yaml::to_string(&duplicate).unwrap(), &input)
+        render_host_values(&BASE, &serde_yaml::to_string(&duplicate).unwrap(), &input)
             .unwrap_err()
             .to_string()
             .contains("repeats environment variable")
@@ -414,10 +409,14 @@ fn host_values_refuse_missing_and_duplicate_owned_fields() {
         .env
         .retain(|entry| entry.name != "WAMN_HTTP_ADMITTER_PG_URL");
     assert!(
-        render_host_values(BASE, &serde_yaml::to_string(&missing_role).unwrap(), &input)
-            .unwrap_err()
-            .to_string()
-            .contains("missing role Secret")
+        render_host_values(
+            &BASE,
+            &serde_yaml::to_string(&missing_role).unwrap(),
+            &input
+        )
+        .unwrap_err()
+        .to_string()
+        .contains("missing role Secret")
     );
     let mut repeated_group = original.clone();
     repeated_group
@@ -426,7 +425,7 @@ fn host_values_refuse_missing_and_duplicate_owned_fields() {
         .push(original.runtime.host_groups[0].clone());
     assert!(
         render_host_values(
-            BASE,
+            &BASE,
             &serde_yaml::to_string(&repeated_group).unwrap(),
             &input
         )
@@ -440,7 +439,7 @@ fn host_values_refuse_missing_and_duplicate_owned_fields() {
             .extra_args
             .retain(|arg| !arg.starts_with(argument));
         assert!(
-            render_host_values(BASE, &serde_yaml::to_string(&document).unwrap(), &input)
+            render_host_values(&BASE, &serde_yaml::to_string(&document).unwrap(), &input)
                 .unwrap_err()
                 .to_string()
                 .contains(argument)
@@ -453,7 +452,7 @@ fn host_object_credentials_must_match_the_selected_application() {
     let mut input = host_input(OVERLAY);
     input.object_store_secret_name = None;
     assert!(
-        render_host_values(BASE, &host_template(OVERLAY), &input)
+        render_host_values(&BASE, &host_template(OVERLAY), &input)
             .unwrap_err()
             .to_string()
             .contains("none were declared")
@@ -461,7 +460,7 @@ fn host_object_credentials_must_match_the_selected_application() {
     let mut input = host_input(FIXTURE);
     input.object_store_secret_name = Some("test-object-store".into());
     assert!(
-        render_host_values(BASE, &host_template(FIXTURE), &input)
+        render_host_values(&BASE, &host_template(FIXTURE), &input)
             .unwrap_err()
             .to_string()
             .contains("no declared object-store")
@@ -666,12 +665,12 @@ fn kind_configuration_keeps_three_nodes_without_host_port_mappings() {
 
 #[test]
 fn workload_documents_refuse_missing_required_fields_and_wrong_types() {
-    let mut document: Value = serde_yaml::from_str(BASE).unwrap();
+    let mut document: Value = serde_yaml::from_str(&host_template(FIXTURE)).unwrap();
     document["runtime"]["hostGroups"][0]["replicas"] = Value::from("three");
     assert!(
         render_host_values(
+            &BASE,
             &serde_yaml::to_string(&document).unwrap(),
-            &host_template(FIXTURE),
             &host_input(FIXTURE)
         )
         .is_err()
@@ -809,7 +808,7 @@ fn a_supplied_release_moves_the_overlay_to_its_own_identity() {
     let mut input = host_input(OVERLAY);
     input.event = identity.clone();
     assert!(
-        render_host_values(BASE, &host_template(OVERLAY), &input)
+        render_host_values(&BASE, &host_template(OVERLAY), &input)
             .unwrap_err()
             .to_string()
             .contains("missing role Secret")
@@ -817,7 +816,7 @@ fn a_supplied_release_moves_the_overlay_to_its_own_identity() {
     let moved = overlay_values(&host_template(OVERLAY), &identity).unwrap();
     assert!(!moved.contains("example"), "{moved}");
     assert!(moved.contains("wamn-object-store-credentials-dkk--fixture-overlay--dev"));
-    let output = render_host_values(BASE, &moved, &input).unwrap();
+    let output = render_host_values(&BASE, &moved, &input).unwrap();
     let overlay: HostValues = serde_yaml::from_str(&output.overlay).unwrap();
     let env = &overlay.runtime.host_groups[0].env;
     for name in ["WAMN_ORG", "WAMN_EVT_ORG"] {

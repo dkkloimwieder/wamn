@@ -8,6 +8,149 @@ use wamn_control::release_chart::{self, ImageSet};
 use wamn_test_infrastructure::rendering::kubernetes_documents;
 use wamn_test_infrastructure::scratch::ScratchRoot;
 
+/// Render a case's host values through apply, with the case's platform inputs.
+pub fn host_values(
+    input: &wamn_test_infrastructure::rendering::HostValuesInput,
+    schema: &str,
+) -> anyhow::Result<wamn_test_infrastructure::rendering::RenderedHostValues> {
+    use serde_json::json;
+    use wamn_test_infrastructure::rendering::{RenderedHostValues, host_defaults};
+
+    let mut values = wamn_control::environment::write::render(
+        &release_chart::ValuesInput {
+            org: input.event.org.clone(),
+            project: input.event.project.clone(),
+            env: input.event.environment.clone(),
+            manifest_digest: input.manifest_digest.clone(),
+            artifact_base: input.release_artifact_base.clone(),
+            route_host: "fixture.invalid".into(),
+            applications: std::collections::BTreeMap::new(),
+            roles: Vec::new(),
+            drain_bound_seconds: 70,
+            actor: "prekind render".into(),
+            host_group: serde_yaml::Mapping::new(),
+        },
+        None,
+    )?;
+    let group = &mut values["runtime-operator"]["runtime"]["hostGroups"][0];
+    group["namespace"] = input.namespace.clone().into();
+    group["replicas"] = input.replicas.into();
+    group["http"] = serde_yaml::to_value(json!({"enabled": true, "port": 80}))?;
+    group["resources"] = serde_yaml::to_value(json!({
+        "requests": {"memory": "256Mi", "cpu": "2"},
+        "limits": {"memory": "4Gi", "cpu": "6"},
+        "defaultHeapMemory": "256MiB", "coreInstances": 512,
+        "guestMemoryMode": "count", "maxConcurrentStarts": 4,
+    }))?;
+    let variables = group["env"]
+        .as_sequence_mut()
+        .context("apply host variables")?;
+    for credential in wamn_control_provision::host_credentials::HOST_CREDENTIALS {
+        let Some(variable) = credential.host_variable else {
+            continue;
+        };
+        let selected = if credential.family == wamn_control_provision::WorkloadRoleFamily::App {
+            Some(input.guest_secret_name.as_str())
+        } else {
+            input
+                .role_secrets
+                .iter()
+                .find(|secret| secret.family == credential.family)
+                .map(|secret| secret.name.as_str())
+        };
+        if let Some(name) = selected {
+            let entry = variables
+                .iter_mut()
+                .find(|entry| entry["name"] == variable)
+                .context("apply credential variable")?;
+            entry["valueFrom"]["secretKeyRef"]["name"] = name.into();
+        }
+    }
+    for (name, value) in [
+        ("WAMN_SCHEMA", schema.to_owned()),
+        (
+            "WAMN_COMPONENT_ARTIFACT_BASE",
+            input.component_artifact_base.clone(),
+        ),
+        ("WAMN_EVT_ORG", input.event.org.clone()),
+        ("WAMN_EVT_PROJECT", input.event.project.clone()),
+        ("WAMN_EVT_ENV", input.event.environment.clone()),
+        (
+            "WAMN_EVT_STREAM_REPLICAS",
+            input.stream_replicas.to_string(),
+        ),
+        (
+            "WAMN_EVT_DUP_WINDOW_SECS",
+            input.dup_window_secs.to_string(),
+        ),
+        ("WAMN_PG_GUEST_POOL_MAX", "14".into()),
+        ("WAMN_PG_PLATFORM_POOL_MAX", "2".into()),
+        ("WAMN_HTTP_ROUTE_IN_FLIGHT_LIMIT", "64".into()),
+        ("WAMN_WASMTIME_CACHE_DIR", "/tmp/wamn-wasmtime-cache".into()),
+        ("OTEL_BSP_SCHEDULE_DELAY", "1".into()),
+        ("OTEL_BSP_MAX_EXPORT_BATCH_SIZE", "1".into()),
+        ("DOCKER_CONFIG", "/etc/wamn/registry".into()),
+        (
+            "WAMN_REGISTRY_AUTH_FILE",
+            "/etc/wamn/registry/config.json".into(),
+        ),
+    ] {
+        variables.push(serde_yaml::to_value(json!({"name": name, "value": value}))?);
+    }
+    group["volumes"]
+        .as_sequence_mut()
+        .context("apply host volumes")?
+        .push(serde_yaml::to_value(
+            json!({"name": "registry-pull", "secret": {
+                "secretName": "wamn-registry-pull", "optional": false,
+                "items": [{"key": ".dockerconfigjson", "path": "config.json"}],
+            }}),
+        )?);
+    group["volumeMounts"]
+        .as_sequence_mut()
+        .context("apply host mounts")?
+        .push(serde_yaml::to_value(json!(
+            {"name": "registry-pull", "mountPath": "/etc/wamn/registry", "readOnly": true}
+        ))?);
+    group["ociCaPaths"] = serde_yaml::to_value(["/runtime-cert/ca.crt"])?;
+    group["extraArgs"]
+        .as_sequence_mut()
+        .context("release arguments")?
+        .push("--allow-insecure-registries".into());
+    let mut base: serde_yaml::Value = serde_yaml::from_str(&host_defaults()?)?;
+    base["runtime"]["terminationGracePeriodSeconds"] =
+        values["runtime-operator"]["runtime"]["terminationGracePeriodSeconds"].clone();
+    base["runtime"]["image"]["repository"] = "wamn-host".into();
+    base["runtime"]["image"]["tag"] = input.host_tag.clone().into();
+    let mut overlay = values["runtime-operator"].clone();
+    overlay["global"] = values["global"].clone();
+    let mut overlay = serde_yaml::to_string(&overlay)?;
+    if let Some(secret) = &input.object_store_secret_name {
+        overlay = wamn_test_infrastructure::rendering::object_store_overlay(&overlay, secret)?;
+    }
+    Ok(RenderedHostValues {
+        base: serde_yaml::to_string(&base)?,
+        overlay,
+    })
+}
+
+/// Extract the platform inputs before the release chart derives its fields again.
+pub fn host_group(overlay: &str) -> anyhow::Result<serde_yaml::Mapping> {
+    let mut group = crate::case_release::host_group(overlay)?;
+    if let Some(ports) = group
+        .get_mut("ports")
+        .and_then(serde_yaml::Value::as_sequence_mut)
+    {
+        ports.retain(|port| port["name"] != "files");
+    }
+    group
+        .get_mut("env")
+        .and_then(serde_yaml::Value::as_sequence_mut)
+        .context("apply host variables")?
+        .retain(|variable| variable["name"] != "WAMN_MATERIALIZER_DRAIN_BOUND_SECONDS");
+    Ok(group)
+}
+
 /// Render the source chart with fixture image references, without pulling images.
 pub fn template(values: &serde_yaml::Value, namespace: &str) -> anyhow::Result<Vec<Value>> {
     let work = ScratchRoot::create()?;

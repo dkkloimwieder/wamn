@@ -12,15 +12,15 @@ use std::process::{Command, Output};
 const PLATFORM: &str = "deploy/platform";
 
 /// The host image is supplied through Helm values.
-const HOST_VALUES_FILE: &str = "values-host-default.yaml";
+const HOST_VALUES: &str = "release chart host values";
 const IDENTITY_ISSUER: &str = "https://wamn-identity.wamn-system.svc";
 const IDENTITY_TLS_SECRET: &str = "wamn-identity-serving-tls";
 const EDGE_TLS_SECRET: &str = "wamn-edge-tls";
 const EDGE_IDENTITY_CA: &str = "wamn-identity-ca";
 const HELM_VALUES_IMAGE_PARTS: [(&str, &str); 3] = [
     ("registry", "\"\""),
-    ("repository", "wamn-host"),
-    ("tag", "dev"),
+    ("repository", "\"\""),
+    ("tag", "\"\""),
 ];
 
 /// Files removed from the tier that must not come back.
@@ -50,7 +50,8 @@ const RETIRED_IMAGE_MARKERS: [&str; 4] = ["wamn-gates", "node-host", "serve-node
 /// Externally supplied Secrets and ConfigMaps with their provisioning owner.
 /// Mounted names must be declared by a platform manifest or allowed here.
 /// A Certificate declares its `spec.secretName` output, which cert-manager writes.
-const EXTERNAL_PREREQUISITES: [(&str, &str); 8] = [
+const EXTERNAL_PREREQUISITES: [(&str, &str); 9] = [
+    ("wamn-oauth", "platform apply; local OAuth encryption key"),
     // The host Pod's runtime and data certificates, which cert-manager issues
     // from deploy/infra/nats-certificates.yaml (docs/plan/alignment.md R4).
     (
@@ -93,16 +94,15 @@ const EXTERNAL_PREREQUISITES: [(&str, &str); 8] = [
 /// literals without pinning the demo triple into the test. What a prefix is
 /// allowed to absorb is [`absorbed_by_a_prerequisite_prefix`], not
 /// `starts_with`.
-const EXTERNAL_PREREQUISITE_PREFIXES: [&str; 6] = [
+const EXTERNAL_PREREQUISITE_PREFIXES: [&str; 8] = [
+    "wamn-guest-",
+    "wamn-nats-",
     // `wamn-a40n.2` adds the administration credential beside the other
     // `provision-project-env` outputs the host mounts.
     "wamn-administration-",
     // `wamn-vzbx0.2` adds the connection-reader credential beside the identity reader.
     "wamn-conn-reader-",
-    // `values-host-receiving-pat.yaml` mounts all four `provision-project-env`
-    // outputs with `optional: false`, but only two were listed here. The
-    // overlay's own header has named the set as four since it was written; this
-    // table lagged it (`wamn-10yt.3.5.2`).
+    // The release chart mounts the environment apply credentials.
     "wamn-event-materializer-",
     "wamn-executor-platform-",
     "wamn-http-admitter-",
@@ -292,24 +292,44 @@ fn read(root: &Path, file: &str) -> String {
     fs::read_to_string(&path).unwrap_or_else(|error| panic!("read {}: {error}", path.display()))
 }
 
-/// The release chart of one environment, with its platform image set stamped
-/// and the host tier's host group as the environment's.
-///
-/// The install values follow `wamn_control::release_chart::values`: the host
-/// group body of [`HOST_VALUES_FILE`] under the release's derived name, with the
-/// release arguments, pod label and annotations, and both roles.
+/// The host defaults and apply values used by the release chart.
+fn host_values() -> wamn_test_infrastructure::rendering::RenderedHostValues {
+    use wamn_test_infrastructure::rendering::{EventIdentity, HostValuesInput};
+    wamn_gate_harness::render_check::host_values(
+        &HostValuesInput {
+            namespace: "wamn-system".into(),
+            host_tag: "dev".into(),
+            replicas: 3,
+            component_artifact_base: "registry.example/components".into(),
+            release_artifact_base: "registry.example/releases".into(),
+            manifest_digest:
+                "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855".into(),
+            stream_replicas: 1,
+            dup_window_secs: 120,
+            event: EventIdentity {
+                org: "acme".into(),
+                project: "wms".into(),
+                environment: "dev".into(),
+            },
+            guest_secret_name: "wamn-guest-acme--wms--dev".into(),
+            role_secrets: Vec::new(),
+            object_store_secret_name: None,
+        },
+        "wms",
+    )
+    .expect("render apply host values")
+}
+
+/// The release chart with its platform images and apply host group.
 fn render_release(root: &Path) -> Output {
     const NAME: &str = "r-dev-0123456789abcdef0123";
     const DIGEST: &str = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
     const LABEL: &str = "4oymiquy7qobjgx36tejs35zeqt24qpemsnzgtfeswmrw6csxbkq";
-    let host_values: serde_yaml::Value = serde_yaml::from_str(
-        &fs::read_to_string(root.join(PLATFORM).join(HOST_VALUES_FILE))
-            .expect("read the host tier values"),
-    )
-    .expect("parse the host tier values");
+    let host_values: serde_yaml::Value =
+        serde_yaml::from_str(&host_values().overlay).expect("parse apply host values");
     let mut group = host_values["runtime"]["hostGroups"][0]
         .as_mapping()
-        .expect("the host tier names one host group")
+        .expect("apply names one host group")
         .clone();
     for key in ["name", "namespace", "service"] {
         group.remove(key);
@@ -353,6 +373,7 @@ runtime-operator:
         four = "4".repeat(64),
     ))
     .expect("release values");
+    values["global"] = host_values["global"].clone();
     values["runtime-operator"]["runtime"]["hostGroups"] =
         serde_yaml::Value::Sequence(vec![serde_yaml::Value::Mapping(group)]);
     let path = std::env::temp_dir().join(format!(
@@ -755,15 +776,28 @@ fn only_identity_receives_issuer_credentials_and_other_consumers_keep_their_clas
     assert_eq!(issuer_secret_consumers, ["identity"]);
     assert_eq!(issuer_url_consumers, ["identity"]);
     assert_eq!(identity_image_consumers, ["identity"]);
-    let source = read(&root, HOST_VALUES_FILE);
-    let expected = BTreeMap::from([(
-        "WAMN_PG_URL".to_owned(),
-        ("wamn-host-db".to_owned(), "url".to_owned()),
-    )]);
+    let source = host_values().overlay;
+    let expected = [
+        ("WAMN_PG_URL", "wamn-guest"),
+        ("WAMN_SYSTEM_URL", "wamn-identity-reader"),
+        ("WAMN_CONNECTION_STORE_URL", "wamn-conn-reader"),
+        ("WAMN_EXECUTOR_PLATFORM_PG_URL", "wamn-executor-platform"),
+        ("WAMN_HTTP_ADMITTER_PG_URL", "wamn-http-admitter"),
+        ("WAMN_EVENT_MATERIALIZER_PG_URL", "wamn-event-materializer"),
+        ("WAMN_ADMINISTRATION_PG_URL", "wamn-administration"),
+    ]
+    .into_iter()
+    .map(|(variable, stem)| {
+        (
+            variable.to_owned(),
+            (format!("{stem}-acme--wms--dev"), "url".to_owned()),
+        )
+    })
+    .collect();
     assert_eq!(
-        environment_secret_bindings(&source, HOST_VALUES_FILE),
+        environment_secret_bindings(&source, HOST_VALUES),
         expected,
-        "{HOST_VALUES_FILE} credential classes changed"
+        "{HOST_VALUES} credential classes changed"
     );
     assert_eq!(
         environment_secret_bindings(&read(&root, "identity"), "identity"),
@@ -774,10 +808,11 @@ fn only_identity_receives_issuer_credentials_and_other_consumers_keep_their_clas
     );
 
     // The host tier's image is three keys, not one.
-    let host_values = read(&root, HOST_VALUES_FILE);
+    let host_values = wamn_test_infrastructure::rendering::host_defaults()
+        .expect("read the release chart host defaults");
     assert!(
         images(&host_values).is_empty(),
-        "{HOST_VALUES_FILE} gained a literal image: line; the host image is \
+        "{HOST_VALUES} gained a literal image: line; the host image is \
          registry+repository+tag under runtime.image"
     );
     for (key, value) in HELM_VALUES_IMAGE_PARTS {
@@ -788,7 +823,7 @@ fn only_identity_receives_issuer_credentials_and_other_consumers_keep_their_clas
                     |line| scalar_after(line, key) == Some(value.trim_matches('"'))
                         || line.trim() == format!("{key}: {value}")
                 ),
-            "{HOST_VALUES_FILE} must pin runtime.image.{key} = {value}"
+            "{HOST_VALUES} must leave runtime.image.{key} = {value} for platform stamping"
         );
     }
 }

@@ -55,9 +55,10 @@ const REGISTRY_MOUNT: &str = "/etc/wamn/registry";
 /// The host variables that `env apply` derives from the coordinate, the
 /// policy and the credential Secrets (`environment/write.rs`,
 /// `release_chart::values`). The platform part of the host group must not set them.
-const DERIVED_VARIABLES: [&str; 14] = [
+const DERIVED_VARIABLES: [&str; 15] = [
     "WAMN_PG_URL",
     "WAMN_SYSTEM_URL",
+    "WAMN_CONNECTION_STORE_URL",
     "WAMN_EXECUTOR_PLATFORM_PG_URL",
     "WAMN_HTTP_ADMITTER_PG_URL",
     "WAMN_EVENT_MATERIALIZER_PG_URL",
@@ -71,9 +72,6 @@ const DERIVED_VARIABLES: [&str; 14] = [
     "OTEL_TRACES_SAMPLER",
     "OTEL_TRACES_SAMPLER_ARG",
 ];
-/// The host group keys that the release chart derives.
-const DERIVED_KEYS: [&str; 5] = ["name", "namespace", "service", "extraArgs", "image"];
-
 /// One application on the kept cluster.
 pub struct Application<'a> {
     pub repository: &'a Path,
@@ -291,19 +289,7 @@ fn host_group(
     overlay: &Path,
     renames: &[(String, String)],
 ) -> anyhow::Result<PathBuf> {
-    let values: Yaml = serde_yaml::from_str(&fs::read_to_string(overlay)?)
-        .with_context(|| format!("parse {}", overlay.display()))?;
-    let groups = values["runtime"]["hostGroups"]
-        .as_sequence()
-        .context("the overlay has host groups")?;
-    ensure!(groups.len() == 1, "the overlay has one host group");
-    let mut group = groups[0]
-        .as_mapping()
-        .context("the host group is a mapping")?
-        .clone();
-    for key in DERIVED_KEYS {
-        group.remove(key);
-    }
+    let mut group = crate::render_check::host_group(&fs::read_to_string(overlay)?)?;
     group.insert("replicas".into(), REPLICAS.into());
     // The kept cluster runs the one NATS in wamn-system, where the release
     // chart's default names platform.

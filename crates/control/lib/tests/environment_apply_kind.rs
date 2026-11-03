@@ -1166,7 +1166,7 @@ async fn scenario(run: &mut Run, repository: &Path, source: &Path) -> anyhow::Re
 
     // The platform part of the host group: the registry mount, and the http
     // listener that the http role's Service reaches, as every platform host
-    // group has (deploy/platform/values-host-default.yaml).
+    // group has (deploy/platform/release).
     std::fs::write(
         work.join("host-group.yaml"),
         serde_yaml::to_string(&fixture_host_group(&local))?,

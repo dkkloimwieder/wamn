@@ -5743,6 +5743,7 @@ dependencies = [
  "wamn-gate-harness",
  "wamn-run-state",
  "wamn-schema-generator",
+ "wamn-test-infrastructure",
  "wamn-test-postgres",
  "wash-runtime",
  "wasi-virt",
@@ -6643,8 +6644,10 @@ dependencies = [
  "tracing",
  "tracing-opentelemetry",
  "tracing-subscriber",
+ "wamn-gate-harness",
  "wamn-run-state",
  "wamn-runtime",
+ "wamn-test-infrastructure",
 ]
 
 [[package]]

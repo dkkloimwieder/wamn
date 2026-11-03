@@ -3,7 +3,7 @@
 //!
 //! # Why this is load-bearing and not hypothetical
 //!
-//! `deploy/platform/executor.yaml` and `deploy/platform/values-host-default.yaml`
+//! `deploy/platform/executor.yaml` and the release chart (`deploy/platform/release`)
 //! inject a credentialed `WAMN_PG_URL` into the HOST PROCESS environment via
 //! `secretKeyRef`. If the runtime handed a guest the process environment, a
 //! component would read the platform's database credential directly. So the

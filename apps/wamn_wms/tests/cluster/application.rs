@@ -153,7 +153,6 @@ pub(super) fn render_host(
     use wamn_control_provision::WorkloadRoleFamily;
     use wamn_test_infrastructure::rendering::{
         EventIdentity, HostIdentity, HostRoleSecret, HostValuesInput, assert_rendered_identity,
-        overlay_values, render_host_values,
     };
 
     let HostBinding {
@@ -166,7 +165,6 @@ pub(super) fn render_host(
         candidate,
     } = *binding;
 
-    let repository = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
     let secrets = host_secrets(inputs, database_host)?;
     let guest = secrets
         .iter()
@@ -185,23 +183,7 @@ pub(super) fn render_host(
         project: crate::environment::identity().project.clone(),
         environment: crate::environment::identity().environment.clone(),
     };
-    let mut overlay =
-        std::fs::read_to_string(repository.join("deploy/platform/values-host-wms-pat.yaml"))?;
-    if candidate.is_some() {
-        overlay = overlay_values(&overlay, &event)?;
-    }
-    let mut values: serde_yaml::Value = serde_yaml::from_str(&overlay)?;
-    values["runtime"]["serviceAccount"] = serde_yaml::to_value(json!({
-        "name": wamn_credential_store::kubernetes::service_account_name(
-            &event.org, &event.project, &event.environment,
-        ),
-        "create": false,
-    }))?;
-    values["runtime"]["automountServiceAccountToken"] = true.into();
-    let overlay = serde_yaml::to_string(&values)?;
-    let mut rendered = render_host_values(
-        &std::fs::read_to_string(repository.join("deploy/platform/values-host-default.yaml"))?,
-        &overlay,
+    let mut rendered = wamn_gate_harness::render_check::host_values(
         &HostValuesInput {
             namespace: inputs.host_secret_namespace.clone(),
             host_tag: host_tag.to_owned(),
@@ -216,6 +198,7 @@ pub(super) fn render_host(
             role_secrets,
             object_store_secret_name: None,
         },
+        crate::environment::SCHEMA,
     )?;
     if let Some(candidate) = candidate {
         rendered.base = crate::delivery::host_values(

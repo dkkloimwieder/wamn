@@ -38,7 +38,6 @@ use wamn_gate_harness::case_release::{self, NAMESPACE, Registry};
 use wamn_gate_harness::journey::JourneyDocument;
 use wamn_test_infrastructure::rendering::{
     EventIdentity, HostIdentity, HostRoleSecret, HostValuesInput, assert_rendered_identity,
-    overlay_values, render_host_values,
 };
 use wamn_test_infrastructure::secrets::{
     HostSecret, HostSecretsInput, derive_host_secrets, host_role_families,
@@ -345,7 +344,7 @@ fn carrier(inputs: &JourneyDocument, digest: String) -> anyhow::Result<ReleaseCa
 }
 
 /// The drain bound of a case environment release: the host pods' grace period
-/// and `WAMN_DRAIN_BOUND_SECONDS`, as `deploy/platform/values-host-default.yaml`
+/// and `WAMN_DRAIN_BOUND_SECONDS`, as the release chart
 /// sets them (R20).
 const DRAIN_BOUND_SECONDS: u32 = 70;
 
@@ -442,7 +441,9 @@ async fn install_release(
             roles: release_chart::roles(manifest, org, project, env),
             drain_bound_seconds: DRAIN_BOUND_SECONDS,
             actor: "receiving cluster case".to_owned(),
-            host_group: case_release::host_group(&fs::read_to_string(&overlay)?)?,
+            host_group: wamn_gate_harness::render_check::host_group(&fs::read_to_string(
+                &overlay,
+            )?)?,
         },
     )
     .await?;
@@ -557,21 +558,7 @@ fn render_host(
         project: identity().project.clone(),
         environment: identity().environment.clone(),
     };
-    let mut overlay = fs::read_to_string(
-        cluster
-            .repository
-            .join("deploy/platform/values-host-receiving-pat.yaml"),
-    )?;
-    if cluster.candidate.is_some() {
-        overlay = overlay_values(&overlay, &event)?;
-    }
-    let mut values = render_host_values(
-        &fs::read_to_string(
-            cluster
-                .repository
-                .join("deploy/platform/values-host-default.yaml"),
-        )?,
-        &overlay,
+    let mut values = wamn_gate_harness::render_check::host_values(
         &HostValuesInput {
             namespace: NAMESPACE.to_owned(),
             host_tag: cluster.name.clone(),
@@ -586,6 +573,7 @@ fn render_host(
             stream_replicas: source.num_replicas,
             dup_window_secs: source.duplicate_window.as_secs(),
         },
+        "receiving",
     )?;
     if cluster.candidate.is_some() {
         values.base = super::delivery::host_values(&values.base, &cluster.host_image)?;

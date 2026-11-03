@@ -9,7 +9,7 @@
 # RoleBinding's namespace. The control host group runs as the one platform
 # service account `wamn-host` in the release namespace (docs/operations/gcp.md
 # section 3.23, wamn-okr8y). The control group mounts a projected token
-# (deploy/gcp/values-host.yaml). Environment releases use separate ServiceAccounts.
+# (deploy/platform/release). Environment releases use separate ServiceAccounts.
 #
 # get, list and watch on pods, deployments and workloaddeployments in the
 # release namespace. Credential writes grant create, get and update on Secrets.

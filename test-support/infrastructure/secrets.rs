@@ -500,12 +500,12 @@ mod tests {
                 .collect(),
             object_store_secret_name: None,
         };
-        let base = include_str!("../../deploy/platform/values-host-default.yaml");
-        assert!(render_host_values(base, OVERLAY, &host).is_ok());
+        let base = crate::rendering::host_defaults().unwrap();
+        assert!(render_host_values(&base, OVERLAY, &host).is_ok());
         let mut wrong = host;
         wrong.event.project = "other".into();
         assert!(
-            render_host_values(base, OVERLAY, &wrong)
+            render_host_values(&base, OVERLAY, &wrong)
                 .unwrap_err()
                 .to_string()
                 .contains("missing role Secret")
