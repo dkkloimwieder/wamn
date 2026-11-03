@@ -55,8 +55,8 @@ Control-client tests compose this pinned raw guest with an empty dispatcher and 
 Generator changes select `package_digest` in `wamn-control`.
 Platform fixture and catalog changes select `wamn-control-provision`.
 SQL changes select `wamn-ctl` with `ops`, including `protected_relations_live`.
-Control and platform deployment changes select prekind rendering and the exact native host case.
-The prekind suite runs `environment_render` and `platform_render` in `wamn-control`.
+Control and platform deployment changes select the exact native host case.
+Every change outside documentation selects the prekind suite, which runs `environment_render` and `platform_render` in `wamn-control`.
 The release-chart-render suite runs the ignored Helm cases in `release_chart_render`.
 These contract targets compile separately from the kind cases.
 Web changes select repository web lint, runtime tests, and platform UI checks, tests, and build.
@@ -139,6 +139,7 @@ It preserves command failures and refuses absent or entirely ignored test result
 An explicit dry run or a change set with no selected tests remains a planning result.
 It records no permanent result.
 `tools/test-changes` is the broad check before integration, and it runs once per merge.
+Every merge runs the install render checks in the prekind suite.
 `tools/test-revision` runs it on a committed revision.
 Implementation work runs only fmt, Clippy and the tests of the packages that it changed before handoff.
 Merges are fast-forward after reviewer acceptance.
@@ -367,6 +368,8 @@ A target with no tests takes unit.
 - Kind requires Kubernetes.
 
 Unit and contract run per issue, live tiers run per merge, and kind runs per epic.
+`platform_apply_kind` runs once at each epic close and once on `main` before a GCP build.
+It never runs for a single fix.
 The timeout in the selection file stops a stage after 30 minutes of silence.
 It gives no expected duration.
 The epoch interruption case lives in `wamn-engine --test deadline`.
@@ -777,6 +780,42 @@ The test refuses credentials in progress or Job logs.
 After the qualification refusal, an unchanged apply must skip every step through 4.14.
 The broker and session target Secrets must keep their resource versions.
 
+A failed `platform_apply_kind` run keeps its cluster, both registries, secrets, and work directory under `/var/tmp/platform-apply-<random suffix>`.
+A passing full run deletes them.
+Unset or empty `WAMN_KIND_KEEP` keeps them on failure.
+Set `WAMN_KIND_KEEP=never` to delete them after either outcome.
+The case rejects other values.
+A full run refuses an existing cluster or registry and names the cleanup command.
+
+The fixture writes private `kept.json` with resource names, registry ports, paths, and completed steps.
+It also records the failed step and failed checks.
+It saves release digests, chart and credential paths, progress lines, and comparison values for later steps.
+To delete the named resources and the fixture directory, use the cleanup command from that file:
+
+```bash
+tools/kind-kept-delete /absolute/path/to/kept.json
+```
+
+To resume at a named platform step, set both variables:
+
+```bash
+WAMN_KIND_REUSE=/absolute/path/to/kept.json \
+WAMN_KIND_FROM='4.17 Apply with the release' \
+WAMN_RELEASE_CHART=/absolute/path/to/chart \
+cargo test --locked -p wamn-control --test platform_apply_kind -- --ignored --exact platform_apply_kind --nocapture
+```
+
+The rerun skips earlier steps and runs the selected step and every later step whose dependencies completed.
+It uses saved inputs and does not rebuild earlier steps.
+The install remains one step because its Jobs already skip completed work by input digest.
+Step names and dependencies live in `STEPS` in `crates/control/lib/tests/support/platform_checks.rs`.
+An unknown name fails and lists the known names.
+A missing completed dependency fails and names that dependency.
+Setting only one variable fails.
+A rerun always keeps the cluster, even with `WAMN_KIND_KEEP=never`, and writes a new `kept.json` under the original fixture directory.
+Independent checks record errors and continue.
+A failed required step blocks its dependents and reports them as not run.
+
 The separate environment test needs Docker, kind, Helm 4, kubectl, OpenSSL, and the release chart that `build-platform` stamps.
 The `edge` preparation step supplies the device component.
 Its [test source](../../crates/control/lib/tests/environment_apply_kind.rs) describes the required images and fixtures.
@@ -859,7 +898,7 @@ The rerun table contains these checks:
 
 When you add a rerunnable check, add its name, phase, and function to `CHECKS` in `environment_apply_kind.rs`.
 Call that same function at the existing point in the full run.
-These keep and rerun rules apply only to `environment_apply_kind`.
+The `WAMN_KIND_CHECKS` selection applies only to `environment_apply_kind`.
 
 ### Files on PostgreSQL and MinIO
 

@@ -577,9 +577,10 @@ target = ["test:environment_render", "test:platform_render"]
 tests = []
 features = ["ops"]
 prerequisites = ["helm"]
-inputs = ["^(crates/control/|deploy/platform/)"]
+inputs = []
 execution = "libtest"
 mode = "local"
+always = true
 resource_lock = ""
 timeout = 1800
 

@@ -1262,6 +1262,35 @@ fn runtime_changes_select_the_native_host_reader() {
 }
 
 #[test]
+fn every_change_selects_the_install_render_checks() {
+    let fixture = Fixture::new();
+    let policy = fs::read_to_string(repository_root().join("tests/selection.toml")).unwrap();
+    let prekind = policy
+        .split("[[suites]]")
+        .find(|section| section.contains("id = \"prekind\""))
+        .unwrap();
+    assert!(prekind.contains("always = true"));
+    // The fixture has no wamn-control package, so a fixture package stands for it.
+    let prekind = prekind
+        .replace("package = \"wamn-control\"", "package = \"user\"")
+        .replace(
+            "target = [\"test:environment_render\", \"test:platform_render\"]",
+            "target = [\"lib:user\"]",
+        )
+        .replace("tests = []", "tests = [\"fixture::case\"]")
+        .replace("features = [\"ops\"]", "features = []")
+        .replace("prerequisites = [\"helm\"]", "prerequisites = []");
+    fixture.add_suite(&prekind);
+    fixture.write("crates/far/src/lib.rs", "changed\n");
+    let calls = fixture.selected(&[]);
+    assert!(
+        calls
+            .iter()
+            .any(|call| call.contains(&"fixture::case".to_owned()))
+    );
+}
+
+#[test]
 fn a_change_that_selects_an_image_guest_builds_the_guests_both_ways() {
     // A platform crate the guest links, and a shared WIT root.
     for path in [

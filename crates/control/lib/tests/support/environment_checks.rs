@@ -27,15 +27,9 @@ pub struct Kept {
     pub cleanup: String,
 }
 
-pub fn keep_on_failure(value: Option<&str>) -> anyhow::Result<bool> {
-    match value {
-        None | Some("") => Ok(true),
-        Some("never") => Ok(false),
-        Some(value) => {
-            anyhow::bail!("invalid WAMN_KIND_KEEP={value:?}: accepted value is never (or unset)")
-        }
-    }
-}
+#[path = "kind_checks.rs"]
+mod kind_checks;
+pub use kind_checks::keep_on_failure;
 
 pub fn cluster_name(repository: &Path) -> String {
     let digest = ring::digest::digest(
