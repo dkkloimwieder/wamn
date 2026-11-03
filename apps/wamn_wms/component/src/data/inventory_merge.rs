@@ -10,9 +10,9 @@
 use serde::Deserialize;
 use wamn_postgres_statements::{TimestampTz, Transaction, Uuid};
 
-use crate::error::{self, AccessError, AccessErrorType};
-use crate::scalar;
-use crate::statements::wamn::inventory_merge as sql;
+use crate::data::error::{self, AccessError, AccessErrorType};
+use crate::data::scalar;
+use crate::data::statements::wamn::inventory_merge as sql;
 
 /// One request element's command body.
 #[derive(Debug, Deserialize)]

@@ -1,4 +1,4 @@
-//! `inventory.split` validates and writes under packaging locks.
+//! `inventory.adjust` validates and writes under packaging locks.
 //!
 //! The first statement locks the parent packaging rows and returns any parent
 //! refusal. The second reads quantities with a fresh READ COMMITTED snapshot,
@@ -10,65 +10,54 @@
 use serde::Deserialize;
 use wamn_postgres_statements::{Numeric, TimestampTz, Transaction, Uuid};
 
-use crate::error::{self, AccessError, AccessErrorType};
-use crate::scalar;
-use crate::statements::wamn::inventory_split as sql;
+use crate::data::error::{self, AccessError, AccessErrorType};
+use crate::data::scalar;
+use crate::data::statements::wamn::inventory_adjust as sql;
 
 /// One request element's command body.
 #[derive(Debug, Deserialize)]
-pub struct SplitCommand {
-    pub source_packaging_id: String,
+pub struct AdjustCommand {
+    pub packaging_id: String,
     pub product_id: String,
     pub status: String,
     pub quantity: String,
-    pub new_packaging_code: String,
-    pub new_packaging_type: String,
-    pub to_location_id: String,
+    pub reason_code: String,
     pub expected_row_version: i32,
     pub occurred_at: String,
 }
 
-/// What one accepted split answers with.
+/// What one accepted adjust answers with.
 #[derive(Debug, PartialEq, Eq)]
-pub struct SplitResult {
+pub struct AdjustResult {
     pub transaction_ids: Vec<String>,
-    pub source_packaging_id: String,
-    pub new_packaging_id: String,
-    pub source_status: String,
+    pub packaging_id: String,
+    pub adjusted_quantity: String,
+    pub packaging_status: String,
     pub row_version: i32,
 }
 
+/// The command's scalars in their one wire spelling.
 #[derive(Debug)]
 struct Parsed {
-    source_packaging_id: Uuid,
+    packaging_id: Uuid,
     product_id: Uuid,
     status: String,
     quantity: Numeric,
-    new_packaging_type: String,
-    to_location_id: Uuid,
     occurred_at: TimestampTz,
 }
 
-fn parse(command: &SplitCommand) -> Result<Parsed, AccessError> {
-    if command.new_packaging_code.is_empty() {
+fn parse(command: &AdjustCommand) -> Result<Parsed, AccessError> {
+    if command.reason_code.is_empty() {
         return Err(AccessError::field(
             AccessErrorType::InvalidInput,
-            "value.new_packaging_code",
+            "value.reason_code",
         ));
     }
     Ok(Parsed {
-        source_packaging_id: scalar::uuid(
-            "value.source_packaging_id",
-            &command.source_packaging_id,
-        )?,
+        packaging_id: scalar::uuid("value.packaging_id", &command.packaging_id)?,
         product_id: scalar::uuid("value.product_id", &command.product_id)?,
         status: scalar::quantity_status("value.status", &command.status)?,
-        quantity: scalar::numeric("value.quantity", &command.quantity)?,
-        new_packaging_type: scalar::packaging_type(
-            "value.new_packaging_type",
-            &command.new_packaging_type,
-        )?,
-        to_location_id: scalar::uuid("value.to_location_id", &command.to_location_id)?,
+        quantity: scalar::count("value.quantity", &command.quantity)?,
         occurred_at: scalar::timestamp("value.occurred_at", &command.occurred_at)?,
     })
 }
@@ -81,20 +70,20 @@ fn parse(command: &SplitCommand) -> Result<Parsed, AccessError> {
 /// declares for that refusal.
 pub async fn execute(
     transaction: &mut Transaction,
-    command: &SplitCommand,
-) -> Result<SplitResult, AccessError> {
+    command: &AdjustCommand,
+) -> Result<AdjustResult, AccessError> {
     let parsed = parse(command)?;
     run(transaction, command, &parsed).await
 }
 
 async fn run(
     transaction: &mut Transaction,
-    command: &SplitCommand,
+    command: &AdjustCommand,
     parsed: &Parsed,
-) -> Result<SplitResult, AccessError> {
+) -> Result<AdjustResult, AccessError> {
     let locked = sql::lock_packaging(
         transaction,
-        parsed.source_packaging_id.clone(),
+        parsed.packaging_id.clone(),
         command.expected_row_version,
     )
     .await
@@ -102,23 +91,21 @@ async fn run(
     error::command_outcome(&locked.outcome, &locked.detail.0)?;
 
     // This statement starts after the lock wait, so child reads see fresh data.
-    let written = sql::split(
+    let written = sql::adjust(
         transaction,
-        parsed.source_packaging_id.clone(),
+        parsed.packaging_id.clone(),
         parsed.product_id.clone(),
         parsed.status.clone(),
         parsed.quantity.clone(),
-        command.new_packaging_code.clone(),
-        parsed.new_packaging_type.clone(),
-        parsed.to_location_id.clone(),
+        command.reason_code.clone(),
         parsed.occurred_at.clone(),
     )
     .await
     .map_err(|e| error::from_statement(&e))?;
     error::command_outcome(&written.outcome, &written.detail.0)?;
-    let (Some(transaction_id), Some(new_packaging_id), Some(row_version), Some(source_status)) = (
+    let (Some(transaction_id), Some(adjusted_quantity), Some(row_version), Some(packaging_status)) = (
         written.transaction_id,
-        written.new_packaging_id,
+        written.adjusted_quantity,
         written.row_version,
         written.status,
     ) else {
@@ -127,11 +114,11 @@ async fn run(
             serde_json::json!({}),
         ));
     };
-    Ok(SplitResult {
+    Ok(AdjustResult {
         transaction_ids: vec![transaction_id.0],
-        source_packaging_id: parsed.source_packaging_id.0.clone(),
-        new_packaging_id: new_packaging_id.0,
-        source_status,
+        packaging_id: parsed.packaging_id.0.clone(),
+        adjusted_quantity: adjusted_quantity.0,
+        packaging_status,
         row_version,
     })
 }
@@ -140,33 +127,37 @@ async fn run(
 mod tests {
     use super::*;
 
-    fn command() -> SplitCommand {
-        SplitCommand {
-            source_packaging_id: "00000000-0000-0000-0000-000000000301".to_owned(),
+    fn command(packaging_id: &str, occurred_at: &str) -> AdjustCommand {
+        AdjustCommand {
+            packaging_id: packaging_id.to_owned(),
             product_id: "00000000-0000-0000-0000-000000000101".to_owned(),
             status: "available".to_owned(),
-            quantity: "4".to_owned(),
-            new_packaging_code: "PAL-302".to_owned(),
-            new_packaging_type: "tote".to_owned(),
-            to_location_id: "00000000-0000-0000-0000-000000000202".to_owned(),
+            quantity: "7".to_owned(),
+            reason_code: "cycle-count".to_owned(),
             expected_row_version: 1,
-            occurred_at: "2026-09-05T00:00:00Z".to_owned(),
+            occurred_at: occurred_at.to_owned(),
         }
     }
 
     #[test]
-    fn a_blank_packaging_code_and_a_zero_quantity_refuse_before_any_statement() {
-        let mut blank = command();
-        blank.new_packaging_code.clear();
+    fn the_reason_and_status_are_refused_before_any_statement() {
+        let mut blank = command(
+            "00000000-0000-0000-0000-00000000030a",
+            "2026-09-05T00:00:00Z",
+        );
+        blank.reason_code.clear();
         assert_eq!(
             parse(&blank).unwrap_err().detail()["field"],
-            "value.new_packaging_code"
+            "value.reason_code"
         );
-        let mut zero = command();
-        zero.quantity = "0.0".to_owned();
+        let mut consumed = command(
+            "00000000-0000-0000-0000-00000000030a",
+            "2026-09-05T00:00:00Z",
+        );
+        consumed.status = "consumed".to_owned();
         assert_eq!(
-            parse(&zero).unwrap_err().detail()["field"],
-            "value.quantity"
+            parse(&consumed).unwrap_err().detail()["field"],
+            "value.status"
         );
     }
 }

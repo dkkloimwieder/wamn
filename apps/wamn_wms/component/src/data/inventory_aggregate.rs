@@ -6,10 +6,10 @@
 
 use wamn_postgres_statements::Connection;
 
-use crate::error::{self, AccessError};
-use crate::statements::wamn::inventory_aggregate as sql;
+use crate::data::error::{self, AccessError};
+use crate::data::statements::wamn::inventory_aggregate as sql;
 
-pub use crate::statements::wamn::inventory_aggregate::InventoryAggregateRow;
+pub use crate::data::statements::wamn::inventory_aggregate::InventoryAggregateRow;
 
 /// # Errors
 ///

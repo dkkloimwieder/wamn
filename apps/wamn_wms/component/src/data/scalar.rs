@@ -8,7 +8,7 @@
 
 use wamn_postgres_statements::{Numeric, TimestampTz, Uuid};
 
-use crate::error::{AccessError, AccessErrorType};
+use crate::data::error::{AccessError, AccessErrorType};
 
 /// The packaging status a command refuses to work on: a consumed packaging is
 /// history, not live stock (`inventory_aggregate.sql` says why).

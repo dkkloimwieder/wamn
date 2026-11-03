@@ -1,4 +1,4 @@
-use wamn_wms_data_access::{
+use crate::data::{
     AccessError, inventory_adjust, inventory_aggregate, inventory_merge, inventory_move,
     inventory_split,
 };

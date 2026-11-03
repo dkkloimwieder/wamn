@@ -1,5 +1,5 @@
 //! The statement accessors of the WMS commands, materialized in the package.
-//! The generated operations include their own, in [`crate::generated`].
+//! The generated operations include their own, in [`crate::data::generated`].
 
 /// Runtime projections carrying only admitted statement paths.
 pub(crate) mod wamn {

@@ -5,11 +5,17 @@
 
 //! One package-grain component exporting every WMS operation.
 
+#[expect(
+    dead_code,
+    reason = "private data modules retain the complete generated and authored refusal vocabulary"
+)]
+mod data;
+
 mod inventory;
 
 /// The generated operations, whole.
 mod generated {
-    use wamn_wms_data_access::generated as data;
+    use crate::data::generated as data;
     include!(concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/../../target/wamn/wamn_wms/component/mod.rs"
