@@ -1379,6 +1379,14 @@ async fn submit_cloud_build(
 /// The Docker CLI with buildx, the version that the runner image pins.
 const CLOUD_DOCKER_IMAGE: &str = "docker:28.5.1-cli";
 
+/// The token step. `$1` is the registry host, and Cloud Build reads `$$` as `$`.
+const CLOUD_AUTH_SCRIPT: &str = r#"set -eu
+umask 077
+token=$(gcloud auth print-access-token 2>/dev/null)
+auth=$(printf 'oauth2accesstoken:%s' "$token" | base64 -w0)
+printf '{"auths":{"%s":{"auth":"%s"}}}' "$1" "$auth" > /cloud-auth/config.json
+"#;
+
 fn cloud_configuration(
     request: &BuildPlatformRequest,
     supplement: &str,
@@ -1392,16 +1400,11 @@ fn cloud_configuration(
     // The token is captured in memory, then written privately to the shared
     // credential volume. Neither the token nor its encoded form is logged.
     // A token lasts an hour, so each push step gets a fresh one.
-    let auth = r"import base64, json, os, subprocess, sys
-os.umask(0o077)
-token = subprocess.check_output(['gcloud', 'auth', 'print-access-token'], stderr=subprocess.DEVNULL).decode().strip()
-with open('/cloud-auth/config.json', 'w') as output:
-    json.dump({'auths': {sys.argv[1]: {'auth': base64.b64encode(('oauth2accesstoken:' + token).encode()).decode()}}}, output)
-";
+    let auth = CLOUD_AUTH_SCRIPT.replace('$', "$$");
     let volume = json!([{"name": "cloud-auth", "path": "/cloud-auth"}]);
     let auth_step = json!({
-        "name": "gcr.io/google.com/cloudsdktool/cloud-sdk:slim", "entrypoint": "python3",
-        "args": ["-c", auth, request.registry.split('/').next().context("registry host")?],
+        "name": "gcr.io/google.com/cloudsdktool/cloud-sdk:slim", "entrypoint": "bash",
+        "args": ["-c", auth, "bash", request.registry.split('/').next().context("registry host")?],
         "volumes": volume,
     });
     // The worker daemon's BuildKit lacks named build contexts, so buildx runs
@@ -1722,9 +1725,13 @@ mod tests {
         // Each image build follows its own token step.
         for (index, step) in steps.iter().enumerate() {
             if pushes(step) {
-                assert_eq!(steps[index - 1]["entrypoint"], "python3");
+                assert_eq!(steps[index - 1]["entrypoint"], "bash");
             }
         }
+        assert!(
+            !steps.iter().any(|step| step.to_string().contains("python")),
+            "no Cloud Build step runs python"
+        );
         assert!(!steps.iter().any(|step| step["args"][0] == "push"));
         let has = |step: &serde_json::Value, text: &str| {
             step["args"]
@@ -1766,6 +1773,38 @@ mod tests {
         assert!(!builds.iter().any(|step| has(step, "host")));
         assert!(builds.iter().any(|step| has(step, "roles")));
         assert_eq!(wash(steps), 2);
+    }
+
+    #[test]
+    fn the_cloud_token_step_writes_a_private_docker_credential() {
+        use base64::Engine as _;
+        use std::os::unix::fs::PermissionsExt as _;
+        let directory =
+            std::env::temp_dir().join(format!("wamn-cloud-auth-{}", std::process::id()));
+        std::fs::create_dir_all(&directory).unwrap();
+        let gcloud = directory.join("gcloud");
+        std::fs::write(&gcloud, "#!/bin/sh\necho token-1\n").unwrap();
+        std::fs::set_permissions(&gcloud, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let file = directory.join("config.json");
+        let script = CLOUD_AUTH_SCRIPT.replace("/cloud-auth/config.json", file.to_str().unwrap());
+        let path = format!("{}:{}", directory.display(), std::env::var("PATH").unwrap());
+        let status = std::process::Command::new("bash")
+            .args(["-c", &script, "bash", "us-central1-docker.pkg.dev"])
+            .env("PATH", path)
+            .status()
+            .unwrap();
+        assert!(status.success());
+        let written: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&file).unwrap()).unwrap();
+        assert_eq!(
+            written["auths"]["us-central1-docker.pkg.dev"]["auth"],
+            base64::engine::general_purpose::STANDARD.encode("oauth2accesstoken:token-1")
+        );
+        assert_eq!(
+            std::fs::metadata(&file).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+        std::fs::remove_dir_all(&directory).unwrap();
     }
 
     #[test]
