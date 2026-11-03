@@ -6,9 +6,9 @@
 
 use wamn_postgres_statements::Transaction;
 
-use crate::error::{self, AccessError};
-use crate::scalar;
-use crate::statements::wamn::sample_record as record_sql;
+use crate::data::error::{self, AccessError};
+use crate::data::scalar;
+use crate::data::statements::wamn::sample_record as record_sql;
 
 /// One forwarded sample, as the edge box sends it.
 #[derive(Debug)]

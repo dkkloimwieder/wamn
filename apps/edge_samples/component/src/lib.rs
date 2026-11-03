@@ -5,11 +5,17 @@
 
 //! One package-grain component exporting every edge samples operation.
 
+#[expect(
+    dead_code,
+    reason = "private data modules retain the complete generated and authored refusal vocabulary"
+)]
+mod data;
+
 mod sample;
 
 /// The generated operations, whole.
 mod generated {
-    use wamn_edge_samples_data_access::generated as data;
+    use crate::data::generated as data;
     include!(concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/../../target/wamn/edge_samples/component/mod.rs"

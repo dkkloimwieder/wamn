@@ -10,9 +10,13 @@ pub mod sample;
 mod scalar;
 mod statements;
 
-pub use error::{AccessError, AccessErrorType};
+pub use error::AccessError;
 
 /// The generated operations, one module for each model, and their refusal.
+#[expect(
+    clippy::enum_variant_names,
+    reason = "generated refusal names match the closed wire vocabulary"
+)]
 pub mod generated {
     include!(concat!(
         env!("CARGO_MANIFEST_DIR"),

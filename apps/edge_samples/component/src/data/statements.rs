@@ -1,5 +1,5 @@
 //! The statement accessor of the `sample.record` command, materialized in the
-//! package. The generated operation includes its own, in [`crate::generated`].
+//! package. The generated operation includes its own, in [`crate::data::generated`].
 
 /// Runtime projections carrying only admitted statement paths.
 pub(crate) mod wamn {

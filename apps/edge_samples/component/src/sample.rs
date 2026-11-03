@@ -1,4 +1,4 @@
-use wamn_edge_samples_data_access::{AccessError, sample};
+use crate::data::{AccessError, sample};
 
 fn detail(error: &AccessError, key: &str) -> Option<String> {
     let value = error.detail().get(key)?;

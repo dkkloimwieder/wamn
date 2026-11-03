@@ -6,7 +6,7 @@
 
 use wamn_postgres_statements::TimestampTz;
 
-use crate::error::{AccessError, AccessErrorType};
+use crate::data::error::{AccessError, AccessErrorType};
 
 /// A required text value. A blank value refuses on its field.
 pub(crate) fn text<'a>(field: &str, value: &'a str) -> Result<&'a str, AccessError> {

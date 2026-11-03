@@ -6,16 +6,15 @@ description = "Package-grain edge samples operation component"
 license = "Apache-2.0"
 
 [dependencies]
+wamn-data-access = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
 uuid.workspace = true
-wamn-edge-samples-data-access = { workspace = true }
 wamn-postgres-statements = { workspace = true }
 wit-bindgen = { workspace = true }
 
 [lib]
 crate-type = ["cdylib"]
-test = false
 bench = false
 
 [lints]
