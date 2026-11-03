@@ -244,6 +244,24 @@ fn host_command(
             {
                 continue;
             }
+            // The pod mounts the wamn-oauth Secret at this path. The local host
+            // reads the same key from a private file in its directory.
+            if name == "WAMN_OAUTH_KEY_FILE" {
+                let key = secrets
+                    .iter()
+                    .find(|secret| secret["metadata"]["name"] == "wamn-oauth")
+                    .context("wamn-oauth Secret")?["stringData"]["key"]
+                    .as_str()
+                    .context("OAuth key")?;
+                let path = directory.join("oauth-key");
+                std::fs::write(&path, key)?;
+                std::fs::set_permissions(
+                    &path,
+                    std::os::unix::fs::PermissionsExt::from_mode(0o600),
+                )?;
+                command.env(name, &path);
+                continue;
+            }
             value.to_owned()
         } else if let Some(reference) = variable.pointer("/valueFrom/secretKeyRef") {
             let secret = secrets
@@ -724,6 +742,10 @@ async fn prekind_http_host_runs_and_rejects_respond_without_caller() -> anyhow::
         &["config.json", "ca.crt"],
         NAMESPACE,
     ));
+    let mut oauth =
+        wamn_gate_harness::render_check::prerequisite("wamn-oauth", &["key"], NAMESPACE);
+    oauth["stringData"]["key"] = "o".repeat(32).into();
+    secrets.push(oauth);
     // cert-manager issues the environment's NATS certificate (R5).
     secrets.push(wamn_gate_harness::render_check::prerequisite(
         &format!(
