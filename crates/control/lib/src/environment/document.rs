@@ -29,9 +29,9 @@ pub struct EnvironmentDocument {
     /// `none`, or a full `sha256:` digest.
     pub release: DeclaredRelease,
     pub route_host: String,
-    /// The package whose web client this route host serves.
+    /// The package and pinned web artifact this route host serves. Absent means no client.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub client_package: Option<String>,
+    pub client: Option<Client>,
     /// A policy of `registry.env_policies`, by name.
     pub policy: String,
     /// Application name to the packages of the release that belong to it.
@@ -41,6 +41,14 @@ pub struct EnvironmentDocument {
     /// Package id to the version to contract to (R13).
     #[serde(default)]
     pub floors: BTreeMap<String, String>,
+}
+
+/// The package id and immutable web artifact of an environment's client.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Client {
+    pub package: String,
+    pub web: String,
 }
 
 /// The published version of a project integration.
@@ -142,6 +150,9 @@ impl EnvironmentDocument {
             self.route_host
         );
         ensure!(!self.policy.is_empty(), "policy is empty");
+        if let Some(client) = &self.client {
+            wamn_package_artifact::ensure_digest(&client.web).context("client.web")?;
+        }
         for (name, application) in &self.applications {
             ensure!(!name.is_empty(), "an application has an empty name");
             ensure!(
@@ -210,8 +221,12 @@ impl EnvironmentDocument {
         ] {
             lines.push(format!("    {key} = {}", quote(&value)));
         }
-        if let Some(package) = &self.client_package {
-            lines.push(format!("    client_package = {}", quote(package)));
+        if let Some(client) = &self.client {
+            lines.push(format!(
+                "    client = {{package = {}, web = {}}}",
+                quote(&client.package),
+                quote(&client.web)
+            ));
         }
         lines.push("    integrations = {".to_owned());
         for (name, integration) in &self.integrations {
@@ -296,7 +311,7 @@ mod tests {
             serde_json::from_value::<EnvironmentDocument>(input)
                 .unwrap_err()
                 .to_string(),
-            "unknown field `connections`, expected one of `org`, `project`, `env`, `target`, `release`, `route_host`, `client_package`, `policy`, `applications`, `integrations`, `floors`"
+            "unknown field `connections`, expected one of `org`, `project`, `env`, `target`, `release`, `route_host`, `client`, `policy`, `applications`, `integrations`, `floors`"
         );
     }
 
@@ -490,7 +505,12 @@ mod tests {
 
     #[test]
     fn the_kcl_form_compiles_back_to_the_same_document() {
-        let parsed = EnvironmentDocument::from_json(document().to_string().as_bytes()).unwrap();
+        let mut input = document();
+        input["client"] = json!({
+            "package": "wamn_wms",
+            "web": wamn_execution_contract::bytes_sha256(b"web artifact")
+        });
+        let parsed = EnvironmentDocument::from_json(input.to_string().as_bytes()).unwrap();
         let directory =
             std::env::temp_dir().join(format!("wamn-environment-{}", std::process::id()));
         std::fs::create_dir_all(&directory).expect("create the directory");
@@ -500,6 +520,33 @@ mod tests {
         let compiled = EnvironmentDocument::compile(&file);
         std::fs::remove_dir_all(&directory).expect("remove the directory");
         assert_eq!(compiled.expect("the document compiles"), parsed);
+    }
+
+    #[test]
+    fn client_web_requires_a_full_lowercase_digest_in_json_and_kcl() {
+        let directory =
+            std::env::temp_dir().join(format!("wamn-environment-web-{}", std::process::id()));
+        std::fs::create_dir_all(&directory).unwrap();
+        let file = directory.join("environment.k");
+        for web in [
+            "sha256:".to_owned(),
+            format!("sha256:{}", "a".repeat(63)),
+            format!("sha256:{}", "a".repeat(65)),
+            format!("sha256:{}", "A".repeat(64)),
+            format!("sha512:{}", "a".repeat(64)),
+            format!("sha256:{}\n", "a".repeat(64)),
+        ] {
+            let mut input = document();
+            input["client"] = json!({"package": "wamn_wms", "web": web});
+            assert!(EnvironmentDocument::from_json(input.to_string().as_bytes()).is_err());
+            let parsed: EnvironmentDocument = serde_json::from_value(input).unwrap();
+            std::fs::write(&file, parsed.to_kcl()).unwrap();
+            assert!(
+                wamn_schema_generator::compile_environment(&file).is_err(),
+                "{web:?}"
+            );
+        }
+        std::fs::remove_dir_all(&directory).unwrap();
     }
 
     #[test]

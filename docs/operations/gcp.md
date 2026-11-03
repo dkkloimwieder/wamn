@@ -1103,9 +1103,11 @@ gcloud storage buckets add-iam-policy-binding gs://wamn-dev-web --member service
 gcloud iam service-accounts add-iam-policy-binding wamn-edge@wamn-dev.iam.gserviceaccount.com --project wamn-dev --role roles/iam.workloadIdentityUser --member 'serviceAccount:wamn-dev.svc.id.goog[edge/wamn-edge-web]'
 ```
 
-Each environment can set `client_package` to the package id whose web client its `route_host` serves.
-A release with one client needs no name.
-With multiple clients and no name, `env apply` refuses and names the host.
+Each environment can set `client = {package = "<package id>", web = "<full web digest>"}` for its `route_host`.
+Without `client`, the host serves no application web client.
+Apply requires the pinned web artifact's package coordinate to appear in the release.
+The revision values keep `webClients` and `webDigests` beside each other.
+
 The release chart owns the host-to-package map and the release digest in its ConfigMap.
 The edge reads that row and fetches files under `clients/<package>/<release digest hex>/` with `object_store`.
 For the control host, it reads files under `platform-ui/<platform version>/`.

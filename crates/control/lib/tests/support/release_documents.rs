@@ -134,7 +134,7 @@ pub fn fixture_document(env: &str, route_host: &str, digest: &str) -> Environmen
         )]
         .into(),
         target: "cloud".into(),
-        client_package: None,
+        client: None,
         org: ORG.to_owned(),
         project: PROJECT.to_owned(),
         env: env.to_owned(),
@@ -1068,7 +1068,7 @@ pub mod workflow {
             env: ENVIRONMENT.into(),
             release: DeclaredRelease::None,
             route_host: "integration.orders.example".into(),
-            client_package: None,
+            client: None,
             policy: POLICY.into(),
             // The existing consumer and integration packages put this application's
             // models in two schemas. The connector supplies the workflow components.

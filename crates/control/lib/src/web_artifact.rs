@@ -12,7 +12,7 @@ use anyhow::{Context as _, bail, ensure};
 use object_store::aws::AmazonS3Builder;
 use object_store::gcp::GoogleCloudStorageBuilder;
 use object_store::{Attribute, Attributes, ObjectStore, ObjectStoreExt as _, PutMode, PutOptions};
-use oci_client::manifest::OCI_IMAGE_MEDIA_TYPE;
+use oci_client::manifest::{OCI_IMAGE_MEDIA_TYPE, OciImageManifest};
 use wamn_execution_contract::{bytes_sha256, canonical_json_bytes};
 use wamn_package_artifact::registry_credentials::read_registry_push_credentials;
 use wamn_package_artifact::{Repository, ensure_digest, ensure_tag, registry_auth};
@@ -55,6 +55,7 @@ enum WebArtifactErrorKind {
     Build,
     Pack,
     Push,
+    Pull,
 }
 
 /// A web artifact failure with its action, path or reference, and source.
@@ -339,6 +340,91 @@ pub async fn push_web_artifact(
         context: format!("{}:{}", registry.artifact_base, packed.tag),
         source,
     })
+}
+
+/// Pull a pinned web artifact and read its canonical metadata without claiming it.
+///
+/// # Errors
+///
+/// Refuses an absent artifact, a digest mismatch, or invalid web metadata.
+pub async fn pull_web_artifact(
+    registry: &PackageRegistry,
+    digest: &str,
+) -> Result<WebManifest, WebArtifactError> {
+    async {
+        ensure_digest(digest)?;
+        let repository = Repository::open(registry, digest)?;
+        let (bytes, _) = repository
+            .manifest()
+            .await?
+            .with_context(|| format!("web artifact {digest} does not exist"))?;
+        let manifest: OciImageManifest = serde_json::from_slice(&bytes)?;
+        ensure!(
+            manifest.artifact_type.as_deref() == Some(WEB_ARTIFACT_TYPE),
+            "{digest} is not a {WEB_ARTIFACT_TYPE} web artifact"
+        );
+        ensure!(
+            manifest.layers.len() == 1 && manifest.layers[0].media_type == WEB_TAR_MEDIA_TYPE,
+            "web artifact {digest} must have one {WEB_TAR_MEDIA_TYPE} layer"
+        );
+        let layer = &manifest.layers[0];
+        let tar = wamn_package_artifact::registry_pull::blob(
+            &repository.client,
+            &repository.reference,
+            layer,
+            tokio::time::Instant::now() + std::time::Duration::from_secs(30),
+        )
+        .await?;
+        ensure!(
+            bytes_sha256(&tar) == layer.digest,
+            "web artifact {digest} layer does not hash to {}",
+            layer.digest
+        );
+        read_web_manifest(&tar)
+    }
+    .await
+    .map_err(|source| WebArtifactError {
+        kind: WebArtifactErrorKind::Pull,
+        context: format!("{}@{digest}", registry.artifact_base),
+        source,
+    })
+}
+
+fn read_web_manifest(tar: &[u8]) -> anyhow::Result<WebManifest> {
+    use std::io::Read as _;
+
+    let mut archive = tar::Archive::new(tar);
+    let mut metadata = None;
+    for entry in archive.entries()? {
+        let mut entry = entry?;
+        if entry.path()?.as_ref() != Path::new(WEB_MANIFEST_FILE) {
+            continue;
+        }
+        ensure!(metadata.is_none(), "web artifact repeats web.json");
+        ensure!(
+            entry.header().entry_type().is_file(),
+            "web.json must be a regular file"
+        );
+        let mut bytes = Vec::new();
+        entry.read_to_end(&mut bytes)?;
+        let web: WebManifest = serde_json::from_slice(&bytes)?;
+        ensure!(bytes == web.to_bytes(), "web.json is not canonical JSON");
+        ensure_digest(&web.contract_digest)?;
+        ensure!(
+            !web.client_package.is_empty(),
+            "web.json has no client_package"
+        );
+        let (package, version) = web
+            .package
+            .split_once('@')
+            .context("web.json package must be <id>@<version>")?;
+        ensure!(
+            !package.is_empty() && !version.is_empty(),
+            "web.json package must be <id>@<version>"
+        );
+        metadata = Some(web);
+    }
+    metadata.context("web artifact has no web.json")
 }
 
 /// A built file name carries its content hash, so a browser keeps it.
@@ -648,7 +734,8 @@ mod tests {
 
     use super::{
         Scheme, Sink, WEB_MANIFEST_FILE, WebPushDisposition, artifact_output, build_web_artifact,
-        collect, pack_web_artifact, push_web_artifact, web_manifest, write_files,
+        collect, pack_web_artifact, pull_web_artifact, push_web_artifact, read_web_manifest,
+        web_manifest, write_files,
     };
 
     fn build_fixture(client: Option<&str>) -> (BuildRecord, Vec<u8>) {
@@ -899,8 +986,10 @@ fs.copyFileSync('index.html', dist + '/index.html');
         let auth = scratch.path().join("registry-auth.json");
         fs::write(
             &auth,
-            serde_json::to_vec(&serde_json::json!({"auths": {server.reference.registry(): {}}}))
-                .unwrap(),
+            serde_json::to_vec(&serde_json::json!({"auths": {server.reference.registry(): {
+                "username": "fixture", "password": "fixture"
+            }}}))
+            .unwrap(),
         )
         .unwrap();
         PackageRegistry {
@@ -908,6 +997,94 @@ fs.copyFileSync('index.html', dist + '/index.html');
             registry_auth_file: auth,
             insecure_registry: true,
             oci_ca_paths: Vec::new(),
+        }
+    }
+
+    #[tokio::test]
+    async fn web_pull_reads_verified_metadata_by_digest_without_writes() {
+        let scratch = ScratchRoot::create().unwrap();
+        artifact_fixture(scratch.path(), false);
+        let packed = pack_web_artifact(scratch.path()).unwrap();
+        let server = Server::start(vec![
+            (200, packed.manifest.clone()),
+            (200, packed.tar.clone()),
+            (200, packed.manifest.clone()),
+            (200, packed.tar.clone()),
+        ])
+        .await;
+        let registry = fixture_registry(&scratch, &server);
+        let first = pull_web_artifact(&registry, &packed.digest).await.unwrap();
+        let second = pull_web_artifact(&registry, &packed.digest).await.unwrap();
+        assert_eq!(first, second);
+        assert_eq!(first.package, "web_fixture@1.0.0");
+        assert_eq!(server.requests(), 4);
+    }
+
+    #[tokio::test]
+    async fn web_pull_refuses_absence_and_manifest_or_layer_digest_mismatches() {
+        let scratch = ScratchRoot::create().unwrap();
+        artifact_fixture(scratch.path(), false);
+        let packed = pack_web_artifact(scratch.path()).unwrap();
+        for (responses, digest, reason) in [
+            (
+                vec![(404, Vec::new())],
+                packed.digest.clone(),
+                "does not exist",
+            ),
+            (
+                vec![(200, packed.manifest.clone())],
+                bytes_sha256(b"another manifest"),
+                "Invalid digest",
+            ),
+            (
+                vec![(200, packed.manifest.clone()), (200, b"wrong tar".to_vec())],
+                packed.digest.clone(),
+                "Invalid digest",
+            ),
+        ] {
+            let server = Server::start(responses).await;
+            let error = pull_web_artifact(&fixture_registry(&scratch, &server), &digest)
+                .await
+                .unwrap_err()
+                .to_string();
+            assert!(error.contains(reason), "{error}");
+            assert!(error.contains(&digest), "{error}");
+        }
+    }
+
+    #[test]
+    fn web_metadata_requires_one_canonical_web_json() {
+        let mut empty = tar::Builder::new(Vec::new());
+        empty.finish().unwrap();
+        assert!(read_web_manifest(&empty.into_inner().unwrap()).is_err());
+        for (bytes, copies, reason) in [
+            (b"{}\n".to_vec(), 1, "missing field"),
+            (
+                [
+                    include_bytes!("../tests/support/web-artifact/web.json").as_slice(),
+                    b"\n",
+                ]
+                .concat(),
+                1,
+                "not canonical",
+            ),
+            (
+                include_bytes!("../tests/support/web-artifact/web.json").to_vec(),
+                2,
+                "repeats web.json",
+            ),
+        ] {
+            let mut archive = tar::Builder::new(Vec::new());
+            for _ in 0..copies {
+                let mut header = tar::Header::new_gnu();
+                header.set_size(bytes.len() as u64);
+                header.set_mode(0o644);
+                archive
+                    .append_data(&mut header, WEB_MANIFEST_FILE, &bytes[..])
+                    .unwrap();
+            }
+            let error = read_web_manifest(&archive.into_inner().unwrap()).unwrap_err();
+            assert!(error.to_string().contains(reason), "{error:#}");
         }
     }
 

@@ -20,6 +20,13 @@ schema Integration:
     check:
         version > 0, "version must be positive"
 
+schema Client:
+    package: str
+    web: str
+
+    check:
+        regex.match(web, r"^sha256:[0-9a-f]{64}$"), "web is a full sha256: digest"
+
 schema Environment:
     org: str
     project: str
@@ -28,8 +35,8 @@ schema Environment:
     # A published, qualified release by its full digest, or "none".
     release: str
     route_host: str
-    # Package id of the web client for route_host; one client defaults itself.
-    client_package?: str
+    # The package and immutable web artifact for route_host. Absent means no client.
+    client?: Client
     # A policy of registry.env_policies, by name.
     policy: str
     # Application name to its packages. Every package of the release belongs

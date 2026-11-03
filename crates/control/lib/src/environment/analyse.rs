@@ -127,6 +127,7 @@ pub async fn analyse(
         DeclaredRelease::None => None,
         DeclaredRelease::Digest(declared) => Some(read_release(platform, declared).await?),
     };
+    super::clients::analyse(platform, document, release.as_ref()).await?;
     let revision = read_revision(platform, &release_name).await?;
     let live = read_live_set(platform, &release_name).await?;
     let packages = match &release {

@@ -692,7 +692,7 @@ pub async fn install_candidate(
         env: triple.env.as_str().to_owned(),
         release: DeclaredRelease::Digest(digest.as_str().to_owned()),
         route_host: String::new(),
-        client_package: None,
+        client: None,
         policy: String::new(),
         // The package stage names each package's sequences by its application.
         applications: [(

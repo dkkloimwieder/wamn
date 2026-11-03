@@ -155,6 +155,14 @@ pub(crate) fn release_values(
         host_group,
     )?;
     rendered["webClients"] = serde_yaml::to_value(clients)?;
+    rendered["webDigests"] = serde_yaml::to_value(
+        document
+            .client
+            .as_ref()
+            .map(|client| (document.route_host.clone(), client.web.clone()))
+            .into_iter()
+            .collect::<std::collections::BTreeMap<_, _>>(),
+    )?;
     Ok((rendered, names))
 }
 
@@ -248,6 +256,53 @@ async fn helm_show_chart(chart: &std::path::Path) -> anyhow::Result<String> {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn release_values_keep_both_client_maps_and_clear_an_absent_pin() {
+        let mut document = EnvironmentDocument::from_json(
+            br#"{"org":"acme","project":"wms","env":"dev","target":"cloud","release":"none","route_host":"wms.example.com","policy":"dev","applications":{}}"#,
+        ).unwrap();
+        let manifest = serde_json::from_value(json!({
+            "format-version": wamn_catalog::SERVING_MANIFEST_FORMAT_VERSION,
+            "release": {"packages": []}, "components": [], "routes": [], "attachments": {},
+        }))
+        .unwrap();
+        let digest = wamn_execution_contract::bytes_sha256(b"web artifact");
+        for client in [
+            Some(super::super::document::Client {
+                package: "wms".into(),
+                web: digest.clone(),
+            }),
+            None,
+        ] {
+            document.client = client;
+            let clients = super::super::clients::resolve(&document, ["wms"].into_iter()).unwrap();
+            let (values, _) = release_values(
+                &document,
+                &manifest,
+                &digest,
+                "registry.example/releases",
+                30,
+                "test",
+                None,
+                &clients,
+            )
+            .unwrap();
+            if document.client.is_some() {
+                assert_eq!(
+                    values["webClients"]["wms.example.com"].as_str(),
+                    Some("wms")
+                );
+                assert_eq!(
+                    values["webDigests"]["wms.example.com"].as_str(),
+                    Some(digest.as_str())
+                );
+            } else {
+                assert!(values["webClients"].as_mapping().unwrap().is_empty());
+                assert!(values["webDigests"].as_mapping().unwrap().is_empty());
+            }
+        }
+    }
 
     #[test]
     fn audit_is_no_difference() {

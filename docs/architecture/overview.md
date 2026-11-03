@@ -136,6 +136,13 @@ The release is named by its manifest digest alone.
 
 An environment is declared in one `environment.k` document.
 It names the coordinate, the release digest or `none`, the route host, the policy by name, the connection definitions, and the floors.
+
+Its optional `client` names a package id and an immutable web artifact digest.
+Analysis makes sure that the artifact matches its digest and its package coordinate appears in the release.
+Without `client`, the host serves no application web client.
+Revision values keep `webClients` for package ids and `webDigests` for web artifact digests.
+Apply reads the web artifact without claiming it, so environments can share one artifact.
+
 `wamn-ctl env` has five verbs:
 
 - `apply <file>`: Move the environment toward its document. `--dry-run` prints the plan without the lock.

@@ -59,7 +59,8 @@ pub struct Platform {
     pub registry_auth_file: PathBuf,
     pub oci_ca_paths: Vec<PathBuf>,
     /// `<registry>/<repository>` of package artifacts. Needed only when a
-    /// release names a package the environment does not have yet.
+    /// release names a package the environment does not have yet, or the
+    /// document pins a web artifact.
     pub package_artifact_base: Option<String>,
     /// The repository of component artifacts used during package admission.
     pub component_artifact_base: Option<String>,

@@ -2,33 +2,87 @@
 
 use std::collections::BTreeMap;
 
-use anyhow::{bail, ensure};
+use anyhow::{Context as _, ensure};
 
+use super::Platform;
+use super::analyse::ReleaseFacts;
 use super::document::EnvironmentDocument;
+use crate::package_artifact::PackageRegistry;
+use crate::web_artifact::{WebManifest, pull_web_artifact};
+
+pub(super) async fn analyse(
+    platform: &Platform,
+    document: &EnvironmentDocument,
+    release: Option<&ReleaseFacts>,
+) -> anyhow::Result<()> {
+    let Some(client) = &document.client else {
+        return Ok(());
+    };
+    let registry = PackageRegistry {
+        artifact_base: platform
+            .package_artifact_base
+            .clone()
+            .context("set WAMN_PACKAGE_ARTIFACT_BASE for the pinned web artifact")?,
+        registry_auth_file: platform.registry_auth_file.clone(),
+        insecure_registry: false,
+        oci_ca_paths: platform.oci_ca_paths.clone(),
+    };
+    let web = pull_web_artifact(&registry, &client.web).await?;
+    verify(
+        document,
+        &web,
+        release.into_iter().flat_map(|release| {
+            release
+                .manifest
+                .release
+                .packages
+                .iter()
+                .map(|package| (package.package_id(), package.package_version()))
+        }),
+    )
+}
+
+fn verify<'a>(
+    document: &EnvironmentDocument,
+    web: &WebManifest,
+    packages: impl Iterator<Item = (&'a str, &'a str)>,
+) -> anyhow::Result<()> {
+    let client = document.client.as_ref().expect("a pinned client");
+    let (package, version) = web
+        .package
+        .split_once('@')
+        .context("web.json package must be <id>@<version>")?;
+    ensure!(
+        package == client.package,
+        "web artifact package {package}@{version} differs from client.package {} for release {}",
+        client.package,
+        document.release
+    );
+    ensure!(
+        packages
+            .into_iter()
+            .any(|coordinate| coordinate == (package, version)),
+        "web artifact package {package}@{version} is not in release {}",
+        document.release
+    );
+    Ok(())
+}
 
 pub(super) fn resolve<'a>(
     document: &EnvironmentDocument,
     packages: impl Iterator<Item = &'a str>,
 ) -> anyhow::Result<BTreeMap<String, String>> {
-    let packages: Vec<_> = packages.collect();
-    let selected = match document.client_package.as_deref() {
-        Some(name) => {
+    let selected = match &document.client {
+        Some(client) => {
+            let name = client.package.as_str();
             ensure!(
-                packages.contains(&name),
+                packages.into_iter().any(|package| package == name),
                 "host {} names client package {name}, which the release does not provide",
                 document.route_host
             );
             Some(name)
         }
-        None => match packages.as_slice() {
-            [] => None,
-            [only] => Some(*only),
-            _ => bail!(
-                "hosts [{}] require client_package because the release provides multiple clients: {}",
-                document.route_host,
-                packages.join(", ")
-            ),
-        },
+        None => None,
     };
     Ok(selected
         .map(|name| (document.route_host.clone(), name.to_owned()))
@@ -49,18 +103,23 @@ mod tests {
     }
 
     #[test]
-    fn the_only_client_is_the_default() {
-        assert_eq!(
-            resolve(&document(), ["wms"].into_iter()).unwrap()["wms.example.com"],
-            "wms"
-        );
-        assert!(resolve(&document(), [].into_iter()).unwrap().is_empty());
+    fn no_pin_serves_no_client() {
+        for packages in [vec![], vec!["wms"], vec!["wms", "receiving"]] {
+            assert!(
+                resolve(&document(), packages.into_iter())
+                    .unwrap()
+                    .is_empty()
+            );
+        }
     }
 
     #[test]
     fn a_named_client_selects_its_package() {
         let mut document = document();
-        document.client_package = Some("receiving".into());
+        document.client = Some(super::super::document::Client {
+            package: "receiving".into(),
+            web: wamn_execution_contract::bytes_sha256(b"web artifact"),
+        });
         assert_eq!(
             resolve(&document, ["wms", "receiving"].into_iter()).unwrap()["wms.example.com"],
             "receiving"
@@ -74,12 +133,42 @@ mod tests {
     }
 
     #[test]
-    fn multiple_clients_without_a_name_refuse_with_the_host() {
-        let error = resolve(&document(), ["wms", "receiving"].into_iter()).unwrap_err();
-        assert!(
-            error
-                .to_string()
-                .contains("hosts [wms.example.com] require client_package")
+    fn a_web_pin_requires_its_exact_package_version_in_the_release() {
+        let web: WebManifest =
+            serde_json::from_str(include_str!("../../tests/support/web-artifact/web.json"))
+                .unwrap();
+        let mut document = document();
+        document.release = super::super::document::DeclaredRelease::Digest(
+            wamn_execution_contract::bytes_sha256(b"release"),
         );
+        document.client = Some(super::super::document::Client {
+            package: "web_fixture".into(),
+            web: wamn_execution_contract::bytes_sha256(b"web artifact"),
+        });
+        let error = verify(&document, &web, [("web_fixture", "2.0.0")].into_iter())
+            .unwrap_err()
+            .to_string();
+        for detail in ["web_fixture", "1.0.0", &document.release.to_string()] {
+            assert!(error.contains(detail), "{error}");
+        }
+        verify(&document, &web, [("web_fixture", "1.0.0")].into_iter()).unwrap();
+        let mut second = document.clone();
+        second.env = "qa".into();
+        verify(&second, &web, [("web_fixture", "1.0.0")].into_iter()).unwrap();
+        assert_eq!(document.client, second.client);
+        document.client.as_mut().unwrap().package = "receiving".into();
+        let error = verify(&document, &web, [("web_fixture", "1.0.0")].into_iter())
+            .unwrap_err()
+            .to_string();
+        for detail in [
+            "web_fixture@1.0.0",
+            "receiving",
+            &document.release.to_string(),
+        ] {
+            assert!(error.contains(detail), "{error}");
+        }
+        document.client.as_mut().unwrap().package = "web_fixture".into();
+        document.release = super::super::document::DeclaredRelease::None;
+        assert!(verify(&document, &web, [].into_iter()).is_err());
     }
 }

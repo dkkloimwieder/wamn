@@ -13,7 +13,7 @@ use wamn_control_registry::Triple;
 
 use super::Platform;
 use super::analyse::{connect, read_revision, read_row};
-use super::document::{DeclaredRelease, EnvironmentDocument};
+use super::document::{Client, DeclaredRelease, EnvironmentDocument};
 use crate::release_chart;
 
 /// Synthesize the document of an environment.
@@ -29,7 +29,7 @@ pub async fn show(platform: &Platform, triple: &Triple) -> anyhow::Result<Enviro
         env: triple.env.as_str().to_owned(),
         release: DeclaredRelease::None,
         route_host: String::new(),
-        client_package: None,
+        client: None,
         policy: String::new(),
         applications: BTreeMap::new(),
         integrations: BTreeMap::new(),
@@ -47,9 +47,7 @@ pub async fn show(platform: &Platform, triple: &Triple) -> anyhow::Result<Enviro
         if let Some(digest) = revision.manifest_digest() {
             document.release = DeclaredRelease::Digest(digest.to_owned());
         }
-        document.client_package = revision.values["webClients"][&document.route_host]
-            .as_str()
-            .map(str::to_owned);
+        document.client = revision_client(&revision.values, &document.route_host)?;
         document.applications = revision_applications(&revision.values)?;
     }
     if let DeclaredRelease::Digest(digest) = &document.release {
@@ -76,6 +74,20 @@ pub async fn show(platform: &Platform, triple: &Triple) -> anyhow::Result<Enviro
         }
     }
     Ok(document)
+}
+
+fn revision_client(values: &serde_json::Value, host: &str) -> anyhow::Result<Option<Client>> {
+    match (
+        values["webClients"][host].as_str(),
+        values["webDigests"][host].as_str(),
+    ) {
+        (None, None) => Ok(None),
+        (Some(package), Some(web)) => Ok(Some(Client {
+            package: package.to_owned(),
+            web: web.to_owned(),
+        })),
+        _ => anyhow::bail!("revision must name both webClients and webDigests for host {host}"),
+    }
 }
 
 /// The release an environment serves, as [`show`] derives it: the digest of
@@ -118,5 +130,33 @@ fn revision_applications(
         None | Some(serde_json::Value::Null) => Ok(BTreeMap::new()),
         Some(applications) => serde_json::from_value(applications.clone())
             .context("read the applications of the Helm revision"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn revision_client_reads_the_package_and_web_pin_together() {
+        let digest = wamn_execution_contract::bytes_sha256(b"web artifact");
+        let values = json!({
+            "webClients": {"wms.example.com": "wms"},
+            "webDigests": {"wms.example.com": digest},
+        });
+        assert_eq!(
+            revision_client(&values, "wms.example.com").unwrap(),
+            Some(Client {
+                package: "wms".into(),
+                web: digest
+            })
+        );
+        assert_eq!(revision_client(&values, "other.example.com").unwrap(), None);
+        for key in ["webClients", "webDigests"] {
+            let mut incomplete = values.clone();
+            incomplete.as_object_mut().unwrap().remove(key);
+            assert!(revision_client(&incomplete, "wms.example.com").is_err());
+        }
     }
 }

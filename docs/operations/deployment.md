@@ -187,6 +187,15 @@ Then run these steps in this order:
 `env apply` creates the environment row, its `Database`, its roles, its run plane, and its credential Secrets.
 The first apply names `release = "none"`, because `publish-release` needs the environment's database.
 A later apply names the release digest and installs the release chart.
+
+The optional `client` field pins an application web artifact: `client = {package = "wamn_receiving", web = "<full web digest>"}`.
+The web digest is `sha256:` and 64 lowercase hexadecimal digits, as `wamn web push` prints it.
+Without `client`, the host serves no application web client, even when the release contains one client package.
+Apply pulls the artifact from `WAMN_PACKAGE_ARTIFACT_BASE` with the existing registry credentials and CA paths.
+It refuses a web artifact whose package id differs from `client.package` or whose package version is absent from the release.
+The revision values keep the host-to-package map in `webClients` and the host-to-web-digest map in `webDigests`.
+
+The same immutable web artifact can serve more than one environment.
 The verb reads its platform inputs from environment variables ([Google Cloud platform file](gcp.md#410-platform-file)):
 
 ```bash

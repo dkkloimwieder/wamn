@@ -449,7 +449,7 @@ async fn bind_labels(
         env: identity().environment.clone(),
         release: DeclaredRelease::Digest(digest.into()),
         route_host: identity().route_host.clone(),
-        client_package: None,
+        client: None,
         policy: "dev".into(),
         applications: BTreeMap::from([(
             "wamn_wms".into(),
@@ -783,7 +783,7 @@ pub async fn publish(
             env: identity().environment.clone(),
             release: DeclaredRelease::Digest(release_digest.clone()),
             route_host: identity().route_host.clone(),
-            client_package: None,
+            client: None,
             policy: String::new(),
             applications: BTreeMap::from([(
                 package.package_id().to_owned(),
