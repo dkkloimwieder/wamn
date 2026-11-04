@@ -475,6 +475,7 @@ pub(super) async fn publish_journey_release(
         },
         &registry,
         &inputs.release_artifact_base,
+        Some(&inputs.component_artifact_base),
     )
     .await
     .context("publish the production Receiving release")?

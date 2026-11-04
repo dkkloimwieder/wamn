@@ -78,6 +78,9 @@ pub async fn publish(args: PublishReleaseArgs) -> anyhow::Result<()> {
         },
         &registry,
         &release_artifact_base,
+        std::env::var("WAMN_COMPONENT_ARTIFACT_BASE")
+            .ok()
+            .as_deref(),
     )
     .await?;
     println!("{digest}");

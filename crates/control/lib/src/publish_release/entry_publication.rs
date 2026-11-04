@@ -19,6 +19,7 @@ pub(super) async fn publish(
     registry: &PackageRegistry,
     applications: &wamn_catalog::EnvironmentApplications,
     application: Option<&str>,
+    component_base: Option<&str>,
 ) -> anyhow::Result<()> {
     if !published
         .manifest
@@ -28,11 +29,11 @@ pub(super) async fn publish(
     {
         return Ok(());
     }
-    let component_base = std::env::var("WAMN_COMPONENT_ARTIFACT_BASE")
-        .context("set WAMN_COMPONENT_ARTIFACT_BASE for release entry publication")?;
+    let component_base =
+        component_base.context("set WAMN_COMPONENT_ARTIFACT_BASE for release entry publication")?;
     let source = ComponentArtifactSource::new(
         ComponentArtifactSourceConfig::new(
-            &component_base,
+            component_base,
             registry.insecure_registry,
             Duration::from_secs(30),
         )?

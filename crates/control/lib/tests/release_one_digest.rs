@@ -222,6 +222,9 @@ async fn publish_through_publish_release(
         },
         registry,
         releases,
+        std::env::var("WAMN_COMPONENT_ARTIFACT_BASE")
+            .ok()
+            .as_deref(),
     )
     .await
 }

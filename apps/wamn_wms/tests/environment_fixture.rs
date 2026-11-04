@@ -753,6 +753,7 @@ pub async fn publish(
         },
         &registry,
         &inputs.release_artifact_base,
+        Some(&inputs.component_artifact_base),
     )
     .await?
     .to_string();
