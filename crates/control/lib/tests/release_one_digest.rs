@@ -25,7 +25,9 @@ use wamn_control::package_artifact::{
     PackageRegistry, PushPackageRequest, open_package, push_package,
 };
 use wamn_control::provision_org::{OrgRecord, ProvisionOrgRequest, provision_org};
-use wamn_control::publish_release::{PublishReleaseRequest, publish_release};
+use wamn_control::publish_release::{
+    EntryPublicationInputs, PublishReleaseRequest, publish_release,
+};
 use wamn_control::verification_policy::project_environment_policy;
 use wamn_control_registry::{Template, project_env_key};
 use wamn_schema_control::BareSchemaName;
@@ -197,6 +199,7 @@ async fn publish_through_publish_release(
     )
     .await
     .expect("project the environment policy");
+    let route_guest = route_guest();
     publish_release(
         PublishReleaseRequest {
             applications: [(
@@ -224,7 +227,12 @@ async fn publish_through_publish_release(
         releases,
         std::env::var("WAMN_COMPONENT_ARTIFACT_BASE")
             .ok()
-            .as_deref(),
+            .as_deref()
+            .map(|component_artifact_base| EntryPublicationInputs {
+                component_artifact_base,
+                route_guest: &route_guest,
+            })
+            .as_ref(),
     )
     .await
 }

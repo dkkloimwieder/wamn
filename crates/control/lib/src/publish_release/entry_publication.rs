@@ -1,6 +1,6 @@
 //! Publish the composed workload through the runtime's OCI component publisher.
 
-use std::path::PathBuf;
+use std::path::Path;
 use std::time::Duration;
 
 use anyhow::{Context as _, ensure};
@@ -13,13 +13,22 @@ use wamn_runtime::component_artifact_source::{
 
 use super::{PackageRegistry, PublishedRelease, ReleaseComponents};
 
+/// What the caller names for a release with an HTTP entry: the component
+/// repository the composed workload is pushed to, and the pinned HTTP route
+/// guest it composes.
+#[derive(Debug, Clone, Copy)]
+pub struct EntryPublicationInputs<'a> {
+    pub component_artifact_base: &'a str,
+    pub route_guest: &'a Path,
+}
+
 pub(super) async fn publish(
     published: &mut PublishedRelease,
     components: &ReleaseComponents,
     registry: &PackageRegistry,
     applications: &wamn_catalog::EnvironmentApplications,
     application: Option<&str>,
-    component_base: Option<&str>,
+    inputs: Option<&EntryPublicationInputs<'_>>,
 ) -> anyhow::Result<()> {
     if !published
         .manifest
@@ -29,23 +38,23 @@ pub(super) async fn publish(
     {
         return Ok(());
     }
-    let component_base =
-        component_base.context("set WAMN_COMPONENT_ARTIFACT_BASE for release entry publication")?;
+    let inputs = inputs
+        .context("entry publication needs the component artifact base and the route guest path")?;
     let source = ComponentArtifactSource::new(
         ComponentArtifactSourceConfig::new(
-            component_base,
+            inputs.component_artifact_base,
             registry.insecure_registry,
             Duration::from_secs(30),
         )?
         .with_registry_auth_file(&registry.registry_auth_file)?
         .with_ca_paths(&registry.oci_ca_paths)?,
     )?;
-    let route_path = std::env::var_os("WAMN_FLOW_HTTP_COMPONENT").map_or_else(
-        || PathBuf::from("/usr/local/share/wamn/http_route.wasm"),
-        PathBuf::from,
-    );
-    let route =
-        std::fs::read(&route_path).context("read the publisher's pinned HTTP route guest")?;
+    let route = std::fs::read(inputs.route_guest).with_context(|| {
+        format!(
+            "read the publisher's pinned HTTP route guest {}",
+            inputs.route_guest.display()
+        )
+    })?;
     let mut candidates = Vec::new();
     for application in components.facts.values().flatten() {
         if published.manifest.components.iter().any(|released| {
@@ -67,7 +76,8 @@ pub(super) async fn publish(
     )?;
     // The entry lives beside the members, under the component artifact base.
     let repository = format!(
-        "{component_base}/{}",
+        "{}/{}",
+        inputs.component_artifact_base,
         wamn_catalog::COMPOSED_ENTRY_REPOSITORY
     );
     let base = wamn_catalog::parse_component_artifact_base(&repository)?;

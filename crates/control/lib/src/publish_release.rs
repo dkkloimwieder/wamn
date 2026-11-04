@@ -41,6 +41,7 @@ use attachments::{
 use components::{
     project_serving_component, resolve_component_dependency_closure, resolve_route_component,
 };
+pub use entry_publication::EntryPublicationInputs;
 pub use package_sources::package_route;
 use package_sources::read_package_manifests;
 
@@ -311,22 +312,19 @@ impl PublishReleaseRequest {
 /// Publish one effective release from the package artifacts in
 /// `registry`: push its manifest to `release_artifact_base` with the
 /// credential and trust roots of `registry` (§8.1), and return its manifest
-/// digest. A release with an HTTP entry pushes its composed workload to
-/// `component_artifact_base`. It writes OCI only.
+/// digest. A release with an HTTP entry needs `entry` (§8.1). It writes OCI
+/// only.
 pub async fn publish_release(
     request: PublishReleaseRequest,
     registry: &PackageRegistry,
     release_artifact_base: &str,
-    component_artifact_base: Option<&str>,
+    entry: Option<&EntryPublicationInputs<'_>>,
 ) -> anyhow::Result<ManifestDigest> {
-    Ok(publish_candidate(
-        &request,
-        registry,
-        release_artifact_base,
-        component_artifact_base,
+    Ok(
+        publish_candidate(&request, registry, release_artifact_base, entry)
+            .await?
+            .digest,
     )
-    .await?
-    .digest)
 }
 
 /// Assemble a candidate only in a provisioned disposable target, without publication.
@@ -808,7 +806,7 @@ async fn publish_candidate(
     args: &PublishReleaseRequest,
     registry: &PackageRegistry,
     release_artifact_base: &str,
-    component_artifact_base: Option<&str>,
+    entry: Option<&EntryPublicationInputs<'_>>,
 ) -> anyhow::Result<PublishedRelease> {
     ensure!(
         !args.environment.is_empty(),
@@ -930,7 +928,7 @@ async fn publish_candidate(
         &source_policy,
         registry,
         release_artifact_base,
-        component_artifact_base,
+        entry,
         args,
     )
     .await;
@@ -965,7 +963,7 @@ async fn read_and_push(
     source_policy: &AuthoritativeEnvironmentPolicy,
     registry: &PackageRegistry,
     release_artifact_base: &str,
-    component_artifact_base: Option<&str>,
+    entry: Option<&EntryPublicationInputs<'_>>,
     args: &PublishReleaseRequest,
 ) -> anyhow::Result<PublishedRelease> {
     let published = publish_release_with_package_manifests(
@@ -992,7 +990,7 @@ async fn read_and_push(
         registry,
         &args.applications,
         args.application.as_deref(),
-        component_artifact_base,
+        entry,
     )
     .await?;
     push_manifest_bytes(

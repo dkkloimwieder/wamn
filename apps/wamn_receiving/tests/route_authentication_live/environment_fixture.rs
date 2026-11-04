@@ -475,7 +475,10 @@ pub(super) async fn publish_journey_release(
         },
         &registry,
         &inputs.release_artifact_base,
-        Some(&inputs.component_artifact_base),
+        Some(&publish_release::EntryPublicationInputs {
+            component_artifact_base: &inputs.component_artifact_base,
+            route_guest: &inputs.flow_http_wasm,
+        }),
     )
     .await
     .context("publish the production Receiving release")?

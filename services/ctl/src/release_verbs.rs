@@ -6,7 +6,9 @@ use clap::Args;
 use wamn_catalog::PackageCoordinate;
 use wamn_control::environment::document::EnvironmentDocument;
 use wamn_control::package_artifact::PackageRegistry;
-use wamn_control::publish_release::{self, PublishReleaseRequest, parse_package};
+use wamn_control::publish_release::{
+    self, EntryPublicationInputs, PublishReleaseRequest, parse_package,
+};
 use wamn_runtime::component_artifact_source::OCI_CA_PATHS_ENV;
 
 /// Arguments for the release publish verb. Each package is the artifact that
@@ -63,6 +65,20 @@ pub async fn publish(args: PublishReleaseArgs) -> anyhow::Result<()> {
         insecure_registry: args.insecure_registry,
         oci_ca_paths: args.oci_ca_paths,
     };
+    // A release with an HTTP entry pushes its composed workload to
+    // `WAMN_COMPONENT_ARTIFACT_BASE`, with the route guest from
+    // `WAMN_FLOW_HTTP_COMPONENT` or the image's pinned copy.
+    let component_artifact_base = std::env::var("WAMN_COMPONENT_ARTIFACT_BASE").ok();
+    let route_guest = std::env::var_os("WAMN_FLOW_HTTP_COMPONENT").map_or_else(
+        || PathBuf::from("/usr/local/share/wamn/http_route.wasm"),
+        PathBuf::from,
+    );
+    let entry = component_artifact_base
+        .as_deref()
+        .map(|component_artifact_base| EntryPublicationInputs {
+            component_artifact_base,
+            route_guest: &route_guest,
+        });
     let digest = publish_release::publish_release(
         PublishReleaseRequest {
             applications: environment.applications,
@@ -78,9 +94,7 @@ pub async fn publish(args: PublishReleaseArgs) -> anyhow::Result<()> {
         },
         &registry,
         &release_artifact_base,
-        std::env::var("WAMN_COMPONENT_ARTIFACT_BASE")
-            .ok()
-            .as_deref(),
+        entry.as_ref(),
     )
     .await?;
     println!("{digest}");

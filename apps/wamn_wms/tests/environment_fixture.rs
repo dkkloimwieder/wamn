@@ -753,7 +753,10 @@ pub async fn publish(
         },
         &registry,
         &inputs.release_artifact_base,
-        Some(&inputs.component_artifact_base),
+        Some(&publish_release::EntryPublicationInputs {
+            component_artifact_base: &inputs.component_artifact_base,
+            route_guest: &inputs.flow_http_wasm,
+        }),
     )
     .await?
     .to_string();
