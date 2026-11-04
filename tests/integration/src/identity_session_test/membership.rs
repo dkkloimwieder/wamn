@@ -166,13 +166,9 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires: bin:/usr/lib/postgresql/18/bin/postgres"]
     async fn membership_steps_write_as_provisioning_without_an_admin() {
         use wamn_control_provision::PlatformComponent;
         use wamn_platform_identity::auth_changes::AuthChanges;
-        wamn_test_postgres::require_ignored_prerequisites(
-            "requires: bin:/usr/lib/postgresql/18/bin/postgres",
-        );
 
         let _lock = wamn_test_postgres::lock();
         let database = wamn_control_provision::test_database::system();

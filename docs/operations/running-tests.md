@@ -194,7 +194,7 @@ It serves the native `/readyz` endpoint while the second host waits for its leas
 Run these tests with the build environment in [building](building.md):
 
 ```bash
-cargo test --locked --offline -p wamn-runtime resource_lease::tests -- --ignored --test-threads=1
+cargo test --locked --offline -p wamn-runtime resource_lease::tests -- --test-threads=1
 cargo test --locked --offline -p wamn-control --test integration_restart_live -- --ignored --test-threads=1
 cargo test --locked --offline -p wamn-host --bin wamn-host host::lease_tests::sigterm_drains_calls_then_hands_the_lease_to_a_ready_host -- --ignored --exact --test-threads=1
 ```

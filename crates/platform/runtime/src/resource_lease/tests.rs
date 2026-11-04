@@ -130,11 +130,7 @@ async fn lock_pid(client: &tokio_postgres::Client, key: &str, granted: bool) -> 
 }
 
 #[tokio::test]
-#[ignore = "requires: bin:/usr/lib/postgresql/18/bin/postgres"]
 async fn database_owners_unlock_and_recover_after_session_termination() {
-    wamn_test_postgres::require_ignored_prerequisites(
-        "requires: bin:/usr/lib/postgresql/18/bin/postgres",
-    );
     let _lock = wamn_test_postgres::lock();
     let (database, client) = database().await;
     let a = Arc::new(ResourceLeases::new(Some(database.url())).unwrap());
@@ -186,11 +182,7 @@ async fn database_owners_unlock_and_recover_after_session_termination() {
 }
 
 #[tokio::test]
-#[ignore = "requires: bin:/usr/lib/postgresql/18/bin/postgres"]
 async fn a_waiting_acquire_does_not_block_another_resource_release() {
-    wamn_test_postgres::require_ignored_prerequisites(
-        "requires: bin:/usr/lib/postgresql/18/bin/postgres",
-    );
     let _lock = wamn_test_postgres::lock();
     let (database, client) = database().await;
     let owner = Arc::new(ResourceLeases::new(Some(database.url())).unwrap());
@@ -238,11 +230,7 @@ async fn a_waiting_acquire_does_not_block_another_resource_release() {
 }
 
 #[tokio::test]
-#[ignore = "requires: bin:/usr/lib/postgresql/18/bin/postgres"]
 async fn a_replacement_on_the_same_owner_waits_for_the_old_call() {
-    wamn_test_postgres::require_ignored_prerequisites(
-        "requires: bin:/usr/lib/postgresql/18/bin/postgres",
-    );
     let _lock = wamn_test_postgres::lock();
     let (database, _) = database().await;
     let owner = Arc::new(ResourceLeases::new(Some(database.url())).unwrap());

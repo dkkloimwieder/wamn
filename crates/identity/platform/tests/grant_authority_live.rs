@@ -36,11 +36,7 @@ async fn blocked(observer: &Client, waiting: i32, holder: i32) -> anyhow::Result
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "requires: bin:/usr/lib/postgresql/18/bin/postgres"]
 async fn inactive_membership_serializes_grants_and_refuses_sessions() -> anyhow::Result<()> {
-    wamn_test_postgres::require_ignored_prerequisites(
-        "requires: bin:/usr/lib/postgresql/18/bin/postgres",
-    );
     let _lock = wamn_test_postgres::lock();
     let database = test_database::system();
     let mut first = connect(database.url()).await?;
@@ -140,12 +136,8 @@ async fn inactive_membership_serializes_grants_and_refuses_sessions() -> anyhow:
 }
 
 #[tokio::test]
-#[ignore = "requires: bin:/usr/lib/postgresql/18/bin/postgres"]
 async fn service_admin_projects_without_user_membership_and_stale_admin_is_removed()
 -> anyhow::Result<()> {
-    wamn_test_postgres::require_ignored_prerequisites(
-        "requires: bin:/usr/lib/postgresql/18/bin/postgres",
-    );
     let _lock = wamn_test_postgres::lock();
     let system_database = test_database::system();
     let target_database = wamn_project_state::test_database::tenant_platform();
@@ -231,14 +223,10 @@ async fn service_admin_projects_without_user_membership_and_stale_admin_is_remov
 }
 
 #[tokio::test]
-#[ignore = "requires: bin:/usr/lib/postgresql/18/bin/postgres"]
 async fn authored_mutations_refuse_direct_admin_and_escalation() -> anyhow::Result<()> {
     use wamn_platform_identity::application::{
         ApplicationUser, GrantAuthority, GrantChange, create_role, mutate_grant, write_user,
     };
-    wamn_test_postgres::require_ignored_prerequisites(
-        "requires: bin:/usr/lib/postgresql/18/bin/postgres",
-    );
     let _lock = wamn_test_postgres::lock();
     let database = wamn_project_state::test_database::tenant_platform();
     let mut client = connect(database.url()).await?;
