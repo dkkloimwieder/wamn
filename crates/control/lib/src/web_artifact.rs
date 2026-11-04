@@ -37,6 +37,8 @@ const EMPTY_CONFIG: &[u8] = b"{}";
 #[serde(deny_unknown_fields)]
 pub struct WebManifest {
     pub client_package: String,
+    /// The version from the package's `web/package.json`.
+    pub version: String,
     /// `<package id>@<package version>` from the package build record.
     pub package: String,
     /// `outputs.manifest`, the digest of the compiled canonical `wamn.json`.
@@ -88,7 +90,11 @@ pub fn artifact_output(package_root: &Path) -> PathBuf {
     wamn_schema_generator::output_root(package_root).join(ARTIFACT_DIRECTORY)
 }
 
-fn web_manifest(record: &BuildRecord, compiled: &[u8]) -> anyhow::Result<WebManifest> {
+fn web_manifest(
+    record: &BuildRecord,
+    compiled: &[u8],
+    version: String,
+) -> anyhow::Result<WebManifest> {
     let digest = bytes_sha256(compiled);
     ensure!(
         digest == record.outputs.manifest,
@@ -113,6 +119,7 @@ fn web_manifest(record: &BuildRecord, compiled: &[u8]) -> anyhow::Result<WebMani
     })?;
     Ok(WebManifest {
         client_package: client.name,
+        version,
         package: format!("{}@{}", record.package.id, record.package.version),
         contract_digest: record.outputs.manifest.clone(),
     })
@@ -122,17 +129,28 @@ fn web_manifest(record: &BuildRecord, compiled: &[u8]) -> anyhow::Result<WebMani
 ///
 /// Web source changes do not require another package build. The compiled
 /// manifest must still match the contract that `build.json` records.
+/// The web version comes from the package's `web/package.json`.
 ///
 /// # Errors
 ///
-/// Refuses a missing build record, a changed manifest, no client, or a failed Vite build.
+/// Refuses a missing build record or web version, a changed manifest, no client,
+/// or a failed Vite build.
 pub async fn build_web_artifact(package_root: &Path) -> Result<PathBuf, WebArtifactError> {
     async {
         let output = wamn_schema_generator::output_root(package_root);
         let record = build_record::read(&output)?;
         let path = output.join("wamn.json");
         let compiled = std::fs::read(&path).with_context(|| format!("read {}", path.display()))?;
-        let manifest = web_manifest(&record, &compiled)?;
+        let path = package_root.join("web/package.json");
+        let bytes = std::fs::read(&path).with_context(|| format!("read {}", path.display()))?;
+        let package: serde_json::Value =
+            serde_json::from_slice(&bytes).with_context(|| format!("read {}", path.display()))?;
+        let version = package
+            .get("version")
+            .and_then(serde_json::Value::as_str)
+            .filter(|version| !version.is_empty())
+            .with_context(|| format!("{} has no nonempty version", path.display()))?;
+        let manifest = web_manifest(&record, &compiled, version.to_owned())?;
         let root = artifact_output(package_root);
         std::fs::create_dir_all(&root)?;
         let sidecar = root.join(WEB_MANIFEST_FILE);
@@ -192,6 +210,7 @@ fn pack_web(root: &Path) -> anyhow::Result<PackedWebArtifact> {
         !metadata.client_package.is_empty(),
         "web.json has no client_package"
     );
+    ensure!(!metadata.version.is_empty(), "web.json has no version");
     ensure_digest(&metadata.contract_digest)?;
     let (package, version) = metadata
         .package
@@ -201,7 +220,7 @@ fn pack_web(root: &Path) -> anyhow::Result<PackedWebArtifact> {
         !package.is_empty() && !version.is_empty(),
         "web.json package must be <id>@<version>"
     );
-    let tag = format!("{package}-web-{version}");
+    let tag = format!("{package}-web-{}", metadata.version);
     ensure_tag(&tag)?;
     let mut files = std::collections::BTreeMap::new();
     artifact_files(root, Path::new("dist"), &mut files)?;
@@ -428,6 +447,7 @@ fn read_web_manifest(tar: &[u8]) -> anyhow::Result<WebManifest> {
             !web.client_package.is_empty(),
             "web.json has no client_package"
         );
+        ensure!(!web.version.is_empty(), "web.json has no version");
         let (package, version) = web
             .package
             .split_once('@')
@@ -934,7 +954,8 @@ mod tests {
 
     fn write_build(scratch: &ScratchRoot, record: &BuildRecord, compiled: &[u8]) -> PathBuf {
         let package = scratch.path().join("apps/web_fixture");
-        fs::create_dir_all(&package).unwrap();
+        fs::create_dir_all(package.join("web")).unwrap();
+        fs::write(package.join("web/package.json"), r#"{"version":"0.2.0"}"#).unwrap();
         let output = wamn_schema_generator::output_root(&package);
         fs::create_dir_all(&output).unwrap();
         fs::write(
@@ -952,11 +973,12 @@ mod tests {
         let (record, compiled) = build_fixture(Some("@wamn/web-fixture-client"));
         let package = write_build(&scratch, &record, &compiled);
         let read = build_record::read(&wamn_schema_generator::output_root(&package)).unwrap();
-        let metadata = web_manifest(&read, &compiled).unwrap();
+        let metadata = web_manifest(&read, &compiled, "0.2.0".into()).unwrap();
         assert_eq!(
             metadata.to_bytes(),
             canonical_json_bytes(&serde_json::json!({
                 "client_package": "@wamn/web-fixture-client",
+                "version": "0.2.0",
                 "package": "web_fixture@1.0.0",
                 "contract_digest": record.outputs.manifest,
             }))
@@ -990,15 +1012,35 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn web_build_refuses_a_missing_or_empty_web_version_and_names_package_json() {
+        let scratch = ScratchRoot::create().unwrap();
+        let (record, compiled) = build_fixture(Some("@wamn/web-fixture-client"));
+        let package = write_build(&scratch, &record, &compiled);
+        let path = package.join("web/package.json");
+        for contents in [None, Some("{}"), Some(r#"{"version":""}"#)] {
+            if let Some(contents) = contents {
+                fs::write(&path, contents).unwrap();
+            } else {
+                fs::remove_file(&path).unwrap();
+            }
+            let error = build_web_artifact(&package).await.unwrap_err().to_string();
+            assert!(error.contains(path.to_str().unwrap()), "{error}");
+            if contents.is_some() {
+                assert!(error.contains("version"), "{error}");
+            }
+            assert!(!artifact_output(&package).exists());
+        }
+    }
+
+    #[tokio::test]
     async fn web_build_rebuilds_changed_web_source_without_changing_the_package_record() {
         let scratch = ScratchRoot::create().unwrap();
         let (record, compiled) = build_fixture(Some("@wamn/web-fixture-client"));
         let package = write_build(&scratch, &record, &compiled);
         let source = package.join("web");
-        fs::create_dir(&source).unwrap();
         fs::write(
             source.join("package.json"),
-            r#"{"scripts":{"build":"node build.cjs"}}"#,
+            r#"{"version":"0.2.0","scripts":{"build":"node build.cjs"}}"#,
         )
         .unwrap();
         fs::write(
@@ -1024,11 +1066,25 @@ fs.copyFileSync('index.html', dist + '/index.html');
         let first = pack_web_artifact(&output).unwrap();
         assert_eq!(
             fs::read(output.join(WEB_MANIFEST_FILE)).unwrap(),
-            web_manifest(&record, &compiled).unwrap().to_bytes()
+            web_manifest(&record, &compiled, "0.2.0".into())
+                .unwrap()
+                .to_bytes()
         );
         fs::write(source.join("index.html"), "other").unwrap();
+        fs::write(
+            source.join("package.json"),
+            r#"{"version":"0.2.1","scripts":{"build":"node build.cjs"}}"#,
+        )
+        .unwrap();
         build_web_artifact(&package).await.unwrap();
-        assert_ne!(first.digest, pack_web_artifact(&output).unwrap().digest);
+        let second = pack_web_artifact(&output).unwrap();
+        assert_eq!(first.tag, "web_fixture-web-0.2.0");
+        assert_eq!(second.tag, "web_fixture-web-0.2.1");
+        assert_ne!(first.digest, second.digest);
+        let metadata = read_web_manifest(&second.tar).unwrap();
+        assert_eq!(metadata.package, "web_fixture@1.0.0");
+        assert_eq!(metadata.contract_digest, record.outputs.manifest);
+        assert_eq!(metadata.version, "0.2.1");
         assert_eq!(
             build_record::read(&wamn_schema_generator::output_root(&package)).unwrap(),
             record
@@ -1065,7 +1121,9 @@ fs.copyFileSync('index.html', dist + '/index.html');
         let (record, compiled) = build_fixture(Some("@wamn/web-fixture-client"));
         fs::write(
             root.join(WEB_MANIFEST_FILE),
-            web_manifest(&record, &compiled).unwrap().to_bytes(),
+            web_manifest(&record, &compiled, "0.2.0".into())
+                .unwrap()
+                .to_bytes(),
         )
         .unwrap();
     }
@@ -1082,7 +1140,7 @@ fs.copyFileSync('index.html', dist + '/index.html');
         assert_eq!(packed.digest, other.digest);
         assert_eq!(packed.tar, other.tar);
         assert_eq!(packed.manifest, other.manifest);
-        assert_eq!(packed.tag, "web_fixture-web-1.0.0");
+        assert_eq!(packed.tag, "web_fixture-web-0.2.0");
         let mut archive = tar::Archive::new(&packed.tar[..]);
         let paths = archive
             .entries()
@@ -1108,6 +1166,35 @@ fs.copyFileSync('index.html', dist + '/index.html');
     }
 
     #[test]
+    fn web_pack_and_pull_refuse_a_missing_or_empty_web_version() {
+        let scratch = ScratchRoot::create().unwrap();
+        artifact_fixture(scratch.path(), false);
+        let path = scratch.path().join(WEB_MANIFEST_FILE);
+        let mut metadata: serde_json::Value =
+            serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        for version in [None, Some("")] {
+            if let Some(version) = version {
+                metadata["version"] = serde_json::json!(version);
+            } else {
+                metadata.as_object_mut().unwrap().remove("version");
+            }
+            let bytes = canonical_json_bytes(&metadata);
+            fs::write(&path, &bytes).unwrap();
+            let error = pack_web_artifact(scratch.path()).unwrap_err().to_string();
+            assert!(error.contains("version"), "{error}");
+            let mut archive = tar::Builder::new(Vec::new());
+            let mut header = tar::Header::new_gnu();
+            header.set_size(bytes.len() as u64);
+            header.set_mode(0o644);
+            archive
+                .append_data(&mut header, WEB_MANIFEST_FILE, &bytes[..])
+                .unwrap();
+            let error = read_web_manifest(&archive.into_inner().unwrap()).unwrap_err();
+            assert!(error.to_string().contains("version"), "{error:#}");
+        }
+    }
+
+    #[test]
     fn web_pack_refuses_noncanonical_metadata_missing_index_and_links() {
         let scratch = ScratchRoot::create().unwrap();
         let root = scratch.path().join("artifact");
@@ -1122,6 +1209,10 @@ fs.copyFileSync('index.html', dist + '/index.html');
                 .to_string()
                 .contains("not canonical JSON")
         );
+        let mut invalid: serde_json::Value = serde_json::from_slice(&metadata).unwrap();
+        invalid["version"] = serde_json::json!("bad/version");
+        fs::write(root.join(WEB_MANIFEST_FILE), canonical_json_bytes(&invalid)).unwrap();
+        assert!(pack_web_artifact(&root).is_err());
         fs::write(root.join(WEB_MANIFEST_FILE), metadata).unwrap();
         fs::remove_file(root.join("dist/index.html")).unwrap();
         assert!(
@@ -1175,6 +1266,7 @@ fs.copyFileSync('index.html', dist + '/index.html');
         let second = pull_web_artifact(&registry, &packed.digest).await.unwrap();
         assert_eq!(first, second);
         assert_eq!(first.package, "web_fixture@1.0.0");
+        assert_eq!(first.version, "0.2.0");
         assert_eq!(server.requests(), 4);
     }
 
@@ -1267,6 +1359,8 @@ fs.copyFileSync('index.html', dist + '/index.html');
         let packed = pack_web_artifact(scratch.path()).unwrap();
         fs::write(scratch.path().join("dist/index.html"), "other").unwrap();
         let changed = pack_web_artifact(scratch.path()).unwrap();
+        assert_eq!(packed.tag, changed.tag);
+        assert_ne!(packed.digest, changed.digest);
         let server = Server::start(vec![(200, packed.manifest.clone())]).await;
         let error = push_web_artifact(&changed, &fixture_registry(&scratch, &server))
             .await

@@ -24,10 +24,12 @@ wamn web push --package apps/wamn_receiving \
 The build writes `apps/target/wamn/<package>/web-artifact/dist/` and `web.json` beside it.
 The source package's compiled `wamn.json` must hash to `build.json`'s `outputs.manifest`.
 The build refuses a different digest or a package without `client_package`, and names the package.
-`web.json` contains three fields:
+The build refuses a missing or empty `version` in the package's `web/package.json`, and names that file.
+`web.json` contains four fields:
 
 - `client_package`: The client name from the compiled manifest.
-- `package`: `<id>@<version>` from the build record.
+- `version`: The version from the package's `web/package.json`.
+- `package`: `<id>@<package version>` from the build record.
 - `contract_digest`: `outputs.manifest`, the digest of the canonical package manifest.
 
 Web source edits need only another `wamn web build` against that recorded contract.
@@ -42,10 +44,11 @@ The OCI artifact type is `application/vnd.wamn.web.v1`.
 The layer media type is `application/vnd.wamn.web.v1.tar`, and the configuration is the OCI empty JSON object.
 The artifact digest is the SHA-256 of the canonical OCI image manifest.
 
-The tag is `<package>-web-<version>` under `--artifact-base`.
+The tag is `<package id>-web-<web version>` under `--artifact-base`.
+The package id comes from `web.json`'s `package`, and the web version comes from its `version`.
 An existing tag with the same digest returns `AlreadyPresent` without writes.
 An existing tag with different content refuses and names the tag and both digests.
-A changed web build therefore needs an unused tag before it can be pushed.
+For a UI change, change only the version in `web/package.json` to an unused web version before the build.
 The push uses the existing registry client and Docker credential reader.
 The registry arguments match `apply-package`: `--artifact-base`, `--registry-auth-file`, `--insecure-registry`, and repeatable `--oci-ca-path`.
 For an anonymous push, the credential file must explicitly contain `{"auths":{"<registry>":{}}}`.
