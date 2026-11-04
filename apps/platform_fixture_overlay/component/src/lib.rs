@@ -8,7 +8,7 @@
 //! The overlay declares one operation, `widget.get`, which reads the field the
 //! overlay adds. It is generated whole, and the package has no data-access
 //! crate, so the component includes the generated data functions itself.
-
+#![expect(unsafe_code, reason = "wit-bindgen generated FFI glue")]
 /// The generated operations, whole, with their data functions.
 mod generated {
     #[expect(
@@ -45,12 +45,4 @@ wit_bindgen::generate!({
 
 struct Component;
 
-#[expect(
-    unsafe_code,
-    reason = "wit-bindgen generated bindings and exports contain unsafe FFI glue"
-)]
-mod component_exports {
-    use super::{Component, export, exports};
-
-    export!(Component);
-}
+export!(Component);

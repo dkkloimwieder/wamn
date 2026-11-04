@@ -4,7 +4,7 @@
 )]
 
 //! One package-grain component exporting every Receiving operation.
-
+#![expect(unsafe_code, reason = "wit-bindgen generated FFI glue")]
 #[expect(
     dead_code,
     reason = "private data modules retain the complete generated and authored refusal vocabulary"
@@ -256,12 +256,4 @@ mod tests {
     }
 }
 
-#[expect(
-    unsafe_code,
-    reason = "wit-bindgen generated bindings and exports contain unsafe FFI glue"
-)]
-mod component_exports {
-    use super::{Component, export, exports};
-
-    export!(Component);
-}
+export!(Component);

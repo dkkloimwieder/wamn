@@ -3,7 +3,7 @@
 //! MVP outcome: minimum test coverage.
 
 #![no_std]
-
+#![expect(unsafe_code, reason = "wit-bindgen generated FFI glue")]
 extern crate alloc;
 
 use alloc::string::ToString as _;
@@ -19,21 +19,9 @@ struct BumpAllocator {
 }
 
 // SAFETY: access to the backing bytes is partitioned by the atomic bump pointer.
-#[expect(
-    unsafe_code,
-    reason = "The atomic bump pointer partitions access to the backing bytes."
-)]
 unsafe impl Sync for BumpAllocator {}
 
-#[expect(
-    unsafe_code,
-    reason = "The atomic bump pointer reserves disjoint aligned ranges within the backing bytes."
-)]
 unsafe impl GlobalAlloc for BumpAllocator {
-    #[expect(
-        unsafe_code,
-        reason = "The atomic bump pointer reserves an aligned range within the bounds of the backing bytes."
-    )]
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
         let align_mask = layout.align() - 1;
         let mut current = self.next.load(Ordering::Relaxed);
@@ -57,10 +45,6 @@ unsafe impl GlobalAlloc for BumpAllocator {
         }
     }
 
-    #[expect(
-        unsafe_code,
-        reason = "The bump allocator never reuses allocations, so deallocation is a no-op."
-    )]
     unsafe fn dealloc(&self, _: *mut u8, _: Layout) {}
 }
 
@@ -70,10 +54,6 @@ static ALLOCATOR: BumpAllocator = BumpAllocator {
     bytes: UnsafeCell::new([0; 65_536]),
 };
 
-#[expect(
-    unsafe_code,
-    reason = "The canonical ABI caller supplies valid allocation pointers, lengths, and alignments."
-)]
 #[unsafe(no_mangle)]
 unsafe extern "C" fn cabi_realloc(
     old_ptr: *mut u8,
@@ -135,15 +115,7 @@ impl bindings::exports::wamn::connection_http_standard_fixture::node::Guest for 
     }
 }
 
-#[expect(
-    unsafe_code,
-    reason = "wit-bindgen generated bindings and exports contain unsafe FFI glue"
-)]
-mod component_exports {
-    use super::{Component, bindings};
-
-    bindings::export!(Component with_types_in bindings);
-}
+bindings::export!(Component with_types_in bindings);
 
 #[panic_handler]
 fn panic(_: &core::panic::PanicInfo<'_>) -> ! {

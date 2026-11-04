@@ -1,5 +1,5 @@
 //! Durable JetStream registration delivery through the shared router bridge.
-
+#![expect(unsafe_code, reason = "wit-bindgen generated FFI glue")]
 #[allow(
     clippy::same_length_and_capacity,
     reason = "wit-bindgen 0.61 emits Vec::from_raw_parts with equal length and capacity"
@@ -50,15 +50,7 @@ impl bindings::exports::wasi::cli::run::Guest for Component {
     }
 }
 
-#[expect(
-    unsafe_code,
-    reason = "wit-bindgen generated bindings and exports contain unsafe FFI glue"
-)]
-mod component_exports {
-    use super::{Component, bindings};
-
-    bindings::export!(Component with_types_in bindings);
-}
+bindings::export!(Component with_types_in bindings);
 
 struct Config {
     stream: String,

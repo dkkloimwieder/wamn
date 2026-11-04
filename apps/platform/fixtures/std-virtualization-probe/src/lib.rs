@@ -4,7 +4,7 @@
 )]
 
 //! Standard-library guest that tests build-time WASI virtualization behavior.
-
+#![expect(unsafe_code, reason = "wit-bindgen generated FFI glue")]
 use exports::wamn::node::async_handler::{Emission, Guest, NodeContext, NodeError};
 use wamn::connection::http::Request;
 use wamn::node::types::ErrorDetail;
@@ -101,12 +101,4 @@ fn invalid_input(code: &str, message: impl Into<String>) -> NodeError {
     })
 }
 
-#[expect(
-    unsafe_code,
-    reason = "wit-bindgen generated bindings and exports contain unsafe FFI glue"
-)]
-mod component_exports {
-    use super::{Component, export, exports};
-
-    export!(Component);
-}
+export!(Component);

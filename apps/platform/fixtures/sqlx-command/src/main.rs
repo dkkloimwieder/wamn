@@ -1,5 +1,5 @@
 //! Exercises SQLx queries and explicit transactions over `wamn:postgres`.
-
+#![expect(unsafe_code, reason = "wit-bindgen generated FFI glue")]
 #[cfg_attr(
     not(test),
     expect(
@@ -108,12 +108,4 @@ impl bindings::exports::wasi::cli::run::Guest for Component {
     }
 }
 
-#[expect(
-    unsafe_code,
-    reason = "wit-bindgen generated bindings and exports contain unsafe FFI glue"
-)]
-mod component_exports {
-    use super::{Component, bindings};
-
-    bindings::export!(Component with_types_in bindings);
-}
+bindings::export!(Component with_types_in bindings);

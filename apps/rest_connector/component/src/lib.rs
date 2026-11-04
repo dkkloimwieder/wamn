@@ -3,7 +3,7 @@
     clippy::same_length_and_capacity,
     reason = "wit-bindgen emits equal length and capacity"
 )]
-
+#![expect(unsafe_code, reason = "wit-bindgen generated FFI glue")]
 wit_bindgen::generate!({
     world: "rest-connector:component/rest-connector@0.1.0",
     path: [
@@ -26,15 +26,7 @@ use wamn_integration::{
 };
 
 struct Component;
-#[expect(
-    unsafe_code,
-    reason = "wit-bindgen generated bindings and exports contain unsafe FFI glue"
-)]
-mod component_exports {
-    use super::{Component, export, exports};
-
-    export!(Component);
-}
+export!(Component);
 
 mod finish_codec {
     use super::finish as contract;

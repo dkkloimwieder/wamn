@@ -17,7 +17,7 @@
 //! An input that is not JSON is `invalid-input`. An expression that does not
 //! parse is a configuration fault, and an evaluation failure repeats on a
 //! retry, so both are `terminal`.
-
+#![cfg_attr(target_arch = "wasm32", expect(unsafe_code, reason = "wit-bindgen"))]
 #[allow(
     clippy::same_length_and_capacity,
     reason = "wit-bindgen 0.61 emits Vec::from_raw_parts with equal length and capacity"
@@ -199,15 +199,7 @@ fn terminal(code: &str, message: String) -> NodeError {
 }
 
 #[cfg(target_arch = "wasm32")]
-#[expect(
-    unsafe_code,
-    reason = "wit-bindgen generated bindings and exports contain unsafe FFI glue"
-)]
-mod component_exports {
-    use super::{Component, bindings};
-
-    bindings::export!(Component with_types_in bindings);
-}
+bindings::export!(Component with_types_in bindings);
 
 #[cfg(test)]
 mod tests {

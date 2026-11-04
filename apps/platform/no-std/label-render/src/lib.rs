@@ -40,7 +40,7 @@
 //! primary gate.
 
 #![no_std]
-
+#![expect(unsafe_code, reason = "wit-bindgen generated FFI glue")]
 #[cfg(any(test, feature = "std"))]
 extern crate std;
 
@@ -148,15 +148,7 @@ fn terminal(code: &str, message: &str) -> NodeError {
     })
 }
 
-#[expect(
-    unsafe_code,
-    reason = "wit-bindgen generated bindings and exports contain unsafe FFI glue"
-)]
-mod component_exports {
-    use super::{Component, bindings};
-
-    bindings::export!(Component with_types_in bindings);
-}
+bindings::export!(Component with_types_in bindings);
 
 #[cfg(test)]
 mod tests {

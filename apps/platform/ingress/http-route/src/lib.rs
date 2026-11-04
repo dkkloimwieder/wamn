@@ -1,5 +1,5 @@
 //! Thin HTTP adapter from a released attachment to inline router delivery.
-
+#![cfg_attr(target_arch = "wasm32", expect(unsafe_code, reason = "wit-bindgen"))]
 use std::fmt::Write as _;
 
 use serde::{Deserialize, Serialize};

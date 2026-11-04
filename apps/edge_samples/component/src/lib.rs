@@ -4,7 +4,7 @@
 )]
 
 //! One package-grain component exporting every edge samples operation.
-
+#![expect(unsafe_code, reason = "wit-bindgen generated FFI glue")]
 #[expect(
     dead_code,
     reason = "private data modules retain the complete generated and authored refusal vocabulary"
@@ -36,12 +36,4 @@ wit_bindgen::generate!({
 
 struct Component;
 
-#[expect(
-    unsafe_code,
-    reason = "wit-bindgen generated bindings and exports contain unsafe FFI glue"
-)]
-mod component_exports {
-    use super::{Component, export, exports};
-
-    export!(Component);
-}
+export!(Component);

@@ -62,15 +62,7 @@ impl Guest for Component {
     }
 }
 
-#[expect(
-    unsafe_code,
-    reason = "wit-bindgen generated bindings and exports contain unsafe FFI glue"
-)]
-mod component_exports {
-    use super::{Component, bindings};
-
-    bindings::export!(Component with_types_in bindings);
-}
+bindings::export!(Component with_types_in bindings);
 
 /// The routes the guest read for this request.
 #[derive(Default)]

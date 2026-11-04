@@ -30,7 +30,7 @@
 //! The node names its own declared store ALIAS, from the wiring parameter. The
 //! container is environment-owned, and a guest that could name it would need
 //! the coordinate the confinement exists to keep from it.
-
+#![expect(unsafe_code, reason = "wit-bindgen generated FFI glue")]
 // THIS NODE EXPORTS THE ASYNC CONTRACT, wamn:node/async-handler (RULED
 // wamn-362o.46). Every wasmcloud:blobstore function is `async func` carrying
 // streams, and the component model forbids a synchronously-lifted export from
@@ -256,15 +256,7 @@ fn terminal(code: &str, message: impl Into<String>) -> NodeError {
     })
 }
 
-#[expect(
-    unsafe_code,
-    reason = "wit-bindgen generated bindings and exports contain unsafe FFI glue"
-)]
-mod component_exports {
-    use super::{Component, bindings};
-
-    bindings::export!(Component with_types_in bindings);
-}
+bindings::export!(Component with_types_in bindings);
 
 #[cfg(test)]
 use tests::write_object;

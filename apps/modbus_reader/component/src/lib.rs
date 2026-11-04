@@ -4,7 +4,7 @@
     clippy::same_length_and_capacity,
     reason = "wit-bindgen emits canonical ABI buffers with equal length and capacity"
 )]
-
+#![expect(unsafe_code, reason = "wit-bindgen generated FFI glue")]
 wit_bindgen::generate!({
     path: [
         "../../../wit/wamn-integration",
@@ -25,15 +25,7 @@ use exports::modbus_reader::register::read as contract;
 use registers::{self as read_registers, Error};
 
 struct Application;
-#[expect(
-    unsafe_code,
-    reason = "wit-bindgen generated bindings and exports contain unsafe FFI glue"
-)]
-mod component_exports {
-    use super::{Application, export, exports};
-
-    export!(Application);
-}
+export!(Application);
 
 mod codec {
     use super::contract;

@@ -1,7 +1,7 @@
 //! Bound Modbus TCP register operations and gateway health.
 
 #![cfg_attr(target_arch = "wasm32", no_std)]
-
+#![cfg_attr(target_arch = "wasm32", expect(unsafe_code, reason = "wit-bindgen"))]
 extern crate alloc;
 #[cfg(target_arch = "wasm32")]
 use alloc::vec::Vec;
@@ -31,15 +31,7 @@ mod component {
     };
 
     struct Modbus;
-    #[expect(
-        unsafe_code,
-        reason = "wit-bindgen generated bindings and exports contain unsafe FFI glue"
-    )]
-    mod component_exports {
-        use super::{Modbus, export, exports};
-
-        export!(Modbus);
-    }
+    export!(Modbus);
 
     fn transport(error: impl core::fmt::Debug) -> Error {
         Error::Transport(format!("{error:?}"))
