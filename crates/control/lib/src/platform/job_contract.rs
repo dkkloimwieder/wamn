@@ -372,9 +372,7 @@ const CONTRACTS: &[Contract] = &[
         required: &[
             "WAMN_CONTROL_DATABASE_URL",
             "WAMN_RELEASE_CHART",
-            "WAMN_RELEASE_ARTIFACT_BASE",
             "WAMN_REGISTRY_AUTH_FILE",
-            "WAMN_PACKAGE_ARTIFACT_BASE",
             "WAMN_NATS_URL",
             "WAMN_NATS_TLS_CA",
             "WAMN_NATS_TLS_CERT",

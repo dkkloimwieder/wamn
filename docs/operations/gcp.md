@@ -1039,14 +1039,17 @@ Each log shows `registration loaded`, the three `preflight` lines and `walsender
 
 ### 4.19 Web clients
 
-`platform apply` runs `wamn web upload` as a Job for each environment and its declared release digest.
+`platform apply` runs `wamn web upload --web <client.web> --org <org>` as a Job for each environment with a client.
 The Job runs in `hosts` as `wamn-host`, which takes the grants of the namespace `hosts` (section 1, item 15).
-It reads the built clients from package artifacts and writes them below `gs://<buckets.web>/clients/<package>/<digest hex>/`.
-It leaves `WAMN_NATS_URL` unset.
+It pulls the pinned web artifact from the package repository and makes sure that its manifest and layer match their digests.
+It writes the browser files below `gs://<buckets.web>/clients/<package>/<web digest hex>/`.
+The Job keeps the existing registry and credential mounts.
 The Job runner saves the log before it deletes the Job and its temporary Secrets.
 A completed Job with the same input digest skips the upload.
+An existing index at the destination also skips all writes, including when another environment uses the same web digest.
 
 If `buckets.web` is empty, the report prints `skipped: no bucket` for each environment's upload and its check.
+With a bucket and no `client`, the upload prints `skipped: no web client`.
 The verb starts no web Job in that case.
 The kind fixture has no web bucket.
 
@@ -1109,7 +1112,7 @@ Apply requires the pinned web artifact's package coordinate to appear in the rel
 The revision values keep `webClients` and `webDigests` beside each other.
 
 The release chart owns the host-to-package map and the release digest in its ConfigMap.
-The edge reads that row and fetches files under `clients/<package>/<release digest hex>/` with `object_store`.
+The edge reads that row and fetches files under `clients/<package>/<web digest hex>/` with `object_store`.
 For the control host, it reads files under `platform-ui/<platform version>/`.
 It caches files in memory by their full versioned object path.
 Digest paths carry `Cache-Control: public, max-age=31536000, immutable`.

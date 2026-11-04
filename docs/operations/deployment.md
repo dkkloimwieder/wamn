@@ -291,7 +291,10 @@ Name the release digest in the environment document, and run `env apply` of it (
 
 ## Web client files
 
-Use [Web upload](web-upload.md#package-clients) to write the clients from the served release to a bucket.
+Use [Web upload](web-upload.md#package-clients) to copy the pinned web artifact to a bucket.
+Pass the environment document’s `client.web` digest, the org, and the registry inputs.
+The uploader reads the package id and client name from `web.json`.
+It writes `clients/<package>/<web digest hex>/` and skips all writes when the index already exists.
 That page owns the command, required inputs, destination paths, output, and errors.
 The shell reads `/config.json` before sign-in. The local dev server answers it from `dev.json`.
 The bucket must allow reads without credentials.

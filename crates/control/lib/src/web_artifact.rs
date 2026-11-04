@@ -4,7 +4,7 @@
 //! Its metadata binds the client to the package's recorded manifest digest.
 //!
 //! `wamn web upload --platform-ui` uploads the local platform UI.
-//! Release uploads refuse until lane 1.5 reads standalone web artifacts.
+//! Application uploads copy the pinned artifact to its immutable bucket root.
 
 use std::path::{Path, PathBuf};
 
@@ -56,6 +56,7 @@ enum WebArtifactErrorKind {
     Pack,
     Push,
     Pull,
+    Upload,
 }
 
 /// A web artifact failure with its action, path or reference, and source.
@@ -351,6 +352,15 @@ pub async fn pull_web_artifact(
     registry: &PackageRegistry,
     digest: &str,
 ) -> Result<WebManifest, WebArtifactError> {
+    pull_web(registry, digest)
+        .await
+        .map(|(metadata, _)| metadata)
+}
+
+async fn pull_web(
+    registry: &PackageRegistry,
+    digest: &str,
+) -> Result<(WebManifest, Vec<u8>), WebArtifactError> {
     async {
         ensure_digest(digest)?;
         let repository = Repository::open(registry, digest)?;
@@ -358,6 +368,10 @@ pub async fn pull_web_artifact(
             .manifest()
             .await?
             .with_context(|| format!("web artifact {digest} does not exist"))?;
+        ensure!(
+            bytes_sha256(&bytes) == digest,
+            "web artifact manifest does not hash to {digest}"
+        );
         let manifest: OciImageManifest = serde_json::from_slice(&bytes)?;
         ensure!(
             manifest.artifact_type.as_deref() == Some(WEB_ARTIFACT_TYPE),
@@ -380,7 +394,7 @@ pub async fn pull_web_artifact(
             "web artifact {digest} layer does not hash to {}",
             layer.digest
         );
-        read_web_manifest(&tar)
+        Ok((read_web_manifest(&tar)?, tar))
     }
     .await
     .map_err(|source| WebArtifactError {
@@ -432,17 +446,167 @@ const ASSET_CACHE: &str = "public, max-age=31536000, immutable";
 /// The index names the current files, and the service worker `sw.js` keeps
 /// its name across builds, so a browser asks again at every load.
 const INDEX_CACHE: &str = "no-cache";
-/// Refuse release uploads until their source is the standalone web artifact.
+/// The package, destination, and completion state of an artifact upload.
+#[derive(Debug)]
+pub struct UploadedClient {
+    pub package: String,
+    pub location: String,
+    pub written: bool,
+}
+
+/// Copy a pinned web artifact to the bucket without replacing existing objects.
 ///
 /// # Errors
 ///
-/// Always refuses because package artifacts no longer contain browser files.
-pub fn upload_release() -> anyhow::Result<()> {
-    bail!(
-        "package artifacts no longer contain web clients. Release upload requires the \
-         standalone web artifact from `wamn web build` and `wamn web push`. Lane 1.5 \
-         replaces the package source with the web artifact"
+/// Refuses invalid artifacts, registry failures, or conflicting bucket objects.
+pub async fn upload_web_artifact(
+    registry: &PackageRegistry,
+    digest: &str,
+    org: &str,
+    bucket: &str,
+) -> Result<UploadedClient, WebArtifactError> {
+    async {
+        let sink = Sink::parse(bucket)?;
+        let store = sink.store()?;
+        let (package, root, written) =
+            upload_web_to_store(registry, digest, org, sink.prefix, store.as_ref()).await?;
+        Ok(UploadedClient {
+            package,
+            location: format!("{}{}/{root}/", sink.scheme.prefix(), sink.bucket),
+            written,
+        })
+    }
+    .await
+    .map_err(|source| WebArtifactError {
+        kind: WebArtifactErrorKind::Upload,
+        context: format!("{}@{digest} to {bucket}", registry.artifact_base),
+        source,
+    })
+}
+
+async fn upload_web_to_store(
+    registry: &PackageRegistry,
+    digest: &str,
+    org: &str,
+    prefix: &str,
+    store: &dyn ObjectStore,
+) -> anyhow::Result<(String, String, bool)> {
+    ensure!(!org.is_empty(), "web upload requires an org");
+    let (metadata, tar) = pull_web(registry, digest).await?;
+    let (package, _) = metadata.package.split_once('@').expect("verified web.json");
+    ensure_tag(package)?;
+    let project = client_project(&metadata.client_package)?;
+    let root = [prefix.trim_matches('/'), "clients", package, &digest[7..]]
+        .into_iter()
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>()
+        .join("/");
+    let index = object_store::path::Path::from(format!("{root}/index.html"));
+    match store.head(&index).await {
+        Ok(_) => return Ok((package.to_owned(), root, false)),
+        Err(object_store::Error::NotFound { .. }) => {}
+        Err(error) => return Err(error).context("read the web upload completion index"),
+    }
+    let mut files = web_dist_files(&tar)?;
+    let index = files
+        .remove("index.html")
+        .context("web artifact has no dist/index.html")?;
+    for (name, bytes) in files {
+        put(
+            store,
+            &root,
+            &name,
+            bytes,
+            cache_control(&name)?,
+            content_type(&name)?,
+        )
+        .await?;
+    }
+    put(
+        store,
+        &root,
+        SCOPE_FILE,
+        crate::web_scope::scope_file_bytes(org, project),
+        SCOPE_CACHE,
+        SCOPE_CONTENT_TYPE,
     )
+    .await?;
+    put(
+        store,
+        &root,
+        "index.html",
+        index,
+        INDEX_CACHE,
+        content_type("index.html")?,
+    )
+    .await?;
+    Ok((package.to_owned(), root, true))
+}
+
+fn web_dist_files(tar: &[u8]) -> anyhow::Result<std::collections::BTreeMap<String, Vec<u8>>> {
+    use std::io::Read as _;
+
+    let mut archive = tar::Archive::new(tar);
+    let mut files = std::collections::BTreeMap::new();
+    for entry in archive.entries()? {
+        let mut entry = entry?;
+        let path = entry.path()?.into_owned();
+        if path == Path::new(WEB_MANIFEST_FILE) {
+            continue;
+        }
+        ensure!(
+            path.components()
+                .all(|part| matches!(part, std::path::Component::Normal(_))),
+            "invalid web artifact path {}",
+            path.display()
+        );
+        let relative = path
+            .strip_prefix("dist")
+            .with_context(|| format!("web artifact path {} is outside dist", path.display()))?;
+        if entry.header().entry_type().is_dir() {
+            continue;
+        }
+        ensure!(
+            entry.header().entry_type().is_file(),
+            "web artifact path {} is not a regular file",
+            path.display()
+        );
+        let name = relative
+            .to_str()
+            .context("web artifact paths must be UTF-8")?;
+        cache_control(name)?;
+        content_type(name)?;
+        let mut bytes = Vec::new();
+        entry.read_to_end(&mut bytes)?;
+        ensure!(
+            files.insert(name.to_owned(), bytes).is_none(),
+            "web artifact repeats {name}"
+        );
+    }
+    ensure!(
+        files.contains_key("index.html"),
+        "web artifact has no dist/index.html"
+    );
+    Ok(files)
+}
+
+/// The project that a client package `@wamn/<project>-client` names.
+pub fn client_project(client: &str) -> anyhow::Result<&str> {
+    client
+        .strip_prefix("@wamn/")
+        .and_then(|rest| rest.strip_suffix("-client"))
+        .filter(|project| !project.is_empty())
+        .with_context(|| format!("the client package {client} is not @wamn/<project>-client"))
+}
+
+fn cache_control(relative: &str) -> anyhow::Result<&'static str> {
+    if relative == "index.html" || relative == "sw.js" {
+        Ok(INDEX_CACHE)
+    } else if relative.starts_with("assets/") {
+        Ok(ASSET_CACHE)
+    } else {
+        bail!("the build wrote {relative}, which has no declared cache rule")
+    }
 }
 
 /// The platform UI has one bucket and one prefix per platform version.
@@ -545,13 +709,7 @@ pub async fn write_files(
             .strip_prefix(dist)?
             .to_str()
             .context("a built file name is UTF-8")?;
-        let cache = if relative == "index.html" || relative == "sw.js" {
-            INDEX_CACHE
-        } else if relative.starts_with("assets/") {
-            ASSET_CACHE
-        } else {
-            bail!("the build wrote {relative}, which has no declared cache rule")
-        };
+        let cache = cache_control(relative)?;
         put(
             store,
             root,
@@ -1120,21 +1278,170 @@ fs.copyFileSync('index.html', dist + '/index.html');
         assert_eq!(server.requests(), 1);
     }
 
-    use object_store::ObjectStoreExt as _;
     use object_store::memory::InMemory;
+    use object_store::{ObjectStore as _, ObjectStoreExt as _};
 
     const HEAD: &str = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
     const SCOPE: &[u8] = br#"{"org":"acme","project":"receiving"}"#;
 
-    #[test]
-    fn release_upload_refuses_until_it_reads_the_web_artifact() {
-        let error = super::upload_release().unwrap_err().to_string();
-        for detail in [
-            "package artifacts no longer contain web clients",
-            "web artifact",
-            "Lane 1.5",
+    #[tokio::test]
+    async fn two_environments_with_the_same_web_digest_share_one_completed_upload() {
+        use crate::environment::document::EnvironmentDocument;
+        use futures_util::TryStreamExt as _;
+
+        let scratch = ScratchRoot::create().unwrap();
+        artifact_fixture(scratch.path(), false);
+        let packed = pack_web_artifact(scratch.path()).unwrap();
+        let server = Server::start(vec![
+            (200, packed.manifest.clone()),
+            (200, packed.tar.clone()),
+            (200, packed.manifest.clone()),
+            (200, packed.tar.clone()),
+        ])
+        .await;
+        let registry = fixture_registry(&scratch, &server);
+        let first: EnvironmentDocument = serde_json::from_value(serde_json::json!({
+            "org": "acme", "project": "web-fixture", "env": "dev", "target": "dev",
+            "release": HEAD, "route_host": "dev.example.com", "policy": "dev",
+            "applications": {}, "client": {"package": "web_fixture", "web": packed.digest},
+        }))
+        .unwrap();
+        let mut second = first.clone();
+        second.env = "staging".into();
+        second.route_host = "staging.example.com".into();
+        let store = InMemory::new();
+        let upload = |environment: &EnvironmentDocument| {
+            (
+                environment.client.as_ref().unwrap().web.clone(),
+                environment.org.clone(),
+            )
+        };
+        let (web, org) = upload(&first);
+        let (package, root, written) =
+            super::upload_web_to_store(&registry, &web, &org, "prefix", &store)
+                .await
+                .unwrap();
+        assert!(written);
+        assert_eq!(package, "web_fixture");
+        assert_eq!(
+            root,
+            format!("prefix/clients/web_fixture/{}", &packed.digest[7..])
+        );
+        let before = store.list(None).try_collect::<Vec<_>>().await.unwrap();
+        assert_eq!(before.len(), 3);
+        let scope = store
+            .get(&object_store::path::Path::from(format!(
+                "{root}/config.json"
+            )))
+            .await
+            .unwrap();
+        assert_eq!(
+            scope.bytes().await.unwrap().as_ref(),
+            br#"{"org":"acme","project":"web-fixture"}"#
+        );
+        let (web, org) = upload(&second);
+        let (other_package, other_root, written) =
+            super::upload_web_to_store(&registry, &web, &org, "prefix", &store)
+                .await
+                .unwrap();
+        assert!(!written);
+        assert_eq!(other_package, package);
+        assert_eq!(other_root, root);
+        assert_eq!(
+            store.list(None).try_collect::<Vec<_>>().await.unwrap(),
+            before
+        );
+    }
+
+    #[tokio::test]
+    async fn an_existing_index_skips_all_writes_even_when_an_asset_is_absent() {
+        let scratch = ScratchRoot::create().unwrap();
+        artifact_fixture(scratch.path(), false);
+        let packed = pack_web_artifact(scratch.path()).unwrap();
+        let server = Server::start(vec![
+            (200, packed.manifest.clone()),
+            (200, packed.tar.clone()),
+            (200, packed.manifest.clone()),
+            (200, packed.tar.clone()),
+        ])
+        .await;
+        let registry = fixture_registry(&scratch, &server);
+        let store = InMemory::new();
+        let (_, root, written) =
+            super::upload_web_to_store(&registry, &packed.digest, "acme", "", &store)
+                .await
+                .unwrap();
+        assert!(written);
+        let asset = object_store::path::Path::from(format!("{root}/assets/app.js"));
+        store.delete(&asset).await.unwrap();
+        let scope = object_store::path::Path::from(format!("{root}/config.json"));
+        store.put(&scope, "sentinel".into()).await.unwrap();
+        let (_, _, written) =
+            super::upload_web_to_store(&registry, &packed.digest, "acme", "", &store)
+                .await
+                .unwrap();
+        assert!(!written);
+        assert!(store.head(&asset).await.is_err());
+        assert_eq!(
+            store
+                .get(&scope)
+                .await
+                .unwrap()
+                .bytes()
+                .await
+                .unwrap()
+                .as_ref(),
+            b"sentinel"
+        );
+    }
+
+    #[tokio::test]
+    async fn upload_refuses_digest_mismatches_and_non_web_artifacts_before_any_write() {
+        use futures_util::TryStreamExt as _;
+
+        let scratch = ScratchRoot::create().unwrap();
+        artifact_fixture(scratch.path(), false);
+        let packed = pack_web_artifact(scratch.path()).unwrap();
+        let mut non_web: serde_json::Value = serde_json::from_slice(&packed.manifest).unwrap();
+        non_web["artifactType"] = serde_json::json!("application/vnd.wamn.package.v1");
+        let non_web = canonical_json_bytes(&non_web);
+        for (responses, digest, reason) in [
+            (
+                vec![(200, packed.manifest.clone())],
+                bytes_sha256(b"another manifest"),
+                "Invalid digest",
+            ),
+            (
+                vec![(200, packed.manifest.clone()), (200, b"wrong tar".to_vec())],
+                packed.digest.clone(),
+                "Invalid digest",
+            ),
+            (
+                vec![(200, non_web.clone())],
+                bytes_sha256(&non_web),
+                "is not a",
+            ),
         ] {
-            assert!(error.contains(detail), "{error}");
+            let server = Server::start(responses).await;
+            let store = InMemory::new();
+            let error = super::upload_web_to_store(
+                &fixture_registry(&scratch, &server),
+                &digest,
+                "acme",
+                "",
+                &store,
+            )
+            .await
+            .unwrap_err();
+            assert!(format!("{error:#}").contains(reason), "{error:#}");
+            assert!(
+                store
+                    .list(None)
+                    .try_collect::<Vec<_>>()
+                    .await
+                    .unwrap()
+                    .is_empty()
+            );
         }
     }
 

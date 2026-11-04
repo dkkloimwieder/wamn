@@ -1,4 +1,4 @@
-//! Upload each environment's released web clients through an install Job.
+//! Upload each environment's pinned web artifact through an install Job.
 
 use std::path::Path;
 use std::time::Instant;
@@ -7,7 +7,7 @@ use anyhow::{Context as _, ensure};
 use serde_json::json;
 use wamn_package_artifact::PackageRegistry;
 
-use crate::environment::document::{DeclaredRelease, EnvironmentDocument};
+use crate::environment::document::EnvironmentDocument;
 use crate::kubectl;
 use crate::release_chart::Target;
 
@@ -38,6 +38,12 @@ pub(super) async fn apply(
                     "4.19 Web {action} {coordinate}: skipped: no bucket"
                 ))?;
             }
+            continue;
+        }
+        if environment.client.is_none() {
+            progress(&format!(
+                "4.19 Web upload {coordinate}: skipped: no web client"
+            ))?;
             continue;
         }
         let started = Instant::now();
@@ -80,9 +86,10 @@ pub(super) fn request(
     registry: &PackageRegistry,
     auth: &SecretData,
 ) -> anyhow::Result<JobRequest> {
-    let DeclaredRelease::Digest(digest) = &environment.release else {
-        anyhow::bail!("web upload requires a declared release");
-    };
+    let client = environment
+        .client
+        .as_ref()
+        .context("web upload requires a web client")?;
     ensure!(!bucket.is_empty(), "web upload requires a bucket");
     let env_key = wamn_control_registry::project_env_key(
         &environment.org,
@@ -100,14 +107,16 @@ pub(super) fn request(
             "web-upload".into(),
             "web".into(),
             "upload".into(),
-            format!(
-                "{}/{}/{}",
-                environment.org, environment.project, environment.env
-            ),
-            "--release".into(),
-            digest.clone(),
+            "--web".into(),
+            client.web.clone(),
+            "--org".into(),
+            environment.org.clone(),
+            "--artifact-base".into(),
+            registry.artifact_base.clone(),
+            "--registry-auth-file".into(),
+            "/inputs/registry.json".into(),
             "--bucket".into(),
-            format!("gs://{bucket}/clients"),
+            format!("gs://{bucket}"),
         ],
         environment: [
             ("KUBECONFIG".into(), "/inputs/kubeconfig".into()),
@@ -124,14 +133,9 @@ pub(super) fn request(
     };
     job::auth_nats_inputs(&mut request, auth)?;
     super::packages::registry_inputs(&mut request, registry)?;
-    request.environment.insert(
-        "WAMN_PACKAGE_ARTIFACT_BASE".into(),
-        registry.artifact_base.clone(),
-    );
-    request.environment.insert(
-        "WAMN_RELEASE_ARTIFACT_BASE".into(),
-        super::packages::artifact_base(registry, "releases")?,
-    );
+    if registry.insecure_registry {
+        request.arguments.push("--insecure-registry".into());
+    }
     Ok(request)
 }
 
@@ -353,11 +357,60 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn an_environment_without_a_client_skips_before_reading_job_inputs() {
+        let scratch = wamn_test_infrastructure::scratch::ScratchRoot::create().unwrap();
+        let environment: EnvironmentDocument = serde_json::from_value(json!({
+            "org": "test", "project": "receiving", "env": "dev", "target": "dev",
+            "release": "none", "route_host": "test.example.com", "policy": "dev",
+            "applications": {}
+        }))
+        .unwrap();
+        std::fs::write(scratch.path().join("environment.k"), environment.to_kcl()).unwrap();
+        let document = serde_json::from_value(json!({
+            "provider": "kind", "project_id": "", "zone": "", "cluster_name": "test",
+            "org": "test", "owner_email": "owner@example.com", "registry": "localhost:5000",
+            "buckets": {"web": "test-web", "otel": "", "state": ""},
+            "route_hosts": {"control": "control.example.com"}, "resend_from": "sender@example.com"
+        }))
+        .unwrap();
+        let registry = PackageRegistry {
+            artifact_base: "registry/packages".into(),
+            registry_auth_file: "/absent".into(),
+            insecure_registry: false,
+            oci_ca_paths: Vec::new(),
+        };
+        let target = Target {
+            kubeconfig: "/absent".into(),
+            context: "absent".into(),
+            namespace: "platform".into(),
+        };
+        let mut lines = Vec::new();
+        apply(
+            &target,
+            &document,
+            scratch.path(),
+            Path::new("/absent"),
+            &registry,
+            |line| {
+                lines.push(line.to_owned());
+                Ok(())
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            lines,
+            ["4.19 Web upload test/receiving/dev: skipped: no web client"]
+        );
+    }
+
     #[test]
-    fn upload_uses_the_release_bucket_and_existing_identity_without_event_nats() {
+    fn upload_uses_the_web_digest_org_bucket_and_existing_identity_without_event_nats() {
         let environment: EnvironmentDocument = serde_json::from_value(json!({
             "org": "test", "project": "receiving", "env": "dev",
             "release": format!("sha256:{}", "a".repeat(64)),
+            "client": {"package": "wamn_receiving", "web": format!("sha256:{}", "b".repeat(64))},
             "target": "cloud", "route_host": "test.example.com", "policy": "dev", "applications": {}
         }))
         .unwrap();
@@ -384,8 +437,27 @@ mod tests {
         .unwrap();
         std::fs::remove_dir_all(directory).unwrap();
         assert_eq!(request.service_account.as_deref(), Some("wamn-host"));
-        assert!(request.arguments.contains(&"gs://test-web/clients".into()));
-        assert!(request.arguments.contains(&environment.release.to_string()));
+        assert!(request.arguments.contains(&"gs://test-web".into()));
+        assert!(
+            request
+                .arguments
+                .windows(2)
+                .any(|pair| pair == ["--web", &environment.client.as_ref().unwrap().web])
+        );
+        assert!(
+            request
+                .arguments
+                .windows(2)
+                .any(|pair| pair == ["--org", "test"])
+        );
+        assert!(
+            request
+                .arguments
+                .windows(2)
+                .any(|pair| pair == ["--artifact-base", "registry/packages"])
+        );
+        assert!(!request.arguments.contains(&"--release".into()));
+        assert!(!request.arguments.contains(&environment.release.to_string()));
         assert!(!request.environment.contains_key("WAMN_EVENT_NATS_URL"));
         assert_eq!(
             request.secret_mounts[0].name,

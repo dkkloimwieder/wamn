@@ -283,6 +283,25 @@ pub fn fixture_environment(
     Ok((source, document))
 }
 
+/// Build and push real web artifacts, then pin the kind documents to their digests.
+pub async fn pin_web_clients(
+    repository: &Path,
+    registry: &wamn_control::package_artifact::PackageRegistry,
+    environments: &mut [(&str, &mut EnvironmentDocument)],
+) -> anyhow::Result<()> {
+    use wamn_control::web_artifact::{build_web_artifact, pack_web_artifact, push_web_artifact};
+
+    for (package, environment) in environments {
+        let root = build_web_artifact(&repository.join("apps").join(*package)).await?;
+        let packed = pack_web_artifact(&root)?;
+        environment.client = Some(environment::document::Client {
+            package: (*package).to_owned(),
+            web: push_web_artifact(&packed, registry).await?.digest,
+        });
+    }
+    Ok(())
+}
+
 pub mod http {
     use super::{NAMESPACE, ORG, PACKAGE, PROJECT};
     use anyhow::{Context as _, ensure};

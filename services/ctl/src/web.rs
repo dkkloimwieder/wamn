@@ -2,7 +2,7 @@
 
 use anyhow::Context as _;
 use clap::{Args, Subcommand};
-use wamn_control::web_artifact::{self, upload_platform_ui, upload_release};
+use wamn_control::web_artifact::{self, upload_platform_ui, upload_web_artifact};
 
 /// Web client commands.
 #[derive(Debug, Args)]
@@ -17,7 +17,7 @@ pub enum WebCommand {
     Build(BuildArgs),
     /// Push a built web client as an immutable OCI artifact.
     Push(PushArgs),
-    /// Upload the platform UI. Release uploads refuse until lane 1.5.
+    /// Upload a pinned web artifact or the local platform UI.
     Upload(UploadArgs),
 }
 
@@ -39,21 +39,16 @@ pub struct PushArgs {
 
 #[derive(Debug, Args)]
 pub struct UploadArgs {
-    /// The environment, `org/project/env`. Release uploads refuse until lane 1.5
-    /// reads standalone web artifacts.
-    #[arg(
-        required_unless_present = "platform_ui",
-        conflicts_with = "platform_ui"
-    )]
-    pub coordinate: Option<String>,
-    /// The release manifest digest, `sha256:` and 64 lowercase hexadecimal digits.
-    /// Release uploads refuse until lane 1.5 supplies the new source.
+    /// The web artifact digest, `sha256:` and 64 lowercase hexadecimal digits.
     #[arg(
         long,
         required_unless_present = "platform_ui",
-        conflicts_with = "platform_ui"
+        conflicts_with = "platform_ui",
+        requires = "RegistryArgs"
     )]
-    pub release: Option<String>,
+    pub web: Option<String>,
+    #[command(flatten)]
+    pub registry: Option<crate::package_verbs::RegistryArgs>,
     /// The bucket and an optional prefix, `s3://<bucket>[/<prefix>]` or
     /// `gs://<bucket>[/<prefix>]`. For `s3://` the `AWS_*` variables supply
     /// the endpoint and the credentials. For `gs://` the `GOOGLE_*` variables
@@ -61,11 +56,11 @@ pub struct UploadArgs {
     #[arg(long, required_unless_present = "platform_ui")]
     pub bucket: Option<String>,
     /// Upload apps/platform_ui/dist using WAMN_RELEASE_CHART's build record.
-    #[arg(long, requires = "org")]
+    #[arg(long, conflicts_with = "RegistryArgs")]
     pub platform_ui: bool,
-    /// The org written to the platform UI config.json.
-    #[arg(long, requires = "platform_ui")]
-    pub org: Option<String>,
+    /// The org written to config.json.
+    #[arg(long)]
+    pub org: String,
 }
 
 pub async fn run(args: WebArgs) -> anyhow::Result<()> {
@@ -94,9 +89,7 @@ async fn upload(args: UploadArgs) -> anyhow::Result<()> {
         let location = upload_platform_ui(
             &std::env::current_dir()?,
             std::path::Path::new(&chart),
-            args.org
-                .as_deref()
-                .context("--platform-ui requires --org")?,
+            &args.org,
             args.bucket
                 .as_deref()
                 .unwrap_or(web_artifact::PLATFORM_UI_BUCKET),
@@ -105,7 +98,27 @@ async fn upload(args: UploadArgs) -> anyhow::Result<()> {
         println!("platform-ui {location} written");
         return Ok(());
     }
-    upload_release()
+    let uploaded = upload_web_artifact(
+        &args
+            .registry
+            .context("--web requires registry arguments")?
+            .registry(),
+        args.web.as_deref().context("upload requires --web")?,
+        &args.org,
+        args.bucket.as_deref().context("--web requires --bucket")?,
+    )
+    .await?;
+    println!(
+        "{} {} {}",
+        uploaded.package,
+        uploaded.location,
+        if uploaded.written {
+            "written"
+        } else {
+            "present"
+        }
+    );
+    Ok(())
 }
 
 #[cfg(test)]
@@ -139,43 +152,57 @@ mod tests {
         assert!(Cli::try_parse_from(["web", "push", "--package", "apps/client"]).is_err());
     }
 
-    #[tokio::test]
-    async fn release_upload_refuses_before_loading_platform_configuration() {
-        let args = Cli::try_parse_from([
+    #[test]
+    fn upload_requires_a_web_digest_org_bucket_and_registry() {
+        let valid = [
             "web",
             "upload",
-            "acme/receiving/dev",
-            "--release",
+            "--web",
             "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "--org",
+            "acme",
             "--bucket",
-            "gs://web/clients",
-        ])
-        .unwrap()
-        .web;
-        let error = run(args).await.unwrap_err().to_string();
-        assert!(
-            error.contains("web artifact") && error.contains("Lane 1.5"),
-            "{error}"
-        );
-    }
-
-    #[test]
-    fn upload_sources_have_separate_required_inputs() {
-        assert!(Cli::try_parse_from(["web", "upload", "--platform-ui", "--org", "dkk"]).is_ok());
-        assert!(Cli::try_parse_from(["web", "upload", "--platform-ui"]).is_err());
-        assert!(Cli::try_parse_from(["web", "upload", "--org", "dkk"]).is_err());
+            "gs://web/prefix",
+            "--artifact-base",
+            "registry.example/packages",
+            "--registry-auth-file",
+            "auth.json",
+            "--insecure-registry",
+            "--oci-ca-path",
+            "ca.pem",
+        ];
+        assert!(Cli::try_parse_from(valid).is_ok());
+        for flag in [
+            "--web",
+            "--org",
+            "--bucket",
+            "--artifact-base",
+            "--registry-auth-file",
+        ] {
+            let index = valid.iter().position(|value| *value == flag).unwrap();
+            let mut missing = valid.to_vec();
+            missing.drain(index..index + 2);
+            assert!(Cli::try_parse_from(missing).is_err(), "missing {flag}");
+        }
         assert!(
             Cli::try_parse_from([
                 "web",
                 "upload",
-                "dkk/wms/dev",
+                "acme/receiving/dev",
                 "--release",
                 "sha256:abc",
                 "--bucket",
                 "gs://web"
             ])
-            .is_ok()
+            .is_err()
         );
+    }
+
+    #[test]
+    fn platform_ui_keeps_its_own_inputs() {
+        assert!(Cli::try_parse_from(["web", "upload", "--platform-ui", "--org", "dkk"]).is_ok());
+        assert!(Cli::try_parse_from(["web", "upload", "--platform-ui"]).is_err());
+        assert!(Cli::try_parse_from(["web", "upload", "--org", "dkk"]).is_err());
         assert!(
             Cli::try_parse_from([
                 "web",
@@ -187,6 +214,32 @@ mod tests {
                 "gs://other"
             ])
             .is_ok()
+        );
+        assert!(
+            Cli::try_parse_from([
+                "web",
+                "upload",
+                "--platform-ui",
+                "--org",
+                "dkk",
+                "--web",
+                "sha256:abc"
+            ])
+            .is_err()
+        );
+        assert!(
+            Cli::try_parse_from([
+                "web",
+                "upload",
+                "--platform-ui",
+                "--org",
+                "dkk",
+                "--artifact-base",
+                "r/packages",
+                "--registry-auth-file",
+                "auth.json"
+            ])
+            .is_err()
         );
     }
 }

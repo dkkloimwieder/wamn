@@ -144,6 +144,9 @@ Analysis makes sure that the artifact matches its digest and its package coordin
 Without `client`, the host serves no application web client.
 Revision values keep `webClients` for package ids and `webDigests` for web artifact digests.
 Apply reads the web artifact without claiming it, so environments can share one artifact.
+`wamn web upload` copies that artifact’s `dist/` to the shared digest root.
+It writes files create-only, then the org and project configuration, then the index.
+An existing index marks completion, so another upload writes nothing.
 
 The Rust edge reads `release.json` for each request.
 It serves application files from `clients/<package>/<web digest hex>/` in the web bucket.

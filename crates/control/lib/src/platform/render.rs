@@ -476,7 +476,10 @@ pub fn install(
         }
     }
     if !document.buckets.web.is_empty() {
-        for environment in environments {
+        for environment in environments
+            .iter()
+            .filter(|environment| environment.client.is_some())
+        {
             let batch = super::web::upload_request(
                 environment,
                 &document.buckets.web,
@@ -739,13 +742,21 @@ mod tests {
         // Owner and local-build steps apply no Kubernetes objects.
         for step in [
             "4.3", "4.4", "4.4.1", "4.5", "4.7", "4.8", "4.9", "4.11", "4.12", "4.13", "4.14",
-            "4.16.1", "4.17", "4.18", "4.19", "4.19.1", "4.20", "4.21",
+            "4.16.1", "4.17", "4.18", "4.19.1", "4.20", "4.21",
         ] {
             assert!(
                 objects.iter().any(|(number, _)| *number == step),
                 "empty step {step}"
             );
         }
+        assert_eq!(
+            objects.iter().any(|(step, _)| *step == "4.19"),
+            render
+                .documents
+                .iter()
+                .any(|(_, environment)| environment.client.is_some()),
+            "web upload Jobs require a client pin"
+        );
         for kind in [
             "Deployment",
             "Service",

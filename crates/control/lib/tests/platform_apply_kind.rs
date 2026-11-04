@@ -580,6 +580,15 @@ async fn scenario(run: &mut Run, start: usize) -> anyhow::Result<()> {
                         if installed.is_ok() { "pass" } else { "fail" }
                     );
                     installed?;
+                    release_documents::pin_web_clients(
+                        &repository,
+                        &artifacts,
+                        &mut [
+                            ("wamn_receiving", &mut environment),
+                            ("wamn_wms", &mut wms_environment),
+                        ],
+                    )
+                    .await?;
                     run.record(
                         "4.3 through 4.14 progress (done)",
                         require_steps(&first, if run.reuse { "done|skipped" } else { "done" }),
@@ -627,6 +636,9 @@ async fn scenario(run: &mut Run, start: usize) -> anyhow::Result<()> {
                     std::fs::write(&wms_input, wms_environment.to_kcl())?;
                     environment.release = DeclaredRelease::Digest(digest.clone());
                     std::fs::write(&input, environment.to_kcl())?;
+                    let fixture = run.kept.fixture.as_mut().context("missing fixture setup")?;
+                    fixture.environment.client.clone_from(&environment.client);
+                    fixture.wms_environment.client.clone_from(&wms_environment.client);
                 }
                 "installed objects and NATS" => {
                     let ready = kubectl::wait(

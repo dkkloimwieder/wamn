@@ -1107,6 +1107,7 @@ pub fn install_job_requests(
     let environment = serde_json::from_value(json!({
         "org": "test", "project": "receiving", "env": "dev", "target": "dev",
         "release": format!("sha256:{}", "a".repeat(64)),
+        "client": {"package": "wamn_receiving", "web": format!("sha256:{}", "b".repeat(64))},
         "route_host": "test.example.com", "policy": "dev", "applications": {}
     }))?;
     let auth = serde_json::from_value(json!({"data": {
