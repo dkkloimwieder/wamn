@@ -85,12 +85,14 @@ async fn checked<R: Runner + ?Sized>(
 ) -> anyhow::Result<Vec<u8>> {
     let output = runner.output(command, input, bound).await?;
     // Arguments carry no private bytes: those enter on standard input.
+    // Standard output can carry them and is not printed.
     ensure!(
         output.status.success(),
-        "fixture command {} {:?} failed with {}; private output was not printed",
+        "fixture command {} {:?} failed with {}: {}",
         command.as_std().get_program().display(),
         command.as_std().get_args().collect::<Vec<_>>(),
-        output.status
+        output.status,
+        String::from_utf8_lossy(&output.stderr).trim()
     );
     Ok(output.stdout)
 }
