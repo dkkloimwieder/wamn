@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """Enforce native dependency boundaries and pure control modules."""
 
-import json
 from pathlib import Path
 import re
 import subprocess
 import sys
+import tomllib
 
 EDGE_REFUSED = {
     "wamn-runtime": "the edge never links the cloud plugin set",
@@ -546,24 +546,33 @@ def purity_modules(package, paths, root):
         scan(module)
 
 
+def library_roots():
+    """Each package's manifest and library root, read from the manifests under crates/."""
+    roots = {}
+    for manifest in (Path(__file__).resolve().parent.parent / "crates").rglob("Cargo.toml"):
+        data = tomllib.loads(manifest.read_text())
+        if "package" in data:
+            library = manifest.parent / data.get("lib", {}).get("path", "src/lib.rs")
+            roots[data["package"]["name"]] = (manifest, library)
+    return roots
+
+
 def purity():
-    result = subprocess.run([sys.argv[1], "metadata", "--format-version", "1", "--no-deps", "--offline"],
-                            check=True, capture_output=True, text=True)
-    packages = {package["name"]: package for package in json.loads(result.stdout)["packages"]}
+    packages = library_roots()
     for package in PURE_CRATES:
         require(package in packages, f"unknown pure package {package}")
         linked = dependencies(package)
         refused = {name: rule for name, rule in PURE_REFUSED.items() if name in linked}
-        manifest = packages[package]["manifest_path"]
+        manifest = packages[package][0]
         require(not refused, f"{manifest}:1: pure {package} links forbidden dependencies: {refused}")
     for package in PURE_MODULES.keys() | PURE_CRATES.keys():
         paths = PURE_MODULES.get(package, [])
         if package in PURE_CRATES:
             paths = ["", *paths]
         require(package in packages, f"unknown pure package {package}")
-        targets = [target for target in packages[package]["targets"] if "lib" in target["kind"]]
-        require(len(targets) == 1, f"{package}: expected one library target")
-        purity_modules(package, paths, Path(targets[0]["src_path"]))
+        library = packages[package][1]
+        require(library.is_file(), f"{package}: expected one library target")
+        purity_modules(package, paths, library)
 
 
 try:
