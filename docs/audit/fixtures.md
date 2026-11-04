@@ -88,14 +88,14 @@ Each run removed its cluster. No cluster, container or volume of this epic remai
 
 The owner rule of 2026-11-03 stops new cluster runs, so the epic acceptance on wamn-hchst now reads: merge on the per-merge selection, and the deferred run lands when the owner approves one. The journeys through the new fixture are therefore not proven on a cluster.
 
-## Request for the deferred run
+## Owner ruling 2026-11-04
 
-Purpose: prove the Receiving and WMS delivery cases through the new fixture, and find the `kubectl` step that failed in run 4.
+The epic stops after run 10, and no run 11 takes place. The owner waived the kind journey, as for uisplit. The branch merges on its unit and clippy evidence and on the per-merge selection of `tools/test-changes` without a kind suite.
 
-Command: `tools/delivery-owned receiving`, then `tools/delivery-owned wms`, then `tools/delivery-owned remove-kept wamn-delivery-fx`, on the existing 0.1.142 chart, with no platform build.
+The ruling adds a standing rule to CLAUDE.md. A journey test drives the product's own deploy path, which is the wamn commands and control routes that clients use, and it asserts the end state. Test code that does again what the product does is deleted, not fixed or hardened. If the product cannot drive a step that a journey needs, that is a product gap, and a bead against the deploy routes (Track 2) records it.
 
-Expected duration: root estimates 30 to 60 minutes if both cases pass, because no complete run exists to measure. A failure in Receiving ends the run sooner. If run 4 failed in this branch's fixture code, a fix and a second run follow, and each needs approval.
+Under this rule, the fixture code of this epic waits for deletion when the deploy routes land. Bead wamn-p6om9 lists the files: the shared Cluster lifecycle, the preflight, the deadline wrappers and the journey-run script. They get no new checks, no new limits and no dry-run mode. The fix for run 10 (a limit for each long wait and the command name in the deadline error) was not committed, by this ruling.
 
 ## Merge
 
-Fast-forward after the reviewer accepts. Main is still b7aff8e09.
+Fast-forward after the per-merge selection, on main 7dfc1a7b4 or later.
