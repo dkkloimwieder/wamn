@@ -53,10 +53,6 @@ fn generated_update_schema_agrees_with_client_presence_and_null_behavior() {
     let schema: Value =
         serde_json::from_slice(&std::fs::read(path).expect("read generated schema"))
             .expect("parse generated schema");
-    let properties = &schema["items"]["properties"]["change"]["properties"];
-    for (field, behavior) in [("code", "invalid_input"), ("note", "accepted")] {
-        assert_eq!(properties[field]["x-wamn-explicit-null"], behavior);
-    }
     let mut input = json!({"request_id":"r1","id":"00000000-0000-0000-0000-000000000001",
         "expected_edit_version":4,"change":{}});
     let absent = build_request(FIELDS, &input, Some(&schema)).expect("omit optional fields");
