@@ -73,6 +73,7 @@ The epic named one kind journey each for Receiving and WMS through the new fixtu
 | 1 and 2 | The package build failed on the read-only `libring` file. Fixed in 54045d4ee. |
 | 3 | The Receiving build record was stale. Root rebuilt the packages. |
 | 4 | A `kubectl` command failed after 58 seconds. The error named no arguments. Fixed in 7841cb622, so the next run names the failed step. |
+| 5 (owner-approved) | The fixture created the cluster, installed the platform and passed the step that failed in run 4. The Receiving build then failed after 1,312 seconds: `receiving.wasm` was not in the target. Root removed that target before the run, but the package build records stayed, so `wamn build` reported the packages as current and wrote no components. Root removed the records and rebuilt the packages. |
 
 Each run removed its cluster. No cluster, container or volume of this epic remains.
 
