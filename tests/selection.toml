@@ -280,6 +280,7 @@ root_features = ["wamn-control/ops", "wamn-ctl/ops"]
   RESEND_API_KEY = "Credential for the selected mail service."
   RESEND_FROM = "Authorized sender of the selected mail service."
   WAMN_COMPONENT_ARTIFACT_BASE = "Registry address supplied by the parent publication test."
+  WAMN_DELIVERY_CANDIDATE = "Candidate release document that qualify-release names for a cluster case."
   WAMN_DELIVERY_CLUSTER = "Operator-selected cluster declaration for delivery."
   WAMN_DEV_ENV_NATS_TLS_CA = "Credential or trust file for the operator-selected external service."
   WAMN_DEV_ENV_NATS_TLS_CERT = "Credential or trust file for the operator-selected external service."
