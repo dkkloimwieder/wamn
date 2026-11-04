@@ -158,7 +158,7 @@ impl Registry {
     }
 }
 
-fn is_loopback(authority: &str) -> bool {
+pub(crate) fn is_loopback(authority: &str) -> bool {
     matches!(authority.split(':').next(), Some("localhost" | "127.0.0.1"))
 }
 
@@ -244,7 +244,7 @@ pub fn registry_files(endpoint: &str, host_image: &str, work: &Path) -> anyhow::
     Ok(())
 }
 
-async fn docker(arguments: &[&str]) -> anyhow::Result<String> {
+pub(crate) async fn docker(arguments: &[&str]) -> anyhow::Result<String> {
     let output = tokio::process::Command::new("docker")
         .args(arguments)
         .kill_on_drop(true)

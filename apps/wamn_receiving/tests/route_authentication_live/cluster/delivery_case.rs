@@ -57,6 +57,8 @@ async fn owned_release_delivery() -> anyhow::Result<()> {
     let evidence = super::evidence_directory()?;
     DirBuilder::new().mode(0o700).create(&evidence)?;
     let started = Instant::now();
+    let artifacts = build::components_and_tools(&repository, &evidence).await?;
+    delivery::preflight(&artifacts.http).await?;
     let kept = delivery::kept_cluster(
         &repository,
         &Triple::new(
@@ -66,7 +68,7 @@ async fn owned_release_delivery() -> anyhow::Result<()> {
         ),
     )
     .await?;
-    let result = Box::pin(run(&repository, &kept, &evidence)).await;
+    let result = Box::pin(run(&repository, &kept, &artifacts, &evidence)).await;
     fs::write(
         evidence.join("delivery-result.json"),
         serde_json::to_vec_pretty(&json!({
@@ -79,11 +81,15 @@ async fn owned_release_delivery() -> anyhow::Result<()> {
 }
 
 #[expect(clippy::too_many_lines, reason = "one delivery, step after step")]
-async fn run(repository: &Path, kept: &KeptCluster, evidence: &Path) -> anyhow::Result<()> {
+async fn run(
+    repository: &Path,
+    kept: &KeptCluster,
+    artifacts: &build::Artifacts,
+    evidence: &Path,
+) -> anyhow::Result<()> {
     let work = application_directory(kept, "receiving")?;
     share_kubeconfig(kept, &work)?;
     let owner = format!("{}-receiving", kept.name);
-    let artifacts = build::components_and_tools(repository, evidence).await?;
     for directory in ["docker", "host-secrets", "wasmtime-cache"] {
         DirBuilder::new().mode(0o700).create(work.join(directory))?;
     }

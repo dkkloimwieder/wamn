@@ -70,6 +70,8 @@ async fn owned_release_delivery() -> anyhow::Result<()> {
     DirBuilder::new().mode(0o700).create(&evidence)?;
     println!("WMS delivery results: {}", evidence.display());
     let started = Instant::now();
+    build::build(&repository, &target, &evidence).await?;
+    delivery::preflight(&target.join("wasm32-wasip2/release/http_route.wasm")).await?;
     let kept = delivery::kept_cluster(
         &repository,
         &Triple::new(
@@ -101,7 +103,6 @@ async fn run(
     let work = application_directory(kept, "wms")?;
     share_kubeconfig(kept, &work)?;
     let owner = format!("{}-wms", kept.name);
-    build::build(repository, target, evidence).await?;
     let files = bootstrap::prepare(&work).await?;
     fs::copy(&kept.registry_auth, work.join("docker/config.json"))?;
     for directory in ["host-secrets", "wasmtime-cache"] {

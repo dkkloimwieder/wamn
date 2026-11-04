@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# This registry belongs to the train host, not to a kind cluster.
+# This registry belongs to the test host, not to a kind cluster.
 name=wamn-local-registry
 volume=wamn-local-registry-data
 label=wamn.dev/local-registry
@@ -21,7 +21,7 @@ flock 9
 docker info >/dev/null
 if ! docker container inspect "$name" >/dev/null 2>&1; then
   docker create --name "$name" --label "$label=true" \
-    --restart unless-stopped -p 127.0.0.1:0:5000 \
+    --restart unless-stopped -p 127.0.0.1:5001:5000 \
     -v "$volume:/var/lib/registry" registry:2 >&2
 fi
 owner=$(docker inspect --format '{{index .Config.Labels "wamn.dev/local-registry"}}' "$name")

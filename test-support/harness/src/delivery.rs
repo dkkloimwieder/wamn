@@ -21,6 +21,7 @@
 //! 4. The checks: the hosts, each role's placement, the A1 probe, and A12 when
 //!    another environment is in the namespace.
 
+use std::collections::BTreeSet;
 use std::ffi::OsString;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -42,7 +43,9 @@ use wamn_test_infrastructure::release_chart::{
     self as checks, Environment, Release, a1_probe, hosts_ready, role_placed,
 };
 
-use crate::case_release::{Registry, copy_image, registry_endpoint, registry_files, release_chart};
+use crate::case_release::{
+    Registry, copy_image, docker, is_loopback, registry_endpoint, registry_files, release_chart,
+};
 
 /// One run of an owned delivery command may take this long; `qualify-release`
 /// runs the application's cluster cases.
@@ -51,6 +54,8 @@ const COMMAND_TIMEOUT: Duration = Duration::from_hours(3);
 const REPLICAS: u32 = 1;
 /// Where the hosts mount [`REGISTRY_SECRET`].
 const REGISTRY_MOUNT: &str = "/etc/wamn/registry";
+/// The host's registry that `tools/local-registry` starts.
+const LOCAL_REGISTRY: &str = "wamn-local-registry";
 
 /// The host variables that `env apply` derives from the coordinate, the
 /// policy and the credential Secrets (`environment/write.rs`,
@@ -163,6 +168,83 @@ pub async fn load_images(app: &Application<'_>) -> anyhow::Result<()> {
         }
         app.kept.load_image(&local).await?;
     }
+    Ok(())
+}
+
+/// The checks that need no cluster, which a case runs before it creates or
+/// attaches one. Each loopback registry that the release chart's images name
+/// answers `/v2/`, [`LOCAL_REGISTRY`] is on the kind network when the chart
+/// names one, and the route guest at `route_guest` holds bytes.
+///
+/// # Errors
+///
+/// With every failed check at once, or when the release chart cannot be read.
+pub async fn preflight(route_guest: &Path) -> anyhow::Result<()> {
+    let chart = release_chart()?;
+    let set = image_set(&chart).await?;
+    let qualification = qualification_images(&chart).await?;
+    let mut loopback = BTreeSet::new();
+    for image in [
+        &set.host,
+        &set.http,
+        &set.materializer,
+        &qualification.runner,
+        &qualification.gates,
+        &qualification.identity,
+    ] {
+        let (authority, _) = image
+            .split_once('/')
+            .with_context(|| format!("the image {image} names a registry"))?;
+        if is_loopback(authority) {
+            loopback.insert(authority);
+        }
+    }
+    let mut failures = Vec::new();
+    for authority in &loopback {
+        let answered = Command::new("curl")
+            .args(["--noproxy", "*", "--fail", "--silent", "--max-time", "2"])
+            .args(["--output", "/dev/null"])
+            .arg(format!("http://{authority}/v2/"))
+            .kill_on_drop(true)
+            .status()
+            .await
+            .context("run curl")?;
+        if !answered.success() {
+            failures.push(format!(
+                "the registry {authority} that the release chart names does not answer /v2/"
+            ));
+        }
+    }
+    if !loopback.is_empty() {
+        match docker(&[
+            "container",
+            "inspect",
+            "--format",
+            "{{json .NetworkSettings.Networks}}",
+            LOCAL_REGISTRY,
+        ])
+        .await
+        {
+            Ok(networks)
+                if serde_json::from_str::<Value>(&networks)?
+                    .get("kind")
+                    .is_some() => {}
+            Ok(_) => failures.push(format!("{LOCAL_REGISTRY} is not on the kind network")),
+            Err(error) => failures.push(format!("{error:#}")),
+        }
+    }
+    match fs::metadata(route_guest) {
+        Ok(metadata) if metadata.len() > 0 => {}
+        Ok(_) => failures.push(format!(
+            "the route guest {} is empty",
+            route_guest.display()
+        )),
+        Err(error) => failures.push(format!(
+            "the route guest {}: {error}",
+            route_guest.display()
+        )),
+    }
+    ensure!(failures.is_empty(), "preflight: {}", failures.join("; "));
     Ok(())
 }
 
