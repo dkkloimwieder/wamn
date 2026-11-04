@@ -256,4 +256,12 @@ mod tests {
     }
 }
 
-export!(Component);
+#[expect(
+    unsafe_code,
+    reason = "wit-bindgen generated bindings and exports contain unsafe FFI glue"
+)]
+mod component_exports {
+    use super::{Component, export, exports};
+
+    export!(Component);
+}

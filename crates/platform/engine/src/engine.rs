@@ -245,6 +245,10 @@ fn configure_abandoned_call_grace() {
         // SAFETY: std serializes its own environment reads and writes, and
         // wash-runtime reads this variable through std. The remaining hazard is
         // a concurrent C `getenv`, and engine construction starts none.
+        #[expect(
+            unsafe_code,
+            reason = "std serializes its environment accesses, wash-runtime uses std, and engine construction starts no concurrent C getenv (wamn-i0iy.4)."
+        )]
         unsafe { std::env::set_var(ABANDONED_CALL_GRACE_ENV, ABANDONED_CALL_GRACE_SECS) };
     });
 }

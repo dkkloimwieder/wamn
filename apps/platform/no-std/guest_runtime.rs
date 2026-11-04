@@ -9,6 +9,10 @@ static ALLOCATOR: dlmalloc::GlobalDlmalloc = dlmalloc::GlobalDlmalloc;
 ///
 /// A non-null `old_pointer` must denote an allocation of `old_length` bytes
 /// with `alignment`; these are the canonical ABI realloc preconditions.
+#[expect(
+    unsafe_code,
+    reason = "The caller upholds the canonical ABI allocation and alignment contract."
+)]
 #[unsafe(no_mangle)]
 unsafe extern "C" fn cabi_realloc(
     old_pointer: *mut u8,
@@ -56,6 +60,10 @@ fn panic(_: &core::panic::PanicInfo<'_>) -> ! {
 ///
 /// The compiler-generated caller must provide two readable regions of at least
 /// `length` bytes. This has the same contract as C `memcmp`.
+#[expect(
+    unsafe_code,
+    reason = "The compiler-generated caller provides two readable regions of at least length bytes."
+)]
 #[unsafe(no_mangle)]
 unsafe extern "C" fn memcmp(
     left: *const core::ffi::c_void,

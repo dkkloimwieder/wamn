@@ -158,6 +158,10 @@ impl<S: Subscriber> Subscriber for SampledSpans<S> {
         self.0.on_register_dispatch(subscriber);
     }
 
+    #[expect(
+        unsafe_code,
+        reason = "Forwarding unchanged preserves the wrapped subscriber's contract and lets tracing-opentelemetry find its layer."
+    )]
     unsafe fn downcast_raw(&self, id: TypeId) -> Option<*const ()> {
         if id == TypeId::of::<Self>() {
             return Some(std::ptr::from_ref(self).cast());

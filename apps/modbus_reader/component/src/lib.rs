@@ -25,7 +25,15 @@ use exports::modbus_reader::register::read as contract;
 use registers::{self as read_registers, Error};
 
 struct Application;
-export!(Application);
+#[expect(
+    unsafe_code,
+    reason = "wit-bindgen generated bindings and exports contain unsafe FFI glue"
+)]
+mod component_exports {
+    use super::{Application, export, exports};
+
+    export!(Application);
+}
 
 mod codec {
     use super::contract;

@@ -49,6 +49,10 @@ fn main() -> anyhow::Result<()> {
     // (wamn-gdex). A RUST_LOG the deployment sets wins.
     if std::env::var_os("RUST_LOG").is_none() {
         // SAFETY: no other thread exists yet; the runtime starts below.
+        #[expect(
+            unsafe_code,
+            reason = "No other thread exists yet because the runtime starts below."
+        )]
         unsafe {
             std::env::set_var(
                 "RUST_LOG",

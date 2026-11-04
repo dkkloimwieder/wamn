@@ -208,6 +208,10 @@ fn every_token_reader_asks_the_one_metadata_server() {
     .expect("PATH joins");
     // SAFETY: this binary's only test sets these before it starts any thread
     // of its own, and libtest runs no other test beside it.
+    #[expect(
+        unsafe_code,
+        reason = "This binary's sole test sets these before starting any thread of its own, and libtest runs no other test beside it."
+    )]
     unsafe {
         std::env::set_var(METADATA_HOST_ENV, &host);
         std::env::set_var("PATH", path);

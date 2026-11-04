@@ -55,6 +55,10 @@ exclude = [
 ambiguous_negative_literals = "deny"
 redundant_lifetimes = "deny"
 trivial_numeric_casts = "deny"
+# 5 handwritten unsafe items and 19 wit-bindgen export modules at 9f74f86c8,
+# retained by owner ruling 2026-11-04.
+# Each has a scoped expect to keep new unsafe code under review.
+unsafe_code = "deny"
 unsafe_op_in_unsafe_fn = "deny"
 unused_lifetimes = "deny"
 missing_debug_implementations = "warn"

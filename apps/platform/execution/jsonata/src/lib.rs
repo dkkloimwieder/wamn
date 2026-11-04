@@ -199,7 +199,15 @@ fn terminal(code: &str, message: String) -> NodeError {
 }
 
 #[cfg(target_arch = "wasm32")]
-bindings::export!(Component with_types_in bindings);
+#[expect(
+    unsafe_code,
+    reason = "wit-bindgen generated bindings and exports contain unsafe FFI glue"
+)]
+mod component_exports {
+    use super::{Component, bindings};
+
+    bindings::export!(Component with_types_in bindings);
+}
 
 #[cfg(test)]
 mod tests {

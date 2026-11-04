@@ -31,7 +31,15 @@ mod component {
     };
 
     struct Modbus;
-    export!(Modbus);
+    #[expect(
+        unsafe_code,
+        reason = "wit-bindgen generated bindings and exports contain unsafe FFI glue"
+    )]
+    mod component_exports {
+        use super::{Modbus, export, exports};
+
+        export!(Modbus);
+    }
 
     fn transport(error: impl core::fmt::Debug) -> Error {
         Error::Transport(format!("{error:?}"))

@@ -75,6 +75,10 @@ impl ReaderProcess {
         // SAFETY: `kill` does not dereference pointers. The PID comes directly
         // from the still-running child and the signal is the service's existing
         // graceful-shutdown boundary.
+        #[expect(
+            unsafe_code,
+            reason = "kill dereferences no pointers, and the still-running child's PID receives the service's graceful-shutdown signal."
+        )]
         let signal_result = unsafe { libc::kill(pid, libc::SIGTERM) };
         if signal_result != 0 {
             let error = std::io::Error::last_os_error();
