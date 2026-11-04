@@ -136,7 +136,7 @@ targets = [
   { workspace="root", package="wamn-engine", target="lib:wamn_engine", tier="contract" },
   { workspace="root", package="wamn-engine", target="test:deadline", tier="contract" },
   { workspace="root", package="wamn-execution-host", target="lib:wamn_execution_host", tier="live-postgres" },
-  { workspace="root", package="wamn-execution-host", target="test:control_route_live", tier="live-postgres" },
+  { workspace="root", package="wamn-execution-host", target="test:control_route_live", tier="live-nats" },
   { workspace="root", package="wamn-execution-host", target="test:files_live", tier="live-postgres" },
   { workspace="root", package="wamn-execution-host", target="test:host_route_live", tier="live-postgres" },
   { workspace="root", package="wamn-gate-harness", target="lib:wamn_gate_harness", tier="contract" },
