@@ -1,0 +1,1112 @@
+//! Observe and reconcile the current run plane and its runtime identities.
+//!
+//! Dry runs read database facts without changing roles or schema.
+//! Apply requires SUPERUSER or BYPASSRLS to observe every tenant row.
+
+use std::collections::BTreeSet;
+use std::error::Error as StdError;
+
+use anyhow::Context as _;
+use tokio_postgres::NoTls;
+
+use wamn_control_provision::{
+    APP_SCHEMA_SQL, PlatformComponent, bind_platform_principal_sql, platform_principals_sql,
+    project_env_database_name, validate_project_env,
+};
+use wamn_control_registry::{DurabilityClass, Triple};
+use wamn_schema_control::{
+    BareSchemaName, RowPolicyObservation, RowSecurityObservation, RunPlaneObservation,
+    RunPlanePlan, ScenarioAuthorRoleObservation, catalog_schema_present_sql, plan_run_plane,
+    select_app_run_queue_authority_sql, select_app_scenario_author_membership_sql,
+    select_authoring_effective_column_privileges_sql,
+    select_authoring_effective_table_privileges_sql, select_authoring_table_owners_sql,
+    select_authoring_table_privileges_sql, select_environment_policy_policies_sql,
+    select_environment_policy_row_security_sql, select_run_capture_privileges_sql,
+    select_run_plane_helper_functions_sql, select_scenario_author_role_sql,
+    select_scenario_author_schema_usage_sql, select_schema_checks_sql, select_schema_columns_sql,
+    select_schema_indexes_sql, select_schema_triggers_sql,
+};
+
+/// Inputs of one run-plane reconciliation.
+#[derive(Debug)]
+pub struct ReconcileRunPlaneRequest {
+    /// Administrative Postgres URL to the system registry. The reconciler reads
+    /// the project-env's stored instance suffix here before resolving policy;
+    /// admission never connects to this database.
+    pub system_database_url: String,
+
+    /// Administrative Postgres URL to the exact registry-derived project
+    /// database. Observation and apply require SUPERUSER or BYPASSRLS so
+    /// forced-RLS rows cannot be skipped.
+    pub admin_database_url: String,
+
+    /// Registry organization owning the environment policy.
+    pub org: String,
+
+    /// Registry project owning the exact provisioned database target.
+    pub project: String,
+
+    /// Environment name. The policy is the one the environment row names.
+    pub env: String,
+
+    /// The project-env schema the run-plane tables live in (e.g.
+    /// `wamn_runner_demo`, `poc_f1`).
+    pub schema: String,
+
+    /// Plan without applying (strictly read-only).
+    pub dry_run: bool,
+
+    /// Publishes the user rows the reconciliation wrote or removed.
+    pub changes: wamn_platform_identity::auth_changes::AuthChanges,
+}
+
+impl ReconcileRunPlaneRequest {
+    /// The composed environment key derived from the environment coordinate.
+    pub fn env_key(&self) -> String {
+        wamn_control_registry::project_env_key(&self.org, &self.project, &self.env)
+    }
+}
+
+/// Result of one run-plane reconciliation.
+#[derive(Debug)]
+pub struct ReconcileRunPlaneOutcome {
+    /// The plan that was applied, or that would apply under a dry run.
+    pub plan: RunPlanePlan,
+    /// Whether the tenant's environment policy changed, or would change.
+    pub policy_changed: bool,
+    /// Durability class of the source environment policy.
+    pub durability_class: DurabilityClass,
+    /// What the tenant's `platform` schema and identity rows needed.
+    pub env_key_identity: EnvKeyIdentityOutcome,
+}
+
+/// Stable class for a run-plane target-identity refusal.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReconcileTargetErrorType {
+    /// The trusted triple could not resolve to one recorded registry target.
+    RegistryTarget,
+    /// The connected database did not match the registry-derived target identity.
+    DatabaseTarget,
+}
+
+/// Prefix shared by every typed run-plane target refusal.
+pub const RECONCILE_TARGET_REFUSAL_PREFIX: &str = "reconcile-run-plane target refusal";
+
+/// Contextual refusal raised before any run-plane or policy mutation.
+#[derive(Debug)]
+pub struct ReconcileTargetError {
+    type_: ReconcileTargetErrorType,
+    context: String,
+    expected_database: Option<String>,
+    actual_database: Option<String>,
+    source: Option<anyhow::Error>,
+}
+
+impl ReconcileTargetError {
+    fn with_source(
+        type_: ReconcileTargetErrorType,
+        context: impl Into<String>,
+        source: impl Into<anyhow::Error>,
+    ) -> Self {
+        Self {
+            type_,
+            context: format!("{RECONCILE_TARGET_REFUSAL_PREFIX}: {}", context.into()),
+            expected_database: None,
+            actual_database: None,
+            source: Some(source.into()),
+        }
+    }
+
+    fn mismatch(triple: &Triple, expected_database: String, actual_database: String) -> Self {
+        Self {
+            type_: ReconcileTargetErrorType::DatabaseTarget,
+            context: format!(
+                "{RECONCILE_TARGET_REFUSAL_PREFIX}: database target mismatch for registry triple {triple}: expected {expected_database:?}, actual {actual_database:?}"
+            ),
+            expected_database: Some(expected_database),
+            actual_database: Some(actual_database),
+            source: None,
+        }
+    }
+
+    /// Return the stable refusal class.
+    pub const fn error_type(&self) -> ReconcileTargetErrorType {
+        self.type_
+    }
+
+    /// Whether the trusted triple failed to resolve in the registry.
+    pub const fn is_registry_target(&self) -> bool {
+        matches!(self.type_, ReconcileTargetErrorType::RegistryTarget)
+    }
+
+    /// Whether the connected database failed the exact target check.
+    pub const fn is_database_target(&self) -> bool {
+        matches!(self.type_, ReconcileTargetErrorType::DatabaseTarget)
+    }
+
+    /// The exact registry-derived database name, when target comparison ran.
+    pub fn expected_database(&self) -> Option<&str> {
+        self.expected_database.as_deref()
+    }
+
+    /// The exact database-reported name, when target comparison ran.
+    pub fn actual_database(&self) -> Option<&str> {
+        self.actual_database.as_deref()
+    }
+}
+
+impl std::fmt::Display for ReconcileTargetError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(&self.context)
+    }
+}
+
+impl StdError for ReconcileTargetError {
+    fn source(&self) -> Option<&(dyn StdError + 'static)> {
+        self.source
+            .as_ref()
+            .map(|source| source.as_ref() as &(dyn StdError + 'static))
+    }
+}
+
+/// Reconcile one registry-verified run plane and return its plan and policy change.
+pub async fn reconcile_run_plane(
+    args: ReconcileRunPlaneRequest,
+) -> anyhow::Result<ReconcileRunPlaneOutcome> {
+    anyhow::ensure!(
+        ![&args.org, &args.project, &args.env]
+            .iter()
+            .any(|part| part.is_empty()),
+        "org, project and environment must not be empty"
+    );
+    let schema = BareSchemaName::new(args.schema.clone())
+        .with_context(|| format!("invalid --schema {:?}", args.schema))?;
+    let triple = Triple::new(&args.org, &args.project, args.env.as_str());
+    validate_project_env(&args.org, &args.project, &args.env).map_err(|source| {
+        ReconcileTargetError::with_source(
+            ReconcileTargetErrorType::RegistryTarget,
+            format!("registry target identity {triple} is invalid"),
+            source,
+        )
+    })?;
+    let instance =
+        crate::provision_project_env::read_project_env_instance(&args.system_database_url, &triple)
+            .await
+            .map_err(|source| {
+                ReconcileTargetError::with_source(
+                    ReconcileTargetErrorType::RegistryTarget,
+                    format!("registry target {triple} has no usable recorded instance"),
+                    source,
+                )
+            })?;
+    let expected_database =
+        project_env_database_name(&args.org, &args.project, &args.env, &instance);
+    let (mut client, conn) = tokio_postgres::connect(&args.admin_database_url, NoTls)
+        .await
+        .map_err(|source| {
+            ReconcileTargetError::with_source(
+                ReconcileTargetErrorType::DatabaseTarget,
+                format!("database target for registry triple {triple} did not connect"),
+                source,
+            )
+        })?;
+    let conn_task = tokio::spawn(conn);
+    let actual_database = client
+        .query_one("SELECT pg_catalog.current_database()::text", &[])
+        .await
+        .map(|row| row.get::<_, String>(0))
+        .map_err(|source| {
+            ReconcileTargetError::with_source(
+                ReconcileTargetErrorType::DatabaseTarget,
+                format!("database target for registry triple {triple} did not identify itself"),
+                source,
+            )
+        });
+    let actual_database = match actual_database {
+        Ok(actual_database) => actual_database,
+        Err(error) => {
+            drop(client);
+            let _ = conn_task.await;
+            return Err(error.into());
+        }
+    };
+    if actual_database != expected_database {
+        drop(client);
+        let _ = conn_task.await;
+        return Err(
+            ReconcileTargetError::mismatch(&triple, expected_database, actual_database).into(),
+        );
+    }
+    let result = async {
+        // The environment row names the policy
+        // (docs/architecture/overview.md#environment-lifecycle).
+        let policy = crate::provision_project_env::read_project_env_policy(
+            &args.system_database_url,
+            &triple,
+        )
+        .await?;
+        let source_policy =
+            wamn_release_control::verification_policy::read_authoritative_environment_policy(
+                &args.system_database_url,
+                &args.org,
+                &policy,
+                !args.dry_run,
+            )
+            .await?;
+        let durability_class = source_policy.durability_class();
+        let plan = reconcile(&client, &schema, !args.dry_run).await?;
+        let policy_changed = converge_environment_policy(
+            &mut client,
+            &schema,
+            &args.env_key(),
+            &args.env,
+            &source_policy,
+            !args.dry_run,
+        )
+        .await?;
+        // After the catalog schema, because app-schema.sql's stamp triggers
+        // call the record-history function that composition installs.
+        let (mut system, connection) =
+            tokio_postgres::connect(&args.system_database_url, NoTls).await?;
+        let connection = tokio::spawn(connection);
+        let identity_result = async {
+            let authority = system.transaction().await?;
+            if !args.dry_run {
+                wamn_platform_identity::org::lock_org_memberships(&authority, &args.org).await?;
+            }
+            let identity_source =
+                read_env_key_identity_source(&authority, &args.org, &args.project, &args.env)
+                    .await?;
+            let env_key = args.env_key();
+            let scope = wamn_platform_identity::application::ApplicationScope {
+                org: &args.org,
+                project: &args.project,
+                env: &args.env,
+                env_key: &env_key,
+            };
+            let outcome = converge_env_key_identity(
+                &mut client,
+                &env_key,
+                &identity_source,
+                !args.dry_run,
+                &args.changes,
+                &authority,
+                scope,
+            )
+            .await?;
+            authority.commit().await?;
+            anyhow::Ok(outcome)
+        }
+        .await;
+        drop(system);
+        let _ = connection.await;
+        let env_key_identity = identity_result?;
+        Ok::<_, anyhow::Error>((plan, policy_changed, durability_class, env_key_identity))
+    }
+    .await;
+    drop(client);
+    let _ = conn_task.await;
+    let (plan, policy_changed, durability_class, env_key_identity) = result?;
+    Ok(ReconcileRunPlaneOutcome {
+        plan,
+        policy_changed,
+        durability_class,
+        env_key_identity,
+    })
+}
+
+/// One service principal that holds a role in the project being reconciled.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ServicePrincipal {
+    id: String,
+    subject: String,
+    display_name: String,
+}
+
+/// One user principal with active org and environment memberships.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct UserPrincipal {
+    id: String,
+}
+
+/// The deployment and registry facts a tenant's identity rows are built from.
+///
+/// All of them come from the system registry, never from the tenant database,
+/// so a tenant cannot name its own platform rows, invent a service principal,
+/// or admit a user who was never granted a membership.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct EnvKeyIdentitySource {
+    /// `registry.meta.platform_domain`, absent until the bootstrap sets it.
+    platform_domain: Option<String>,
+    services: Vec<ServicePrincipal>,
+    users: Vec<UserPrincipal>,
+    /// The committed user and service principals that derive application admin.
+    admins: BTreeSet<String>,
+}
+
+/// Every service principal holding a role in one project, with the deployment
+/// platform domain that names the platform rows.
+const ENV_KEY_IDENTITY_SOURCE_SQL: &str = "SELECT p.id::text, p.subject, p.display_name \
+     FROM identity.project_roles AS r \
+     JOIN identity.principals AS p ON p.id = r.principal_id \
+     WHERE r.org = $1 AND r.project = $2 \
+       AND p.type = 'service' AND p.status = 'active' \
+     GROUP BY p.id, p.subject, p.display_name \
+     ORDER BY p.subject";
+
+/// Every user principal that `grant-project-env-membership` admitted to ONE
+/// project environment (`wamn-0h0g.9.18`).
+///
+/// `identity.project_env_memberships` carries `org`, `project` and `env`
+/// itself, so the tenant needs no join beyond the principal that names the
+/// user. The env narrows the read: one tenant database serves one project
+/// environment, and a member of `dev` gets no row in the `prod` tenant.
+const ENV_KEY_IDENTITY_USERS_SQL: &str = "SELECT p.id::text, p.email, p.display_name \
+     FROM identity.project_env_memberships AS m \
+     JOIN identity.principals AS p ON p.id = m.principal_id \
+     WHERE m.org = $1 AND m.project = $2 AND m.env = $3 \
+       AND p.type = 'user' AND p.status = 'active' \
+       AND EXISTS (SELECT 1 FROM identity.org_memberships om WHERE om.principal_id=p.id AND om.org=m.org AND om.status='active') \
+     ORDER BY p.email";
+
+/// Every user member of ONE project environment who holds `project-admin` in
+/// its project.
+const ENV_KEY_IDENTITY_ADMINS_SQL: &str = "SELECT p.id::text FROM identity.principals p \
+    WHERE p.status='active' AND (EXISTS (SELECT 1 FROM identity.project_roles r \
+    WHERE r.principal_id=p.id AND r.org=$1 AND r.project=$2 AND r.role=$4) \
+    OR EXISTS (SELECT 1 FROM identity.org_roles r WHERE r.principal_id=p.id AND r.org=$1 AND r.role='org-admin')) \
+    AND (p.type='service' OR (p.type='user' \
+    AND EXISTS (SELECT 1 FROM identity.org_memberships om WHERE om.principal_id=p.id AND om.org=$1 AND om.status='active') \
+    AND EXISTS (SELECT 1 FROM identity.project_env_memberships m WHERE m.principal_id=p.id AND m.org=$1 AND m.project=$2 AND m.env=$3)))";
+
+async fn read_env_key_identity_source(
+    client: &tokio_postgres::Transaction<'_>,
+    org: &str,
+    project: &str,
+    env: &str,
+) -> anyhow::Result<EnvKeyIdentitySource> {
+    let platform_domain: Option<String> = client
+        .query_one("SELECT platform_domain FROM registry.meta", &[])
+        .await
+        .context("read the deployment platform domain")?
+        .get(0);
+    let services = client
+        .query(ENV_KEY_IDENTITY_SOURCE_SQL, &[&org, &project])
+        .await
+        .context("read the project's service principals")?
+        .into_iter()
+        .map(|row| ServicePrincipal {
+            id: row.get(0),
+            subject: row.get(1),
+            display_name: row.get(2),
+        })
+        .collect();
+    let users = client
+        .query(ENV_KEY_IDENTITY_USERS_SQL, &[&org, &project, &env])
+        .await
+        .context("read the project environment's user members")?
+        .into_iter()
+        .map(|row| UserPrincipal { id: row.get(0) })
+        .collect();
+    let admins = client
+        .query(
+            ENV_KEY_IDENTITY_ADMINS_SQL,
+            &[
+                &org,
+                &project,
+                &env,
+                &wamn_platform_identity::control::PROJECT_ADMIN_ROLE,
+            ],
+        )
+        .await
+        .context("read the project environment's administrators")?
+        .into_iter()
+        .map(|row| row.get(0))
+        .collect();
+    Ok::<_, anyhow::Error>(EnvKeyIdentitySource {
+        platform_domain,
+        services,
+        users,
+        admins,
+    })
+}
+
+/// What one env_keyentity convergence did, or would do under a dry run.
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct EnvKeyIdentityOutcome {
+    /// `deploy/sql/app-schema.sql` was absent and was installed.
+    pub app_schema_installed: bool,
+    /// Platform rows written, out of the closed component list.
+    pub platform_rows_written: usize,
+    /// Service rows written for principals holding a role in this project.
+    pub service_rows_written: usize,
+    /// User rows written for users with a membership in this environment.
+    pub user_rows_written: usize,
+    /// User rows removed because their user has no membership in this
+    /// environment any more, or is no longer an active user.
+    pub user_rows_removed: usize,
+    /// `admin` rows written for administrators that had none, which repairs
+    /// an interrupted grant and the grants of `wamn-ctl invite`.
+    pub admin_rows_written: usize,
+}
+
+/// Install the tenant's `platform` schema and its identity rows
+/// (`wamn-0h0g.9.15`).
+///
+/// This is the production application of `deploy/sql/app-schema.sql` and of the
+/// platform principal rows. Both were manual `psql` steps that
+/// `docs/operations/deployment.md` told an operator to run, and a tenant that
+/// skipped them refused every stamped write with `actor-required`.
+///
+/// It runs here and not in `provision-project-env` because this verb already
+/// holds an administrative connection to the exact project-env database, and
+/// because the record-history functions the stamp triggers call arrive with the
+/// catalog schema this same run installs.
+///
+/// A service row is written for every service principal holding a role in the
+/// project. Its email is `<subject>@<platform-domain>`: a service is not a
+/// user, so it carries the deployment's own domain, like a platform row, and
+/// the subject keeps it unique inside the tenant.
+///
+/// A user row is written for every user that `grant-project-env-membership`
+/// admitted to this environment (`wamn-0h0g.9.18`). It carries the user's own
+/// `identity.principals.email` and display name. A new member gets the row at
+/// the next reconcile, not at the moment of the grant, because the grant flow
+/// holds no tenant connection.
+///
+/// A user row whose user is not in that source any more is removed, and the
+/// foreign keys remove its role assignments and API keys
+/// (docs/architecture/overview.md#organization-membership-and-administration).
+/// Service and platform rows keep their own sources, so this removes neither.
+///
+/// `apply=false` observes only and writes nothing.
+async fn converge_env_key_identity(
+    client: &mut tokio_postgres::Client,
+    env_key: &str,
+    source: &EnvKeyIdentitySource,
+    apply: bool,
+    changes: &wamn_platform_identity::auth_changes::AuthChanges,
+    system: &tokio_postgres::Transaction<'_>,
+    scope: wamn_platform_identity::application::ApplicationScope<'_>,
+) -> anyhow::Result<EnvKeyIdentityOutcome> {
+    anyhow::ensure!(!env_key.is_empty(), "tenant must not be empty");
+    let mut outcome = EnvKeyIdentityOutcome::default();
+    let app_schema_present: bool = client
+        .query_one("SELECT to_regclass('platform.\"user\"') IS NOT NULL", &[])
+        .await
+        .context("probe the platform schema")?
+        .get(0);
+
+    // Every relation app-schema.sql creates has a stamp trigger, so the
+    // record-history function has to exist before the file runs. The catalog
+    // composition carries it, and this same reconcile installs that. A tenant
+    // whose catalog predates record-history reaches here without it, and the
+    // failure is clearer here than inside a CREATE TRIGGER.
+    let stamp_function_present: bool = client
+        .query_one(
+            "SELECT EXISTS ( SELECT FROM pg_proc AS p \
+               JOIN pg_namespace AS n ON n.oid = p.pronamespace \
+              WHERE n.nspname = 'wamn_history' AND p.proname = 'stamp_row' )",
+            &[],
+        )
+        .await
+        .context("probe the record-history stamp function")?
+        .get(0);
+
+    let missing_platform: Vec<PlatformComponent> = if app_schema_present {
+        let present: BTreeSet<String> = client
+            .query(
+                "SELECT id::text FROM platform.\"user\" WHERE type = 'platform'",
+                &[],
+            )
+            .await
+            .context("read the tenant's platform rows")?
+            .into_iter()
+            .map(|row| row.get::<_, String>(0))
+            .collect();
+        PlatformComponent::ALL
+            .into_iter()
+            .filter(|component| !present.contains(&component.principal_id().to_string()))
+            .collect()
+    } else {
+        PlatformComponent::ALL.into_iter().collect()
+    };
+
+    let (present_users, present_user_type): (BTreeSet<String>, BTreeSet<String>) =
+        if app_schema_present {
+            client
+                .query("SELECT id::text, type = 'user' FROM platform.\"user\"", &[])
+                .await
+                .context("read the tenant's user rows")?
+                .into_iter()
+                .fold(Default::default(), |(mut all, mut users), row| {
+                    let id: String = row.get(0);
+                    if row.get::<_, bool>(1) {
+                        users.insert(id.clone());
+                    }
+                    all.insert(id);
+                    (all, users)
+                })
+        } else {
+            Default::default()
+        };
+    let missing_services: Vec<&ServicePrincipal> = source
+        .services
+        .iter()
+        .filter(|service| !present_users.contains(&service.id))
+        .collect();
+    let missing_users: Vec<&UserPrincipal> = source
+        .users
+        .iter()
+        .filter(|user| !present_users.contains(&user.id))
+        .collect();
+
+    outcome.app_schema_installed = !app_schema_present;
+    outcome.platform_rows_written = missing_platform.len();
+    outcome.service_rows_written = missing_services.len();
+    let members: BTreeSet<&str> = source.users.iter().map(|user| user.id.as_str()).collect();
+    let stale_users: Vec<&String> = present_user_type
+        .iter()
+        .filter(|id| !members.contains(id.as_str()))
+        .collect();
+    outcome.user_rows_written = missing_users.len();
+    outcome.user_rows_removed = stale_users.len();
+    let present_admins: BTreeSet<String> = if app_schema_present {
+        client
+            .query(
+                "SELECT user_id::text FROM platform.user_role \
+                  WHERE role_name = $1",
+                &[&wamn_project_state::ADMIN_ROLE],
+            )
+            .await
+            .context("read the tenant's admin rows")?
+            .into_iter()
+            .map(|row| row.get(0))
+            .collect()
+    } else {
+        BTreeSet::new()
+    };
+    let missing_admins: Vec<&UserPrincipal> = source
+        .users
+        .iter()
+        .filter(|user| source.admins.contains(&user.id) && !present_admins.contains(&user.id))
+        .collect();
+    outcome.admin_rows_written = source.admins.difference(&present_admins).count();
+    let stale_admins: Vec<_> = present_admins.difference(&source.admins).collect();
+    if !apply
+        || (app_schema_present
+            && missing_platform.is_empty()
+            && present_users.contains(&wamn_project_state::workflow_user_id().to_string())
+            && missing_services.is_empty()
+            && missing_users.is_empty()
+            && stale_users.is_empty()
+            && missing_admins.is_empty()
+            && stale_admins.is_empty()
+            && source.admins.is_subset(&present_admins))
+    {
+        return Ok(outcome);
+    }
+    anyhow::ensure!(
+        stamp_function_present,
+        "record-history-absent: this database has no wamn_history.stamp_row function, which every \
+         platform stamp trigger calls. deploy/sql/record-history.sql arrives with the catalog \
+         schema, so reconcile the catalog schema before the tenant identity rows"
+    );
+    let Some(platform_domain) = source.platform_domain.as_deref() else {
+        anyhow::bail!(
+            "platform-domain-unset: registry.meta.platform_domain names the domain of the \
+             platform principal emails, and this deployment has not set it. Set it once against \
+             the system database, for example UPDATE registry.meta SET platform_domain = \
+             'example.invalid'"
+        );
+    };
+    let platform_rows =
+        platform_principals_sql(platform_domain).map_err(|source| anyhow::anyhow!("{source}"))?;
+
+    let transaction = client
+        .transaction()
+        .await
+        .context("open the tenant identity transaction")?;
+    let mut drops = wamn_platform_identity::auth_changes::AuthDrops::default();
+    if !app_schema_present {
+        let owner: String = transaction
+            .query_one(
+                "SELECT pg_get_userbyid(datdba) FROM pg_database WHERE datname=current_database()",
+                &[],
+            )
+            .await?
+            .get(0);
+        transaction
+            .batch_execute(&format!(
+                "SET LOCAL ROLE {}; {APP_SCHEMA_SQL} RESET ROLE;",
+                wamn_pg_core::quote_ident(&owner)
+            ))
+            .await
+            .context("install deploy/sql/app-schema.sql")?;
+        wamn_package_control::schema_baseline::record_project(&transaction)
+            .await
+            .context("record the project schema baseline")?;
+    }
+    // Every write below stamps `wamn:provisioning`, and its own row stamps
+    // itself, because the bind comes first and lasts for this transaction.
+    transaction
+        .batch_execute(&platform_rows)
+        .await
+        .context("write the tenant's platform principal rows")?;
+    if !missing_services.is_empty()
+        || !missing_users.is_empty()
+        || !stale_users.is_empty()
+        || !missing_admins.is_empty()
+        || !stale_admins.is_empty()
+        || !source.admins.is_subset(&present_admins)
+    {
+        transaction
+            .batch_execute(&bind_platform_principal_sql(
+                PlatformComponent::Provisioning,
+            ))
+            .await
+            .context("bind wamn:provisioning for the service and user rows")?;
+        for service in &missing_services {
+            let principal_id: wamn_platform_identity::PrincipalId = service.id.parse()?;
+            wamn_platform_identity::application::write_service(
+                &transaction,
+                env_key,
+                wamn_platform_identity::application::ApplicationUser {
+                    principal_id: &principal_id,
+                    email: &format!("{}@{platform_domain}", service.subject),
+                    display_name: &service.display_name,
+                },
+                &mut drops,
+            )
+            .await?;
+        }
+        let mut principals = present_user_type.clone();
+        principals.extend(source.users.iter().map(|user| user.id.clone()));
+        principals.extend(source.services.iter().map(|service| service.id.clone()));
+        principals.extend(present_admins.iter().cloned());
+        for id in principals {
+            let principal = id.parse()?;
+            wamn_platform_identity::application::project_authority(
+                system,
+                &transaction,
+                scope,
+                &principal,
+                &mut drops,
+            )
+            .await?;
+        }
+    }
+    transaction
+        .commit()
+        .await
+        .context("commit the tenant identity rows")?;
+    changes.publish(drops).await;
+    Ok(outcome)
+}
+
+/// Converge one source-attested environment policy into the project-local
+/// relation owned by this reconciler. `apply=false` observes only, including a
+/// from-zero schema where the relation or additive source carriers do not yet
+/// exist.
+///
+/// `expected_environment` is the environment's name, which the run plane
+/// and publish compare with the scope. The policy the environment row names
+/// supplies the durability class and the source identity
+/// (docs/architecture/overview.md#environment-lifecycle).
+pub(crate) async fn converge_environment_policy(
+    client: &mut tokio_postgres::Client,
+    schema: &BareSchemaName,
+    env_key: &str,
+    environment: &str,
+    source: &wamn_release_control::verification_policy::AuthoritativeEnvironmentPolicy,
+    apply: bool,
+) -> anyhow::Result<bool> {
+    anyhow::ensure!(!env_key.is_empty(), "tenant must not be empty");
+    let table_present: bool = client
+        .query_one(
+            "SELECT pg_catalog.to_regclass(pg_catalog.format('%I.environment_policies', $1::text)) IS NOT NULL",
+            &[&schema.as_str()],
+        )
+        .await
+        .context("observe project-local environment policy relation")?
+        .get(0);
+    let source_carriers_present: bool = if table_present {
+        client
+            .query_one(
+                "SELECT count(*) = 2 FROM pg_catalog.pg_attribute AS attribute \
+                  WHERE attribute.attrelid = \
+                          pg_catalog.to_regclass(pg_catalog.format('%I.environment_policies', $1::text)) \
+                    AND attribute.attname IN ('source_policy_org', 'source_policy_hash') \
+                    AND attribute.attnum > 0 AND NOT attribute.attisdropped",
+                &[&schema.as_str()],
+            )
+            .await
+            .context("observe project-local environment policy source carriers")?
+            .get(0)
+    } else {
+        false
+    };
+    let current = if source_carriers_present {
+        client
+            .query_opt(
+                &format!(
+                    "SELECT expected_environment, durability_class, \
+                            source_policy_org, source_policy_hash \
+                       FROM {}.environment_policies WHERE env_key = $1",
+                    schema.quoted()
+                ),
+                &[&env_key],
+            )
+            .await
+            .context("observe project-local environment policy")?
+            .map(|row| {
+                (
+                    row.get::<_, String>(0),
+                    row.get::<_, String>(1),
+                    row.get::<_, Option<String>>(2),
+                    row.get::<_, Option<String>>(3),
+                )
+            })
+    } else {
+        None
+    };
+    let wanted_class = source.durability_class().as_sql();
+    let changed = current.as_ref().is_none_or(
+        |(current_environment, current_class, current_org, current_hash)| {
+            current_environment != environment
+                || current_class != wanted_class
+                || current_org.as_deref() != Some(source.source_policy_org.as_ref())
+                || current_hash.as_deref() != Some(source.source_policy_hash.as_ref())
+        },
+    );
+    if apply && changed {
+        anyhow::ensure!(
+            table_present && source_carriers_present,
+            "run-plane reconciliation did not create the environment policy source carriers"
+        );
+        let transaction = client.transaction().await?;
+        transaction
+            .batch_execute(&wamn_control_provision::bind_platform_principal_sql(
+                PlatformComponent::Provisioning,
+            ))
+            .await?;
+        transaction
+            .execute(
+                &format!(
+                    "INSERT INTO {}.environment_policies \
+                       (env_key, expected_environment, durability_class, \
+                        source_policy_org, source_policy_hash) \
+                     VALUES ($1, $2, $3, $4, $5) \
+                     ON CONFLICT (env_key) DO UPDATE SET \
+                       expected_environment = EXCLUDED.expected_environment, \
+                       durability_class = EXCLUDED.durability_class, \
+                       source_policy_org = EXCLUDED.source_policy_org, \
+                       source_policy_hash = EXCLUDED.source_policy_hash \
+                     WHERE (environment_policies.expected_environment, \
+                            environment_policies.durability_class, \
+                            environment_policies.source_policy_org, \
+                            environment_policies.source_policy_hash) \
+                           IS DISTINCT FROM \
+                           (EXCLUDED.expected_environment, EXCLUDED.durability_class, \
+                            EXCLUDED.source_policy_org, EXCLUDED.source_policy_hash)",
+                    schema.quoted()
+                ),
+                &[
+                    &env_key,
+                    &environment,
+                    &wanted_class,
+                    &source.source_policy_org.as_ref(),
+                    &source.source_policy_hash.as_ref(),
+                ],
+            )
+            .await
+            .context("converge project-local environment policy")?;
+        transaction.commit().await?;
+    }
+    Ok(changed)
+}
+
+/// The reusable core: observe the schema, plan, and — when `apply` — ensure the
+/// `wamn_app` role the sections GRANT to and execute the actions in order.
+/// Returns the plan (for reporting / gate assertions). Shared by the CLI verb
+/// and the live gate so both exercise one code path.
+pub async fn reconcile(
+    client: &tokio_postgres::Client,
+    schema: &BareSchemaName,
+    apply: bool,
+) -> anyhow::Result<RunPlanePlan> {
+    let bypasses_forced_rls: bool = client
+        .query_one(
+            "SELECT rolsuper OR rolbypassrls FROM pg_catalog.pg_roles WHERE rolname = CURRENT_USER",
+            &[],
+        )
+        .await
+        .context("verify reconcile admin bypasses forced RLS")?
+        .get(0);
+    anyhow::ensure!(
+        bypasses_forced_rls,
+        "reconcile-run-plane requires SUPERUSER or BYPASSRLS; a plain schema owner cannot completely observe forced-RLS rows"
+    );
+
+    let obs = observe(client, schema).await?;
+    let plan = plan_run_plane(schema, &obs);
+    if apply {
+        ensure_runtime_roles(client).await?;
+        let owner: String = client
+            .query_one(
+                "SELECT pg_get_userbyid(datdba) FROM pg_database WHERE datname=current_database()",
+                &[],
+            )
+            .await?
+            .get(0);
+        client
+            .batch_execute(&format!("SET ROLE {}", wamn_pg_core::quote_ident(&owner)))
+            .await?;
+        for action in &plan.actions {
+            client
+                .batch_execute(&action.sql)
+                .await
+                .with_context(|| format!("apply {:?} {}", action.kind, action.target))?;
+        }
+        client.batch_execute("RESET ROLE").await?;
+    }
+    Ok(plan)
+}
+
+pub async fn ensure_runtime_roles(client: &tokio_postgres::Client) -> anyhow::Result<()> {
+    for family in [
+        wamn_control_provision::WorkloadRoleFamily::Retention,
+        wamn_control_provision::WorkloadRoleFamily::AuditRetention,
+    ] {
+        client
+            .batch_execute(&wamn_control_provision::sql::ensure_workload_acl_role_sql(
+                family,
+            ))
+            .await?;
+    }
+    client
+        .batch_execute(&wamn_control_provision::sql::ensure_platform_group_role_sql())
+        .await?;
+    client
+        .batch_execute(&wamn_control_provision::sql::ensure_app_acl_role_sql())
+        .await
+        .context("ensure wamn_app role")?;
+    client
+        .batch_execute(wamn_schema_control::ensure_scenario_author_role_sql())
+        .await
+        .context("ensure host-only wamn_scenario_author role")?;
+    client
+        .batch_execute(
+            "SELECT pg_advisory_xact_lock(hashtext('wamn_role_bootstrap')); \
+             DO $separate$ BEGIN \
+               IF EXISTS (SELECT FROM pg_auth_members m \
+                            JOIN pg_roles g ON g.oid = m.roleid \
+                            JOIN pg_roles r ON r.oid = m.member \
+                           WHERE g.rolname = 'wamn_scenario_author' \
+                             AND r.rolname = 'wamn_app') THEN \
+                 REVOKE wamn_scenario_author FROM wamn_app; \
+               END IF; \
+             END $separate$;",
+        )
+        .await
+        .context("separate guest and scenario-author roles")
+}
+
+/// Read everything the pure planner decides on. Read-only.
+async fn observe(
+    client: &tokio_postgres::Client,
+    schema: &BareSchemaName,
+) -> anyhow::Result<RunPlaneObservation> {
+    let mut obs = RunPlaneObservation {
+        scenario_author_role: client
+            .query_opt(select_scenario_author_role_sql(), &[])
+            .await
+            .context("read scenario-author role attributes")?
+            .map(|row| ScenarioAuthorRoleObservation {
+                can_login: row.get(0),
+                is_superuser: row.get(1),
+                can_create_database: row.get(2),
+                can_create_role: row.get(3),
+                inherits_roles: row.get(4),
+                can_replicate: row.get(5),
+                bypasses_rls: row.get(6),
+            }),
+        ..Default::default()
+    };
+    obs.app_is_scenario_author_member = client
+        .query_one(select_app_scenario_author_membership_sql(), &[])
+        .await
+        .context("read guest scenario-author membership")?
+        .get(0);
+    obs.app_run_queue_authority = client
+        .query_one(select_app_run_queue_authority_sql(), &[&schema.as_str()])
+        .await
+        .context("read guest run-queue authority")?
+        .get(0);
+    let capture_privileges_sql = select_run_capture_privileges_sql();
+    let capture_privileges = client
+        .query_one(&capture_privileges_sql, &[&schema.as_str()])
+        .await
+        .context("read guest run-capture privileges")?;
+    obs.app_run_capture_privileges = (
+        capture_privileges.get(0),
+        capture_privileges.get(1),
+        capture_privileges.get(2),
+    );
+    for row in client
+        .query(select_authoring_table_privileges_sql(), &[&schema.as_str()])
+        .await
+        .context("read authoring table privileges")?
+    {
+        obs.authoring_table_privileges
+            .entry((row.get(0), row.get(1), row.get(2)))
+            .or_default()
+            .insert(row.get(3));
+    }
+    for row in client
+        .query(
+            select_authoring_effective_table_privileges_sql(),
+            &[&schema.as_str()],
+        )
+        .await
+        .context("read effective authoring table privileges")?
+    {
+        obs.authoring_effective_table_privileges
+            .entry((row.get(0), row.get(1), row.get(2)))
+            .or_default()
+            .insert(row.get(3));
+    }
+    for row in client
+        .query(
+            select_authoring_effective_column_privileges_sql(),
+            &[&schema.as_str()],
+        )
+        .await
+        .context("read effective authoring column privileges")?
+    {
+        obs.authoring_effective_column_privileges
+            .entry((row.get(0), row.get(1), row.get(2)))
+            .or_default()
+            .insert(row.get(3));
+    }
+    for row in client
+        .query(select_authoring_table_owners_sql(), &[&schema.as_str()])
+        .await
+        .context("read authoring table owners")?
+    {
+        obs.authoring_table_owners
+            .insert((row.get(0), row.get(1)), row.get(2));
+    }
+    for row in client
+        .query(
+            select_scenario_author_schema_usage_sql(),
+            &[&schema.as_str()],
+        )
+        .await
+        .context("read scenario-author schema usage")?
+    {
+        let schema_name: String = row.get(0);
+        let has_usage: bool = row.get(1);
+        if has_usage {
+            obs.scenario_author_schema_usage.insert(schema_name);
+        }
+    }
+
+    for row in client
+        .query(select_schema_columns_sql(), &[&schema.as_str()])
+        .await
+        .context("read schema tables/columns")?
+    {
+        let table: String = row.get(0);
+        let column: String = row.get(1);
+        if row.get(2) {
+            obs.non_nullable_columns
+                .insert((table.clone(), column.clone()));
+        }
+        if row.get(3) {
+            obs.defaulted_columns
+                .insert((table.clone(), column.clone()));
+        }
+        obs.column_types
+            .insert((table.clone(), column.clone()), row.get(4));
+        obs.tables.entry(table).or_default().insert(column);
+    }
+    if let Some(row) = client
+        .query_opt(
+            select_environment_policy_row_security_sql(),
+            &[&schema.as_str()],
+        )
+        .await
+        .context("read environment-policy row-security flags")?
+    {
+        let mut row_security = RowSecurityObservation {
+            enabled: row.get(0),
+            forced: row.get(1),
+            ..Default::default()
+        };
+        for row in client
+            .query(
+                select_environment_policy_policies_sql(),
+                &[&schema.as_str()],
+            )
+            .await
+            .context("read environment-policy row-security policies")?
+        {
+            row_security.policies.insert(
+                row.get(0),
+                RowPolicyObservation {
+                    command: row.get(1),
+                    permissive: row.get(2),
+                    roles: row.get::<_, Vec<String>>(3).into_iter().collect(),
+                    using_expression: row.get(4),
+                    check_expression: row.get(5),
+                },
+            );
+        }
+        obs.environment_policy_row_security = Some(row_security);
+    }
+    for row in client
+        .query(select_schema_indexes_sql(), &[&schema.as_str()])
+        .await
+        .context("read schema indexes")?
+    {
+        obs.indexes.insert(row.get(0), row.get(1));
+    }
+    for row in client
+        .query(select_schema_checks_sql(), &[&schema.as_str()])
+        .await
+        .context("read schema check constraints")?
+    {
+        obs.checks.insert((row.get(0), row.get(1)), row.get(2));
+    }
+    for row in client
+        .query(select_schema_triggers_sql(), &[&schema.as_str()])
+        .await
+        .context("read schema triggers")?
+    {
+        obs.triggers.insert((row.get(0), row.get(1)), row.get(2));
+    }
+    for row in client
+        .query(select_run_plane_helper_functions_sql(), &[&schema.as_str()])
+        .await
+        .context("read run-plane helper functions")?
+    {
+        obs.helper_functions.insert(row.get(0), row.get(1));
+    }
+    obs.catalog_schema_present = client
+        .query_one(catalog_schema_present_sql(), &[])
+        .await
+        .context("probe catalog schema")?
+        .get(0);
+    if obs.catalog_schema_present {
+        for row in client
+            .query(select_schema_columns_sql(), &[&"catalog"])
+            .await
+            .context("read catalog tables")?
+        {
+            let table: String = row.get(0);
+            obs.catalog_tables.insert(table.clone());
+        }
+    }
+    Ok(obs)
+}

@@ -10,7 +10,7 @@ pub struct DevResetArgs {
 
 #[cfg(target_os = "linux")]
 pub async fn reset(args: DevResetArgs) -> anyhow::Result<()> {
-    let instance = wamn_control::dev::target_database::reset(&args.config).await?;
+    let instance = wamn_dev_control::dev::target_database::reset(&args.config).await?;
     println!("reset target-instance={instance}");
     Ok(())
 }

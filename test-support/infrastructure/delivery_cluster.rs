@@ -6,7 +6,7 @@
 //! attaches, so the second case sees two applications in one namespace (A12).
 //! Nothing here removes it: `tools/delivery-owned remove-kept <name>` does.
 //!
-//! The platform is the one of `crates/control/lib/tests/environment_apply_kind.rs`:
+//! The platform is the one of `crates/control/dev/tests/environment_apply_kind.rs`:
 //! cert-manager, CloudNativePG, the one NATS and the operator release `wamn`
 //! in `wamn-system`, and a registry with TLS from a private CA and a password. `env apply` and
 //! the release chart's hosts read a registry over TLS only, because the chart

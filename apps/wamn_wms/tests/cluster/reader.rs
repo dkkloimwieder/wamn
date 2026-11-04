@@ -15,7 +15,7 @@ pub(super) fn args(
     source: &async_nats::jetstream::stream::Config,
     publisher: &ClientCertificate,
 ) -> anyhow::Result<EventReaderArgs> {
-    use wamn_control::provision_project_env::secret_value;
+    use wamn_environment_control::provision_project_env::secret_value;
     Ok(EventReaderArgs {
         org: crate::environment::identity().org.clone(),
         project: crate::environment::identity().project.clone(),

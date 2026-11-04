@@ -4,12 +4,12 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use serde_json::json;
-use wamn_control::component_admission::ComponentAdmission;
 use wamn_engine::artifact_source::LocalComponentSource;
 use wamn_engine::operation::native_workload::NativeComponent;
 use wamn_engine::operation::{OperationCall, OperationClosure, invoke_operation, node_types};
 use wamn_engine::release_manifest::{LoadedRelease, ReleaseScope};
 use wamn_execution_host::{NativeFacts, NodeAcquisition, OperationHost, OperationScope};
+use wamn_package_control::component_admission::ComponentAdmission;
 use wamn_runtime::connection_credentials::ConnectionCredentials;
 use wamn_runtime::plugins::connection_http::transport::HttpTransport;
 use wamn_runtime::plugins::connection_http::{

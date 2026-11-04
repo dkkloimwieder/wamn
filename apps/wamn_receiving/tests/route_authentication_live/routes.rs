@@ -57,7 +57,7 @@ async fn provision_environment(
     inputs: &JourneyDocument,
     admin: &Client,
     root: &Path,
-) -> anyhow::Result<wamn_control::provision_project_env::ProvisionedRoute> {
+) -> anyhow::Result<wamn_environment_control::provision_project_env::ProvisionedRoute> {
     let system_url = &inputs.system_pg_url;
     let version: i32 = admin
         .query_one("SHOW server_version_num", &[])
@@ -118,7 +118,7 @@ pub(super) async fn install_candidate_release(
     inputs: &JourneyDocument,
     candidate: &Candidate,
     evidence: &Path,
-) -> anyhow::Result<wamn_control::provision_project_env::ProvisionedRoute> {
+) -> anyhow::Result<wamn_environment_control::provision_project_env::ProvisionedRoute> {
     let system_url = inputs.system_pg_url.clone();
     let scratch = ScratchRoot::create()?;
     let root = scratch.path();
@@ -156,7 +156,7 @@ pub(super) async fn install_candidate_release(
         "receiving",
     )
     .await?;
-    wamn_control::dev::environment::grant_operator_admin_role(
+    wamn_dev_control::dev::environment::grant_operator_admin_role(
         &system_url,
         &route.database_url,
         identity().org.as_str(),
@@ -176,7 +176,7 @@ pub(super) async fn publish_receiving_release(
     inputs: &JourneyDocument,
     scenario_worker: &Path,
 ) -> anyhow::Result<(
-    wamn_control::provision_project_env::ProvisionedRoute,
+    wamn_environment_control::provision_project_env::ProvisionedRoute,
     String,
 )> {
     let system_url = inputs.system_pg_url.clone();
@@ -192,7 +192,7 @@ pub(super) async fn publish_receiving_release(
     install_journey_project(&packages, project.as_ref(), &route.database_url).await?;
     verify_journey_operation_grants(project.as_ref()).await?;
     reconcile_journey_run_plane(&scope(), &system_url, &route.database_url).await?;
-    wamn_control::dev::environment::grant_operator_admin_role(
+    wamn_dev_control::dev::environment::grant_operator_admin_role(
         &system_url,
         &route.database_url,
         identity().org.as_str(),

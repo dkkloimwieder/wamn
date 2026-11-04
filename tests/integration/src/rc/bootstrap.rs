@@ -5,10 +5,10 @@ use std::time::Duration;
 
 use anyhow::{Context as _, ensure};
 use serde_json::{Value, json};
-use wamn_control::dev::{environment::connect, pat_issuer};
-use wamn_control::provision_org::{self, OrgRecord, ProvisionOrgRequest};
-use wamn_control::provision_project_env::{self, ProvisionProjectEnvRequest};
 use wamn_control_provision::sql;
+use wamn_dev_control::dev::{environment::connect, pat_issuer};
+use wamn_environment_control::provision_org::{self, OrgRecord, ProvisionOrgRequest};
+use wamn_environment_control::provision_project_env::{self, ProvisionProjectEnvRequest};
 
 use super::{NAMESPACE, Resources, apply, command_json, kubectl, save};
 

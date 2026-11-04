@@ -1,15 +1,19 @@
 //! Arguments and output of the operational verbs of the `wamn-ctl-ops` binary.
 //!
-//! The work runs in `wamn-control`. This module holds the clap surface and the
+//! The work runs in `wamn-environment-control`. This module holds the clap surface and the
 //! printed lines.
 
 use clap::Args;
-use wamn_control::create_user::{CreateUserRequest, create_user_principal};
-use wamn_control::event_advisories::{EventAdvisoriesRequest, read_retained_advisories};
-use wamn_control::prune_record_history::{
+use wamn_environment_control::create_user::{CreateUserRequest, create_user_principal};
+use wamn_environment_control::event_advisories::{
+    EventAdvisoriesRequest, read_retained_advisories,
+};
+use wamn_environment_control::prune_record_history::{
     PruneRecordHistoryRequest, PrunedHistory, prune_expired_record_history,
 };
-use wamn_control::prune_run_history::{PruneRunHistoryRequest, prune_terminal_run_history};
+use wamn_environment_control::prune_run_history::{
+    PruneRunHistoryRequest, prune_terminal_run_history,
+};
 
 /// Retained broker advisory reporting arguments.
 #[derive(Debug, Args)]

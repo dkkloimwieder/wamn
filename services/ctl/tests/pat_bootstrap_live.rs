@@ -5,10 +5,10 @@ use std::path::PathBuf;
 use std::process::Stdio;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use wamn_control::dev::environment::{
+use wamn_control_provision::PlatformComponent;
+use wamn_dev_control::dev::environment::{
     JourneyScope, connect, provision_journey_control, provision_route,
 };
-use wamn_control_provision::PlatformComponent;
 use wamn_platform_identity::{PrincipalType, authenticate_pat};
 
 struct Files(PathBuf);
@@ -25,7 +25,7 @@ async fn cli_bootstrap_mints_first_service_pats_over_https() {
     wamn_test_postgres::require_ignored_prerequisites(
         "requires: bin:/usr/lib/postgresql/18/bin/postgres, env:WAMN_IDENTITY_BINARY",
     );
-    wamn_control::dev::pat_issuer::identity_binary().expect("find the wamn-identity binary");
+    wamn_dev_control::dev::pat_issuer::identity_binary().expect("find the wamn-identity binary");
     let _lock = wamn_test_postgres::lock();
     let database = wamn_test_postgres::database();
     database
@@ -231,7 +231,7 @@ async fn cli_bootstrap_mints_first_service_pats_over_https() {
 async fn development_identity_survives_target_recreation_and_owned_teardown() {
     const PASSWORD: &str = "owned-development-identity-fixture-password";
     use serde_json::{Value, json};
-    use wamn_control::dev::environment::{
+    use wamn_dev_control::dev::environment::{
         DEVELOPER_EMAIL, ENVIRONMENT, JourneyScope, ORG, PROJECT, provision,
         reconcile_journey_run_plane,
     };
@@ -377,7 +377,8 @@ async fn development_identity_survives_target_recreation_and_owned_teardown() {
     // Exercise the destructive database boundary used by structural rebuilds.
     // Identity remains outside that database and its role reader reconnects.
     let database =
-        wamn_control::dev::target_database::database_name(&environment.route.database_url).unwrap();
+        wamn_dev_control::dev::target_database::database_name(&environment.route.database_url)
+            .unwrap();
     admin
         .batch_execute(&format!(
             "DROP DATABASE {} WITH (FORCE);",
@@ -456,7 +457,7 @@ async fn development_identity_survives_target_recreation_and_owned_teardown() {
     wrong_owner["started"] = "not-the-owned-process".into();
     std::fs::write(&record_path, serde_json::to_vec(&wrong_owner).unwrap()).unwrap();
     assert!(
-        wamn_control::dev::pat_issuer::stop_environment(&files.0)
+        wamn_dev_control::dev::pat_issuer::stop_environment(&files.0)
             .await
             .is_err()
     );
@@ -467,7 +468,7 @@ async fn development_identity_survives_target_recreation_and_owned_teardown() {
     foreign.kill().await.unwrap();
     foreign.wait().await.unwrap();
     std::fs::write(record_path, record).unwrap();
-    wamn_control::dev::pat_issuer::stop_environment(&files.0)
+    wamn_dev_control::dev::pat_issuer::stop_environment(&files.0)
         .await
         .unwrap_or_else(|error| panic!("owned teardown failed: {error}"));
     assert!(

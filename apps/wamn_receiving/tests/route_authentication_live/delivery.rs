@@ -2,7 +2,7 @@
 
 use anyhow::{Context as _, ensure};
 use wamn_catalog::ServingManifest;
-use wamn_control::delivery::Candidate;
+use wamn_release_control::delivery::Candidate;
 
 pub(super) use wamn_test_infrastructure::rendering::{host_values, image_reference};
 

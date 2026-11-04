@@ -31,7 +31,7 @@ The control host and an edge box read no status.
 The [status routes](#host-run-routes) of the control host write the row.
 
 An attachment with auth policy `none` or `signature` has no principal, so it cannot write.
-If the reachable wiring of an anonymous attachment holds a registered operation or a transactional statement, [release publish](../../crates/control/lib/src/publish_release/components.rs) refuses it.
+If the reachable wiring of an anonymous attachment holds a registered operation or a transactional statement, [release publish](../../crates/control/release/src/publish_release/components.rs) refuses it.
 
 An authored attachment selects signature authentication with `{"modes":["signature"],"header":"X-Signature","credential":"<handle>"}` in its `auth-policy`.
 The host resolves the handle under its own project through `WamnCredentials`.

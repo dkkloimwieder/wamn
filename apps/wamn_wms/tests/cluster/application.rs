@@ -30,11 +30,11 @@ pub(super) async fn provision(
     work: &Path,
     admin_url: &str,
 ) -> anyhow::Result<(
-    wamn_control::provision_project_env::ProvisionedRoute,
-    wamn_control::dev::environment::JourneyCredentials,
+    wamn_environment_control::provision_project_env::ProvisionedRoute,
+    wamn_dev_control::dev::environment::JourneyCredentials,
 )> {
     crate::environment::install_control(admin_url, &inputs.system_pg_url).await?;
-    let issuer = wamn_control::dev::pat_issuer::start_for_issuer(
+    let issuer = wamn_dev_control::dev::pat_issuer::start_for_issuer(
         &inputs.system_pg_url,
         work,
         "https://127.0.0.1",
@@ -60,12 +60,12 @@ pub(super) async fn provision(
 /// Publish the release of this checkout through the authoring path.
 pub(super) async fn publish(
     inputs: &JourneyDocument,
-    route: &wamn_control::provision_project_env::ProvisionedRoute,
-    credentials: &wamn_control::dev::environment::JourneyCredentials,
+    route: &wamn_environment_control::provision_project_env::ProvisionedRoute,
+    credentials: &wamn_dev_control::dev::environment::JourneyCredentials,
     publication: &PublicationInputs<'_>,
-    platform: &wamn_control::environment::Platform,
+    platform: &wamn_environment_control::environment::Platform,
     evidence: &Path,
-) -> anyhow::Result<wamn_control::release_carrier::ReleaseCarrier> {
+) -> anyhow::Result<wamn_release_control::release_carrier::ReleaseCarrier> {
     crate::environment::publish(
         inputs,
         route,
@@ -82,10 +82,10 @@ pub(super) async fn publish(
 
 /// Record the run plane of the installed environment and seed the fixture.
 pub(super) async fn seed(
-    route: &wamn_control::provision_project_env::ProvisionedRoute,
+    route: &wamn_environment_control::provision_project_env::ProvisionedRoute,
     evidence: &Path,
 ) -> anyhow::Result<()> {
-    let (project, task) = wamn_control::dev::environment::connect(&route.database_url).await?;
+    let (project, task) = wamn_dev_control::dev::environment::connect(&route.database_url).await?;
     let seeded = async {
         let row = project
             .query_one(
@@ -142,7 +142,7 @@ pub(super) struct HostBinding<'a> {
     /// The session issuer and the instance suffix the host trusts.
     pub(super) session: (&'a str, &'a str),
     /// The candidate a qualification case runs; the delivery case has none.
-    pub(super) candidate: Option<&'a wamn_control::delivery::Candidate>,
+    pub(super) candidate: Option<&'a wamn_release_control::delivery::Candidate>,
 }
 
 pub(super) fn render_host(

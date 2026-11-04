@@ -29,12 +29,12 @@ use std::time::Duration;
 use anyhow::{Context as _, ensure};
 use futures_util::FutureExt as _;
 use serde_json::json;
-use wamn_control::delivery::Candidate;
-use wamn_control::release_chart::{self, ImageSet, ValuesInput};
 use wamn_control_provision::events::{advisory_stream_config, source_stream_config};
 use wamn_control_registry::Triple;
 use wamn_gate_harness::case_release::{self, NAMESPACE, Registry};
 use wamn_gate_harness::journey::JourneyDocument;
+use wamn_release_control::delivery::Candidate;
+use wamn_release_control::release_chart::{self, ImageSet, ValuesInput};
 use wamn_test_infrastructure::release_chart::{Release, hosts_ready, role_placed};
 use wamn_test_infrastructure::scratch::ScratchRoot;
 use wamn_test_infrastructure::{platform, workload};
@@ -267,7 +267,9 @@ async fn run_case(case: Case) -> anyhow::Result<()> {
     .await;
     match run {
         Ok(result) => match (result, cleanup) {
-            (Ok(()), Ok(())) => wamn_control::delivery::report_candidate_success(&candidate),
+            (Ok(()), Ok(())) => {
+                wamn_release_control::delivery::report_candidate_success(&candidate)
+            }
             (Err(error), Ok(())) | (Ok(()), Err(error)) => Err(error),
             (Err(error), Err(cleanup)) => {
                 Err(error.context(format!("WMS cleanup also failed: {cleanup:#}")))
@@ -298,7 +300,7 @@ struct CaseContext<'a> {
     /// The materializer consumers of the candidate's WMS package.
     consumers: &'a [async_nats::jetstream::consumer::pull::Config],
     /// The candidate's packages, from their artifacts.
-    packages: &'a [wamn_control::package_artifact::OpenedPackage],
+    packages: &'a [wamn_package_control::package_artifact::OpenedPackage],
     /// The release the case installs and deploys.
     candidate: &'a Candidate,
 }
@@ -365,9 +367,9 @@ async fn run_created(
     deployment::wait_registry(&registry_authority, &registry_auth).await?;
     deployment::wait_minio(&minio_endpoint).await?;
     deployment::labels(cluster, work, true).await?;
-    let platform_inputs = wamn_control::platform::journey::cluster(
+    let platform_inputs = wamn_environment_control::platform::journey::cluster(
         repository,
-        &wamn_control::platform::journey::ClusterInput {
+        &wamn_environment_control::platform::journey::ClusterInput {
             operator_namespace: NAMESPACE,
             host_namespace: NAMESPACE,
             org: scope.org.as_str(),
@@ -425,7 +427,7 @@ async fn run_created(
     application::seed(&route, evidence).await?;
     if measure_startup {
         let provisioning = nats.provisioning.connect(&nats.server).await?;
-        wamn_control::event_streams::provision(
+        wamn_environment_control::event_streams::provision(
             &async_nats::jetstream::new(provisioning.clone()),
             scope,
             source.num_replicas,
@@ -469,7 +471,7 @@ async fn run_created(
         .await
         .context("close the scoped stream observation client")?;
     let (project, project_task) =
-        wamn_control::dev::environment::connect(&route.database_url).await?;
+        wamn_dev_control::dev::environment::connect(&route.database_url).await?;
     let reader_args = if measure_startup {
         None
     } else {

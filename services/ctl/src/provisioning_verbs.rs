@@ -8,22 +8,26 @@ use std::path::{Path, PathBuf};
 use anyhow::Context as _;
 use clap::{Args, ValueEnum};
 use serde_json::Value;
-use wamn_control::capture_gap::{
+use wamn_control_provision::{CredentialGeneration, DB_OWNER_ROLE, WorkloadRoleFamily};
+use wamn_control_registry::{Template, Triple};
+use wamn_environment_control::capture_gap::{
     self, CloseCaptureGapRequest, ClosedCaptureGap, RecoverCaptureGapRequest, RecoveredCaptureGap,
 };
-use wamn_control::enable_cdc_project_env::{
+use wamn_environment_control::enable_cdc_project_env::{
     self, EnableCdcProjectEnvOutcome, EnableCdcProjectEnvRequest,
 };
-use wamn_control::pat_client::PatIssuerConfig;
-use wamn_control::provision_org::{self, OrgRecord, ProvisionOrgRequest, ProvisionedOrg};
-use wamn_control::provision_project_env::{
+use wamn_environment_control::provision_org::{
+    self, OrgRecord, ProvisionOrgRequest, ProvisionedOrg,
+};
+use wamn_environment_control::provision_project_env::{
     self, OrgWorkloadActionRequest, ProvisionProjectEnvOutcome, ProvisionProjectEnvRequest,
     WorkloadActionOutcome, WorkloadActionRequest, WorkloadActionVerb, WorkloadGenerationAction,
     ensure_secret_path, parse_pat_prefix, workload_action_flag, workload_secret_flag,
 };
-use wamn_control::provision_system::{self, EmitProvisionerRequest, ProvisionSystemRequest};
-use wamn_control_provision::{CredentialGeneration, DB_OWNER_ROLE, WorkloadRoleFamily};
-use wamn_control_registry::{Template, Triple};
+use wamn_environment_control::provision_system::{
+    self, EmitProvisionerRequest, ProvisionSystemRequest,
+};
+use wamn_identity_client::PatIssuerConfig;
 
 #[derive(Debug, Args)]
 pub struct ProvisionSystemArgs {
@@ -713,7 +717,7 @@ pub async fn provision(args: ProvisionProjectEnvArgs) -> anyhow::Result<()> {
         || request.emit_operator_pat_secret.is_some()
     {
         // Preserve transport validation before opening any external connection.
-        wamn_control::pat_client::PatClient::new(&request.pat_issuer)?;
+        wamn_identity_client::PatClient::new(&request.pat_issuer)?;
         request.changes = wamn_platform_identity::auth_changes::AuthChanges::connect(
             &wamn_platform_identity::nats::PlatformNats::from_env()?,
         )

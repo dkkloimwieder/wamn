@@ -5,7 +5,7 @@ It uploads the platform UI from the local repository.
 Application uploads pull a pinned standalone web artifact from the registry.
 It does not build files or change edge routing.
 [services/ctl/src/web.rs](../../services/ctl/src/web.rs) defines the arguments and output.
-[crates/control/lib/src/web_artifact.rs](../../crates/control/lib/src/web_artifact.rs) owns the upload behavior.
+[crates/control/package/src/web_artifact.rs](../../crates/control/package/src/web_artifact.rs) owns the upload behavior.
 
 ## Build and push
 
@@ -74,7 +74,7 @@ wamn web upload --platform-ui --org <org> [--bucket <bucket URL>]
 
 A bucket URL uses `s3://<bucket>[/<prefix>]` or `gs://<bucket>[/<prefix>]`.
 The optional prefix adds a directory before the upload path.
-`Sink::store` in [web_artifact.rs](../../crates/control/lib/src/web_artifact.rs) reads `AWS_*` variables for S3.
+`Sink::store` in [web_artifact.rs](../../crates/control/package/src/web_artifact.rs) reads `AWS_*` variables for S3.
 For Google Cloud Storage, it reads `GOOGLE_*` variables and Application Default Credentials, the credentials that Google client libraries use.
 The caller needs access to create objects in the bucket.
 The upload does not create the bucket or grant public access.
@@ -104,12 +104,12 @@ wamn web upload --platform-ui --org dkk --bucket gs://example-web/clients
 
 The uploader requires the chart version to equal the version in `deploy/platform/release/Chart.yaml`, which it reads at run time.
 It also requires the local file digest to match `PlatformBuildRecord.platform_ui` before it writes any object.
-[platform_ui_source](../../crates/control/lib/src/web_artifact.rs) applies these rules.
-[platform_ui_digest](../../crates/control/lib/src/platform_build.rs) includes each relative file path and file digest, and requires `index.html`.
+[platform_ui_source](../../crates/control/environment/src/platform/web.rs) applies these rules.
+[platform_ui_digest](../../crates/control/environment/src/platform_build.rs) includes each relative file path and file digest, and requires `index.html`.
 
 The destination is `<prefix>/platform-ui/<platform version>/`.
 The default example prints `platform-ui gs://wamn-dev-web/platform-ui/<platform version>/ written` after success.
-Its `config.json` contains only `{"org":"dkk"}`, as [web_scope.rs](../../crates/control/lib/src/web_scope.rs) defines.
+Its `config.json` contains only `{"org":"dkk"}`, as [web_scope.rs](../../crates/control/package/src/web_scope.rs) defines.
 This mode requires no environment coordinate, release selection, or package artifact.
 A repeated platform upload attempts the writes again. It keeps equal objects and refuses objects with other bytes.
 
@@ -148,12 +148,12 @@ Each write creates a new object and never replaces an existing object.
 A failed upload can leave objects behind. The command performs no rollback.
 A retry after a partial upload keeps each existing object whose bytes are equal, and refuses an object with other bytes.
 
-[write_files](../../crates/control/lib/src/web_artifact.rs) accepts `index.html`, the service worker `sw.js`, and files under `assets/`.
+[write_files](../../crates/control/package/src/web_artifact.rs) accepts `index.html`, the service worker `sw.js`, and files under `assets/`.
 Assets carry `Cache-Control: public, max-age=31536000, immutable`.
 The index, `sw.js` and generated `config.json` carry `Cache-Control: no-cache`.
 The accepted extensions are `html`, `js`, `css`, `json`, `map`, `svg`, `png`, `ico`, `woff2`, and `woff`.
 
-The [CLI](../../services/ctl/src/web.rs) and [upload implementation](../../crates/control/lib/src/web_artifact.rs) report these errors:
+The [CLI](../../services/ctl/src/web.rs) and [upload implementation](../../crates/control/package/src/web_artifact.rs) report these errors:
 
 | Error text | Cause or action |
 | --- | --- |

@@ -162,7 +162,7 @@ async fn execute(
     )
     .await?;
     let client = nats.provisioning.connect(&nats.server).await?;
-    wamn_control::event_streams::provision(
+    wamn_environment_control::event_streams::provision(
         &async_nats::jetstream::new(client),
         &scope,
         source.num_replicas,

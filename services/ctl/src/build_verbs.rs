@@ -52,7 +52,7 @@ pub async fn run(args: BuildArgs) -> anyhow::Result<()> {
             package_output(&output_root, &build_record.package.id).display()
         );
         if args.record_digest {
-            let line = wamn_control::package_artifact::record_package_digest(package)?;
+            let line = wamn_package_control::package_artifact::record_package_digest(package)?;
             print!("{}: {line}", package.display());
         }
     }

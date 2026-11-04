@@ -5,7 +5,7 @@
 # nodeSelector or tolerations field, so the host group file cannot carry them.
 # This policy adds both to the host pod when the API server admits it.
 # r-dev-ee95c37ee965257ff856 is the release name of dkk/receiving/dev and its
-# host group (release_name in crates/control/lib/src/release_chart.rs).
+# host group (release_name in crates/control/release/src/release_chart.rs).
 apiVersion: admissionregistration.k8s.io/v1
 kind: MutatingAdmissionPolicy
 metadata:

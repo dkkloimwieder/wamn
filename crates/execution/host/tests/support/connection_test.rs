@@ -10,7 +10,7 @@ use wamn_package_artifact::{
 use wamn_runtime::connection_health::ConnectionHealth;
 use wamn_runtime::plugins::connection_http::transport::HttpTransport;
 
-#[path = "../../../../control/lib/tests/support/local_registry.rs"]
+#[path = "../../../../control/environment/tests/support/local_registry.rs"]
 mod local_registry;
 
 const SECRET: &str = "candidate-private-api-key";
@@ -225,13 +225,13 @@ async fn candidate_http_and_modbus_health_commit_nothing() -> anyhow::Result<()>
     let repository = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../..")
         .canonicalize()?;
-    let built = wamn_control::integration::build(&repository, "modbus").await?;
+    let built = wamn_package_control::integration::build(&repository, "modbus").await?;
     let schema = json!({"type":"object","properties":{"authority":{"type":"string","minLength":1,"immutable":true}},"required":["authority"]});
-    wamn_control::integration::publish(
+    wamn_package_control::integration::publish(
         &built,
         &configuration,
         database.url(),
-        &wamn_control::integration::Publication {
+        &wamn_package_control::integration::Publication {
             version: 2,
             parameter_schema: schema.clone(),
             operations: "wamn:modbus/client@1.0.0".into(),

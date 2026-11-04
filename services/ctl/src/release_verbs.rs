@@ -4,9 +4,9 @@ use std::path::PathBuf;
 
 use clap::Args;
 use wamn_catalog::PackageCoordinate;
-use wamn_control::environment::document::EnvironmentDocument;
-use wamn_control::package_artifact::PackageRegistry;
-use wamn_control::publish_release::{
+use wamn_environment_control::environment::document::EnvironmentDocument;
+use wamn_package_control::package_artifact::PackageRegistry;
+use wamn_release_control::publish_release::{
     self, EntryPublicationInputs, PublishReleaseRequest, parse_package,
 };
 use wamn_runtime::component_artifact_source::OCI_CA_PATHS_ENV;

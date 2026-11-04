@@ -1,7 +1,7 @@
 //! The session issuer of a Receiving cluster case.
 
-use wamn_control::release_carrier::ReleaseCarrier;
 use wamn_gate_harness::session_issuer::{self, IssuerCluster, image_loaded};
+use wamn_release_control::release_carrier::ReleaseCarrier;
 
 use super::super::identity;
 use super::ReceivingCluster;

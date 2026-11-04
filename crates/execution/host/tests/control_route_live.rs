@@ -1866,7 +1866,7 @@ async fn connection_routes_refuse_mismatches_and_project_only_enabled_rows() -> 
     billing
         .batch_execute("ALTER TABLE platform.unavailable_integration RENAME TO integration")
         .await?;
-    let document = wamn_control::environment::document::EnvironmentDocument::from_json(
+    let document = wamn_environment_control::environment::document::EnvironmentDocument::from_json(
         &serde_json::to_vec(
             &json!({"org":ORG,"project":"billing","env":"dev","target":"cloud","release":"none","route_host":"billing.example","policy":"dev","applications":{}}),
         )?,
@@ -1882,7 +1882,7 @@ async fn connection_routes_refuse_mismatches_and_project_only_enabled_rows() -> 
         )?
         .path(),
     );
-    let _ = wamn_control::environment::bindings::project_authority(
+    let _ = wamn_environment_control::environment::bindings::project_authority(
         database.url(),
         billing_url.as_str(),
         &document,
@@ -1892,7 +1892,7 @@ async fn connection_routes_refuse_mismatches_and_project_only_enabled_rows() -> 
         .query_one("SELECT xmin::text FROM platform.connection", &[])
         .await?
         .get(0);
-    let _ = wamn_control::environment::bindings::project_authority(
+    let _ = wamn_environment_control::environment::bindings::project_authority(
         database.url(),
         billing_url.as_str(),
         &document,

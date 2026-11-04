@@ -294,7 +294,7 @@ async fn connect(url: &str) -> anyhow::Result<(Client, tokio::task::JoinHandle<(
     Ok((client, task))
 }
 
-#[path = "../../../crates/control/lib/tests/support/local_registry.rs"]
+#[path = "../../../crates/control/environment/tests/support/local_registry.rs"]
 mod local_registry;
 use local_registry::LocalRegistry;
 
@@ -380,7 +380,7 @@ impl ArtifactRegistry {
                 wamn_execution_contract::canonical_json_bytes(&serde_json::to_value(&parsed)?),
             )?;
         }
-        let packed = wamn_control::package_artifact::pack_package(&root)?;
+        let packed = wamn_package_control::package_artifact::pack_package(&root)?;
         let http = reqwest::Client::new();
         let base = format!("http://{}/v2/{PACKAGE_REPOSITORY}", self.local.address);
         for bytes in packed

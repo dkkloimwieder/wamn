@@ -1,7 +1,7 @@
 # Sourced by local.sh after its pinned PostgreSQL container is ready.
 command -v pgbench >/dev/null
 (( concurrency <= 1000 )) || { echo "The 1000-order seed needs at most 1000 clients" >&2; exit 2; }
-cargo build --offline --release -p wamn-control --example pg_floor_database
+cargo build --offline --release -p wamn-dev-control --example pg_floor_database
 database_url="postgresql://postgres:probe@127.0.0.1:$pg_port/wamn_system"
 "$bin/examples/pg_floor_database" "$database_url" "$repository/apps/wamn_receiving" >"$work/database.log" 2>&1 || {
   cat "$work/database.log" >&2

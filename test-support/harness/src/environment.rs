@@ -4,13 +4,15 @@ use std::path::Path;
 
 use anyhow::{Context as _, ensure};
 use tokio_postgres::Client;
-use wamn_control::component_admission::{self, AdmitComponentRequest};
-use wamn_control::enable_cdc_project_env::{self, EnableCdcProjectEnvRequest};
-use wamn_control::provision_project_env::{
+use wamn_control_provision::{project_env_database_name, sql, validate_instance_suffix};
+use wamn_environment_control::enable_cdc_project_env::{self, EnableCdcProjectEnvRequest};
+use wamn_environment_control::provision_project_env::{
     self, ProvisionProjectEnvRequest, ProvisionedRoute, read_json, secret_value,
 };
-use wamn_control::reconcile_package_data_access::{self, ReconcilePackageDataAccessRequest};
-use wamn_control_provision::{project_env_database_name, sql, validate_instance_suffix};
+use wamn_environment_control::reconcile_package_data_access::{
+    self, ReconcilePackageDataAccessRequest,
+};
+use wamn_package_control::component_admission::{self, AdmitComponentRequest};
 
 /// Provision the declared project and read its emitted connection and credentials.
 ///

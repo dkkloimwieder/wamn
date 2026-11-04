@@ -312,7 +312,7 @@ pub(super) async fn run_verified_query(
 ) -> Result<RowSet, StatementError> {
     async {
         // Admission parses declared SQL and refuses these constructs on the
-        // parse tree (`wamn_control::component_admission`, `declared_sql`).
+        // parse tree (`wamn_package_control::component_admission`, `declared_sql`).
         // This text guard stays as a second layer: a release admitted before
         // that check, or a forged descriptor, was never parsed.
         reject_claim_mutation(&statement.exact_sql).map_err(StatementError::Postgres)?;

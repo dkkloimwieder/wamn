@@ -1,0 +1,994 @@
+//! Disposable-PG18 test for installed-set generated data authority.
+
+use std::collections::BTreeMap;
+use std::path::{Path, PathBuf};
+
+use tokio_postgres::{Client, NoTls};
+use url::Url;
+use wamn_control_provision::{
+    CredentialGeneration, WorkloadRoleFamily, WorkloadRoleScope, sql, workload_generation_role,
+};
+use wamn_environment_control::reconcile_package_data_access::{
+    self, ReconcilePackageDataAccessRequest,
+};
+use wamn_package_control::apply_package::{self, ApplyPackageRequest};
+use wamn_test_infrastructure::locked_database;
+
+const CATALOG_SCHEMA: &str = wamn_catalog::CATALOG_SCHEMA_SQL;
+const APP_SCHEMA: &str = include_str!("../../../../deploy/sql/app-schema.sql");
+const ENV_KEY: &str = "package-data-access-live--fixture--dev";
+const PASSWORD: &str = "package-data-access-live-password";
+/// The relation maps apply-package writes beside the application tables.
+const APPLIER_OWNED_RELATIONS: [&str; 2] = ["wamn_entities", "wamn_cdc_exclusions"];
+
+async fn connect(url: &str) -> Client {
+    let (client, connection) = tokio_postgres::connect(url, NoTls)
+        .await
+        .expect("connect to disposable PostgreSQL");
+    tokio::spawn(connection);
+    client
+}
+
+fn fixture_package_root() -> PathBuf {
+    wamn_fixture_package::package_root()
+}
+
+fn overlay_package_root() -> PathBuf {
+    wamn_fixture_package::overlay_root()
+}
+
+fn generation_url(admin_url: &str, role: &str) -> String {
+    let mut url = Url::parse(admin_url).expect("parse disposable PostgreSQL URL");
+    url.set_username(role).expect("set generation role");
+    url.set_password(Some(PASSWORD))
+        .expect("set generation password");
+    url.into()
+}
+
+fn reconcile_args(url: &str, packages: Vec<PathBuf>) -> ReconcilePackageDataAccessRequest {
+    // A release reconcile presents verified artifacts. Each fixture tree
+    // stands in for one under a digest of its current bytes.
+    ReconcilePackageDataAccessRequest {
+        packages: packages
+            .into_iter()
+            .map(|package| wamn_package_control::apply_package::PackageRoot {
+                path: package.clone(),
+                artifact_digest: Some(
+                    wamn_test_infrastructure::fixture_digest::fixture_artifact_digest(&package)
+                        .expect("read the fixture package root"),
+                ),
+            })
+            .collect(),
+        database_url: url.to_owned(),
+        org: "package-data-access-live".into(),
+        project: "fixture".into(),
+        environment: "dev".into(),
+    }
+}
+
+async fn acl_identity(client: &Client) -> Vec<String> {
+    client
+        .query(
+            "SELECT identity FROM ( \
+               SELECT 'schema:' || namespace.nspname || ':' || namespace.xmin::text AS identity \
+                 FROM pg_catalog.pg_namespace AS namespace \
+                WHERE namespace.nspname = 'inventory' \
+               UNION ALL \
+               SELECT 'table:' || relation.relname || ':' || relation.xmin::text \
+                 FROM pg_catalog.pg_class AS relation \
+                 JOIN pg_catalog.pg_namespace AS namespace ON namespace.oid = relation.relnamespace \
+                WHERE namespace.nspname = 'inventory' AND relation.relname IN ( \
+                    'widget', 'widget_maker', \
+                    'unconsumed_relation', 'unconsumed_sequence', 'unconsumed_view') \
+               UNION ALL \
+               SELECT 'column:' || relation.relname || ':' || attribute.attname || ':' || attribute.xmin::text \
+                 FROM pg_catalog.pg_attribute AS attribute \
+                 JOIN pg_catalog.pg_class AS relation ON relation.oid = attribute.attrelid \
+                 JOIN pg_catalog.pg_namespace AS namespace ON namespace.oid = relation.relnamespace \
+                WHERE namespace.nspname = 'inventory' AND relation.relname IN ( \
+                    'widget', 'widget_maker', \
+                    'unconsumed_relation', 'unconsumed_sequence', 'unconsumed_view') \
+                  AND attribute.attnum > 0 AND NOT attribute.attisdropped \
+             ) AS observed ORDER BY identity COLLATE \"C\"",
+            &[],
+        )
+        .await
+        .expect("read ACL-bearing catalog identities")
+        .into_iter()
+        .map(|row| row.get(0))
+        .collect()
+}
+
+/// Every privilege the App role reaches on the applier-owned relation maps.
+///
+/// This is a measurement, not an assumption. The maps carry no seeded grant, so
+/// an empty answer before reconciliation states that no guest path reads them.
+/// A non-empty answer is a finding about the applier, and the assertion that
+/// reads it says so.
+async fn applier_owned_authority(client: &Client) -> Vec<String> {
+    let table_privileges = vec![
+        "DELETE",
+        "INSERT",
+        "MAINTAIN",
+        "REFERENCES",
+        "SELECT",
+        "TRIGGER",
+        "TRUNCATE",
+        "UPDATE",
+    ];
+    let column_privileges = vec!["INSERT", "REFERENCES", "SELECT", "UPDATE"];
+    client
+        .query(
+            "SELECT held FROM ( \
+               SELECT relation.relname || ':' || privilege AS held \
+                 FROM pg_catalog.pg_class AS relation \
+                 JOIN pg_catalog.pg_namespace AS namespace ON namespace.oid = relation.relnamespace \
+                 CROSS JOIN unnest($1::text[]) AS privilege \
+                WHERE namespace.nspname = 'inventory' \
+                  AND relation.relname = ANY($3::text[]) \
+                  AND pg_catalog.has_table_privilege('wamn_app', relation.oid, privilege) \
+               UNION ALL \
+               SELECT relation.relname || ':' || attribute.attname || ':' || privilege \
+                 FROM pg_catalog.pg_class AS relation \
+                 JOIN pg_catalog.pg_namespace AS namespace ON namespace.oid = relation.relnamespace \
+                 JOIN pg_catalog.pg_attribute AS attribute ON attribute.attrelid = relation.oid \
+                 CROSS JOIN unnest($2::text[]) AS privilege \
+                WHERE namespace.nspname = 'inventory' \
+                  AND relation.relname = ANY($3::text[]) \
+                  AND attribute.attnum > 0 AND NOT attribute.attisdropped \
+                  AND pg_catalog.has_column_privilege( \
+                        'wamn_app', relation.oid, attribute.attnum, privilege) \
+             ) AS observed ORDER BY held COLLATE \"C\"",
+            &[
+                &table_privileges,
+                &column_privileges,
+                &APPLIER_OWNED_RELATIONS.as_slice(),
+            ],
+        )
+        .await
+        .expect("read App authority on the applier-owned relation maps")
+        .into_iter()
+        .map(|row| row.get(0))
+        .collect()
+}
+
+#[tokio::test]
+async fn installed_package_set_unions_a_real_app_generation_and_replays_noop() {
+    let url = locked_database::database(wamn_test_postgres::database);
+    let admin = connect(&url).await;
+    let database: String = admin
+        .query_one("SELECT current_database()::text", &[])
+        .await
+        .expect("read disposable database")
+        .get(0);
+    let generation = workload_generation_role(
+        WorkloadRoleFamily::App,
+        WorkloadRoleScope::EnvKey {
+            env_key: ENV_KEY,
+            database: &database,
+        },
+        CredentialGeneration::A,
+    )
+    .expect("App generation accepts tenant scope");
+    admin
+        .batch_execute(&format!(
+            "DROP SCHEMA IF EXISTS inventory CASCADE; \
+             DROP SCHEMA IF EXISTS platform CASCADE; \
+             DROP SCHEMA IF EXISTS catalog CASCADE; \
+             DO $reset$ BEGIN \
+               IF EXISTS (SELECT FROM pg_roles WHERE rolname = '{generation}') THEN \
+                 EXECUTE format('DROP OWNED BY %I', '{generation}'); \
+                 EXECUTE format('DROP ROLE %I', '{generation}'); \
+               END IF; \
+               IF EXISTS (SELECT FROM pg_roles WHERE rolname = 'wamn_app') THEN \
+                 EXECUTE 'DROP OWNED BY wamn_app'; \
+                 EXECUTE 'DROP ROLE wamn_app'; \
+               END IF; \
+               CREATE ROLE wamn_app NOLOGIN; \
+               IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'wamn_scenario_author') THEN \
+                 CREATE ROLE wamn_scenario_author NOLOGIN; \
+               END IF; \
+             END $reset$;"
+        ))
+        .await
+        .expect("reset package data-access fixture");
+    admin
+        .batch_execute(sql::ensure_db_owner_role_sql())
+        .await
+        .expect("ensure the production package-owner role");
+    admin
+        .batch_execute(
+            "DO $grant$ BEGIN \
+               EXECUTE format(\
+                 'GRANT CREATE ON DATABASE %I TO wamn_db_owner', current_database()\
+               ); \
+             END $grant$;",
+        )
+        .await
+        .expect("grant the package-owner role its production-equivalent database authority");
+    admin
+        .batch_execute(CATALOG_SCHEMA)
+        .await
+        .expect("install package catalog");
+    admin
+        .batch_execute(APP_SCHEMA)
+        .await
+        .expect("install application authorization floor");
+    apply_package::apply_package(ApplyPackageRequest {
+        component_source: wamn_package_control::apply_package::component_source_from_env(None)
+            .unwrap(),
+        changes: wamn_platform_identity::auth_changes::AuthChanges::default(),
+        package: wamn_package_control::apply_package::PackageRoot {
+            path: fixture_package_root(),
+            artifact_digest: Some(
+                wamn_test_infrastructure::fixture_digest::fixture_artifact_digest(
+                    &fixture_package_root(),
+                )
+                .expect("read the fixture package root"),
+            ),
+        },
+        database_url: url.to_string(),
+        org: "package-data-access-live".into(),
+        project: "fixture".into(),
+        environment: "dev".into(),
+    })
+    .await
+    .expect("apply the fixture package before policy");
+    apply_package::apply_package(ApplyPackageRequest {
+        component_source: wamn_package_control::apply_package::component_source_from_env(None)
+            .unwrap(),
+        changes: wamn_platform_identity::auth_changes::AuthChanges::default(),
+        package: wamn_package_control::apply_package::PackageRoot {
+            path: overlay_package_root(),
+            artifact_digest: Some(
+                wamn_test_infrastructure::fixture_digest::fixture_artifact_digest(
+                    &overlay_package_root(),
+                )
+                .expect("read the fixture package root"),
+            ),
+        },
+        database_url: url.to_string(),
+        org: "package-data-access-live".into(),
+        project: "fixture".into(),
+        environment: "dev".into(),
+    })
+    .await
+    .expect("apply client overlay package before policy");
+    admin
+        .batch_execute(&sql::prepare_workload_generation_sql(
+            WorkloadRoleFamily::App,
+            &database,
+            &generation,
+            PASSWORD,
+            "2099-01-01T00:00:00Z",
+        ))
+        .await
+        .expect("prepare production App generation");
+    admin
+        .batch_execute(
+            "ALTER TABLE inventory.widget_maker ADD COLUMN undeclared_note text; \
+             GRANT DELETE ON TABLE inventory.widget_maker TO wamn_app; \
+             GRANT UPDATE (name) ON TABLE inventory.widget_maker TO wamn_app; \
+             GRANT SELECT (undeclared_note) ON TABLE inventory.widget_maker TO wamn_app; \
+             GRANT SELECT (name) ON TABLE inventory.widget_maker TO PUBLIC;",
+        )
+        .await
+        .expect("seed direct ACL residue");
+    // Negative controls. The admin role mints three relations in the
+    // package-owned schema that no package declares, one of each carrier the
+    // sweep reads, and grants the App role authority on each. Showing the
+    // absence of authority afterwards needs a relation that no package speaks
+    // for. Every declared relation fails that test by construction.
+    admin
+        .batch_execute(
+            "CREATE TABLE inventory.unconsumed_relation ( \
+                 id uuid PRIMARY KEY DEFAULT gen_random_uuid(), note text); \
+             CREATE VIEW inventory.unconsumed_view AS SELECT id FROM inventory.widget_maker; \
+             CREATE SEQUENCE inventory.unconsumed_sequence; \
+             GRANT SELECT ON TABLE inventory.unconsumed_relation TO wamn_app; \
+             GRANT UPDATE (note) ON TABLE inventory.unconsumed_relation TO wamn_app; \
+             GRANT SELECT ON TABLE inventory.unconsumed_view TO wamn_app; \
+             GRANT USAGE ON SEQUENCE inventory.unconsumed_sequence TO wamn_app;",
+        )
+        .await
+        .expect("seed authority on relations no package declares");
+    // The applier-owned relation maps carry no seed. The sweep reaches them like
+    // every other relation in the schema, and this reading states what it finds
+    // there before it runs.
+    assert_eq!(
+        applier_owned_authority(&admin).await,
+        Vec::<String>::new(),
+        "a guest path already reaches an applier-owned relation map, which is a \
+         finding about apply-package rather than a reason to exclude the map"
+    );
+
+    let incomplete = reconcile_package_data_access::reconcile_package_data_access(reconcile_args(
+        &url,
+        vec![fixture_package_root()],
+    ))
+    .await
+    .expect_err("one package cannot reconcile a two-package installed set");
+    assert!(
+        incomplete
+            .to_string()
+            .contains("package-data-access-installed-set-mismatch"),
+        "incomplete installed set did not carry its typed refusal: {incomplete:#}"
+    );
+
+    let installed_packages = vec![fixture_package_root(), overlay_package_root()];
+    let first_effect = reconcile_package_data_access::reconcile_package_data_access(
+        reconcile_args(&url, installed_packages.clone()),
+    )
+    .await
+    .expect("apply installed-set data-access union");
+    assert!(
+        !first_effect.is_noop(),
+        "residual ACL did not require repair"
+    );
+    assert_eq!(
+        applier_owned_authority(&admin).await,
+        Vec::<String>::new(),
+        "reconciliation left App authority on an applier-owned relation map"
+    );
+    let guest = connect(&generation_url(&url, &generation)).await;
+    guest
+        .query("SELECT id FROM inventory.widget_maker", &[])
+        .await
+        .expect("generated SELECT field is reachable through a real App generation");
+    guest
+        .execute(
+            "UPDATE inventory.widget \
+                SET maker_id = maker_id, edit_version = edit_version \
+              WHERE false",
+            &[],
+        )
+        .await
+        .expect("generated writable and revision fields are reachable");
+    guest
+        .query("SELECT id FROM inventory.widget FOR KEY SHARE", &[])
+        .await
+        .expect("generated lock carrier permits the declared row lock");
+    guest
+        .query("SELECT overlay_note FROM inventory.widget", &[])
+        .await
+        .expect("overlay SELECT survives beside base authority");
+    let delete = guest
+        .execute("DELETE FROM inventory.widget_maker WHERE false", &[])
+        .await
+        .expect_err("residual table DELETE survived reconciliation");
+    assert_eq!(
+        delete.as_db_error().map(|error| error.code().code()),
+        Some("42501")
+    );
+    // undeclared_note is added to the live relation by the seeding above and
+    // no manifest declares it, so it is a real undeclared column.
+    let undeclared_column = guest
+        .query("SELECT undeclared_note FROM inventory.widget_maker", &[])
+        .await
+        .expect_err("the undeclared column remained readable");
+    assert_eq!(
+        undeclared_column
+            .as_db_error()
+            .map(|error| error.code().code()),
+        Some("42501")
+    );
+    // The arm used to name a relation both packages declare, and whose
+    // select fields carry id. It asserted that a declared read fails. The subject
+    // is now a relation no package declares, so the arm shows the absence of
+    // authority instead of fabricating it.
+    for unconsumed in [
+        "SELECT id FROM inventory.unconsumed_relation",
+        "SELECT note FROM inventory.unconsumed_relation",
+        "SELECT id FROM inventory.unconsumed_view",
+        "SELECT nextval('inventory.unconsumed_sequence')",
+    ] {
+        let denied = guest
+            .query(unconsumed, &[])
+            .await
+            .expect_err("seeded authority survived on a relation no package declares");
+        assert_eq!(
+            denied.as_db_error().map(|error| error.code().code()),
+            Some("42501"),
+            "{unconsumed} kept its seeded authority"
+        );
+    }
+    for control_relation in ["wamn_entities", "wamn_cdc_exclusions"] {
+        let denied = guest
+            .query(&format!("SELECT * FROM inventory.{control_relation}"), &[])
+            .await
+            .expect_err("package data authority reached a control-owned relation map");
+        assert_eq!(
+            denied.as_db_error().map(|error| error.code().code()),
+            Some("42501"),
+            "{control_relation} became package data authority"
+        );
+    }
+    let overlay_delete = guest
+        .execute("DELETE FROM inventory.widget_maker WHERE false", &[])
+        .await
+        .expect_err("overlay residue survived installed-set reconciliation");
+    assert_eq!(
+        overlay_delete
+            .as_db_error()
+            .map(|error| error.code().code()),
+        Some("42501")
+    );
+
+    let first = acl_identity(&admin).await;
+    let again = reconcile_package_data_access::reconcile_package_data_access(reconcile_args(
+        &url,
+        installed_packages,
+    ))
+    .await
+    .expect("replay installed-set data-access union");
+    assert!(again.is_noop(), "replay did not report convergence");
+    assert_eq!(
+        acl_identity(&admin).await,
+        first,
+        "replay rewrote ACL state"
+    );
+}
+
+fn lineage_fixture_directory() -> PathBuf {
+    std::env::temp_dir().join("wamn-ctl-package-lineage-live")
+}
+
+/// The digest of the `wamn.json` bytes of the tree at `root`, which a local
+/// target comment records.
+fn manifest_digest(root: &Path) -> String {
+    let directory = apply_package::read_package_directory(root).expect("read the staged root");
+    format!(
+        "sha256:{}",
+        hex::encode(ring::digest::digest(
+            &ring::digest::SHA256,
+            &directory.manifest_bytes
+        ))
+    )
+}
+
+/// Stage one package root under the lineage fixture directory.
+///
+/// This helper copies the shipped root and returns the digest of the staged
+/// manifest.
+fn stage_package_root(source: &Path, name: &str) -> (PathBuf, String) {
+    let root = lineage_fixture_directory().join(name);
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(root.join("migrations")).expect("create staged migrations directory");
+    std::fs::create_dir_all(wamn_schema_generator::output_root(&root).join("platform-policy"))
+        .expect("create staged evidence directory");
+    for entry in std::fs::read_dir(source.join("migrations")).expect("read package migrations") {
+        let entry = entry.expect("read one package migration entry");
+        std::fs::copy(
+            entry.path(),
+            root.join("migrations").join(entry.file_name()),
+        )
+        .expect("copy one package migration");
+    }
+
+    wamn_schema_generator::build_record::check_current(source)
+        .unwrap_or_else(|error| panic!("{error:#}"));
+    let manifest_bytes = std::fs::read(wamn_schema_generator::package_manifest_path(source))
+        .expect("read package manifest");
+    std::fs::write(root.join("wamn.json"), &manifest_bytes).expect("write staged manifest");
+
+    std::fs::copy(overlay_evidence_path(source), overlay_evidence_path(&root))
+        .expect("copy staged evidence");
+    wamn_test_infrastructure::fixture_digest::write_build_record(&root);
+    let staged = manifest_digest(&root);
+    (root, staged)
+}
+
+async fn install_lineage_fixture(url: &str) -> Client {
+    let admin = connect(url).await;
+    admin
+        .batch_execute(
+            "DROP SCHEMA IF EXISTS inventory CASCADE; \
+             DROP SCHEMA IF EXISTS platform CASCADE; \
+             DROP SCHEMA IF EXISTS catalog CASCADE; \
+             DO $reset$ BEGIN \
+               IF EXISTS (SELECT FROM pg_roles WHERE rolname = 'wamn_app') THEN \
+                 EXECUTE 'DROP OWNED BY wamn_app'; \
+                 EXECUTE 'DROP ROLE wamn_app'; \
+               END IF; \
+               CREATE ROLE wamn_app NOLOGIN; \
+               IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'wamn_scenario_author') THEN \
+                 CREATE ROLE wamn_scenario_author NOLOGIN; \
+               END IF; \
+             END $reset$;",
+        )
+        .await
+        .expect("reset package lineage fixture");
+    admin
+        .batch_execute(sql::ensure_db_owner_role_sql())
+        .await
+        .expect("ensure the production package-owner role");
+    admin
+        .batch_execute(
+            "DO $grant$ BEGIN \
+               EXECUTE format(\
+                 'GRANT CREATE ON DATABASE %I TO wamn_db_owner', current_database()\
+               ); \
+             END $grant$;",
+        )
+        .await
+        .expect("grant the package-owner role its production-equivalent database authority");
+    admin
+        .batch_execute(CATALOG_SCHEMA)
+        .await
+        .expect("install package catalog");
+    admin
+        .batch_execute(APP_SCHEMA)
+        .await
+        .expect("install application authorization floor");
+    admin
+}
+
+async fn apply(url: &str, package: PathBuf) {
+    apply_package::apply_package(ApplyPackageRequest {
+        component_source: wamn_package_control::apply_package::component_source_from_env(None)
+            .unwrap(),
+        changes: wamn_platform_identity::auth_changes::AuthChanges::default(),
+        package: wamn_package_control::apply_package::PackageRoot {
+            path: package.clone(),
+            artifact_digest: Some(
+                wamn_test_infrastructure::fixture_digest::fixture_artifact_digest(&package)
+                    .expect("read the fixture package root"),
+            ),
+        },
+        database_url: url.to_owned(),
+        org: "package-data-access-live".into(),
+        project: "fixture".into(),
+        environment: "dev".into(),
+    })
+    .await
+    .expect("apply one package coordinate");
+}
+
+#[tokio::test]
+async fn moved_bytes_under_an_applied_version_are_refused() {
+    let url = locked_database::database(wamn_test_postgres::database);
+    let _admin = install_lineage_fixture(&url).await;
+    let (released, released_digest) = stage_package_root(&fixture_package_root(), "fixture");
+    let (overlay, _) = stage_package_root(&overlay_package_root(), "overlay");
+    apply(&url, released.clone()).await;
+    apply(&url, overlay.clone()).await;
+
+    // A published version stays immutable. Moving the bytes under an applied
+    // coordinate is refused, and the refusal names that coordinate.
+    let mut moved: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(released.join("wamn.json")).expect("read manifest"))
+            .expect("parse manifest");
+    moved
+        .get_mut("package")
+        .and_then(serde_json::Value::as_object_mut)
+        .expect("the staged manifest carries a package identity")
+        .insert("predecessor_version".to_owned(), serde_json::json!("0.9.0"));
+    let moved_bytes = wamn_execution_contract::canonical_json_bytes(&moved);
+    std::fs::write(released.join("wamn.json"), &moved_bytes).expect("move the manifest bytes");
+    wamn_test_infrastructure::fixture_digest::write_build_record(&released);
+    assert_ne!(
+        manifest_digest(&released),
+        released_digest,
+        "the package bytes did not move"
+    );
+    let drift = reconcile_package_data_access::reconcile_package_data_access(reconcile_args(
+        &url,
+        vec![released.clone(), overlay.clone()],
+    ))
+    .await
+    .expect_err("moved bytes reconciled under an already applied version");
+    assert!(
+        drift
+            .to_string()
+            .contains("package-data-access-source-drift: package=platform_fixture@2.1.1"),
+        "the immutable coordinate did not carry its drift refusal: {drift:#}"
+    );
+
+    std::fs::remove_dir_all(lineage_fixture_directory())
+        .expect("remove the package lineage fixture");
+}
+
+#[tokio::test]
+async fn reconciliation_leaves_every_platform_schema_grant_on_the_app_role_standing() {
+    let url = locked_database::database(wamn_test_postgres::database);
+    let admin = install_lineage_fixture(&url).await;
+    apply(&url, fixture_package_root()).await;
+    apply(&url, overlay_package_root()).await;
+    // platform and catalog are platform schemas. No package manifest names
+    // them, so the reconciler never reads a relation there. The floor grants the
+    // two schema files install stand outside every package declaration, and so
+    // does this seeded grant.
+    admin
+        .batch_execute("GRANT UPDATE (env_key) ON TABLE catalog.packages TO wamn_app;")
+        .await
+        .expect("seed App authority inside the platform schemas");
+    reconcile_package_data_access::reconcile_package_data_access(reconcile_args(
+        &url,
+        vec![fixture_package_root(), overlay_package_root()],
+    ))
+    .await
+    .expect("reconcile the installed package set beside platform-schema authority");
+
+    for (relation, privilege) in [
+        ("platform.\"user\"", "SELECT"),
+        ("platform.write_log", "INSERT"),
+        ("catalog.packages", "SELECT"),
+    ] {
+        assert!(
+            admin
+                .query_one(
+                    "SELECT pg_catalog.has_table_privilege('wamn_app', $1, $2)",
+                    &[&relation, &privilege],
+                )
+                .await
+                .expect("read platform-schema table authority")
+                .get::<_, bool>(0),
+            "reconciliation revoked {privilege} on {relation}"
+        );
+    }
+    assert!(
+        admin
+            .query_one(
+                "SELECT pg_catalog.has_column_privilege( \
+                   'wamn_app', 'catalog.packages', 'env_key', 'UPDATE')",
+                &[],
+            )
+            .await
+            .expect("read platform-schema column authority")
+            .get::<_, bool>(0),
+        "reconciliation revoked the seeded platform-schema column grant"
+    );
+}
+
+/// Stage the fixture application, whose `widget` relation logs.
+fn stage_logged_fixture() -> PathBuf {
+    let (root, _) = stage_package_root(&fixture_package_root(), "fixture-logged");
+    let manifest: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(root.join("wamn.json")).expect("read manifest"))
+            .expect("parse manifest");
+    assert_eq!(
+        manifest["models"]["widget_tag"]["audit_log"],
+        serde_json::json!({"columns": [], "retention": "P30D"}),
+        "the relation logs and carries no stamp columns"
+    );
+    root
+}
+
+/// Level-2 spec test 12 and ruling 28: a logged relation with no stamp columns
+/// writes history entries through the production App role, and the reconciler
+/// keeps the derived history insert grant.
+#[tokio::test]
+async fn a_logged_relation_writes_history_through_the_reconciled_app_role() {
+    let url = locked_database::database(wamn_test_postgres::database);
+    let admin = install_lineage_fixture(&url).await;
+    let database: String = admin
+        .query_one("SELECT current_database()::text", &[])
+        .await
+        .expect("read disposable database")
+        .get(0);
+    let package = stage_logged_fixture();
+    apply(&url, package.clone()).await;
+    let generation = workload_generation_role(
+        WorkloadRoleFamily::App,
+        WorkloadRoleScope::EnvKey {
+            env_key: ENV_KEY,
+            database: &database,
+        },
+        CredentialGeneration::A,
+    )
+    .expect("App generation accepts tenant scope");
+    admin
+        .batch_execute(&sql::prepare_workload_generation_sql(
+            WorkloadRoleFamily::App,
+            &database,
+            &generation,
+            PASSWORD,
+            "2099-01-01T00:00:00Z",
+        ))
+        .await
+        .expect("prepare production App generation");
+    let first = reconcile_package_data_access::reconcile_package_data_access(reconcile_args(
+        &url,
+        vec![package.clone()],
+    ))
+    .await
+    .expect("reconcile the logged package");
+    assert!(!first.is_noop(), "the logged package needed its grants");
+
+    let history_privileges = || async {
+        admin
+            .query(
+                "SELECT held FROM ( \
+                   SELECT attribute.attname::text || ':' || privilege AS held \
+                     FROM pg_catalog.pg_attribute AS attribute \
+                     CROSS JOIN unnest(ARRAY['SELECT', 'INSERT', 'UPDATE', 'REFERENCES']) \
+                          AS privilege \
+                    WHERE attribute.attrelid = 'inventory.widget_tag_history'::regclass \
+                      AND attribute.attnum > 0 AND NOT attribute.attisdropped \
+                      AND pg_catalog.has_column_privilege( \
+                            'wamn_app', attribute.attrelid, attribute.attnum, privilege) \
+                 ) AS observed ORDER BY held COLLATE \"C\"",
+                &[],
+            )
+            .await
+            .expect("read App authority on the history table")
+            .into_iter()
+            .map(|row| row.get::<_, String>(0))
+            .collect::<Vec<_>>()
+    };
+    let expected_privileges = [
+        "after:INSERT",
+        "before:INSERT",
+        "changed_at:INSERT",
+        "changed_by:INSERT",
+        "operation:INSERT",
+        "row_key:INSERT",
+        "transaction_id:INSERT",
+        "type:INSERT",
+    ];
+    assert_eq!(history_privileges().await, expected_privileges);
+
+    admin
+        .batch_execute(
+            "BEGIN; \
+             SELECT set_config('app.user_id', '00000000-0000-4000-8000-0000000000f1', true), \
+                    set_config('app.operation', 'admin:seed-history-fixture', true); \
+             INSERT INTO inventory.widget_tag (id, label) \
+               VALUES ('00000000-0000-4000-8000-00000000b003', 'history-tag'); \
+             COMMIT;",
+        )
+        .await
+        .expect("seed the logged relation as the fixture principal");
+
+    let guest = connect(&generation_url(&url, &generation)).await;
+    guest
+        .batch_execute(
+            "BEGIN; \
+             SELECT set_config('app.user_id', '00000000-0000-4000-8000-0000000000f2', true), \
+                    set_config('app.operation', 'platform-fixture:widget-tag/update@2.1.1', true); \
+             UPDATE inventory.widget_tag SET label = 'logged' \
+              WHERE id = '00000000-0000-4000-8000-00000000b003'; \
+             COMMIT;",
+        )
+        .await
+        .expect("the App role writes a logged relation with its reconciled grants");
+    let entries = admin
+        .query(
+            "SELECT type, operation, changed_by::text, row_key::text, before::text, after::text \
+               FROM inventory.widget_tag_history ORDER BY position",
+            &[],
+        )
+        .await
+        .expect("read the history entries")
+        .into_iter()
+        .map(|row| {
+            (
+                row.get::<_, String>(0),
+                row.get::<_, String>(1),
+                row.get::<_, String>(2),
+                row.get::<_, String>(3),
+                row.get::<_, String>(4),
+                row.get::<_, String>(5),
+            )
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        entries.len(),
+        2,
+        "one entry for each row change: {entries:?}"
+    );
+    assert_eq!(
+        (
+            entries[0].0.as_str(),
+            entries[0].1.as_str(),
+            entries[0].4.as_str()
+        ),
+        ("insert", "admin:seed-history-fixture", "{}")
+    );
+    assert_eq!(
+        entries[1],
+        (
+            "update".to_owned(),
+            "platform-fixture:widget-tag/update@2.1.1".to_owned(),
+            "00000000-0000-4000-8000-0000000000f2".to_owned(),
+            r#"{"id": "00000000-0000-4000-8000-00000000b003"}"#.to_owned(),
+            r#"{"label": "history-tag"}"#.to_owned(),
+            r#"{"label": "logged"}"#.to_owned(),
+        )
+    );
+    let stamps = admin
+        .query_one(
+            "SELECT count(*) FROM pg_catalog.pg_attribute \
+              WHERE attrelid = 'inventory.widget_tag'::regclass \
+                AND attname IN ('created_at', 'created_by', 'updated_at', 'updated_by') \
+                AND NOT attisdropped",
+            &[],
+        )
+        .await
+        .expect("read stamp columns")
+        .get::<_, i64>(0);
+    assert_eq!(stamps, 0, "the logged relation carries no stamp column");
+
+    for statement in [
+        "SELECT type FROM inventory.widget_tag_history",
+        "UPDATE inventory.widget_tag_history SET type = type",
+        "DELETE FROM inventory.widget_tag_history",
+    ] {
+        let denied = guest
+            .execute(statement, &[])
+            .await
+            .expect_err("the App role reached a history entry outside the log trigger");
+        assert_eq!(
+            denied.as_db_error().map(|error| error.code().code()),
+            Some("42501"),
+            "{statement}"
+        );
+    }
+
+    let again = reconcile_package_data_access::reconcile_package_data_access(reconcile_args(
+        &url,
+        vec![package],
+    ))
+    .await
+    .expect("replay the logged package reconciliation");
+    assert!(again.is_noop(), "the reconciler changed the history grant");
+    assert_eq!(history_privileges().await, expected_privileges);
+
+    std::fs::remove_dir_all(lineage_fixture_directory().join("fixture-logged"))
+        .expect("remove the logged package fixture");
+}
+
+/// The full comment of the connected database.
+async fn database_comment(client: &Client) -> Option<String> {
+    client
+        .query_one(
+            "SELECT pg_catalog.shobj_description(oid, 'pg_database') \
+               FROM pg_catalog.pg_database WHERE datname = pg_catalog.current_database()",
+            &[],
+        )
+        .await
+        .expect("read the database comment")
+        .get(0)
+}
+
+/// The manifest digests the local target comment records.
+async fn recorded_manifests(client: &Client) -> BTreeMap<String, String> {
+    let comment = database_comment(client)
+        .await
+        .expect("the target carries a comment");
+    wamn_runtime::local_application::parse_local_target_comment(&comment)
+        .expect("parse the local target comment")
+        .manifests
+}
+
+/// Change the staged manifest bytes without changing what the package declares.
+fn change_manifest_bytes(root: &Path) -> String {
+    let path = root.join("wamn.json");
+    let mut bytes = std::fs::read(&path).expect("read the staged manifest");
+    bytes.push(b'\n');
+    std::fs::write(&path, &bytes).expect("write the changed manifest");
+    wamn_test_infrastructure::fixture_digest::write_build_record(root);
+    manifest_digest(root)
+}
+
+/// Owner ruling 8 of wamn-ri4b: the local grant reconcile at Activate records
+/// the presented manifest digest of each package in the local target comment, and
+/// a changed wamn.json at an applied coordinate no longer refuses there.
+#[tokio::test]
+async fn the_local_grant_reconcile_records_the_presented_manifest_hash() {
+    const ENVIRONMENT: &str = "development";
+    let url = locked_database::database(wamn_test_postgres::database);
+    let admin = install_lineage_fixture(&url).await;
+    let (fixture, first) = stage_package_root(&fixture_package_root(), "fixture-local");
+    let (overlay, overlay_digest) = stage_package_root(&overlay_package_root(), "overlay-local");
+    apply(&url, fixture.clone()).await;
+    apply(&url, overlay.clone()).await;
+
+    let instance: u32 = admin
+        .query_one(
+            "SELECT oid FROM pg_catalog.pg_database WHERE datname = pg_catalog.current_database()",
+            &[],
+        )
+        .await
+        .expect("read the database instance")
+        .get(0);
+    let marker =
+        wamn_runtime::local_application::local_target_marker(ENV_KEY, ENVIRONMENT, instance);
+    admin
+        .batch_execute(&format!(
+            "DO $comment$ BEGIN \
+               EXECUTE format('COMMENT ON DATABASE %I IS %L', current_database(), {}::text); \
+             END $comment$;",
+            wamn_pg_core::quote_literal(&marker)
+        ))
+        .await
+        .expect("mark the local target");
+
+    let roots = vec![fixture.clone(), overlay.clone()];
+    let reconcile = |apply: bool| {
+        let prepared = reconcile_package_data_access::prepare_local(&roots)
+            .expect("prepare the presented local packages");
+        let url = url.to_string();
+        async move {
+            reconcile_package_data_access::reconcile_local(
+                &prepared,
+                &url,
+                ENV_KEY,
+                ENVIRONMENT,
+                apply,
+                &wamn_platform_identity::auth_changes::AuthChanges::default(),
+            )
+            .await
+        }
+    };
+
+    // A validating reconcile rolls back, so it records nothing.
+    reconcile(false)
+        .await
+        .expect("validate the local grants before the cutover");
+    assert_eq!(database_comment(&admin).await, Some(marker.clone()));
+
+    reconcile(true).await.expect("apply the local grants");
+    assert_eq!(
+        recorded_manifests(&admin).await,
+        BTreeMap::from([
+            ("platform_fixture@2.1.1".to_owned(), first.clone()),
+            ("platform_fixture_overlay@2.1.1".to_owned(), overlay_digest),
+        ]),
+        "the comment does not name the presented manifest of each package"
+    );
+
+    // An operations-only wamn.json edit at an applied coordinate reconciles
+    // with no Migrate, and the comment follows the presented manifest.
+    let installed = wamn_test_infrastructure::fixture_digest::fixture_artifact_digest(&fixture)
+        .expect("read the fixture package root");
+    let second = change_manifest_bytes(&fixture);
+    assert_ne!(second, first, "the manifest bytes did not move");
+    reconcile(true)
+        .await
+        .expect("the local reconcile takes a changed manifest at an applied coordinate");
+    assert_eq!(
+        recorded_manifests(&admin)
+            .await
+            .get("platform_fixture@2.1.1"),
+        Some(&second),
+        "the comment kept a digest the application no longer came from"
+    );
+    assert_eq!(
+        admin
+            .query_one(
+                "SELECT artifact_digest FROM catalog.packages \
+                  WHERE env_key = $1 AND package_id = 'platform_fixture' \
+                    AND package_version = '2.1.1'",
+                &[&ENV_KEY],
+            )
+            .await
+            .expect("read the immutable package row")
+            .get::<_, Option<String>>(0),
+        Some(installed),
+        "catalog.packages keeps the artifact digest the release apply recorded"
+    );
+
+    // The production path still refuses the same moved bytes.
+    let drift = reconcile_package_data_access::reconcile_package_data_access(reconcile_args(
+        &url,
+        roots.clone(),
+    ))
+    .await
+    .expect_err("moved bytes reconciled under an applied coordinate");
+    assert!(
+        drift
+            .to_string()
+            .contains("package-data-access-source-drift: package=platform_fixture@2.1.1"),
+        "the production path did not refuse the moved bytes: {drift:#}"
+    );
+
+    for root in &roots {
+        std::fs::remove_dir_all(root).expect("remove the local reconcile fixture");
+    }
+}
+
+/// The data-access evidence of the package at `root`, in its output root.
+fn overlay_evidence_path(root: &Path) -> PathBuf {
+    wamn_schema_generator::output_root(root).join("platform-policy/data-access.json")
+}

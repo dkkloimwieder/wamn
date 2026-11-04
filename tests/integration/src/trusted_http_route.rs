@@ -203,7 +203,8 @@ async fn credential_fixture(
         )
         .await?;
     let transaction =
-        wamn_control::provision_project_env::provisioning_transaction(&mut admin).await?;
+        wamn_environment_control::provision_project_env::provisioning_transaction(&mut admin)
+            .await?;
     transaction
         .execute(
             wamn_control_provision::sql::upsert_control_author_env_key_mapping_sql(),
@@ -644,11 +645,11 @@ async fn seed_with_client(
     client
         .batch_execute(&wamn_control_provision::sql::grant_administration_surface_sql("wamn_run"))
         .await?;
-    let authority: wamn_control::environment::document::EnvironmentDocument =
+    let authority: wamn_environment_control::environment::document::EnvironmentDocument =
         serde_json::from_value(
             serde_json::json!({"org":"acme","project":PROJECT,"env":ENVIRONMENT,"target":"cloud","release":"none","route_host":"fixture.example","policy":"dev","applications":{}}),
         )?;
-    let _ = wamn_control::environment::bindings::project_authority(
+    let _ = wamn_environment_control::environment::bindings::project_authority(
         system_url,
         &options.database_url,
         &authority,
@@ -978,7 +979,9 @@ mod tests {
     async fn set_instance_status(system_url: &str, status: &str) -> anyhow::Result<()> {
         let (mut client, driver) = tokio_postgres::connect(system_url, NoTls).await?;
         tokio::spawn(driver);
-        let tx = wamn_control::provision_project_env::provisioning_transaction(&mut client).await?;
+        let tx =
+            wamn_environment_control::provision_project_env::provisioning_transaction(&mut client)
+                .await?;
         tx.batch_execute("SET LOCAL ROLE wamn_control").await?;
         wamn_platform_identity::connections::administration::execute(
             &tx,
@@ -1003,7 +1006,9 @@ mod tests {
         tokio::spawn(driver);
         let (_, name) =
             wamn_catalog::parse_org_credential_handle(handle).map_err(anyhow::Error::msg)?;
-        let tx = wamn_control::provision_project_env::provisioning_transaction(&mut client).await?;
+        let tx =
+            wamn_environment_control::provision_project_env::provisioning_transaction(&mut client)
+                .await?;
         let row=tx.query_one("SELECT g.credential_id::text,k.store,k.ref,k.version FROM registry.connection c JOIN registry.integration i ON i.id=c.integration_id JOIN registry.connection_generation g ON(g.connection_id,g.generation)=(c.id,c.active_generation) JOIN identity.credential k ON k.id=g.credential_id WHERE i.org='acme' AND i.project=$1 AND i.name=$2",&[&PROJECT,&name]).await?;
         assert_eq!(row.get::<_, String>(1), "file");
         let stored = wamn_credential_store::StoreVersion {

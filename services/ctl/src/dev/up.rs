@@ -16,10 +16,10 @@ use std::path::PathBuf;
 
 use clap::Args;
 
-use wamn_control::dev::up::{DevUpRequest, provision_environment};
+use wamn_dev_control::dev::up::{DevUpRequest, provision_environment};
 
 /// The operator credential's file, written into `--root` by
-/// [`wamn_control::dev::environment::provision_route`]. Named here so the summary can
+/// [`wamn_dev_control::dev::environment::provision_route`]. Named here so the summary can
 /// point at it: only the path is ever printed, never the token inside it.
 const OPERATOR_PAT_FILE: &str = "operator-pat.json";
 
@@ -133,7 +133,7 @@ pub async fn run(args: DevUpArgs) -> anyhow::Result<()> {
         .map(|root| format!(" --overlay-root {}", root.display()))
         .unwrap_or_default();
     println!("environment ready; identity, control and web remain running until wamn dev down");
-    let web = wamn_control::provision_project_env::read_json(&root.join("web.json"))?;
+    let web = wamn_environment_control::provision_project_env::read_json(&root.join("web.json"))?;
     println!("  web: {}", web["url"].as_str().unwrap_or_default());
     for application in web["applications"].as_array().into_iter().flatten() {
         println!("  {}: {}", application["name"], application["url"]);
@@ -165,8 +165,8 @@ pub struct DevDownArgs {
 /// Leave externally supplied databases and brokers untouched.
 pub async fn down(args: DevDownArgs) -> anyhow::Result<()> {
     let root = args.root.canonicalize()?;
-    wamn_control::dev::control::stop(&root).await?;
-    wamn_control::dev::pat_issuer::stop_environment(&root).await?;
+    wamn_dev_control::dev::control::stop(&root).await?;
+    wamn_dev_control::dev::pat_issuer::stop_environment(&root).await?;
     println!("development identity, control and web stopped");
     Ok(())
 }

@@ -5,13 +5,15 @@ use std::path::PathBuf;
 
 use anyhow::Context as _;
 use clap::Args;
-use wamn_control::apply_package::{self, ApplyOutcome, ApplyPackageRequest, PackageRoot};
-use wamn_control::package_artifact::{
-    self, OpenedPackage, PackagePushDisposition, PackageRegistry, PackageSource, PushPackageRequest,
+use wamn_environment_control::reconcile_package_data_access::{
+    self, ReconcilePackageDataAccessRequest,
 };
-use wamn_control::reconcile_package_data_access::{self, ReconcilePackageDataAccessRequest};
-use wamn_control::reconcile_replica_identity::{
+use wamn_environment_control::reconcile_replica_identity::{
     ReconcileReplicaIdentityRequest, reconcile_package_replica_identity,
+};
+use wamn_package_control::apply_package::{self, ApplyOutcome, ApplyPackageRequest, PackageRoot};
+use wamn_package_control::package_artifact::{
+    self, OpenedPackage, PackagePushDisposition, PackageRegistry, PackageSource, PushPackageRequest,
 };
 use wamn_runtime::component_artifact_source::OCI_CA_PATHS_ENV;
 use wamn_schema_control::{ReplicaIdentity, ReplicaIdentityPlan};

@@ -5,9 +5,10 @@ use std::path::{Path, PathBuf};
 
 use anyhow::Context as _;
 use clap::{Args, Subcommand};
-use wamn_control::platform::document::ClusterDocument;
-use wamn_control::platform::pools::Direction;
-use wamn_control::platform::steps::{install_steps, read_platform_version};
+use wamn_environment_control::platform::document::ClusterDocument;
+use wamn_environment_control::platform::pools::Direction;
+use wamn_environment_control::platform::steps::install_steps;
+use wamn_release_control::release_chart::read_platform_version;
 
 /// One `platform` verb.
 #[derive(Debug, Subcommand)]
@@ -50,7 +51,7 @@ pub async fn run(command: PlatformCommand, mut output: impl Write) -> anyhow::Re
             _ => Direction::Sleep,
         };
         let document = ClusterDocument::compile(&args.file)?;
-        return wamn_control::platform::pools::resize(
+        return wamn_environment_control::platform::pools::resize(
             &document,
             &args
                 .file
@@ -58,7 +59,7 @@ pub async fn run(command: PlatformCommand, mut output: impl Write) -> anyhow::Re
                 .unwrap_or(Path::new("."))
                 .join("project.k"),
             direction,
-            &wamn_control::platform::lock::work_directory()?,
+            &wamn_environment_control::platform::lock::work_directory()?,
             |line| {
                 writeln!(output, "{line}")?;
                 output.flush().context("write resize progress")
@@ -71,8 +72,8 @@ pub async fn run(command: PlatformCommand, mut output: impl Write) -> anyhow::Re
     {
         let document = ClusterDocument::compile(&args.file)?;
         let version = read_platform_version(Path::new("deploy/platform/release/Chart.yaml"))?;
-        let directory = wamn_control::platform::lock::work_directory()?;
-        return wamn_control::platform::install::apply(
+        let directory = wamn_environment_control::platform::lock::work_directory()?;
+        return wamn_environment_control::platform::install::apply(
             &document,
             &version,
             Path::new("."),
@@ -82,7 +83,7 @@ pub async fn run(command: PlatformCommand, mut output: impl Write) -> anyhow::Re
                 .unwrap_or(Path::new("."))
                 .join("environments"),
             &directory,
-            &wamn_control::platform::install::registry(&document)?,
+            &wamn_environment_control::platform::install::registry(&document)?,
             |line| {
                 writeln!(output, "{line}")?;
                 output.flush().context("write install progress")
@@ -148,7 +149,7 @@ mod tests {
     use clap::Parser as _;
     use std::collections::BTreeSet;
     use std::path::Path;
-    use wamn_control::platform::steps::Runner;
+    use wamn_environment_control::platform::steps::Runner;
 
     #[tokio::test]
     async fn apply_without_dry_run_reads_the_document_before_starting() {

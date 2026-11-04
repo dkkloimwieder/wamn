@@ -8,12 +8,12 @@ use std::time::Duration;
 use anyhow::{Context as _, ensure};
 use tokio::process::Command;
 
-use wamn_control::delivery::qualification_artifact::{
+use wamn_package_control::package_artifact::PackageRegistry;
+use wamn_release_control::delivery::qualification_artifact::{
     self, FoundQualification, QUALIFICATION_PAYLOAD_FORMAT, QualificationPayload,
     QualificationPushDisposition,
 };
-use wamn_control::delivery::{ApplicationResult, Candidate, CheckResult, Qualification};
-use wamn_control::package_artifact::PackageRegistry;
+use wamn_release_control::delivery::{ApplicationResult, Candidate, CheckResult, Qualification};
 
 mod declarations;
 use declarations::{Case, declared_cases};
@@ -218,9 +218,11 @@ async fn write_candidate(
     let candidate = Candidate {
         manifest_path,
         releases: request.releases.clone(),
-        images: wamn_control::release_chart::image_set(&request.release_chart).await?,
-        qualification: wamn_control::release_chart::qualification_images(&request.release_chart)
-            .await?,
+        images: wamn_release_control::release_chart::image_set(&request.release_chart).await?,
+        qualification: wamn_release_control::release_chart::qualification_images(
+            &request.release_chart,
+        )
+        .await?,
     };
     let output = OpenOptions::new()
         .create_new(true)
@@ -383,7 +385,7 @@ async fn qualify_candidate(
             let case_result = temporary.path.join(format!("case-{index}.json"));
             let env = [
                 (
-                    wamn_control::delivery::CANDIDATE_ENV,
+                    wamn_release_control::delivery::CANDIDATE_ENV,
                     candidate_path.display().to_string(),
                 ),
                 ("WAMN_DELIVERY_RESULT", case_result.display().to_string()),
@@ -522,7 +524,7 @@ async fn run(
         command.env_remove(name);
     }
     command.envs(env.iter().cloned());
-    let result = wamn_control::owned_command::execute(
+    let result = wamn_dev_control::owned_command::execute(
         &mut command,
         COMMAND_TIMEOUT,
         Duration::from_secs(60),
@@ -607,12 +609,12 @@ mod tests {
                 insecure_registry: false,
                 oci_ca_paths: Vec::new(),
             },
-            images: wamn_control::release_chart::ImageSet {
+            images: wamn_release_control::release_chart::ImageSet {
                 host: pinned("host"),
                 http: pinned("flow-http"),
                 materializer: pinned("materializer"),
             },
-            qualification: wamn_control::release_chart::QualificationImages {
+            qualification: wamn_release_control::release_chart::QualificationImages {
                 runner: pinned("runner"),
                 gates: pinned("gates"),
                 identity: pinned("identity"),

@@ -150,12 +150,12 @@ async fn recover(
         wamn_gate_harness::workflow::author_and_enable(
             system_url, project_url,
             &wamn_control_registry::Triple::new(&identity.org, &identity.project, identity.environment.as_str()),
-            &wamn_control::author_workflow::AuthorWorkflowRequest {
+            &wamn_environment_control::author_workflow::AuthorWorkflowRequest {
                 org: &identity.org, project: &identity.project, environment: &identity.environment,
                 application: "receiving",
                 declared: &queue.release.scope().applications,
-                document: wiring, trigger: wamn_control::author_workflow::WorkflowTrigger::Manual,
-                execution: wamn_control::author_workflow::WorkflowExecution::Invoker,
+                document: wiring, trigger: wamn_environment_control::author_workflow::WorkflowTrigger::Manual,
+                execution: wamn_environment_control::author_workflow::WorkflowExecution::Invoker,
                 created_by: &principal,
                 manifest_digest: queue.release.release().manifest_digest.as_str(),
             }, None,

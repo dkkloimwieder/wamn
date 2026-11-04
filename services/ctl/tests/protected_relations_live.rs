@@ -7,12 +7,12 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use tokio_postgres::{Client, NoTls};
 
-use wamn_control::apply_package::{self, ApplyPackageRequest};
-use wamn_control::reconcile_run_plane;
 use wamn_control_provision::identity_issuer::{
     IDENTITY_ISSUER_ROLE, IDENTITY_ISSUER_TABLES, grant_identity_issuer_surface_sql,
 };
 use wamn_control_provision::sql;
+use wamn_environment_control::reconcile_run_plane;
+use wamn_package_control::apply_package::{self, ApplyPackageRequest};
 use wamn_schema_control::BareSchemaName;
 use wamn_test_infrastructure::locked_database;
 
@@ -186,7 +186,7 @@ async fn install_project_database(client: &Client, url: &str) {
         component_source: apply_package::component_source_from_env(None)
             .expect("component repository configuration"),
         changes: wamn_platform_identity::auth_changes::AuthChanges::default(),
-        package: wamn_control::apply_package::PackageRoot {
+        package: wamn_package_control::apply_package::PackageRoot {
             path: wamn_fixture_package::package_root(),
             artifact_digest: Some(
                 wamn_test_infrastructure::fixture_digest::fixture_artifact_digest(

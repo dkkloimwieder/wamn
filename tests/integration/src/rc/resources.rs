@@ -19,7 +19,7 @@ pub(super) struct Resources {
     pub evidence: PathBuf,
     pub source: String,
     pub lifecycle: wamn_test_infrastructure::cluster::Cluster,
-    pub candidate: Option<wamn_control::delivery::Candidate>,
+    pub candidate: Option<wamn_release_control::delivery::Candidate>,
     pub gates_image: String,
 }
 
@@ -79,7 +79,7 @@ pub(super) async fn prepare(
             .file_name()
             .context("evidence directory has a name")?,
     );
-    let candidate = wamn_control::delivery::Candidate::from_env()?;
+    let candidate = wamn_release_control::delivery::Candidate::from_env()?;
     let gates_image = candidate.qualification.gates.clone();
     DirBuilder::new().mode(0o700).create(&evidence)?;
     let work = std::env::temp_dir().join(CLUSTER);

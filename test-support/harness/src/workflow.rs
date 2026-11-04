@@ -1,9 +1,9 @@
 //! Author and enable environment workflows for live fixtures.
 
-use wamn_control::author_workflow::{AuthorWorkflowRequest, author_workflow};
-use wamn_control::environment::EventBroker;
-use wamn_control::workflow_lifecycle::{WorkflowVersion, enable_workflow};
 use wamn_control_registry::Triple;
+use wamn_environment_control::author_workflow::{AuthorWorkflowRequest, author_workflow};
+use wamn_environment_control::environment::EventBroker;
+use wamn_environment_control::workflow_lifecycle::{WorkflowVersion, enable_workflow};
 
 /// Use the same authorship and enable boundaries as the control verbs.
 pub async fn author_and_enable(

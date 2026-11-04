@@ -24,14 +24,14 @@ use oci_client::manifest::{
 use oci_client::secrets::RegistryAuth;
 use oci_client::{Client, Reference, RegistryOperation};
 use serde_yaml::{Mapping, Value};
-use wamn_control::delivery::{Candidate, sibling_bases};
-use wamn_control::environment::analyse::Installed;
-use wamn_control::environment::document::{DeclaredRelease, EnvironmentDocument};
-use wamn_control::environment::{Platform, stage};
-use wamn_control::package_artifact::{OpenedPackage, PackageRegistry, open_package};
-use wamn_control::release_chart::{self, ImageSet, Target, ValuesInput};
 use wamn_control_registry::Triple;
+use wamn_environment_control::environment::analyse::Installed;
+use wamn_environment_control::environment::document::{DeclaredRelease, EnvironmentDocument};
+use wamn_environment_control::environment::{Platform, stage};
 use wamn_package_artifact::registry_credentials::read_registry_credentials;
+use wamn_package_control::package_artifact::{OpenedPackage, PackageRegistry, open_package};
+use wamn_release_control::delivery::{Candidate, sibling_bases};
+use wamn_release_control::release_chart::{self, ImageSet, Target, ValuesInput};
 
 /// The operator release's namespace, where every environment release and
 /// its hosts live (R6).
@@ -681,7 +681,7 @@ pub async fn install_candidate(
         database_host: None,
         database_port: 5432,
         host_group: None,
-        pat_issuer: wamn_control::pat_client::PatIssuerConfig::default(),
+        pat_issuer: wamn_identity_client::PatIssuerConfig::default(),
         events: None,
     };
     let document = EnvironmentDocument {
@@ -836,15 +836,16 @@ pub async fn install(
         None,
         &at.work.join("release-chart"),
     )?;
-    let bundle =
-        wamn_control::platform::journey::release(&wamn_control::platform::journey::ReleaseInput {
+    let bundle = wamn_environment_control::platform::journey::release(
+        &wamn_environment_control::platform::journey::ReleaseInput {
             chart: &chart,
             namespace: NAMESPACE,
             values: input,
             nats_url: wamn_test_infrastructure::platform::NATS_URL,
             otlp_endpoint: KIND_OTLP_ENDPOINT,
             insecure_registry: true,
-        })?;
+        },
+    )?;
     let name = bundle.chart["name"]
         .as_str()
         .context("release name")?
@@ -857,7 +858,7 @@ pub async fn install(
         namespace: NAMESPACE.to_owned(),
     };
     for object in bundle.objects {
-        wamn_control::kubectl::kubectl(
+        wamn_environment_control::kubectl::kubectl(
             &target.kubeconfig,
             &target.context,
             &target.namespace,
@@ -889,7 +890,7 @@ pub async fn install(
 /// `wamn-system`, where the release chart's default names `platform`.
 pub fn render(input: &ValuesInput) -> anyhow::Result<Value> {
     Ok(serde_yaml::to_value(
-        wamn_control::platform::journey::release_values(
+        wamn_environment_control::platform::journey::release_values(
             input,
             wamn_test_infrastructure::platform::NATS_URL,
             KIND_OTLP_ENDPOINT,
@@ -1036,7 +1037,7 @@ mod tests {
                 http: image("registry.example"),
                 materializer: image("registry.example"),
             },
-            qualification: wamn_control::release_chart::QualificationImages {
+            qualification: wamn_release_control::release_chart::QualificationImages {
                 runner: image("registry.example"),
                 gates: image("registry.example"),
                 identity: image("registry.example"),

@@ -3,7 +3,7 @@
 //!
 //! An operator mints through the `mint-pat` Job of docs/operations/gcp.md
 //! §3.16. A disposable stack has no such Job, so this starts the temporary
-//! `wamn-identity` of `wamn dev up` (`wamn_control::dev::pat_issuer`), issues
+//! `wamn-identity` of `wamn dev up` (`wamn_dev_control::dev::pat_issuer`), issues
 //! the PAT through it in the same process, and stops it. The issuer's
 //! certificates live in its own private directory, which `stop` removes.
 //!
@@ -15,8 +15,8 @@
 use std::path::PathBuf;
 
 use anyhow::{Context as _, ensure};
-use wamn_control::dev::pat_issuer;
-use wamn_control::provision_project_env::{self, ProvisionProjectEnvRequest};
+use wamn_dev_control::dev::pat_issuer;
+use wamn_environment_control::provision_project_env::{self, ProvisionProjectEnvRequest};
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> anyhow::Result<()> {

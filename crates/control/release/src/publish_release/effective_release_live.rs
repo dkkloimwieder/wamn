@@ -1,0 +1,493 @@
+//! Fresh two-package effective-release test on disposable PostgreSQL.
+
+use std::collections::{BTreeMap, BTreeSet};
+use std::path::PathBuf;
+
+use tokio_postgres::{Client, NoTls};
+use wamn_catalog::{ComponentDeclaration, OperationType, PackageCoordinate};
+use wamn_control_provision::CONTROL_BOOTSTRAP_SQL;
+use wamn_engine::component_admission::{ComponentAdmissionRequest, validate_component_admission};
+use wamn_execution_contract::bytes_sha256;
+
+use super::{
+    PublishManifestErrorType, PublishReleaseManifest, PublishedRelease, ReleaseComponents,
+    publish_release_with_package_manifests, read_package_attachments, read_package_manifests,
+    resolve_route_methods,
+};
+use wamn_package_control::apply_package::{self, ApplyPackageRequest};
+
+const ENV_KEY: &str = "effective-release-poc--fixture--dev";
+const ENVIRONMENT: &str = "dev";
+const PUBLISHER: &str = "effective-release-poc-publisher";
+const BASE_WASM_ENV: &str = "WAMN_EFFECTIVE_RELEASE_BASE_COMPONENT_WASM";
+const OVERLAY_WASM_ENV: &str = "WAMN_EFFECTIVE_RELEASE_OVERLAY_COMPONENT_WASM";
+const CATALOG_SCHEMA: &str = wamn_catalog::CATALOG_SCHEMA_SQL;
+const APP_SCHEMA: &str = include_str!("../../../../../deploy/sql/app-schema.sql");
+
+/// The fixture version, read from the compiled manifest that authors it. The
+/// base and the overlay move together, so the overlay carries the same one.
+fn package_version() -> &'static str {
+    static VERSION: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| {
+        let manifest: serde_json::Value =
+            serde_json::from_slice(&wamn_package_control::test_support::fixture_manifest())
+                .expect("the compiled fixture manifest is JSON");
+        manifest["package"]["version"]
+            .as_str()
+            .expect("the compiled fixture manifest declares its version")
+            .to_owned()
+    });
+    &VERSION
+}
+
+struct PackageInput {
+    id: &'static str,
+    version: &'static str,
+    root: PathBuf,
+    component_declaration: PathBuf,
+    component_bytes: PathBuf,
+    expected_component_digest: Option<String>,
+}
+
+/// The base component digest, read from the ONE file that authors it.
+///
+/// wamn-10yt.50: this test used to restate the same `sha256:` literal the
+/// overlay manifest pins, which is a third copy of a value that must be one.
+fn base_component_digest() -> String {
+    let base = format!("{}@{}", wamn_fixture_package::PACKAGE_ID, package_version());
+    wamn_package_control::component_declaration::authored_base_digests(
+        &wamn_fixture_package::overlay_root(),
+    )
+    .expect("the overlay manifest authors its base digest")[base.as_str()]
+    .to_string()
+}
+
+fn packages() -> [PackageInput; 2] {
+    let base = wamn_fixture_package::package_root();
+    let overlay = wamn_fixture_package::overlay_root();
+    [
+        PackageInput {
+            id: wamn_fixture_package::PACKAGE_ID,
+            version: package_version(),
+            component_declaration: base.join("publication/components/fixture.json.in"),
+            root: base,
+            component_bytes: std::env::var_os(BASE_WASM_ENV)
+                .map(PathBuf::from)
+                .expect("WAMN_EFFECTIVE_RELEASE_BASE_COMPONENT_WASM names the built base component"),
+            expected_component_digest: Some(base_component_digest()),
+        },
+        PackageInput {
+            id: wamn_fixture_package::OVERLAY_PACKAGE_ID,
+            version: package_version(),
+            component_declaration: overlay
+                .join("publication/components/fixture_overlay.json.in"),
+            root: overlay,
+            component_bytes: std::env::var_os(OVERLAY_WASM_ENV)
+                .map(PathBuf::from)
+                .expect(
+                    "WAMN_EFFECTIVE_RELEASE_OVERLAY_COMPONENT_WASM names the built overlay component",
+                ),
+            expected_component_digest: None,
+        },
+    ]
+}
+
+async fn connect(url: &str) -> (Client, tokio::task::JoinHandle<()>) {
+    let (client, connection) = tokio_postgres::connect(url, NoTls)
+        .await
+        .expect("connect to disposable PostgreSQL");
+    let task = tokio::spawn(async move {
+        let _ = connection.await;
+    });
+    (client, task)
+}
+
+async fn provision_project(project: &Client) {
+    project
+        .batch_execute(
+            // The database owner holds the platform floor. `apply_package`
+            // provisions separate package owners before running migrations.
+            "DROP SCHEMA IF EXISTS inventory CASCADE; \
+             DROP SCHEMA IF EXISTS platform CASCADE; \
+             DROP SCHEMA IF EXISTS catalog CASCADE; \
+             DO $$ DECLARE role_name text; BEGIN \
+               PERFORM pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtext('wamn_role_bootstrap')); \
+               FOREACH role_name IN ARRAY \
+                   ARRAY['wamn_app', 'wamn_scenario_author', 'wamn_db_owner'] LOOP \
+                 IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = role_name) THEN \
+                   EXECUTE format('CREATE ROLE %I NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE \
+                                   NOINHERIT NOREPLICATION NOBYPASSRLS', role_name); \
+                 END IF; \
+               END LOOP; \
+             END $$; \
+             DO $$ BEGIN \
+               EXECUTE format('ALTER DATABASE %I OWNER TO wamn_db_owner', \
+                              pg_catalog.current_database()); \
+             END $$;",
+        )
+        .await
+        .expect("reset the project schemas and prerequisite roles");
+    project
+        .batch_execute(&format!("{CATALOG_SCHEMA}\n{APP_SCHEMA}"))
+        .await
+        .expect("install the production project schemas");
+}
+
+async fn provision_control(control: &Client) {
+    control
+        .batch_execute(
+            "DROP SCHEMA IF EXISTS wamn_run CASCADE; \
+             DROP SCHEMA IF EXISTS wamn_authority CASCADE; \
+             DROP SCHEMA IF EXISTS catalog CASCADE; \
+             DROP SCHEMA IF EXISTS registry CASCADE; \
+             DROP SCHEMA IF EXISTS provisioning CASCADE; \
+             DROP SCHEMA IF EXISTS identity CASCADE; \
+             DO $$ DECLARE role_name text; BEGIN \
+               PERFORM pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtext('wamn_role_bootstrap')); \
+               FOREACH role_name IN ARRAY ARRAY['wamn_system', 'wamn_control_author', 'wamn_app'] LOOP \
+                 IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = role_name) THEN \
+                   EXECUTE format('CREATE ROLE %I NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE \
+                                   NOINHERIT NOREPLICATION NOBYPASSRLS', role_name); \
+                 END IF; \
+               END LOOP; \
+             END $$; \
+             DO $$ BEGIN \
+               EXECUTE format('REVOKE CONNECT ON DATABASE %I FROM PUBLIC', \
+                              pg_catalog.current_database()); \
+             END $$;",
+        )
+        .await
+        .expect("reset the control schemas and prerequisite roles");
+    for stage in CONTROL_BOOTSTRAP_SQL {
+        control
+            .batch_execute(stage)
+            .await
+            .expect("install the production control bootstrap");
+    }
+    control
+        .query_one("SELECT set_config('app.env_key', $1, false)", &[&ENV_KEY])
+        .await
+        .expect("scope the control test session");
+}
+
+async fn apply_packages(project_url: &str, inputs: &[PackageInput]) {
+    for input in inputs {
+        apply_package::apply_package(ApplyPackageRequest {
+            component_source: wamn_package_control::apply_package::component_source_from_env(None)
+                .unwrap(),
+            changes: wamn_platform_identity::auth_changes::AuthChanges::default(),
+            package: wamn_package_control::package_artifact::fixture_package_root(&input.root)
+                .expect("read the fixture package root"),
+            database_url: project_url.to_owned(),
+            org: "effective-release-poc".into(),
+            project: "fixture".into(),
+            environment: "dev".into(),
+        })
+        .await
+        .unwrap_or_else(|error| panic!("apply {}@{}: {error:#}", input.id, input.version));
+    }
+}
+
+fn admit_components(inputs: &[PackageInput]) -> (BTreeMap<String, String>, ReleaseComponents) {
+    let engine = wamn_engine::build_engine(&[]).expect("build the production admission engine");
+    let mut digests = BTreeMap::new();
+    let mut release_components = ReleaseComponents::default();
+    for input in inputs {
+        let base_digests =
+            wamn_package_control::component_declaration::authored_base_digests(&input.root)
+                .unwrap_or_else(|error| {
+                    panic!("read {}@{} base pins: {error}", input.id, input.version)
+                });
+        let declaration = wamn_package_control::component_declaration::render_declaration_document(
+            &input.component_declaration,
+            ENV_KEY,
+        )
+        .unwrap_or_else(|error| {
+            panic!("render {}: {error}", input.component_declaration.display())
+        });
+        let declaration: ComponentDeclaration = serde_json::from_value(declaration)
+            .expect("the package-owned component declaration is strict");
+        let bytes = std::fs::read(&input.component_bytes)
+            .unwrap_or_else(|error| panic!("read {}: {error}", input.component_bytes.display()));
+        if let Some(expected) = &input.expected_component_digest {
+            assert_eq!(
+                bytes_sha256(&bytes),
+                *expected,
+                "{}@{} must use the exact digest pinned by the overlay dependency",
+                input.id,
+                input.version
+            );
+        }
+        let facts = validate_component_admission(
+            &engine,
+            &bytes,
+            ComponentAdmissionRequest {
+                declaration,
+                admitted_platform_packages: BTreeSet::from([
+                    "wamn:node".to_owned(),
+                    "wamn:postgres".to_owned(),
+                ]),
+                base_digests: base_digests.values().map(ToString::to_string).collect(),
+            },
+        )
+        .unwrap_or_else(|error| panic!("admit {}@{} component: {error}", input.id, input.version));
+        assert!(
+            facts.connections.is_empty(),
+            "the POC application components declare no portable store aliases"
+        );
+        digests.insert(
+            input.id.to_owned(),
+            facts.component.component_digest.clone(),
+        );
+        release_components
+            .insert(
+                facts.component,
+                facts.connections,
+                facts.statement_instances,
+            )
+            .expect("each package names its component once");
+    }
+    (digests, release_components)
+}
+
+async fn publish(
+    project: &Client,
+    request: &PublishReleaseManifest<'_>,
+    components: &ReleaseComponents,
+    manifests: &BTreeMap<String, wamn_catalog::manifest::PackageManifest>,
+    hashes: &BTreeMap<String, String>,
+    kinds: &super::RouteContracts,
+) -> PublishedRelease {
+    publish_release_with_package_manifests(project, request, components, manifests, hashes, kinds)
+        .await
+        .expect("publish the exact fresh two-package release")
+}
+
+#[tokio::test]
+#[ignore = "requires: env:WAMN_EFFECTIVE_RELEASE_BASE_COMPONENT_WASM, env:WAMN_EFFECTIVE_RELEASE_OVERLAY_COMPONENT_WASM"]
+async fn fresh_base_and_overlay_publish_byte_identically_and_refuse_drift() {
+    wamn_test_postgres::require_ignored_prerequisites(
+        "requires: env:WAMN_EFFECTIVE_RELEASE_BASE_COMPONENT_WASM, env:WAMN_EFFECTIVE_RELEASE_OVERLAY_COMPONENT_WASM",
+    );
+    let inputs = packages();
+    let _lock = wamn_test_postgres::lock();
+    let project_database = wamn_test_postgres::database();
+    let control_database = wamn_test_postgres::database();
+    let project_url = project_database.url().to_owned();
+    let control_url = control_database.url().to_owned();
+
+    let (project, project_task) = connect(&project_url).await;
+    let (control, control_task) = connect(&control_url).await;
+    provision_project(&project).await;
+    provision_control(&control).await;
+    apply_packages(&project_url, &inputs).await;
+    let (admitted_digests, components) = admit_components(&inputs);
+
+    let manifest_paths = inputs
+        .iter()
+        .map(|input| wamn_schema_generator::package_manifest_path(&input.root))
+        .collect::<Vec<_>>();
+    let (manifests, kinds) = read_package_manifests(&manifest_paths)
+        .expect("consume exact package manifests and package contracts");
+    // apply-package installed the stand-in artifact digest of each fixture tree.
+    let manifest_hashes = inputs
+        .iter()
+        .map(|input| {
+            (
+                input.id.to_owned(),
+                wamn_package_control::package_artifact::fixture_package_root(&input.root)
+                    .expect("read the fixture package root")
+                    .artifact_digest
+                    .expect("a fixture package root has a stand-in digest"),
+            )
+        })
+        .collect::<BTreeMap<_, _>>();
+    let packages = inputs
+        .iter()
+        .map(|input| PackageCoordinate::new(input.id, input.version).unwrap())
+        .collect::<BTreeSet<_>>();
+    // Both packages name widget-get-http. The overlay's replaces the base's, so
+    // the release carries a route to each package's component.
+    let read = |input: &PackageInput| {
+        read_package_attachments(
+            &[input.root.join("publication/attachments.json")],
+            &manifest_paths,
+        )
+        .expect("read the package attachment document")
+    };
+    let mut authored_attachments = read(&inputs[0]);
+    authored_attachments.extend(read(&inputs[1]));
+    let attachments =
+        resolve_route_methods(&authored_attachments, &kinds).expect("resolve the route methods");
+    let request = PublishReleaseManifest {
+        org: "effective-release-poc",
+        project: "fixture",
+        environment: ENVIRONMENT,
+        verified_publisher_principal: PUBLISHER,
+        packages: &packages,
+        attachments: &attachments,
+        environment_is_disposable: false,
+    };
+
+    let first = publish(
+        &project,
+        &request,
+        &components,
+        &manifests,
+        &manifest_hashes,
+        &kinds,
+    )
+    .await;
+    let second = publish(
+        &project,
+        &request,
+        &components,
+        &manifests,
+        &manifest_hashes,
+        &kinds,
+    )
+    .await;
+    assert_eq!(first.canonical_bytes, second.canonical_bytes);
+    assert_eq!(first.digest, second.digest);
+    assert_eq!(first.manifest, second.manifest);
+    assert_eq!(first.manifest.release.packages, packages);
+    assert_eq!(first.manifest.components.len(), 2);
+    // Every attachment names a route. Released operation contracts can also
+    // have route records without attachments, which open no HTTP endpoint.
+    assert!(
+        serde_json::to_value(&first.manifest)
+            .unwrap()
+            .get("workflow")
+            .is_none()
+    );
+    let attached_routes = first
+        .manifest
+        .attachments
+        .values()
+        .map(|attachment| {
+            (
+                &attachment.package_id,
+                &attachment.component,
+                &attachment.operation,
+            )
+        })
+        .collect::<BTreeSet<_>>();
+    let routes = &first.manifest.routes;
+    for (package, component, operation) in &attached_routes {
+        assert!(routes.iter().any(|route| {
+            (&route.package_id, &route.component, &route.operation)
+                == (*package, *component, *operation)
+        }));
+    }
+    for route in routes {
+        if attached_routes.contains(&(&route.package_id, &route.component, &route.operation)) {
+            continue;
+        }
+        assert!(first.manifest.components.iter().any(|component| {
+            component.package_id == route.package_id
+                && component.descriptor.component == route.component
+                && component.operations.contains_key(&route.operation)
+        }));
+        let contract = &kinds[&(route.package_id.clone(), route.operation.clone())];
+        assert_ne!(contract.kind, OperationType::EventHandler);
+        assert_eq!(route.type_, contract.kind);
+        assert_eq!(route.reads, contract.reads);
+        assert_eq!(route.revision, contract.revision);
+        assert_eq!(route.idempotency, contract.idempotency);
+        assert_eq!(route.canonicalization, contract.canonicalization);
+    }
+    let kind_of = |operation: &str| {
+        first
+            .manifest
+            .routes
+            .iter()
+            .find(|route| route.operation == operation)
+            .map(|route| route.type_)
+    };
+    assert_eq!(
+        kind_of(&format!(
+            "platform-fixture-overlay:widget/get@{}",
+            package_version()
+        )),
+        Some(OperationType::Get)
+    );
+    assert_eq!(
+        kind_of(&format!(
+            "platform-fixture:widget/query@{}",
+            package_version()
+        )),
+        Some(OperationType::Query)
+    );
+    assert_eq!(
+        kind_of(&format!(
+            "platform-fixture:widget/record-batch@{}",
+            package_version()
+        )),
+        Some(OperationType::Command)
+    );
+    for component in &first.manifest.components {
+        assert_eq!(
+            component.descriptor.component_digest.as_str(),
+            admitted_digests[component.package_id.as_str()]
+        );
+    }
+    // Composition writes no release row; apply's stage writes it (R1 (3)).
+    let release_rows: i64 = project
+        .query_one(
+            "SELECT count(*) FROM catalog.releases WHERE env_key = $1",
+            &[&ENV_KEY],
+        )
+        .await
+        .expect("count release rows")
+        .get(0);
+    assert_eq!(release_rows, 0);
+
+    let mut drifted_hashes = manifest_hashes.clone();
+    drifted_hashes.insert(
+        wamn_fixture_package::OVERLAY_PACKAGE_ID.to_owned(),
+        format!("sha256:{}", "f".repeat(64)),
+    );
+    let refusal = publish_release_with_package_manifests(
+        &project,
+        &request,
+        &components,
+        &manifests,
+        &drifted_hashes,
+        &kinds,
+    )
+    .await
+    .expect_err("manifest bytes other than apply-package's exact input must refuse");
+    assert_eq!(
+        refusal.error_type(),
+        PublishManifestErrorType::PackageManifest
+    );
+    assert!(refusal.detail().contains(&format!(
+        "{}@{}",
+        wamn_fixture_package::OVERLAY_PACKAGE_ID,
+        package_version()
+    )));
+    assert!(refusal.detail().contains("apply the verified artifact"));
+
+    project
+        .batch_execute(
+            "DROP SCHEMA IF EXISTS inventory CASCADE; \
+             DROP SCHEMA IF EXISTS platform CASCADE; \
+             DROP SCHEMA IF EXISTS catalog CASCADE;",
+        )
+        .await
+        .expect("clean project test schemas");
+    control
+        .batch_execute(
+            "DROP SCHEMA IF EXISTS wamn_run CASCADE; \
+             DROP SCHEMA IF EXISTS wamn_authority CASCADE; \
+             DROP SCHEMA IF EXISTS catalog CASCADE; \
+             DROP SCHEMA IF EXISTS registry CASCADE; \
+             DROP SCHEMA IF EXISTS provisioning CASCADE; \
+             DROP SCHEMA IF EXISTS identity CASCADE;",
+        )
+        .await
+        .expect("clean control test schemas");
+    drop(project);
+    drop(control);
+    project_task.abort();
+    control_task.abort();
+}

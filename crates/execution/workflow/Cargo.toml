@@ -37,7 +37,7 @@ tokio = { workspace = true, features = ["test-util"] }
 # `wamn_catalog::fixture_graph` is gated behind `test-util`.
 wamn-catalog = { workspace = true, features = ["test-util"] }
 wamn-schema-control = { workspace = true }
-wamn-control = { workspace = true }
+wamn-environment-control = { workspace = true }
 wamn-test-infrastructure = { workspace = true }
 wamn-runtime = { workspace = true, features = ["test-util"] }
 wamn-control-provision = { workspace = true, features = ["test-util"] }

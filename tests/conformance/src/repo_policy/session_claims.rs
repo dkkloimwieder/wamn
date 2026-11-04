@@ -349,7 +349,7 @@ const PLATFORM_TRIGGER_CLAIMS: [&str; 2] = ["app.user_id", "app.operation"];
 const PLATFORM_TRIGGER_READERS: [(&str, &str); 3] = [
     ("deploy/sql/record-history.sql", "wamn_history.stamp_row"),
     (
-        "crates/control/lib/src/apply_package/record_history.rs",
+        "crates/control/package/src/apply_package/record_history.rs",
         "wamn_history.{name}",
     ),
     (

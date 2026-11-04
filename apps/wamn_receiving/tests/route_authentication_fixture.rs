@@ -12,12 +12,12 @@ use serde_json::Value;
 use tokio::process::Command;
 use tokio_postgres::Client;
 use wamn_catalog::{AdmittedComponent, PackageCoordinate};
-use wamn_control::apply_package::{self, ApplyPackageRequest};
-use wamn_control::component_admission::{AdmitComponentRequest, admit_component};
-use wamn_control::dev::watch::GitSource;
-use wamn_control::git_source::GitSourceState;
-use wamn_control::publish_release::{self, PublishReleaseRequest};
-use wamn_control::reconcile_package_data_access::ReconcilePackageDataAccessRequest;
+use wamn_package_control::apply_package::{self, ApplyPackageRequest};
+use wamn_package_control::component_admission::{AdmitComponentRequest, admit_component};
+use wamn_dev_control::dev::watch::GitSource;
+use wamn_dev_control::git_source::GitSourceState;
+use wamn_release_control::publish_release::{self, PublishReleaseRequest};
+use wamn_environment_control::reconcile_package_data_access::ReconcilePackageDataAccessRequest;
 use wamn_gate_harness::journey::{JourneyDocument, MaterializerPhase};
 use wamn_runtime::release_manifest_source::ReleaseManifestSource;
 
@@ -29,13 +29,13 @@ use environment::{
     verify_journey_operation_grants, verify_zero_case_gate_reports,
 };
 use routes::copy_package;
-use wamn_control::delivery::{Candidate, ReleaseIdentity};
-use wamn_control::dev::environment::{
+use wamn_release_control::delivery::{Candidate, ReleaseIdentity};
+use wamn_dev_control::dev::environment::{
     DevEnvironmentInputs, ENVIRONMENT, JourneyScope, ORG, PROJECT, connect,
     install_journey_platform_floor, prepare_journey_credentials, provision_journey_control,
     provision_route, reconcile_journey_run_plane, spawn_journey_management_gate, write_dev_config,
 };
-use wamn_control::provision_project_env::{read_json, secret_value};
+use wamn_environment_control::provision_project_env::{read_json, secret_value};
 use wamn_test_infrastructure::operations::{package_version, sealed};
 use wamn_test_infrastructure::scratch::ScratchRoot;
 
@@ -130,7 +130,7 @@ fn identity() -> &'static ReleaseIdentity {
     static IDENTITY: LazyLock<ReleaseIdentity> = LazyLock::new(|| {
         // A cluster case takes its packages from its candidate; the other
         // Receiving tests run this checkout's packages.
-        let candidate = std::env::var_os(wamn_control::delivery::CANDIDATE_ENV)
+        let candidate = std::env::var_os(wamn_release_control::delivery::CANDIDATE_ENV)
             .map(|_| Candidate::from_env().expect("read the supplied Receiving candidate"));
         ReleaseIdentity {
             org: ORG.to_owned(),

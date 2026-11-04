@@ -4,7 +4,7 @@ use std::path::Path;
 
 use anyhow::{Context as _, ensure};
 use serde_json::Value;
-use wamn_control::release_chart::{self, ImageSet};
+use wamn_release_control::release_chart::{self, ImageSet};
 use wamn_test_infrastructure::rendering::kubernetes_documents;
 use wamn_test_infrastructure::scratch::ScratchRoot;
 
@@ -16,7 +16,7 @@ pub fn host_values(
     use serde_json::json;
     use wamn_test_infrastructure::rendering::{RenderedHostValues, host_defaults};
 
-    let mut values = wamn_control::environment::write::render(
+    let mut values = wamn_environment_control::environment::write::render(
         &release_chart::ValuesInput {
             org: input.event.org.clone(),
             project: input.event.project.clone(),
@@ -461,7 +461,7 @@ pub fn fixture_roles(
 
 /// Render the apply path with its real credential references and emission list.
 pub fn environment(
-    document: &wamn_control::environment::document::EnvironmentDocument,
+    document: &wamn_environment_control::environment::document::EnvironmentDocument,
     manifest: &wamn_catalog::ServingManifest,
     host_group: &Path,
     drain_bound_seconds: u32,
@@ -470,7 +470,7 @@ pub fn environment(
     for application in applications.values_mut() {
         application.connections.clear();
     }
-    wamn_control::environment::write::render(
+    wamn_environment_control::environment::write::render(
         &release_chart::ValuesInput {
             org: document.org.clone(),
             project: document.project.clone(),

@@ -1,6 +1,8 @@
 //! Test databases with the control store installed.
 
-use crate::{CONTROL_PORTABLE_STORE_SQL, SYSTEM_SCHEMA_SQL, sql};
+use crate::CONTROL_PORTABLE_STORE_SQL;
+use crate::SYSTEM_SCHEMA_SQL;
+use crate::sql;
 
 /// Create the control owner role with the attributes of the production bootstrap.
 const SYSTEM_ROLE_SQL: &str = "DO $system_role$ BEGIN \

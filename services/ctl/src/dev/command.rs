@@ -6,9 +6,9 @@ use std::io::{self, Write as _};
 use std::path::PathBuf;
 use tokio::signal::unix::{SignalKind, signal};
 use tokio::task::JoinSet;
-use wamn_control::dev::read::{DevReadHandle, DevRuntimeEndpoint};
-use wamn_control::dev::session::{DevSession, DevSessionControl, DevSessionRequest};
-use wamn_control::dev::{DevRunResult, DevWatchObserver, DevWatchOutcome};
+use wamn_dev_control::dev::read::{DevReadHandle, DevRuntimeEndpoint};
+use wamn_dev_control::dev::session::{DevSession, DevSessionControl, DevSessionRequest};
+use wamn_dev_control::dev::{DevRunResult, DevWatchObserver, DevWatchOutcome};
 
 /// Inputs owned by the literal `wamn dev` product command.
 /// The selected configuration requires an authored `environment.k` beside it.
@@ -324,7 +324,7 @@ mod tests {
     async fn signal_child_finishes_work_and_closes_watch(signal: &str) {
         use rustix::process::{Signal, getpid, kill_process};
         use std::convert::Infallible;
-        use wamn_control::dev::{
+        use wamn_dev_control::dev::{
             DevInvalidation, DevInvalidationSource, DevStage, DevStageRunner, run_watch,
         };
 

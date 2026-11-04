@@ -2,7 +2,7 @@
 //!
 //! MVP outcome: provisioning · publish · additive schema · tenant isolation (T1 minting).
 //!
-//! `wamn-control` owns the control operations. This crate holds the clap argument
+//! The four control crates own the control operations. This crate holds the clap argument
 //! definitions, the printed output, and the exit codes. Each verb parses its
 //! arguments, calls its owner, and prints the result. Qualification also reads
 //! application case declarations and runs their Docker commands. The user-creation,

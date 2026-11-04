@@ -24,11 +24,11 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use tokio_postgres::{Client, NoTls};
-use wamn_control::apply_package::{self, ApplyOutcome, ApplyPackageRequest};
 use wamn_control_provision::{
     AUDIT_RETENTION_ROLE, CredentialGeneration, WorkloadRoleFamily, WorkloadRoleScope, compose_url,
     sql, workload_generation_role,
 };
+use wamn_package_control::apply_package::{self, ApplyOutcome, ApplyPackageRequest};
 use wamn_test_infrastructure::ctl_process;
 use wamn_test_infrastructure::locked_database;
 
@@ -164,7 +164,7 @@ async fn apply(url: &str, package: &Path) -> anyhow::Result<ApplyOutcome> {
     apply_package::apply_package(ApplyPackageRequest {
         component_source: apply_package::component_source_from_env(None)?,
         changes: wamn_platform_identity::auth_changes::AuthChanges::default(),
-        package: wamn_control::apply_package::PackageRoot {
+        package: wamn_package_control::apply_package::PackageRoot {
             path: package.to_path_buf(),
             artifact_digest: Some(
                 wamn_test_infrastructure::fixture_digest::fixture_artifact_digest(package)?,
@@ -718,8 +718,9 @@ async fn history_table_creation_waits_for_a_running_prune() {
         .await
         .unwrap()
         .get(0);
-    let prune =
-        tokio::spawn(async move { wamn_control::prune_record_history::prune(&mut pruning).await });
+    let prune = tokio::spawn(async move {
+        wamn_environment_control::prune_record_history::prune(&mut pruning).await
+    });
     wait_for_blocker(&admin, "history_lock_prune", holder_pid).await;
 
     let mut applying_url = url::Url::parse(&url).expect("parse the database URL");

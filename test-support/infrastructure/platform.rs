@@ -18,8 +18,8 @@ pub const NATS_URL: &str = "nats://wamn-nats.wamn-system.svc.cluster.local:4222"
 /// Install the shared prerequisites before the application host release.
 ///
 /// `nats` is the one NATS with its certificates and users, which
-/// `wamn_control::platform::manifests::one_nats` and
-/// `wamn_control::platform::single_namespace_nats` render for `wamn-system`
+/// `wamn_environment_control::platform::manifests::one_nats` and
+/// `wamn_environment_control::platform::single_namespace_nats` render for `wamn-system`
 /// (docs/plan/alignment.md R1-R5). The caller creates the cluster and its
 /// private work directory first. Observed objects stay in that directory for
 /// the caller to retain.
@@ -605,7 +605,7 @@ mod tests {
         include_str!("../../deploy/platform/runtime-operator-events-rbac.example.yaml");
 
     fn rbac() -> Vec<EventRbac> {
-        wamn_control::platform::install::runtime_events(
+        wamn_environment_control::platform::install::runtime_events(
             &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../.."),
             "test-warehouse",
             SYSTEM_NAMESPACE,

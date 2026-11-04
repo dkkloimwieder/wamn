@@ -20,7 +20,8 @@ fn main() -> anyhow::Result<()> {
         "usage: <package id> <package version> <project> <environment> <wiring document>"
     );
     let package = PackageCoordinate::new(&arguments[0], &arguments[1])?;
-    let document = wamn_control::author_workflow::read_wiring_document(Path::new(&arguments[4]))?;
+    let document =
+        wamn_environment_control::author_workflow::read_wiring_document(Path::new(&arguments[4]))?;
     let request = gate_document(
         &GateInput {
             command_id: format!(

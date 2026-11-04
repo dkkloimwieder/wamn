@@ -22,7 +22,7 @@ use ring::signature::{Ed25519KeyPair, KeyPair as _};
 use serde_json::json;
 use wamn_catalog::edge_bundle::BUNDLE_FILE_NAME;
 use wamn_catalog::{RELEASE_MANIFEST_FILE_NAME, ServingManifest};
-use wamn_control::dev::edge_bundle::{EdgeScope, PackageRelease, write_package};
+use wamn_dev_control::dev::edge_bundle::{EdgeScope, PackageRelease, write_package};
 use wamn_edge::config::{
     EdgeConfig, HttpConfig, ReleaseConfig, ScopeConfig, SessionConfig, StoreConfig,
 };

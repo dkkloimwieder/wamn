@@ -352,7 +352,7 @@ rm -rf $HOME/.cache/wamn-install
 
 ## 4. Install
 
-The [platform publication owner](../../crates/control/lib/src/platform/job.rs) creates the Jobs.
+The [platform publication owner](../../crates/control/environment/src/platform/job.rs) creates the Jobs.
 
 ### 4.1 Work directory and binaries
 
@@ -529,7 +529,7 @@ kubectl apply -f deploy/infra/nats-certificates.yaml
 kubectl wait --for=condition=Ready clusterissuer/wasmcloud-ca --timeout=120s
 kubectl -n platform wait --for=condition=Ready certificate --all --timeout=120s
 kubectl -n hosts wait --for=condition=Ready certificate --all --timeout=120s
-# platform apply writes the Secret platform/wamn-nats-authorization (crates/control/lib/src/platform/broker.rs).
+# platform apply writes the Secret platform/wamn-nats-authorization (crates/control/environment/src/platform/broker.rs).
 kubectl apply -f deploy/gcp/nats-jetstream.yaml
 kubectl -n platform rollout status statefulset/wamn-nats --timeout=300s
 helm upgrade --install --namespace platform wamn oci://ghcr.io/wasmcloud/charts/runtime-operator --version 2.11.0 \
@@ -725,7 +725,7 @@ Keep these keys across restarts because a replacement key cannot decrypt existin
 
 ### 4.10 Platform file
 
-`wamn-ctl env` reads its platform inputs from the environment (`Platform::from_env` in `crates/control/lib/src/environment/mod.rs`). Write them into one file. Every later step starts with `. $HOME/.cache/wamn-install/platform.sh`:
+`wamn-ctl env` reads its platform inputs from the environment (`Platform::from_env` in `crates/control/environment/src/environment/mod.rs`). Write them into one file. Every later step starts with `. $HOME/.cache/wamn-install/platform.sh`:
 
 ```bash
 W=$HOME/.cache/wamn-install
@@ -809,7 +809,7 @@ git diff deploy/gcp/host-group-*.yaml
 The following commands describe the manual procedure.
 
 Prepare the session target of each environment in namespace `identity`.
-The [identity installer](../../crates/control/lib/src/platform/identity.rs) derives both Secret names:
+The [identity installer](../../crates/control/environment/src/platform/identity.rs) derives both Secret names:
 
 ```bash
 . $HOME/.cache/wamn-install/platform.sh
@@ -924,7 +924,7 @@ RELEASE_receiving=$($CARGO_TARGET_DIR/debug/wamn-ctl publish-release --database-
 echo "$RELEASE_receiving" > $W/release-receiving
 ```
 
-The [publication owner](../../crates/control/lib/src/platform/job.rs) prepares and publishes wired WMS releases through `platform apply`.
+The [publication owner](../../crates/control/environment/src/platform/job.rs) prepares and publishes wired WMS releases through `platform apply`.
 
 ### 4.15 Qualification
 

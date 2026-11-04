@@ -241,7 +241,7 @@ read -r org project environment env_key < <(python3 - <<'IDENTITY'
 import pathlib
 import re
 
-source = pathlib.Path("crates/control/lib/src/dev/environment.rs").read_text()
+source = pathlib.Path("crates/control/dev/src/dev/environment.rs").read_text()
 values = []
 for name in ("ORG", "PROJECT", "ENVIRONMENT", "ENV_KEY"):
     value, = re.findall(r'^pub const ' + name + r': &str = "([^"]+)";$', source, re.M)

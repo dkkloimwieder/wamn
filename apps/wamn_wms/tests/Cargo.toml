@@ -20,6 +20,7 @@ required-features = ["cluster"]
 cluster = []
 
 [dev-dependencies]
+wamn-identity-client = { workspace = true }
 wamn-credential-store = { workspace = true }
 wamn-schema-generator = { workspace = true }
 # The subject token of a registration entity, as the materializer consumer filters it.
@@ -36,7 +37,10 @@ wamn-gate-harness = { workspace = true }
 wamn-integration-tests = { workspace = true }
 
 tokio-postgres = { workspace = true, features = ["with-serde_json-1"] }
-wamn-control = { workspace = true, features = ["test-util"] }
+wamn-package-control = { workspace = true, features = ["test-util"] }
+wamn-release-control = { workspace = true }
+wamn-environment-control = { workspace = true, features = ["test-util"] }
+wamn-dev-control = { workspace = true, features = ["test-util"] }
 # The publisher a run-plane reconciliation takes (AuthChanges).
 wamn-platform-identity = { workspace = true }
 wamn-project-state = { workspace = true }

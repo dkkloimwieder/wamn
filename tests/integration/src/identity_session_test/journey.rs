@@ -8,9 +8,9 @@ use std::time::Duration;
 use anyhow::{Context as _, ensure};
 use serde_json::{Value, json};
 use tokio::process::Command;
-use wamn_control::delivery::Candidate;
 use wamn_control_provision::{CredentialGeneration, WorkloadRoleFamily};
 use wamn_gate_harness::{case_release, kubernetes_gate, session_issuer};
+use wamn_release_control::delivery::Candidate;
 use wamn_test_infrastructure::cluster::{self, Cluster};
 use wamn_test_infrastructure::scratch::ScratchRoot;
 
@@ -69,14 +69,14 @@ async fn identity_jwks_rotation_tls_and_membership_revocation() -> anyhow::Resul
         let url = format!("postgresql://postgres:{password}@{host}:5432/postgres");
         let (admin, task) = tokio::time::timeout(Duration::from_secs(120), async {
             loop {
-                if let Ok(pair) = wamn_control::dev::environment::connect(&url).await { break pair; }
+                if let Ok(pair) = wamn_dev_control::dev::environment::connect(&url).await { break pair; }
                 tokio::time::sleep(Duration::from_secs(1)).await;
             }
         }).await.context("identity PostgreSQL TCP readiness")?;
         admin.batch_execute("CREATE ROLE wamn_system NOLOGIN; CREATE ROLE wamn_app NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS; CREATE ROLE wamn_db_owner NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS; CREATE DATABASE wamn_system OWNER wamn_system").await?;
         drop(admin); task.abort();
         let system_url = format!("postgresql://postgres:{password}@{host}:5432/wamn_system");
-        let (system, task) = wamn_control::dev::environment::connect(&system_url).await?;
+        let (system, task) = wamn_dev_control::dev::environment::connect(&system_url).await?;
         let version: String = system.query_one("SELECT current_database() || '|' || current_setting('server_version_num')", &[]).await?.get(0);
         ensure!(version.starts_with("wamn_system|18") && version.len() == 18, "identity fixture requires PostgreSQL 18 and wamn_system");
         system.batch_execute("SET ROLE wamn_system").await?;
@@ -362,7 +362,7 @@ async fn sessions(
     evidence: &Path,
 ) -> anyhow::Result<()> {
     let (system, task) =
-        wamn_control::dev::environment::connect(issuer_cluster.system_database_url).await?;
+        wamn_dev_control::dev::environment::connect(issuer_cluster.system_database_url).await?;
     system.batch_execute("INSERT INTO registry.orgs (id,placement_type,pool_cluster) VALUES ('acme','pooled','fixture'),('other','pooled','fixture'); INSERT INTO registry.env_policies (org,name,recovery_domain,promotion_rank,instances,storage,cpu,memory,image) VALUES ('acme','dev','\"own\"',0,1,'1Gi','1','1Gi','postgres:18'),('acme','prod','\"own\"',1,1,'1Gi','1','1Gi','postgres:18'),('other','dev','\"own\"',0,1,'1Gi','1','1Gi','postgres:18'); INSERT INTO registry.projects (org,id) VALUES ('acme','shared'),('other','shared'); INSERT INTO registry.project_envs (org,project,env,secret_name,instance_suffix,policy_name) VALUES ('acme','shared','dev','fixture-acme-dev','k3m9x2p7','dev'),('acme','shared','prod','fixture-acme-prod','p7x2m9k3','prod'),('other','shared','dev','fixture-other-dev','q2n5r8t4','dev');").await?;
     let private_fixture: Value =
         serde_json::from_slice(&super::create_fixture(issuer_cluster.system_database_url).await?)?;
@@ -382,7 +382,7 @@ async fn sessions(
             .batch_execute(&format!("CREATE DATABASE \"{database}\""))
             .await?;
         let url = format!("postgresql://postgres:{password}@{host}:5432/{database}");
-        let (target, driver) = wamn_control::dev::environment::connect(&url).await?;
+        let (target, driver) = wamn_dev_control::dev::environment::connect(&url).await?;
         target
             .batch_execute(include_str!("../../../../deploy/sql/record-history.sql"))
             .await?;
@@ -406,8 +406,8 @@ async fn sessions(
         let secret = fixture
             .work
             .join(format!("session-{org}-{env}-target.json"));
-        wamn_control::provision_project_env::run_workload_action(
-            &wamn_control::provision_project_env::WorkloadActionRequest {
+        wamn_environment_control::provision_project_env::run_workload_action(
+            &wamn_environment_control::provision_project_env::WorkloadActionRequest {
                 org: org.into(),
                 project: "shared".into(),
                 env: env.into(),
@@ -417,9 +417,9 @@ async fn sessions(
                 db_host: Some(host.into()),
                 db_port: 5432,
                 namespace: NAMESPACE.into(),
-                action: wamn_control::provision_project_env::WorkloadGenerationAction {
+                action: wamn_environment_control::provision_project_env::WorkloadGenerationAction {
                     family: WorkloadRoleFamily::SessionRoleReader,
-                    verb: wamn_control::provision_project_env::WorkloadActionVerb::Prepare,
+                    verb: wamn_environment_control::provision_project_env::WorkloadActionVerb::Prepare,
                     generation: CredentialGeneration::A,
                 },
                 secret: Some(secret.clone()),
@@ -475,7 +475,7 @@ async fn sessions(
     key(fixture, "activate", Some(&kid)).await?;
     session_issuer::install_mode(
         issuer_cluster,
-        wamn_control::platform::identity::Mode::Session {
+        wamn_environment_control::platform::identity::Mode::Session {
             targets,
             nats: None,
         },

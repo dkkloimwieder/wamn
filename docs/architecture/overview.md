@@ -34,26 +34,30 @@ Cargo owns membership, dependencies, features, and targets. Application manifest
 | `wamn-schema-control` | Package migration decisions and run storage declarations |
 | `wamn-catalog` | Component, wiring, and release facts |
 | `wamn-package-artifact` | Reading package artifacts from the registry and their component descriptors |
-| `wamn-control` | Control operations, delivery, development orchestration, and process supervision |
-| `wamn-ctl` | Command-line client of `wamn-control` |
+| `wamn-package-control` | Package admission, artifacts, and application |
+| `wamn-release-control` | Release publication, qualification, and charts |
+| `wamn-environment-control` | Environment provisioning, reconciliation, and platform operations |
+| `wamn-dev-control` | Development orchestration and process supervision |
+| `wamn-ctl` | Command-line client of the four control crates |
 | `wamn-scenario-worker` | The authoring admission API |
 
-The CLI, the dev loop, and other callers call `wamn-control`, and `wamn-control` calls the lower libraries.
-`wamn-control` never depends on `wamn-ctl`.
-The control library owns standalone web artifacts in `web_artifact`.
+The CLI and test support call each control crate directly.
+The dependency order is package, release, environment, then development.
+Each crate depends only on earlier control crates and the lower libraries.
+The control crates never depend on `wamn-ctl`.
+`wamn-package-control` owns standalone web artifacts in `web_artifact`.
 Package artifacts contain three tar layers and no browser files.
 `wamn build` compiles package components without Vite or a web output digest.
 `wamn web build` binds browser files to the compiled package manifest digest recorded in `build.json`.
 `wamn web push` publishes a deterministic OCI artifact under an immutable tag.
 [Web clients](../operations/web-upload.md#build-and-push) defines its layout and commands.
-A deployed service never depends on `wamn-control`. The scenario worker reads component facts through `wamn-package-artifact`, as publish does.
-A `wamn-control` operation takes ordinary inputs, keeps its own validation, and returns its result without printing.
+A deployed service never depends on these four control crates. The scenario worker reads component facts through `wamn-package-artifact`, as publish does.
+A control operation takes ordinary inputs, keeps its own validation, and returns its result without printing.
 
-`wamn-control` lives at `crates/control/lib` and owns the control operations.
-It also owns release publication, qualification artifacts, and environment application.
-That code runs the `git`, `docker`, `kubectl`, and `cargo` processes its work needs.
-It owns the child process group those processes run in.
-The `ops` feature adds the user-creation, broker-advisory reporting, and history-pruning verbs.
+The four control crates live under `crates/control/{package,release,environment,dev}`.
+They run the `git`, `docker`, `kubectl`, and `cargo` processes that their work needs.
+`wamn-dev-control::owned_command` owns the child process groups.
+The environment crate's `ops` feature adds the user-creation, broker-advisory reporting, and history-pruning verbs.
 `wamn-ctl` turns that feature on for its separate `wamn-ctl-ops` binary.
 
 `wamn-ctl` lives at `services/ctl` and owns the command line.
@@ -62,7 +66,7 @@ Each verb parses its arguments, calls its owner, and prints the result.
 The qualification verb also reads application case declarations and runs their Docker commands.
 The `<area>_verbs.rs` modules hold that surface.
 The development commands in `services/ctl/src/dev/` own argument parsing, output, and process signals.
-`wamn-control::dev` owns the watcher, session orchestration, environment setup, target reset, and child-process supervision.
+`wamn-dev-control::dev` owns the watcher, session orchestration, environment setup, target reset, and child-process supervision.
 Clients request cooperative shutdown through the session control handle.
 The engine finishes active work and cleans up its owned processes.
 

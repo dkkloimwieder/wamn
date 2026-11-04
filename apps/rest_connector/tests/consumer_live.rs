@@ -6,16 +6,16 @@ use std::sync::Arc;
 
 use serde_json::json;
 use tokio_postgres::Client;
-use wamn_control::apply_package::{ApplyPackageRequest, PackageRoot, apply_package};
-use wamn_control::component_admission::ComponentAdmission;
-use wamn_control::reconcile_package_data_access::{
-    ReconcilePackageDataAccessRequest, reconcile_package_data_access,
-};
 use wamn_control_provision::{
     CredentialGeneration, WorkloadRoleFamily, WorkloadRoleScope, sql, workload_generation_role,
 };
 use wamn_engine::operation::{OperationCall, OperationClosure, invoke_operation, node_types};
+use wamn_environment_control::reconcile_package_data_access::{
+    ReconcilePackageDataAccessRequest, reconcile_package_data_access,
+};
 use wamn_execution_host::{NativeFacts, NodeAcquisition, OperationHost, OperationScope};
+use wamn_package_control::apply_package::{ApplyPackageRequest, PackageRoot, apply_package};
+use wamn_package_control::component_admission::ComponentAdmission;
 use wamn_runtime::plugins::wamn_postgres::{
     AuthorityClass, ClassCredentials, ProjectConfig, StaticCredentialProvider, WamnPostgres,
 };
@@ -92,7 +92,7 @@ pub async fn workflow_host(
     database: &wamn_test_postgres::Database,
     manifest: &wamn_catalog::ServingManifest,
 ) -> anyhow::Result<Arc<WamnPostgres>> {
-    wamn_control::reconcile_run_plane::reconcile(
+    wamn_environment_control::reconcile_run_plane::reconcile(
         admin,
         &wamn_schema_control::BareSchemaName::new("wamn_run")?,
         true,
@@ -109,7 +109,7 @@ pub async fn workflow_host(
     admin.execute("INSERT INTO wamn_run.environment_policies (env_key,expected_environment,durability_class) VALUES ($1,'test','standard')", &[&ENV_KEY]).await?;
     let (_, digest) =
         wamn_catalog::ServingManifest::from_canonical_bytes(&manifest.canonical_bytes())?;
-    wamn_control::environment::stage::write_release(
+    wamn_environment_control::environment::stage::write_release(
         database.url(),
         ENV_KEY,
         digest.as_str(),
@@ -210,10 +210,10 @@ pub async fn schedule_run(
     operations: &[&str],
     due: &str,
 ) -> anyhow::Result<String> {
-    use wamn_control::author_workflow::{
+    use wamn_environment_control::author_workflow::{
         AuthorWorkflowRequest, WorkflowExecution, WorkflowTrigger, author_workflow_in_databases,
     };
-    use wamn_control::workflow_lifecycle::{WorkflowVersion, enable_workflow};
+    use wamn_environment_control::workflow_lifecycle::{WorkflowVersion, enable_workflow};
     use wamn_runtime::plugins::wamn_postgres::{ScheduleRunAdmission, ScheduleRunAdmitted};
 
     let (_, digest) =
@@ -348,7 +348,8 @@ pub async fn install(
         .collect::<anyhow::Result<Vec<_>>>()?;
     for package in &packages {
         apply_package(ApplyPackageRequest {
-            component_source: wamn_control::apply_package::component_source_from_env(None).unwrap(),
+            component_source: wamn_package_control::apply_package::component_source_from_env(None)
+                .unwrap(),
             changes: wamn_platform_identity::auth_changes::AuthChanges::default(),
             package: package.clone(),
             database_url: database.url().into(),
@@ -405,7 +406,7 @@ pub async fn install(
             )?)
         })
         .collect::<anyhow::Result<Vec<_>>>()?;
-    wamn_control::environment::stage::materialize_application_principals(
+    wamn_environment_control::environment::stage::materialize_application_principals(
         system.url(),
         database.url(),
         ENV_KEY,

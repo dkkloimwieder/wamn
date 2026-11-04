@@ -1,0 +1,461 @@
+//! C4 file schema, grants, history, and reference constraints on real PostgreSQL.
+//! Object transfer and HTTP exposure require the integrated native file routes.
+
+use tokio_postgres::error::SqlState;
+
+#[path = "support/files.rs"]
+#[expect(
+    dead_code,
+    reason = "The shared fixture also supplies native host and MinIO helpers."
+)]
+mod files;
+
+#[test]
+fn file_fixture_declares_each_binding_mode() {
+    wamn_catalog::manifest::PackageManifest::from_slice(files::PACKAGE.as_bytes())
+        .expect("the file fixture uses the current package manifest");
+    let package: serde_json::Value = serde_json::from_str(files::PACKAGE).unwrap();
+    let declaration = wamn_package_control::component_declaration::render_palette_declaration(
+        &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/support/file_package/publication/components/blob-put.json.in"),
+        &wamn_catalog::ComponentPackageScope {
+            env_key: "file-fixture".into(),
+            package_id: "file_fixture".into(),
+            package_version: "0.1.0".into(),
+        },
+        None,
+    )
+    .expect("render the file fixture's current blobstore declaration");
+    let _: wamn_catalog::ComponentDeclaration = serde_json::from_value(declaration)
+        .expect("the fixture uses the current component declaration");
+    assert_eq!(
+        package["connections"]["files"]["interface"],
+        serde_json::json!("wasmcloud:blobstore/blobstore@0.1.0")
+    );
+    assert_eq!(package["connections"]["files"]["mode"], "write");
+    assert_eq!(package["connections"]["files-read"]["mode"], "read");
+    assert_eq!(package["connections"]["files-no-cdn"]["mode"], "write");
+}
+
+#[tokio::test]
+async fn application_file_writes_are_refused_and_history_uses_the_standard_contract()
+-> anyhow::Result<()> {
+    let fixture = files::fixture("file_authority").await?;
+    files::metadata(&fixture.writer).await?;
+    for statement in [
+        "INSERT INTO platform.file DEFAULT VALUES",
+        "UPDATE platform.file SET name='forged'",
+        "DELETE FROM platform.file",
+        "TRUNCATE platform.file",
+        "INSERT INTO platform.file_history DEFAULT VALUES",
+    ] {
+        let error = fixture.guest.batch_execute(statement).await.unwrap_err();
+        assert_eq!(
+            error.code(),
+            Some(&SqlState::INSUFFICIENT_PRIVILEGE),
+            "{statement}"
+        );
+    }
+    let row = fixture
+        .guest
+        .query_one(
+            "SELECT application,connection_id::text,created_by::text, \
+         updated_by::text,created_at=updated_at,exposure,url FROM platform.file WHERE id=$1::text::uuid",
+            &[&files::FILE],
+        )
+        .await?;
+    assert_eq!(row.get::<_, String>(0), files::APPLICATION);
+    assert_eq!(row.get::<_, String>(1), files::CONNECTION);
+    assert_eq!(row.get::<_, String>(2), files::CALLER);
+    assert_eq!(row.get::<_, String>(3), files::CALLER);
+    assert!(row.get::<_, bool>(4));
+    assert_eq!(row.get::<_, String>(5), "application");
+    assert!(row.get::<_, Option<String>>(6).is_none());
+    let entry = fixture
+        .observer
+        .query_one(
+            "SELECT changed_by::text,operation,after->>'id' FROM platform.file_history",
+            &[],
+        )
+        .await?;
+    assert_eq!(entry.get::<_, String>(0), files::CALLER);
+    assert_eq!(entry.get::<_, String>(1), "admin:file-fixture");
+    assert_eq!(entry.get::<_, String>(2), files::FILE);
+    Ok(())
+}
+
+#[tokio::test]
+async fn disabling_a_connection_preserves_file_references_and_referenced_delete_refuses()
+-> anyhow::Result<()> {
+    let fixture = files::fixture("file_references").await?;
+    files::metadata(&fixture.writer).await?;
+    fixture
+        .guest
+        .execute(
+            "INSERT INTO file_fixture.document (id,file_id) VALUES ($1::text::uuid,$1::text::uuid)",
+            &[&files::FILE],
+        )
+        .await?;
+    fixture
+        .writer
+        .execute(
+            "UPDATE platform.connection SET status='disabled' WHERE id=$1::text::uuid",
+            &[&files::CONNECTION],
+        )
+        .await?;
+    let row = fixture
+        .guest
+        .query_one(
+            "SELECT c.status,f.connection_id::text FROM file_fixture.document d \
+         JOIN platform.file f ON f.id=d.file_id JOIN platform.connection c ON c.id=f.connection_id",
+            &[],
+        )
+        .await?;
+    assert_eq!(row.get::<_, String>(0), "disabled");
+    assert_eq!(row.get::<_, String>(1), files::CONNECTION);
+    let error = fixture
+        .writer
+        .execute(
+            "DELETE FROM platform.file WHERE id=$1::text::uuid",
+            &[&files::FILE],
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(error.code(), Some(&SqlState::FOREIGN_KEY_VIOLATION));
+    fixture
+        .guest
+        .execute("DELETE FROM file_fixture.document", &[])
+        .await?;
+    assert_eq!(
+        fixture
+            .guest
+            .query_one("SELECT count(*) FROM platform.file", &[])
+            .await?
+            .get::<_, i64>(0),
+        1
+    );
+    assert_eq!(
+        fixture
+            .writer
+            .execute(
+                "DELETE FROM platform.file WHERE id=$1::text::uuid",
+                &[&files::FILE],
+            )
+            .await?,
+        1
+    );
+    // The migration owner needs no lasting platform privileges to keep the FK.
+    let privilege = fixture
+        .migrator
+        .query_one(
+            "SELECT has_table_privilege(current_user, \
+             (SELECT c.oid FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace \
+              WHERE n.nspname='platform' AND c.relname='file'), 'REFERENCES')",
+            &[],
+        )
+        .await?;
+    assert!(!privilege.get::<_, bool>(0));
+    Ok(())
+}
+
+fn registry_definition() -> serde_json::Value {
+    serde_json::json!({"provider":"s3","endpoint":"http://127.0.0.1:9000",
+        "container":"files-a","prefix":"old/"})
+}
+
+#[tokio::test]
+async fn file_connection_lookup_refuses_wrong_login_and_forged_scope() -> anyhow::Result<()> {
+    let registry = files::registry("file-org", "project", registry_definition()).await?;
+    assert_eq!(
+        files::active_file_connections(
+            &registry.reader,
+            "file-org",
+            "project",
+            Some(&registry.connection_id)
+        )
+        .await?
+        .len(),
+        1
+    );
+    registry
+        .unmapped
+        .batch_execute("SET app.org='file-org'; SET app.project='project'")
+        .await?;
+    for (client, org, project) in [
+        (&registry.unmapped, "file-org", "project"),
+        (registry.reader.as_ref(), "other-org", "project"),
+        (registry.reader.as_ref(), "file-org", "unenabled"),
+        (&registry.unenabled, "file-org", "unenabled"),
+    ] {
+        assert!(
+            files::active_file_connections(client, org, project, Some(&registry.connection_id))
+                .await?
+                .is_empty()
+        );
+    }
+    assert_eq!(
+        registry
+            .reader
+            .query("SELECT * FROM registry.connection_generation", &[])
+            .await
+            .unwrap_err()
+            .code(),
+        Some(&SqlState::INSUFFICIENT_PRIVILEGE)
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn file_connection_lookup_requires_an_active_connection_and_integration() -> anyhow::Result<()>
+{
+    let mut registry = files::registry("file-org", "project", registry_definition()).await?;
+    registry
+        .configure(
+            "connection.disable",
+            serde_json::json!({"name":files::STORE_NAME}),
+        )
+        .await?;
+    assert!(
+        files::active_file_connections(
+            &registry.reader,
+            "file-org",
+            "project",
+            Some(&registry.connection_id)
+        )
+        .await?
+        .is_empty()
+    );
+    registry
+        .configure(
+            "connection.enable",
+            serde_json::json!({"name":files::STORE_NAME}),
+        )
+        .await?;
+    registry
+        .owner
+        .batch_execute("UPDATE registry.integration SET status='disabled' WHERE name='file-store'")
+        .await?;
+    assert!(
+        files::active_file_connections(
+            &registry.reader,
+            "file-org",
+            "project",
+            Some(&registry.connection_id)
+        )
+        .await?
+        .is_empty()
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn raw_blobstore_mutations_refuse_file_namespaces_on_minio() -> anyhow::Result<()> {
+    use object_store::{ObjectStoreExt as _, aws::AmazonS3Builder, path::Path};
+    use std::sync::Arc;
+    use wamn_runtime::plugins::wamn_blobstore::store::BoundContainer;
+    let minio = files::Minio::start().await?;
+    let backend = Arc::new(
+        AmazonS3Builder::new()
+            .with_endpoint(&minio.endpoint)
+            .with_bucket_name("files-a")
+            .with_region("us-east-1")
+            .with_access_key_id("file-fixture")
+            .with_secret_access_key(files::STORE_PASSWORD)
+            .with_allow_http(true)
+            .build()?,
+    );
+    let raw = BoundContainer::new(
+        Arc::<object_store::aws::AmazonS3>::clone(&backend),
+        "files-a",
+        "generation-one",
+    );
+    let id = uuid::Uuid::new_v4();
+    let live = format!("dev/_wamn_files/live/{id}");
+    backend
+        .put(
+            &Path::from(format!("generation-one/{live}")),
+            b"retained".to_vec().into(),
+        )
+        .await?;
+    raw.put("ordinary", b"ordinary".to_vec()).await?;
+    for key in [
+        live.clone(),
+        format!("dev/_wamn_files/staging/{id}"),
+        format!("dev/public/_wamn_files/live/{id}"),
+    ] {
+        assert!(
+            raw.put(&key, b"forged".to_vec()).await.is_err(),
+            "raw put {key}"
+        );
+        assert!(raw.delete(&key).await.is_err(), "raw delete {key}");
+    }
+    assert!(raw.clear().await.is_err());
+    assert_eq!(
+        backend
+            .get(&Path::from(format!("generation-one/{live}")))
+            .await?
+            .bytes()
+            .await?
+            .as_ref(),
+        b"retained"
+    );
+    assert_eq!(raw.get("ordinary").await?, b"ordinary");
+    Ok(())
+}
+
+/// MinIO's preserved source time supplies aged objects without changing the clock.
+/// Source: https://github.com/minio/minio/blob/RELEASE.2025-09-07T16-13-09Z/cmd/object-api-options.go
+#[tokio::test]
+async fn aged_staging_expires_while_unlinked_metadata_and_aged_live_bytes_stay()
+-> anyhow::Result<()> {
+    use object_store::{
+        ObjectStoreExt as _,
+        aws::AmazonS3Builder,
+        path::Path,
+        signer::{Method, Signer as _},
+    };
+    let metadata = files::fixture("file_lifecycle").await?;
+    files::metadata(&metadata.writer).await?;
+    files::age_metadata(&metadata).await?;
+    let minio = files::Minio::start().await?;
+    let store = AmazonS3Builder::new()
+        .with_endpoint(&minio.endpoint)
+        .with_bucket_name("files-a")
+        .with_region("us-east-1")
+        .with_access_key_id("file-fixture")
+        .with_secret_access_key(files::STORE_PASSWORD)
+        .with_allow_http(true)
+        .build()?;
+    let live = Path::from(format!(
+        "generation-one/dev/_wamn_files/live/{}",
+        files::FILE
+    ));
+    let staging_id = uuid::Uuid::new_v4().to_string();
+    let staging = Path::from(format!(
+        "generation-one/dev/_wamn_files/staging/{staging_id}"
+    ));
+    let client = minio.client()?;
+    for path in [&live, &staging] {
+        let url = store
+            .signed_url(Method::PUT, path, std::time::Duration::from_secs(60))
+            .await?;
+        let response = client
+            .put(url)
+            .header("x-minio-source-mtime", "2000-01-01T00:00:00Z")
+            .body(b"aged fixture bytes".to_vec())
+            .send()
+            .await?;
+        assert!(
+            response.status().is_success(),
+            "seed aged MinIO object: {}",
+            response.text().await?
+        );
+    }
+    metadata
+        .writer
+        .execute(
+            "UPDATE platform.file SET size=$1,sha256=$2 WHERE id=$3::text::uuid",
+            &[
+                &i64::try_from(b"aged fixture bytes".len())?,
+                &hex::encode(
+                    ring::digest::digest(&ring::digest::SHA256, b"aged fixture bytes").as_ref(),
+                ),
+                &files::FILE,
+            ],
+        )
+        .await?;
+    let row = metadata
+        .guest
+        .query_one(
+            "SELECT created_at FROM platform.file WHERE id=$1::text::uuid",
+            &[&files::FILE],
+        )
+        .await?;
+    let created: chrono::DateTime<chrono::Utc> = row.get(0);
+    assert!(created < chrono::Utc::now() - chrono::Duration::days(30));
+    assert_eq!(
+        metadata
+            .guest
+            .query_one("SELECT count(*) FROM file_fixture.document", &[])
+            .await?
+            .get::<_, i64>(0),
+        0
+    );
+    assert_eq!(
+        metadata
+            .guest
+            .query_one(
+                "SELECT count(*) FROM platform.file WHERE id=$1::text::uuid",
+                &[&staging_id]
+            )
+            .await?
+            .get::<_, i64>(0),
+        0
+    );
+    let cutoff = chrono::Utc::now() - chrono::Duration::days(2);
+    assert!(store.head(&staging).await?.last_modified < cutoff);
+    assert!(store.head(&live).await?.last_modified < cutoff);
+    minio.mc("mc ilm rule add --expire-days 1 --prefix generation-one/dev/_wamn_files/staging/ file/files-a").await?;
+    let mut removed = false;
+    for _ in 0..180 {
+        match store.head(&staging).await {
+            Err(object_store::Error::NotFound { .. }) => {
+                removed = true;
+                break;
+            }
+            Ok(_) => tokio::time::sleep(std::time::Duration::from_millis(500)).await,
+            Err(error) => return Err(error.into()),
+        }
+    }
+    assert!(
+        removed,
+        "the lifecycle scanner must delete aged staging only"
+    );
+    assert_eq!(
+        store.get(&live).await?.bytes().await?.as_ref(),
+        b"aged fixture bytes"
+    );
+    assert_eq!(
+        metadata
+            .guest
+            .query_one(
+                "SELECT count(*) FROM platform.file WHERE id=$1::text::uuid",
+                &[&files::FILE]
+            )
+            .await?
+            .get::<_, i64>(0),
+        1
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn file_reads_select_the_active_generation_and_refuse_another_connection()
+-> anyhow::Result<()> {
+    let original = registry_definition();
+    let mut registry = files::registry("file-org", "project", original.clone()).await?;
+    let mut changed = original;
+    changed["cdn_host"] = serde_json::json!("https://files.example");
+    registry.move_store(&changed).await?;
+    let rows = files::active_file_connections(
+        &registry.reader,
+        "file-org",
+        "project",
+        Some(&registry.connection_id),
+    )
+    .await?;
+    assert_eq!(rows.len(), 1);
+    assert!(rows[0].get::<_, i64>(2) > registry.generation);
+    assert_eq!(rows[0].get::<_, serde_json::Value>(3), changed);
+    assert!(
+        files::active_file_connections(
+            &registry.reader,
+            "file-org",
+            "project",
+            Some("00000000-0000-0000-0000-000000000001")
+        )
+        .await?
+        .is_empty()
+    );
+    Ok(())
+}

@@ -460,7 +460,7 @@ fn native_authenticated_call_graph_grant() {
             .args(["--exact", &full_name, "--nocapture"])
             .env(CHILD_MARKER, TEST_NAME)
             .envs(
-                wamn_control::release_chart::TELEMETRY_VARIABLES
+                wamn_release_control::release_chart::TELEMETRY_VARIABLES
                     .into_iter()
                     .filter(|(name, _)| name.starts_with("OTEL_TRACES_")),
             )

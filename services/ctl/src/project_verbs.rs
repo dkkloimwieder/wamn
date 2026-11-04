@@ -4,7 +4,7 @@ use std::path::PathBuf;
 
 use anyhow::Context as _;
 use clap::{Args, Subcommand};
-use wamn_control::platform::project::ProjectDocument;
+use wamn_environment_control::platform::project::ProjectDocument;
 
 #[derive(Debug, Subcommand)]
 pub enum ProjectCommand {

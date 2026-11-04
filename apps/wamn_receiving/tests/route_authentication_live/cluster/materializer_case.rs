@@ -5,7 +5,7 @@ use std::time::Duration;
 
 use anyhow::{Context as _, ensure};
 use serde_json::{Value, json};
-use wamn_control::provision_project_env::secret_value;
+use wamn_environment_control::provision_project_env::secret_value;
 use wamn_gate_harness::journey::MaterializerPhase;
 
 use super::super::case_execution::validate_response;

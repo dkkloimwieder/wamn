@@ -438,7 +438,7 @@ Removing the web layer changes existing package digests.
 After rebuilding the packages, refresh their records with `wamn build --record-digest` before the package digest test.
 No version or format bump accompanies this greenfield change.
 
-Registry tags are immutable, so a package that changes under an unchanged version cannot be pushed to the GKE registry again. Each package that a file in `deploy/gcp/environments` names has a committed `package.digest` beside its `wamn.k`. The file holds one line, the tag and the digest that the built package packs to. The test `cargo test -p wamn-control --test package_digest` builds no package, so run `wamn build` first. It refuses when the digest changed and the tag did not, and when the tag changed and the file did not.
+Registry tags are immutable, so a package that changes under an unchanged version cannot be pushed to the GKE registry again. Each package that a file in `deploy/gcp/environments` names has a committed `package.digest` beside its `wamn.k`. The file holds one line, the tag and the digest that the built package packs to. The test `cargo test -p wamn-package-control --test package_digest` builds no package, so run `wamn build` first. It refuses when the digest changed and the tag did not, and when the tag changed and the file did not.
 
 When you change such a package, bump its version in `wamn.k`. Then write the file again and commit it with the change:
 
@@ -474,7 +474,7 @@ They take the registry flags of `wamn-ctl apply-package`: `--artifact-base`, `--
   --registry-auth-file <auth file>
 ```
 
-**Contract A** (`wamn-vavs4.1`, `crates/control/lib/src/package_artifact.rs`). A component artifact is the object `push-package` pushes for each component. `push-component` is gone (`wamn-vavs4.7`). Its tag is the 64 hex digits of the component digest. Its image manifest has media type `application/vnd.oci.image.manifest.v1+json`, `schemaVersion` 2 and no `artifactType`. Its config is `application/vnd.wamn.component.config.v1+json`, the canonical JSON `{format-version: "0.1", component-digest, imports, imports-fingerprint}` (`component_artifact_config_bytes`). It has one layer, `application/vnd.wamn.component.v1+wasm`, with the exact wasm bytes. These media types live in `crates/platform/engine/src/component_artifact.rs`.
+**Contract A** (`wamn-vavs4.1`, `crates/control/package/src/package_artifact.rs`). A component artifact is the object `push-package` pushes for each component. `push-component` is gone (`wamn-vavs4.7`). Its tag is the 64 hex digits of the component digest. Its image manifest has media type `application/vnd.oci.image.manifest.v1+json`, `schemaVersion` 2 and no `artifactType`. Its config is `application/vnd.wamn.component.config.v1+json`, the canonical JSON `{format-version: "0.1", component-digest, imports, imports-fingerprint}` (`component_artifact_config_bytes`). It has one layer, `application/vnd.wamn.component.v1+wasm`, with the exact wasm bytes. These media types live in `crates/platform/engine/src/component_artifact.rs`.
 
 A package artifact has the tag `<package_id>-<version>`. Its image manifest has media type `application/vnd.oci.image.manifest.v1+json` and `artifactType` `application/vnd.wamn.package.v2` (a v1 reader requires exactly one layer). Its config is `application/vnd.oci.empty.v1+json` with the bytes `{}`. Its layers are always present, in this order; `title` is the annotation `org.opencontainers.image.title`:
 

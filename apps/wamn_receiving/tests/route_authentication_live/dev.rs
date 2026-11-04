@@ -36,7 +36,7 @@ impl DevJourneyInputs {
         let inputs = Self {
             wamn_binary: required_journey_path("WAMN_RECEIVING_DEV_BIN")?,
             environment: DevEnvironmentInputs {
-                local_artifacts: wamn_control::dev::config::LocalArtifacts {
+                local_artifacts: wamn_dev_control::dev::config::LocalArtifacts {
                     directory: PathBuf::new(),
                     flow_http_component: required_journey_path("WAMN_DEV_ENV_FLOW_HTTP_COMPONENT")?
                         .canonicalize()
@@ -113,7 +113,7 @@ pub(super) fn verify_dev_command_output(output: &std::process::Output) -> anyhow
         "wamn dev failed with {}: stdout={stdout:?} stderr={stderr:?}",
         output.status
     );
-    let stages = wamn_control::dev::DEV_STAGE_ORDER
+    let stages = wamn_dev_control::dev::DEV_STAGE_ORDER
         .iter()
         .map(|stage| stage.as_str())
         .collect::<Vec<_>>()
@@ -390,7 +390,7 @@ pub(super) async fn assert_dev_command(
     let root = scratch.path();
     inputs.environment.local_artifacts.directory = root.join("local-artifacts");
     let (admin, admin_task) = connect(system_url).await?;
-    let environment = wamn_control::dev::environment::provision(
+    let environment = wamn_dev_control::dev::environment::provision(
         system_url,
         admin.as_ref(),
         root,
@@ -408,7 +408,7 @@ pub(super) async fn assert_dev_command(
         project: environment.identity.project.clone(),
         env: wamn_control_registry::Env::new(environment.identity.environment.clone()),
     };
-    wamn_control::event_streams::provision(
+    wamn_environment_control::event_streams::provision(
         &async_nats::jetstream::new(event_provisioning.clone()),
         &event_scope,
         inputs.environment.stream_replicas,

@@ -54,11 +54,11 @@ The stage checks the router pin, as the guest build of `wamn build` does.
 Control-client tests compose this pinned raw guest with an empty dispatcher and link operation calls without authority.
 `tools/test-changes --tier kind` runs no guest build.
 `tests/selection.toml` owns suite commands, tiers, prerequisites, and inputs beyond Cargo dependencies.
-Generator changes select `package_digest` in `wamn-control`.
+Generator changes select `package_digest` in `wamn-package-control`.
 Platform fixture and catalog changes select `wamn-control-provision`.
 SQL changes select `wamn-ctl` with `ops`, including `protected_relations_live`.
 Control and platform deployment changes select the exact native host case.
-Every change outside documentation selects the prekind suite, which runs `environment_render` and `platform_render` in `wamn-control`.
+Every change outside documentation selects the prekind suite, which runs `environment_render` and `platform_render` in `wamn-environment-control`.
 The release-chart-render suite runs the ignored Helm cases in `release_chart_render`.
 These contract targets compile separately from the kind cases.
 Web changes select repository web lint, runtime tests, and platform UI checks, tests, and build.
@@ -195,7 +195,7 @@ Run these tests with the build environment in [building](building.md):
 
 ```bash
 cargo test --locked --offline -p wamn-runtime resource_lease::tests -- --test-threads=1
-cargo test --locked --offline -p wamn-control --test integration_restart_live -- --ignored --test-threads=1
+cargo test --locked --offline -p wamn-environment-control --test integration_restart_live -- --ignored --test-threads=1
 cargo test --locked --offline -p wamn-host --bin wamn-host host::lease_tests::sigterm_drains_calls_then_hands_the_lease_to_a_ready_host -- --ignored --exact --test-threads=1
 ```
 
@@ -305,7 +305,7 @@ Run the environment render cases by their full names:
 ```bash
 for name in prekind_environment_renders prekind_rejects_old_missing_conn_reader \
   prekind_receiving_pat_renders prekind_wms_pat_renders; do
-  cargo test --locked --offline -p wamn-control --test environment_render \
+  cargo test --locked --offline -p wamn-environment-control --test environment_render \
     "$name" -- --exact --nocapture --test-threads=1 || exit "$?"
 done
 ```
@@ -377,9 +377,9 @@ It gives no expected duration.
 The epoch interruption case lives in `wamn-engine --test deadline`.
 Paused-time scheduling decisions live in `wamn-workflow --test schedule_decisions`.
 Admission authority stays in `wamn-run-state --test admission_live`.
-Schedule storage stays in `wamn-control --test workflow_schedule_live`.
-Broker acknowledgement lives in `wamn-control --test workflow_event_nats`.
-The native host case lives in `wamn-control --test native_host` and takes live-nats.
+Schedule storage stays in `wamn-environment-control --test workflow_schedule_live`.
+Broker acknowledgement lives in `wamn-environment-control --test workflow_event_nats`.
+The native host case lives in `wamn-dev-control --test native_host` and takes live-nats.
 
 ## Ignored tests
 
@@ -521,11 +521,11 @@ Do not infer execution from the aggregate Cargo pass count.
 
 | Existing reference | Current owner and required setup |
 | --- | --- |
-| `[RUN-PLANE-RECONCILE]` | `crates/control/lib/tests/run_plane_live.rs`: covers creation, current no-op, two-plane residency, platform configuration, and current security behavior under the process lock |
+| `[RUN-PLANE-RECONCILE]` | `crates/control/environment/tests/run_plane_live.rs`: covers creation, current no-op, two-plane residency, platform configuration, and current security behavior under the process lock |
 | `[CLAIMS-LIVE]` | Runtime `plugins::wamn_postgres::claims::tests` `live_*` cases: run by default on the test server, and the cases that create fixed roles hold the process lock |
 | `[EFFECT-SNAPSHOT]` | `crates/platform/runtime/tests/effect_snapshot_live.rs`: ignored, starts its own server with `pg_stat_statements`, and needs `WAMN_NATS_URL`. It runs the production cluster snapshot as a provisioned HTTP admitter, holds the process lock, and makes sure that a repeated snapshot sends no statement. || `[R18-NEG]` | Runtime `plugins::wamn_postgres::claims::tests::live_scs_off_server_fails_checkout_closed`: runs by default on a separate server started with `standard_conforming_strings=off` |
 | `[EVT-READER]` | `services/cdc-reader/tests/event_reader_live.rs`: ignored in live-nats, starts its own server with `wal_level=logical`, and needs `WAMN_READER_NATS_URL` |
-| `[CAPTURE-GAP]` | `crates/control/lib/tests/capture_gap_live.rs`: ignored, starts its own server with `wal_level=logical`, and needs `WAMN_READER_NATS_URL`. It does not test the refusal of an active slot, because only a streaming reader holds a slot active |
+| `[CAPTURE-GAP]` | `crates/control/environment/tests/capture_gap_live.rs`: ignored, starts its own server with `wal_level=logical`, and needs `WAMN_READER_NATS_URL`. It does not test the refusal of an active slot, because only a streaming reader holds a slot active |
 | `[SQLX-TRANSACTION]` | `crates/platform/runtime/tests/sqlx_transaction_live.rs`: ignored in live-postgres, takes its database from the test server, and needs `WAMN_SQLX_TRANSACTION_COMPONENT` |
 | `[MGMT-LIVE]` | `services/scenario-worker/tests/management_live.rs`: runs by default on the test server and holds the process lock |
 | `[STD-GUEST-VIRTUALIZATION]` | `tests/integration/src/virtualized_std_guest.rs`: ignored in live-nats, and needs built guest files and its explicit `WAMN_STD_VIRTUALIZATION_*` inputs |
@@ -752,9 +752,9 @@ export PATH="$CARGO_TARGET_DIR/debug:$PATH"
 When the owner requests kind tests, run both cases together from the prepared shell:
 
 ```bash
-cargo test --locked -p wamn-control --test platform_apply_kind -- --ignored --nocapture &
+cargo test --locked -p wamn-dev-control --test platform_apply_kind -- --ignored --nocapture &
 platform_pid=$!
-cargo test --locked -p wamn-control --test environment_apply_kind -- --ignored --nocapture &
+cargo test --locked -p wamn-dev-control --test environment_apply_kind -- --ignored --nocapture &
 environment_pid=$!
 platform_status=0
 wait "$platform_pid" || platform_status=$?
@@ -808,7 +808,7 @@ To resume at a named platform step, set both variables:
 WAMN_KIND_REUSE=/absolute/path/to/kept.json \
 WAMN_KIND_FROM='4.17 Apply with the release' \
 WAMN_RELEASE_CHART=/absolute/path/to/chart \
-cargo test --locked -p wamn-control --test platform_apply_kind -- --ignored --exact platform_apply_kind --nocapture
+cargo test --locked -p wamn-dev-control --test platform_apply_kind -- --ignored --exact platform_apply_kind --nocapture
 ```
 
 The rerun skips earlier steps and runs the selected step and every later step whose dependencies completed.
@@ -818,7 +818,7 @@ The install chart names the runner image of the provisioning Jobs, and the insta
 If an image digest in either chart differs from `WAMN_RELEASE_CHART`, the rerun fails and names the chart and the image.
 If the platform version differs from the kept fixture, the rerun fails.
 The install remains one step because its Jobs already skip completed work by input digest.
-Step names and dependencies live in `STEPS` in `crates/control/lib/tests/support/platform_checks.rs`.
+Step names and dependencies live in `STEPS` in `crates/control/environment/tests/support/platform_checks.rs`.
 An unknown name fails and lists the known names.
 A missing completed dependency fails and names that dependency.
 Setting only one variable fails.
@@ -828,10 +828,10 @@ A failed required step blocks its dependents and reports them as not run.
 
 The separate environment test needs Docker, kind, Helm 4, kubectl, OpenSSL, and the release chart that `build-platform` stamps.
 The `edge` preparation step supplies the device component.
-Its [test source](../../crates/control/lib/tests/environment_apply_kind.rs) describes the required images and fixtures.
+Its [test source](../../crates/control/dev/tests/environment_apply_kind.rs) describes the required images and fixtures.
 
 ```bash
-WAMN_RELEASE_CHART=<chart> cargo test -p wamn-control --test environment_apply_kind -- --ignored --nocapture
+WAMN_RELEASE_CHART=<chart> cargo test -p wamn-dev-control --test environment_apply_kind -- --ignored --nocapture
 ```
 
 ### Add a check to a kind case
@@ -877,7 +877,7 @@ To rerun named checks, set both variables:
 WAMN_KIND_REUSE=/absolute/path/to/kept.json \
 WAMN_KIND_CHECKS='14 / A1 heartbeat labels,4 show reapply' \
 WAMN_RELEASE_CHART=/absolute/path/to/chart \
-cargo test --locked --offline -p wamn-control --test environment_apply_kind -- --ignored --exact environment_apply_kind --nocapture
+cargo test --locked --offline -p wamn-dev-control --test environment_apply_kind -- --ignored --exact environment_apply_kind --nocapture
 ```
 
 A rerun runs only the named checks and always keeps the cluster.
@@ -916,7 +916,7 @@ The C4 tests use disposable PostgreSQL databases. Compile them without starting 
 
 ```bash
 export CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUNNER='kache test-runner'
-cargo test --locked --offline -p wamn-control --test files_live --test platform_grants_live --no-run
+cargo test --locked --offline -p wamn-environment-control --test files_live --test platform_grants_live --no-run
 cargo test --locked --offline -p wamn-control-provision --test family_denial_matrix --test deploy_sql_authority --no-run
 cargo test --locked --offline -p wamn-execution-host --test files_live --test host_route_live --no-run
 cargo test --locked --offline -p wamn-schema-introspection --test file_reference_live --no-run
@@ -927,7 +927,7 @@ The NATS variable selects an existing server binary and prevents a native NATS b
 Run the live cases with Docker and the PostgreSQL binaries:
 
 ```bash
-cargo test --locked --offline -p wamn-control --test files_live --test platform_grants_live -- --nocapture
+cargo test --locked --offline -p wamn-environment-control --test files_live --test platform_grants_live -- --nocapture
 cargo test --locked --offline -p wamn-control-provision --test family_denial_matrix --test deploy_sql_authority -- --nocapture
 cargo test --locked --offline -p wamn-execution-host --test files_live --test host_route_live -- --nocapture
 cargo test --locked --offline -p wamn-schema-introspection --test file_reference_live -- --nocapture
@@ -990,14 +990,14 @@ Before a kind run, make sure that the fixture release has an http role.
 This test builds and assembles the fixture package on a disposable PostgreSQL, without kind:
 
 ```bash
-cargo test --locked --offline -p wamn-control --test file_fixture_live \
+cargo test --locked --offline -p wamn-environment-control --test file_fixture_live \
   native_files::file_fixture_assembles_an_http_role_without_kind -- --ignored --exact
 ```
 
 Set the other [kind prerequisites](#platform-and-environment-apply-on-kind), then run the scenario once:
 
 ```bash
-cargo test --locked --offline -p wamn-control --test environment_apply_kind \
+cargo test --locked --offline -p wamn-dev-control --test environment_apply_kind \
   environment_apply_kind -- --ignored --exact --nocapture
 ```
 
@@ -1422,7 +1422,7 @@ Another holds a lock on the rows across one minute: the late tick admits its own
 Each of these two cases takes up to about three minutes.
 
 ```bash
-cargo test -p wamn-control --test workflow_schedule_live -- --nocapture
+cargo test -p wamn-environment-control --test workflow_schedule_live -- --nocapture
 ```
 
 ### Connection candidates

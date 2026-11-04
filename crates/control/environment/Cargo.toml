@@ -1,0 +1,105 @@
+[package]
+name = "wamn-environment-control"
+description = "Environment control operations."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[features]
+default = []
+test-util = []
+ops = ["wamn-control-provision/ops"]
+
+[[test]]
+name = "create_user_live"
+path = "tests/create_user_live.rs"
+required-features = ["ops"]
+
+[[test]]
+name = "workload_generation_live"
+path = "tests/workload_generation_live.rs"
+
+[[test]]
+name = "wamn_integration_live"
+path = "../../../apps/platform/wamn_integration/tests/operations_live.rs"
+
+[[example]]
+name = "identity-chart-input"
+required-features = ["test-util"]
+
+[[test]]
+name = "netsuite_publication"
+path = "../../../apps/netsuite/tests/publication.rs"
+
+[[test]]
+name = "rest_connector_publication"
+path = "../../../apps/rest_connector/tests/publication.rs"
+
+[dependencies]
+wit-parser = { workspace = true }
+wamn-credential-store = { workspace = true }
+futures-util = { workspace = true }
+wash-runtime = { workspace = true, features = ["washlet"] }
+anyhow = { workspace = true }
+async-nats = { workspace = true, features = ["jetstream"] }
+base64 = { workspace = true }
+chrono = { workspace = true, features = ["clock"] }
+hex = { workspace = true }
+oci-client = { workspace = true }
+docker_credential = "=1.4.0"
+object_store = { workspace = true, features = ["gcp"] }
+reqwest = { workspace = true, features = ["rustls"] }
+ring = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+serde_yaml = { workspace = true }
+tokio = { workspace = true, features = ["fs", "io-util", "macros", "process", "rt", "signal", "sync", "time"] }
+tokio-postgres = { workspace = true, features = ["with-chrono-0_4", "with-serde_json-1"] }
+tracing = { workspace = true }
+url = { workspace = true }
+wamn-catalog = { workspace = true }
+wamn-package-artifact = { workspace = true }
+wamn-control-provision = { workspace = true }
+wamn-control-registry = { workspace = true }
+wamn-event-reg = { workspace = true }
+wamn-event-wire = { workspace = true }
+wamn-execution-contract = { workspace = true }
+wamn-pg-core = { workspace = true }
+wamn-platform-identity = { workspace = true }
+wamn-identity-client = { workspace = true }
+wamn-project-state = { workspace = true }
+wamn-run-state = { workspace = true }
+wamn-runtime = { workspace = true }
+wamn-schema-control = { workspace = true }
+wamn-schema-generator = { workspace = true }
+wamn-schema-introspection = { workspace = true }
+wamn-package-control = { workspace = true }
+wamn-release-control = { workspace = true }
+
+[dev-dependencies]
+wamn-gate-harness = { workspace = true }
+wamn-package-artifact = { workspace = true, features = ["test-util"] }
+wamn-runtime = { workspace = true, features = ["test-util"] }
+wamn-execution-host = { workspace = true }
+wamn-workflow = { workspace = true }
+wamn-fixture-package = { workspace = true }
+tokio = { workspace = true, features = ["io-util", "macros", "net", "rt", "sync", "test-util", "time"] }
+tokio-postgres = { workspace = true, features = ["with-chrono-0_4", "with-uuid-1"] }
+uuid = { workspace = true }
+tokio-rustls = { workspace = true }
+wamn-catalog = { workspace = true, features = ["test-util"] }
+wamn-control-provision = { workspace = true, features = ["test-util"] }
+wamn-project-state = { workspace = true, features = ["test-util"] }
+wamn-test-infrastructure = { workspace = true }
+wamn-test-postgres = { workspace = true }
+wit-component = { workspace = true, features = ["dummy-module"] }
+wat = "=1.254.2"
+rcgen = { workspace = true }
+pg_query = "=6.2.1"
+tar = { workspace = true }
+wamn-session = { workspace = true }
+wamn-engine = { workspace = true }
+wamn-package-control = { workspace = true, features = ["test-util"] }
+
+[lints]
+workspace = true

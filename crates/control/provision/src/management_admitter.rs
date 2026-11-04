@@ -270,8 +270,9 @@ pub fn parse_management_admission_url(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::APP_ROLE;
+    use crate::MANAGEMENT_ADMITTER_ROLE;
     use crate::control_author::control_author_generation_role;
-    use crate::{APP_ROLE, MANAGEMENT_ADMITTER_ROLE};
 
     const ORG: &str = "acme";
     const PROJECT: &str = "widgets";

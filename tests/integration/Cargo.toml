@@ -49,7 +49,10 @@ tracing = { workspace = true }
 tracing-opentelemetry = { workspace = true }
 tracing-subscriber = { workspace = true }
 url = { workspace = true }
-wamn-control = { workspace = true }
+wamn-package-control = { workspace = true }
+wamn-release-control = { workspace = true }
+wamn-environment-control = { workspace = true }
+wamn-dev-control = { workspace = true }
 wamn-control-provision = { workspace = true, features = ["ops", "test-util"] }
 wamn-control-registry = { workspace = true }
 wamn-catalog = { workspace = true }
@@ -82,7 +85,10 @@ tokio-rustls = { workspace = true }
 wamn-run-state = { workspace = true, features = ["test-util"] }
 wamn-test-postgres = { workspace = true }
 # `prune_record_history` is an `ops` verb; route_interface_live prunes history.
-wamn-control = { workspace = true, features = ["ops"] }
+wamn-package-control = { workspace = true, features = ["test-util"] }
+wamn-release-control = { workspace = true }
+wamn-environment-control = { workspace = true, features = ["test-util"] }
+wamn-dev-control = { workspace = true, features = ["test-util"] }
 
 [lints]
 workspace = true

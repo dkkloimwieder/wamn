@@ -18,7 +18,7 @@ wamn-catalog = { workspace = true }
 wamn-control-provision = { workspace = true }
 # wamn-vavs4.6: the gate and publish read component facts from the verified
 # package artifact, the way publish-release reads them (R2). A deployed service
-# never depends on `wamn-control`, so the reader is its own small crate.
+# never depends on the control crates, so the reader is its own small crate.
 wamn-package-artifact = { workspace = true }
 wamn-control-registry = { workspace = true }
 wamn-platform-identity = { workspace = true }
@@ -53,11 +53,11 @@ wamn-catalog = { workspace = true }
 url = { workspace = true }
 wamn-test-postgres = { workspace = true }
 # The live gates push synthetic verified package artifacts to a local
-# registry:2 (crates/control/lib/tests/support/local_registry.rs).
+# registry:2 (crates/control/environment/tests/support/local_registry.rs).
 reqwest = { workspace = true, features = ["rustls"] }
 # The live gates pack their synthetic package artifacts with the production
 # packer. A dev-dependency only: the deployed binary does not link it.
-wamn-control = { workspace = true }
+wamn-package-control = { workspace = true }
 
 [lints]
 workspace = true

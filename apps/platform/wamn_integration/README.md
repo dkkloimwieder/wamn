@@ -22,7 +22,7 @@ The package declares no event registration, so change data capture (CDC) does no
 Build the package before its consumers with `target/debug/wamn build apps/platform/wamn_integration`.
 Set `DATABASE_URL` to a PostgreSQL 18 server as [building](../../../docs/operations/building.md#wamn-build) describes.
 Run component unit tests in the apps workspace with `cargo test --manifest-path apps/Cargo.toml -p wamn-integration --lib`.
-Run the SQL test with `cargo test -p wamn-control --test wamn_integration_live`.
+Run the SQL test with `cargo test -p wamn-environment-control --test wamn_integration_live`.
 The SQL test uses the [test database fixture](../../../docs/operations/running-tests.md) and the generated application grants.
 
 `setting.read` accepts optional JSON `carry` and returns it unchanged beside `value`.

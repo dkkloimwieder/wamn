@@ -8,10 +8,10 @@ use anyhow::{Context as _, ensure};
 use serde_json::{Value, json};
 use tokio::io::{AsyncBufReadExt as _, AsyncWriteExt as _, BufReader};
 use tokio::process::Command;
-use wamn_control::dev::environment::{
+use wamn_control_provision::PlatformComponent;
+use wamn_dev_control::dev::environment::{
     DEVELOPER_EMAIL, ENVIRONMENT, JourneyScope, ORG, PROJECT, reconcile_journey_run_plane,
 };
-use wamn_control_provision::PlatformComponent;
 use wamn_platform_identity::{create_or_reuse_user, grant_project_env_membership};
 
 const PASSWORD: &str = "local platform browser password";

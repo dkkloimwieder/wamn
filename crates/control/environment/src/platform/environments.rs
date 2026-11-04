@@ -1,0 +1,597 @@
+//! Environment apply runs in the cluster with its declared inputs.
+
+use std::path::Path;
+
+use anyhow::Context as _;
+use serde_json::json;
+
+use crate::environment::document::DeclaredRelease;
+use crate::kubectl;
+use wamn_release_control::release_chart::Target;
+
+use super::document::ClusterDocument;
+use super::install::{DATABASE_HOST, SecretData, administrator, runner_image, secret_text};
+use super::job::{self, JobRequest};
+
+pub(super) async fn apply(
+    target: &Target,
+    document: &ClusterDocument,
+    environments: &Path,
+    directory: &Path,
+    registry: Option<&wamn_package_artifact::PackageRegistry>,
+) -> anyhow::Result<bool> {
+    let initial = registry.is_none();
+    let image = runner_image(directory)?;
+    let secret: SecretData = kubectl::get(
+        &target.kubeconfig,
+        &target.context,
+        "platform",
+        "secret",
+        "wamn-pg-superuser",
+    )
+    .await?
+    .context("missing Secret platform/wamn-pg-superuser")?;
+    let admin = administrator(&secret)?;
+    let apply_secret: SecretData = kubectl::get(
+        &target.kubeconfig,
+        &target.context,
+        "platform",
+        "secret",
+        "wamn-apply",
+    )
+    .await?
+    .context("missing apply credential")?;
+    let apply_url = secret_text(&apply_secret, "url")?;
+    let auth: SecretData = kubectl::get(
+        &target.kubeconfig,
+        &target.context,
+        "platform",
+        "secret",
+        "wamn-ctl-nats",
+    )
+    .await?
+    .context("missing Secret platform/wamn-ctl-nats")?;
+    let mut changed = false;
+    for (_, mut environment) in super::broker::documents(environments)? {
+        if initial {
+            // After 4.17 applied a release, a first apply with release none
+            // would uninstall it, so a new platform image does not rerun it.
+            if released(target, &environment).await? {
+                continue;
+            }
+        }
+        let (mut request, secrets, inputs) = apply_request(
+            document,
+            &mut environment,
+            &image,
+            initial,
+            &auth,
+            &directory.join("release-chart"),
+            (&admin, &apply_url),
+        )?;
+        if let Some(registry) = registry {
+            release_inputs(
+                target,
+                document,
+                &environment,
+                environments
+                    .parent()
+                    .context("environments has no cluster directory")?,
+                directory,
+                &mut request,
+                registry,
+            )
+            .await?;
+        }
+        let result = job::run(target, directory, &request, &inputs, &secrets).await;
+        match result {
+            Ok(applied) => changed |= applied,
+            Err(error) => {
+                if let DeclaredRelease::Digest(digest) = &environment.release
+                    && matches!(
+                        error.downcast_ref::<job::JobError>(),
+                        Some(job::JobError { kind: job::JobErrorKind::JobFailed, name })
+                            if name == &request.name
+                    )
+                {
+                    let log = std::fs::read_to_string(
+                        directory.join("jobs").join(format!("{}.log", request.name)),
+                    )
+                    .unwrap_or_default();
+                    if let Some(message) = qualification_refusal(&log, digest) {
+                        let registry = registry.context("release apply has no registry inputs")?;
+                        anyhow::bail!(
+                            "{message}\nRun on the build machine: {}",
+                            qualification_command(digest, directory, registry)?
+                        );
+                    }
+                }
+                return Err(error);
+            }
+        }
+    }
+    Ok(changed)
+}
+
+/// Build the environment apply request and its temporary credentials.
+pub(super) fn apply_request(
+    document: &ClusterDocument,
+    environment: &mut crate::environment::document::EnvironmentDocument,
+    image: &str,
+    initial: bool,
+    auth: &SecretData,
+    chart: &Path,
+    credentials: (&super::job::JobSecret, &str),
+) -> anyhow::Result<job::JobInputs> {
+    if initial {
+        environment.release = DeclaredRelease::None;
+    }
+    let secrets = vec![
+        credentials.0.clone(),
+        super::job::JobSecret {
+            name: "wamn-env-apply".into(),
+            key: "url".into(),
+            value: credentials.1.into(),
+            environment: "WAMN_APPLY_DATABASE_URL".into(),
+        },
+    ];
+    let mut request = request(document, environment, image, initial, auth)?;
+    for name in ["Chart.yaml", "values.yaml"] {
+        request
+            .files
+            .insert(name.into(), std::fs::read_to_string(chart.join(name))?);
+    }
+    Ok((request, secrets, json!({"environment":environment})))
+}
+
+/// Whether the release apply of 4.17 completed for `environment`.
+async fn released(
+    target: &Target,
+    environment: &crate::environment::document::EnvironmentDocument,
+) -> anyhow::Result<bool> {
+    let env_key = wamn_control_registry::project_env_key(
+        &environment.org,
+        &environment.project,
+        &environment.env,
+    );
+    let completion: Option<serde_json::Value> = kubectl::get(
+        &target.kubeconfig,
+        &target.context,
+        "platform",
+        "configmap",
+        &format!("wamn-install-platform-apply-{env_key}"),
+    )
+    .await?;
+    Ok(completion.is_some())
+}
+
+/// Step 4.16.1: write each environment's committed integration documents
+/// from `connections/` beside the cluster document, in `hosts`, where the
+/// credential store keeps their credentials.
+pub(super) async fn connections(
+    target: &Target,
+    document: &ClusterDocument,
+    environments: &Path,
+    directory: &Path,
+) -> anyhow::Result<bool> {
+    let image = runner_image(directory)?;
+    let secret: SecretData = kubectl::get(
+        &target.kubeconfig,
+        &target.context,
+        "platform",
+        "secret",
+        "wamn-pg-superuser",
+    )
+    .await?
+    .context("missing Secret platform/wamn-pg-superuser")?;
+    let admin = administrator(&secret)?;
+    let auth: SecretData = kubectl::get(
+        &target.kubeconfig,
+        &target.context,
+        "platform",
+        "secret",
+        "wamn-ctl-nats",
+    )
+    .await?
+    .context("missing Secret platform/wamn-ctl-nats")?;
+    let source = environments
+        .parent()
+        .context("environments has no cluster directory")?
+        .join("connections");
+    let mut target = target.clone();
+    target.namespace = "hosts".into();
+    let mut changed = false;
+    for (_, environment) in super::broker::documents(environments)? {
+        if environment.integrations.is_empty() {
+            continue;
+        }
+        let (request, secrets, inputs) = connection_inputs(
+            document,
+            &environment,
+            &image,
+            &auth,
+            connection_documents(&source, &environment)?,
+            &admin,
+        )?;
+        changed |= job::run(&target, directory, &request, &inputs, &secrets).await?;
+    }
+    Ok(changed)
+}
+
+/// The documents of each integration `environment` declares, by file name.
+pub(super) fn connection_documents(
+    source: &Path,
+    environment: &crate::environment::document::EnvironmentDocument,
+) -> anyhow::Result<std::collections::BTreeMap<String, String>> {
+    let mut files = std::collections::BTreeMap::new();
+    let mut read = |name: String| -> anyhow::Result<String> {
+        let path = source.join(&name);
+        let text =
+            std::fs::read_to_string(&path).with_context(|| format!("read {}", path.display()))?;
+        files.insert(name, text.clone());
+        Ok(text)
+    };
+    for name in environment.integrations.keys() {
+        read(format!("{name}.json"))?;
+        let integration: serde_json::Value =
+            serde_json::from_str(&read(format!("{name}.integration.json"))?)?;
+        if let Some(system) = integration["external_system"].as_str() {
+            read(format!("{system}.external-system.json"))?;
+        }
+    }
+    Ok(files)
+}
+
+pub(super) fn connection_inputs(
+    document: &ClusterDocument,
+    environment: &crate::environment::document::EnvironmentDocument,
+    image: &str,
+    auth: &SecretData,
+    files: std::collections::BTreeMap<String, String>,
+    admin: &super::job::JobSecret,
+) -> anyhow::Result<job::JobInputs> {
+    let request = connections_request(document, environment, image, auth, files)?;
+    let mut credential = admin.clone();
+    credential.environment = "WAMN_CONTROL_DATABASE_URL".into();
+    Ok((
+        request,
+        vec![credential],
+        json!({"environment":environment}),
+    ))
+}
+
+pub(super) fn connections_request(
+    document: &ClusterDocument,
+    environment: &crate::environment::document::EnvironmentDocument,
+    image: &str,
+    auth: &SecretData,
+    documents: std::collections::BTreeMap<String, String>,
+) -> anyhow::Result<JobRequest> {
+    let env_key = wamn_control_registry::project_env_key(
+        &environment.org,
+        &environment.project,
+        &environment.env,
+    );
+    let mut request = request(document, environment, image, false, auth)?;
+    request.name = format!("platform-connections-{env_key}");
+    request.arguments = [
+        "env",
+        "connections",
+        "/inputs/environment.k",
+        "--documents",
+        "/inputs",
+    ]
+    .map(str::to_owned)
+    .into();
+    for (name, text) in documents {
+        anyhow::ensure!(
+            !request.files.contains_key(&name),
+            "the integration document {name} has the name of a Job input"
+        );
+        request.files.insert(name, text);
+    }
+    Ok(request)
+}
+
+fn qualification_refusal<'a>(log: &'a str, digest: &str) -> Option<&'a str> {
+    let prefix = format!("release {digest} has no qualification on the chart's image set:");
+    log.lines()
+        .find_map(|line| line.find(&prefix).map(|at| &line[at..]))
+}
+
+fn qualification_command(
+    digest: &str,
+    directory: &Path,
+    registry: &wamn_package_artifact::PackageRegistry,
+) -> anyhow::Result<String> {
+    let mut command = format!(
+        "wamn-ctl qualify-release --release-digest {digest} --release-chart {} --artifact-base {} --registry-auth-file {}",
+        shell_path(&directory.join("release-chart")),
+        shell_path(Path::new(&super::packages::artifact_base(
+            registry, "releases"
+        )?)),
+        shell_path(&registry.registry_auth_file)
+    );
+    for path in &registry.oci_ca_paths {
+        command.push_str(" --oci-ca-path ");
+        command.push_str(&shell_path(path));
+    }
+    Ok(command)
+}
+
+fn shell_path(path: &Path) -> String {
+    format!("'{}'", path.display().to_string().replace('\'', "'\"'\"'"))
+}
+
+pub(super) fn chart_files(
+    root: &Path,
+    relative: &Path,
+    request: &mut JobRequest,
+) -> anyhow::Result<()> {
+    for entry in std::fs::read_dir(root.join(relative))? {
+        let entry = entry?;
+        let path = relative.join(entry.file_name());
+        if entry.file_type()?.is_dir() {
+            chart_files(root, &path, request)?;
+        } else {
+            let name = path.to_str().context("chart path is not UTF-8")?.to_owned();
+            if !request.files.contains_key(&name) {
+                request
+                    .binary_files
+                    .insert(name, std::fs::read(entry.path())?);
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Render the host overlay that platform install passes to environment apply.
+pub fn render_host_group(
+    yaml: &str,
+    environment: &crate::environment::document::EnvironmentDocument,
+    registry: &str,
+    suffix: &str,
+) -> anyhow::Result<serde_json::Value> {
+    let mut group: serde_json::Value = serde_yaml::from_str(yaml)?;
+    for variable in group["env"]
+        .as_array_mut()
+        .context("host group has no env list")?
+    {
+        let replacement = match variable["name"].as_str().unwrap_or_default() {
+            "WAMN_COMPONENT_ARTIFACT_BASE" => Some(format!("{registry}/components")),
+            "WAMN_EVT_ORG" => Some(environment.org.clone()),
+            "WAMN_EVT_PROJECT" => Some(environment.project.clone()),
+            "WAMN_EVT_ENV" => Some(environment.env.clone()),
+            "WAMN_SESSION_INSTANCE_SUFFIX" => Some(suffix.into()),
+            _ => None,
+        };
+        if let Some(value) = replacement {
+            variable["value"] = value.into();
+        }
+    }
+    Ok(group)
+}
+
+async fn release_inputs(
+    target: &Target,
+    document: &ClusterDocument,
+    environment: &crate::environment::document::EnvironmentDocument,
+    cluster_directory: &Path,
+    directory: &Path,
+    request: &mut JobRequest,
+    registry: &wamn_package_artifact::PackageRegistry,
+) -> anyhow::Result<()> {
+    let secrets = super::packages::credentials(target, environment).await?;
+    let database = url::Url::parse(&secrets[1].value)
+        .map_err(|_| anyhow::anyhow!("parse environment database URL"))?;
+    let suffix = database
+        .path()
+        .rsplit_once("--")
+        .context("environment database has no instance suffix")?
+        .1;
+    let path = cluster_directory.join(format!("host-group-{}.yaml", environment.project));
+    let group = std::fs::read_to_string(&path)
+        .with_context(|| format!("read host group {}", path.display()))?;
+    released_request_inputs(
+        document,
+        environment,
+        request,
+        registry,
+        &directory.join("release-chart"),
+        &group,
+        suffix,
+    )?;
+    // A local target's hosts mount the key, so it exists before their first
+    // apply and not only after the control release of 4.19.1.
+    super::oauth::ensure_key(target, document).await?;
+    Ok(())
+}
+
+pub(super) fn released_request_inputs(
+    document: &ClusterDocument,
+    environment: &crate::environment::document::EnvironmentDocument,
+    request: &mut JobRequest,
+    registry: &wamn_package_artifact::PackageRegistry,
+    chart: &Path,
+    group_yaml: &str,
+    suffix: &str,
+) -> anyhow::Result<()> {
+    super::packages::registry_inputs(request, registry)?;
+    request.environment.insert(
+        "WAMN_PACKAGE_ARTIFACT_BASE".into(),
+        registry.artifact_base.clone(),
+    );
+    request.environment.insert(
+        "WAMN_RELEASE_ARTIFACT_BASE".into(),
+        super::packages::artifact_base(registry, "releases")?,
+    );
+    request.environment.insert(
+        "WAMN_COMPONENT_ARTIFACT_BASE".into(),
+        super::packages::artifact_base(registry, "components")?,
+    );
+    chart_files(chart, Path::new(""), request)?;
+    let mut group = render_host_group(group_yaml, environment, &document.registry, suffix)?;
+    super::oauth::host_group(&mut group, &super::oauth::configuration(document))?;
+    request
+        .files
+        .insert("host-group.yaml".into(), serde_yaml::to_string(&group)?);
+    request.environment.insert(
+        "WAMN_RELEASE_HOST_GROUP".into(),
+        "/inputs/host-group.yaml".into(),
+    );
+    Ok(())
+}
+
+pub(super) fn kubeconfig() -> serde_json::Value {
+    json!({
+        "apiVersion": "v1", "kind": "Config",
+        "clusters": [{"name": "install", "cluster": {
+            "server": "https://kubernetes.default.svc",
+            "certificate-authority": "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"
+        }}],
+        "users": [{"name": "install", "user": {
+            "tokenFile": "/var/run/secrets/kubernetes.io/serviceaccount/token"
+        }}],
+        "contexts": [{"name": "install", "context": {"cluster": "install", "user": "install"}}],
+        "current-context": "install"
+    })
+}
+
+pub(super) fn request(
+    document: &ClusterDocument,
+    environment: &crate::environment::document::EnvironmentDocument,
+    image: &str,
+    initial: bool,
+    auth: &SecretData,
+) -> anyhow::Result<JobRequest> {
+    let env_key = wamn_control_registry::project_env_key(
+        &environment.org,
+        &environment.project,
+        &environment.env,
+    );
+
+    let mut request = JobRequest {
+        name: format!(
+            "platform-{}apply-{env_key}",
+            if initial { "first-" } else { "" }
+        ),
+        image: image.into(),
+        arguments: vec!["env".into(), "apply".into(), "/inputs/environment.k".into()],
+        calls_kubernetes: true,
+        environment: [
+            ("KUBECONFIG".into(), "/inputs/kubeconfig".into()),
+            ("WAMN_KCL".into(), "/usr/local/bin/kcl".into()),
+            ("WAMN_RELEASE_NAMESPACE".into(), "hosts".into()),
+            ("WAMN_DATABASE_NAMESPACE".into(), "platform".into()),
+            ("WAMN_DATABASE_HOST".into(), DATABASE_HOST.into()),
+            ("WAMN_RELEASE_CHART".into(), "/inputs".into()),
+            (
+                "WAMN_RELEASE_ARTIFACT_BASE".into(),
+                format!("{}/releases", document.registry),
+            ),
+            (
+                "WAMN_PACKAGE_ARTIFACT_BASE".into(),
+                format!("{}/packages", document.registry),
+            ),
+            (
+                "WAMN_REGISTRY_AUTH_FILE".into(),
+                "/inputs/registry.json".into(),
+            ),
+        ]
+        .into(),
+        files: [
+            ("environment.k".into(), environment.to_kcl()),
+            ("kubeconfig".into(), kubeconfig().to_string()),
+            ("registry.json".into(), "{}".into()),
+        ]
+        .into(),
+        ..JobRequest::default()
+    };
+    job::auth_nats_inputs(&mut request, auth)?;
+    Ok(request)
+}
+
+pub(super) fn release_chart_objects(
+    chart: &Path,
+    document: &crate::environment::document::EnvironmentDocument,
+    values: &serde_yaml::Value,
+) -> anyhow::Result<Vec<serde_json::Value>> {
+    let name = wamn_release_control::release_chart::release_name(
+        &document.org,
+        &document.project,
+        &document.env,
+    )?;
+    Ok(vec![
+        json!({"chart":chart,"version":wamn_release_control::release_chart::read_platform_version(&chart.join("Chart.yaml"))?,"name":name,"namespace":"hosts","values":values}),
+    ])
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn qualification_command_keeps_the_host_chart_registry_and_ca_paths() {
+        let registry = wamn_package_artifact::PackageRegistry {
+            artifact_base: "registry.example/packages".into(),
+            registry_auth_file: "/host/registry.json".into(),
+            insecure_registry: false,
+            oci_ca_paths: vec!["/host/ca.crt".into()],
+        };
+        assert_eq!(
+            qualification_command("sha256:abc", Path::new("/host/work"), &registry).unwrap(),
+            "wamn-ctl qualify-release --release-digest sha256:abc --release-chart '/host/work/release-chart' --artifact-base 'registry.example/releases' --registry-auth-file '/host/registry.json' --oci-ca-path '/host/ca.crt'"
+        );
+    }
+
+    #[test]
+    fn qualification_message_is_the_jobs_refusal_for_the_requested_release() {
+        let digest = format!("sha256:{}", "a".repeat(64));
+        let message = format!(
+            "release {digest} has no qualification on the chart's image set: registry/releases:qualification-example is absent"
+        );
+        let log = format!("Error: refused\n\nCaused by:\n    {message}\n");
+        assert_eq!(qualification_refusal(&log, &digest), Some(message.as_str()));
+        assert_eq!(qualification_refusal(&log, "sha256:other"), None);
+        assert_eq!(
+            qualification_refusal("database connection refused", &digest),
+            None
+        );
+    }
+
+    #[test]
+    fn job_configuration_uses_its_service_account_and_namespace_access() {
+        let config = kubeconfig();
+        assert_eq!(
+            config["users"][0]["user"]["tokenFile"],
+            "/var/run/secrets/kubernetes.io/serviceaccount/token"
+        );
+        assert_eq!(
+            config["clusters"][0]["cluster"]["server"],
+            "https://kubernetes.default.svc"
+        );
+        let access = super::super::job_contract::access(&JobRequest {
+            arguments: vec!["env".into(), "apply".into(), "/inputs/environment.k".into()],
+            ..JobRequest::default()
+        })
+        .unwrap();
+        assert!(access.iter().any(|grant| grant.namespace == "platform"));
+        let hosts = access
+            .iter()
+            .find(|grant| grant.namespace == "hosts")
+            .unwrap();
+        for (resource, verb) in [("pods/log", "get"), ("events", "list")] {
+            assert!(hosts.rules.iter().any(|rule| {
+                rule.resources.iter().any(|name| name == resource)
+                    && rule.verbs.iter().any(|name| name == verb)
+            }));
+        }
+        // A verb-wide apply Role includes Helm cleanup, including delete.
+        assert!(
+            access
+                .iter()
+                .flat_map(|access| &access.rules)
+                .all(|rule| { !rule.verbs.iter().any(|verb| verb == "*") })
+        );
+    }
+}

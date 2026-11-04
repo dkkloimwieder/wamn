@@ -11,13 +11,13 @@ mod support;
 
 use std::collections::BTreeSet;
 use wamn_catalog::{ComponentPackageScope, PackageCoordinate, WiringDocument};
-use wamn_control::publish_release::{PublishReleaseRequest, assemble_local_release};
+use wamn_release_control::publish_release::{PublishReleaseRequest, assemble_local_release};
 use wamn_schema_generator::operation_reference::{AuthoredDocument, read_authored_document};
 
 struct Fixture {
     args: PublishReleaseRequest,
     roots: Vec<std::path::PathBuf>,
-    admissions: Vec<wamn_control::component_admission::ComponentAdmission>,
+    admissions: Vec<wamn_package_control::component_admission::ComponentAdmission>,
     documents: Vec<(ComponentPackageScope, WiringDocument)>,
 }
 

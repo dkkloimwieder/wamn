@@ -10,28 +10,28 @@ use wamn_platform_identity::auth_changes::AuthChanges;
 use anyhow::{Context as _, ensure};
 use serde_json::{Value, json};
 use wamn_catalog::{ComponentPackageScope, PackageCoordinate};
-use wamn_control::apply_package::{self, ApplyPackageRequest};
-use wamn_control::component_admission::AdmitComponentRequest;
-use wamn_control::component_declaration::declared_platform_packages;
-use wamn_control::delivery::{Candidate, ReleaseIdentity};
-use wamn_control::dev::environment::{JourneyCredentials, connect};
-use wamn_control::enable_cdc_project_env::EnableCdcProjectEnvRequest;
-use wamn_control::environment::analyse::Installed;
-use wamn_control::environment::document::{DeclaredRelease, EnvironmentDocument};
-use wamn_control::environment::{Platform, stage};
-use wamn_control::package_artifact::{PackageRegistry, PushPackageRequest, push_package};
-use wamn_control::pat_client::PatIssuerConfig;
-use wamn_control::provision_org::{self, OrgRecord, ProvisionOrgRequest};
-use wamn_control::provision_project_env::{
+use wamn_control_provision::{WorkloadRoleFamily, sql};
+use wamn_dev_control::dev::environment::{JourneyCredentials, connect};
+use wamn_environment_control::enable_cdc_project_env::EnableCdcProjectEnvRequest;
+use wamn_environment_control::environment::analyse::Installed;
+use wamn_environment_control::environment::document::{DeclaredRelease, EnvironmentDocument};
+use wamn_environment_control::environment::{Platform, stage};
+use wamn_environment_control::provision_org::{self, OrgRecord, ProvisionOrgRequest};
+use wamn_environment_control::provision_project_env::{
     self, ProvisionProjectEnvRequest, ProvisionedRoute, WorkloadActionRequest, read_json,
     secret_value,
 };
-use wamn_control::publish_release::{self, PublishReleaseRequest};
-use wamn_control::reconcile_package_data_access::ReconcilePackageDataAccessRequest;
-use wamn_control::reconcile_run_plane::{self, ReconcileRunPlaneRequest};
-use wamn_control::release_carrier::ReleaseCarrier;
-use wamn_control_provision::{WorkloadRoleFamily, sql};
+use wamn_environment_control::reconcile_package_data_access::ReconcilePackageDataAccessRequest;
+use wamn_environment_control::reconcile_run_plane::{self, ReconcileRunPlaneRequest};
 use wamn_gate_harness::{environment as shared, journey::JourneyDocument};
+use wamn_identity_client::PatIssuerConfig;
+use wamn_package_control::apply_package::{self, ApplyPackageRequest};
+use wamn_package_control::component_admission::AdmitComponentRequest;
+use wamn_package_control::component_declaration::declared_platform_packages;
+use wamn_package_control::package_artifact::{PackageRegistry, PushPackageRequest, push_package};
+use wamn_release_control::delivery::{Candidate, ReleaseIdentity};
+use wamn_release_control::publish_release::{self, PublishReleaseRequest};
+use wamn_release_control::release_carrier::ReleaseCarrier;
 use wamn_schema_generator::route_schema;
 use wamn_test_infrastructure::declarations::render_component_declaration;
 
@@ -46,7 +46,7 @@ pub(crate) fn identity() -> &'static ReleaseIdentity {
     static IDENTITY: LazyLock<ReleaseIdentity> = LazyLock::new(|| {
         // A cluster case takes its packages from its candidate; the other
         // WMS tests run this checkout's package.
-        let candidate = std::env::var_os(wamn_control::delivery::CANDIDATE_ENV)
+        let candidate = std::env::var_os(wamn_release_control::delivery::CANDIDATE_ENV)
             .map(|_| Candidate::from_env().expect("read the supplied WMS candidate"));
         ReleaseIdentity {
             org: "acme".to_owned(),
@@ -201,7 +201,7 @@ pub async fn prepare_project(
     task.abort();
     result?;
     let (project, task) = connect(&route.database_url).await?;
-    let installed = wamn_control::dev::environment::install_journey_platform_floor(
+    let installed = wamn_dev_control::dev::environment::install_journey_platform_floor(
         project.as_ref(),
         PLATFORM_DOMAIN,
     )
@@ -333,7 +333,7 @@ async fn after_install(
     route: &ProvisionedRoute,
     package: PathBuf,
 ) -> anyhow::Result<()> {
-    wamn_control::dev::environment::grant_operator_admin_role(
+    wamn_dev_control::dev::environment::grant_operator_admin_role(
         system_url,
         &route.database_url,
         identity().org.as_str(),
@@ -343,8 +343,8 @@ async fn after_install(
         PLATFORM_DOMAIN,
     )
     .await?;
-    wamn_control::reconcile_replica_identity::reconcile_package_replica_identity(
-        wamn_control::reconcile_replica_identity::ReconcileReplicaIdentityRequest {
+    wamn_environment_control::reconcile_replica_identity::reconcile_package_replica_identity(
+        wamn_environment_control::reconcile_replica_identity::ReconcileReplicaIdentityRequest {
             admin_database_url: route.database_url.clone(),
             package,
             dry_run: false,
@@ -365,7 +365,7 @@ pub async fn install(
     candidate: &Candidate,
     inputs: &JourneyDocument,
     route: &ProvisionedRoute,
-    packages: &[wamn_control::package_artifact::OpenedPackage],
+    packages: &[wamn_package_control::package_artifact::OpenedPackage],
     minio_endpoint: &str,
 ) -> anyhow::Result<()> {
     wamn_gate_harness::case_release::install_candidate(
@@ -402,7 +402,8 @@ async fn bind_labels(
     let (mut system, driver) =
         tokio_postgres::connect(&inputs.system_pg_url, tokio_postgres::NoTls).await?;
     tokio::spawn(driver);
-    let tx = wamn_control::provision_project_env::provisioning_transaction(&mut system).await?;
+    let tx = wamn_environment_control::provision_project_env::provisioning_transaction(&mut system)
+        .await?;
     tx.execute("UPDATE registry.project_envs SET target_id=(SELECT id FROM registry.target WHERE name='cloud') WHERE org=$1 AND project=$2 AND env=$3",&[&identity().org,&identity().project,&identity().environment]).await?;
     // No control host runs in the case cluster, so no generation made the
     // control role. Make it the way a control generation does.
@@ -439,7 +440,7 @@ async fn bind_labels(
             .map(|name| {
                 (
                     name.clone(),
-                    wamn_control::environment::document::Integration { version: 1 },
+                    wamn_environment_control::environment::document::Integration { version: 1 },
                 )
             })
             .collect(),
@@ -470,21 +471,22 @@ async fn bind_labels(
     let packages = [package_manifest()?];
     system.batch_execute("SET ROLE wamn_db_owner").await?;
     let bindings =
-        wamn_control::environment::bindings::analyse(&system, &document, &packages).await?;
+        wamn_environment_control::environment::bindings::analyse(&system, &document, &packages)
+            .await?;
     let (mut project, driver) =
         tokio_postgres::connect(&route.database_url, tokio_postgres::NoTls).await?;
     tokio::spawn(driver);
     project
         .batch_execute(&sql::grant_administration_surface_sql("wamn_run"))
         .await?;
-    let _ = wamn_control::environment::bindings::project_authority(
+    let _ = wamn_environment_control::environment::bindings::project_authority(
         &inputs.system_pg_url,
         &route.database_url,
         &document,
     )
     .await?;
     let tx = project.transaction().await?;
-    wamn_control::environment::bindings::write(
+    wamn_environment_control::environment::bindings::write(
         &tx,
         &identity().env_key(),
         digest,
@@ -504,7 +506,7 @@ fn generation_args(
     secret: &Path,
     namespace: &str,
 ) -> WorkloadActionRequest {
-    let mut args = wamn_control::dev::environment::generation_args(
+    let mut args = wamn_dev_control::dev::environment::generation_args(
         &identity().into(),
         family,
         &inputs.system_pg_url,
@@ -598,7 +600,7 @@ fn component_declaration(
 /// Render the WMS template as `push-package` does: the version comes from
 /// the package's `wamn.json`, and the template authors none (wamn-uqs5.3).
 fn wms_component_declaration(root: &Path, env_key: &str, output: &Path) -> anyhow::Result<()> {
-    let declaration = wamn_control::component_declaration::render_declaration_document(
+    let declaration = wamn_package_control::component_declaration::render_declaration_document(
         &root.join("publication/components/wms.json.in"),
         env_key,
     )?;
@@ -650,12 +652,13 @@ pub async fn publish(
     })
     .await
     .context("push the WMS package artifact")?;
-    let installed = wamn_control::apply_package::PackageRoot {
+    let installed = wamn_package_control::apply_package::PackageRoot {
         path: package_root(),
         artifact_digest: Some(pushed.digest),
     };
     apply_package::apply_package(ApplyPackageRequest {
-        component_source: wamn_control::apply_package::component_source_from_env(None).unwrap(),
+        component_source: wamn_package_control::apply_package::component_source_from_env(None)
+            .unwrap(),
         changes: wamn_platform_identity::auth_changes::AuthChanges::default(),
         package: installed.clone(),
         database_url: route.database_url.clone(),
@@ -844,12 +847,12 @@ pub fn declared_consumers(
 async fn author_event_workflow(
     inputs: &JourneyDocument,
     route: &ProvisionedRoute,
-    events: &wamn_control::environment::EventBroker,
+    events: &wamn_environment_control::environment::EventBroker,
 ) -> anyhow::Result<()> {
-    use wamn_control::author_workflow::{
+    use wamn_environment_control::author_workflow::{
         AuthorWorkflowRequest, WorkflowExecution, WorkflowTrigger,
     };
-    let graph = wamn_control::author_workflow::read_wiring_document(
+    let graph = wamn_environment_control::author_workflow::read_wiring_document(
         &package_root().join("publication/wirings/inventory_move_and_label.json"),
     )?;
     let (project, task) = connect(&route.database_url).await?;
@@ -954,7 +957,7 @@ pub async fn configure_cdc(
     author_event_workflow(
         inputs,
         route,
-        &wamn_control::environment::EventBroker {
+        &wamn_environment_control::environment::EventBroker {
             nats: provisioning.platform_nats(nats_url),
             stream_replicas: source.num_replicas,
             dup_window_secs: source.duplicate_window.as_secs(),

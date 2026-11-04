@@ -2,7 +2,8 @@
 
 use anyhow::Context as _;
 use clap::{Args, Subcommand};
-use wamn_control::web_artifact::{self, upload_platform_ui, upload_web_artifact};
+use wamn_environment_control::platform::web::{PLATFORM_UI_BUCKET, upload_platform_ui};
+use wamn_package_control::web_artifact::{self, upload_web_artifact};
 
 /// Web client commands.
 #[derive(Debug, Args)]
@@ -90,9 +91,7 @@ async fn upload(args: UploadArgs) -> anyhow::Result<()> {
             &std::env::current_dir()?,
             std::path::Path::new(&chart),
             &args.org,
-            args.bucket
-                .as_deref()
-                .unwrap_or(web_artifact::PLATFORM_UI_BUCKET),
+            args.bucket.as_deref().unwrap_or(PLATFORM_UI_BUCKET),
         )
         .await?;
         println!("platform-ui {location} written");

@@ -18,16 +18,16 @@ use std::time::{Duration, Instant};
 
 use anyhow::ensure;
 use serde_json::json;
-use wamn_control::environment::{EventBroker, Platform};
-use wamn_control::pat_client::PatIssuerConfig;
-use wamn_control::release_chart::Target;
 use wamn_control_provision::events::source_stream_config;
 use wamn_control_registry::Triple;
+use wamn_environment_control::environment::{EventBroker, Platform};
 use wamn_gate_harness::delivery::{
     self, Application, Inputs, application_directory, coordinate_name, share_kubeconfig,
 };
 use wamn_gate_harness::journey::JourneyDocument;
 use wamn_gate_harness::session_issuer::{IssuerCluster, prepare_application};
+use wamn_identity_client::PatIssuerConfig;
+use wamn_release_control::release_chart::Target;
 use wamn_test_infrastructure::delivery_cluster::{
     KeptCluster, NAMESPACE, ensure_database, start_container,
 };
@@ -47,7 +47,7 @@ async fn owned_release_delivery() -> anyhow::Result<()> {
         "requires: bin:docker, bin:kind, bin:kubectl, bin:helm, bin:openssl, env:WAMN_DELIVERY_CLUSTER",
     );
     ensure!(
-        std::env::var_os(wamn_control::delivery::CANDIDATE_ENV).is_none(),
+        std::env::var_os(wamn_release_control::delivery::CANDIDATE_ENV).is_none(),
         "the owned setup mints its own candidate"
     );
     let repository = Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -135,7 +135,7 @@ async fn run(
     let minio_endpoint = format!("http://{minio}:9000");
     deployment::wait_minio(&minio_endpoint).await?;
     super::deployment::labels(&owner, &work, true).await?;
-    let database_inputs = wamn_control::platform::journey::delivery_database(
+    let database_inputs = wamn_environment_control::platform::journey::delivery_database(
         repository,
         DATABASE_NAMESPACE,
         crate::environment::CLUSTER,
@@ -206,7 +206,7 @@ async fn run(
     .await?;
     application::seed(&route, evidence).await?;
     let provisioning = nats.provisioning.connect(&nats.server).await?;
-    wamn_control::event_streams::provision(
+    wamn_environment_control::event_streams::provision(
         &async_nats::jetstream::new(provisioning.clone()),
         &triple,
         source.num_replicas,

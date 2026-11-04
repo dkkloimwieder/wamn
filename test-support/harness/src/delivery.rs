@@ -32,12 +32,12 @@ use serde_json::{Value, json};
 use serde_yaml::Value as Yaml;
 use tokio::process::Command;
 use wamn_catalog::ServingManifest;
-use wamn_control::environment::document::DeclaredRelease;
-use wamn_control::environment::{EventBroker, Platform};
-use wamn_control::release_chart::{
+use wamn_control_registry::Triple;
+use wamn_environment_control::environment::document::DeclaredRelease;
+use wamn_environment_control::environment::{EventBroker, Platform};
+use wamn_release_control::release_chart::{
     ImageSet, Target, chart_version, image_set, qualification_images, release_name, roles, stamp,
 };
-use wamn_control_registry::Triple;
 use wamn_test_infrastructure::delivery_cluster::{self, KeptCluster, NAMESPACE, REGISTRY_SECRET};
 use wamn_test_infrastructure::release_chart::{
     self as checks, Environment, Release, a1_probe, hosts_ready, role_placed,
@@ -308,7 +308,7 @@ pub async fn deliver(app: &Application<'_>, inputs: &Inputs<'_>) -> anyhow::Resu
         database_host: Some(inputs.database_host.to_owned()),
         database_port: 5432,
         host_group: Some(host_group(app, inputs.overlay, inputs.renames)?),
-        pat_issuer: wamn_control::pat_client::PatIssuerConfig::default(),
+        pat_issuer: wamn_identity_client::PatIssuerConfig::default(),
         events: Some(inputs.events.clone()),
     };
     let plan = apply(app, &platform).await?;
@@ -317,9 +317,11 @@ pub async fn deliver(app: &Application<'_>, inputs: &Inputs<'_>) -> anyhow::Resu
         &app.triple.project,
         app.triple.env.as_str(),
     )?;
-    let manifest =
-        wamn_control::environment::analyse::pull_release_manifest(&platform, app.release_digest)
-            .await?;
+    let manifest = wamn_environment_control::environment::analyse::pull_release_manifest(
+        &platform,
+        app.release_digest,
+    )
+    .await?;
     check(app, &name, &host_image, &manifest).await?;
     Ok(Delivered {
         release_name: name,
@@ -462,16 +464,19 @@ fn rename(value: &mut Yaml, renames: &[(String, String)]) {
 /// document is what `env show` synthesizes from the authorities, which the
 /// fixture wrote, with the release digest and the route host (R21).
 async fn apply(app: &Application<'_>, platform: &Platform) -> anyhow::Result<String> {
-    let mut document = wamn_control::environment::show::show(platform, &app.triple).await?;
+    let mut document =
+        wamn_environment_control::environment::show::show(platform, &app.triple).await?;
     document.release = DeclaredRelease::Digest(app.release_digest.to_owned());
     app.route_host.clone_into(&mut document.route_host);
     // `env show` keeps no applications before the first release. The fixture's
     // environment declares one application, named after its project, with every
     // package of the release (docs/architecture/execution.md#workflows).
     if document.applications.is_empty() {
-        let manifest =
-            wamn_control::environment::analyse::pull_release_manifest(platform, app.release_digest)
-                .await?;
+        let manifest = wamn_environment_control::environment::analyse::pull_release_manifest(
+            platform,
+            app.release_digest,
+        )
+        .await?;
         document.applications.insert(
             app.triple.project.clone(),
             wamn_catalog::ApplicationDefinition {
@@ -703,7 +708,7 @@ async fn step(app: &Application<'_>, name: &str, command: &mut Command) -> anyho
         .collect::<Vec<_>>();
     command.current_dir(app.repository).kill_on_drop(true);
     let output =
-        wamn_control::owned_command::execute(command, COMMAND_TIMEOUT, Duration::from_secs(60))
+        wamn_dev_control::owned_command::execute(command, COMMAND_TIMEOUT, Duration::from_secs(60))
             .await
             .map_err(|error| anyhow::anyhow!(redact(format!("{error:#}"))))
             .with_context(|| format!("execute owned delivery {name}"))?;
@@ -780,9 +785,9 @@ pub async fn kept_cluster(repository: &Path, triple: &Triple) -> anyhow::Result<
         &delivery_cluster::name_from_env()?,
         triple,
         |environments| {
-            let inputs = wamn_control::platform::journey::delivery(
+            let inputs = wamn_environment_control::platform::journey::delivery(
                 repository,
-                &wamn_control::platform::journey::ClusterInput {
+                &wamn_environment_control::platform::journey::ClusterInput {
                     operator_namespace: delivery_cluster::NAMESPACE,
                     host_namespace: delivery_cluster::NAMESPACE,
                     org: triple.org.as_str(),

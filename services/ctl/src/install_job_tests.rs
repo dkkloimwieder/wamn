@@ -2,10 +2,10 @@
 
 use std::collections::BTreeSet;
 
-use wamn_control::platform::job::{JobRequest, JobSecret, install_job_requests};
+use wamn_environment_control::platform::job::{JobRequest, JobSecret, install_job_requests};
 
 fn missing(request: &JobRequest, secrets: &[JobSecret]) -> Vec<&'static str> {
-    let contract = wamn_control::platform::job_contract::request(request).unwrap();
+    let contract = wamn_environment_control::platform::job_contract::request(request).unwrap();
     let mut available: BTreeSet<&str> = request
         .environment
         .keys()

@@ -28,14 +28,14 @@ use anyhow::{Context as _, ensure};
 use serde_json::{Value, json};
 use tokio::process::Command;
 use wamn_catalog::ServingManifest;
-use wamn_control::delivery::Candidate;
-use wamn_control::package_artifact::OpenedPackage;
-use wamn_control::provision_project_env::ProvisionedRoute;
-use wamn_control::release_carrier::ReleaseCarrier;
-use wamn_control::release_chart::{self, ImageSet, ValuesInput};
 use wamn_control_provision::workload_role::WorkloadRoleFamily;
+use wamn_environment_control::provision_project_env::ProvisionedRoute;
 use wamn_gate_harness::case_release::{self, NAMESPACE, Registry};
 use wamn_gate_harness::journey::JourneyDocument;
+use wamn_package_control::package_artifact::OpenedPackage;
+use wamn_release_control::delivery::Candidate;
+use wamn_release_control::release_carrier::ReleaseCarrier;
+use wamn_release_control::release_chart::{self, ImageSet, ValuesInput};
 use wamn_test_infrastructure::rendering::{
     EventIdentity, HostIdentity, HostRoleSecret, HostValuesInput, assert_rendered_identity,
 };
@@ -126,9 +126,9 @@ async fn start(evidence: &Path, gates_image: bool) -> anyhow::Result<ReceivingCl
     let registry_auth_file =
         resources::registry_auth(&cluster, &authority, &registry_password).await?;
     // The platform, with the one NATS, installs before the streams.
-    let platform = wamn_control::platform::journey::cluster(
+    let platform = wamn_environment_control::platform::journey::cluster(
         &cluster.repository,
-        &wamn_control::platform::journey::ClusterInput {
+        &wamn_environment_control::platform::journey::ClusterInput {
             operator_namespace: NAMESPACE,
             host_namespace: NAMESPACE,
             org: scope.org.as_str(),
@@ -153,7 +153,7 @@ async fn start(evidence: &Path, gates_image: bool) -> anyhow::Result<ReceivingCl
     )
     .await?;
     let provisioning = nats.provisioning.connect(&nats.server).await?;
-    wamn_control::event_streams::provision(
+    wamn_environment_control::event_streams::provision(
         &async_nats::jetstream::new(provisioning),
         &scope,
         source.num_replicas,

@@ -5,7 +5,7 @@ mod support;
 use serde_json::json;
 use std::collections::BTreeSet;
 use wamn_catalog::{ComponentPackageScope, PackageCoordinate, WiringDocument};
-use wamn_control::publish_release::{PublishReleaseRequest, assemble_local_release};
+use wamn_release_control::publish_release::{PublishReleaseRequest, assemble_local_release};
 use wamn_schema_generator::operation_reference::{AuthoredDocument, read_authored_document};
 
 #[tokio::test]
@@ -129,7 +129,7 @@ async fn both_applications_publish_with_exact_dependencies_and_private_state() -
 async fn composed_sql_uses_released_schemas(
     roots: &[std::path::PathBuf],
     release: &wamn_catalog::ServingManifest,
-    admissions: &[wamn_control::component_admission::ComponentAdmission],
+    admissions: &[wamn_package_control::component_admission::ComponentAdmission],
 ) -> anyhow::Result<()> {
     let _lock = wamn_test_postgres::lock();
     let database = wamn_test_postgres::database();

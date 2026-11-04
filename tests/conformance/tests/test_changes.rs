@@ -653,7 +653,11 @@ fn shared_wit_changes_select_the_workspaces_with_direct_readers() {
         let mut expected = vec![
             fixture.command(
                 "Cargo.toml",
-                &["--workspace", "--features", "wamn-control/ops,wamn-ctl/ops"],
+                &[
+                    "--workspace",
+                    "--features",
+                    "wamn-environment-control/ops,wamn-ctl/ops",
+                ],
             ),
             fixture.command("apps/Cargo.toml", &["--workspace"]),
         ];
@@ -666,7 +670,11 @@ fn shared_wit_changes_select_the_workspaces_with_direct_readers() {
 
 #[test]
 fn workspace_files_and_unowned_inputs_run_the_full_command() {
-    let root_full = ["--workspace", "--features", "wamn-control/ops,wamn-ctl/ops"];
+    let root_full = [
+        "--workspace",
+        "--features",
+        "wamn-environment-control/ops,wamn-ctl/ops",
+    ];
     let fixture = Fixture::new();
     fixture.write("Cargo.lock", "changed\n");
     fixture.write("apps/platform/no-std/Cargo.lock", "changed\n");
@@ -737,7 +745,7 @@ fn a_grant_sql_change_selects_the_family_denial_matrix() {
         stdout.lines().any(|line| {
             line.starts_with("root (full: \"deploy/sql/apply-grants.sql\"): ")
                 && line.ends_with(
-                    " --no-fail-fast --workspace --features wamn-control/ops\\,wamn-ctl/ops",
+                    " --no-fail-fast --workspace --features wamn-environment-control/ops\\,wamn-ctl/ops",
                 )
         }),
         "{stdout}"
@@ -1012,7 +1020,7 @@ fn dry_run_prints_the_commands_without_running_tests() {
             && lines[3].starts_with("repo-lint: ")
             && lines[4].starts_with("root (full: \"Cargo.lock\"): ")
             && lines[4].ends_with(
-                " --no-fail-fast --workspace --features wamn-control/ops\\,wamn-ctl/ops"
+                " --no-fail-fast --workspace --features wamn-environment-control/ops\\,wamn-ctl/ops"
             )
             && lines[5] == "packages alone: tools/check-packages-alone",
         "{stdout}"
@@ -1054,7 +1062,7 @@ fn kind_runs_the_root_ignored_tests_one_at_a_time() {
     let stdout = String::from_utf8(output.stdout).unwrap();
     assert!(
         stdout.lines().nth(4).is_some_and(|line| line.ends_with(
-            " --workspace --features wamn-control/ops\\,wamn-ctl/ops\\,demo-tests/cluster -- --ignored --test-threads=1"
+            " --workspace --features wamn-environment-control/ops\\,wamn-ctl/ops\\,demo-tests/cluster -- --ignored --test-threads=1"
         )),
         "{stdout}"
     );
@@ -1241,7 +1249,7 @@ fn runtime_changes_select_the_native_host_reader() {
     // The fixture has no runtime package, so a fixture package stands for it.
     let host = host
         .replace("crates/platform/runtime/", "crates/far/")
-        .replace("package = \"wamn-control\"", "package = \"user\"")
+        .replace("package = \"wamn-dev-control\"", "package = \"user\"")
         .replace("target = [\"test:native_host\"]", "target = [\"lib:user\"]")
         .replace("features = [\"ops\"]", "features = []")
         .replace(
@@ -1271,9 +1279,12 @@ fn every_change_selects_the_install_render_checks() {
         .find(|section| section.contains("id = \"prekind\""))
         .unwrap();
     assert!(prekind.contains("always = true"));
-    // The fixture has no wamn-control package, so a fixture package stands for it.
+    // The fixture has no wamn-environment-control package, so a fixture package stands for it.
     let prekind = prekind
-        .replace("package = \"wamn-control\"", "package = \"user\"")
+        .replace(
+            "package = \"wamn-environment-control\"",
+            "package = \"user\"",
+        )
         .replace(
             "target = [\"test:environment_render\", \"test:platform_render\"]",
             "target = [\"lib:user\"]",
@@ -1643,7 +1654,11 @@ fn an_unknown_path_keeps_one_default_command_per_workspace() {
         vec![
             fixture.command(
                 "Cargo.toml",
-                &["--workspace", "--features", "wamn-control/ops,wamn-ctl/ops"]
+                &[
+                    "--workspace",
+                    "--features",
+                    "wamn-environment-control/ops,wamn-ctl/ops"
+                ]
             ),
             fixture.command("apps/Cargo.toml", &["--workspace"]),
             fixture.command("apps/platform/no-std/Cargo.toml", &["--workspace"]),

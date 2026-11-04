@@ -7,11 +7,11 @@ use std::path::PathBuf;
 
 use clap::{ArgGroup, Args};
 use serde_json::json;
-use wamn_control::identity_issuer::{
+use wamn_control_provision::CredentialGeneration;
+use wamn_environment_control::identity_issuer::{
     IdentityIssuerAction, IdentityIssuerRequest, provision_identity_issuer,
 };
-use wamn_control::invite::{InviteRequest, invite as run_invite};
-use wamn_control_provision::CredentialGeneration;
+use wamn_environment_control::invite::{InviteRequest, invite as run_invite};
 use wamn_platform_identity::org::MemberGrants;
 
 use crate::provisioning_verbs::PatIssuerArgs;

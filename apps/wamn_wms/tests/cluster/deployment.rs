@@ -112,7 +112,7 @@ pub(super) async fn install_application_secrets(
         &crate::environment::identity().environment,
     );
     for (_, mut resource) in
-        wamn_control::environment::ensure::credential_access(&account, &reference)
+        wamn_environment_control::environment::ensure::credential_access(&account, &reference)
     {
         resource["metadata"]["namespace"] = document.host_secret_namespace.clone().into();
         if let Some(subjects) = resource["subjects"].as_array_mut() {

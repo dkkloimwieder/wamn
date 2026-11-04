@@ -7,10 +7,12 @@ use std::path::Path;
 use crate::route_authentication_live::scope;
 use anyhow::{Context as _, ensure};
 use wamn_cdc_reader::EventReaderArgs;
-use wamn_control::dev::environment::{connect, generation_args};
-use wamn_control::enable_cdc_project_env::EnableCdcProjectEnvRequest;
-use wamn_control::provision_project_env::{self, ProvisionedRoute, read_json, secret_value};
 use wamn_control_provision::workload_role::WorkloadRoleFamily;
+use wamn_dev_control::dev::environment::{connect, generation_args};
+use wamn_environment_control::enable_cdc_project_env::EnableCdcProjectEnvRequest;
+use wamn_environment_control::provision_project_env::{
+    self, ProvisionedRoute, read_json, secret_value,
+};
 use wamn_gate_harness::journey::JourneyDocument;
 use wamn_test_infrastructure::nats_tls::ClientCertificate;
 
@@ -87,7 +89,7 @@ pub(super) async fn configure(
     super::super::environment::author_materializer_workflow(
         inputs,
         route,
-        &wamn_control::environment::EventBroker {
+        &wamn_environment_control::environment::EventBroker {
             nats: provisioning.platform_nats(nats_url),
             stream_replicas: source.num_replicas,
             dup_window_secs: source.duplicate_window.as_secs(),

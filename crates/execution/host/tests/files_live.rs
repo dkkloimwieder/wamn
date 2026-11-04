@@ -35,7 +35,7 @@ use wasmtime_wasi_http::WasiBody;
 mod application_fixture;
 #[path = "support/file_delete_proxy.rs"]
 mod file_delete_proxy;
-#[path = "../../../control/lib/tests/support/files.rs"]
+#[path = "../../../control/environment/tests/support/files.rs"]
 #[expect(
     dead_code,
     reason = "The shared file fixture also supports schema and registry tests."
@@ -47,7 +47,7 @@ mod files;
     reason = "The shared session fixture also supports verifier barriers."
 )]
 mod session_fixture;
-#[path = "../../../control/lib/tests/support/file_package/signed_read.rs"]
+#[path = "../../../control/environment/tests/support/file_package/signed_read.rs"]
 mod signed_read;
 use application_fixture::{ApplicationHost, ENV_KEY, MEMBER, PROJECT, READ};
 use session_fixture::{ORG, claims, header, signed};

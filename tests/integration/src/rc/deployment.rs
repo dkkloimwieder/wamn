@@ -44,9 +44,9 @@ fn validate_source(source: &stream::Config) -> anyhow::Result<()> {
 /// (docs/plan/alignment.md R5).
 pub(super) async fn install_platform(resources: &Resources) -> anyhow::Result<()> {
     checked(kubectl(resources).args(["create", "namespace", NAMESPACE])).await?;
-    let mut inputs = wamn_control::platform::journey::cluster(
+    let mut inputs = wamn_environment_control::platform::journey::cluster(
         &resources.repository,
-        &wamn_control::platform::journey::ClusterInput {
+        &wamn_environment_control::platform::journey::ClusterInput {
             operator_namespace: "wamn-system",
             host_namespace: NAMESPACE,
             org: "rc",

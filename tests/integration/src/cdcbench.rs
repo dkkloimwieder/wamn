@@ -659,7 +659,7 @@ async fn drain_mode(args: &CdcBenchArgs, admin_url: &str, pass: &mut bool) -> an
         let _ = js
             .delete_stream(wamn_event_wire::delivery_advisory_stream(&stream_name))
             .await;
-        wamn_control::event_streams::provision(
+        wamn_environment_control::event_streams::provision(
             &js,
             &wamn_control_registry::Triple::new(ORG, PROJECT, ENV),
             1,
@@ -856,7 +856,7 @@ async fn lag_mode(args: &CdcBenchArgs, admin_url: &str, pass: &mut bool) -> anyh
     let _ = js
         .delete_stream(wamn_event_wire::delivery_advisory_stream(&stream_name))
         .await;
-    wamn_control::event_streams::provision(
+    wamn_environment_control::event_streams::provision(
         &js,
         &wamn_control_registry::Triple::new(ORG, PROJECT, ENV),
         1,

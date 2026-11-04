@@ -4,10 +4,10 @@ use std::path::{Path, PathBuf};
 
 use serde_json::Value;
 use wamn_catalog::ComponentPackageScope;
-use wamn_control::component_admission::{
+use wamn_package_control::component_admission::{
     AdmitComponentRequest, ComponentAdmission, admit_component,
 };
-use wamn_control::component_declaration::{
+use wamn_package_control::component_declaration::{
     render_declaration_document, render_palette_declaration,
 };
 

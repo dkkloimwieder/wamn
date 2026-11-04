@@ -1047,7 +1047,7 @@ async fn project_admin(
     let mut target = connect(&inputs.project_pg_url).await?;
     let mut drops = AuthDrops::default();
     let authority =
-        wamn_control::provision_project_env::provisioning_transaction(&mut system.client).await?;
+        wamn_environment_control::provision_project_env::provisioning_transaction(&mut system.client).await?;
     if org_admin && grant {
         wamn_platform_identity::org::grant_org_admin(&authority, principal, &inputs.org).await?;
         drops.identity(principal.as_str());
@@ -1118,7 +1118,7 @@ pub(crate) fn assert_histories_with_cancellation(
     for (component, root) in &inputs.packages {
         package_tree_digests.insert(
             component.clone(),
-            json!(wamn_control::package_artifact::package_artifact_digest(
+            json!(wamn_package_control::package_artifact::package_artifact_digest(
                 root
             )?),
         );

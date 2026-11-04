@@ -43,10 +43,11 @@
 use wamn_pg_core::{quote_ident, quote_literal};
 use wamn_run_state::CredentialGeneration;
 
+use crate::APP_ROLE;
+use crate::DB_OWNER_ROLE;
 use crate::workload_role::{
     SCOPE_HASH_HEX_LEN, WorkloadRoleFamily, WorkloadRoleScope, workload_role_scope_hash,
 };
-use crate::{APP_ROLE, DB_OWNER_ROLE};
 
 /// Schema hosting authority derivations inside a project-environment database.
 ///

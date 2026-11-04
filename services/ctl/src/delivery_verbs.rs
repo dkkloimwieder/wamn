@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use crate::qualification;
 use anyhow::Context as _;
 use clap::Args;
-use wamn_control::package_artifact::PackageRegistry;
+use wamn_package_control::package_artifact::PackageRegistry;
 use wamn_runtime::component_artifact_source::OCI_CA_PATHS_ENV;
 
 /// Qualify one published release, by its digest, on the release chart's
@@ -89,16 +89,18 @@ pub async fn qualify(args: QualifyReleaseArgs) -> anyhow::Result<()> {
 /// Build the platform, or with `--stamp-only` read it from the registry, and
 /// print the stamped chart's directory.
 pub async fn build_platform(args: BuildPlatformArgs) -> anyhow::Result<()> {
-    use wamn_control::platform_build::{BuildPlatformRequest, build_platform, stamp_only};
+    use wamn_environment_control::platform_build::{
+        BuildPlatformRequest, build_platform, stamp_only,
+    };
     let repository = std::fs::canonicalize(&args.repository)
         .with_context(|| format!("find {}", args.repository.display()))?;
     let request = BuildPlatformRequest {
         cluster: args
             .cluster
             .as_deref()
-            .map(wamn_control::platform::document::ClusterDocument::compile)
+            .map(wamn_environment_control::platform::document::ClusterDocument::compile)
             .transpose()?,
-        version: wamn_control::release_chart::chart_version(
+        version: wamn_release_control::release_chart::chart_version(
             &repository.join("deploy/platform/release"),
         )?,
         repository,

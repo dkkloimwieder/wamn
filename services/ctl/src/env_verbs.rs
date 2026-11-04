@@ -2,15 +2,15 @@
 //! (docs/architecture/overview.md#environment-lifecycle). `apply` has one flag,
 //! `--dry-run`; `rollback` one argument, `--reason`; `delete` one flag,
 //! `--data`. Every other input is a field of the environment document, or a
-//! platform input that [`wamn_control::environment::Platform::from_env`] reads.
+//! platform input that [`wamn_environment_control::environment::Platform::from_env`] reads.
 
 use std::io::{BufRead as _, IsTerminal as _, Write as _};
 use std::path::PathBuf;
 
 use anyhow::{Context as _, bail};
 use clap::{Args, Subcommand};
-use wamn_control::environment::{self, Platform};
 use wamn_control_registry::Triple;
+use wamn_environment_control::environment::{self, Platform};
 
 /// One `env` verb.
 #[derive(Debug, Subcommand)]

@@ -7,9 +7,6 @@ use anyhow::Context as _;
 use serde_json::{Value, json};
 use tokio_postgres::NoTls;
 use wamn_catalog::{AttachmentTarget, ServingAttachment, ServingManifest, ServingRoute};
-use wamn_control::apply_package::{ApplyPackageRequest, apply_package};
-use wamn_control::component_admission::{AdmitComponentRequest, admit_component};
-use wamn_control::publish_release::package_route;
 use wamn_control_provision::{
     CredentialGeneration, SystemReader, WorkloadRoleFamily, WorkloadRoleScope,
     system_reader_generation_role, workload_generation_role,
@@ -22,7 +19,10 @@ use wamn_execution_host::{
     OperationHost, OperationScope, RouterDeliveryBridge, RouterReadinessProbe,
     RouterReadinessStatus,
 };
+use wamn_package_control::apply_package::{ApplyPackageRequest, apply_package};
+use wamn_package_control::component_admission::{AdmitComponentRequest, admit_component};
 use wamn_platform_identity::{assign_project_role, create_service, issue_pat, operator_subject};
+use wamn_release_control::publish_release::package_route;
 use wamn_run_state::AuthorityClass;
 use wamn_runtime::connection_credentials::ConnectionCredentials;
 use wamn_runtime::plugins::WamnLogging;
@@ -54,14 +54,15 @@ pub struct LocalPackage<'a> {
 pub(super) async fn assemble(
     input: LocalApplicationConfig<'_>,
 ) -> anyhow::Result<PreparedLocalApplication> {
-    let environment = wamn_control::environment::document::EnvironmentDocument::compile(
-        &input.scratch.join("environment.k"),
-    )?;
+    let environment =
+        wamn_environment_control::environment::document::EnvironmentDocument::compile(
+            &input.scratch.join("environment.k"),
+        )?;
     let (system, system_connection) = tokio_postgres::connect(input.system_database_url, NoTls)
         .await
         .context("connect to the disposable identity database")?;
     let system_task = tokio::spawn(system_connection);
-    wamn_control::dev::environment::reset_control_store(&system).await?;
+    wamn_dev_control::dev::environment::reset_control_store(&system).await?;
     system
         .execute(
             "SELECT set_config('app.user_id', $1, false)",
@@ -125,10 +126,10 @@ pub(super) async fn assemble(
         ))
         .await
         .context("create the catalog and application ACL owner roles")?;
-    wamn_control::dev::environment::install_journey_platform_floor(&project, "local.invalid")
+    wamn_dev_control::dev::environment::install_journey_platform_floor(&project, "local.invalid")
         .await?;
     let run_schema = wamn_schema_control::BareSchemaName::new("wamn_run")?;
-    wamn_control::reconcile_run_plane::reconcile(&project, &run_schema, true).await?;
+    wamn_environment_control::reconcile_run_plane::reconcile(&project, &run_schema, true).await?;
     project
         .execute(
             "SELECT set_config('app.user_id',$1,false), set_config('app.operation','admin:local-application',false)",
@@ -209,9 +210,10 @@ pub(super) async fn assemble(
     let mut roots = BTreeMap::new();
     for package in input.packages {
         let applied = apply_package(ApplyPackageRequest {
-            component_source: wamn_control::apply_package::component_source_from_env(None).unwrap(),
+            component_source: wamn_package_control::apply_package::component_source_from_env(None)
+                .unwrap(),
             changes: wamn_platform_identity::auth_changes::AuthChanges::default(),
-            package: wamn_control::apply_package::PackageRoot {
+            package: wamn_package_control::apply_package::PackageRoot {
                 path: package.root.to_path_buf(),
                 artifact_digest: Some(
                     wamn_test_infrastructure::fixture_digest::fixture_artifact_digest(
@@ -258,13 +260,13 @@ pub(super) async fn assemble(
         admitted.push((applied.package_id, facts));
         admissions.push(admission);
     }
-    wamn_control::reconcile_package_data_access::reconcile_package_data_access(
-        wamn_control::reconcile_package_data_access::ReconcilePackageDataAccessRequest {
+    wamn_environment_control::reconcile_package_data_access::reconcile_package_data_access(
+        wamn_environment_control::reconcile_package_data_access::ReconcilePackageDataAccessRequest {
             packages: input
                 .packages
                 .iter()
                 .map(|package| {
-                    Ok(wamn_control::apply_package::PackageRoot {
+                    Ok(wamn_package_control::apply_package::PackageRoot {
                         path: package.root.to_path_buf(),
                         artifact_digest: Some(
                             wamn_test_infrastructure::fixture_digest::fixture_artifact_digest(
@@ -290,12 +292,12 @@ pub(super) async fn assemble(
         .insert(wamn_catalog::HostRouteSet::Application);
     let canonical_bytes = manifest.canonical_bytes();
     let (_, digest) = ServingManifest::from_canonical_bytes(&canonical_bytes)?;
-    let mut published = wamn_control::publish_release::PublishedRelease {
+    let mut published = wamn_release_control::publish_release::PublishedRelease {
         manifest,
         digest,
         canonical_bytes,
     };
-    let entry = wamn_control::publish_release::compose_release_entry(
+    let entry = wamn_release_control::publish_release::compose_release_entry(
         &published,
         &admissions,
         &std::fs::read(input.flow_http_wasm)?,
@@ -306,7 +308,11 @@ pub(super) async fn assemble(
         wamn_engine::artifact_source::local_component_path(input.scratch, entry.digest())?;
     std::fs::write(&entry_path, entry.bytes())?;
     let entry_reference = format!("file:{}", entry_path.display());
-    wamn_control::publish_release::record_composed_entry(&mut published, &entry, &entry_reference)?;
+    wamn_release_control::publish_release::record_composed_entry(
+        &mut published,
+        &entry,
+        &entry_reference,
+    )?;
     let canonical = published.canonical_bytes;
     let release = Arc::new(LoadedRelease::load_canonical_bytes(
         &canonical,
@@ -453,7 +459,7 @@ pub(super) async fn assemble(
     );
     let flow_http = Component::new(engine.inner(), entry.bytes())?;
     let secret = input.scratch.join("operator-pat.json");
-    wamn_control::provision_project_env::write_secret_json(
+    wamn_environment_control::provision_project_env::write_secret_json(
         &secret,
         &json!({"stringData":{"token":bearer}}),
     )?;
@@ -488,7 +494,7 @@ fn render_declaration(
     target: &Path,
 ) -> anyhow::Result<BTreeSet<String>> {
     let mut base_digests =
-        wamn_control::component_declaration::authored_base_digests(package.root)?;
+        wamn_package_control::component_declaration::authored_base_digests(package.root)?;
     for base in input.packages {
         wamn_schema_generator::build_record::check_current(base.root)?;
         let manifest: Value = serde_json::from_slice(&std::fs::read(
@@ -510,8 +516,10 @@ fn render_declaration(
             *digest = wamn_engine::component_admission::component_digest(&bytes).into_boxed_str();
         }
     }
-    let value =
-        wamn_control::component_declaration::render_declaration_document(source, input.env_key)?;
+    let value = wamn_package_control::component_declaration::render_declaration_document(
+        source,
+        input.env_key,
+    )?;
     std::fs::write(target, serde_json::to_vec(&value)?)?;
     Ok(base_digests.into_values().map(String::from).collect())
 }

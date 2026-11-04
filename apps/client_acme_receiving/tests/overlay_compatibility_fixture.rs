@@ -8,9 +8,9 @@ use std::path::Path;
 use anyhow::{Context as _, ensure};
 use serde_json::{Value, json};
 use wamn_catalog::schema::ForeignKeyColumn;
-use wamn_control::apply_package::{self, ApplyPackageRequest};
-use wamn_control::package_artifact::OpenedPackage;
 use wamn_engine::component_admission::component_digest;
+use wamn_package_control::apply_package::{self, ApplyPackageRequest};
+use wamn_package_control::package_artifact::OpenedPackage;
 use wamn_schema_introspection::ir::{Constraint, ForeignKeyAction, postgres_type};
 
 use super::identity;
@@ -329,7 +329,7 @@ async fn install_fresh(
     let roots = packages
         .iter()
         .map(|package| {
-            Ok(wamn_control::apply_package::PackageRoot {
+            Ok(wamn_package_control::apply_package::PackageRoot {
                 path: package.clone(),
                 artifact_digest: Some(
                     wamn_test_infrastructure::fixture_digest::fixture_artifact_digest(package)?,
@@ -339,7 +339,8 @@ async fn install_fresh(
         .collect::<anyhow::Result<Vec<_>>>()?;
     for package in &roots {
         apply_package::apply_package(ApplyPackageRequest {
-            component_source: wamn_control::apply_package::component_source_from_env(None).unwrap(),
+            component_source: wamn_package_control::apply_package::component_source_from_env(None)
+                .unwrap(),
             changes: wamn_platform_identity::auth_changes::AuthChanges::default(),
             package: package.clone(),
             database_url: url.clone(),
@@ -349,8 +350,8 @@ async fn install_fresh(
         })
         .await?;
     }
-    wamn_control::reconcile_package_data_access::reconcile_package_data_access(
-        wamn_control::reconcile_package_data_access::ReconcilePackageDataAccessRequest {
+    wamn_environment_control::reconcile_package_data_access::reconcile_package_data_access(
+        wamn_environment_control::reconcile_package_data_access::ReconcilePackageDataAccessRequest {
             packages: roots,
             database_url: url.clone(),
             org: identity().org.clone(),

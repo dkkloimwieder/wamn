@@ -26,7 +26,7 @@ pub(super) struct Resources {
     pub gates_image: Option<String>,
     pub identity_image: Option<String>,
     pub candidate: Option<(
-        wamn_control::delivery::Candidate,
+        wamn_release_control::delivery::Candidate,
         wamn_catalog::ServingManifest,
     )>,
     pub reader: Option<(

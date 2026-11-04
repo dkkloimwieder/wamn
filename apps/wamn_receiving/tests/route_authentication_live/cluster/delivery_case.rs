@@ -19,7 +19,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context as _, ensure};
 use serde_json::{Value, json};
-use wamn_control::environment::EventBroker;
+use wamn_environment_control::environment::EventBroker;
 
 use wamn_control_provision::events::source_stream_config;
 use wamn_control_registry::Triple;
@@ -49,7 +49,7 @@ async fn owned_release_delivery() -> anyhow::Result<()> {
         "requires: bin:docker, bin:kind, bin:kubectl, bin:helm, bin:openssl, env:WAMN_DELIVERY_CLUSTER",
     );
     ensure!(
-        std::env::var_os(wamn_control::delivery::CANDIDATE_ENV).is_none(),
+        std::env::var_os(wamn_release_control::delivery::CANDIDATE_ENV).is_none(),
         "the owned setup mints its own candidate"
     );
     wash_runtime::init_crypto();
@@ -109,7 +109,7 @@ async fn run(
     let nats =
         platform::cluster_nats(&work, &kept.name, identity().env_key().as_str(), NAMESPACE).await?;
     let provisioning = nats.provisioning.connect(&nats.server).await?;
-    wamn_control::event_streams::provision(
+    wamn_environment_control::event_streams::provision(
         &async_nats::jetstream::new(provisioning),
         &triple,
         source.num_replicas,
@@ -117,7 +117,7 @@ async fn run(
         &consumers,
     )
     .await?;
-    let database_inputs = wamn_control::platform::journey::delivery_database(
+    let database_inputs = wamn_environment_control::platform::journey::delivery_database(
         repository,
         DATABASE_NAMESPACE,
         DATABASE_CLUSTER,

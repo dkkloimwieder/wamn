@@ -16,7 +16,8 @@ use serde::Serialize;
 use serde_json::Value;
 use sha2::{Digest as _, Sha256};
 
-use crate::{ProvisionError, validate_project_env};
+use crate::ProvisionError;
+use crate::validate_project_env;
 
 /// The longest slug in a release name: the env name cut to this length.
 pub const SLUG_LEN: usize = 24;

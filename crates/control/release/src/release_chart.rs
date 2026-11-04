@@ -1,0 +1,1134 @@
+//! The `release` chart of one environment
+//! (docs/architecture/overview.md#environment-lifecycle).
+//!
+//! An environment is one Helm release of `deploy/platform/release`: the pinned
+//! runtime-operator subchart, host-only, plus one WorkloadDeployment per role.
+//! This module derives the release name, renders the install values, stamps the
+//! platform image set and the qualification images into the chart's defaults,
+//! reads them back, and runs the Helm install and uninstall.
+//!
+//! The platform image set lives only in the chart's default values (R15). The
+//! install values carry no image digest and no integer release id: the release
+//! is named by its manifest digest alone (R1).
+
+use std::path::{Path, PathBuf};
+use std::process::Stdio;
+use std::time::Duration;
+
+use anyhow::{Context as _, ensure};
+use serde::Deserialize;
+use serde_yaml::{Mapping, Value};
+use tokio::process::Command;
+use wamn_catalog::{AttachmentType, ServingManifest};
+use wamn_engine::release_manifest::release_label;
+
+/// The platform version: `version` in the `Chart.yaml` of the release chart
+/// directory `chart`. The chart is its one owner, so a binary does not change
+/// with the version (wamn-6qo7v).
+pub fn chart_version(chart: &Path) -> anyhow::Result<String> {
+    read_platform_version(&chart.join("Chart.yaml"))
+}
+
+/// Read the platform version from the release chart's top-level version.
+///
+/// # Errors
+///
+/// Returns an error naming the path if the chart cannot be read or decoded.
+pub fn read_platform_version(path: &Path) -> anyhow::Result<String> {
+    #[derive(Deserialize)]
+    struct Chart {
+        version: String,
+    }
+
+    let source = std::fs::read_to_string(path)
+        .with_context(|| format!("read platform chart {}", path.display()))?;
+    let chart: Chart = serde_yaml::from_str(&source).with_context(|| {
+        format!(
+            "read top-level version from platform chart {}",
+            path.display()
+        )
+    })?;
+    anyhow::ensure!(
+        !chart.version.trim().is_empty(),
+        "platform chart {} has an empty version",
+        path.display()
+    );
+    Ok(chart.version)
+}
+
+/// The Helm release name of an environment: `r-<slug>-<hash>`.
+///
+/// The slug is the env name cut to 24 characters. The hash is the first 20 hex
+/// characters of SHA-256 over `org/project/env`. The name is at most 47
+/// characters, inside Helm's bound of 53. It is also the environment's host group.
+pub fn release_name(org: &str, project: &str, env: &str) -> anyhow::Result<String> {
+    wamn_control_provision::environment_state::release_name(org, project, env)
+        .context("the environment coordinate is not valid")
+}
+
+/// The platform image set: the host image and the role component images.
+/// It is the qualification key (R12).
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ImageSet {
+    /// `<repository>:<tag>@sha256:<hex>`.
+    pub host: String,
+    /// `<repository>@sha256:<hex>`.
+    pub http: String,
+    /// `<repository>@sha256:<hex>`.
+    pub materializer: String,
+}
+
+/// The images the chart's defaults pin outside the key: the qualification
+/// runner, gates and identity (R12, R15). Each is `<repository>[:<tag>]@sha256:<hex>`.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct QualificationImages {
+    pub runner: String,
+    pub gates: String,
+    pub identity: String,
+}
+
+/// Copy `chart` to `out` with the image set, and the qualification images
+/// when given, written into its default values.
+///
+/// The platform build step stamps both; its chart's defaults are the one
+/// source of them. A case that copies the roles by digest into its own
+/// registry stamps a copy of that chart with the copied set and `None`, so
+/// the copy keeps the source's qualification images. `chart` must hold its
+/// built subchart archive.
+pub fn stamp(
+    chart: &Path,
+    set: &ImageSet,
+    qualification: Option<&QualificationImages>,
+    out: &Path,
+) -> anyhow::Result<PathBuf> {
+    let (repository, tag) = split_host_image(&set.host)?;
+    let mut pinned = vec![("http", &set.http), ("materializer", &set.materializer)];
+    if let Some(images) = qualification {
+        pinned.extend([
+            ("runner", &images.runner),
+            ("gates", &images.gates),
+            ("identity", &images.identity),
+        ]);
+    }
+    for (name, image) in pinned {
+        ensure!(
+            image.contains("@sha256:"),
+            "the {name} image {image} is not pinned by digest"
+        );
+    }
+    copy_dir(chart, out)?;
+    let path = out.join("values.yaml");
+    let mut values: Value = serde_yaml::from_str(
+        &std::fs::read_to_string(&path).with_context(|| format!("read {}", path.display()))?,
+    )
+    .context("parse the chart's default values")?;
+    let image = &mut values["runtime-operator"]["runtime"]["image"];
+    image["registry"] = "".into();
+    image["repository"] = repository.into();
+    image["tag"] = tag.into();
+    let platform = &mut values["platform"];
+    platform["roles"]["http"]["image"] = set.http.clone().into();
+    platform["roles"]["materializer"]["image"] = set.materializer.clone().into();
+    if let Some(images) = qualification {
+        platform["runner"]["image"] = images.runner.clone().into();
+        platform["gates"]["image"] = images.gates.clone().into();
+        platform["identity"]["image"] = images.identity.clone().into();
+    }
+    std::fs::write(&path, serde_yaml::to_string(&values)?)
+        .with_context(|| format!("write {}", path.display()))?;
+    Ok(out.to_owned())
+}
+
+/// The default values of `chart`, with `helm show values`.
+async fn default_values(chart: &Path) -> anyhow::Result<Value> {
+    let shown = helm(&["show".as_ref(), "values".as_ref(), chart.as_os_str()]).await?;
+    serde_yaml::from_str(&shown).context("parse the chart's values")
+}
+
+/// A stamped default of the chart, which must not be empty.
+fn stamped(value: &Value, name: &str) -> anyhow::Result<String> {
+    let text = value.as_str().unwrap_or_default();
+    ensure!(
+        !text.is_empty(),
+        "the chart's default {name} is not stamped"
+    );
+    Ok(text.to_owned())
+}
+
+/// Read the image set from the default values of `chart`.
+pub async fn image_set(chart: &Path) -> anyhow::Result<ImageSet> {
+    let values = default_values(chart).await?;
+    let image = &values["runtime-operator"]["runtime"]["image"];
+    let registry = image["registry"].as_str().unwrap_or_default();
+    let repository = stamped(&image["repository"], "host repository")?;
+    let tag = stamped(&image["tag"], "host tag")?;
+    let host = if registry.is_empty() {
+        format!("{repository}:{tag}")
+    } else {
+        format!("{registry}/{repository}:{tag}")
+    };
+    let roles = &values["platform"]["roles"];
+    Ok(ImageSet {
+        host,
+        http: stamped(&roles["http"]["image"], "http image")?,
+        materializer: stamped(&roles["materializer"]["image"], "materializer image")?,
+    })
+}
+
+/// Read the qualification images from the default values of `chart`.
+pub async fn qualification_images(chart: &Path) -> anyhow::Result<QualificationImages> {
+    let values = default_values(chart).await?;
+    let platform = &values["platform"];
+    Ok(QualificationImages {
+        runner: stamped(&platform["runner"]["image"], "runner image")?,
+        gates: stamped(&platform["gates"]["image"], "gates image")?,
+        identity: stamped(&platform["identity"]["image"], "identity image")?,
+    })
+}
+
+/// One role workload: `http` or `materializer`, with its configuration.
+#[derive(Debug, Clone)]
+pub struct Role {
+    pub name: RoleName,
+    /// The HTTP entry path recorded by the release, relative to the component
+    /// artifact base. [`values`] joins it with the host group's base.
+    pub entry: Option<String>,
+    /// The entry's named SQL import instances.
+    pub statements: Vec<String>,
+    /// `localResources.config` of the role's component.
+    pub config: Mapping,
+    /// `localResources.environment.config`; the materializer only.
+    pub environment: Option<Mapping>,
+}
+
+/// The roles a release can imply (R4).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RoleName {
+    Http,
+    Materializer,
+}
+
+impl RoleName {
+    /// `http` or `materializer`, the suffix of the role's object names.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Http => "http",
+            Self::Materializer => "materializer",
+        }
+    }
+}
+
+/// The name the release chart gives the WorkloadDeployment of `role` in
+/// release `release_name`: `<release>-<role>`. The http role's Service has
+/// the same name.
+pub fn workload_name(release_name: &str, role: RoleName) -> String {
+    format!("{release_name}-{}", role.as_str())
+}
+
+/// The roles a release implies (R4, epic decision D6): http iff the manifest
+/// has an HTTP route attachment, materializer in every environment.
+/// Each role's configuration derives from the coordinate.
+pub fn roles(manifest: &ServingManifest, org: &str, project: &str, env: &str) -> Vec<Role> {
+    let env_key = wamn_control_provision::project_env_key(org, project, env);
+    let scope = |extra: &[(&str, &str)]| -> Mapping {
+        [
+            ("wamn.env_key", env_key.as_str()),
+            ("wamn.project", project),
+            ("wamn.environment", env),
+        ]
+        .iter()
+        .chain(extra)
+        .map(|(key, value)| ((*key).into(), (*value).into()))
+        .collect()
+    };
+    let mut roles = Vec::new();
+    if manifest
+        .every_attachment()
+        .any(|(_, attachment)| attachment.attachment_type() == AttachmentType::Http)
+    {
+        roles.push(Role {
+            name: RoleName::Http,
+            entry: manifest
+                .composed_entry
+                .as_ref()
+                .map(|entry| entry.reference.clone()),
+            statements: manifest
+                .composing_member()
+                .map_or_else(Vec::new, |application| {
+                    if application.statement_instances.is_empty() {
+                        vec!["sql-0".to_owned()]
+                    } else {
+                        application.statement_instances.keys().cloned().collect()
+                    }
+                }),
+            config: scope(&[]),
+            environment: None,
+        });
+    }
+    {
+        let stream = wamn_control_provision::event_stream_name(org, project, env);
+        let environment = [
+            ("WAMN_MAT_STREAM", stream.as_str()),
+            ("WAMN_MAT_ORG", org),
+            ("WAMN_MAT_PROJECT", project),
+            ("WAMN_MAT_ENV", env),
+            ("WAMN_MAT_ENV_KEY", env_key.as_str()),
+        ]
+        .iter()
+        .map(|(key, value)| ((*key).into(), (*value).into()))
+        .collect();
+        roles.push(Role {
+            name: RoleName::Materializer,
+            entry: None,
+            statements: Vec::new(),
+            config: scope(&[("wamn.postgres.authority", "event-materializer")]),
+            environment: Some(environment),
+        });
+    }
+    roles
+}
+
+/// The host variables that carry the environment coordinate (R1). The host
+/// derives its tenant from the coordinate, because the manifest names none.
+/// The route host is not one of them: it lives only on the http workload's
+/// `config.host` (R2). The environment name is not one of them either: the
+/// operator chart sets `WASMCLOUD_HOST_ENVIRONMENT` to the pod namespace,
+/// which every environment shares (R6), and a second entry of one name is
+/// refused by server-side apply. The release passes `--environment` again in
+/// `extraArgs`, after the chart's, and the host keeps the last value as its
+/// release scope. The host reads `WASMCLOUD_HOST_ENVIRONMENT` once, as its
+/// host namespace, which its heartbeat names and where the operator places
+/// the release's workloads; it is never the environment.
+/// `WAMN_DRAIN_BOUND_SECONDS` is the policy's drain bound, the one budget of
+/// the host's shutdown sequence, from the same value as the pods'
+/// `terminationGracePeriodSeconds` (R20).
+const HOST_VARIABLES: [&str; 4] = [
+    "WAMN_ORG",
+    "WAMN_PROJECT",
+    "WAMN_DRAIN_BOUND_SECONDS",
+    "WAMN_MATERIALIZER_DRAIN_BOUND_SECONDS",
+];
+
+/// The materializer's grace: when its host drains, the host stops the
+/// materializer and answers the operator's stop within this time, before it
+/// closes admission. It must be shorter than the drain bound, so a host pod
+/// never leaves a materializer replica that the operator cannot stop.
+pub const MATERIALIZER_DRAIN_BOUND_SECONDS: u32 = 10;
+
+/// The host samples traces at their start and exports to the cluster's collector.
+/// The sampler keeps sampled parents and 10% of new traces (R5, R6).
+/// These variables are not application facts. The chart sets them on every host.
+pub const TELEMETRY_VARIABLES: [(&str, &str); 4] = [
+    (
+        "OTEL_EXPORTER_OTLP_ENDPOINT",
+        "http://otel-collector.platform.svc.cluster.local:4317",
+    ),
+    ("OTEL_SERVICE_NAME", "wamn-host"),
+    ("OTEL_TRACES_SAMPLER", "parentbased_traceidratio"),
+    ("OTEL_TRACES_SAMPLER_ARG", "0.1"),
+];
+
+/// The host variables a host group body must not set: the derived ones, the
+/// telemetry and allocator residency ones, and the chart's environment
+/// variable, which the release replaces by argument.
+const REFUSED_VARIABLES: [&str; 12] = [
+    "WAMN_ORG",
+    "WAMN_PROJECT",
+    "WAMN_DRAIN_BOUND_SECONDS",
+    "WAMN_MATERIALIZER_DRAIN_BOUND_SECONDS",
+    "OTEL_EXPORTER_OTLP_ENDPOINT",
+    "OTEL_SERVICE_NAME",
+    "OTEL_TRACES_SAMPLER",
+    "OTEL_TRACES_SAMPLER_ARG",
+    "WASMCLOUD_HOST_ENVIRONMENT",
+    "WASMTIME_POOLING_LINEAR_MEMORY_KEEP_RESIDENT",
+    "WASMTIME_POOLING_TABLE_KEEP_RESIDENT",
+    "WASMTIME_POOLING_ASYNC_STACK_KEEP_RESIDENT",
+];
+
+/// The inputs of one environment's install values.
+#[derive(Debug, Clone)]
+pub struct ValuesInput {
+    pub org: String,
+    pub project: String,
+    pub env: String,
+    /// `sha256:<hex>` of the release manifest.
+    pub manifest_digest: String,
+    pub artifact_base: String,
+    pub route_host: String,
+    /// The applications the environment declares. The host takes them in
+    /// `--applications` beside `--environment`, and the values keep them for
+    /// `env show`.
+    pub applications: wamn_catalog::EnvironmentApplications,
+    pub roles: Vec<Role>,
+    /// The drain bound of the environment policy, rendered as the host pods'
+    /// `terminationGracePeriodSeconds` and as the host's
+    /// `WAMN_DRAIN_BOUND_SECONDS` (R20).
+    pub drain_bound_seconds: u32,
+    /// Who applied. It renders nothing and is kept with the revision (§9.2).
+    pub actor: String,
+    /// The body of the one host group entry: env, volumes, volumeMounts,
+    /// replicas, http, resources, ociCaPaths. The name, namespace, service and
+    /// release arguments are this module's and are refused here.
+    pub host_group: Mapping,
+}
+
+/// The host group's raw-socket egress mode. Chart 2.11.0 defaults it to
+/// enforce. The owner ruling of 2026-10-21 (wamn-upgrade-2.11) keeps count
+/// unless the host group body names a mode.
+pub const SOCKET_EGRESS: &str = "count";
+
+/// The canonical JSON of the declared applications, as `--applications`
+/// carries it.
+fn applications_argument(
+    applications: &wamn_catalog::EnvironmentApplications,
+) -> anyhow::Result<String> {
+    let value = serde_json::to_value(applications).context("encode the applications")?;
+    String::from_utf8(wamn_execution_contract::canonical_json_bytes(&value))
+        .context("the canonical applications are UTF-8")
+}
+
+/// The host group's `plugins` entry for the materializer's `events` binding
+/// (docs/plan/alignment.md R6). Its grants are the environment's own stream and
+/// subjects, and its replies use the environment user's inbox. It names no
+/// `servers`, so it inherits the data connection and its certificate (R5).
+/// `workloadConfig: deny` keeps every connection key and grant here.
+pub fn events_plugin(org: &str, project: &str, env: &str) -> anyhow::Result<Value> {
+    let scope = wamn_control_registry::Triple::new(org, project, env);
+    let source =
+        wamn_control_provision::events::source_stream_config(&scope, 1, Duration::from_secs(120));
+    let env_key = wamn_control_registry::project_env_key(org, project, env);
+    let config = mapping([
+        (
+            "inbox-prefix",
+            format!(
+                "_INBOX_{}",
+                wamn_control_registry::environment_nats_user(&env_key)
+            ),
+        ),
+        ("stream-allow", source.name),
+        ("subject-allow", source.subjects.join(",")),
+        ("subscription-capacity-bytes", "4194304".to_owned()),
+        ("subscription-capacity", "64".to_owned()),
+        ("max-in-flight", "64".to_owned()),
+    ]);
+    let mut binding = Mapping::new();
+    binding.insert("config".into(), config);
+    let mut bindings = Mapping::new();
+    bindings.insert("events".into(), Value::Mapping(binding));
+    let mut entry = Mapping::new();
+    entry.insert("id".into(), "wasmcloud-nats".into());
+    entry.insert("workloadConfig".into(), "deny".into());
+    entry.insert("bindings".into(), Value::Mapping(bindings));
+    Ok(Value::Sequence(vec![Value::Mapping(entry)]))
+}
+
+/// Render the install values of one environment.
+pub fn values(input: &ValuesInput) -> anyhow::Result<Value> {
+    ensure!(
+        MATERIALIZER_DRAIN_BOUND_SECONDS < input.drain_bound_seconds,
+        "materializer_drain_bound_seconds ({MATERIALIZER_DRAIN_BOUND_SECONDS}) must be shorter than drain_bound_seconds ({})",
+        input.drain_bound_seconds
+    );
+    let name = release_name(&input.org, &input.project, &input.env)?;
+    let label = release_label(&input.manifest_digest)
+        .context("the release manifest digest is not a sha256 digest")?;
+    for key in ["name", "namespace", "service", "extraArgs", "image"] {
+        ensure!(
+            !input.host_group.contains_key(key),
+            "the host group body sets `{key}`, which the release chart derives"
+        );
+    }
+    let environment = format!("{}/{}/{}", input.org, input.project, input.env);
+    let mut group = input.host_group.clone();
+    group.insert("name".into(), name.into());
+    let variables = group
+        .entry("env".into())
+        .or_insert_with(|| Value::Sequence(Vec::new()))
+        .as_sequence_mut()
+        .context("the host group body's `env` is not a list")?;
+    ensure!(
+        !variables.iter().any(|variable| {
+            variable["name"]
+                .as_str()
+                .is_some_and(|name| REFUSED_VARIABLES.contains(&name))
+        }),
+        "the host group body sets a scope variable, which the release chart derives"
+    );
+    // The http Workload image is the entry path joined with the base the
+    // hosts resolve members against.
+    let component_base = variables
+        .iter()
+        .find(|variable| variable["name"].as_str() == Some("WAMN_COMPONENT_ARTIFACT_BASE"))
+        .and_then(|variable| variable["value"].as_str())
+        .map(str::to_owned);
+    for (variable, value) in HOST_VARIABLES.into_iter().zip([
+        input.org.clone(),
+        input.project.clone(),
+        input.drain_bound_seconds.to_string(),
+        MATERIALIZER_DRAIN_BOUND_SECONDS.to_string(),
+    ]) {
+        variables.push(mapping([("name", variable.to_owned()), ("value", value)]));
+    }
+    for (variable, value) in TELEMETRY_VARIABLES {
+        variables.push(mapping([
+            ("name", variable.to_owned()),
+            ("value", value.to_owned()),
+        ]));
+    }
+    group.insert(
+        "extraArgs".into(),
+        Value::Sequence(vec![
+            format!("--release-artifact-base={}", input.artifact_base).into(),
+            format!("--release-manifest-digest={}", input.manifest_digest).into(),
+            format!("--environment={}", input.env).into(),
+            "--files-addr=0.0.0.0:8082".into(),
+            format!(
+                "--applications={}",
+                applications_argument(&input.applications)?
+            )
+            .into(),
+        ]),
+    );
+    group
+        .entry("ports".into())
+        .or_insert_with(|| Value::Sequence(Vec::new()))
+        .as_sequence_mut()
+        .context("the host group body's `ports` is not a list")?
+        .push(Value::Mapping(Mapping::from_iter([
+            ("name".into(), "files".into()),
+            ("containerPort".into(), 8082.into()),
+            ("protocol".into(), "TCP".into()),
+        ])));
+    group
+        .entry("networking".into())
+        .or_insert_with(|| Value::Mapping(Mapping::new()))
+        .as_mapping_mut()
+        .context("the host group body's `networking` is not a mapping")?
+        .entry("socketEgress".into())
+        .or_insert_with(|| SOCKET_EGRESS.into());
+    ensure!(
+        !group.contains_key("plugins"),
+        "the host group body sets `plugins`, which the release chart derives"
+    );
+    group.insert(
+        "plugins".into(),
+        events_plugin(&input.org, &input.project, &input.env)?,
+    );
+    let roles = input
+        .roles
+        .iter()
+        .map(|role| {
+            let mut entry = Mapping::new();
+            entry.insert("name".into(), role.name.as_str().into());
+            entry.insert("config".into(), Value::Mapping(role.config.clone()));
+            if let Some(recorded) = &role.entry {
+                let image = wamn_catalog::composed_entry_start_reference(
+                    component_base.as_deref(),
+                    recorded,
+                )
+                .context("the host group's WAMN_COMPONENT_ARTIFACT_BASE resolves the entry")?;
+                entry.insert("entry".into(), image.into());
+            }
+            entry.insert(
+                "statements".into(),
+                Value::Sequence(role.statements.iter().cloned().map(Value::String).collect()),
+            );
+            if let Some(environment) = &role.environment {
+                entry.insert("environment".into(), Value::Mapping(environment.clone()));
+            }
+            Ok(Value::Mapping(entry))
+        })
+        .collect::<anyhow::Result<_>>()?;
+    let mut runtime = Mapping::new();
+    runtime.insert(
+        "terminationGracePeriodSeconds".into(),
+        input.drain_bound_seconds.into(),
+    );
+    runtime.insert("podLabels".into(), mapping([("wamn.release", label)]));
+    runtime.insert(
+        "podAnnotations".into(),
+        mapping([
+            ("wamn.release-digest", input.manifest_digest.clone()),
+            ("wamn.environment", environment.clone()),
+        ]),
+    );
+    let mut account = Mapping::new();
+    account.insert(
+        "name".into(),
+        wamn_credential_store::kubernetes::service_account_name(
+            &input.org,
+            &input.project,
+            &input.env,
+        )
+        .into(),
+    );
+    account.insert("create".into(), false.into());
+    runtime.insert("serviceAccount".into(), Value::Mapping(account));
+    runtime.insert("automountServiceAccountToken".into(), true.into());
+    runtime.insert(
+        "hostGroups".into(),
+        Value::Sequence(vec![Value::Mapping(group)]),
+    );
+    let mut operator = Mapping::new();
+    operator.insert("runtime".into(), Value::Mapping(runtime));
+    let mut values = Mapping::new();
+    values.insert(
+        "release".into(),
+        mapping([
+            ("manifestDigest", input.manifest_digest.clone()),
+            ("artifactBase", input.artifact_base.clone()),
+        ]),
+    );
+    values.insert("environment".into(), environment.into());
+    values.insert("routeHost".into(), input.route_host.clone().into());
+    values.insert(
+        "applications".into(),
+        serde_yaml::to_value(&input.applications).context("render the applications")?,
+    );
+    values.insert("roles".into(), Value::Sequence(roles));
+    values.insert("audit".into(), mapping([("actor", input.actor.clone())]));
+    values.insert("runtime-operator".into(), Value::Mapping(operator));
+    // The host's data connection is the environment's NATS user
+    // (docs/plan/alignment.md R5).
+    let env_key = wamn_control_registry::project_env_key(&input.org, &input.project, &input.env);
+    let mut global = Mapping::new();
+    global.insert(
+        "certificates".into(),
+        mapping([("dataCertSecretName", format!("wamn-nats-{env_key}"))]),
+    );
+    values.insert("global".into(), Value::Mapping(global));
+    Ok(Value::Mapping(values))
+}
+
+/// Where Helm writes: an explicit kubeconfig, context and namespace.
+#[derive(Debug, Clone)]
+pub struct Target {
+    pub kubeconfig: PathBuf,
+    pub context: String,
+    /// The release namespace (R6).
+    pub namespace: String,
+}
+
+/// Install or upgrade one environment's release at the version of `chart` and
+/// wait for its host Deployment. `description` is kept with the revision.
+pub async fn upgrade(
+    target: &Target,
+    chart: &Path,
+    name: &str,
+    values: &Path,
+    timeout: Duration,
+    description: &str,
+) -> anyhow::Result<()> {
+    let timeout = format!("{}s", timeout.as_secs());
+    let version = chart_version(chart)?;
+    helm(&[
+        "upgrade".as_ref(),
+        "--install".as_ref(),
+        name.as_ref(),
+        chart.as_os_str(),
+        "--version".as_ref(),
+        version.as_ref(),
+        "--description".as_ref(),
+        description.as_ref(),
+        "--kubeconfig".as_ref(),
+        target.kubeconfig.as_os_str(),
+        "--kube-context".as_ref(),
+        target.context.as_ref(),
+        "--namespace".as_ref(),
+        target.namespace.as_ref(),
+        "-f".as_ref(),
+        values.as_os_str(),
+        "--skip-crds".as_ref(),
+        "--wait".as_ref(),
+        "--timeout".as_ref(),
+        timeout.as_ref(),
+        "--rollback-on-failure".as_ref(),
+        "--history-max".as_ref(),
+        "50".as_ref(),
+    ])
+    .await
+    .map(drop)
+}
+
+/// What clears an operation that a killed writer left pending.
+#[derive(Debug, PartialEq, Eq)]
+enum Recovery {
+    /// A first install never finished: no revision ever served.
+    Uninstall,
+    /// An upgrade or rollback never finished: the previous revision serves.
+    Rollback,
+}
+
+fn recovery(status: &str) -> Option<Recovery> {
+    match status {
+        "pending-install" => Some(Recovery::Uninstall),
+        "pending-upgrade" | "pending-rollback" => Some(Recovery::Rollback),
+        _ => None,
+    }
+}
+
+/// Clear a pending operation on one environment's release (wamn-jovpg).
+///
+/// Only the apply of this environment writes its release, and it holds the
+/// install lock, so a pending operation here belongs to a writer that died,
+/// for example an install Job deleted while Helm waited. Helm refuses every
+/// later upgrade with "another operation (install/upgrade/rollback) is in
+/// progress" until the pending revision is cleared.
+///
+/// # Errors
+///
+/// When Helm fails.
+pub async fn recover_pending(target: &Target, name: &str) -> anyhow::Result<()> {
+    let filter = format!("^{name}$");
+    let listed = helm(&[
+        "list".as_ref(),
+        "--pending".as_ref(),
+        "--filter".as_ref(),
+        filter.as_ref(),
+        "-o".as_ref(),
+        "json".as_ref(),
+        "--kubeconfig".as_ref(),
+        target.kubeconfig.as_os_str(),
+        "--kube-context".as_ref(),
+        target.context.as_ref(),
+        "--namespace".as_ref(),
+        target.namespace.as_ref(),
+    ])
+    .await?;
+    let releases: Vec<serde_json::Value> =
+        serde_json::from_str(&listed).context("decode helm list")?;
+    let Some(status) = releases
+        .iter()
+        .find(|release| release["name"] == name)
+        .and_then(|release| release["status"].as_str())
+    else {
+        return Ok(());
+    };
+    match recovery(status) {
+        Some(Recovery::Uninstall) => uninstall(target, name).await,
+        Some(Recovery::Rollback) => helm(&[
+            "rollback".as_ref(),
+            name.as_ref(),
+            "--kubeconfig".as_ref(),
+            target.kubeconfig.as_os_str(),
+            "--kube-context".as_ref(),
+            target.context.as_ref(),
+            "--namespace".as_ref(),
+            target.namespace.as_ref(),
+            "--wait".as_ref(),
+        ])
+        .await
+        .map(drop),
+        None => Ok(()),
+    }
+}
+
+/// Uninstall one environment's release and wait for its objects to go.
+pub async fn uninstall(target: &Target, name: &str) -> anyhow::Result<()> {
+    helm(&[
+        "uninstall".as_ref(),
+        name.as_ref(),
+        "--kubeconfig".as_ref(),
+        target.kubeconfig.as_os_str(),
+        "--kube-context".as_ref(),
+        target.context.as_ref(),
+        "--namespace".as_ref(),
+        target.namespace.as_ref(),
+        "--wait".as_ref(),
+    ])
+    .await
+    .map(drop)
+}
+
+async fn helm(arguments: &[&std::ffi::OsStr]) -> anyhow::Result<String> {
+    let output = Command::new("helm")
+        .args(arguments)
+        .stdin(Stdio::null())
+        .kill_on_drop(true)
+        .output()
+        .await
+        .context("start helm")?;
+    ensure!(
+        output.status.success(),
+        "helm {} exited {}: {}",
+        arguments
+            .iter()
+            .map(|argument| argument.to_string_lossy())
+            .collect::<Vec<_>>()
+            .join(" "),
+        output.status,
+        String::from_utf8_lossy(&output.stderr)
+    );
+    String::from_utf8(output.stdout).context("helm wrote text")
+}
+
+/// Split `<repository>:<tag>@sha256:<hex>` into the repository and
+/// `<tag>@sha256:<hex>`, the form the subchart's split image fields take.
+fn split_host_image(image: &str) -> anyhow::Result<(String, String)> {
+    let (name, digest) = image
+        .rsplit_once('@')
+        .with_context(|| format!("the host image {image} is not pinned by digest"))?;
+    ensure!(
+        digest.starts_with("sha256:"),
+        "the host image {image} is not pinned by a sha256 digest"
+    );
+    let (repository, tag) = name
+        .rsplit_once(':')
+        .filter(|(_, tag)| !tag.contains('/'))
+        .with_context(|| format!("the host image {image} has no tag"))?;
+    Ok((repository.to_owned(), format!("{tag}@{digest}")))
+}
+
+fn mapping<const N: usize>(entries: [(&str, String); N]) -> Value {
+    Value::Mapping(
+        entries
+            .into_iter()
+            .map(|(key, value)| (key.into(), value.into()))
+            .collect(),
+    )
+}
+
+fn copy_dir(from: &Path, to: &Path) -> anyhow::Result<()> {
+    std::fs::create_dir_all(to).with_context(|| format!("create {}", to.display()))?;
+    for entry in std::fs::read_dir(from).with_context(|| format!("read {}", from.display()))? {
+        let entry = entry?;
+        let target = to.join(entry.file_name());
+        if entry.file_type()?.is_dir() {
+            copy_dir(&entry.path(), &target)?;
+        } else {
+            std::fs::copy(entry.path(), &target)
+                .with_context(|| format!("copy {}", entry.path().display()))?;
+        }
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeMap;
+
+    use super::*;
+
+    #[test]
+    fn only_a_pending_operation_is_recovered() {
+        assert_eq!(recovery("pending-install"), Some(Recovery::Uninstall));
+        assert_eq!(recovery("pending-upgrade"), Some(Recovery::Rollback));
+        assert_eq!(recovery("pending-rollback"), Some(Recovery::Rollback));
+        assert_eq!(recovery("deployed"), None);
+        assert_eq!(recovery("failed"), None);
+    }
+
+    const DIGEST: &str = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+
+    fn input() -> ValuesInput {
+        let mut group = Mapping::new();
+        group.insert("replicas".into(), 3.into());
+        group.insert(
+            "env".into(),
+            serde_yaml::from_str(
+                "[{name: WAMN_COMPONENT_ARTIFACT_BASE, value: registry.example/components}]",
+            )
+            .expect("yaml"),
+        );
+        ValuesInput {
+            org: "acme".into(),
+            project: "wms".into(),
+            env: "prod".into(),
+            manifest_digest: DIGEST.into(),
+            artifact_base: "registry.example/releases".into(),
+            route_host: "wms.acme.example".into(),
+            applications: [(
+                "wms".to_owned(),
+                wamn_catalog::ApplicationDefinition {
+                    connections: std::collections::BTreeMap::new(),
+                    packages: ["wamn_wms".to_owned()].into(),
+                },
+            )]
+            .into(),
+            roles: vec![Role {
+                entry: Some(format!("entries@sha256:{}", "a".repeat(64))),
+                statements: vec!["sql-0".to_owned()],
+                name: RoleName::Http,
+                config: Mapping::new(),
+                environment: None,
+            }],
+            drain_bound_seconds: 300,
+            actor: "ops".into(),
+            host_group: group,
+        }
+    }
+
+    #[test]
+    fn the_chart_version_and_app_version_are_one() {
+        let chart = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../deploy/platform/release");
+        let version = chart_version(&chart).expect("Chart.yaml has a version");
+        let text = std::fs::read_to_string(chart.join("Chart.yaml")).expect("read Chart.yaml");
+        let chart: Value = serde_yaml::from_str(&text).expect("Chart.yaml parses");
+        assert_eq!(chart["appVersion"].as_str(), Some(version.as_str()));
+    }
+
+    #[test]
+    fn release_name_is_bounded_stable_and_cut() {
+        use wamn_control_provision::environment_state::{HASH_LEN, SLUG_LEN};
+        let name = release_name("acme", "wms", "prod").expect("valid coordinate");
+        assert_eq!(
+            name,
+            release_name("acme", "wms", "prod").expect("valid coordinate")
+        );
+        assert!(name.starts_with("r-prod-") && name.len() == "r-prod-".len() + HASH_LEN);
+        assert_eq!(
+            release_name("acme", "wms", "dev").expect("valid coordinate"),
+            "r-dev-2d9920a989cb26764e77"
+        );
+        // A valid env is bounded by the database name it provisions, so a short
+        // org and project leave room for an env longer than the slug.
+        let long = "a".repeat(30);
+        let name = release_name("a", "wms", &long).expect("valid coordinate");
+        assert_eq!(name.len(), 2 + SLUG_LEN + 1 + HASH_LEN);
+        assert!(name.len() <= 47);
+        let other = release_name("a", "wms", &format!("{}b", "a".repeat(29))).expect("valid");
+        assert_ne!(name, other, "envs that share the slug differ by hash");
+        assert_ne!(
+            release_name("acme", "wms", "prod").expect("valid"),
+            release_name("acme", "wms2", "prod").expect("valid")
+        );
+    }
+
+    #[test]
+    fn values_pin_the_release_and_entry_without_overriding_the_runtime_image() {
+        let values = values(&input()).expect("values render");
+        let name = release_name("acme", "wms", "prod").expect("valid coordinate");
+        let label = release_label(DIGEST).expect("digest");
+        assert!(values.get("releaseLabel").is_none());
+        let runtime = &values["runtime-operator"]["runtime"];
+        assert_eq!(runtime["terminationGracePeriodSeconds"].as_u64(), Some(300));
+        assert_eq!(
+            runtime["serviceAccount"]["name"],
+            "wamn-host-acme--wms--prod"
+        );
+        assert_eq!(runtime["serviceAccount"]["create"], false);
+        assert_eq!(runtime["automountServiceAccountToken"], true);
+        assert_eq!(
+            runtime["podLabels"]["wamn.release"].as_str(),
+            Some(label.as_str())
+        );
+        assert_eq!(
+            runtime["podAnnotations"]["wamn.release-digest"].as_str(),
+            Some(DIGEST)
+        );
+        assert_eq!(
+            runtime["podAnnotations"]["wamn.environment"].as_str(),
+            Some("acme/wms/prod")
+        );
+        let group = &runtime["hostGroups"][0];
+        assert_eq!(group["name"].as_str(), Some(name.as_str()));
+        assert_eq!(group["replicas"].as_u64(), Some(3));
+        assert_eq!(
+            group["ports"],
+            serde_yaml::from_str::<Value>("[{name: files, containerPort: 8082, protocol: TCP}]")
+                .expect("yaml")
+        );
+        assert_eq!(
+            group["env"],
+            serde_yaml::from_str::<Value>(
+                "[{name: WAMN_COMPONENT_ARTIFACT_BASE, value: registry.example/components}, \
+                 {name: WAMN_ORG, value: acme}, {name: WAMN_PROJECT, value: wms}, \
+                 {name: WAMN_DRAIN_BOUND_SECONDS, value: '300'}, \
+                 {name: WAMN_MATERIALIZER_DRAIN_BOUND_SECONDS, value: '10'}, \
+                 {name: OTEL_EXPORTER_OTLP_ENDPOINT, \
+                  value: 'http://otel-collector.platform.svc.cluster.local:4317'}, \
+                 {name: OTEL_SERVICE_NAME, value: wamn-host}, \
+                 {name: OTEL_TRACES_SAMPLER, value: parentbased_traceidratio}, \
+                 {name: OTEL_TRACES_SAMPLER_ARG, value: '0.1'}]"
+            )
+            .expect("yaml")
+        );
+        assert_eq!(
+            group["extraArgs"],
+            serde_yaml::from_str::<Value>(&format!(
+                "[--release-artifact-base=registry.example/releases, --release-manifest-digest={DIGEST}, \
+                 --environment=prod, --files-addr=0.0.0.0:8082, '--applications={{\"wms\":{{\"packages\":[\"wamn_wms\"]}}}}']"
+            ))
+            .expect("yaml")
+        );
+        assert_eq!(
+            values["applications"],
+            serde_yaml::from_str::<Value>("{wms: {packages: [wamn_wms]}}").expect("yaml")
+        );
+        assert_eq!(group["networking"]["socketEgress"].as_str(), Some("count"));
+        assert!(runtime.get("image").is_none());
+        assert_eq!(values["audit"]["actor"].as_str(), Some("ops"));
+        assert!(values.get("platform").is_none());
+        assert_eq!(
+            values["roles"][0]["entry"].as_str(),
+            Some(
+                format!(
+                    "registry.example/components/entries@sha256:{}",
+                    "a".repeat(64)
+                )
+                .as_str()
+            )
+        );
+    }
+
+    #[test]
+    fn a_retired_workflow_http_attachment_does_not_render_the_http_role() {
+        let value = serde_json::json!({
+            "format-version": wamn_catalog::SERVING_MANIFEST_FORMAT_VERSION,
+            "release":{"packages":[{"package-id":"orders","package-version":"1.0.0"}]},
+            "components":[],"routes":[],"attachments":{},
+            "workflow":{"attachments":{"orders-http":{"type":"http","wiring-id":"orders"}}}
+        });
+        let (manifest, _) = ServingManifest::from_canonical_bytes(
+            &wamn_execution_contract::canonical_json_bytes(&value),
+        )
+        .unwrap();
+        let roles = roles(&manifest, "acme", "orders", "dev");
+        assert_eq!(roles.len(), 1);
+        assert_eq!(roles[0].name, RoleName::Materializer);
+    }
+
+    #[test]
+    fn an_empty_release_still_renders_the_materializer() {
+        let manifest: ServingManifest = serde_json::from_value(serde_json::json!({
+            "format-version": wamn_catalog::SERVING_MANIFEST_FORMAT_VERSION,
+            "release": {"packages": []}, "components": [], "routes": [], "attachments": {},
+        }))
+        .unwrap();
+        let roles = roles(&manifest, "acme", "orders", "dev");
+        assert_eq!(roles.len(), 1);
+        assert_eq!(roles[0].name, RoleName::Materializer);
+        assert_eq!(
+            roles[0].environment.as_ref().unwrap()["WAMN_MAT_STREAM"].as_str(),
+            Some(wamn_control_provision::event_stream_name("acme", "orders", "dev").as_str())
+        );
+    }
+
+    #[test]
+    fn the_named_application_supplies_the_http_statement_instances() {
+        let mut manifest: ServingManifest = serde_json::from_value(serde_json::json!({
+            "format-version": wamn_catalog::SERVING_MANIFEST_FORMAT_VERSION,
+            "release": {"packages": []}, "components": [], "routes": [],
+            "attachments": {"orders-http": {
+                "type": "http", "package-id": "wamn_wms", "component": "wms",
+                "operation": "get", "definition-hash": DIGEST,
+                "definition": {}, "auth-policy": {"modes": ["none"]}
+            }}
+        }))
+        .unwrap();
+
+        let application = wamn_catalog::ServingEntryMember {
+            package_id: "wamn_wms".into(),
+            component: "wms".into(),
+            digest: DIGEST.into(),
+        };
+        for (name, imports) in [
+            ("wms", vec!["sql-application"]),
+            ("base", vec!["sql-0", "sql-1"]),
+        ] {
+            manifest.components.insert(wamn_catalog::ServingComponent {
+                package_id: "wamn_wms".into(),
+                descriptor: wamn_catalog::ComponentDescriptor::named(name, "0.1", DIGEST),
+                operations: BTreeMap::new(),
+                runtime_schema: None,
+                statement_instances: imports
+                    .into_iter()
+                    .map(|name| (name.to_owned(), BTreeMap::new()))
+                    .collect(),
+            });
+        }
+        manifest.composed_entry = Some(wamn_catalog::ServingComposedEntry {
+            reference: format!("entries@{DIGEST}"),
+            route_digest: DIGEST.into(),
+            application: application.clone(),
+            members: [
+                application,
+                wamn_catalog::ServingEntryMember {
+                    package_id: "wamn_wms".into(),
+                    component: "base".into(),
+                    digest: DIGEST.into(),
+                },
+            ]
+            .into(),
+        });
+        assert_eq!(
+            roles(&manifest, "acme", "orders", "dev")[0].statements,
+            ["sql-application"],
+            "the named application owns the imports even when another member has more"
+        );
+    }
+
+    #[test]
+    fn values_refuse_a_materializer_bound_equal_to_or_above_the_host_bound() {
+        for host_bound in [
+            0,
+            MATERIALIZER_DRAIN_BOUND_SECONDS,
+            MATERIALIZER_DRAIN_BOUND_SECONDS - 1,
+        ] {
+            let mut input = input();
+            input.drain_bound_seconds = host_bound;
+            let error = values(&input).expect_err("materializer must stop before its host");
+            assert_eq!(
+                error.to_string(),
+                format!(
+                    "materializer_drain_bound_seconds (10) must be shorter than drain_bound_seconds ({host_bound})"
+                )
+            );
+        }
+        for host_bound in [MATERIALIZER_DRAIN_BOUND_SECONDS + 1, 30] {
+            let mut input = input();
+            input.drain_bound_seconds = host_bound;
+            assert!(values(&input).is_ok(), "host bound {host_bound} is valid");
+        }
+    }
+
+    #[test]
+    fn values_refuse_an_entry_without_a_component_base() {
+        let mut input = input();
+        input.host_group.remove("env");
+        assert!(values(&input).is_err());
+    }
+
+    #[test]
+    fn values_refuse_a_host_group_that_sets_derived_keys() {
+        for key in ["name", "namespace", "service", "extraArgs", "image"] {
+            let mut input = input();
+            input.host_group.insert(key.into(), "x".into());
+            assert!(values(&input).is_err(), "{key} is refused");
+        }
+        let mut input = input();
+        input.manifest_digest = "e3b0".into();
+        assert!(values(&input).is_err());
+        for variable in [
+            "WAMN_ORG",
+            "WASMCLOUD_HOST_ENVIRONMENT",
+            "WASMTIME_POOLING_LINEAR_MEMORY_KEEP_RESIDENT",
+            "WASMTIME_POOLING_TABLE_KEEP_RESIDENT",
+            "WASMTIME_POOLING_ASYNC_STACK_KEEP_RESIDENT",
+        ] {
+            let mut input = super::tests::input();
+            input.host_group.insert(
+                "env".into(),
+                serde_yaml::from_str(&format!("[{{name: {variable}, value: other}}]"))
+                    .expect("yaml"),
+            );
+            assert!(values(&input).is_err(), "{variable} is refused");
+        }
+    }
+
+    #[test]
+    fn host_image_splits_into_the_subcharts_fields() {
+        assert_eq!(
+            split_host_image("localhost:5000/wamn-host:dev@sha256:ab").expect("split"),
+            (
+                "localhost:5000/wamn-host".to_owned(),
+                "dev@sha256:ab".to_owned()
+            )
+        );
+        assert!(split_host_image("localhost:5000/wamn-host@sha256:ab").is_err());
+        assert!(split_host_image("wamn-host:dev").is_err());
+    }
+}

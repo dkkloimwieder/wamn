@@ -32,7 +32,7 @@ pub(super) async fn install(admin: &Client, admin_url: &str) -> anyhow::Result<S
     admin
         .batch_execute("CREATE ROLE wamn_system NOLOGIN")
         .await?;
-    wamn_control::provision_system::install_control_store(admin).await?;
+    wamn_environment_control::provision_system::install_control_store(admin).await?;
     admin
         .batch_execute(&format!(
             "SET ROLE wamn_system; SET app.user_id = '{}'",
@@ -91,7 +91,7 @@ pub(super) async fn project_database(
     instance: &str,
     logins: &std::path::Path,
 ) -> anyhow::Result<Client> {
-    use wamn_control::provision_project_env::{
+    use wamn_environment_control::provision_project_env::{
         self, WorkloadActionRequest, WorkloadActionVerb, WorkloadGenerationAction,
     };
     let database = wamn_control_provision::project_env_database_name(ORG, project, "dev", instance);

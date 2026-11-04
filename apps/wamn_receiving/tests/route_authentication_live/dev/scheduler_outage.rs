@@ -146,7 +146,7 @@ async fn routes_answer_during_a_scheduler_outage_and_recover() -> anyhow::Result
     let root = scratch.path();
     inputs.environment.local_artifacts.directory = root.join("local-artifacts");
     let (admin, admin_task) = connect(&system_url).await?;
-    let environment = wamn_control::dev::environment::provision(
+    let environment = wamn_dev_control::dev::environment::provision(
         &system_url,
         admin.as_ref(),
         root,
@@ -155,7 +155,7 @@ async fn routes_answer_during_a_scheduler_outage_and_recover() -> anyhow::Result
     )
     .await?;
     let provisioning = inputs.environment.nats.connect().await?;
-    wamn_control::event_streams::provision(
+    wamn_environment_control::event_streams::provision(
         &async_nats::jetstream::new(provisioning.clone()),
         &wamn_control_registry::Triple::new(
             &environment.identity.org,

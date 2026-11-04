@@ -1,0 +1,56 @@
+[package]
+name = "wamn-release-control"
+description = "Release control operations."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[features]
+default = []
+
+[dependencies]
+wamn-credential-store = { workspace = true }
+wash-runtime = { workspace = true, features = ["washlet"] }
+anyhow = { workspace = true }
+hex = { workspace = true }
+oci-client = { workspace = true }
+reqwest = { workspace = true, features = ["rustls"] }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+serde_yaml = { workspace = true }
+tokio = { workspace = true, features = ["fs", "io-util", "macros", "process", "rt", "signal", "sync", "time"] }
+tokio-postgres = { workspace = true, features = ["with-chrono-0_4", "with-serde_json-1"] }
+wamn-catalog = { workspace = true }
+wamn-component-composer = { workspace = true }
+wasmparser = { workspace = true }
+wamn-package-artifact = { workspace = true }
+wamn-control-provision = { workspace = true }
+wamn-control-registry = { workspace = true }
+wamn-execution-contract = { workspace = true }
+wamn-record-history = { workspace = true }
+wamn-runtime = { workspace = true }
+wamn-engine = { workspace = true }
+wamn-schema-control = { workspace = true }
+wamn-schema-generator = { workspace = true }
+wamn-package-control = { workspace = true }
+
+[dev-dependencies]
+wamn-package-artifact = { workspace = true, features = ["test-util"] }
+wamn-runtime = { workspace = true, features = ["test-util"] }
+wamn-fixture-package = { workspace = true }
+tokio = { workspace = true, features = ["io-util", "macros", "net", "rt", "sync", "test-util", "time"] }
+tokio-postgres = { workspace = true, features = ["with-chrono-0_4", "with-uuid-1"] }
+wamn-catalog = { workspace = true, features = ["test-util"] }
+wamn-control-provision = { workspace = true, features = ["test-util"] }
+wamn-project-state = { workspace = true, features = ["test-util"] }
+wamn-test-infrastructure = { workspace = true }
+wamn-test-postgres = { workspace = true }
+wit-component = { workspace = true, features = ["dummy-module"] }
+wat = "=1.254.2"
+wit-parser = { workspace = true }
+url = { workspace = true }
+wamn-platform-identity = { workspace = true }
+wamn-package-control = { workspace = true, features = ["test-util"] }
+
+[lints]
+workspace = true

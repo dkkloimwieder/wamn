@@ -12,12 +12,12 @@ use anyhow::{Context as _, ensure};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use tokio::process::Command;
-use wamn_control::dev::environment::connect;
-use wamn_control::identity_issuer::{IdentityIssuerRequest, provision_identity_issuer};
-use wamn_control::provision_project_env::{
+use wamn_control_provision::{CredentialGeneration, WorkloadRoleFamily, workload_secret_name};
+use wamn_dev_control::dev::environment::connect;
+use wamn_environment_control::identity_issuer::{IdentityIssuerRequest, provision_identity_issuer};
+use wamn_environment_control::provision_project_env::{
     self, WorkloadActionRequest, WorkloadActionVerb, WorkloadGenerationAction,
 };
-use wamn_control_provision::{CredentialGeneration, WorkloadRoleFamily, workload_secret_name};
 
 const IDENTITY: &str = "host-session-identity";
 
@@ -67,7 +67,7 @@ pub async fn prepare_application(
         }))?,
     )?;
     let issuer = prepare(cluster, manifest_digest, &fixture).await?;
-    let database = wamn_control::provision_project_env::secret_value(
+    let database = wamn_environment_control::provision_project_env::secret_value(
         &cluster.work.join("session-identity-db.json"),
         "url",
     )?;
@@ -259,7 +259,7 @@ pub async fn prepare(
     .await?;
     install_mode(
         cluster,
-        wamn_control::platform::identity::Mode::Session {
+        wamn_environment_control::platform::identity::Mode::Session {
             targets: vec![target_name],
             nats: None,
         },
@@ -707,14 +707,14 @@ fn write_private(path: &Path, bytes: &[u8]) -> anyhow::Result<()> {
 /// Install the same identity chart with foundation or session inputs.
 pub async fn install_mode(
     cluster: &IssuerCluster<'_>,
-    mode: wamn_control::platform::identity::Mode,
+    mode: wamn_environment_control::platform::identity::Mode,
 ) -> anyhow::Result<()> {
     let identity_image = cluster
         .identity_image
         .context("candidate identity image is required")?;
     let issuer = format!("https://{IDENTITY}.{}.svc.cluster.local", cluster.namespace);
-    let entry =
-        wamn_control::platform::journey::identity(&wamn_control::platform::identity::ChartInput {
+    let entry = wamn_environment_control::platform::journey::identity(
+        &wamn_environment_control::platform::identity::ChartInput {
             chart: &cluster.repository.join("deploy/platform/identity"),
             name: IDENTITY,
             namespace: cluster.namespace,
@@ -728,7 +728,8 @@ pub async fn install_mode(
             resend_from: "",
             invite_url: "",
             mode,
-        })?;
+        },
+    )?;
     let values = cluster.work.join("session-identity-values.yaml");
     fs::write(&values, serde_yaml::to_string(&entry["values"])?)?;
     for install in [false, true] {
@@ -850,7 +851,11 @@ pub async fn foundation(cluster: &IssuerCluster<'_>) -> anyhow::Result<String> {
             )),
     )
     .await?;
-    install_mode(cluster, wamn_control::platform::identity::Mode::Foundation).await?;
+    install_mode(
+        cluster,
+        wamn_environment_control::platform::identity::Mode::Foundation,
+    )
+    .await?;
     let deployment = read_object(
         cluster,
         "foundation-deployment",

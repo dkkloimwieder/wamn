@@ -50,7 +50,7 @@ async fn run(evidence: &std::path::Path) -> anyhow::Result<()> {
     )?;
     result?;
     if let Some((candidate, _)) = &cluster.resources.candidate {
-        wamn_control::delivery::report_candidate_success(candidate)?;
+        wamn_release_control::delivery::report_candidate_success(candidate)?;
     }
     Ok(())
 }
@@ -182,9 +182,9 @@ async fn exercise(cluster: &mut ReceivingCluster) -> anyhow::Result<()> {
         kubeconfig: resources.work.join("kubeconfig"),
         context: format!("kind-{}", resources.name),
         namespace: NAMESPACE.to_owned(),
-        materializer_workload: wamn_control::release_chart::workload_name(
+        materializer_workload: wamn_release_control::release_chart::workload_name(
             &deployed.name,
-            wamn_control::release_chart::RoleName::Materializer,
+            wamn_release_control::release_chart::RoleName::Materializer,
         ),
         statement_timeout_ms: statement_timeout(resources, &deployed.name).await?,
     });
@@ -193,7 +193,7 @@ async fn exercise(cluster: &mut ReceivingCluster) -> anyhow::Result<()> {
         .environment
         .connect(&cluster.nats.server)
         .await?;
-    let wiring = wamn_control::author_workflow::read_wiring_document(
+    let wiring = wamn_environment_control::author_workflow::read_wiring_document(
         &super::super::overlay_package_root()
             .join("publication/wirings/quality_create_inspection.json"),
     )?;

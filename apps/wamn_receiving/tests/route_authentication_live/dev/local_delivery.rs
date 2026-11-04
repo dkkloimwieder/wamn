@@ -71,7 +71,7 @@ async fn local_watch_preserves_data_refuses_bad_sql_and_recreates_schema() -> an
     inputs.environment.local_artifacts.directory = root.join("local-artifacts");
 
     let (admin, admin_task) = connect(&system_url).await?;
-    let environment = wamn_control::dev::environment::provision(
+    let environment = wamn_dev_control::dev::environment::provision(
         &system_url,
         admin.as_ref(),
         root,
@@ -86,7 +86,7 @@ async fn local_watch_preserves_data_refuses_bad_sql_and_recreates_schema() -> an
         &environment.identity.project,
         environment.identity.environment.as_str(),
     );
-    wamn_control::event_streams::provision(
+    wamn_environment_control::event_streams::provision(
         &async_nats::jetstream::new(provisioning.clone()),
         &scope,
         inputs.environment.stream_replicas,

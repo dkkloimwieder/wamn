@@ -47,7 +47,7 @@ async fn file_reference_is_introspected_and_other_platform_keys_are_refused() {
     }
     client
         .batch_execute(include_str!(
-            "../../../control/lib/tests/support/file_package/migrations/0001_documents.sql"
+            "../../../control/environment/tests/support/file_package/migrations/0001_documents.sql"
         ))
         .await
         .unwrap();

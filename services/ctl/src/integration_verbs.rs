@@ -51,7 +51,7 @@ enum IntegrationCommand {
 pub async fn run(args: IntegrationArgs) -> anyhow::Result<()> {
     let built = match args.command {
         IntegrationCommand::Build { code, repository } => {
-            wamn_control::integration::build(&repository, &code).await?
+            wamn_package_control::integration::build(&repository, &code).await?
         }
         IntegrationCommand::Publish {
             code,
@@ -63,14 +63,14 @@ pub async fn run(args: IntegrationArgs) -> anyhow::Result<()> {
             operations,
             write_interfaces,
         } => {
-            let built = wamn_control::integration::build(&repository, &code).await?;
-            let publication = wamn_control::integration::Publication {
+            let built = wamn_package_control::integration::build(&repository, &code).await?;
+            let publication = wamn_package_control::integration::Publication {
                 version,
                 parameter_schema: serde_json::from_slice(&std::fs::read(parameter_schema)?)?,
                 operations,
                 write_interfaces,
             };
-            wamn_control::integration::publish(
+            wamn_package_control::integration::publish(
                 &built,
                 &registry.registry(),
                 &database_url,

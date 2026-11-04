@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["services/host", "services/edge", "services/identity", "services/ctl", "services/scenario-worker", "services/cdc-reader", "tools/bench", "tools/submodule-check", "tests/orchestrator", "tests/conformance", "tests/integration", "tests/system", "test-support/harness", "test-support/fixture-package", "test-support/infrastructure", "test-support/postgres", "crates/client/core", "apps/wamn_receiving/tests", "apps/wamn_wms/tests", "crates/authoring/model", "crates/catalog/model", "crates/catalog/package-artifact", "crates/execution/host", "crates/execution/workflow/router", "crates/execution/run-state", "crates/execution/run-state-sqlite", "crates/execution/workflow", "crates/schema/control", "crates/schema/generator", "crates/schema/introspection", "crates/platform/pg-core", "crates/platform/number-pattern", "crates/platform/component-policy", "crates/platform/component-composer", "crates/platform/component-virtualizer", "crates/platform/engine", "crates/platform/runtime", "crates/control/lib", "crates/control/provision", "crates/control/registry", "crates/identity/platform", "crates/identity/client", "crates/identity/session", "crates/identity/project-state", "crates/identity/credential-store"]
+members = ["services/host", "services/edge", "services/identity", "services/ctl", "services/scenario-worker", "services/cdc-reader", "tools/bench", "tools/submodule-check", "tests/orchestrator", "tests/conformance", "tests/integration", "tests/system", "test-support/harness", "test-support/fixture-package", "test-support/infrastructure", "test-support/postgres", "crates/client/core", "apps/wamn_receiving/tests", "apps/wamn_wms/tests", "crates/authoring/model", "crates/catalog/model", "crates/catalog/package-artifact", "crates/execution/host", "crates/execution/workflow/router", "crates/execution/run-state", "crates/execution/run-state-sqlite", "crates/execution/workflow", "crates/schema/control", "crates/schema/generator", "crates/schema/introspection", "crates/platform/pg-core", "crates/platform/number-pattern", "crates/platform/component-policy", "crates/platform/component-composer", "crates/platform/component-virtualizer", "crates/platform/engine", "crates/platform/runtime", "crates/control/package", "crates/control/release", "crates/control/environment", "crates/control/dev", "crates/control/provision", "crates/control/registry", "crates/identity/platform", "crates/identity/client", "crates/identity/session", "crates/identity/project-state", "crates/identity/credential-store"]
 default-members = [
   "crates/authoring/model",
   "crates/catalog/model",
@@ -240,7 +240,10 @@ wamn-cdc-reader = { path = "services/cdc-reader", version = "0.1.0" }
 wamn-component-policy = { path = "crates/platform/component-policy", version = "0.1.0" }
 wamn-component-composer = { path = "crates/platform/component-composer", version = "0.1.0" }
 wamn-component-virtualizer = { path = "crates/platform/component-virtualizer", version = "0.1.0" }
-wamn-control = { path = "crates/control/lib", version = "0.1.0" }
+wamn-package-control = { path = "crates/control/package", version = "0.1.0" }
+wamn-release-control = { path = "crates/control/release", version = "0.1.0" }
+wamn-environment-control = { path = "crates/control/environment", version = "0.1.0" }
+wamn-dev-control = { path = "crates/control/dev", version = "0.1.0" }
 wamn-control-provision = { path = "crates/control/provision", version = "0.1.0" }
 wamn-control-registry = { path = "crates/control/registry", version = "0.1.0" }
 wamn-ctl = { path = "services/ctl", version = "0.1.0" }

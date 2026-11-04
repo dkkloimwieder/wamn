@@ -1,0 +1,243 @@
+//! Invite the document's owner only when no password or pending invitation exists.
+
+use std::path::Path;
+
+use anyhow::Context as _;
+use serde_json::{Value, json};
+
+use crate::kubectl;
+use wamn_release_control::release_chart::Target;
+
+use super::document::ClusterDocument;
+use super::install::SecretData;
+use super::job::{self, JobRequest, SecretMount};
+
+const STATE: &str = "SELECT EXISTS (
+    SELECT FROM identity.principals p WHERE p.type = 'user' AND p.email = :'owner'
+    AND (EXISTS (SELECT FROM identity.password_credentials c WHERE c.principal_id = p.id)
+      OR EXISTS (SELECT FROM identity.password_tokens t WHERE t.principal_id = p.id
+        AND t.purpose = 'invitation' AND t.consumed_at IS NULL AND t.expires_at > clock_timestamp()))
+);";
+
+pub(super) const OWNER_STATE: &str = "export PGPASSWORD=\"$(cat /etc/wamn/postgres/password)\"; exec psql --no-psqlrc --tuples-only --no-align --set ON_ERROR_STOP=1 --set owner=\"$OWNER_EMAIL\" --file /inputs/state.sql";
+
+pub(super) const INVITE: &str = r#"invite_owner() {
+  umask 077
+  scratch=$(mktemp -d)
+  trap 'rm -rf "$scratch"' EXIT
+  database=$(cat /etc/wamn/postgres/uri)
+  export WAMN_SYSTEM_ADMIN_URL="${database%/*}/wamn_system"
+  for key in crt key; do
+    kubectl -n identity get secret "operator-$ORG" -o "jsonpath={.data.tls\\.$key}" > "$scratch/encoded" || return 1
+    base64 -d "$scratch/encoded" > "$scratch/tls.$key" || return 1
+  done
+  kubectl -n identity get secret identity-tls -o 'jsonpath={.data.ca\.crt}' > "$scratch/encoded" || return 1
+  base64 -d "$scratch/encoded" > "$scratch/ca.crt" || return 1
+  export WAMN_PAT_CLIENT_CERT="$scratch/tls.crt" WAMN_PAT_CLIENT_KEY="$scratch/tls.key" WAMN_PAT_SERVER_CA="$scratch/ca.crt"
+  /usr/local/bin/wamn-ctl invite --org "$ORG" --email "$OWNER_EMAIL" --display-name "$OWNER_EMAIL" --org-admin
+}
+errors=$(mktemp)
+invite_owner 2>"$errors" || { cat "$errors" >&2; echo 'invite owner failed' >&2; exit 1; }
+echo 'owner invitation accepted'
+"#;
+
+fn postgres_mount() -> SecretMount {
+    SecretMount {
+        name: "wamn-pg-superuser".into(),
+        path: "/etc/wamn/postgres".into(),
+        keys: vec!["uri".into(), "password".into()],
+    }
+}
+
+pub(super) async fn apply(
+    target: &Target,
+    document: &ClusterDocument,
+    directory: &Path,
+) -> anyhow::Result<bool> {
+    let cluster: Value = kubectl::get(
+        &target.kubeconfig,
+        &target.context,
+        "platform",
+        "cluster.postgresql.cnpg.io",
+        "wamn-pg",
+    )
+    .await?
+    .context("missing Cluster platform/wamn-pg")?;
+    let (probe, secrets, inputs) = state_inputs(
+        document,
+        cluster["spec"]["imageName"]
+            .as_str()
+            .context("PostgreSQL Cluster has no image")?,
+    );
+    job::run(target, directory, &probe, &inputs, &secrets).await?;
+    if !needs_invite(&job::output(target, &probe).await?)? {
+        return Ok(false);
+    }
+    // The Job runs in the platform namespace, so it copies the ctl auth client
+    // like the package and environment Jobs.
+    let auth: SecretData = kubectl::get(
+        &target.kubeconfig,
+        &target.context,
+        "platform",
+        "secret",
+        "wamn-ctl-nats",
+    )
+    .await?
+    .context("missing Secret platform/wamn-ctl-nats")?;
+    let (request, secrets, inputs) =
+        invite_inputs(document, &super::install::runner_image(directory)?, &auth)?;
+    job::run(target, directory, &request, &inputs, &secrets).await
+}
+
+pub(super) fn request(
+    document: &ClusterDocument,
+    image: &str,
+    auth: &SecretData,
+) -> anyhow::Result<JobRequest> {
+    let mut request = JobRequest {
+        name: format!("platform-invite-{}", document.org),
+        image: image.into(),
+        command: vec!["/bin/sh".into(), "-ec".into()],
+        arguments: vec![INVITE.into()],
+        calls_kubernetes: true,
+        refresh: true,
+        environment: [
+            ("ORG".into(), document.org.clone()),
+            ("OWNER_EMAIL".into(), document.owner_email.clone()),
+            (
+                "WAMN_PAT_ISSUER".into(),
+                "https://identity.identity.svc.cluster.local".into(),
+            ),
+        ]
+        .into(),
+        // The input volume appears only after the Job runner grants its access.
+        files: [(
+            "kubeconfig".into(),
+            super::environments::kubeconfig().to_string(),
+        )]
+        .into(),
+        secret_mounts: vec![postgres_mount()],
+        ..JobRequest::default()
+    };
+    job::auth_nats_inputs(&mut request, auth)?;
+    Ok(request)
+}
+
+pub(super) fn state_request(document: &ClusterDocument, image: &str) -> JobRequest {
+    JobRequest {
+        name: format!("platform-owner-state-{}", document.org),
+        image: image.into(),
+        command: vec!["/bin/sh".into(), "-ec".into()],
+        arguments: vec![OWNER_STATE.into()],
+        environment: [
+            ("PGHOST".into(), super::install::DATABASE_HOST.into()),
+            ("PGUSER".into(), "postgres".into()),
+            ("PGDATABASE".into(), "wamn_system".into()),
+            ("OWNER_EMAIL".into(), document.owner_email.clone()),
+        ]
+        .into(),
+        files: [("state.sql".into(), STATE.into())].into(),
+        secret_mounts: vec![postgres_mount()],
+        capture_output: true,
+        refresh: true,
+        run_as_user: Some(0),
+        ..JobRequest::default()
+    }
+}
+
+pub(super) fn needs_invite(output: &str) -> anyhow::Result<bool> {
+    match output.trim() {
+        "t" => Ok(false),
+        "f" => Ok(true),
+        _ => anyhow::bail!("owner invitation state is not a boolean"),
+    }
+}
+
+pub(super) fn state_inputs(document: &ClusterDocument, image: &str) -> job::JobInputs {
+    (
+        state_request(document, image),
+        Vec::new(),
+        json!({"org":document.org}),
+    )
+}
+
+pub(super) fn invite_inputs(
+    document: &ClusterDocument,
+    image: &str,
+    auth: &SecretData,
+) -> anyhow::Result<job::JobInputs> {
+    Ok((
+        request(document, image, auth)?,
+        Vec::new(),
+        json!({"org":document.org}),
+    ))
+}
+
+#[cfg(test)]
+mod tests {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    use super::INVITE;
+
+    /// Run the Job script with stub kubectl and wamn-ctl that log to stderr.
+    fn run_invite(exit: &str) -> std::process::Output {
+        let directory =
+            std::env::temp_dir().join(format!("wamn-invite-script-{}-{exit}", std::process::id()));
+        std::fs::create_dir_all(&directory).unwrap();
+        for (name, body) in [
+            ("kubectl", "#!/bin/sh\nexit 0\n".to_owned()),
+            (
+                "wamn-ctl",
+                format!(
+                    "#!/bin/sh\necho 'INFO async_nats: connected' >&2\necho invited\nexit {exit}\n"
+                ),
+            ),
+        ] {
+            let path = directory.join(name);
+            std::fs::write(&path, body).unwrap();
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        std::fs::write(directory.join("uri"), "postgresql://host/postgres").unwrap();
+        let script = INVITE
+            .replace(
+                "/usr/local/bin/wamn-ctl",
+                directory.join("wamn-ctl").to_str().unwrap(),
+            )
+            .replace(
+                "/etc/wamn/postgres/uri",
+                directory.join("uri").to_str().unwrap(),
+            );
+        let output = std::process::Command::new("/bin/sh")
+            .args(["-ec", &script])
+            .env("PATH", format!("{}:/usr/bin:/bin", directory.display()))
+            .output()
+            .unwrap();
+        std::fs::remove_dir_all(&directory).unwrap();
+        output
+    }
+
+    // Kind run 7: the verb's stderr made the passing Job log differ from the
+    // line platform_apply_kind reads.
+    #[test]
+    fn a_passing_invite_logs_only_its_result() {
+        let output = run_invite("0");
+        assert!(output.status.success());
+        assert_eq!(
+            String::from_utf8_lossy(&output.stdout),
+            "invited\nowner invitation accepted\n"
+        );
+        assert_eq!(String::from_utf8_lossy(&output.stderr), "");
+    }
+
+    // Kind run 5: the failed Job log named no cause.
+    #[test]
+    fn a_failed_invite_logs_the_verb_error() {
+        let output = run_invite("1");
+        assert!(!output.status.success());
+        assert_eq!(String::from_utf8_lossy(&output.stdout), "invited\n");
+        assert_eq!(
+            String::from_utf8_lossy(&output.stderr),
+            "INFO async_nats: connected\ninvite owner failed\n"
+        );
+    }
+}

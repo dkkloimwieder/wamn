@@ -49,7 +49,9 @@ reqwest = { workspace = true, features = ["json"] }
 serde_yaml = { workspace = true }
 # `wamn_catalog::fixture_graph` is gated behind `test-util`.
 wamn-catalog = { workspace = true, features = ["test-util"] }
-wamn-control = { workspace = true }
+wamn-package-control = { workspace = true }
+wamn-release-control = { workspace = true }
+wamn-environment-control = { workspace = true }
 wamn-test-infrastructure = { workspace = true }
 wamn-runtime = { workspace = true, features = ["test-util"] }
 wamn-session = { workspace = true }

@@ -57,7 +57,7 @@ Build that chart first with the platform build step, against a registry at a loo
 ```bash
 target/debug/wamn-ctl build-platform --registry localhost:<port> --out "$WAMN_RESULTS/release-chart"
 WAMN_RELEASE_CHART="$WAMN_RESULTS/release-chart" \
-  cargo test -p wamn-control --test environment_apply_kind -- --ignored --nocapture
+  cargo test -p wamn-dev-control --test environment_apply_kind -- --ignored --nocapture
 ```
 
 The test prints its work directory. `report.json` in that directory records each check with its command, output, and result.

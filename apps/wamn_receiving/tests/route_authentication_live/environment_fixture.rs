@@ -46,14 +46,15 @@ pub(super) fn overlay_route_path(wiring_id: &str) -> &'static str {
 /// Apply each released journey package as the artifact
 /// [`push_journey_packages`] pushed, in its order.
 pub(super) async fn install_journey_project(
-    packages: &[wamn_control::apply_package::PackageRoot],
+    packages: &[wamn_package_control::apply_package::PackageRoot],
     project: &Client,
     project_url: &str,
 ) -> anyhow::Result<()> {
     install_journey_platform_floor(project, PLATFORM_DOMAIN).await?;
     for (package, root) in released_journey_packages().zip(packages) {
         apply_package::apply_package(ApplyPackageRequest {
-            component_source: wamn_control::apply_package::component_source_from_env(None).unwrap(),
+            component_source: wamn_package_control::apply_package::component_source_from_env(None)
+                .unwrap(),
             changes: wamn_platform_identity::auth_changes::AuthChanges::default(),
             package: root.clone(),
             database_url: project_url.to_owned(),
@@ -74,7 +75,7 @@ pub(super) async fn install_journey_project(
 }
 
 pub(super) async fn reconcile_journey_data_access(
-    packages: &[wamn_control::apply_package::PackageRoot],
+    packages: &[wamn_package_control::apply_package::PackageRoot],
     project_url: &str,
 ) -> anyhow::Result<()> {
     wamn_gate_harness::environment::reconcile_package_data_access(
@@ -145,7 +146,7 @@ pub(super) fn render_component_declarations(
             // virtualized bytes over authored pins without editing the package.
             let package_root = journey_package_root(package);
             let mut base_digests =
-                wamn_control::component_declaration::authored_base_digests(&package_root)
+                wamn_package_control::component_declaration::authored_base_digests(&package_root)
                     .with_context(|| format!("read {} base pins", package_root.display()))?;
             for base in released_journey_packages() {
                 let coordinate = format!("{}@{}", base.id, base.version());
@@ -157,11 +158,12 @@ pub(super) fn render_component_declarations(
                         wamn_engine::component_admission::component_digest(&bytes).into_boxed_str();
                 }
             }
-            let declaration = wamn_control::component_declaration::render_declaration_document(
-                &source,
-                identity().env_key().as_str(),
-            )
-            .with_context(|| format!("render {}", source.display()))?;
+            let declaration =
+                wamn_package_control::component_declaration::render_declaration_document(
+                    &source,
+                    identity().env_key().as_str(),
+                )
+                .with_context(|| format!("render {}", source.display()))?;
             let destination = output.join(format!("{}.json", package.component));
             std::fs::write(&destination, serde_json::to_vec(&declaration)?)
                 .with_context(|| format!("write {}", destination.display()))?;
@@ -396,12 +398,12 @@ pub(super) struct JourneyReleaseTarget<'a> {
 /// beside the component artifact base.
 pub(super) fn journey_package_registry(
     inputs: &JourneyDocument,
-) -> anyhow::Result<wamn_control::package_artifact::PackageRegistry> {
+) -> anyhow::Result<wamn_package_control::package_artifact::PackageRegistry> {
     let (parent, _) = inputs
         .component_artifact_base
         .rsplit_once('/')
         .context("the component artifact base names a repository")?;
-    Ok(wamn_control::package_artifact::PackageRegistry {
+    Ok(wamn_package_control::package_artifact::PackageRegistry {
         artifact_base: format!("{parent}/packages"),
         registry_auth_file: inputs.registry_auth_file.clone(),
         insecure_registry: true,
@@ -415,13 +417,13 @@ pub(super) fn journey_package_registry(
 /// authorship and publish read component facts from these artifacts.
 pub(super) async fn push_journey_packages(
     inputs: &JourneyDocument,
-) -> anyhow::Result<Vec<wamn_control::apply_package::PackageRoot>> {
+) -> anyhow::Result<Vec<wamn_package_control::apply_package::PackageRoot>> {
     let registry = journey_package_registry(inputs)?;
     let mut packages = Vec::new();
     for package in released_journey_packages() {
         let path = journey_package_root(package);
-        let pushed = wamn_control::package_artifact::push_package(
-            &wamn_control::package_artifact::PushPackageRequest {
+        let pushed = wamn_package_control::package_artifact::push_package(
+            &wamn_package_control::package_artifact::PushPackageRequest {
                 package: path.clone(),
                 registry: registry.clone(),
                 component_artifact_base: inputs.component_artifact_base.clone(),
@@ -429,7 +431,7 @@ pub(super) async fn push_journey_packages(
         )
         .await
         .with_context(|| format!("push the {} package artifact", package.id))?;
-        packages.push(wamn_control::apply_package::PackageRoot {
+        packages.push(wamn_package_control::apply_package::PackageRoot {
             path,
             artifact_digest: Some(pushed.digest),
         });
@@ -495,7 +497,7 @@ pub(super) async fn publish_journey_release(
     .await
     .context("pull the exact released manifest")?;
     let (manifest, _) = wamn_catalog::ServingManifest::from_canonical_bytes(&bytes)?;
-    wamn_control::environment::stage::write_release(
+    wamn_environment_control::environment::stage::write_release(
         project_url,
         identity().env_key().as_str(),
         &digest,
@@ -598,13 +600,13 @@ pub(super) async fn seed_materializer_order(
 
 pub(super) async fn author_materializer_workflow(
     inputs: &JourneyDocument,
-    route: &wamn_control::provision_project_env::ProvisionedRoute,
-    events: &wamn_control::environment::EventBroker,
+    route: &wamn_environment_control::provision_project_env::ProvisionedRoute,
+    events: &wamn_environment_control::environment::EventBroker,
 ) -> anyhow::Result<()> {
-    use wamn_control::author_workflow::{
+    use wamn_environment_control::author_workflow::{
         AuthorWorkflowRequest, WorkflowExecution, WorkflowTrigger,
     };
-    let graph = wamn_control::author_workflow::read_wiring_document(
+    let graph = wamn_environment_control::author_workflow::read_wiring_document(
         &overlay_package_root().join("publication/wirings/quality_create_inspection.json"),
     )?;
     let (project, task) = connect(&route.database_url).await?;

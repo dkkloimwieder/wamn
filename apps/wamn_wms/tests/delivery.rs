@@ -1,7 +1,7 @@
 //! The candidate release of the WMS cluster cases.
 
 use anyhow::{Context as _, ensure};
-use wamn_control::delivery::Candidate;
+use wamn_release_control::delivery::Candidate;
 
 pub(crate) use wamn_test_infrastructure::rendering::{host_values, image_reference};
 

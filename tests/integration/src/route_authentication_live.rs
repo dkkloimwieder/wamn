@@ -8,13 +8,13 @@ use wamn_platform_identity::auth_changes::{AuthChanges, AuthDrops};
 use anyhow::Context as _;
 use tokio_postgres::Client;
 use wamn_catalog::SERVING_MANIFEST_FORMAT_VERSION;
-use wamn_control::apply_package::{self, ApplyPackageRequest};
-use wamn_control::provision_project_env::{self, secret_value};
 use wamn_control_provision::{SystemReader, WorkloadRoleFamily, parse_system_reader_url};
 use wamn_engine::flow_http_routing::{FlowHttpRouting, RouteInFlightLimit};
 use wamn_engine::release_manifest::LoadedRelease;
 use wamn_engine::router_delivery::authorize_attachment_for_test;
+use wamn_environment_control::provision_project_env::{self, secret_value};
 use wamn_gate_harness::journey::{journey_document_schema_bytes, parse_journey_document};
+use wamn_package_control::apply_package::{self, ApplyPackageRequest};
 use wamn_platform_identity::{
     PrincipalType, assign_project_role, create_service, create_user, disable_principal, issue_pat,
     operator_subject, resolve_subject, revoke_pat,
@@ -28,7 +28,7 @@ use wamn_runtime::plugins::wamn_postgres::{
 };
 
 use crate::identity_session_test::membership::{self as fixture_membership, MembershipRequest};
-use wamn_control::dev::environment::{
+use wamn_dev_control::dev::environment::{
     ENV_KEY, ENVIRONMENT, JourneyScope, ORG, PROJECT, connect, generation_args, provision_route,
     reset_control_store,
 };
@@ -209,9 +209,10 @@ async fn install_project_and_reconcile(project: &Client, project_url: &str) -> a
     }
     wamn_test_infrastructure::fixture_digest::write_build_record(&package);
     let args = || ApplyPackageRequest {
-        component_source: wamn_control::apply_package::component_source_from_env(None).unwrap(),
+        component_source: wamn_package_control::apply_package::component_source_from_env(None)
+            .unwrap(),
         changes: wamn_platform_identity::auth_changes::AuthChanges::default(),
-        package: wamn_control::apply_package::PackageRoot {
+        package: wamn_package_control::apply_package::PackageRoot {
             path: package.clone(),
             artifact_digest: Some(
                 wamn_test_infrastructure::fixture_digest::fixture_artifact_digest(&package)
@@ -506,8 +507,11 @@ async fn assert_user_environment_membership(
             wamn_schema_control::ensure_scenario_author_role_sql(),
         ))
         .await?;
-    wamn_control::dev::environment::install_journey_platform_floor(&other_project, "example.test")
-        .await?;
+    wamn_dev_control::dev::environment::install_journey_platform_floor(
+        &other_project,
+        "example.test",
+    )
+    .await?;
     other_project
         .execute(
             "SELECT set_config('app.user_id', $1, false), \
@@ -850,7 +854,7 @@ async fn production_operator_authentication_and_operation_authorization() {
 }
 
 async fn production_operator_authentication(root: &Path) {
-    wamn_control::dev::pat_issuer::identity_binary().expect("find the wamn-identity binary");
+    wamn_dev_control::dev::pat_issuer::identity_binary().expect("find the wamn-identity binary");
     // Provisioning changes roles and database grants of the whole server, so
     // the test starts its own.
     let mut server =

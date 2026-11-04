@@ -8,9 +8,9 @@ use async_nats::jetstream::{Context, message::StreamMessage, stream::Stream};
 use serde_json::{Value, json};
 use tokio::process::Command;
 use tokio_postgres::Client;
-use wamn_control::release_chart;
 use wamn_event_wire::{DeliveryAdvisory, DeliveryAdvisoryType, Envelope, Op};
 use wamn_gate_harness::journey::PostcommitPhase;
+use wamn_release_control::release_chart;
 
 use super::{
     BASE_PACKAGE_ID, JourneyDocument, connect, identity, materializer_durable, materializer_stream,

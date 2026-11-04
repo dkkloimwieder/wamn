@@ -1,5 +1,5 @@
 use clap::{CommandFactory as _, Parser};
-use wamn_control::provision_project_env::ensure_distinct_secret_paths;
+use wamn_environment_control::provision_project_env::ensure_distinct_secret_paths;
 
 use super::*;
 
@@ -669,7 +669,7 @@ fn every_family_secret_is_bound_to_its_own_prepare() {
 
 /// The management-admitter family's own parse, split from
 /// `the_management_admitter_action_is_one_more_stamp_of_the_workload_lifecycle`,
-/// whose lifecycle half stays beside the implementation in `wamn-control`.
+/// whose lifecycle half stays beside the implementation in `wamn-environment-control`.
 #[test]
 fn the_management_admitter_action_parses_its_own_prepare_and_secret() {
     // One action per invocation and one Secret bound to its own prepare are

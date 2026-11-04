@@ -6,7 +6,7 @@
 # TLS is required. Every client presents a certificate from the ClusterIssuer
 # wasmcloud-ca (deploy/infra/nats-certificates.yaml), and the server maps its
 # DNS name to a user (`verify_and_map`). Platform apply writes the users to the
-# Secret wamn-nats-authorization (crates/control/lib/src/platform/broker.rs).
+# Secret wamn-nats-authorization (crates/control/environment/src/platform/broker.rs).
 #
 # The volume is pd-standard.
 apiVersion: v1

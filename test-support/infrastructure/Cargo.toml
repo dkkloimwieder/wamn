@@ -44,7 +44,8 @@ tokio-postgres = { workspace = true }
 wamn-test-postgres = { workspace = true }
 
 [dev-dependencies]
-wamn-control = { workspace = true }
+wamn-environment-control = { workspace = true }
+wamn-dev-control = { workspace = true }
 
 [lints]
 workspace = true
