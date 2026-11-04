@@ -125,6 +125,16 @@ A journey test drives the product's own deploy path, which is the `wamn` command
 Test code that does again what the product does is deleted, not fixed or hardened.
 If the product cannot drive a step that a journey needs, that is a product gap: file it as a bead against the deploy routes (Track 2), and do not compensate in test code.
 
+### Test rules
+
+Owner ruling 2026-11-04 (`wamn-inmae`, docs/audit/test-practice.md Part C). Check every test you write or rewrite against all five before you push, and state in the push report which rules the diff touched. No diff that violates one merges.
+
+1. Test a contract once, at the lowest tier that can observe it; a kind or live test asserts only the state its cluster or server alone shows.
+2. Assert text, a count or a whole document only when that text, count or document is itself the contract. Corollary: derive the asserted set from the artifact under test — never hand-pin a roster of names the artifact can enumerate. A pinned roster is a change detector, and a new member it misses is an unchecked consumer.
+3. Do not test a test helper: no fabricated-failure cases for checkers, no pinned diagnostics.
+4. An `#[ignore]` only for a prerequisite the target's tier does not supply; a target sits in the tier of its strongest resource.
+5. A failed acceptance run is answered with a product fix and the test that catches the defect — never with only an updated expected list, title or message.
+
 ## Standing repository rules
 
 Epics may run in parallel when they share no files and no migration (owner ruling 2026-10-09). Each running epic is scoped into issues; the epics not yet started in the owning plan are direction, not work, and have no issues. Merges to `main` are serial. Migration numbers are assigned at merge, not in the lane. Before merge, a lane runs every live test target that touches its files. The per-merge live-target list comes from tools/test-changes against the branch diff, never from a hand-written list. The test of the owning plan is that scoping: an epic must be scopable into fully specified issues from the owning plan alone, each issue naming its files, the owning plan’s invariants it makes true and the owning plan’s checks it runs. If it cannot be, the owning plan is insufficient; the gap is reported with the section that fails to answer, and nothing is guessed.
