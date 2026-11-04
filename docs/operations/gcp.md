@@ -538,9 +538,6 @@ sed -e 's/__ENVIRONMENT_NAMESPACE__/hosts/' -e 's/namespace: wamn-system/namespa
   deploy/platform/runtime-operator-events-rbac.example.yaml | kubectl apply -f -
 ```
 
-On an install from before One NATS, `platform apply` also deletes the old event NATS `evt-nats` with its volume and its password Secrets, keeps the four chart Secrets that cert-manager now issues, and deletes every leaf Secret of the old CA so that cert-manager issues it again.
-No event data carries over. `env apply` of each environment then creates its streams again.
-
 The namespace `identity` exists now. Step 4.12 writes its Secret `identity-resend` from Secret Manager.
 
 ### 4.4.1 Collector

@@ -720,7 +720,6 @@ async fn runtime(
     for namespace in runtime_namespaces() {
         changed |= apply_object(target, &namespace).await?;
     }
-    changed |= remove_event_nats(target).await?;
     for object in runtime_certificates(repository, document)? {
         changed |= apply_object(target, &object)
             .await
@@ -770,63 +769,6 @@ const CHART_SECRETS: [(&str, &str); 4] = [
     ("hosts", "wasmcloud-runtime-tls"),
     ("hosts", "wasmcloud-data-tls"),
 ];
-
-/// The event NATS of an install from before One NATS, in namespace platform.
-/// Its streams go with its volume; no event data carries over.
-const EVENT_NATS: [(&str, &str); 6] = [
-    ("statefulset", "evt-nats"),
-    ("service", "evt-nats"),
-    ("service", "evt-nats-headless"),
-    ("configmap", "evt-nats-config"),
-    ("secret", "evt-nats-authorization"),
-    ("persistentvolumeclaim", "data-evt-nats-0"),
-];
-
-/// Delete the event NATS of an older install, and every per-environment
-/// password Secret `evt-nats-<env_key>-<role>`.
-async fn remove_event_nats(target: &Target) -> anyhow::Result<bool> {
-    let mut changed = false;
-    for (kind, name) in EVENT_NATS {
-        let found: Option<Value> =
-            kubectl::get(&target.kubeconfig, &target.context, "platform", kind, name).await?;
-        if found.is_some() {
-            kubectl::kubectl(
-                &target.kubeconfig,
-                &target.context,
-                "platform",
-                &["delete", kind, name, "--wait=true"],
-                None,
-            )
-            .await?;
-            changed = true;
-        }
-    }
-    for namespace in ["platform", "hosts"] {
-        let names = kubectl::kubectl(
-            &target.kubeconfig,
-            &target.context,
-            namespace,
-            &["get", "secret", "-o", "name"],
-            None,
-        )
-        .await?;
-        for name in names
-            .lines()
-            .filter(|name| name.starts_with("secret/evt-nats-"))
-        {
-            kubectl::kubectl(
-                &target.kubeconfig,
-                &target.context,
-                namespace,
-                &["delete", name],
-                None,
-            )
-            .await?;
-            changed = true;
-        }
-    }
-    Ok(changed)
-}
 
 /// Delete each Secret of a certificate of the ClusterIssuer wasmcloud-ca
 /// whose CA is not the current one, so that cert-manager issues it again. An
