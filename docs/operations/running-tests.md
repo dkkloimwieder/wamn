@@ -473,11 +473,9 @@ The library targets keep the local business cases in live-nats.
 
 Record the start and end time of each run, and time its build apart from its tests.
 
-Keep one sweep log per epic closeout in the repository, at `docs/history/evidence/sweeps/<epic>-<commit>.log`.
-`<epic>` is the Beads id of the epic, and `<commit>` is the short hash of the commit that the sweep ran on.
+Keep the sweep log outside the repository.
 Set `WAMN_RESULTS` outside the checkout, so that the run writes nothing into the tree.
-After the sweep ends, copy `$WAMN_RESULTS/workspace.log` to that path.
-Commit the log with the closeout.
+Cite the path of `$WAMN_RESULTS/workspace.log` and the commit that the sweep ran on in the close reason of the epic.
 If the sweep has failures, run the same command once on the base commit of the branch.
 Then list the failures that differ by name.
 Do not compare with the log of an earlier closeout, because the commits of other chains between them add failures that the epic did not cause.
