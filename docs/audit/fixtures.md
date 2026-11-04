@@ -6,7 +6,7 @@ Branch `worktree-fixtures` on origin, based on main b7aff8e09. It is not merged.
 
 | Issue | Commits |
 | --- | --- |
-| .1 one shared cluster fixture | e5113bf99, b7e0f8472, 54045d4ee, 7841cb622, ebc0f9d16 |
+| .1 one shared cluster fixture | e5113bf99, b7e0f8472, 54045d4ee, 7841cb622, ebc0f9d16, 7988ead75 |
 | .2 kept snapshot files | 29130418d |
 | .3 fixture upgrade support, floors, environment file loader | abec40b9f |
 
@@ -74,6 +74,7 @@ The epic named one kind journey each for Receiving and WMS through the new fixtu
 | 3 | The Receiving build record was stale. Root rebuilt the packages. |
 | 4 | A `kubectl` command failed after 58 seconds. The error named no arguments. Fixed in 7841cb622, so the next run names the failed step. |
 | 5 (owner-approved) | The fixture created the cluster, installed the platform and passed the step that failed in run 4. The Receiving build then failed after 1,312 seconds: `receiving.wasm` was not in the target. Root removed that target before the run, but the package build records stayed, so `wamn build` reported the packages as current and wrote no components. Root removed the records and rebuilt the packages. |
+| 6 (owner-approved rerun) | The cluster, platform, builds and qualification passed. The Receiving case failed at publish after 250 seconds: `publish_release` read `WAMN_COMPONENT_ARTIFACT_BASE` from the process environment since d55002b3d on main, and the Receiving and WMS cases carry that address in their inputs. Fixed in 7988ead75: the caller passes the address, and the command line still reads the variable. |
 
 Each run removed its cluster. No cluster, container or volume of this epic remains.
 
