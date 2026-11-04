@@ -5,6 +5,8 @@
 //! against, and renders a `publication/components/*.json.in` template into the
 //! declaration document that admission reads.
 
+pub(super) mod plan;
+
 use std::collections::BTreeMap;
 use std::error::Error;
 use std::fmt;
@@ -179,20 +181,7 @@ pub fn render_declaration_document(
     // authored once, in the wamn.json of the package that holds the template.
     let (_, owners) = wamn_schema_generator::operation_reference::package_owners_of(template)
         .map_err(|error| invalid(error.context().to_owned()))?;
-    wamn_schema_generator::operation_reference::resolve_declaration_document(
-        &mut document,
-        &owners,
-    )
-    .map_err(|error| invalid(error.context().to_owned()))?;
-    let slot = document
-        .pointer_mut("/scope/env_key")
-        .ok_or_else(|| invalid("has no scope.env_key".to_owned()))?;
-    if slot.as_str() != Some(COMPONENT_DECLARATION_PLACEHOLDER) {
-        return Err(invalid(
-            "must leave scope.env_key as the deployment placeholder".to_owned(),
-        ));
-    }
-    *slot = Value::String(env_key.to_owned());
+    plan::render_declaration_document(template, &mut document, env_key, &owners)?;
     // An input port can name its package's generated route schema instead of
     // copying it (wamn-4omo). The template sits at
     // `publication/components/<component>.json.in` under its package root,
@@ -240,55 +229,9 @@ pub fn render_palette_declaration(
 ) -> Result<Value, ComponentDeclarationError> {
     let bytes =
         fs::read(template).map_err(|source| ComponentDeclarationError::read(template, source))?;
-    let mut document: Value = serde_json::from_slice(&bytes)
+    let document: Value = serde_json::from_slice(&bytes)
         .map_err(|source| ComponentDeclarationError::parse(template, source))?;
-    let invalid = |detail: String| {
-        ComponentDeclarationError::invalid(
-            ComponentDeclarationErrorType::TemplateInvalid,
-            template,
-            detail,
-        )
-    };
-    for (field, placeholder, value) in [
-        ("env_key", COMPONENT_DECLARATION_PLACEHOLDER, &scope.env_key),
-        ("package-id", "__PACKAGE_ID__", &scope.package_id),
-        (
-            "package-version",
-            "__PACKAGE_VERSION__",
-            &scope.package_version,
-        ),
-    ] {
-        let slot = document
-            .pointer_mut(&format!("/scope/{field}"))
-            .ok_or_else(|| invalid(format!("has no scope.{field}")))?;
-        if slot.as_str() != Some(placeholder) {
-            return Err(invalid(format!(
-                "must leave scope.{field} as the placeholder {placeholder}"
-            )));
-        }
-        *slot = Value::String(value.clone());
-    }
-    for connection in document
-        .get_mut("connections")
-        .and_then(Value::as_array_mut)
-        .into_iter()
-        .flatten()
-    {
-        let Some(alias) = connection.get_mut("store-alias") else {
-            continue;
-        };
-        if alias.as_str() != Some(COMPONENT_DECLARATION_STORE_ALIAS_PLACEHOLDER) {
-            continue;
-        }
-        let store_alias = store_alias.ok_or_else(|| {
-            invalid(format!(
-                "leaves a store alias as {COMPONENT_DECLARATION_STORE_ALIAS_PLACEHOLDER}, and no \
-                 binding selection names a store alias for it"
-            ))
-        })?;
-        *alias = Value::String(store_alias.to_owned());
-    }
-    Ok(document)
+    plan::render_palette_declaration(template, document, scope, store_alias)
 }
 
 /// The platform packages a rendered declaration states it imports: the WIT

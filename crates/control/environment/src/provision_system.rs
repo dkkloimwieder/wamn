@@ -13,12 +13,14 @@
 //! manifest of `wamn_provisioner` and the role statement that sets its
 //! password, see [`emit_provisioner_credential`].
 
+pub(super) mod plan;
+use plan::scram_sha256_verifier;
+
 use std::fmt;
 use std::num::NonZeroU32;
 use std::path::PathBuf;
 
 use anyhow::{Context as _, ensure};
-use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD;
 use ring::rand::{SecureRandom as _, SystemRandom};
 use ring::{digest, hmac, pbkdf2};
@@ -257,29 +259,4 @@ pub fn emit_provisioner_credential(request: &EmitProvisionerRequest) -> anyhow::
     let statement = provisioner_statement_sql(&scram_sha256_verifier(&password, &salt));
     std::fs::write(&request.emit_provisioner_sql, statement)
         .with_context(|| format!("write {}", request.emit_provisioner_sql.display()))
-}
-
-/// The SCRAM-SHA-256 verifier that PostgreSQL stores for `password`
-/// (RFC 7677, PostgreSQL's default 4096 iterations). The password is ASCII
-/// hex, so SASLprep leaves it unchanged.
-fn scram_sha256_verifier(password: &str, salt: &[u8]) -> String {
-    const ITERATIONS: u32 = 4096;
-    let mut salted = [0_u8; 32];
-    pbkdf2::derive(
-        pbkdf2::PBKDF2_HMAC_SHA256,
-        NonZeroU32::new(ITERATIONS).expect("4096 is not zero"),
-        salt,
-        password.as_bytes(),
-        &mut salted,
-    );
-    let key = hmac::Key::new(hmac::HMAC_SHA256, &salted);
-    let client_key = hmac::sign(&key, b"Client Key");
-    let stored_key = digest::digest(&digest::SHA256, client_key.as_ref());
-    let server_key = hmac::sign(&key, b"Server Key");
-    format!(
-        "SCRAM-SHA-256${ITERATIONS}:{}${}:{}",
-        STANDARD.encode(salt),
-        STANDARD.encode(stored_key.as_ref()),
-        STANDARD.encode(server_key.as_ref())
-    )
 }

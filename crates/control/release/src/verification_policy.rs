@@ -5,22 +5,14 @@
 //! that source identity and hash into a verification database. It does not
 //! copy any other system or application state.
 
+pub(super) mod plan;
+use plan::authoritative_environment_policy;
+
 use anyhow::Context as _;
 use tokio_postgres::NoTls;
 use wamn_control_registry::{DurabilityClass, EnvPolicy};
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct AuthoritativeEnvironmentPolicy {
-    pub source_policy_org: Box<str>,
-    pub policy: EnvPolicy,
-    pub source_policy_hash: Box<str>,
-}
-
-impl AuthoritativeEnvironmentPolicy {
-    pub const fn durability_class(&self) -> DurabilityClass {
-        self.policy.durability_class
-    }
-}
+pub use plan::AuthoritativeEnvironmentPolicy;
 
 pub async fn read_authoritative_environment_policy(
     system_database_url: &str,
@@ -57,20 +49,6 @@ pub async fn read_authoritative_environment_policy(
         .context("join authoritative environment-policy connection")?;
     driven.context("drive authoritative environment-policy connection")?;
     loaded
-}
-
-fn authoritative_environment_policy(
-    source_policy_org: &str,
-    policy: EnvPolicy,
-) -> anyhow::Result<AuthoritativeEnvironmentPolicy> {
-    let value =
-        serde_json::to_value(&policy).context("serialize authoritative environment policy")?;
-    let source_policy_hash = wamn_execution_contract::canonical_json_sha256(&value);
-    Ok(AuthoritativeEnvironmentPolicy {
-        source_policy_org: source_policy_org.to_owned().into_boxed_str(),
-        policy,
-        source_policy_hash: source_policy_hash.into_boxed_str(),
-    })
 }
 
 #[cfg(test)]

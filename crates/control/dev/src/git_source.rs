@@ -5,6 +5,9 @@
 //! the commit does not. `git status --porcelain=v2` answers both from the same
 //! process, so the two cannot disagree about which revision was observed.
 
+pub(super) mod plan;
+use plan::{one_output_line, trim_ascii};
+
 use std::error::Error;
 use std::ffi::OsString;
 use std::fmt;
@@ -115,37 +118,9 @@ impl Error for GitSourceError {
     }
 }
 
-/// Whole-worktree source state, including untracked non-ignored files.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum GitSourceState {
-    Clean,
-    Dirty,
-}
+pub use plan::GitSourceState;
 
-/// One repository-grained source observation.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct GitSourceSnapshot {
-    repository_root: PathBuf,
-    source_commit: Box<str>,
-    state: GitSourceState,
-}
-
-impl GitSourceSnapshot {
-    /// Originating repository shared by the commit and cleanliness result.
-    pub fn repository_root(&self) -> &Path {
-        &self.repository_root
-    }
-
-    /// Commit at `HEAD` when this state was read.
-    pub fn source_commit(&self) -> &str {
-        &self.source_commit
-    }
-
-    /// Whole-worktree source state, including untracked non-ignored files.
-    pub const fn state(&self) -> GitSourceState {
-        self.state
-    }
-}
+pub use plan::GitSourceSnapshot;
 
 /// Discover the repository worktree root from `path`.
 pub async fn discover_repository_root(path: &Path) -> Result<PathBuf, GitSourceError> {
@@ -243,33 +218,4 @@ async fn git_output(
             type_, operation, repository, &output,
         ))
     }
-}
-
-fn one_output_line<'a>(
-    output: &'a [u8],
-    type_: GitSourceErrorType,
-    operation: &'static str,
-    repository: &Path,
-) -> Result<&'a [u8], GitSourceError> {
-    let line = trim_ascii(output);
-    if line.is_empty() || line.contains(&b'\n') || line.contains(&b'\r') {
-        Err(GitSourceError::output(
-            type_,
-            operation,
-            repository,
-            "Git did not return exactly one nonempty line",
-        ))
-    } else {
-        Ok(line)
-    }
-}
-
-fn trim_ascii(mut bytes: &[u8]) -> &[u8] {
-    while bytes
-        .last()
-        .is_some_and(|byte| matches!(byte, b'\n' | b'\r'))
-    {
-        bytes = &bytes[..bytes.len() - 1];
-    }
-    bytes
 }

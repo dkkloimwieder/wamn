@@ -44,6 +44,8 @@
 //! `provision-project-env` then reads that placement and derives the pool
 //! cluster via [`cluster_of`](wamn_control_registry::cluster_of).
 
+pub(super) mod plan;
+
 use anyhow::Context as _;
 use tokio_postgres::NoTls;
 
@@ -127,19 +129,7 @@ pub async fn provision_org_with_changes(
 ) -> anyhow::Result<ProvisionedOrg> {
     // The template stamps the placement + the org's env-policy set in one step.
     let template = request.template;
-    let (org, stamped) = template.stamp(&request.org, &request.pool);
-
-    // Validate the org id (slug / reserved-prefix), placement, and the stamped
-    // policy set by running the one-org registry through the model's validator.
-    let reg = Registry {
-        schema_version: SCHEMA_VERSION.to_string(),
-        env_policies: stamped.clone(),
-        orgs: vec![org.clone()],
-        projects: Vec::new(),
-        project_envs: Vec::new(),
-    };
-    reg.validate()
-        .map_err(|issues| anyhow::anyhow!("invalid org: {}", fmt_issues(&issues)))?;
+    let (org, stamped) = plan::stamped_org(&template, &request.org, &request.pool)?;
 
     // Connect to the system DB once (if given) — used to record the org + stamp
     // its policies, then read the org's (possibly customized) set back for
@@ -347,14 +337,6 @@ async fn record_admin_rows(
         .await
         .context("write the admin's org-admin row")?;
     Ok(admin)
-}
-
-fn fmt_issues(issues: &[wamn_control_registry::Issue]) -> String {
-    issues
-        .iter()
-        .map(std::string::ToString::to_string)
-        .collect::<Vec<_>>()
-        .join("; ")
 }
 
 #[cfg(test)]

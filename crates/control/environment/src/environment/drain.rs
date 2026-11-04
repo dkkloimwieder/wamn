@@ -9,8 +9,10 @@
 //! running whose release has no live pod is stranded: the verb names each run
 //! and its digest and stops. Nothing fails a stranded run on its own.
 
+pub(super) mod plan;
+pub use plan::{describe, largest_grace, settled};
+
 use std::collections::BTreeMap;
-use std::fmt::Write as _;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context as _, bail};
@@ -109,27 +111,6 @@ pub async fn wait(
     }
 }
 
-/// Whether the live set is exactly the declared release, or empty for none.
-pub fn settled(live: &BTreeMap<String, usize>, target: Option<&str>) -> bool {
-    match target {
-        None => live.is_empty(),
-        Some(digest) => live.len() == 1 && live.contains_key(digest),
-    }
-}
-
-/// The largest `terminationGracePeriodSeconds` of the pods that are not of
-/// the declared release.
-pub fn largest_grace(pods: &Value, target: Option<&str>) -> Duration {
-    pods["items"]
-        .as_array()
-        .into_iter()
-        .flatten()
-        .filter(|pod| pod["metadata"]["annotations"]["wamn.release-digest"].as_str() != target)
-        .filter_map(|pod| pod["spec"]["terminationGracePeriodSeconds"].as_u64())
-        .max()
-        .map_or(Duration::ZERO, Duration::from_secs)
-}
-
 /// The runs of the environment pinned to a release outside `live`.
 ///
 /// # Errors
@@ -166,16 +147,6 @@ pub async fn stranded(
         .await
         .context("end the stranded-run read")?;
     Ok(stranded)
-}
-
-/// "stranded runs: <run> (<digest>), ...".
-pub fn describe(stranded: &[Stranded]) -> String {
-    let mut text = String::from("stranded runs, pinned to a release with no live pod:");
-    for run in stranded {
-        write!(text, " {} ({})", run.run_id, run.manifest_digest)
-            .expect("writing to a String succeeds");
-    }
-    text
 }
 
 #[cfg(test)]

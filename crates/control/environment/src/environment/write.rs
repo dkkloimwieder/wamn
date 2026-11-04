@@ -11,6 +11,9 @@
 //! A connection-only apply writes no revision,
 //! because no connection fact is in the values.
 
+pub(super) mod plan;
+use plan::without_audit;
+
 use std::path::Path;
 use std::time::{Duration, Instant};
 
@@ -117,120 +120,11 @@ pub async fn write(
     })
 }
 
-/// Build release values from the document, artifact, policy, and host overlay.
-#[expect(
-    clippy::too_many_arguments,
-    reason = "Release values combine document, artifact, policy, and chart inputs"
-)]
-pub(crate) fn release_values(
-    document: &EnvironmentDocument,
-    manifest: &wamn_catalog::ServingManifest,
-    manifest_digest: &str,
-    artifact_base: &str,
-    drain_bound_seconds: u32,
-    actor: &str,
-    host_group: Option<&Path>,
-    clients: &std::collections::BTreeMap<String, String>,
-) -> anyhow::Result<(Value, Vec<RoleName>)> {
-    let roles = release_chart::roles(manifest, &document.org, &document.project, &document.env);
-    let names = roles.iter().map(|role| role.name).collect();
-    let mut applications = document.applications.clone();
-    for application in applications.values_mut() {
-        application.connections.clear();
-    }
-    let mut rendered = render(
-        &ValuesInput {
-            org: document.org.clone(),
-            project: document.project.clone(),
-            env: document.env.clone(),
-            manifest_digest: manifest_digest.to_owned(),
-            artifact_base: artifact_base.to_owned(),
-            route_host: document.route_host.clone(),
-            applications,
-            roles,
-            drain_bound_seconds,
-            actor: actor.to_owned(),
-            host_group: Mapping::new(),
-        },
-        host_group,
-    )?;
-    rendered["webClients"] = serde_yaml::to_value(clients)?;
-    rendered["webDigests"] = serde_yaml::to_value(
-        document
-            .client
-            .as_ref()
-            .map(|client| (document.route_host.clone(), client.web.clone()))
-            .into_iter()
-            .collect::<std::collections::BTreeMap<_, _>>(),
-    )?;
-    Ok((rendered, names))
-}
-
 /// Render apply values with the platform overlay and derived credential references.
 pub fn render(input: &ValuesInput, path: Option<&Path>) -> anyhow::Result<Value> {
     let mut input = input.clone();
     input.host_group = host_group(path, &input.org, &input.project, &input.env)?;
     release_chart::values(&input)
-}
-
-/// The host group body: the platform's part, read from
-/// `WAMN_RELEASE_HOST_GROUP`, and the environment's credential Secret
-/// references, which the verb derives from the coordinate.
-pub fn host_group(
-    path: Option<&Path>,
-    org: &str,
-    project: &str,
-    env: &str,
-) -> anyhow::Result<Mapping> {
-    let mut group = match path {
-        None => Mapping::new(),
-        Some(path) => serde_yaml::from_str(
-            &std::fs::read_to_string(path).with_context(|| format!("read {}", path.display()))?,
-        )
-        .with_context(|| format!("{} is not a YAML mapping", path.display()))?,
-    };
-    let variables = group
-        .entry("env".into())
-        .or_insert_with(|| Value::Sequence(Vec::new()))
-        .as_sequence_mut()
-        .context("the platform host group's `env` is not a list")?;
-    for credential in HOST_CREDENTIALS {
-        let Some(variable) = credential.host_variable else {
-            continue;
-        };
-        ensure!(
-            !variables
-                .iter()
-                .any(|entry| entry["name"].as_str() == Some(variable)),
-            "the platform host group sets {variable}, which apply derives from the coordinate"
-        );
-        let secret =
-            wamn_control_provision::workload_secret_name(credential.family, org, project, env);
-        variables.push(serde_yaml::from_str(&format!(
-            "{{name: {variable}, valueFrom: {{secretKeyRef: {{name: {secret}, key: url, optional: false}}}}}}"
-        ))?);
-    }
-    let mut group = serde_json::to_value(group)?;
-    let encryption = group["env"]
-        .as_array()
-        .and_then(|env| {
-            env.iter()
-                .find(|entry| entry["name"] == "WAMN_OAUTH_ENCRYPTION")
-        })
-        .and_then(|entry| entry["value"].as_str())
-        .map(serde_json::from_str)
-        .transpose()?
-        .unwrap_or_else(|| serde_json::json!({"provider":"local"}));
-    crate::platform::oauth::host_group(&mut group, &encryption)?;
-    Ok(serde_yaml::from_value(serde_yaml::to_value(group)?)?)
-}
-
-/// The values with `audit` removed: who applied is no reason to write.
-fn without_audit(mut values: serde_json::Value) -> serde_json::Value {
-    if let Some(values) = values.as_object_mut() {
-        values.remove("audit");
-    }
-    values
 }
 
 async fn helm_show_chart(chart: &std::path::Path) -> anyhow::Result<String> {
@@ -250,6 +144,58 @@ async fn helm_show_chart(chart: &std::path::Path) -> anyhow::Result<String> {
         String::from_utf8_lossy(&output.stderr)
     );
     String::from_utf8(output.stdout).context("helm wrote text")
+}
+
+/// Build release values from the document, artifact, policy, and host overlay.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Release values combine document, artifact, policy, and chart inputs"
+)]
+pub(crate) fn release_values(
+    document: &EnvironmentDocument,
+    manifest: &wamn_catalog::ServingManifest,
+    manifest_digest: &str,
+    artifact_base: &str,
+    drain_bound_seconds: u32,
+    actor: &str,
+    host_group_path: Option<&Path>,
+    clients: &std::collections::BTreeMap<String, String>,
+) -> anyhow::Result<(Value, Vec<RoleName>)> {
+    let group = host_group(
+        host_group_path,
+        &document.org,
+        &document.project,
+        &document.env,
+    )?;
+    plan::release_values(
+        document,
+        manifest,
+        manifest_digest,
+        artifact_base,
+        drain_bound_seconds,
+        actor,
+        group,
+        clients,
+    )
+}
+
+/// The host group body: the platform's part, read from
+/// `WAMN_RELEASE_HOST_GROUP`, and the environment's credential Secret
+/// references, which the verb derives from the coordinate.
+pub fn host_group(
+    path: Option<&Path>,
+    org: &str,
+    project: &str,
+    env: &str,
+) -> anyhow::Result<Mapping> {
+    let group = match path {
+        None => Mapping::new(),
+        Some(path) => serde_yaml::from_str(
+            &std::fs::read_to_string(path).with_context(|| format!("read {}", path.display()))?,
+        )
+        .with_context(|| format!("{} is not a YAML mapping", path.display()))?,
+    };
+    plan::host_group(group, org, project, env)
 }
 
 #[cfg(test)]

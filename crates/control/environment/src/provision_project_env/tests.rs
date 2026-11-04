@@ -1,4 +1,4 @@
-use super::grants::{
+use super::grants::plan::{
     RoleAcl, StableGrantSet, stable_grant_set, verify_audit_retention_grants,
     verify_connection_reader_grants, verify_event_materializer_grants, verify_http_admitter_grants,
     verify_management_admitter_grants, verify_session_role_reader_grants,

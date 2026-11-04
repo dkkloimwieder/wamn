@@ -6,6 +6,10 @@
 //! Connection names come from the applied application map, and the
 //! document uses the current authorities. `show` takes no lock.
 
+pub(super) mod plan;
+use plan::revision_applications;
+pub(super) use plan::revision_client;
+
 use std::collections::BTreeMap;
 
 use anyhow::Context as _;
@@ -76,23 +80,6 @@ pub async fn show(platform: &Platform, triple: &Triple) -> anyhow::Result<Enviro
     Ok(document)
 }
 
-pub(super) fn revision_client(
-    values: &serde_json::Value,
-    host: &str,
-) -> anyhow::Result<Option<Client>> {
-    match (
-        values["webClients"][host].as_str(),
-        values["webDigests"][host].as_str(),
-    ) {
-        (None, None) => Ok(None),
-        (Some(package), Some(web)) => Ok(Some(Client {
-            package: package.to_owned(),
-            web: web.to_owned(),
-        })),
-        _ => anyhow::bail!("revision must name both webClients and webDigests for host {host}"),
-    }
-}
-
 /// The release an environment serves, as [`show`] derives it: the digest of
 /// the newest successful Helm revision.
 ///
@@ -122,18 +109,6 @@ pub async fn serving_applications(
         .await?
         .with_context(|| format!("environment {triple} serves no release"))?;
     revision_applications(&revision.values)
-}
-
-/// The applications one revision's values keep. A revision written before
-/// the values carried them keeps none.
-fn revision_applications(
-    values: &serde_json::Value,
-) -> anyhow::Result<wamn_catalog::EnvironmentApplications> {
-    match values.get("applications") {
-        None | Some(serde_json::Value::Null) => Ok(BTreeMap::new()),
-        Some(applications) => serde_json::from_value(applications.clone())
-            .context("read the applications of the Helm revision"),
-    }
 }
 
 #[cfg(test)]

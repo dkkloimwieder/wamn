@@ -1,5 +1,7 @@
 //! Package manifest bytes and generated operation contracts.
 
+pub(super) mod plan;
+
 use std::path::Path;
 
 use wamn_record_history::{HISTORY_TABLE_SUFFIX, is_history_table_name};
@@ -80,56 +82,6 @@ pub(super) fn read_package_manifests(
         }
     }
     Ok((manifests, kinds))
-}
-
-/// The manifest route of one route attachment of the package at `root`, as
-/// publish writes it from the generated contract of its operation.
-///
-/// A local application assembly calls it, so a test release carries the same
-/// route facts as a published one. `roots` holds the directory of every
-/// assembled package.
-///
-/// # Errors
-///
-/// Returns [`PublishManifestError`] when no generated contract declares the
-/// operation, or a contract cannot be read.
-pub fn package_route(
-    roots: &BTreeMap<String, &Path>,
-    package_id: &str,
-    component: &str,
-    operation: &str,
-) -> Result<ServingRoute, PublishManifestError> {
-    let unassembled = |package: &str| {
-        PublishManifestError::new(
-            PublishManifestErrorType::PackageManifest,
-            format!("package {package:?} is not assembled"),
-        )
-    };
-    let root = roots
-        .get(package_id)
-        .ok_or_else(|| unassembled(package_id))?;
-    let contract = read_operation_contracts(root)?
-        .into_iter()
-        .find(|contract| contract.operation == operation)
-        .ok_or_else(|| {
-            PublishManifestError::new(
-                PublishManifestErrorType::PackageManifest,
-                format!(
-                    "no generated contract of package {package_id:?} declares operation {operation:?}; regenerate the package evidence"
-                ),
-            )
-        })?;
-    let contract = contract.route;
-    Ok(ServingRoute {
-        package_id: package_id.to_owned(),
-        component: component.to_owned(),
-        operation: operation.to_owned(),
-        type_: contract.kind,
-        reads: contract.reads,
-        revision: contract.revision,
-        idempotency: contract.idempotency,
-        canonicalization: contract.canonicalization,
-    })
 }
 
 /// One generated contract of a package.
@@ -291,6 +243,36 @@ fn read_input_identity(
         wamn_schema_generator::client_plan::idempotency_field(&contract),
         wamn_schema_generator::client_plan::route_canonicalization(&contract),
     ))
+}
+
+/// The manifest route of one route attachment of the package at `root`, as
+/// publish writes it from the generated contract of its operation.
+///
+/// A local application assembly calls it, so a test release carries the same
+/// route facts as a published one. `roots` holds the directory of every
+/// assembled package.
+///
+/// # Errors
+///
+/// Returns [`PublishManifestError`] when no generated contract declares the
+/// operation, or a contract cannot be read.
+pub fn package_route(
+    roots: &BTreeMap<String, &Path>,
+    package_id: &str,
+    component: &str,
+    operation: &str,
+) -> Result<ServingRoute, PublishManifestError> {
+    let unassembled = |package: &str| {
+        PublishManifestError::new(
+            PublishManifestErrorType::PackageManifest,
+            format!("package {package:?} is not assembled"),
+        )
+    };
+    let root = roots
+        .get(package_id)
+        .ok_or_else(|| unassembled(package_id))?;
+    let contracts = read_operation_contracts(root)?;
+    plan::package_route(contracts, package_id, component, operation)
 }
 
 #[cfg(test)]

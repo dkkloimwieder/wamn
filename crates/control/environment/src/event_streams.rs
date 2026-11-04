@@ -1,5 +1,8 @@
 //! Provision declared event streams and materializer consumers.
 
+pub(super) mod plan;
+pub(crate) use plan::validate_inputs;
+
 use std::time::Duration;
 
 use anyhow::{Context as _, ensure};
@@ -84,74 +87,6 @@ pub async fn provision(
         ensure!(
             consumer_config_matches(expected, &actual),
             "materializer consumer {durable} differs from its complete declaration"
-        );
-    }
-    Ok(())
-}
-
-pub(crate) fn validate_inputs(
-    scope: &Triple,
-    replicas: usize,
-    duplicate_window: Duration,
-    consumers: &[pull::Config],
-) -> anyhow::Result<()> {
-    let token = |value: &str| {
-        !value.is_empty()
-            && value
-                .bytes()
-                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
-    };
-    ensure!(
-        [
-            scope.org.as_str(),
-            scope.project.as_str(),
-            scope.env.as_str()
-        ]
-        .into_iter()
-        .all(&token),
-        "event coordinates must be nonempty broker tokens"
-    );
-    ensure!(
-        (1..=5).contains(&replicas),
-        "event stream replicas must be between one and five"
-    );
-    ensure!(
-        !duplicate_window.is_zero(),
-        "event duplicate window must be positive"
-    );
-    let prefix = format!("evt.{}.{}.{}.", scope.org, scope.project, scope.env);
-    let mut names = std::collections::BTreeSet::new();
-    for config in consumers {
-        let durable = config
-            .durable_name
-            .as_deref()
-            .context("materializer consumer needs a durable name")?;
-        ensure!(
-            token(durable) && names.insert(durable),
-            "materializer durable must be an exact distinct broker name"
-        );
-        ensure!(
-            config
-                .filter_subject
-                .strip_prefix(&prefix)
-                .is_some_and(|tail| !tail.is_empty()),
-            "materializer filter must belong to its declared environment"
-        );
-        let max_deliver = u32::try_from(config.max_deliver)
-            .context("materializer max_deliver must be positive")?;
-        ensure!(
-            max_deliver > 0 && !config.ack_wait.is_zero(),
-            "materializer delivery bounds must be positive"
-        );
-        ensure!(
-            config
-                == &materializer_consumer_config(
-                    durable,
-                    &config.filter_subject,
-                    config.ack_wait,
-                    max_deliver
-                ),
-            "materializer consumer differs from its bounded declaration"
         );
     }
     Ok(())

@@ -1,5 +1,8 @@
 //! Shared kubectl execution and typed object operations.
 
+pub(super) mod plan;
+use plan::{apply_request, decode_object, get_arguments, unreachable, wait_arguments};
+
 use std::path::Path;
 use std::process::Stdio;
 
@@ -21,11 +24,6 @@ impl std::fmt::Display for Unreachable {
 }
 
 impl std::error::Error for Unreachable {}
-
-/// kubectl writes this prefix for every transport failure to the API server.
-fn unreachable(stderr: &str) -> bool {
-    stderr.starts_with("Unable to connect to the server:")
-}
 
 /// Run `kubectl` against the selected cluster and namespace.
 ///
@@ -140,13 +138,6 @@ pub async fn apply<T: Serialize>(
     .map(drop)
 }
 
-fn apply_request<T: Serialize>(object: &T) -> anyhow::Result<([&'static str; 4], Vec<u8>)> {
-    Ok((
-        ["apply", "--server-side", "-f", "-"],
-        serde_json::to_vec(object).context("encode the kubectl object")?,
-    ))
-}
-
 /// Read one typed object, or return `None` if it is absent.
 ///
 /// # Errors
@@ -163,26 +154,6 @@ pub async fn get<T: DeserializeOwned>(
     let arguments: Vec<_> = arguments.iter().map(String::as_str).collect();
     let output = kubectl(kubeconfig, context, namespace, &arguments, None).await?;
     decode_object(&output)
-}
-
-fn get_arguments(kind: &str, name: &str) -> [String; 5] {
-    [
-        "get".into(),
-        format!("{kind}/{name}"),
-        "-o".into(),
-        "json".into(),
-        "--ignore-not-found".into(),
-    ]
-}
-
-fn decode_object<T: DeserializeOwned>(output: &str) -> anyhow::Result<Option<T>> {
-    if output.trim().is_empty() {
-        Ok(None)
-    } else {
-        serde_json::from_str(output)
-            .map(Some)
-            .context("decode the kubectl object")
-    }
 }
 
 /// Wait for a condition, using kubectl's condition and duration syntax.
@@ -204,15 +175,6 @@ pub async fn wait(
     kubectl(kubeconfig, context, namespace, &arguments, None)
         .await
         .map(drop)
-}
-
-fn wait_arguments(kind: &str, name: &str, condition: &str, duration: &str) -> [String; 4] {
-    [
-        "wait".into(),
-        format!("{kind}/{name}"),
-        format!("--for={condition}"),
-        format!("--timeout={duration}"),
-    ]
 }
 
 #[cfg(test)]

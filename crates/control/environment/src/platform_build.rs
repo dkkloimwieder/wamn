@@ -12,6 +12,13 @@
 //! stamps those (owner ruling R15, 2026-10-14). Both modes record the digest
 //! of the local platform UI in `platform-build.json` beside the chart defaults.
 
+pub(super) mod plan;
+pub use plan::platform_ui_dist;
+use plan::{
+    builds_platform, cloud_minutes, docker_arguments, input_tag, loopback, manifest_digest,
+    previous_version, stderr_tail, wasm_layer,
+};
+
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
@@ -97,11 +104,6 @@ pub struct PlatformBuildRecord {
 
 /// The platform build record beside the stamped chart's defaults.
 pub const BUILD_RECORD_FILE: &str = "platform-build.json";
-
-/// The local static bundle, independent of package build output.
-pub fn platform_ui_dist(repository: &Path) -> PathBuf {
-    repository.join("apps/platform_ui/dist")
-}
 
 fn ui_build_record(repository: &Path) -> anyhow::Result<PlatformBuildRecord> {
     let dist = platform_ui_dist(repository);
@@ -200,31 +202,6 @@ fn build_location(
     } else {
         BuildLocation::Refused { spend_usd, cap_usd }
     }
-}
-
-fn builds_platform(args: &[String]) -> bool {
-    let Some(program) = args.first() else {
-        return false;
-    };
-    if Path::new(program)
-        .file_name()
-        .and_then(|name| name.to_str())
-        != Some("wamn-ctl")
-    {
-        return false;
-    }
-    // Skip the CLI's global log option before finding its subcommand.
-    let mut arguments = args[1..].iter();
-    while let Some(argument) = arguments.next() {
-        if argument == "--log-level" {
-            arguments.next();
-        } else if !argument.starts_with("--log-level=") {
-            // Neither a stamp nor a cloud build runs Docker on this machine.
-            return argument == "build-platform"
-                && !arguments.any(|argument| argument == "--stamp-only" || argument == "--cloud");
-        }
-    }
-    false
 }
 
 fn check_package_outputs(repository: &Path) -> anyhow::Result<()> {
@@ -401,17 +378,6 @@ async fn stamp_from_registry(
     )
 }
 
-/// The `sha256:<hex>` digest of the manifest descriptor `json`.
-fn manifest_digest(json: &str) -> anyhow::Result<String> {
-    let descriptor: serde_json::Value =
-        serde_json::from_str(json).context("parse the manifest descriptor")?;
-    descriptor["digest"]
-        .as_str()
-        .filter(|digest| digest.starts_with("sha256:"))
-        .map(str::to_owned)
-        .context("the manifest descriptor has no sha256 digest")
-}
-
 /// Stamp the host, runner, gates, identity and edge images and the http and
 /// materializer components into a copy of the checkout's release chart.
 fn stamp_chart(
@@ -453,12 +419,6 @@ fn stamp_chart(
         canonical_json_bytes(&serde_json::to_value(&build_record)?),
     )?;
     Ok(chart)
-}
-
-/// A loopback registry is reached over plain HTTP.
-fn loopback(registry: &str) -> bool {
-    let host = registry.split([':', '/']).next().unwrap_or_default();
-    matches!(host, "localhost" | "127.0.0.1")
 }
 
 /// The role component registry: the registry over OCI, or a fake in tests.
@@ -607,34 +567,6 @@ impl Components for OciComponents {
     }
 }
 
-/// The highest `x.y.z` tag below `current`.
-fn previous_version(tags: &[String], current: &str) -> Option<String> {
-    let parse = |tag: &str| -> Option<(u64, u64, u64)> {
-        let mut parts = tag.split('.').map(|part| part.parse().ok());
-        let version = (parts.next()??, parts.next()??, parts.next()??);
-        parts.next().is_none().then_some(version)
-    };
-    let current = parse(current)?;
-    tags.iter()
-        .filter_map(|tag| parse(tag).map(|version| (version, tag)))
-        .filter(|(version, _)| *version < current)
-        .max()
-        .map(|(_, tag)| tag.clone())
-}
-
-/// The digest of the single layer of a role manifest: the SHA-256 of its wasm.
-fn wasm_layer(manifest: &[u8]) -> anyhow::Result<String> {
-    let value: serde_json::Value =
-        serde_json::from_slice(manifest).context("parse the role manifest")?;
-    match value["layers"].as_array().map(Vec::as_slice) {
-        Some([layer]) => layer["digest"]
-            .as_str()
-            .map(str::to_owned)
-            .context("the role layer has no digest"),
-        _ => anyhow::bail!("a role manifest has one layer"),
-    }
-}
-
 /// When the role of the previous chart version has the wasm layer `layer`,
 /// store its manifest unchanged under the chart version and return the role
 /// pinned by that manifest's digest (owner ruling wamn-vcpvf: detection by
@@ -673,11 +605,6 @@ struct Plan {
     hashes: BTreeMap<&'static str, String>,
     /// The manifest digest of each image whose input tag exists.
     images: BTreeMap<&'static str, String>,
-}
-
-/// The tag that carries the input hash of an image.
-fn input_tag(registry: &str, target: &str, hash: &str) -> String {
-    format!("{registry}/wamn-{target}:input-{hash}")
 }
 
 /// Look up the manifest digest of the input tag of `target`. A tag that is
@@ -1170,24 +1097,6 @@ where
     }
 }
 
-fn cloud_minutes(build: &CloudBuild) -> anyhow::Result<u32> {
-    match (build.start_time, build.finish_time) {
-        (Some(start), Some(finish)) => {
-            let nanos = (finish - start)
-                .num_nanoseconds()
-                .context("cloud build duration is too large")?;
-            let nanos = u64::try_from(nanos).context("cloud build finished before it started")?;
-            u32::try_from(nanos.div_ceil(60_000_000_000)).context("cloud build minutes overflow")
-        }
-        // No start means no worker ran, including a failure before execution.
-        (None, _) => Ok(0),
-        _ => anyhow::bail!(
-            "Cloud Build {} lacks start or finish times; its spend cannot be recorded",
-            build.id
-        ),
-    }
-}
-
 /// Cloud command diagnostics exclude the arguments and stdout. They carry the
 /// last 20 lines of stderr (owner ruling 2026-10-21).
 async fn cloud_output(command: &mut Command) -> anyhow::Result<String> {
@@ -1203,12 +1112,6 @@ async fn cloud_output(command: &mut Command) -> anyhow::Result<String> {
         stderr_tail(&result.stderr, 20)
     );
     String::from_utf8(result.stdout).context("gcloud returned non-UTF-8 output")
-}
-
-fn stderr_tail(stderr: &[u8], lines: usize) -> String {
-    let stderr = String::from_utf8_lossy(stderr);
-    let all: Vec<_> = stderr.trim_end().lines().collect();
-    all[all.len().saturating_sub(lines)..].join("\n")
 }
 
 fn gcloud(project: &str) -> anyhow::Result<Command> {
@@ -1394,95 +1297,6 @@ auth=$(printf 'oauth2accesstoken:%s' "$token" | base64 -w0)
 printf '{"auths":{"%s":{"auth":"%s"}}}' "$1" "$auth" > /cloud-auth/config.json
 "#;
 
-fn cloud_configuration(
-    request: &BuildPlatformRequest,
-    supplement: &str,
-    head: &str,
-    plan: &Plan,
-) -> anyhow::Result<serde_json::Value> {
-    use serde_json::json;
-    let mut steps = Vec::new();
-    let key = checkout_key(&request.repository)?;
-    let base = docker_arguments(&key, "Dockerfile", &format!("{supplement}/apps"));
-    // The token is captured in memory, then written privately to the shared
-    // credential volume. Neither the token nor its encoded form is logged.
-    // A token lasts an hour, so each push step gets a fresh one.
-    let auth = CLOUD_AUTH_SCRIPT.replace('$', "$$");
-    let volume = json!([{"name": "cloud-auth", "path": "/cloud-auth"}]);
-    let auth_step = json!({
-        "name": CLOUD_SDK_IMAGE, "entrypoint": "bash",
-        "args": ["-c", auth, "bash", request.registry.split('/').next().context("registry host")?],
-        "volumes": volume,
-    });
-    // The worker daemon's BuildKit lacks named build contexts, so buildx runs
-    // its own BuildKit in a container (docker-container driver).
-    steps.push(json!({
-        "name": CLOUD_DOCKER_IMAGE,
-        "args": ["buildx", "create", "--name", "wamn", "--driver", "docker-container"],
-        "env": ["DOCKER_CONFIG=/cloud-auth"], "volumes": volume,
-    }));
-    let registry = &request.registry;
-    let version = &request.version;
-    for target in IMAGES.into_iter().chain(["roles"]) {
-        // An image whose input tag exists is copied after the build.
-        if plan.images.contains_key(target) {
-            continue;
-        }
-        let mut args: Vec<String> = vec!["buildx".into(), "--builder".into(), "wamn".into()];
-        args.extend(base.iter().cloned());
-        args.extend(["--target".into(), target.into()]);
-        if target == "roles" {
-            args.extend(["--output".into(), "type=local,dest=/workspace/roles".into()]);
-        } else {
-            let hash = &plan.hashes[target];
-            steps.push(auth_step.clone());
-            args.extend([
-                "--tag".into(),
-                format!("{registry}/wamn-{target}:{version}"),
-                "--tag".into(),
-                input_tag(registry, target, hash),
-                format!("--label=wamn.dev/source-head={head}"),
-                "--label=wamn.dev/build-profile=release".into(),
-                format!("--label=wamn.dev/input-hash={hash}"),
-                // Owner ruling 2026-10-21: buildx pushes each image directly.
-                "--push".into(),
-            ]);
-        }
-        args.push(".".into());
-        steps.push(json!({
-            "name": CLOUD_DOCKER_IMAGE, "args": args,
-            "env": ["DOCKER_CONFIG=/cloud-auth"], "volumes": volume,
-        }));
-    }
-    steps.push(auth_step);
-    for (file, role) in ROLES {
-        steps.push(json!({
-            // This release uses the same wash-runtime revision as Cargo.toml.
-            "name": "ghcr.io/wasmcloud/wash:2.11.0", "entrypoint": "/usr/local/bin/wash",
-            "args": ["oci", "push", format!("{registry}/wamn/{role}:{version}"), format!("/workspace/roles/{file}")],
-            "env": ["DOCKER_CONFIG=/cloud-auth"], "volumes": volume,
-        }));
-    }
-    // Cloud Logging is the log store that the agent can read.
-    Ok(
-        json!({"steps": steps, "options": {"machineType": "E2_HIGHCPU_8", "logging": "CLOUD_LOGGING_ONLY"}}),
-    )
-}
-
-fn docker_arguments(key: &str, file: &str, apps: &str) -> Vec<String> {
-    vec![
-        "build".into(),
-        "--platform=linux/amd64".into(),
-        "--provenance=false".into(),
-        "--build-arg".into(),
-        format!("WAMN_CHECKOUT_KEY={key}"),
-        "--build-context".into(),
-        format!("apps-target={apps}"),
-        "--file".into(),
-        file.into(),
-    ]
-}
-
 /// Run `command` and return its standard output; a failure names its error output.
 async fn output(command: &mut Command) -> anyhow::Result<String> {
     let program = command
@@ -1502,6 +1316,16 @@ async fn output(command: &mut Command) -> anyhow::Result<String> {
         String::from_utf8_lossy(&output.stderr)
     );
     String::from_utf8(output.stdout).with_context(|| format!("{program} wrote text"))
+}
+
+fn cloud_configuration(
+    request: &BuildPlatformRequest,
+    supplement: &str,
+    head: &str,
+    plan: &Plan,
+) -> anyhow::Result<serde_json::Value> {
+    let key = checkout_key(&request.repository)?;
+    plan::cloud_configuration(request, supplement, head, plan, &key)
 }
 
 #[cfg(test)]

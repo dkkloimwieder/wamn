@@ -1,5 +1,8 @@
 //! Development sessions, input watches, and cooperative cleanup.
 
+pub(super) mod plan;
+use plan::{component_build_watch_roots, finish_with_cleanup};
+
 use std::error::Error;
 use std::fmt;
 use std::fs;
@@ -376,35 +379,6 @@ async fn wait_for_shutdown(receiver: &mut watch::Receiver<bool>) {
         }
         if receiver.changed().await.is_err() {
             return;
-        }
-    }
-}
-
-/// The inputs of the component builds besides the package roots: the
-/// platform crates of the packages' Cargo workspace, `<package>/../platform`,
-/// and the shared platform WIT sources.
-fn component_build_watch_roots(repository_root: &Path, package_roots: &[PathBuf]) -> Vec<PathBuf> {
-    let mut roots = package_roots
-        .iter()
-        .filter_map(|root| root.parent())
-        .map(|workspace| workspace.join("platform"))
-        .chain(SHARED_WIT_ROOTS.map(|root| repository_root.join(root)))
-        .collect::<Vec<_>>();
-    roots.sort();
-    roots.dedup();
-    roots
-}
-
-fn finish_with_cleanup<T>(
-    result: anyhow::Result<T>,
-    cleanup: Result<(), ProductionDevStageError>,
-) -> anyhow::Result<T> {
-    match (result, cleanup) {
-        (Ok(value), Ok(())) => Ok(value),
-        (Err(error), Ok(())) => Err(error),
-        (Ok(_), Err(cleanup)) => Err(cleanup).context("clean up local activation"),
-        (Err(error), Err(cleanup)) => {
-            Err(error.context(format!("local activation cleanup also failed: {cleanup}")))
         }
     }
 }

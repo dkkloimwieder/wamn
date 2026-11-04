@@ -4,6 +4,8 @@
 //! component source roots. It deliberately does not coalesce events or execute
 //! stages; [`super::run_watch`] remains the sole orchestration owner.
 
+pub(super) mod plan;
+
 use std::collections::{BTreeSet, HashMap, VecDeque};
 use std::error::Error;
 use std::ffi::{OsStr, OsString};
@@ -226,14 +228,6 @@ impl PackageRoot {
         })?;
         Ok(Self { root })
     }
-
-    fn is_input(&self, path: &Path) -> bool {
-        is_input_path(&self.root, path)
-    }
-
-    fn owns_generated(&self, path: &Path) -> bool {
-        path.starts_with(wamn_schema_generator::output_root(&self.root))
-    }
 }
 
 #[derive(Debug)]
@@ -293,54 +287,9 @@ impl WatchRoots {
         })
     }
 
-    fn exact_file_or_parent(&self, path: &Path) -> bool {
-        self.configuration_files
-            .iter()
-            .any(|file| file == path || file.starts_with(path))
-    }
-
-    fn owns_recursive_path(&self, path: &Path) -> bool {
-        self.watched_roots().any(|root| path.starts_with(root))
-    }
-
     /// Record one directory the ignore rules put outside the watch.
     fn exclude(&mut self, directory: PathBuf) {
         self.excluded.insert(directory);
-    }
-
-    fn is_excluded(&self, path: &Path) -> bool {
-        self.excluded
-            .iter()
-            .any(|directory| path == directory || path.starts_with(directory))
-    }
-
-    fn is_input(&self, path: &Path) -> bool {
-        // An excluded directory is unwatched, so nothing inside it can arrive
-        // here; the directory ITSELF still can, through its watched parent,
-        // when a build creates or replaces it.
-        if self.is_excluded(path) {
-            return false;
-        }
-        if self
-            .packages
-            .iter()
-            .any(|package| package.owns_generated(path))
-        {
-            return false;
-        }
-        self.packages.iter().any(|package| package.is_input(path))
-            || self
-                .component_build_roots
-                .iter()
-                .any(|root| is_input_path(root, path))
-            || self.exact_file_or_parent(path)
-    }
-
-    fn watched_roots(&self) -> impl Iterator<Item = &Path> {
-        self.packages
-            .iter()
-            .map(|package| package.root.as_path())
-            .chain(self.component_build_roots.iter().map(PathBuf::as_path))
     }
 }
 
@@ -348,25 +297,6 @@ impl WatchRoots {
 struct RawChange {
     path: Option<PathBuf>,
     events: ReadFlags,
-}
-
-/// Cargo can create a staging directory and rename it into ignored output
-/// before the watcher drains events. Its absent, never-watched origin cannot
-/// remove existing source; a surviving destination has its own notification.
-fn vanished_unwatched_directory(
-    change: &RawChange,
-    watched_directories: &HashMap<i32, PathBuf>,
-) -> bool {
-    change.events.contains(ReadFlags::ISDIR)
-        && change
-            .events
-            .intersects(ReadFlags::CREATE | ReadFlags::MOVED_FROM | ReadFlags::DELETE)
-        && change.path.as_deref().is_some_and(|path| {
-            !path.exists()
-                && !watched_directories
-                    .values()
-                    .any(|directory| directory.starts_with(path))
-        })
 }
 
 /// Linux filesystem invalidation source over explicit package and build roots.
@@ -648,36 +578,6 @@ impl DevInvalidationSource for FilesystemInvalidationSource {
     }
 }
 
-fn read_changes(
-    descriptor: &OwnedFd,
-    watched_directories: &HashMap<i32, PathBuf>,
-) -> io::Result<Vec<RawChange>> {
-    let mut buffer = vec![MaybeUninit::uninit(); INOTIFY_BUFFER_BYTES].into_boxed_slice();
-    let mut reader = inotify::Reader::new(descriptor, &mut buffer);
-    let mut changes = Vec::new();
-    loop {
-        match reader.next() {
-            Ok(event) => {
-                let path = watched_directories.get(&event.wd()).map(|directory| {
-                    event.file_name().map_or_else(
-                        || directory.clone(),
-                        |name| directory.join(OsStr::from_bytes(name.to_bytes())),
-                    )
-                });
-                changes.push(RawChange {
-                    path,
-                    events: event.events(),
-                });
-            }
-            Err(rustix::io::Errno::AGAIN) if changes.is_empty() => {
-                return Err(io::ErrorKind::WouldBlock.into());
-            }
-            Err(rustix::io::Errno::AGAIN) => return Ok(changes),
-            Err(source) => return Err(errno_to_io(source)),
-        }
-    }
-}
-
 fn read_subdirectories(directory: &Path) -> Result<Vec<PathBuf>, FilesystemInvalidationError> {
     let entries = fs::read_dir(directory).map_err(|source| {
         FilesystemInvalidationError::with_source(
@@ -710,6 +610,55 @@ fn read_subdirectories(directory: &Path) -> Result<Vec<PathBuf>, FilesystemInval
         }
     }
     Ok(children)
+}
+
+/// Cargo can create a staging directory and rename it into ignored output
+/// before the watcher drains events. Its absent, never-watched origin cannot
+/// remove existing source; a surviving destination has its own notification.
+fn vanished_unwatched_directory(
+    change: &RawChange,
+    watched_directories: &HashMap<i32, PathBuf>,
+) -> bool {
+    change.events.contains(ReadFlags::ISDIR)
+        && change
+            .events
+            .intersects(ReadFlags::CREATE | ReadFlags::MOVED_FROM | ReadFlags::DELETE)
+        && change.path.as_deref().is_some_and(|path| {
+            !path.exists()
+                && !watched_directories
+                    .values()
+                    .any(|directory| directory.starts_with(path))
+        })
+}
+
+fn read_changes(
+    descriptor: &OwnedFd,
+    watched_directories: &HashMap<i32, PathBuf>,
+) -> io::Result<Vec<RawChange>> {
+    let mut buffer = vec![MaybeUninit::uninit(); INOTIFY_BUFFER_BYTES].into_boxed_slice();
+    let mut reader = inotify::Reader::new(descriptor, &mut buffer);
+    let mut changes = Vec::new();
+    loop {
+        match reader.next() {
+            Ok(event) => {
+                let path = watched_directories.get(&event.wd()).map(|directory| {
+                    event.file_name().map_or_else(
+                        || directory.clone(),
+                        |name| directory.join(OsStr::from_bytes(name.to_bytes())),
+                    )
+                });
+                changes.push(RawChange {
+                    path,
+                    events: event.events(),
+                });
+            }
+            Err(rustix::io::Errno::AGAIN) if changes.is_empty() => {
+                return Err(io::ErrorKind::WouldBlock.into());
+            }
+            Err(rustix::io::Errno::AGAIN) => return Ok(changes),
+            Err(source) => return Err(errno_to_io(source)),
+        }
+    }
 }
 
 fn metadata_watch_directories(paths: &[PathBuf]) -> BTreeSet<PathBuf> {

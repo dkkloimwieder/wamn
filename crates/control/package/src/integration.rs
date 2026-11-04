@@ -1,5 +1,8 @@
 //! Build and publish digest-addressed wasm integration artifacts.
 
+pub(super) mod plan;
+use plan::check_code;
+
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
@@ -10,7 +13,6 @@ use tokio::process::Command;
 use wamn_catalog::RuntimeType;
 use wamn_package_artifact::{PackageRegistry, Repository, sha256_digest};
 
-/// OCI artifact type for one independently published integration.
 pub use wamn_package_artifact::integration::ARTIFACT_TYPE;
 use wamn_package_artifact::integration::{CONFIG_TYPE, WASM_TYPE};
 
@@ -24,19 +26,6 @@ pub struct BuiltIntegration {
     component: Vec<u8>,
     config: Vec<u8>,
     manifest: Vec<u8>,
-}
-
-fn check_code(code: &str) -> anyhow::Result<()> {
-    ensure!(
-        code.bytes()
-            .next()
-            .is_some_and(|byte| byte.is_ascii_lowercase())
-            && code.bytes().all(|byte| byte.is_ascii_lowercase()
-                || byte.is_ascii_digit()
-                || matches!(byte, b'_' | b'-')),
-        "integration code must start with a lowercase letter and contain lowercase letters, digits, underscores or hyphens"
-    );
-    Ok(())
 }
 
 fn source_files(
@@ -230,13 +219,7 @@ pub async fn publish(
     publication: &Publication,
 ) -> anyhow::Result<()> {
     let exports = crate::connection_requirement::exported_interfaces(&built.component)?;
-    ensure!(
-        publication
-            .write_interfaces
-            .iter()
-            .all(|interface| exports.contains(interface)),
-        "write_interface_not_exported"
-    );
+    plan::require_write_interfaces(publication, &exports)?;
     let repository = Repository::open(registry, &built.digest)?;
     // Authenticate before the low-level blob and manifest writes.
     repository.manifest().await?;
@@ -258,16 +241,10 @@ pub async fn publish(
         .manifest()
         .await?
         .context("published integration is absent")?;
-    ensure!(
-        manifest == built.manifest && digest == built.digest,
-        "published integration manifest differs from its build"
-    );
+    plan::require_published_manifest(built, &manifest, &digest)?;
     let pulled =
         wamn_package_artifact::integration::pull(registry, &built.code, &built.digest).await?;
-    ensure!(
-        pulled == built.component,
-        "published integration bytes differ from its build"
-    );
+    plan::require_published_component(built, &pulled)?;
     let engine = wamn_engine::build_engine(&[])?;
     wamn_engine::component_admission::validate_integration_admission(
         &engine,

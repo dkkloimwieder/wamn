@@ -1,21 +1,12 @@
 //! Shared SQLx verifier commands for local generation and release qualification.
 
+pub(super) mod plan;
+pub use plan::{require_cli_version, requires_verifier};
+
 use std::path::Path;
 
 use anyhow::{Context as _, ensure};
 use wamn_catalog::manifest::PackageManifest;
-
-/// Select SQL verification from declarations rather than package identity.
-pub fn requires_verifier(manifest: &PackageManifest) -> bool {
-    manifest
-        .models
-        .values()
-        .any(|model| !model.operations.is_empty())
-        || manifest
-            .custom_operations
-            .values()
-            .any(|operation| !operation.statements.is_empty())
-}
 
 /// Prepare the SQLx metadata of the package's generated verifier into its
 /// build output, against the migrated database at `database_url`.
@@ -27,18 +18,6 @@ pub async fn prepare(package_root: &Path, database_url: &str) -> anyhow::Result<
     })
     .await
     .context("join the SQLx metadata preparation")?
-}
-
-/// Require the pinned CLI version before preparing metadata.
-pub fn require_cli_version(output: &[u8]) -> anyhow::Result<()> {
-    ensure!(
-        matches!(
-            String::from_utf8_lossy(output).trim(),
-            "sqlx-cli 0.9.0" | "sqlx-cli-sqlx 0.9.0"
-        ),
-        "SQLx CLI 0.9.0 is required"
-    );
-    Ok(())
 }
 
 #[cfg(test)]

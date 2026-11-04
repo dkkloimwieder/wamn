@@ -5,6 +5,8 @@
 //! bounded payload observations; copying either on every UI refresh would make
 //! the read seam itself observable work.
 
+pub(super) mod plan;
+
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -18,274 +20,25 @@ use wamn_catalog::{
 use super::{DEV_STAGE_ORDER, DevStage, DevStageFailure};
 use wamn_release_control::release_carrier::ReleaseCarrier;
 
-/// Number of stages in one development-loop run.
-pub const DEV_STAGE_COUNT: usize = DEV_STAGE_ORDER.len();
+pub use plan::DEV_STAGE_COUNT;
 
-/// Maximum trace observations retained by one session.
-pub const DEV_OBSERVATION_LIMIT: usize = 100;
+pub use plan::DEV_OBSERVATION_LIMIT;
 
-/// Current state of one ordered development stage.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum DevStageState {
-    /// This stage has not run for the current suffix.
-    Awaiting,
-    /// This stage is running.
-    Running,
-    /// This stage completed successfully.
-    Passed,
-    /// This stage did not run, because its input is unchanged and its output
-    /// is already present.
-    Skipped,
-    /// This stage refused or failed.
-    Failed(DevStageFailure),
-}
+pub use plan::DevStageState;
 
-/// State of one exact member of [`DEV_STAGE_ORDER`].
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct DevStageSnapshot {
-    stage: DevStage,
-    state: DevStageState,
-}
+pub use plan::DevStageSnapshot;
 
-impl DevStageSnapshot {
-    /// Stable stage identity.
-    pub const fn stage(&self) -> DevStage {
-        self.stage
-    }
+pub use plan::DevGateVerdict;
 
-    /// Latest state for this stage.
-    pub const fn state(&self) -> &DevStageState {
-        &self.state
-    }
-}
+pub use plan::DevGateOutcome;
 
-/// Exact typed outcome returned by Gate.
-#[derive(Clone, Debug, PartialEq)]
-pub enum DevGateVerdict {
-    /// Gate accepted the wiring and returned its immutable result.
-    Accepted(GateResult),
-    /// Gate refused the wiring with its owning contract type.
-    Refused(GateRefusal),
-}
+pub use plan::DevReleaseSnapshot;
 
-/// Gate outcome bound to the package wiring that produced it.
-#[derive(Clone, Debug, PartialEq)]
-pub struct DevGateOutcome {
-    pub(crate) package_id: String,
-    pub(crate) package_version: String,
-    pub(crate) wiring_id: String,
-    pub(crate) wiring_version: u32,
-    pub(crate) verdict: DevGateVerdict,
-}
+pub use plan::DevTraceObservation;
 
-impl DevGateOutcome {
-    /// Package that owns the gated wiring.
-    pub fn package_id(&self) -> &str {
-        &self.package_id
-    }
+pub use plan::DevRuntimeEndpoint;
 
-    /// Exact package version that was gated.
-    pub fn package_version(&self) -> &str {
-        &self.package_version
-    }
-
-    /// Package-local wiring identity.
-    pub fn wiring_id(&self) -> &str {
-        &self.wiring_id
-    }
-
-    /// Exact wiring version submitted to Gate.
-    pub const fn wiring_version(&self) -> u32 {
-        self.wiring_version
-    }
-
-    /// Typed Gate result or refusal.
-    pub const fn verdict(&self) -> &DevGateVerdict {
-        &self.verdict
-    }
-}
-
-/// Exact release document and the carrier derived from those bytes.
-#[derive(Clone, Debug, PartialEq)]
-pub struct DevReleaseSnapshot {
-    manifest: ServingManifest,
-    carrier: ReleaseCarrier,
-}
-
-impl DevReleaseSnapshot {
-    /// Immutable serving manifest published by Release.
-    pub const fn manifest(&self) -> &ServingManifest {
-        &self.manifest
-    }
-
-    /// Exact registry and manifest digest carried to serving processes.
-    pub const fn carrier(&self) -> &ReleaseCarrier {
-        &self.carrier
-    }
-}
-
-/// One trace summary from sampled collector output.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct DevTraceObservation {
-    pub(crate) trace_id: String,
-    pub(crate) root_service_name: String,
-    pub(crate) root_trace_name: String,
-    pub(crate) start_time_unix_nanos: u64,
-    pub(crate) duration: Duration,
-}
-
-/// Runtime-assigned local route endpoint for the activated release.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct DevRuntimeEndpoint {
-    base_url: Box<str>,
-    route_host: Box<str>,
-    target_instance: Box<str>,
-}
-
-impl DevRuntimeEndpoint {
-    pub(crate) fn new(base_url: String, route_host: &str, target_instance: &str) -> Self {
-        Self {
-            base_url: base_url.into_boxed_str(),
-            route_host: route_host.into(),
-            target_instance: target_instance.into(),
-        }
-    }
-
-    /// Loopback base URL published by the supervised host.
-    pub fn base_url(&self) -> &str {
-        &self.base_url
-    }
-
-    /// Exact creation of the target database served by this activation.
-    pub fn target_instance(&self) -> &str {
-        &self.target_instance
-    }
-
-    /// Deployment-owned Host header bound during publication.
-    pub fn route_host(&self) -> &str {
-        &self.route_host
-    }
-}
-
-impl DevTraceObservation {
-    /// W3C-compatible trace identity.
-    pub fn trace_id(&self) -> &str {
-        &self.trace_id
-    }
-
-    /// Service of the root span, or the earliest observed span.
-    pub fn root_service_name(&self) -> &str {
-        &self.root_service_name
-    }
-
-    /// Name of the root span, or the earliest observed span.
-    pub fn root_trace_name(&self) -> &str {
-        &self.root_trace_name
-    }
-
-    /// Root start time in Unix epoch nanoseconds.
-    pub const fn start_time_unix_nanos(&self) -> u64 {
-        self.start_time_unix_nanos
-    }
-
-    /// Elapsed interval covered by the observed spans.
-    pub const fn duration(&self) -> Duration {
-        self.duration
-    }
-}
-
-/// Immutable state visible to every development-loop client.
-#[derive(Clone, Debug, PartialEq)]
-pub struct DevSnapshot {
-    revision: u64,
-    stages: [DevStageSnapshot; DEV_STAGE_COUNT],
-    gate_outcomes: Vec<DevGateOutcome>,
-    release: Option<Arc<DevReleaseSnapshot>>,
-    runtime_endpoint: Option<DevRuntimeEndpoint>,
-    traces: Vec<DevTraceObservation>,
-}
-
-impl DevSnapshot {
-    fn empty() -> Self {
-        Self {
-            revision: 0,
-            stages: DEV_STAGE_ORDER.map(|stage| DevStageSnapshot {
-                stage,
-                state: DevStageState::Awaiting,
-            }),
-            gate_outcomes: Vec::new(),
-            release: None,
-            runtime_endpoint: None,
-            traces: Vec::with_capacity(DEV_OBSERVATION_LIMIT),
-        }
-    }
-
-    /// Monotonic session-local revision of this snapshot.
-    pub const fn revision(&self) -> u64 {
-        self.revision
-    }
-
-    /// All ten stages in execution order.
-    pub const fn stages(&self) -> &[DevStageSnapshot; DEV_STAGE_COUNT] {
-        &self.stages
-    }
-
-    /// Typed outcomes produced by the latest Gate suffix.
-    pub fn gate_outcomes(&self) -> &[DevGateOutcome] {
-        &self.gate_outcomes
-    }
-
-    /// Exact manifest and serving carrier produced by Release.
-    pub fn release(&self) -> Option<&DevReleaseSnapshot> {
-        self.release.as_deref()
-    }
-
-    /// Local endpoint that serves the activated release.
-    pub const fn runtime_endpoint(&self) -> Option<&DevRuntimeEndpoint> {
-        self.runtime_endpoint.as_ref()
-    }
-
-    /// Exact package memberships derived from the serving manifest.
-    pub fn memberships(&self) -> impl Iterator<Item = &PackageCoordinate> {
-        self.release
-            .iter()
-            .flat_map(|release| release.manifest.release.packages.iter())
-    }
-
-    /// Exact operation facts derived from the serving manifest.
-    pub fn operations(
-        &self,
-    ) -> impl Iterator<Item = (&ServingComponent, &str, &ServingComponentOperation)> {
-        self.release
-            .iter()
-            .flat_map(|release| release.manifest.components.iter())
-            .flat_map(|component| {
-                component
-                    .operations
-                    .iter()
-                    .map(move |(token, facts)| (component, token.as_str(), facts))
-            })
-    }
-
-    /// Published routes derived from release attachments.
-    pub fn routes(&self) -> impl Iterator<Item = (&str, ServingAttachment)> {
-        self.release
-            .iter()
-            .flat_map(|release| release.manifest.every_attachment())
-            .filter(|(_, attachment)| {
-                matches!(
-                    attachment.attachment_type(),
-                    AttachmentType::Http | AttachmentType::Studio
-                )
-            })
-            .map(|(id, attachment)| (id, ServingAttachment::from(attachment)))
-    }
-
-    /// Recent trace summaries, oldest first.
-    pub fn traces(&self) -> &[DevTraceObservation] {
-        &self.traces
-    }
-}
+pub use plan::DevSnapshot;
 
 /// Cloneable read-only entry point for one development-loop session.
 #[derive(Clone, Debug)]
@@ -736,7 +489,6 @@ mod tests {
     }
 }
 
-/// Snapshot construction for clients' rendering tests.
 #[cfg(feature = "test-util")]
 pub mod test_support {
     pub use super::publisher::{DevReadPublisher, dev_read_channel};

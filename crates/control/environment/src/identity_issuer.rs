@@ -4,6 +4,8 @@
 //! does not install the Secret or access session signing keys. Retirement
 //! requires a live session on the replacement generation.
 
+pub(super) mod plan;
+
 use std::collections::BTreeSet;
 use std::fmt;
 use std::path::PathBuf;
@@ -219,40 +221,15 @@ async fn state(client: &(impl GenericClient + Sync), role: &str) -> anyhow::Resu
 }
 
 fn restricted(row: &Row) -> bool {
-    [
-        "rolsuper",
-        "rolcreaterole",
-        "rolcreatedb",
-        "rolreplication",
-        "rolbypassrls",
-    ]
-    .into_iter()
-    .all(|field| !row.get::<_, bool>(field))
-        && row.get::<_, i64>("owned_objects") == 0
+    plan::restricted(&role_state(row))
 }
 
 fn active(row: &Row) -> bool {
-    restricted(row)
-        && row.get::<_, bool>("rolcanlogin")
-        && row.get::<_, bool>("rolinherit")
-        && row.get::<_, bool>("password_set")
-        && row.get::<_, bool>("valid_until_finite")
-        && row.get::<_, Vec<String>>("memberships") == [IDENTITY_ISSUER_ROLE]
-        && row.get::<_, bool>("membership_options_exact")
-        && row.get::<_, Vec<String>>("member_roles").is_empty()
-        && row.get::<_, Vec<String>>("connect_databases") == [IDENTITY_ISSUER_DATABASE]
+    plan::active(&role_state(row))
 }
 
 fn inactive(row: &Row) -> bool {
-    restricted(row)
-        && !row.get::<_, bool>("rolcanlogin")
-        && row.get::<_, bool>("rolinherit")
-        && !row.get::<_, bool>("password_set")
-        && row.get::<_, Option<String>>("valid_until").as_deref() == Some("1970-01-01T00:00:00Z")
-        && row.get::<_, Vec<String>>("memberships").is_empty()
-        && row.get::<_, Vec<String>>("member_roles").is_empty()
-        && row.get::<_, Vec<String>>("connect_databases").is_empty()
-        && row.get::<_, i64>("sessions") == 0
+    plan::inactive(&role_state(row))
 }
 
 #[derive(Clone, Copy)]
@@ -626,6 +603,27 @@ async fn retire(
         .await?;
     transaction.commit().await?;
     deactivate(admin, issuer, generation).await
+}
+
+fn role_state(row: &Row) -> plan::RoleState {
+    plan::RoleState {
+        rolsuper: row.get("rolsuper"),
+        rolcreaterole: row.get("rolcreaterole"),
+        rolcreatedb: row.get("rolcreatedb"),
+        rolreplication: row.get("rolreplication"),
+        rolbypassrls: row.get("rolbypassrls"),
+        owned_objects: row.get("owned_objects"),
+        rolcanlogin: row.get("rolcanlogin"),
+        rolinherit: row.get("rolinherit"),
+        password_set: row.get("password_set"),
+        valid_until_finite: row.get("valid_until_finite"),
+        memberships: row.get("memberships"),
+        membership_options_exact: row.get("membership_options_exact"),
+        member_roles: row.get("member_roles"),
+        connect_databases: row.get("connect_databases"),
+        valid_until: row.get("valid_until"),
+        sessions: row.get("sessions"),
+    }
 }
 
 #[cfg(test)]

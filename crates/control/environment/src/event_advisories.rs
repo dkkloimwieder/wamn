@@ -1,5 +1,8 @@
 //! Read retained broker advisories and report whether their source payloads exist.
 
+pub(super) mod plan;
+use plan::broker_token;
+
 #[cfg(test)]
 use std::time::Duration;
 
@@ -53,13 +56,6 @@ pub struct OperatorRecord {
     pub advisory: DeliveryAdvisory,
     /// The source payload the advisory names, if the stream still holds it.
     pub source: SourcePayload,
-}
-
-fn broker_token(value: &str) -> bool {
-    !value.is_empty()
-        && !value.chars().any(|character| {
-            character.is_whitespace() || character.is_control() || ".*>".contains(character)
-        })
 }
 
 async fn source_payload(

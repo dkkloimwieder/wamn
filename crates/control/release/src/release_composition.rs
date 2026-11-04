@@ -5,6 +5,8 @@
 //! The dev loop calls this derivation. No second file lists the components
 //! of a release.
 
+pub(super) mod plan;
+
 use std::error::Error;
 use std::fmt;
 use std::fs;
@@ -90,21 +92,7 @@ pub fn select_component_artifacts(
 ) -> Result<Vec<SelectedComponentArtifact>, CompositionError> {
     let mut selected = Vec::with_capacity(packages.len());
     for package in packages {
-        if package.manifest.components.len() != 1 {
-            return Err(CompositionError::invalid(
-                "select package component artifact",
-                format!(
-                    "{}@{} must declare exactly one component for the POC loop",
-                    package.manifest.package.id, package.manifest.package.version
-                ),
-            ));
-        }
-        let component = package
-            .manifest
-            .components
-            .keys()
-            .next()
-            .expect("one package component was required above");
+        let component = plan::selected_component(package)?;
         wamn_schema_generator::build_record::check_current(&package.root)
             .map_err(|source| CompositionError::owner("read the package build", source))?;
         let build_record = wamn_schema_generator::build_record::read(
@@ -153,44 +141,12 @@ fn built_component(
     component: &str,
     build_record: &wamn_schema_generator::build_record::BuildRecord,
 ) -> Result<SelectedComponentArtifact, CompositionError> {
-    let output = wamn_schema_generator::output_root(&package.root);
-    let entry = build_record
-        .outputs
-        .components
-        .iter()
-        .find(|entry| entry.name == component)
-        .ok_or_else(|| {
-            CompositionError::invalid(
-                "select component artifact",
-                format!(
-                    "the build of {}@{} records no component {component}; run wamn build",
-                    package.manifest.package.id, package.manifest.package.version
-                ),
-            )
-        })?;
-    let path = output.join(&entry.path);
+    let (path, entry) = plan::component_entry(package, component, build_record)?;
     let bytes = fs::read(&path).map_err(|source| {
         CompositionError::owner(
             "read built component",
             anyhow!(source).context(format!("read {}", path.display())),
         )
     })?;
-    let digest = wamn_engine::component_admission::component_digest(&bytes);
-    if digest != entry.sha256 {
-        return Err(CompositionError::invalid(
-            "read built component",
-            format!(
-                "{} is {digest}, and build.json records {}; run wamn build",
-                path.display(),
-                entry.sha256
-            ),
-        ));
-    }
-    Ok(SelectedComponentArtifact {
-        package_id: package.manifest.package.id.clone().into_boxed_str(),
-        package_version: package.manifest.package.version.clone().into_boxed_str(),
-        component: component.into(),
-        path,
-        digest: digest.into_boxed_str(),
-    })
+    plan::built_component(package, component, path, entry, &bytes)
 }

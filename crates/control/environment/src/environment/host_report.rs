@@ -7,6 +7,10 @@
 //! exist, and [`collect`] reads the report once. Reading the report is best
 //! effort: a failure adds one line and never replaces the step's own error.
 
+pub(super) mod plan;
+pub use plan::attach;
+use plan::{fetch_logs, ready, selector};
+
 use std::collections::BTreeMap;
 use std::fmt;
 use std::sync::{Arc, Mutex};
@@ -21,270 +25,21 @@ use wamn_release_control::release_chart::Target;
 const POLL: Duration = Duration::from_secs(10);
 const LOG_LINES: &str = "--tail=50";
 
-#[derive(Debug, Deserialize)]
-struct Deployment {
-    spec: DeploymentSpec,
-}
+use plan::Deployment;
 
-#[derive(Debug, Deserialize)]
-struct DeploymentSpec {
-    selector: LabelSelector,
-}
+use plan::List;
 
-#[derive(Debug, Default, Deserialize)]
-#[serde(rename_all = "camelCase", default)]
-struct LabelSelector {
-    match_labels: BTreeMap<String, String>,
-    match_expressions: Vec<Requirement>,
-}
+use plan::Pod;
 
-#[derive(Debug, Deserialize)]
-struct Requirement {
-    key: String,
-    operator: String,
-    #[serde(default)]
-    values: Vec<String>,
-}
+use plan::ContainerStatus;
 
-#[derive(Debug, Deserialize)]
-struct List<T> {
-    items: Vec<T>,
-}
+use plan::Event;
 
-#[derive(Debug, Clone, Deserialize)]
-struct Pod {
-    metadata: Metadata,
-    #[serde(default)]
-    status: PodStatus,
-}
+use plan::ContainerLogs;
 
-#[derive(Debug, Clone, Deserialize)]
-struct Metadata {
-    name: String,
-}
+use plan::PodReport;
 
-#[derive(Debug, Clone, Default, Deserialize)]
-#[serde(rename_all = "camelCase", default)]
-struct PodStatus {
-    phase: Option<String>,
-    conditions: Vec<Condition>,
-    container_statuses: Vec<ContainerStatus>,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-struct Condition {
-    #[serde(rename = "type")]
-    kind: String,
-    status: String,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct ContainerStatus {
-    name: String,
-    #[serde(default)]
-    restart_count: u32,
-    #[serde(default)]
-    state: ContainerState,
-    #[serde(default)]
-    last_state: ContainerState,
-}
-
-#[derive(Debug, Clone, Default, Deserialize)]
-#[serde(default)]
-struct ContainerState {
-    waiting: Option<Waiting>,
-    running: Option<serde_json::Value>,
-    terminated: Option<Terminated>,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-struct Waiting {
-    reason: Option<String>,
-    message: Option<String>,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct Terminated {
-    reason: Option<String>,
-    exit_code: i32,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-struct Event {
-    reason: Option<String>,
-    message: Option<String>,
-    count: Option<u32>,
-}
-
-/// The logs of one container, read when its restart count was `restarts`.
-#[derive(Debug, Clone)]
-struct ContainerLogs {
-    restarts: u32,
-    /// `(previous, lines or the read failure)`.
-    reads: Vec<(bool, Result<String, String>)>,
-}
-
-#[derive(Debug, Clone)]
-struct PodReport {
-    pod: Pod,
-    events: Result<Vec<Event>, String>,
-    logs: BTreeMap<String, ContainerLogs>,
-}
-
-/// The last read of each host pod of one release.
-#[derive(Debug, Clone, Default)]
-pub struct Report {
-    deployment: String,
-    pods: BTreeMap<String, PodReport>,
-    /// Why the last read failed, if it did.
-    failure: Option<String>,
-}
-
-impl Report {
-    fn new(release_name: &str) -> Self {
-        Self {
-            deployment: format!("hostgroup-{release_name}"),
-            ..Self::default()
-        }
-    }
-}
-
-impl fmt::Display for Report {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "host pods of Deployment {}:", self.deployment)?;
-        if self.pods.is_empty() && self.failure.is_none() {
-            write!(f, "\n  no pod was found")?;
-        }
-        for report in self.pods.values() {
-            write_pod(f, report)?;
-        }
-        if let Some(failure) = &self.failure {
-            write!(f, "\n  the host pod report could not be read: {failure}")?;
-        }
-        Ok(())
-    }
-}
-
-fn write_pod(f: &mut fmt::Formatter<'_>, report: &PodReport) -> fmt::Result {
-    let status = &report.pod.status;
-    write!(
-        f,
-        "\npod {}: phase {}, {}",
-        report.pod.metadata.name,
-        status.phase.as_deref().unwrap_or("unknown"),
-        if ready(&report.pod) {
-            "Ready"
-        } else {
-            "not Ready"
-        }
-    )?;
-    for container in &status.container_statuses {
-        write!(
-            f,
-            "\n  container {}: {}; restarts {}",
-            container.name,
-            state(&container.state),
-            container.restart_count
-        )?;
-        if let Some(last) = &container.last_state.terminated {
-            write!(
-                f,
-                "; last terminated {}, exit code {}",
-                last.reason.as_deref().unwrap_or("with no reason"),
-                last.exit_code
-            )?;
-        }
-    }
-    match &report.events {
-        Err(failure) => write!(f, "\n  the warning events could not be read: {failure}")?,
-        Ok(events) => {
-            for event in events {
-                write!(
-                    f,
-                    "\n  warning {}: {} (x{})",
-                    event.reason.as_deref().unwrap_or("Unknown"),
-                    event.message.as_deref().unwrap_or_default().trim(),
-                    event.count.unwrap_or(1)
-                )?;
-            }
-        }
-    }
-    for (container, logs) in &report.logs {
-        for (previous, read) in &logs.reads {
-            let which = if *previous { " (previous)" } else { "" };
-            match read {
-                Err(failure) => write!(
-                    f,
-                    "\n  the log of container {container}{which} could not be read: {failure}"
-                )?,
-                Ok(lines) => {
-                    write!(f, "\n  log of container {container}{which}:")?;
-                    for line in lines.lines() {
-                        write!(f, "\n    {line}")?;
-                    }
-                }
-            }
-        }
-    }
-    Ok(())
-}
-
-fn state(state: &ContainerState) -> String {
-    if let Some(waiting) = &state.waiting {
-        let reason = waiting.reason.as_deref().unwrap_or("with no reason");
-        match &waiting.message {
-            Some(message) => format!("waiting {reason} ({})", message.trim()),
-            None => format!("waiting {reason}"),
-        }
-    } else if let Some(terminated) = &state.terminated {
-        format!(
-            "terminated {}, exit code {}",
-            terminated.reason.as_deref().unwrap_or("with no reason"),
-            terminated.exit_code
-        )
-    } else if state.running.is_some() {
-        "running".to_owned()
-    } else {
-        "no state".to_owned()
-    }
-}
-
-fn ready(pod: &Pod) -> bool {
-    pod.status
-        .conditions
-        .iter()
-        .any(|condition| condition.kind == "Ready" && condition.status == "True")
-}
-
-/// Whether a read fetches the logs of `container`: every read when `all`,
-/// otherwise only for a pod that is not Ready or restarted, and only when the
-/// restart count changed since the last read.
-fn fetch_logs(container: &ContainerStatus, pod_ready: bool, last: Option<u32>, all: bool) -> bool {
-    all || ((!pod_ready || container.restart_count > 0) && last != Some(container.restart_count))
-}
-
-/// The `-l` argument for a Deployment's `spec.selector`.
-fn selector(selector: &LabelSelector) -> anyhow::Result<String> {
-    let mut terms: Vec<String> = selector
-        .match_labels
-        .iter()
-        .map(|(key, value)| format!("{key}={value}"))
-        .collect();
-    for requirement in &selector.match_expressions {
-        let (key, values) = (&requirement.key, requirement.values.join(","));
-        terms.push(match requirement.operator.as_str() {
-            "In" => format!("{key} in ({values})"),
-            "NotIn" => format!("{key} notin ({values})"),
-            "Exists" => key.clone(),
-            "DoesNotExist" => format!("!{key}"),
-            operator => anyhow::bail!("unknown selector operator {operator}"),
-        });
-    }
-    anyhow::ensure!(!terms.is_empty(), "the Deployment selector is empty");
-    Ok(terms.join(","))
-}
+pub use plan::Report;
 
 async fn kubectl(target: &Target, arguments: &[&str]) -> anyhow::Result<String> {
     crate::kubectl::kubectl(
@@ -438,13 +193,9 @@ impl Drop for Poller {
     }
 }
 
-/// Keep `error` first and attach `report` after it.
-pub fn attach(error: &anyhow::Error, report: &Report) -> anyhow::Error {
-    anyhow::Error::msg(report.to_string()).context(format!("{error:#}"))
-}
-
 #[cfg(test)]
 mod tests {
+    use super::plan::LabelSelector;
     use super::*;
 
     fn pod(json: serde_json::Value) -> Pod {

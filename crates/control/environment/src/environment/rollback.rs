@@ -11,6 +11,9 @@
 //! lock, with the reason in the Helm description. It never runs `helm rollback`.
 //! With no such revision, the verb refuses and writes nothing.
 
+pub(super) mod plan;
+pub use plan::successful_newest_first;
+
 use anyhow::{Context as _, bail, ensure};
 use serde_json::Value;
 use wamn_control_registry::Triple;
@@ -109,17 +112,6 @@ async fn previous_revision(
         }
     }
     Ok(None)
-}
-
-/// The revisions whose status is `deployed` or `superseded`, newest first.
-pub fn successful_newest_first(history: &[Value]) -> Vec<u64> {
-    let mut revisions: Vec<u64> = history
-        .iter()
-        .filter(|entry| matches!(entry["status"].as_str(), Some("deployed" | "superseded")))
-        .filter_map(|entry| entry["revision"].as_u64())
-        .collect();
-    revisions.sort_unstable_by(|a, b| b.cmp(a));
-    revisions
 }
 
 #[cfg(test)]

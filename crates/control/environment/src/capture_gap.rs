@@ -14,6 +14,9 @@
 //! skips them. The read uses the observer credential, because reading a stream
 //! is the observer's job.
 
+pub(super) mod plan;
+use plan::pg_lsn;
+
 use anyhow::{Context as _, bail, ensure};
 use async_nats::header::NATS_MESSAGE_ID;
 use async_nats::jetstream::stream::RawMessageErrorKind;
@@ -301,11 +304,6 @@ async fn last_cdc_event(
         sequence -= 1;
     }
     Ok(None)
-}
-
-/// The text form of a `pg_lsn`.
-fn pg_lsn(lsn: u64) -> String {
-    format!("{:X}/{:X}", lsn >> 32, lsn & 0xFFFF_FFFF)
 }
 
 async fn connect(url: &str) -> anyhow::Result<Client> {

@@ -1,5 +1,10 @@
 //! Resolve project integrations and write release-scoped environment bindings.
 
+pub(super) mod plan;
+pub(crate) use plan::exports_satisfy;
+pub use plan::key;
+use plan::{mode_satisfies, refuse};
+
 use std::collections::BTreeMap;
 use std::fmt;
 
@@ -32,13 +37,6 @@ impl From<tokio_postgres::Error> for BindingError {
             context: "read connection authority".into(),
             source: Some(Box::new(source)),
         }
-    }
-}
-fn refuse(code: &'static str, context: impl Into<String>) -> BindingError {
-    BindingError {
-        code,
-        context: context.into(),
-        source: None,
     }
 }
 
@@ -188,42 +186,6 @@ pub async fn analyse(
     Ok(bindings)
 }
 
-fn mode_satisfies(mode: ConnectionMode, interface: &str, write_interfaces: &[String]) -> bool {
-    mode != ConnectionMode::Read
-        || !write_interfaces
-            .iter()
-            .any(|export| interface_compatible(interface, export))
-}
-
-pub(crate) fn exports_satisfy(exports: &[String], required: &[String]) -> bool {
-    required.iter().all(|interface| {
-        exports
-            .iter()
-            .any(|export| interface_compatible(interface, export))
-    })
-}
-
-pub(crate) fn interface_compatible(import: &str, export: &str) -> bool {
-    use wit_parser::{PackageName, ParsedUsePath, parse_use_path};
-    let (Ok(ParsedUsePath::Package(import, name)), Ok(ParsedUsePath::Package(export, export_name))) =
-        (parse_use_path(import), parse_use_path(export))
-    else {
-        return false;
-    };
-    if import.namespace != export.namespace || import.name != export.name || name != export_name {
-        return false;
-    }
-    match (import.version, export.version) {
-        (Some(import), Some(export)) => {
-            export >= import
-                && PackageName::version_compat_track(&import)
-                    == PackageName::version_compat_track(&export)
-        }
-        (None, None) => true,
-        _ => false,
-    }
-}
-
 /// Write the release's versions and names after its requirements exist. A
 /// changed row records the memory key of the release in `drops`.
 pub async fn write(
@@ -268,11 +230,6 @@ pub async fn write(
     Ok(())
 }
 
-/// The project catalog identity keeps equal names in separate applications apart.
-pub fn key(application: &str, alias: &str) -> String {
-    format!("{application}/{alias}")
-}
-
 /// Refresh the environment projection under the caller's lifecycle lock.
 pub async fn project_authority(
     system_url: &str,
@@ -303,7 +260,7 @@ pub async fn project_authority(
 
 #[cfg(test)]
 mod tests {
-    use super::interface_compatible;
+    use super::plan::interface_compatible;
     #[test]
     fn a_read_requirement_refuses_a_write_interface() {
         use wamn_catalog::manifest::ConnectionMode::{Read, Write};

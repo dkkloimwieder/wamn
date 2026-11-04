@@ -1,5 +1,8 @@
 //! Install one package baseline from immutable files.
 
+pub(super) mod plan;
+use plan::prepare_directory;
+
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
@@ -153,26 +156,6 @@ pub(crate) struct PreparedPackage {
 pub(crate) fn prepare_package(root: &PackageRoot) -> anyhow::Result<PreparedPackage> {
     let directory = read_package_root(root)?;
     prepare_directory(root, directory)
-}
-
-fn prepare_directory(
-    root: &PackageRoot,
-    directory: PackageDirectory,
-) -> anyhow::Result<PreparedPackage> {
-    let presented = plan_package_migrations(&directory, None)
-        .context("validate package directory before database work")?;
-    let manifest = PackageManifest::from_slice(&directory.manifest_bytes)
-        .context("parse strict package manifest for definition ownership")?;
-    wamn_catalog::manifest::validate_operation_vocabulary(&manifest)
-        .context("validate package manifest for registration projection")?;
-    let policy = validate_migration_policy(&root.path, &directory, &presented)?;
-    Ok(PreparedPackage {
-        component_source: None,
-        root: root.path.clone(),
-        directory,
-        manifest,
-        policy,
-    })
 }
 
 /// Apply the immutable pending suffix from one package directory.

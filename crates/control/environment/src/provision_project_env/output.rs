@@ -1,19 +1,14 @@
 //! Provisioning output files and private credential replacement.
 
+pub(super) mod plan;
+pub use plan::ensure_secret_path;
+
 use std::io::Write as _;
 use std::os::unix::fs::{OpenOptionsExt as _, PermissionsExt as _};
 
 use anyhow::Context as _;
 
 use super::{AtomicU64, File, OpenOptions, Ordering, OsString, Path, PathBuf, Permissions, Value};
-
-pub fn ensure_secret_path(path: &Path, flag: &str) -> anyhow::Result<()> {
-    anyhow::ensure!(
-        path.as_os_str() != "-",
-        "{flag} must name a file; '-' and stdout are forbidden for credentials"
-    );
-    Ok(())
-}
 
 pub fn ensure_distinct_secret_paths<const N: usize>(
     paths: [(&str, Option<&Path>); N],
@@ -34,12 +29,7 @@ pub fn ensure_distinct_secret_paths<const N: usize>(
         let comparable = std::fs::canonicalize(parent)
             .with_context(|| format!("resolve credential output parent for {flag}"))?
             .join(file_name);
-        if let Some((other_flag, _)) = seen
-            .iter()
-            .find(|(_, other_path)| other_path == &comparable)
-        {
-            anyhow::bail!("{flag} and {other_flag} must name distinct credential output files");
-        }
+        plan::ensure_distinct_secret_path(&seen, flag, &comparable)?;
         seen.push((flag, comparable));
     }
     Ok(())

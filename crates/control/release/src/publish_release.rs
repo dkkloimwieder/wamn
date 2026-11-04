@@ -10,6 +10,16 @@
 //! Postgres row: `apply` step 2 writes `catalog.releases` where it installs (R1
 //! (3), R2, §10.2).
 
+pub(super) mod plan;
+pub(crate) use plan::verify_projected_environment_policy;
+pub use plan::{
+    application_dependency_permissions, composes_integration, parse_package, record_composed_entry,
+};
+use plan::{
+    application_digests, covers_routes, pin_runtime_schemas, project_components, project_routes,
+    projected_environment_policy_sql, validate_request,
+};
+
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 
@@ -57,14 +67,6 @@ SELECT artifact_digest FROM catalog.packages \
 const READ_RELEASE_SQL: &str = "\
 SELECT canonical_bytes FROM catalog.releases \
  WHERE env_key = $1 AND manifest_digest = $2";
-
-fn projected_environment_policy_sql(run_schema: &BareSchemaName) -> String {
-    format!(
-        "SELECT expected_environment, source_policy_org, source_policy_hash \
-           FROM {}.environment_policies WHERE env_key = $1",
-        run_schema.quoted()
-    )
-}
 
 /// Inputs owned by the release publisher.
 #[derive(Debug)]
@@ -290,14 +292,6 @@ impl PublishReleaseRequest {
     }
 }
 
-/// Parse one exact `PACKAGE_ID@PACKAGE_VERSION` package coordinate.
-pub fn parse_package(value: &str) -> Result<PackageCoordinate, String> {
-    let (package_id, package_version) = value
-        .rsplit_once('@')
-        .ok_or_else(|| "expected PACKAGE_ID@PACKAGE_VERSION".to_owned())?;
-    PackageCoordinate::new(package_id, package_version).map_err(|error| error.to_string())
-}
-
 impl PublishReleaseRequest {
     fn scope(&self) -> ReleaseScope {
         ReleaseScope::new(self.env_key().as_str(), self.environment.as_str())
@@ -442,88 +436,6 @@ fn compose_verified_application(
         },
         application_digests,
     })
-}
-
-/// The digests of an admitted application and of the members it embeds.
-fn application_digests(
-    application: &AdmittedComponent,
-    application_bytes: &[u8],
-) -> anyhow::Result<BTreeSet<String>> {
-    let mut digests = BTreeSet::from([application.component_digest.as_str().to_owned()]);
-    for payload in wasmparser::Parser::new(0).parse_all(application_bytes) {
-        if let wasmparser::Payload::ComponentSection {
-            unchecked_range, ..
-        } = payload?
-        {
-            let member = &application_bytes
-                [usize::try_from(unchecked_range.start)?..usize::try_from(unchecked_range.end)?];
-            digests.insert(wamn_engine::component_admission::component_digest(member));
-        }
-    }
-    Ok(digests)
-}
-
-/// Whether one application, with the members it embeds, serves every release route.
-///
-/// Publication requires exactly one declared application member to pass this test.
-fn covers_routes(
-    published: &PublishedRelease,
-    application: &AdmittedComponent,
-    application_bytes: &[u8],
-) -> anyhow::Result<bool> {
-    let digests = application_digests(application, application_bytes)?;
-    Ok(published.manifest.routes.iter().all(|route| {
-        published.manifest.components.iter().any(|component| {
-            component.package_id == route.package_id
-                && component.descriptor.component == route.component
-                && digests.contains(component.descriptor.component_digest.as_str())
-        })
-    }))
-}
-
-/// Record the exact composed entry before publication hashes the release.
-///
-/// The record names the released application components embedded in `entry`.
-/// The manifest retains their original digests for SQL and dependency authority.
-pub fn record_composed_entry(
-    published: &mut PublishedRelease,
-    entry: &ComposedApplication,
-    reference: &str,
-) -> anyhow::Result<()> {
-    let members: BTreeSet<_> = published
-        .manifest
-        .components
-        .iter()
-        .filter(|component| {
-            entry
-                .application_digests
-                .contains(&component.descriptor.component_digest)
-        })
-        .map(|component| wamn_catalog::ServingEntryMember {
-            package_id: component.package_id.clone(),
-            component: component.descriptor.component.clone(),
-            digest: component.descriptor.component_digest.clone(),
-        })
-        .collect();
-    ensure!(
-        members.contains(&entry.application),
-        "composed application is outside the released members"
-    );
-    let mut manifest = published.manifest.clone();
-    manifest.composed_entry = Some(wamn_catalog::ServingComposedEntry {
-        reference: reference.to_owned(),
-        route_digest: entry.route_digest.clone(),
-        application: entry.application.clone(),
-        members,
-    });
-    let canonical_bytes = manifest.canonical_bytes();
-    let (manifest, digest) = ServingManifest::from_canonical_bytes(&canonical_bytes)?;
-    *published = PublishedRelease {
-        manifest,
-        digest,
-        canonical_bytes,
-    };
-    Ok(())
 }
 
 /// Compose the routed application before its artifact reference is recorded.
@@ -1029,68 +941,6 @@ pub(crate) async fn read_projected_environment_policy(
         .map_err(|error| storage("read the provisioned environment policy", error))
 }
 
-pub(crate) fn verify_projected_environment_policy(
-    projected: Option<&ProjectedEnvironmentPolicy>,
-    source_policy: &AuthoritativeEnvironmentPolicy,
-    scope: &ReleaseScope,
-    run_schema: &BareSchemaName,
-) -> Result<(), PublishManifestError> {
-    let Some(projected) = projected else {
-        return Err(environment_policy_absent(scope, run_schema));
-    };
-    verify_environment_name(&projected.expected_environment, scope)?;
-    if projected.source_policy_org.as_deref() != Some(source_policy.source_policy_org.as_ref())
-        || projected.source_policy_hash.as_deref()
-            != Some(source_policy.source_policy_hash.as_ref())
-    {
-        return Err(PublishManifestError::new(
-            PublishManifestErrorType::EnvironmentPolicySourceMismatch,
-            format!(
-                "environment {:?} policy source differs: projected-org={:?}, authoritative-org={:?}, projected-hash={:?}, authoritative-hash={:?}; rerun the verification policy projection",
-                scope.environment,
-                projected.source_policy_org.as_deref().unwrap_or("<absent>"),
-                source_policy.source_policy_org,
-                projected
-                    .source_policy_hash
-                    .as_deref()
-                    .unwrap_or("<absent>"),
-                source_policy.source_policy_hash,
-            ),
-        ));
-    }
-    Ok(())
-}
-
-fn environment_policy_absent(
-    scope: &ReleaseScope,
-    run_schema: &BareSchemaName,
-) -> PublishManifestError {
-    PublishManifestError::new(
-        PublishManifestErrorType::EnvironmentPolicyAbsent,
-        format!(
-            "tenant {:?} has no row in {}.environment_policies; run `wamn-ctl env apply`",
-            scope.env_key,
-            run_schema.as_str()
-        ),
-    )
-}
-
-fn verify_environment_name(
-    expected_environment: &str,
-    scope: &ReleaseScope,
-) -> Result<(), PublishManifestError> {
-    if expected_environment != scope.environment {
-        return Err(PublishManifestError::new(
-            PublishManifestErrorType::EnvironmentPolicyMismatch,
-            format!(
-                "release environment {:?} differs from provisioned environment {:?}",
-                scope.environment, expected_environment
-            ),
-        ));
-    }
-    Ok(())
-}
-
 /// Whether provisioning marked this tenant's environment disposable.
 ///
 /// The same projection the admit path reads (wamn-10yt.38), from the same
@@ -1223,32 +1073,181 @@ async fn publish_release_from_sources(
     })
 }
 
-fn validate_request(request: &PublishReleaseManifest<'_>) -> Result<(), PublishManifestError> {
-    if request.environment.is_empty() || request.verified_publisher_principal.is_empty() {
-        return Err(PublishManifestError::new(
-            PublishManifestErrorType::Release,
-            "environment and publisher principal are required",
-        ));
+/// The admitted components of the release packages: the facts of each package
+/// by `(package_id, package_version)`, and the declared connections of each
+/// component by `(package_id, component)`. Together they are the descriptors
+/// the release carries.
+#[derive(Debug, Default)]
+pub struct ReleaseComponents {
+    facts: BTreeMap<(String, String), Vec<AdmittedComponent>>,
+    connections: BTreeMap<(String, String), Vec<ComponentConnection>>,
+    /// The verified statement instance record of each composed component, by
+    /// component digest.
+    statement_instances: BTreeMap<String, BTreeMap<String, String>>,
+}
+
+impl ReleaseComponents {
+    /// Add one admitted component and its connections. A package names each
+    /// component once.
+    pub fn insert(
+        &mut self,
+        fact: AdmittedComponent,
+        connections: Vec<ComponentConnection>,
+        statement_instances: BTreeMap<String, String>,
+    ) -> anyhow::Result<()> {
+        if !statement_instances.is_empty() {
+            self.statement_instances
+                .insert(fact.component_digest.clone(), statement_instances);
+        }
+        ensure!(
+            self.connections
+                .insert(
+                    (fact.scope.package_id.clone(), fact.component.clone()),
+                    connections,
+                )
+                .is_none(),
+            "package {}@{} names component {} twice",
+            fact.scope.package_id,
+            fact.scope.package_version,
+            fact.component
+        );
+        self.facts
+            .entry((
+                fact.scope.package_id.clone(),
+                fact.scope.package_version.clone(),
+            ))
+            .or_default()
+            .push(fact);
+        Ok(())
     }
-    if request.packages.is_empty() {
-        return Err(PublishManifestError::new(
-            PublishManifestErrorType::Release,
-            "an effective release requires at least one exact package pair",
-        ));
+
+    /// `serving` with the statement set of each named `statements` import of
+    /// its component: the overlay's from the component's own descriptor, and
+    /// each base member's from that base's admitted descriptor in the release,
+    /// found by the digest that the base dependency pins.
+    fn with_statement_instances(
+        &self,
+        serving: ServingComponent,
+    ) -> Result<ServingComponent, PublishManifestError> {
+        let Some(instances) = self
+            .statement_instances
+            .get(&serving.descriptor.component_digest)
+        else {
+            return Ok(serving);
+        };
+        let component = serving.descriptor.component.clone();
+        serving
+            .with_statement_instances(instances, &|digest| {
+                self.facts
+                    .values()
+                    .flatten()
+                    .find(|fact| fact.component_digest == digest)
+            })
+            .map_err(|error| {
+                PublishManifestError::with_source(
+                    PublishManifestErrorType::Component,
+                    format!("component {component:?} does not bind its statement instances"),
+                    error,
+                )
+            })
     }
-    let mut ids = BTreeSet::new();
-    if !request
-        .packages
+
+    /// The declared connections of `fact`.
+    fn connections(
+        &self,
+        fact: &AdmittedComponent,
+    ) -> Result<Vec<ComponentConnection>, PublishManifestError> {
+        self.connections
+            .get(&(fact.scope.package_id.clone(), fact.component.clone()))
+            .cloned()
+            .ok_or_else(|| {
+                PublishManifestError::new(
+                    PublishManifestErrorType::Component,
+                    format!(
+                        "component {:?} of package {:?} has no descriptor",
+                        fact.component, fact.scope.package_id
+                    ),
+                )
+            })
+    }
+}
+
+/// The attachment documents and the `wamn.json` of the packages at `roots`. A
+/// package with no `publication/attachments.json` authors no attachments, and
+/// its generated attachments are read beside the missing document.
+fn package_files(roots: &[PathBuf]) -> (Vec<PathBuf>, Vec<PathBuf>) {
+    let attachments = roots
         .iter()
-        .all(|package| ids.insert(package.package_id()))
-    {
-        return Err(PublishManifestError::new(
-            PublishManifestErrorType::Release,
-            "an effective release cannot contain two versions of one package",
-        ));
+        .map(|root| root.join("publication/attachments.json"))
+        .collect();
+    let manifests = roots
+        .iter()
+        .map(|root| wamn_schema_generator::package_manifest_path(root))
+        .collect();
+    (attachments, manifests)
+}
+
+/// Read the canonical bytes of an installed release.
+pub async fn read_release(
+    transaction: &Transaction<'_>,
+    env_key: &str,
+    manifest_digest: &str,
+) -> Result<Option<Vec<u8>>, PublishManifestError> {
+    transaction
+        .query_one(CLAIM_ENV_KEY_SQL, &[&env_key])
+        .await
+        .map_err(|error| storage("claim the release tenant", error))?;
+    transaction
+        .query_opt(READ_RELEASE_SQL, &[&env_key, &manifest_digest])
+        .await
+        .map(|row| row.map(|row| row.get(0)))
+        .map_err(|error| storage("read the release", error))
+}
+
+fn storage(context: &'static str, error: tokio_postgres::Error) -> PublishManifestError {
+    PublishManifestError::with_source(PublishManifestErrorType::Storage, context, error)
+}
+
+#[cfg(test)]
+mod effective_release_live;
+
+fn descriptor_components(
+    env_key: &str,
+    packages: &[PackageCoordinate],
+    opened: &[OpenedPackage],
+) -> anyhow::Result<ReleaseComponents> {
+    let mut components = ReleaseComponents::default();
+    for (package, opened) in packages.iter().zip(opened) {
+        let scope =
+            ComponentPackageScope::new(env_key, package.package_id(), package.package_version())
+                .context("name the release component scope")?;
+        for descriptor in wamn_package_control::package_artifact::read_descriptors(opened.root())? {
+            let facts = descriptor.into_admitted(scope.clone());
+            wamn_catalog::verify_stored_effect_projection(&facts.component).with_context(|| {
+                format!(
+                    "component {:?} of package {}@{} carries an invalid effect projection",
+                    facts.component.component,
+                    package.package_id(),
+                    package.package_version()
+                )
+            })?;
+            wamn_package_control::component_admission::check_admitted_statements(&facts.component)
+                .with_context(|| {
+                    format!(
+                        "component {:?} of package {}@{} carries refused SQL",
+                        facts.component.component,
+                        package.package_id(),
+                        package.package_version()
+                    )
+                })?;
+            components.insert(
+                facts.component,
+                facts.connections,
+                facts.statement_instances,
+            )?;
+        }
     }
-    validate_attachment_definition_hashes(request.attachments)?;
-    Ok(())
+    Ok(components)
 }
 
 /// Bind the release's behavior and ownership inputs to the exact package
@@ -1353,466 +1352,9 @@ async fn validate_release_package_manifests(
     Ok(())
 }
 
-/// Derive the one schema that an application's SQL resolves against.
-pub(crate) fn application_runtime_schema(
-    manifest: &wamn_catalog::manifest::PackageManifest,
-    manifests: &BTreeMap<String, wamn_catalog::manifest::PackageManifest>,
-    components: &BTreeSet<ServingComponent>,
-) -> anyhow::Result<Option<String>> {
-    let member_digests = components
-        .iter()
-        .filter(|component| component.package_id == manifest.package.id)
-        .flat_map(|component| component.descriptor.statement_instances.values())
-        .collect::<BTreeSet<_>>();
-    let mut members = vec![manifest];
-    for dependency in manifest.base_dependencies.values() {
-        let composed = member_digests.contains(&dependency.digest)
-            || components.iter().any(|component| {
-                component.package_id == dependency.package
-                    && member_digests.contains(&component.descriptor.component_digest)
-            });
-        if composed {
-            members.push(
-                manifests
-                    .get(&dependency.package)
-                    .with_context(|| format!("missing base manifest {}", dependency.package))?,
-            );
-        }
-    }
-    let schemas = members
-        .into_iter()
-        .flat_map(|manifest| {
-            manifest
-                .models
-                .values()
-                .map(|model| model.schema.as_str())
-                .chain(
-                    manifest
-                        .internal_relations
-                        .values()
-                        .map(|relation| relation.schema.as_str()),
-                )
-                .chain(manifest.custom_operations.values().flat_map(|operation| {
-                    operation
-                        .relations
-                        .iter()
-                        .map(|relation| relation.schema.as_str())
-                }))
-        })
-        .collect::<BTreeSet<_>>();
-    match schemas.into_iter().collect::<Vec<_>>().as_slice() {
-        [] if manifest.declares_no_sql() => Ok(None),
-        [schema] => Ok(Some((*schema).to_owned())),
-        _ => anyhow::bail!(
-            "one runtime schema is required for package {}",
-            manifest.package.id
-        ),
-    }
-}
-
-/// Select applications whose admitted component includes the integration base.
-pub fn composes_integration(
-    manifest: &wamn_catalog::manifest::PackageManifest,
-    components: &BTreeSet<ServingComponent>,
-) -> bool {
-    manifest.base_dependencies.values().any(|dependency| {
-        dependency.package == "wamn_integration"
-            && components.iter().any(|application| {
-                application.package_id == manifest.package.id
-                    && application
-                        .descriptor
-                        .statement_instances
-                        .values()
-                        .any(|digest| {
-                            digest == &dependency.digest
-                                || components.iter().any(|base| {
-                                    base.package_id == dependency.package
-                                        && &base.descriptor.component_digest == digest
-                                })
-                        })
-            })
-    })
-}
-
-/// Resolve the declared dependency permissions of an integration application.
-/// Publication resolves them against the released package manifests.
-pub fn application_dependency_permissions(
-    manifest: &wamn_catalog::manifest::PackageManifest,
-    manifests: &BTreeMap<&str, &wamn_catalog::manifest::PackageManifest>,
-) -> anyhow::Result<BTreeSet<String>> {
-    let mut permissions = BTreeSet::new();
-    for dependency in manifest.base_dependencies.values() {
-        for operation in &dependency.operations {
-            let base = manifests
-                .get(dependency.package.as_str())
-                .with_context(|| format!("missing dependency manifest {}", dependency.package))?;
-            ensure!(
-                base.package.version == dependency.version,
-                "dependency {} version differs from the release",
-                dependency.package
-            );
-            let registered = base
-                .custom_operations
-                .get(operation)
-                .map(|operation| operation.permission().is_some())
-                .or_else(|| {
-                    base.models
-                        .values()
-                        .flat_map(|model| model.operations.values())
-                        .find(|declared| declared.permission == *operation)
-                        .map(|_| true)
-                })
-                .with_context(|| {
-                    format!(
-                        "declared dependency {}:{operation} is absent from the release",
-                        dependency.package
-                    )
-                })?;
-            if registered {
-                let canonical =
-                    wamn_catalog::manifest::canonical_operation_identity(&base.package, operation)?;
-                permissions.insert(
-                    canonical
-                        .split_once('@')
-                        .expect("canonical operation has a version")
-                        .0
-                        .to_owned(),
-                );
-            }
-        }
-    }
-    Ok(permissions)
-}
-
-fn pin_runtime_schemas(
-    components: BTreeSet<ServingComponent>,
-    manifests: &BTreeMap<String, wamn_catalog::manifest::PackageManifest>,
-) -> Result<BTreeSet<ServingComponent>, PublishManifestError> {
-    let dependency_manifests = manifests
-        .iter()
-        .map(|(id, manifest)| (id.as_str(), manifest))
-        .collect();
-    let schemas = manifests
-        .iter()
-        .map(|(id, manifest)| {
-            if composes_integration(manifest, &components) {
-                application_dependency_permissions(manifest, &dependency_manifests)?;
-            }
-            application_runtime_schema(manifest, manifests, &components)
-                .map(|schema| (id.clone(), schema))
-        })
-        .collect::<anyhow::Result<BTreeMap<_, _>>>()
-        .map_err(|error| {
-            PublishManifestError::new(PublishManifestErrorType::PackageManifest, error.to_string())
-        })?;
-    Ok(components
-        .into_iter()
-        .map(|mut component| {
-            component.runtime_schema = schemas.get(&component.package_id).cloned().flatten();
-            component
-        })
-        .collect())
-}
-
-/// The admitted components of the release packages: the facts of each package
-/// by `(package_id, package_version)`, and the declared connections of each
-/// component by `(package_id, component)`. Together they are the descriptors
-/// the release carries.
-#[derive(Debug, Default)]
-pub struct ReleaseComponents {
-    facts: BTreeMap<(String, String), Vec<AdmittedComponent>>,
-    connections: BTreeMap<(String, String), Vec<ComponentConnection>>,
-    /// The verified statement instance record of each composed component, by
-    /// component digest.
-    statement_instances: BTreeMap<String, BTreeMap<String, String>>,
-}
-
-impl ReleaseComponents {
-    /// Add one admitted component and its connections. A package names each
-    /// component once.
-    pub fn insert(
-        &mut self,
-        fact: AdmittedComponent,
-        connections: Vec<ComponentConnection>,
-        statement_instances: BTreeMap<String, String>,
-    ) -> anyhow::Result<()> {
-        if !statement_instances.is_empty() {
-            self.statement_instances
-                .insert(fact.component_digest.clone(), statement_instances);
-        }
-        ensure!(
-            self.connections
-                .insert(
-                    (fact.scope.package_id.clone(), fact.component.clone()),
-                    connections,
-                )
-                .is_none(),
-            "package {}@{} names component {} twice",
-            fact.scope.package_id,
-            fact.scope.package_version,
-            fact.component
-        );
-        self.facts
-            .entry((
-                fact.scope.package_id.clone(),
-                fact.scope.package_version.clone(),
-            ))
-            .or_default()
-            .push(fact);
-        Ok(())
-    }
-
-    /// `serving` with the statement set of each named `statements` import of
-    /// its component: the overlay's from the component's own descriptor, and
-    /// each base member's from that base's admitted descriptor in the release,
-    /// found by the digest that the base dependency pins.
-    fn with_statement_instances(
-        &self,
-        serving: ServingComponent,
-    ) -> Result<ServingComponent, PublishManifestError> {
-        let Some(instances) = self
-            .statement_instances
-            .get(&serving.descriptor.component_digest)
-        else {
-            return Ok(serving);
-        };
-        let component = serving.descriptor.component.clone();
-        serving
-            .with_statement_instances(instances, &|digest| {
-                self.facts
-                    .values()
-                    .flatten()
-                    .find(|fact| fact.component_digest == digest)
-            })
-            .map_err(|error| {
-                PublishManifestError::with_source(
-                    PublishManifestErrorType::Component,
-                    format!("component {component:?} does not bind its statement instances"),
-                    error,
-                )
-            })
-    }
-
-    /// The declared connections of `fact`.
-    fn connections(
-        &self,
-        fact: &AdmittedComponent,
-    ) -> Result<Vec<ComponentConnection>, PublishManifestError> {
-        self.connections
-            .get(&(fact.scope.package_id.clone(), fact.component.clone()))
-            .cloned()
-            .ok_or_else(|| {
-                PublishManifestError::new(
-                    PublishManifestErrorType::Component,
-                    format!(
-                        "component {:?} of package {:?} has no descriptor",
-                        fact.component, fact.scope.package_id
-                    ),
-                )
-            })
-    }
-}
-
-/// The admitted components of the opened package artifacts, each from its
-/// descriptor layer, in the scope of `env_key`.
-fn project_components(
-    components: &ReleaseComponents,
-) -> Result<BTreeSet<ServingComponent>, PublishManifestError> {
-    components
-        .facts
-        .values()
-        .flatten()
-        .map(|fact| {
-            components.with_statement_instances(project_serving_component(
-                fact,
-                components.connections(fact)?,
-            )?)
-        })
-        .collect()
-}
-
-fn descriptor_components(
-    env_key: &str,
-    packages: &[PackageCoordinate],
-    opened: &[OpenedPackage],
-) -> anyhow::Result<ReleaseComponents> {
-    let mut components = ReleaseComponents::default();
-    for (package, opened) in packages.iter().zip(opened) {
-        let scope =
-            ComponentPackageScope::new(env_key, package.package_id(), package.package_version())
-                .context("name the release component scope")?;
-        for descriptor in wamn_package_control::package_artifact::read_descriptors(opened.root())? {
-            let facts = descriptor.into_admitted(scope.clone());
-            wamn_catalog::verify_stored_effect_projection(&facts.component).with_context(|| {
-                format!(
-                    "component {:?} of package {}@{} carries an invalid effect projection",
-                    facts.component.component,
-                    package.package_id(),
-                    package.package_version()
-                )
-            })?;
-            wamn_package_control::component_admission::check_admitted_statements(&facts.component)
-                .with_context(|| {
-                    format!(
-                        "component {:?} of package {}@{} carries refused SQL",
-                        facts.component.component,
-                        package.package_id(),
-                        package.package_version()
-                    )
-                })?;
-            components.insert(
-                facts.component,
-                facts.connections,
-                facts.statement_instances,
-            )?;
-        }
-    }
-    Ok(components)
-}
-
-/// The attachment documents and the `wamn.json` of the packages at `roots`. A
-/// package with no `publication/attachments.json` authors no attachments, and
-/// its generated attachments are read beside the missing document.
-fn package_files(roots: &[PathBuf]) -> (Vec<PathBuf>, Vec<PathBuf>) {
-    let attachments = roots
-        .iter()
-        .map(|root| root.join("publication/attachments.json"))
-        .collect();
-    let manifests = roots
-        .iter()
-        .map(|root| wamn_schema_generator::package_manifest_path(root))
-        .collect();
-    (attachments, manifests)
-}
-
-/// Project operation contracts for released components and route attachments.
-///
-/// The kind comes from the generated contract of the operation, or from the
-/// published manifest a promotion copies.
-fn project_routes(
-    request: &PublishReleaseManifest<'_>,
-    route_contracts: &RouteContracts,
-    component_facts: &ReleaseComponents,
-    package_manifests: &BTreeMap<String, wamn_catalog::manifest::PackageManifest>,
-    components: &mut BTreeSet<ServingComponent>,
-) -> Result<BTreeSet<ServingRoute>, PublishManifestError> {
-    let rule = DependencyDigestRule::for_environment(request.environment_is_disposable);
-    let mut routes = BTreeSet::new();
-    for (attachment_id, attachment) in request.attachments {
-        let AttachmentTarget::Route {
-            component,
-            operation,
-        } = &attachment.target;
-        let package = request
-            .packages
-            .iter()
-            .find(|package| package.package_id() == attachment.package_id)
-            .ok_or_else(|| {
-                PublishManifestError::new(
-                    PublishManifestErrorType::Component,
-                    format!(
-                        "route attachment {attachment_id:?} names package {:?} outside the effective release membership",
-                        attachment.package_id
-                    ),
-                )
-            })?;
-        let facts = component_facts
-            .facts
-            .get(&(
-                package.package_id().to_owned(),
-                package.package_version().to_owned(),
-            ))
-            .map_or(&[][..], Vec::as_slice);
-        let fact = resolve_route_component(attachment_id, attachment, component, operation, facts)?;
-        let contract = route_contracts
-            .get(&(attachment.package_id.clone(), operation.clone()))
-            .ok_or_else(|| {
-                PublishManifestError::new(
-                    PublishManifestErrorType::PackageManifest,
-                    format!(
-                        "route operation {operation:?} of package {:?} has no generated contract kind; regenerate the package evidence",
-                        attachment.package_id
-                    ),
-                )
-            })?;
-        let roots = BTreeMap::from([(operation.clone(), fact.clone())]);
-        resolve_component_dependency_closure(
-            &roots,
-            &component_facts.facts,
-            package_manifests,
-            rule,
-        )?;
-        components.insert(
-            component_facts.with_statement_instances(project_serving_component(
-                fact,
-                component_facts.connections(fact)?,
-            )?)?,
-        );
-        routes.insert(ServingRoute {
-            package_id: attachment.package_id.clone(),
-            component: component.clone(),
-            operation: operation.clone(),
-            type_: contract.kind,
-            reads: contract.reads.clone(),
-            revision: contract.revision.clone(),
-            idempotency: contract.idempotency.clone(),
-            canonicalization: contract.canonicalization.clone(),
-        });
-    }
-    // Workflow nodes also use these contracts to begin request element transactions and
-    // claim their keys, for private and registered commands alike. An HTTP
-    // attachment is not required to call an operation.
-    for component in components.iter() {
-        for operation in component.operations.keys() {
-            let Some(contract) =
-                route_contracts.get(&(component.package_id.clone(), operation.clone()))
-            else {
-                continue;
-            };
-            if contract.kind == wamn_catalog::OperationType::EventHandler {
-                continue;
-            }
-            routes.insert(ServingRoute {
-                package_id: component.package_id.clone(),
-                component: component.descriptor.component.clone(),
-                operation: operation.clone(),
-                type_: contract.kind,
-                reads: contract.reads.clone(),
-                revision: contract.revision.clone(),
-                idempotency: contract.idempotency.clone(),
-                canonicalization: contract.canonicalization.clone(),
-            });
-        }
-    }
-    Ok(routes)
-}
-
-/// Read the canonical bytes of an installed release.
-pub async fn read_release(
-    transaction: &Transaction<'_>,
-    env_key: &str,
-    manifest_digest: &str,
-) -> Result<Option<Vec<u8>>, PublishManifestError> {
-    transaction
-        .query_one(CLAIM_ENV_KEY_SQL, &[&env_key])
-        .await
-        .map_err(|error| storage("claim the release tenant", error))?;
-    transaction
-        .query_opt(READ_RELEASE_SQL, &[&env_key, &manifest_digest])
-        .await
-        .map(|row| row.map(|row| row.get(0)))
-        .map_err(|error| storage("read the release", error))
-}
-
-fn storage(context: &'static str, error: tokio_postgres::Error) -> PublishManifestError {
-    PublishManifestError::with_source(PublishManifestErrorType::Storage, context, error)
-}
-
-#[cfg(test)]
-mod effective_release_live;
-
 #[cfg(test)]
 mod tests {
+    use super::plan::application_runtime_schema;
     use super::*;
     use wamn_package_control::test_support::{closure_component, source_manifest};
 
