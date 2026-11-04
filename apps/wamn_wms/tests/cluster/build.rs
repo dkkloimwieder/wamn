@@ -87,7 +87,6 @@ fn prepare(command: &mut Command, repository: &Path, target: &Path) {
     command
         .current_dir(repository)
         .env("CARGO_TARGET_DIR", target)
-        .env("RUSTC_WRAPPER", "")
         .env("CARGO_BUILD_JOBS", "2");
     for (name, _) in std::env::vars_os() {
         let key = name.to_string_lossy();

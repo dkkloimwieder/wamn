@@ -130,7 +130,6 @@ async fn run_build(
     let status = command
         .current_dir(repository)
         .env("CARGO_TARGET_DIR", target)
-        .env("RUSTC_WRAPPER", "")
         .stdin(Stdio::null())
         .stdout(output.try_clone()?)
         .stderr(output)
