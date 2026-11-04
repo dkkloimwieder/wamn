@@ -511,7 +511,11 @@ Application package migrations retain their own streams.
 
 ## Rollback and maintenance
 
-Run `wamn-ctl env rollback <coordinate> --reason <text>`, which applies the previous intended release of the release chart.
+Run `wamn-ctl env rollback <coordinate> --reason <text>` to restore the previous intended release and client pin.
+Rollback selects the newest successful revision whose release digest or client pin differs from the current pair.
+It restores both fields from that revision. If the revision has no client, rollback clears the client.
+A web-only rollback restores the previous web digest with the same release digest and leaves host pods untouched.
+
 A release digest selects exact bytes, but a mutable image tag does not.
 The installed package and its committed migrations remain in place.
 Reverse migration is not rollback.

@@ -19,7 +19,7 @@ pub enum EnvCommand {
     Apply(ApplyArgs),
     /// Write the committed integration documents of one environment.
     Connections(ConnectionsArgs),
-    /// Apply the previous intended release of one environment again.
+    /// Restore the previous intended release and web client pin of one environment.
     Rollback(RollbackArgs),
     /// Delete one environment. Its database stays on the cluster unless --data.
     Delete(DeleteArgs),

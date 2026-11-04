@@ -76,7 +76,10 @@ pub async fn show(platform: &Platform, triple: &Triple) -> anyhow::Result<Enviro
     Ok(document)
 }
 
-fn revision_client(values: &serde_json::Value, host: &str) -> anyhow::Result<Option<Client>> {
+pub(super) fn revision_client(
+    values: &serde_json::Value,
+    host: &str,
+) -> anyhow::Result<Option<Client>> {
     match (
         values["webClients"][host].as_str(),
         values["webDigests"][host].as_str(),

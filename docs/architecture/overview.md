@@ -162,7 +162,7 @@ The platform UI still uses `platform-ui/<platform version>/` and its uploaded or
 `wamn-ctl env` has five verbs:
 
 - `apply <file>`: Move the environment toward its document. `--dry-run` prints the plan without the lock.
-- `rollback <coordinate> --reason <text>`: Apply the previous intended release.
+- `rollback <coordinate> --reason <text>`: Restore the previous intended release and client pin.
 - `delete <coordinate> [--data]`: Delete the environment.
 - `show <coordinate>`: Print the document that the authorities hold for the environment.
 - `status <coordinate>`: Print the current state as JSON.
@@ -202,9 +202,15 @@ Every step is an ensure that is judged by observation, so applying again repairs
 The reconciler creates each run plane from the current SQL declarations.
 It repairs current schema and grant drift without converting older run-plane layouts.
 
-`rollback` finds the newest Helm revision that is `deployed` or `superseded` and has another digest than the current one.
-It runs `apply` on that digest and keeps the reason in the Helm description.
-It never runs `helm rollback`.
+`rollback` compares each successful revision's release digest and client pin with the current pair.
+It selects the newest revision with a different pair and status `deployed` or `superseded`.
+It restores that revision's release digest and client through `apply` and keeps the reason in the Helm description.
+If that revision has no client, rollback clears the current client.
+
+After a web-only apply, rollback restores the previous web digest with the same release digest.
+The web maps reach only the edge's release ConfigMap, so a web-only apply or rollback leaves host pod templates unchanged.
+
+Rollback never runs `helm rollback`.
 If no such revision exists, it refuses and writes nothing.
 
 `delete` is the one destructive verb, and every step runs only if its target is present.

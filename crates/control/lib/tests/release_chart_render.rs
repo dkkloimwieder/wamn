@@ -5,7 +5,7 @@
 //! The subchart is fetched from OCI by `helm dependency build`, so the test is
 //! ignored and needs `helm` and the network.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -128,11 +128,8 @@ fn input(env: &str) -> ValuesInput {
     }
 }
 
-/// `helm template` one environment; the documents it renders.
-fn render(chart: &Path, scratch: &Scratch, env: &str) -> Vec<Value> {
+fn render_values(env: &str) -> Value {
     let input = input(env);
-    let name = release_name(&input.org, &input.project, &input.env).expect("valid coordinate");
-    let path = scratch.0.join(format!("values-{env}.yaml"));
     let mut rendered = values(&input).expect("values");
     rendered["webClients"] = serde_yaml::to_value(std::collections::BTreeMap::from([(
         input.route_host.clone(),
@@ -144,7 +141,13 @@ fn render(chart: &Path, scratch: &Scratch, env: &str) -> Vec<Value> {
         WEB_DIGEST,
     )]))
     .unwrap();
-    std::fs::write(&path, serde_yaml::to_string(&rendered).expect("yaml")).expect("write values");
+    rendered
+}
+
+fn render_yaml(chart: &Path, scratch: &Scratch, env: &str, values: &Value) -> String {
+    let name = release_name("acme", "wms", env).expect("valid coordinate");
+    let path = scratch.0.join(format!("values-{env}.yaml"));
+    std::fs::write(&path, serde_yaml::to_string(values).expect("yaml")).expect("write values");
     let output = helm(&[
         "template",
         &name,
@@ -160,7 +163,13 @@ fn render(chart: &Path, scratch: &Scratch, env: &str) -> Vec<Value> {
         "helm template: {}",
         String::from_utf8_lossy(&output.stderr)
     );
-    let documents: Vec<Value> = serde_yaml::Deserializer::from_slice(&output.stdout)
+    String::from_utf8(output.stdout).expect("rendered UTF-8")
+}
+
+/// `helm template` one environment; the documents it renders.
+fn render(chart: &Path, scratch: &Scratch, env: &str) -> Vec<Value> {
+    let yaml = render_yaml(chart, scratch, env, &render_values(env));
+    let documents: Vec<Value> = serde_yaml::Deserializer::from_str(&yaml)
         .map(Value::deserialize)
         .collect::<Result<Vec<_>, _>>()
         .expect("rendered YAML")
@@ -216,6 +225,72 @@ fn kind_name(document: &Value) -> (String, String) {
             .expect("name")
             .to_owned(),
     )
+}
+
+#[test]
+#[ignore = "requires: bin:helm"]
+fn web_only_changes_leave_all_workloads_byte_equal() {
+    wamn_test_postgres::require_ignored_prerequisites("requires: bin:helm");
+    let scratch = Scratch::new("web-only");
+    let chart = stamped_chart(&scratch);
+    let name = release_name("acme", "wms", "prod").unwrap();
+    let first = render_values("prod");
+    let before = render_yaml(&chart, &scratch, "prod", &first);
+    let documents = |yaml: &str| -> BTreeMap<_, _> {
+        yaml.split("---\n")
+            .filter(|document| !document.trim().is_empty())
+            .map(|bytes| {
+                let object: Value = serde_yaml::from_str(bytes).expect("rendered YAML");
+                (kind_name(&object), bytes.to_owned())
+            })
+            .collect()
+    };
+    let before = documents(&before);
+    assert!(before.keys().any(|(kind, _)| kind == "Deployment"));
+    assert!(before.keys().any(|(kind, _)| kind == "WorkloadDeployment"));
+    // Each edit changes one web map only. All other objects, including every
+    // Deployment, StatefulSet and workload pod template, keep their exact bytes.
+    for key in ["webDigests", "webClients"] {
+        let mut second = first.clone();
+        second[key]["wms.acme.example"] = if key == "webDigests" {
+            format!("sha256:{}", "b".repeat(64)).into()
+        } else {
+            "wamn_receiving".into()
+        };
+        let after = documents(&render_yaml(&chart, &scratch, "prod", &second));
+        assert_eq!(
+            before.keys().collect::<Vec<_>>(),
+            after.keys().collect::<Vec<_>>()
+        );
+        let mut changed = Vec::new();
+        for (object, bytes) in &before {
+            if object == &("ConfigMap".into(), name.clone()) {
+                let old: Value = serde_yaml::from_str(bytes).unwrap();
+                let mut new: Value = serde_yaml::from_str(&after[object]).unwrap();
+                let old_release: serde_json::Value =
+                    serde_json::from_str(old["data"]["release.json"].as_str().unwrap()).unwrap();
+                let new_release: serde_json::Value =
+                    serde_json::from_str(new["data"]["release.json"].as_str().unwrap()).unwrap();
+                let field = if key == "webDigests" {
+                    "webs"
+                } else {
+                    "clients"
+                };
+                assert_ne!(old_release[field], new_release[field]);
+                let mut expected = old_release;
+                expected[field] = serde_json::to_value(&second[key]).unwrap();
+                assert_eq!(new_release, expected);
+                new["data"]["release.json"] = old["data"]["release.json"].clone();
+                assert_eq!(old, new);
+            } else {
+                assert_eq!(bytes, &after[object], "{key} changed {object:?}");
+            }
+            if bytes != &after[object] {
+                changed.push(object.clone());
+            }
+        }
+        assert_eq!(changed, [("ConfigMap".into(), name.clone())]);
+    }
 }
 
 #[tokio::test]
