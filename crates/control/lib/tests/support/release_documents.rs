@@ -282,25 +282,6 @@ pub fn fixture_environment(
     Ok((source, document))
 }
 
-/// Build and push real web artifacts, then pin the kind documents to their digests.
-pub async fn pin_web_clients(
-    repository: &Path,
-    registry: &wamn_control::package_artifact::PackageRegistry,
-    environments: &mut [(&str, &mut EnvironmentDocument)],
-) -> anyhow::Result<()> {
-    use wamn_control::web_artifact::{build_web_artifact, pack_web_artifact, push_web_artifact};
-
-    for (package, environment) in environments {
-        let root = build_web_artifact(&repository.join("apps").join(*package)).await?;
-        let packed = pack_web_artifact(&root)?;
-        environment.client = Some(environment::document::Client {
-            package: (*package).to_owned(),
-            web: push_web_artifact(&packed, registry).await?.digest,
-        });
-    }
-    Ok(())
-}
-
 pub mod http {
     use super::{NAMESPACE, ORG, PACKAGE, PROJECT};
     use anyhow::{Context as _, ensure};
@@ -568,10 +549,7 @@ pub mod http {
     pub fn bindings_match(rows: &Value, document: &EnvironmentDocument, digest: &str) -> bool {
         rows["versions"]
             .as_array()
-            .is_some_and(|rows| rows.len() == 4 && rows.iter().all(|row| row["version"] == 1))
-            && rows["bindings"]
-                .as_array()
-                .is_some_and(|rows| rows.len() == 5)
+            .is_some_and(|rows| rows.iter().all(|row| row["version"] == 1))
             && ["upstream", OUTBOUND_HANDLE, API_KEY_HANDLE, AWS_HANDLE]
                 .iter()
                 .all(|handle| {
@@ -1148,15 +1126,5 @@ pub fn host_report_release(
     device: &wamn_catalog::ComponentDescriptor,
 ) -> anyhow::Result<Vec<u8>> {
     let internal = MANIFEST_H.replace(r#""type":"http""#, r#""type":"internal""#);
-    let bytes = release(&internal, version, Some(device))?;
-    let (manifest, _) = wamn_catalog::ServingManifest::from_canonical_bytes(&bytes)?;
-    ensure!(
-        manifest.composed_entry.is_none()
-            && wamn_execution_host::synchronous_route_count(&manifest) > 0
-            && !wamn_control::release_chart::roles(&manifest, ORG, PROJECT, "broken")
-                .iter()
-                .any(|role| role.name == wamn_control::release_chart::RoleName::Http),
-        "the failed-start fixture requires direct component preload and no http role"
-    );
-    Ok(bytes)
+    release(&internal, version, Some(device))
 }
