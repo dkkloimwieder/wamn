@@ -914,7 +914,7 @@ async fn control_connection(args: &HostArgs) -> anyhow::Result<ControlConnection
 
 /// The tracing target of the scheduler client's events. The `wasmcloud:nats`
 /// plugin logs the same event words, and only the target and the `client`
-/// field tell the two lines apart (docs/plan/nats-outage.md §4.1).
+/// field tell the two lines apart (wamn-gdex).
 const SCHEDULER_NATS_TARGET: &str = "wamn_host::scheduler_nats";
 
 /// The commands the scheduler client buffers while it is disconnected; a full

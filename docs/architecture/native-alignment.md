@@ -53,8 +53,8 @@ A generic upstream component transfer cannot replace them by dropping those fact
 
 The [routing contract](execution.md#routing-and-availability) retains the native 404 and readiness limitations.
 
-The native operator can exit after an initial scheduler NATS dial timeout.
-Through a scheduler outage, Kubernetes restarts the operator with a backoff of at most 5 minutes, and the operator recovers when NATS returns.
+The native operator can exit after an initial dial timeout to the one platform NATS.
+Through a NATS outage, Kubernetes restarts the operator with a backoff of at most 5 minutes, and the operator recovers when NATS returns.
 A fault-time liveness delay remains. Supervised restarts do not remove it.
 
 The [lifecycle contract](execution.md#process-lifecycle) covers the combined host shutdown path.

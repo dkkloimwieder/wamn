@@ -6,7 +6,6 @@ Each plan describes work or decisions for its subject. [Architecture](../archite
 - [Identity](identity.md): external login adapters.
 - [Integration schema](integration-schema.md): project integrations and environment connections.
 - [Manifest authoring](manifest-authoring.md): KCL package declarations.
-- [NATS outage](nats-outage.md): evidence and recovery requirements.
 - [Observability](observability.md): telemetry collection and export.
 - [Performance architecture](perf-arch.md): request execution design.
 - [Platform configuration](platform-config.md): application configuration and owner rulings.

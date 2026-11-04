@@ -46,7 +46,7 @@ fn main() -> anyhow::Result<()> {
     // wash-runtime builds its log filter from RUST_LOG, else from the level,
     // and then quiets `async_nats` to error. The more specific directive keeps
     // the cause of each failed NATS attempt, which async-nats logs at debug
-    // (docs/plan/nats-outage.md §4.1). A RUST_LOG the deployment sets wins.
+    // (wamn-gdex). A RUST_LOG the deployment sets wins.
     if std::env::var_os("RUST_LOG").is_none() {
         // SAFETY: no other thread exists yet; the runtime starts below.
         unsafe {

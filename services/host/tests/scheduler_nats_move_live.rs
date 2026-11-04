@@ -1,5 +1,5 @@
-//! Scheduler NATS outage test for the rebuilt host (docs/plan/nats-outage.md,
-//! wamn-gdex): the host reconnects by the NATS client's own retry.
+//! NATS outage test for the rebuilt host (wamn-gdex): the host reconnects by
+//! the NATS client's own retry.
 //!
 //! The ignored test runs NATS in a Docker container on its own network, under
 //! the alias `nats` and with TLS as the runtime-operator chart configures it.

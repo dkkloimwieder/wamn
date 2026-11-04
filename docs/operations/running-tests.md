@@ -617,7 +617,7 @@ The fixture starts Compose services on assigned loopback ports.
 If you put `--wms` before `--`, the fixture also starts MinIO and makes the `labels` bucket.
 It then sets `WAMN_DEV_ENV_CREDENTIALS_FILE` to a mode 0600 file with the MinIO credential under the handle `labels-store`.
 It sets `WAMN_RECEIVING_DEV_MINIO_ENDPOINT` to the MinIO address.
-The owned event broker admits the materializer consumers of the packages that the command gives `wamn dev up`.
+The fixture's NATS admits the materializer consumers of the packages that the command gives `wamn dev up`.
 These are `wamn_receiving` and `client_acme_receiving`, or `wamn_wms` with `--wms`.
 The fixture sets the CDC reader binary and the event publisher credential for `wamn dev up`.
 It also sets the event materializer credential, which the broker scopes to the source stream.
@@ -888,7 +888,7 @@ Setting only one variable fails.
 An empty selection or an unknown name fails and lists the known names.
 
 Each rerunnable check declares its required phase, a point that setup reaches.
-The `environment` phase includes the operators, registry, provisioned organization, packages, releases, system database, and event broker.
+The `environment` phase includes the operators, registry, provisioned organization, packages, releases, system database, and NATS.
 The `release` phase adds the applied dev environment.
 The `bindings` phase adds the dev connection apply.
 Deleting the dev environment removes the `release` and `bindings` phases.
