@@ -743,11 +743,9 @@ async fn runtime(
         "120s",
     )
     .await?;
-    changed |= reissue_stale_leaves(target).await?;
     for (namespace, name) in CHART_SECRETS {
         ready(target, step, namespace, "certificate", name, "120s").await?;
     }
-    changed |= keep_chart_secrets(target).await?;
     changed |= nats(target, document, repository, step).await?;
     let operator = operator_objects(repository, document)?;
     let values_path = work_directory.join("values-operator.yaml");
@@ -769,109 +767,6 @@ const CHART_SECRETS: [(&str, &str); 4] = [
     ("hosts", "wasmcloud-runtime-tls"),
     ("hosts", "wasmcloud-data-tls"),
 ];
-
-/// Delete each Secret of a certificate of the ClusterIssuer wasmcloud-ca
-/// whose CA is not the current one, so that cert-manager issues it again. An
-/// install from before One NATS has leaves of the chart's CA, and a
-/// Certificate whose spec did not change keeps them.
-async fn reissue_stale_leaves(target: &Target) -> anyhow::Result<bool> {
-    let ca: Value = kubectl::get(
-        &target.kubeconfig,
-        &target.context,
-        "cert-manager",
-        "secret",
-        "wasmcloud-ca",
-    )
-    .await?
-    .context("missing Secret cert-manager/wasmcloud-ca")?;
-    let current = ca["data"]["tls.crt"]
-        .as_str()
-        .context("the CA Secret has no tls.crt")?;
-    let certificates: Value = serde_json::from_str(
-        &kubectl::kubectl(
-            &target.kubeconfig,
-            &target.context,
-            "cert-manager",
-            &["get", "certificates.cert-manager.io", "-A", "-o", "json"],
-            None,
-        )
-        .await?,
-    )?;
-    let mut changed = false;
-    for certificate in certificates["items"].as_array().into_iter().flatten() {
-        if certificate["spec"]["issuerRef"]["name"] != "wasmcloud-ca"
-            || certificate["spec"]["issuerRef"]["kind"] != "ClusterIssuer"
-        {
-            continue;
-        }
-        let namespace = certificate["metadata"]["namespace"]
-            .as_str()
-            .context("certificate namespace")?;
-        let name = certificate["spec"]["secretName"]
-            .as_str()
-            .context("certificate secretName")?;
-        let secret: Option<Value> = kubectl::get(
-            &target.kubeconfig,
-            &target.context,
-            namespace,
-            "secret",
-            name,
-        )
-        .await?;
-        if let Some(secret) = secret
-            && secret["data"]["ca.crt"].as_str() != Some(current)
-        {
-            kubectl::kubectl(
-                &target.kubeconfig,
-                &target.context,
-                namespace,
-                &["delete", "secret", name],
-                None,
-            )
-            .await?;
-            changed = true;
-        }
-    }
-    Ok(changed)
-}
-
-/// Keep the chart Secrets that cert-manager now issues: an operator release
-/// from before One NATS generated them, and its upgrade with
-/// `generate: false` would delete them.
-async fn keep_chart_secrets(target: &Target) -> anyhow::Result<bool> {
-    let mut changed = false;
-    for (namespace, name) in CHART_SECRETS {
-        let secret: Option<Value> = kubectl::get(
-            &target.kubeconfig,
-            &target.context,
-            namespace,
-            "secret",
-            name,
-        )
-        .await?;
-        if secret.is_some_and(|secret| {
-            secret["metadata"]["annotations"]["meta.helm.sh/release-name"].is_string()
-                && secret["metadata"]["annotations"]["helm.sh/resource-policy"] != "keep"
-        }) {
-            kubectl::kubectl(
-                &target.kubeconfig,
-                &target.context,
-                namespace,
-                &[
-                    "annotate",
-                    "secret",
-                    name,
-                    "helm.sh/resource-policy=keep",
-                    "--overwrite",
-                ],
-                None,
-            )
-            .await?;
-            changed = true;
-        }
-    }
-    Ok(changed)
-}
 
 async fn collector(
     target: &Target,
