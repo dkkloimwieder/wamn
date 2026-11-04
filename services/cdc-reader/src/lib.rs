@@ -1136,7 +1136,7 @@ pub async fn run_with_shutdown(
         &args,
         reg.slot.clone(),
         monitor.clone(),
-        last_lsn_advance_ms.clone(),
+        Arc::clone(&last_lsn_advance_ms),
     );
 
     let mut ladder = ReopenLadder::new();
@@ -1160,7 +1160,7 @@ pub async fn run_with_shutdown(
                     &args,
                     resumed.slot.clone(),
                     monitor.clone(),
-                    last_lsn_advance_ms.clone(),
+                    Arc::clone(&last_lsn_advance_ms),
                 );
             }
             reg = resumed;

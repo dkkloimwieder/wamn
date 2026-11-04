@@ -145,7 +145,7 @@ fn expected_invocations(root: &Path) -> Vec<Vec<String>> {
             root.clone(),
             "test".into(),
             "--manifest-path".into(),
-            root_manifest.clone(),
+            root_manifest,
             "--locked".into(),
             "--offline".into(),
             "-p".into(),

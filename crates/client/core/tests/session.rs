@@ -194,7 +194,7 @@ fn request_debug_hides_credential_headers_case_insensitively_and_omits_the_body(
 async fn login_posts_to_the_configured_issuer_and_caches_an_opaque_bearer() {
     let pat = Arc::new(PatSource::default());
     let exchange = transport([Ok(session_reply(OPAQUE_SESSION))]);
-    let credentials = session(pat.clone(), exchange.clone());
+    let credentials = session(Arc::<PatSource>::clone(&pat), Arc::clone(&exchange));
 
     credentials.login().await.expect("exchange succeeds");
     assert_eq!(
@@ -236,7 +236,7 @@ async fn concurrent_callers_share_one_exchange_and_renew_after_the_cached_deadli
         Ok(session_reply(OPAQUE_SESSION)),
         Ok(session_reply("opaque-renewed-session")),
     ]);
-    let credentials = session(pat.clone(), exchange.clone());
+    let credentials = session(Arc::<PatSource>::clone(&pat), Arc::clone(&exchange));
 
     let (login, first, second) = tokio::join!(
         credentials.login(),
@@ -278,7 +278,7 @@ async fn concurrent_callers_share_one_exchange_and_renew_after_the_cached_deadli
 async fn explicit_fresh_credentials_bypass_exchange_and_default_providers_refuse() {
     let pat = Arc::new(PatSource::default());
     let exchange = transport([]);
-    let credentials = session(pat.clone(), exchange.clone());
+    let credentials = session(Arc::<PatSource>::clone(&pat), Arc::clone(&exchange));
     assert_eq!(
         credentials.fresh_bearer().await.expect("fresh PAT"),
         format!("{PRIVATE_PAT}-1")
@@ -300,7 +300,7 @@ async fn explicit_fresh_credentials_bypass_exchange_and_default_providers_refuse
     );
 
     assert!(SessionOnly.fresh_bearer().await.is_err());
-    let credentials = session(Arc::new(SessionOnly), exchange.clone());
+    let credentials = session(Arc::new(SessionOnly), Arc::clone(&exchange));
     assert!(credentials.login().await.is_err());
     assert!(credentials.fresh_bearer().await.is_err());
     assert!(requests(&exchange).is_empty());
@@ -337,7 +337,7 @@ async fn malformed_refused_or_expired_exchange_replies_fail_closed() {
     for response in cases {
         let pat = Arc::new(PatSource::default());
         let exchange = transport([Ok(response), Ok(session_reply("recovered-session"))]);
-        let credentials = session(pat.clone(), exchange.clone());
+        let credentials = session(Arc::<PatSource>::clone(&pat), Arc::clone(&exchange));
         assert_redacted(
             &credentials
                 .login()
@@ -366,7 +366,7 @@ async fn failed_renewal_does_not_return_the_expired_session() {
         Ok(reply(401, "{}")),
         Ok(session_reply("recovered-session")),
     ]);
-    let credentials = session(Arc::new(PatSource::default()), exchange.clone());
+    let credentials = session(Arc::new(PatSource::default()), Arc::clone(&exchange));
     credentials.login().await.expect("initial login");
     tokio::time::advance(Duration::from_secs(301)).await;
 
@@ -385,7 +385,7 @@ async fn failed_renewal_does_not_return_the_expired_session() {
 #[tokio::test]
 async fn provider_and_transport_errors_do_not_expose_credentials() {
     let exchange = transport([]);
-    let credentials = session(Arc::new(FailingPat), exchange.clone());
+    let credentials = session(Arc::new(FailingPat), Arc::clone(&exchange));
     assert_redacted(&credentials.login().await.expect_err("PAT source failed"));
     assert_redacted(
         &credentials
@@ -398,7 +398,7 @@ async fn provider_and_transport_errors_do_not_expose_credentials() {
     let exchange = transport([Err(ClientError::Transport {
         detail: format!("{PRIVATE_PAT} {OPAQUE_SESSION}"),
     })]);
-    let credentials = session(Arc::new(PatSource::default()), exchange.clone());
+    let credentials = session(Arc::new(PatSource::default()), Arc::clone(&exchange));
     assert_redacted(&credentials.login().await.expect_err("transport failed"));
     assert_eq!(requests(&exchange).len(), 1);
 }
@@ -425,7 +425,7 @@ async fn password_active_use_serializes_renewal_and_logout_clears_locally() {
     ]);
     let credentials = Arc::new(PasswordCredentials::new(
         SessionTarget::new("https://identity.example", AUDIENCE).unwrap(),
-        exchange.clone(),
+        Arc::<RecordingTransport>::clone(&exchange),
     ));
     credentials
         .login(
@@ -442,7 +442,7 @@ async fn password_active_use_serializes_renewal_and_logout_clears_locally() {
     );
     let mut tasks = tokio::task::JoinSet::new();
     for _ in 0..8 {
-        let credentials = credentials.clone();
+        let credentials = Arc::clone(&credentials);
         tasks.spawn(async move { credentials.bearer().await });
     }
     while let Some(result) = tasks.join_next().await {
@@ -473,7 +473,7 @@ async fn password_lost_renewal_requires_login_and_idle_expiry_sends_nothing() {
         ]);
         let credentials = Arc::new(PasswordCredentials::new(
             SessionTarget::new("https://identity.example", AUDIENCE).unwrap(),
-            exchange.clone(),
+            Arc::<RecordingTransport>::clone(&exchange),
         ));
         credentials
             .login(
@@ -487,8 +487,8 @@ async fn password_lost_renewal_requires_login_and_idle_expiry_sends_nothing() {
         let client = WamnClient::new(
             "https://application.example",
             None,
-            credentials.clone(),
-            operations.clone(),
+            Arc::<wamn_client::credentials::PasswordCredentials>::clone(&credentials),
+            Arc::<RecordingTransport>::clone(&operations),
         );
         assert!(
             client
@@ -514,7 +514,7 @@ async fn password_refusals_hide_provider_content_and_do_not_retry() {
         let exchange = transport([Ok(response)]);
         let credentials = PasswordCredentials::new(
             SessionTarget::new("https://identity.example", AUDIENCE).unwrap(),
-            exchange.clone(),
+            Arc::<RecordingTransport>::clone(&exchange),
         );
         let error = credentials
             .login(

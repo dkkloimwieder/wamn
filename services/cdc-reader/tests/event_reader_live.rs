@@ -114,7 +114,7 @@ impl Proxy {
         let severed = Arc::new(AtomicBool::new(false));
         let conns: Arc<std::sync::Mutex<Vec<tokio::task::JoinHandle<()>>>> =
             Arc::new(std::sync::Mutex::new(Vec::new()));
-        let (s, c) = (severed.clone(), conns.clone());
+        let (s, c) = (Arc::clone(&severed), Arc::clone(&conns));
         tokio::spawn(async move {
             loop {
                 let Ok((mut inbound, _)) = listener.accept().await else {

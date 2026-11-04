@@ -28,9 +28,8 @@ fn candidate_binding(component: &str, alias: &str) -> serde_json::Value {
 fn candidate_binding_world_requires_complete_canonical_unique_rows() {
     let first = candidate_binding("sha256:a", "primary");
     let second = candidate_binding("sha256:b", "primary");
-    let world =
-        CandidateBindingWorld::from_json(serde_json::json!([first.clone(), second.clone()]))
-            .expect("ordered complete world");
+    let world = CandidateBindingWorld::from_json(serde_json::json!([first, second]))
+        .expect("ordered complete world");
     assert!(world.binding("sha256:a", "primary").is_some());
     let mut missing_mode = candidate_binding("sha256:a", "primary");
     missing_mode.as_object_mut().unwrap().remove("read-only");

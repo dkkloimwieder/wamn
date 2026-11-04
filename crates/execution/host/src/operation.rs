@@ -489,7 +489,7 @@ impl OperationHost {
             _ => None,
         };
         let pulls = own.into_iter().map(|fact| {
-            let source = self.source.clone();
+            let source = Arc::clone(&self.source);
             async move {
                 let bytes = source
                     .pull_verified(&fact)

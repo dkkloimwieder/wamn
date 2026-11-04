@@ -460,7 +460,7 @@ fn direct_state_replay_and_composed_routes_remain_distinct() {
     let contracts = fixture::contracts(&package);
     let identity = command.operation.clone();
     let routes = BTreeMap::from([(
-        identity.clone(),
+        identity,
         RouteIr {
             method: "POST".into(),
             template: "/widget/archive".into(),

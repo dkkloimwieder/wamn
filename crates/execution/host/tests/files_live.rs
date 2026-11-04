@@ -153,8 +153,11 @@ impl FileHost {
             host.admin.execute("INSERT INTO catalog.connection_binding(env_key,manifest_digest,component_digest,package_id,name,connection_id) VALUES($1,$2,$3,$4,$5,$6::text::uuid)",&[&ENV_KEY,&release.release().manifest_digest.as_str(),&component.descriptor.component_digest,&component.package_id,&alias,&id]).await?;
         }
         let credentials = Arc::new(
-            ConnectionCredentials::from_database(Arc::clone(&registry.reader), ORG)
-                .with_store(registry.credentials.clone()),
+            ConnectionCredentials::from_database(Arc::clone(&registry.reader), ORG).with_store(
+                Arc::<wamn_test_infrastructure::credentials::LocalCredentials>::clone(
+                    &registry.credentials,
+                ),
+            ),
         );
         let facts = Arc::new(ConnectionFacts::new(
             Arc::new(ConnectionMemory::default()),

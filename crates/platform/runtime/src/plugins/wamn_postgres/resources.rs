@@ -487,7 +487,7 @@ async fn begin_transaction(
             conn: Some(connection.into_connection()),
             finished: false,
         })),
-        destroyed: plugin.destroyed.clone(),
+        destroyed: Arc::clone(&plugin.destroyed),
         cursor_seq: 0,
         row_limit: pp.row_limit,
         lent: false,

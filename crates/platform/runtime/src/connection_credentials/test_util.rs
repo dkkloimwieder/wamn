@@ -160,7 +160,7 @@ impl Fixture {
         ConnectionCredentials::from_database(Arc::new(client), "acme")
             .with_oauth_database_url(url.as_str())
             .unwrap()
-            .with_store(self.store.clone())
+            .with_store(Arc::<FileStore>::clone(&self.store))
     }
 }
 

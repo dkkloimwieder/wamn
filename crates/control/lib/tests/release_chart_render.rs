@@ -137,7 +137,7 @@ fn render_values(env: &str) -> Value {
     )]))
     .unwrap();
     rendered["webDigests"] = serde_yaml::to_value(std::collections::BTreeMap::from([(
-        input.route_host.clone(),
+        input.route_host,
         WEB_DIGEST,
     )]))
     .unwrap();

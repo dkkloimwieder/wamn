@@ -240,7 +240,9 @@ pub async fn serve(config: EdgeConfig) -> anyhow::Result<EdgeHost> {
     let host = HostBuilder::default()
         .with_engine((*engine).clone())
         .with_plugin(Arc::new(routing))?
-        .with_plugin(Arc::new(RouterDelivery::new(delivery.clone())))?
+        .with_plugin(Arc::new(RouterDelivery::new(Arc::<EdgeDelivery>::clone(
+            &delivery,
+        ))))?
         .with_plugin(Arc::new(EdgeOperation::new(
             Arc::clone(&release),
             intents,

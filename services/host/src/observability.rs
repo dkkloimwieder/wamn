@@ -221,7 +221,7 @@ mod tests {
         let created = Arc::new(AtomicUsize::new(0));
         let _default = tracing::subscriber::set_default(SampledSpans(
             Registry::default()
-                .with(CountSpans(created.clone()).with_filter(LevelFilter::INFO))
+                .with(CountSpans(Arc::clone(&created)).with_filter(LevelFilter::INFO))
                 .with(
                     tracing_opentelemetry::layer()
                         .with_tracer(provider.tracer("sampled-spans"))

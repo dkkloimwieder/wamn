@@ -177,7 +177,7 @@ async fn auth_drops_apply_package_publishes_the_committed_admin_role_drop() {
     owner_url.set_password(Some("authdrops")).unwrap();
     let (_server, nats) = nats().await;
     let cache = Arc::new(AuthCache::with_ttl(Duration::from_secs(3600)));
-    let changes = watched(&nats, Some("apply-drops--fixture--dev"), cache.clone()).await;
+    let changes = watched(&nats, Some("apply-drops--fixture--dev"), Arc::clone(&cache)).await;
     let ticket = cache
         .grants("apply-drops--fixture--dev", "principal")
         .unwrap_err();

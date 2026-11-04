@@ -59,9 +59,11 @@ impl PlatformNats {
             .with_context(|| format!("read {}", self.nats_tls_key.display()))?;
         let provider = Arc::new(rustls::crypto::aws_lc_rs::default_provider());
         let roots = Arc::new(roots);
-        let verifier =
-            rustls::client::WebPkiServerVerifier::builder_with_provider(roots, provider.clone())
-                .build()?;
+        let verifier = rustls::client::WebPkiServerVerifier::builder_with_provider(
+            roots,
+            Arc::clone(&provider),
+        )
+        .build()?;
         let builder = rustls::ClientConfig::builder_with_provider(provider)
             .with_safe_default_protocol_versions()?;
         let config = match &self.nats_tls_server_name {

@@ -194,7 +194,7 @@ mod tests {
         write(
             &root.path,
             "unfamiliar",
-            &json!({"cases":[entry.clone(), entry.clone()]}),
+            &json!({"cases":[entry.clone(), entry]}),
         );
         write(&root.path, "empty", &json!({"cases":[]}));
         // The same build resolver also locates nested platform packages.

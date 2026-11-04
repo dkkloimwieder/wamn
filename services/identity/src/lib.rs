@@ -186,7 +186,7 @@ impl Inner {
             return Ok(database);
         }
         let database = Arc::new(connect_database(self.connection.url()).await?);
-        *self.database.write().expect("database lock") = database.clone();
+        *self.database.write().expect("database lock") = Arc::clone(&database);
         Ok(database)
     }
 
@@ -419,7 +419,7 @@ pub async fn serve(
         tokio::select! {
             accepted = listener.accept() => {
                 let (tcp, peer) = accepted.map_err(|_| IdentityServiceError::new("identity HTTPS accept failed"))?;
-                let Ok(slot) = slots.clone().try_acquire_owned() else { drop(tcp); continue; };
+                let Ok(slot) = Arc::clone(&slots).try_acquire_owned() else { drop(tcp); continue; };
                 let acceptor = acceptor.clone();
                 let service = service.clone();
                 connections.spawn(async move {

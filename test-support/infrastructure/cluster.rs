@@ -778,7 +778,7 @@ impl Cluster {
         self.owned = false;
         let name = self.name.clone();
         let work = self.work.clone();
-        let runner = self.runner.clone();
+        let runner = Arc::clone(&self.runner);
         let result = std::thread::spawn(move || {
             let runtime = tokio::runtime::Builder::new_current_thread()
                 .enable_all()

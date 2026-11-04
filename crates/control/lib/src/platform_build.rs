@@ -1671,7 +1671,7 @@ mod tests {
         .unwrap();
         std::fs::set_permissions(&gcloud, std::fs::Permissions::from_mode(0o755)).unwrap();
         let opened = Opened::default();
-        let recorded = opened.clone();
+        let recorded = std::sync::Arc::clone(&opened);
         let stores = CounterStores {
             gcloud: gcloud.into(),
             configuration: directory,
@@ -1679,7 +1679,7 @@ mod tests {
             open: move |bucket: &str, bearer: String| {
                 assert_eq!(bucket, "test");
                 recorded.lock().unwrap().push(bearer);
-                Ok(store.clone() as CounterStore)
+                Ok(std::sync::Arc::clone(&store) as CounterStore)
             },
         };
         (stores, opened)
@@ -1854,7 +1854,7 @@ mod tests {
     async fn daily_counter_creates_and_accumulates_success_and_failure_minutes() {
         use object_store::ObjectStore as _;
         let store = std::sync::Arc::new(object_store::memory::InMemory::new());
-        let (stores, _) = fake_stores("minutes", store.clone());
+        let (stores, _) = fake_stores("minutes", std::sync::Arc::clone(&store));
         let path = object_store::path::Path::from("build/2026-10-20.json");
         assert_eq!(
             read_counter(&stores, &path).await.unwrap().0,

@@ -1224,7 +1224,7 @@ mod tests {
         );
         let release = release();
         let blobstore = Arc::new(WamnBlobstore::new(
-            postgres.clone(),
+            Arc::clone(&postgres),
             Arc::new(ConnectionFacts::new(
                 Arc::new(ConnectionMemory::default()),
                 ConnectionChanges::default(),
@@ -1236,7 +1236,7 @@ mod tests {
             )),
             "acme",
             "project",
-            Some(release.clone()),
+            Some(Arc::clone(&release)),
         ));
         FileRoutes::new(
             release,
@@ -1401,8 +1401,11 @@ mod tests {
     async fn native_listener_uses_shared_authentication_and_preserves_file_paths() {
         let files = Arc::new(files());
         let routing = Arc::new(
-            FlowHttpRouting::new(Some(files.release.clone()), RouteInFlightLimit::default())
-                .with_authenticator(Arc::new(SessionWithoutGrant)),
+            FlowHttpRouting::new(
+                Some(Arc::clone(&files.release)),
+                RouteInFlightLimit::default(),
+            )
+            .with_authenticator(Arc::new(SessionWithoutGrant)),
         );
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
@@ -1436,9 +1439,11 @@ mod tests {
     #[tokio::test]
     async fn native_download_refuses_anonymous_and_session_without_get_before_io() {
         let files = files();
-        let routing =
-            FlowHttpRouting::new(Some(files.release.clone()), RouteInFlightLimit::default())
-                .with_authenticator(Arc::new(SessionWithoutGrant));
+        let routing = FlowHttpRouting::new(
+            Some(Arc::clone(&files.release)),
+            RouteInFlightLimit::default(),
+        )
+        .with_authenticator(Arc::new(SessionWithoutGrant));
         let path = format!("/api/orders/files/{}", Uuid::new_v4());
         for (authorization, status) in [(None, 401), (Some("Bearer session"), 403)] {
             let mut request = hyper::Request::builder().uri(&path);
@@ -1628,7 +1633,7 @@ mod tests {
     fn native_body_holds_the_route_permit_until_it_is_dropped() {
         let files = files();
         let limit = RouteInFlightLimit::new(std::num::NonZeroUsize::new(1).unwrap());
-        let routing = FlowHttpRouting::new(Some(files.release.clone()), limit);
+        let routing = FlowHttpRouting::new(Some(files.release), limit);
         let route = "wamn-control-file-get-http";
         let permit = routing.try_acquire_route(route).unwrap();
         let response = hyper::Response::new(PermitBody {

@@ -326,7 +326,10 @@ async fn run_guest(postgres: Arc<WamnPostgres>, release: Arc<LoadedRelease>, mod
         )
         .unwrap();
     let plugins: HashMap<&'static str, Arc<dyn HostPlugin>> = HashMap::from([
-        (WAMN_POSTGRES_ID, postgres.clone() as Arc<dyn HostPlugin>),
+        (
+            WAMN_POSTGRES_ID,
+            Arc::clone(&postgres) as Arc<dyn HostPlugin>,
+        ),
         (
             FLOW_HTTP_ROUTING_ID,
             Arc::new(FlowHttpRouting::new(

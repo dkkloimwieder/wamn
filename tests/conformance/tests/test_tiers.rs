@@ -552,7 +552,7 @@ fn every_ignored_environment_input_has_one_preparation_or_operator_owner() {
         .unwrap()
         .remove(name);
     assert!(!preparation_errors(&missing, &inputs.0).is_empty());
-    let mut duplicate = policy.clone();
+    let mut duplicate = policy;
     duplicate["operator_inputs"][name] = "duplicate owner".into();
     assert!(!preparation_errors(&duplicate, &inputs.0).is_empty());
 }

@@ -759,7 +759,7 @@ mod tests {
         .unwrap();
         let facts = super::LocalApplicationFacts {
             manifest_digest: manifest.digest(),
-            components: vec![component.clone()],
+            components: vec![component],
             requirements: Vec::new(),
             bindings: Vec::new(),
         };
@@ -840,7 +840,7 @@ mod tests {
         let mut duplicate = facts.clone();
         duplicate.components.push(facts.components[0].clone());
         assert!(super::validate_local_facts(&duplicate, &manifest, "tenant-a").is_err());
-        let mut removed = facts.clone();
+        let mut removed = facts;
         removed.components[0].operations.clear();
         assert!(super::validate_local_facts(&removed, &manifest, "tenant-a").is_err());
     }

@@ -1834,7 +1834,7 @@ mod tests {
                         .expect("interface version"),
                     invocation.component_digest.clone(),
                 ),
-                package_id: invocation.package_id.clone(),
+                package_id: invocation.package_id,
                 operations: BTreeMap::from([(
                     snapshot.operation.expect("operation"),
                     ServingComponentOperation {

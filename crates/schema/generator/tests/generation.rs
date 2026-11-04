@@ -2814,7 +2814,7 @@ fn a_custom_operation_reads_a_history_table() {
     assert_eq!(history["lock"], json!(false));
 
     let unlogged = with_audit_log(&json!(ALL_STAMP_COLUMNS), "none");
-    let mut reads_unlogged = unlogged.clone();
+    let mut reads_unlogged = unlogged;
     reads_unlogged["custom_operations"] = manifest["custom_operations"].clone();
     assert_eq!(
         run(&all_stamps_catalog(), &reads_unlogged, &sources)

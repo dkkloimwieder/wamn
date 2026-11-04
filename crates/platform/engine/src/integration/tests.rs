@@ -262,7 +262,7 @@ fn server(
     status: u16,
 ) -> (Arc<AtomicUsize>, tokio::task::JoinHandle<()>) {
     let accepts = Arc::new(AtomicUsize::new(0));
-    let count = accepts.clone();
+    let count = Arc::clone(&accepts);
     let task = tokio::spawn(async move {
         loop {
             let (mut socket, _) = listener.accept().await.unwrap();
@@ -484,7 +484,11 @@ async fn application_calls_production_integration_imports_in_a_separate_store() 
         )
         .await?,
     );
-    let mut app = application(HashMap::from([("fixture".to_owned(), integration.clone())])).await?;
+    let mut app = application(HashMap::from([(
+        "fixture".to_owned(),
+        Arc::clone(&integration),
+    )]))
+    .await?;
     for _ in 0..2 {
         assert_eq!(app.run("fixture").await?.payload, "200");
     }
@@ -535,8 +539,8 @@ async fn application_routes_two_named_integrations_and_refuses_unbound() -> anyh
         .await?,
     );
     let mut app = application(HashMap::from([
-        ("modbus".to_owned(), modbus.clone()),
-        ("printer".to_owned(), printer.clone()),
+        ("modbus".to_owned(), Arc::clone(&modbus)),
+        ("printer".to_owned(), Arc::clone(&printer)),
     ]))
     .await?;
     assert_eq!(app.run("modbus").await?.payload, "200");

@@ -2610,7 +2610,7 @@ mod tests {
             bytes: b"ALTER TABLE platform_fixture.location ADD COLUMN description text NOT NULL DEFAULT 'not_required';".to_vec(),
         });
         assert!(keeps(&appended), "an appended migration keeps");
-        let mut edited = directory.clone();
+        let mut edited = directory;
         edited.migrations[0]
             .bytes
             .extend_from_slice(b"\n-- schema changed\n");
@@ -2835,7 +2835,7 @@ mod tests {
             )
             .with_exclusions(vec![base_exclusion]),
         ]);
-        let mut manifest = base.manifest.clone();
+        let mut manifest = base.manifest;
         manifest.models.retain(|name, _| name == "record");
         manifest.custom_operations.clear();
         manifest.internal_relations.clear();

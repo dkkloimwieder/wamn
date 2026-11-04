@@ -49,6 +49,21 @@ pedantic = { level = "warn", priority = -1 }
 perf = { level = "warn", priority = -1 }
 style = { level = "warn", priority = -1 }
 
+# 0 at c6233b962. Spell shared ownership explicitly.
+clone_on_ref_ptr = "deny"
+# 0 at c6233b962. Move values instead of copying their last use.
+redundant_clone = "deny"
+# 0 at c6233b962. Reuse the destination allocation when replacing a clone.
+assigning_clones = "deny"
+# 0 at c6233b962. Make implicit copies explicit.
+implicit_clone = "deny"
+# 0 at c6233b962. Borrow instead of allocating an unnecessary owned value.
+unnecessary_to_owned = "deny"
+# 0 at c6233b962. Borrow parameters that do not need ownership.
+needless_pass_by_value = "deny"
+# 0 at c6233b962. Borrow large parameters instead of copying them.
+large_types_passed_by_value = "deny"
+
 must_use_candidate = "allow"
 missing_errors_doc = "allow"
 doc_markdown = "allow"

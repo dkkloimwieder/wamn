@@ -455,7 +455,7 @@ mod tests {
             },
             stream::Config {
                 persist_mode: Some(PersistenceMode::Async),
-                ..reported.clone()
+                ..reported
             },
         ];
         for actual in changed {

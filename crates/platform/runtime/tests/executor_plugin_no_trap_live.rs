@@ -146,7 +146,7 @@ async fn drive_guest(
     linker
         .root()
         .func_wrap("verdict", {
-            let trail = trail.clone();
+            let trail = Arc::clone(&trail);
             move |_caller, (code,): (u32,)| {
                 trail.lock().expect("verdict trail lock").push(code);
                 Ok(())
@@ -296,7 +296,7 @@ async fn wamn_logging_absorbs_a_garbage_guest_context_without_trapping_the_guest
     let mut plugins: HashMap<&'static str, Arc<dyn HostPlugin + Send + Sync>> = HashMap::new();
     plugins.insert(
         WAMN_LOGGING_ID,
-        logging.clone() as Arc<dyn HostPlugin + Send + Sync>,
+        Arc::clone(&logging) as Arc<dyn HostPlugin + Send + Sync>,
     );
 
     let (outcome, trail) =

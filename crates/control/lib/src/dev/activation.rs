@@ -2122,7 +2122,7 @@ mod tests {
             org: org.into(),
             project: project.into(),
             env: environment.into(),
-            manifest_digest: digest.clone(),
+            manifest_digest: digest,
             artifact_base: "local/releases".into(),
             route_host: "receiving.localhost".into(),
             applications: test_applications(),

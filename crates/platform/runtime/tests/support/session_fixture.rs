@@ -106,8 +106,8 @@ impl Server {
             hold: None,
         }));
         let requests = Arc::new(AtomicUsize::new(0));
-        let serving = response.clone();
-        let request_count = requests.clone();
+        let serving = Arc::clone(&response);
+        let request_count = Arc::clone(&requests);
         let task = tokio::spawn(async move {
             let mut connections = JoinSet::new();
             loop {
@@ -115,8 +115,8 @@ impl Server {
                     accepted = listener.accept() => {
                         let (tcp, _) = accepted.expect("fixture connection");
                         let acceptor = acceptor.clone();
-                        let response = serving.clone();
-                        let requests = request_count.clone();
+                        let response = Arc::clone(&serving);
+                        let requests = Arc::clone(&request_count);
                         connections.spawn(async move {
                             let Ok(mut stream) = acceptor.accept(tcp).await else { return; };
                             let mut request = Vec::new();

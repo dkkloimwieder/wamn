@@ -374,8 +374,10 @@ async fn the_host_owns_the_operation_transaction_and_the_guest_works_in_it() {
             },
         )
         .expect("native component compiles");
-    let plugins: HashMap<&'static str, Arc<dyn HostPlugin>> =
-        HashMap::from([(WAMN_POSTGRES_ID, postgres.clone() as Arc<dyn HostPlugin>)]);
+    let plugins: HashMap<&'static str, Arc<dyn HostPlugin>> = HashMap::from([(
+        WAMN_POSTGRES_ID,
+        Arc::clone(&postgres) as Arc<dyn HostPlugin>,
+    )]);
     let egress: Arc<dyn HostHandler> = Arc::new(NullServer::default());
     let workload = workload
         .resolve(

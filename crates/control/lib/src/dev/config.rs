@@ -1525,7 +1525,7 @@ fn database_probe(
         return Err(DevConfigError::endpoint(
             DevConfigErrorType::InvalidValue,
             key,
-            probe.sanitized_endpoint.clone(),
+            probe.sanitized_endpoint,
             "remove host, hostaddr, port, dbname, and user query overrides; use the URL authority and path",
         ));
     }
@@ -1534,7 +1534,7 @@ fn database_probe(
         return Err(DevConfigError::endpoint(
             DevConfigErrorType::InvalidValue,
             key,
-            probe.sanitized_endpoint.clone(),
+            probe.sanitized_endpoint,
             "expected one explicit database name",
         ));
     }
@@ -1551,7 +1551,7 @@ fn database_probe(
         return Err(DevConfigError::endpoint(
             DevConfigErrorType::InvalidValue,
             key,
-            probe.sanitized_endpoint.clone(),
+            probe.sanitized_endpoint,
             "expected one explicit database name",
         ));
     }
@@ -1568,7 +1568,7 @@ fn database_probe(
         return Err(DevConfigError::endpoint(
             DevConfigErrorType::InvalidValue,
             key,
-            probe.sanitized_endpoint.clone(),
+            probe.sanitized_endpoint,
             "expected one explicit database role",
         ));
     }
@@ -2138,8 +2138,7 @@ manifest.Package {
         assert_eq!(error.searched_roots(), std::slice::from_ref(&overlay_root));
 
         let mut ambiguous_document = complete_document(&addresses);
-        ambiguous_document[PACKAGE_SOURCES] =
-            json!([base_root.clone(), overlay_root, base_root.clone()]);
+        ambiguous_document[PACKAGE_SOURCES] = json!([base_root.clone(), overlay_root, base_root]);
         let ambiguous_config = parse_config(
             &serde_json::to_vec(&ambiguous_document).expect("serialize ambiguous-source config"),
         )

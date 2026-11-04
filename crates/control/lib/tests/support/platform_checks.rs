@@ -454,7 +454,7 @@ mod tests {
         kept.data.repeated = vec!["saved rerun progress".into()];
         kept.not_run = vec!["4.17 Apply with the release".into()];
         let bytes = serde_json::to_vec(&kept)?;
-        let decoded: Kept = serde_json::from_slice(&bytes)?;
+        let mut decoded: Kept = serde_json::from_slice(&bytes)?;
         assert_eq!(
             serde_json::to_value(&decoded)?,
             serde_json::to_value(&kept)?
@@ -465,7 +465,7 @@ mod tests {
                 .1,
             2
         );
-        resume(2, &mut decoded.completed.clone())?;
+        resume(2, &mut decoded.completed)?;
         Ok(())
     }
 

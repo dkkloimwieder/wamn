@@ -368,7 +368,7 @@ fn prepare_derived_publication(
         message_id,
         expected_stream,
         wiring: DerivedPublishWiring {
-            package_id: event.package_id.clone(),
+            package_id: event.package_id,
             wiring_id: request.wiring_id,
             wiring_version: request.wiring_version,
             node_id: request.node_id,

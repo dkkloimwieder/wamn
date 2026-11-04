@@ -122,7 +122,7 @@ impl Server {
             listener.local_addr().expect("listener address")
         );
         let observed = Arc::new(Observed::default());
-        let serving = observed.clone();
+        let serving = Arc::clone(&observed);
         let task = tokio::spawn(async move {
             let mut connections = JoinSet::new();
             loop {
@@ -130,7 +130,7 @@ impl Server {
                     accepted = listener.accept() => {
                         let (tcp, _) = accepted.expect("accept loopback connection");
                         let acceptor = acceptor.clone();
-                        let observed = serving.clone();
+                        let observed = Arc::clone(&serving);
                         connections.spawn(async move {
                             let Ok(mut stream) = acceptor.accept(tcp).await else { return; };
                             let mut request = Vec::new();
@@ -144,7 +144,7 @@ impl Server {
                                 .push(String::from_utf8(request).expect("HTTP request text"));
                             let active = observed.active.fetch_add(1, Ordering::SeqCst) + 1;
                             observed.peak.fetch_max(active, Ordering::SeqCst);
-                            let _active = ActiveRequest(observed.clone());
+                            let _active = ActiveRequest(Arc::clone(&observed));
                             let mut reply = observed.replies.lock().expect("reply lock")
                                 .pop_front().expect("each HTTP request must have an explicit reply");
                             let mut headers = format!("HTTP/1.1 {} Fixture\r\nConnection: close\r\nContent-Type: application/json\r\n", reply.status);

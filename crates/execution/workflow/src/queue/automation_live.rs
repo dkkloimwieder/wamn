@@ -364,7 +364,9 @@ async fn run_automation(mode: Mode) -> anyhow::Result<()> {
         ),
         fail_next: std::sync::atomic::AtomicBool::new(false),
     });
-    let postgres = Arc::new(WamnPostgres::with_provider(unavailable.clone()));
+    let postgres = Arc::new(WamnPostgres::with_provider(
+        Arc::<UnavailableCredential>::clone(&unavailable),
+    ));
     postgres
         .bind_session_claims(
             QUEUE_CLAIM_SCOPE,

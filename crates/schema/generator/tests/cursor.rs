@@ -77,7 +77,7 @@ fn malformed_or_mismatched_cursor_is_typed_invalid_input() {
             CursorDirection::Ascending,
         ),
         (valid.clone(), "status", CursorDirection::Ascending),
-        (valid.clone(), "created_at", CursorDirection::Descending),
+        (valid, "created_at", CursorDirection::Descending),
     ];
     for (encoded, field, direction) in cases {
         let error = decode_cursor(&encoded, field, direction, ColumnType::Timestamptz).unwrap_err();

@@ -397,7 +397,7 @@ async fn preexisting_cluster_is_never_claimed_or_deleted() {
     let root = crate::scratch::ScratchRoot::create().unwrap();
     let fake = Arc::new(Fake::new("leftovers"));
     let mut fixture = Cluster::new("wamn-test", root.path()).unwrap();
-    fixture.runner = fake.clone();
+    fixture.runner = Arc::<Fake>::clone(&fake);
     assert!(fixture.create(root.path()).await.is_err());
     assert!(!fixture.owned());
     assert_eq!(fixture.cleanup_blocking(), Teardown::default());
@@ -417,7 +417,7 @@ fn failed_final_cleanup_is_not_repeated_when_the_owner_drops() {
     let root = crate::scratch::ScratchRoot::create().unwrap();
     let fake = Arc::new(Fake::new("inspection"));
     let mut fixture = Cluster::new("wamn-test", root.path()).unwrap();
-    fixture.runner = fake.clone();
+    fixture.runner = Arc::<Fake>::clone(&fake);
     fixture.owned = true;
     assert!(fixture.cleanup_blocking().result().is_err());
     drop(fixture);

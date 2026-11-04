@@ -250,7 +250,7 @@ mod tests {
         )
         .await
         .unwrap();
-        let component = policy.components.values().next().unwrap().clone();
+        let component = Arc::clone(policy.components.values().next().unwrap());
         policy
             .bindings
             .write()

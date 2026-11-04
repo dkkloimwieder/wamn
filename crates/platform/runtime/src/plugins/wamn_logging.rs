@@ -263,7 +263,7 @@ impl WamnLogging {
     /// local gate can assert enrichment + attached trace_id without a collector.
     pub fn new_with_capture(cfg: &WamnLoggingConfig) -> anyhow::Result<(Self, Arc<Capture>)> {
         let capture = Arc::new(Capture::default());
-        let plugin = Self::build(cfg, Some(capture.clone()))?;
+        let plugin = Self::build(cfg, Some(Arc::clone(&capture)))?;
         Ok((plugin, capture))
     }
 
@@ -307,7 +307,7 @@ impl WamnLogging {
 
         // Drain task: pace (optional) then emit enriched OTLP records.
         let logger = provider.logger("wamn-logging");
-        let drain_counters = counters.clone();
+        let drain_counters = Arc::clone(&counters);
         let drain_rate = cfg.drain_rate_per_sec;
         let drain = tokio::spawn(async move {
             drain_loop(rx, logger, drain_counters, drain_rate, capture).await;
@@ -669,7 +669,7 @@ fn register_metrics(counters: &Arc<Counters>) {
         ),
     ];
     for (name, desc, read) in specs {
-        let c = counters.clone();
+        let c = Arc::clone(counters);
         let _ = meter
             .u64_observable_counter(name)
             .with_description(desc)

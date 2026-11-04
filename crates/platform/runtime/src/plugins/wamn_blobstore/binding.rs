@@ -219,7 +219,7 @@ mod tests {
             instance_id: Some("instance".to_owned()),
             validation_hash: None,
             requirement_type: Some(descriptor.requirement_type.clone()),
-            contract: Some(descriptor.contract.clone()),
+            contract: Some(descriptor.contract),
             instance_enabled: true,
             active_generation: Some(7),
             pinned_generation: None,

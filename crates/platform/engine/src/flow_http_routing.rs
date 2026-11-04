@@ -2097,7 +2097,7 @@ mod tests {
             },
         });
         let mut definition = orders_definition();
-        definition["input-schema"] = input_schema.clone();
+        definition["input-schema"] = input_schema;
         definition["raw-body-bytes"] = json!({"maximum": 1_048_576});
         let manifest = release_manifest(BTreeMap::from([(
             "orders".to_string(),

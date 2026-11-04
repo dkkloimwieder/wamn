@@ -53,7 +53,7 @@ impl Fixture {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let base = format!("http://{}/bound/", listener.local_addr().unwrap());
         let observed = Arc::new(Mutex::new(Vec::new()));
-        let recorded = observed.clone();
+        let recorded = Arc::clone(&observed);
         let tokens = Arc::new(Mutex::new(VecDeque::from(tokens)));
         let api = Arc::new(Mutex::new(VecDeque::from(api)));
         let pause = Arc::new(Mutex::new(None::<ResponsePause>));
@@ -66,9 +66,9 @@ impl Fixture {
         let task = tokio::spawn(async move {
             loop {
                 let (tcp, _) = listener.accept().await.unwrap();
-                let observed = recorded.clone();
-                let tokens = tokens.clone();
-                let api = api.clone();
+                let observed = Arc::clone(&recorded);
+                let tokens = Arc::clone(&tokens);
+                let api = Arc::clone(&api);
                 let pause = Arc::clone(&response_pause);
                 let token_pause = Arc::clone(&endpoint_pause);
                 let assertion_check = assertion_check.clone();
@@ -78,9 +78,9 @@ impl Fixture {
                     .serve_connection(
                         TokioIo::new(tcp),
                         service_fn(move |request: hyper::Request<hyper::body::Incoming>| {
-                            let observed = observed.clone();
-                            let tokens = tokens.clone();
-                            let api = api.clone();
+                            let observed = Arc::clone(&observed);
+                            let tokens = Arc::clone(&tokens);
+                            let api = Arc::clone(&api);
                             let pause = Arc::clone(&pause);
                             let token_pause = Arc::clone(&token_pause);
                             let assertion_check = assertion_check.clone();
@@ -1385,7 +1385,9 @@ async fn authorization_code_pkce_callback_refresh_and_secret_rotation() {
         plugin.facts.oauth_encryption().unwrap(),
     )
     .unwrap()
-    .with_store(fixture.credentials.store.clone());
+    .with_store(Arc::<wamn_credential_store::file::FileStore>::clone(
+        &fixture.credentials.store,
+    ));
     let url = fixture.authorize(&oauth).await;
     let query: std::collections::HashMap<_, _> = url.query_pairs().into_owned().collect();
     assert_eq!(query["audience"], "existing+value");
@@ -1572,7 +1574,9 @@ async fn authorization_code_expired_provider_error_and_new_generation_refuse_wit
         plugin.facts.oauth_encryption().unwrap(),
     )
     .unwrap()
-    .with_store(fixture.credentials.store.clone());
+    .with_store(Arc::<wamn_credential_store::file::FileStore>::clone(
+        &fixture.credentials.store,
+    ));
     let url = fixture.authorize(&oauth).await;
     let state = url
         .query_pairs()
@@ -1876,7 +1880,9 @@ async fn token_authority_authorization_code_exchange_and_refresh_refuse_other_or
             plugin.facts.oauth_encryption().unwrap(),
         )
         .unwrap()
-        .with_store(fixture.credentials.store.clone())
+        .with_store(Arc::<wamn_credential_store::file::FileStore>::clone(
+            &fixture.credentials.store,
+        ))
         .with_transport(Arc::clone(&endpoint.transport));
         let url = fixture.authorize(&oauth).await;
         assert_eq!(url.host_str(), Some("browser.example"));

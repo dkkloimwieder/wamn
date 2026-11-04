@@ -103,8 +103,8 @@ async fn captured_retries_preserve_actual_command_bytes_and_raw_response_evidenc
     let client = WamnClient::new(
         "http://127.0.0.1:12345/",
         Some("test.localhost".into()),
-        credentials.clone(),
-        transport.clone(),
+        Arc::<RotatingCredential>::clone(&credentials),
+        Arc::<RecordingTransport>::clone(&transport),
     );
     let route = RouteMetadata {
         method: "POST".into(),
@@ -199,8 +199,8 @@ async fn code_contract_preserves_absence_and_value_on_the_wire_and_blocks_null()
     let client = WamnClient::new(
         "http://127.0.0.1:12345/",
         Some("test.localhost".into()),
-        credentials.clone(),
-        transport.clone(),
+        Arc::<RotatingCredential>::clone(&credentials),
+        Arc::<RecordingTransport>::clone(&transport),
     );
     let schema = json!({"type":"array","items":{"type":"object","properties":{
         "change":{"type":"object","properties":{

@@ -601,7 +601,7 @@ fn the_http_admitter_grants_require_fresh_reads_and_refuse_writes() {
     let mut missing = exact.clone();
     missing.retain(|acl| acl.object_name != "workflows.graph_json");
     verify(&missing).expect_err("the workflow graph read is missing");
-    let mut widened = exact.clone();
+    let mut widened = exact;
     widened.push(role_acl("relation", "catalog", "workflows", "SELECT"));
     verify(&widened).expect_err("the HTTP admitter reads the whole workflows table");
 }

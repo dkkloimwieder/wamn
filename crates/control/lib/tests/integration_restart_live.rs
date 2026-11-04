@@ -596,7 +596,7 @@ async fn published_modbus_versions_link_before_the_next_call() -> anyhow::Result
         integrations.imports(&format!("sha256:{}", "b".repeat(64)), "observer_fixture")?;
     let sibling = observer.store_id("registers").await?.unwrap();
     let mut application = Application::load(Arc::clone(&reader)).await?;
-    let app_store = application.store.data().active_ctx.store_id.clone();
+    let app_store = Arc::clone(&application.store.data().active_ctx.store_id);
     assert_eq!(application.read().await?.unwrap().payload, "4660");
     assert_eq!(application.read_unit(17).await?.unwrap().payload, "17");
     let writer = reader

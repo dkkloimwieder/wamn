@@ -442,7 +442,7 @@ fn kind_nodes_import_the_pinned_digest_and_hold_no_credential() {
         authority: host.clone(),
         auth_file: Some(pull_secret),
         insecure: false,
-        ca_paths: vec![ca.clone()],
+        ca_paths: vec![ca],
     };
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()

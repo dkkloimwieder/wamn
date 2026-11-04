@@ -1202,7 +1202,7 @@ mod tests {
         assert!(answer["next_cursor"].is_null());
         assert!(answer["total"].is_null());
         // A cursor on an application skips the control orgs and continues after it.
-        let apps = first.answer("environments", vec![app.clone(), json!([1, "app-b"])], key);
+        let apps = first.answer("environments", vec![app, json!([1, "app-b"])], key);
         let third = discovery_page(
             &json!({"limit":1,"cursor":apps["next_cursor"]}),
             &principal,

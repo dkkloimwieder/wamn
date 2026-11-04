@@ -361,7 +361,7 @@ fn host_values_keep_both_applications_separate_and_preserve_credentials() {
 fn startup_host_values_change_only_replica_counts() {
     let normal_input = host_input(FIXTURE);
     let normal = render_host_values(&BASE, &host_template(FIXTURE), &normal_input).unwrap();
-    let mut startup_input = normal_input.clone();
+    let mut startup_input = normal_input;
     startup_input.replicas = 0;
     let startup = render_host_values(&BASE, &host_template(FIXTURE), &startup_input).unwrap();
     assert_eq!(normal.base, startup.base);

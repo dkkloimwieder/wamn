@@ -356,7 +356,7 @@ fn client_ir_is_canonical_and_surfaces_contract_changes() {
         "unordered contract members must not change canonical IR bytes"
     );
 
-    let mut changed = contracts.clone();
+    let mut changed = contracts;
     let result = changed.get_mut("widget/archive.result.json").unwrap();
     let mut document: Value = serde_json::from_slice(result).unwrap();
     document["fields"].as_array_mut().unwrap().push(json!({

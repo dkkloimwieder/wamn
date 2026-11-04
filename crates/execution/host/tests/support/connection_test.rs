@@ -150,7 +150,7 @@ async fn candidate_http_and_modbus_health_commit_nothing() -> anyhow::Result<()>
     let delivery = HostRouteDelivery::new(
         Arc::new(LoadedRelease::control_root()),
         HostRouteHandlers::Control {
-            status: live.clone(),
+            status: Arc::<HealthStatus>::clone(&live),
             administration: Some(logins),
             control: Arc::new(connect(&control_url).await?),
             writer: Arc::new(tokio::sync::Mutex::new(connect(&control_url).await?)),

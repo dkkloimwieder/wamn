@@ -219,9 +219,7 @@ impl PasswordWork {
         &self,
         work: impl FnOnce() -> Result<T, PasswordError> + Send + 'static,
     ) -> Result<T, PasswordError> {
-        let permit = self
-            .permits
-            .clone()
+        let permit = Arc::clone(&self.permits)
             .try_acquire_owned()
             .map_err(|_| failure(PasswordErrorType::Busy, "password workers busy"))?;
         tokio::task::spawn_blocking(move || {

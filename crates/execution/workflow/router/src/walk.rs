@@ -503,7 +503,7 @@ impl Wiring {
                     let key = ThrottleKey::new(
                         call.component.clone(),
                         call.credential.clone(),
-                        rl.target_host.clone(),
+                        rl.target_host,
                     );
                     schedule_retry(walk, now_ms + delay, Some(key));
                 } else {

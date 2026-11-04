@@ -256,7 +256,7 @@ mod tests {
             labels: json!({"wamn.org":"acme","wamn.project":"orders","wamn.env":"dev"}),
             mock: Some(Arc::new(Mutex::new(Mock {
                 replies: replies.into(),
-                observed: requests.clone(),
+                observed: Arc::clone(&requests),
             }))),
         };
         (store, requests)

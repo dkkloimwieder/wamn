@@ -1796,7 +1796,7 @@ mod tests {
             wamn_execution_contract::canonical_json_sha256(&document)
         );
         assert_ne!(digest, manifest.digest());
-        let mut spaced = bytes.clone();
+        let mut spaced = bytes;
         spaced.push(b' ');
         assert!(ServingManifest::from_canonical_bytes(&spaced).is_err());
     }

@@ -554,7 +554,7 @@ mod tests {
     fn store(read_only: bool, cdn: Option<&str>) -> (FileStore, Arc<InMemory>) {
         let backend = Arc::new(InMemory::new());
         let bound = BoundContainer::new(
-            backend.clone() as Arc<dyn ObjectStore>,
+            Arc::clone(&backend) as Arc<dyn ObjectStore>,
             "bucket",
             "tenant/app/",
         )
@@ -922,7 +922,11 @@ mod tests {
     async fn expose_and_sign_use_head_and_repair_only_a_missing_live_object() {
         for missing_live in [false, true] {
             let backend = Arc::new(MetadataOnlyStore::default());
-            let bound = BoundContainer::new(backend.clone(), "bucket", "tenant/app");
+            let bound = BoundContainer::new(
+                Arc::<MetadataOnlyStore>::clone(&backend),
+                "bucket",
+                "tenant/app",
+            );
             let files = FileStore::new(
                 bound,
                 Some(Arc::new(RecordingSigner::default())),
@@ -987,11 +991,15 @@ mod tests {
         backend
             .fail_head
             .store(true, std::sync::atomic::Ordering::SeqCst);
-        let bound = BoundContainer::new(backend.clone(), "bucket", "tenant/app");
+        let bound = BoundContainer::new(
+            Arc::<MetadataOnlyStore>::clone(&backend),
+            "bucket",
+            "tenant/app",
+        );
         let signer = Arc::new(RecordingSigner::default());
         let files = FileStore::new(
             bound,
-            Some(signer.clone()),
+            Some(Arc::<RecordingSigner>::clone(&signer)),
             Some("cdn.example.com"),
             7,
             "dev",
@@ -1025,7 +1033,7 @@ mod tests {
     async fn signed_urls_confine_the_key_and_cap_lifetime() {
         let (mut files, _) = store(false, None);
         let signer = Arc::new(RecordingSigner::default());
-        files.signer = Some(signer.clone());
+        files.signer = Some(Arc::<RecordingSigner>::clone(&signer));
         let id = Uuid::new_v4();
         files.stage(id, &b"x"[..]).await.unwrap();
         files

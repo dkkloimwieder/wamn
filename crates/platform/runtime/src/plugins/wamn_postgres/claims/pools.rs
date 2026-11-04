@@ -123,7 +123,7 @@ impl WamnPostgres {
         };
         let key = PoolKey::new(project, class, &generation_role);
         if let Some(pp) = pools.read().expect("pools lock poisoned").get(&key) {
-            return Ok(pp.clone());
+            return Ok(Arc::clone(pp));
         }
         let pp = match Self::build_pool(&cfg, class, project) {
             Ok(pool) => Arc::new(ProjectPool {
@@ -144,7 +144,7 @@ impl WamnPostgres {
             }
         };
         let mut w = pools.write().expect("pools lock poisoned");
-        Ok(w.entry(key).or_insert(pp).clone())
+        Ok(Arc::clone(w.entry(key).or_insert(pp)))
     }
 
     /// Connections destroyed instead of repooled since startup.

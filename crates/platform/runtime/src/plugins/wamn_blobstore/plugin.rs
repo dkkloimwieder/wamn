@@ -322,7 +322,7 @@ impl WamnBlobstore {
                                 error.into_boxed_dyn_error(),
                             )
                         })?;
-                    (client.clone(), client)
+                    (Arc::<object_store::aws::AmazonS3>::clone(&client), client)
                 }
                 binding::BlobstoreProvider::Gcs => {
                     // Without a stored key, object_store signs through IAM signBlob
@@ -334,7 +334,10 @@ impl WamnBlobstore {
                             error.into_boxed_dyn_error(),
                         )
                     })?;
-                    (client.clone(), client)
+                    (
+                        Arc::<object_store::gcp::GoogleCloudStorage>::clone(&client),
+                        client,
+                    )
                 }
             };
         let container = BoundContainer::new(store, bound.container, bound.prefix)
@@ -954,7 +957,7 @@ mod tests {
                     .expect("the fixture snapshot names an interface version"),
                 invocation.component_digest.clone(),
             ),
-            package_id: invocation.package_id.clone(),
+            package_id: invocation.package_id,
             operations: BTreeMap::from([(
                 snapshot
                     .operation

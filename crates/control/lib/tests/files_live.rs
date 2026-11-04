@@ -264,7 +264,11 @@ async fn raw_blobstore_mutations_refuse_file_namespaces_on_minio() -> anyhow::Re
             .with_allow_http(true)
             .build()?,
     );
-    let raw = BoundContainer::new(backend.clone(), "files-a", "generation-one");
+    let raw = BoundContainer::new(
+        Arc::<object_store::aws::AmazonS3>::clone(&backend),
+        "files-a",
+        "generation-one",
+    );
     let id = uuid::Uuid::new_v4();
     let live = format!("dev/_wamn_files/live/{id}");
     backend

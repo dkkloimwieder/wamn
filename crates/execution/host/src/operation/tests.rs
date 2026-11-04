@@ -103,7 +103,7 @@ fn acquisition_binds_its_executing_principal_operation_and_application() {
             closure: ConnectionExecutionClosure::Released,
             effects: None,
         },
-        causation: Some(causation.clone()),
+        causation: Some(causation),
         platform: Some(PlatformComponent::Materializer),
     };
 
@@ -130,7 +130,7 @@ fn acquisition_binds_its_executing_principal_operation_and_application() {
             user_id: Some(materializer),
             operation: Some("platform-fixture-overlay:widget/record-batch@2.1.0".to_owned()),
             application: Some("receiving".to_owned()),
-            ..original.claims.clone()
+            ..original.claims
         }
     );
 }

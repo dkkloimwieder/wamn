@@ -997,7 +997,7 @@ async fn connect_scheduler_nats(args: &HostArgs, name: &str) -> anyhow::Result<a
     let state = Arc::new(std::sync::Mutex::new((None::<Instant>, 0_u64)));
     opts = opts.event_callback(move |event| {
         let client = client.clone();
-        let state = state.clone();
+        let state = Arc::clone(&state);
         async move {
             match event {
                 async_nats::Event::SlowConsumer(sid) => tracing::warn!(
@@ -1671,19 +1671,19 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
         Arc::new(plugin::wasi_otel::WasiOtel::default()),
         // Pool config from WAMN_PG_URL + the WAMN_PG_* tuning env; without a URL
         // the plugin still links and returns connection-unavailable on use.
-        postgres.clone(),
+        Arc::<WamnPostgres>::clone(&postgres),
         // l5i9.17: the wamn:jetstream plugin (E10), first bound by the
         // Service-first materializer. It uses the host's data connection.
         // wamn-0h0g.15.95: READER 4 of the loaded release. Delivery is gated on the serving
         // release's registration projection, so an event whose registration
         // identity is not in this release never reaches a component. The plugin
         // takes the loaded manifest — it does not load one.
-        jetstream.clone(),
+        Arc::<WamnJetstream>::clone(&jetstream),
         // wamn-0h0g.15.96: READER 3 of the loaded release. Route projection stays wholly
         // in-memory; a PAT-protected route additionally carries the scoped
         // identity reader and preloads exact grants from the existing
         // callable-HTTP project pool during authentication.
-        flow_http.clone(),
+        Arc::<FlowHttpRouting>::clone(&flow_http),
     ];
 
     if let Some(operations) = &operations {
@@ -2067,7 +2067,7 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
     let control = match control_builder.attach().await {
         Ok(control) => control,
         Err(error) => {
-            native_host.clone().stop().await?;
+            Arc::clone(&native_host).stop().await?;
             return Err(error.context("attach host control"));
         }
     };

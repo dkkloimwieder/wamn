@@ -656,7 +656,7 @@ mod tests {
                 value
             }),
             ("config-size", {
-                let mut value = exact.clone();
+                let mut value = exact;
                 value.config.size += 1;
                 value
             }),

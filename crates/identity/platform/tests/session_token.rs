@@ -68,10 +68,7 @@ fn public_jwk_wire_is_exact_and_rejects_private_or_missing_fields() {
         hex::encode(bytes),
         "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a"
     );
-    let wire = serde_json::to_value(SessionJwks {
-        keys: vec![key.clone()],
-    })
-    .unwrap();
+    let wire = serde_json::to_value(SessionJwks { keys: vec![key] }).unwrap();
     assert_eq!(
         wire,
         json!({"keys":[{

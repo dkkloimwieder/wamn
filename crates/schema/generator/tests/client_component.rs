@@ -584,7 +584,7 @@ fn tables_carry_only_the_page_inputs_their_read_declares() {
             model: "widget_maker".into(),
             narrowed_by: None,
         }),
-        ..template.clone()
+        ..template
     });
     let files = emit(&ir);
     let page = |module: &str, name: &str| {

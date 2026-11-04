@@ -451,7 +451,7 @@ async fn disabling_a_connection_refuses_signature_and_pat_principals() {
     let signature = routing_policy(
         json!({"modes":["signature"],"header":"X-Signature","credential":"org:acme:webhook"}),
     )
-    .with_authenticator(authenticator.clone());
+    .with_authenticator(Arc::<PlatformRouteAuthenticator>::clone(&authenticator));
     let pat = routing_policy(json!({"modes":["pat"]})).with_authenticator(authenticator);
     let principal: String = fixture.credentials.admin.query_one("SELECT c.service_principal_id::text FROM registry.connection c JOIN registry.integration i ON i.id=c.integration_id WHERE i.name='webhook' AND c.project='host-project'", &[]).await.unwrap().get(0);
     fixture

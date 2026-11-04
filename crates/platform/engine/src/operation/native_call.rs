@@ -153,7 +153,7 @@ impl<P: InvocationPolicy> GuestCall for NativeCall<P> {
                 "native-node-deadline-exceeded"
             );
             let native_id =
-                accessor.with(|mut access| access.get().active_ctx.component_id.clone());
+                accessor.with(|mut access| Arc::clone(&access.get().active_ctx.component_id));
             let warm = request
                 .application
                 .workload

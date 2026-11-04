@@ -375,7 +375,10 @@ async fn sessions_read_permissions_per_request_and_preserve_the_signed_identity(
         Arc::clone(&reader),
         PROJECT,
     ));
-    let route = routing(authentication.clone(), &["session"])?;
+    let route = routing(
+        Arc::<SessionRouteAuthentication>::clone(&authentication),
+        &["session"],
+    )?;
     let mixed = routing(authentication, &["pat", "session"])?;
     let mut first = claims();
     first["roles"] = json!(["purchase-reader", "purchase-writer"]);

@@ -1157,7 +1157,9 @@ async fn warm_postgres_with_pool(
         enabled: std::sync::atomic::AtomicBool::new(true),
     });
     Ok((
-        Arc::new(WamnPostgres::with_provider(credentials.clone())),
+        Arc::new(WamnPostgres::with_provider(Arc::<WarmCredentials>::clone(
+            &credentials,
+        ))),
         credentials,
     ))
 }
