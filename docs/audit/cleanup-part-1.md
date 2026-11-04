@@ -62,3 +62,5 @@ The explicit out-of-scope list was the hard stop, and named deletions were in sc
 - `test-support/harness/src/case_release.rs:704` writes `floors`, which blocks the Rust field, the KCL declaration and the fixture blocks.
 - `test-support/fixture-package/src/lib.rs:79,83,93` blocks removal of fixture upgrade support and `predecessor_version`.
 - `delivery/environment.rs` ENVIRONMENTS, path and read lost their production caller.
+- part 2b (owner ruling 2026-11-03): `deploy/infra/cnpg-cluster.yaml`, read by the hard stop `crates/control/lib/src/platform/journey.rs:103`.
+- part 2b (owner ruling 2026-11-03): the comment at `services/host/src/host.rs:1276` names the deleted `deploy/platform/values-host-default.yaml`.

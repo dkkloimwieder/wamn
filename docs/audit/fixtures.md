@@ -6,7 +6,7 @@ Branch `worktree-fixtures` on origin, based on main b7aff8e09. It is not merged.
 
 | Issue | Commits |
 | --- | --- |
-| .1 one shared cluster fixture | e5113bf99, b7e0f8472, 54045d4ee, 7841cb622 |
+| .1 one shared cluster fixture | e5113bf99, b7e0f8472, 54045d4ee, 7841cb622, ebc0f9d16 |
 | .2 kept snapshot files | 29130418d |
 | .3 fixture upgrade support, floors, environment file loader | abec40b9f |
 
@@ -31,7 +31,8 @@ Root found and fixed three more defects during the run:
 
 - `test_tiers` requires an owner for every ignored input. The identity journey needs `WAMN_DELIVERY_CANDIDATE`, so `tests/selection.toml` now names it (b7e0f8472).
 - The Receiving and WMS cluster builds set `RUSTC_WRAPPER` to an empty value, a rule from the sccache era. Kache restores read-only files into the shared target, so the build without the wrapper could not write `libring` (54045d4ee). This defect was already on main.
-- A failed fixture command printed only the program name. It now prints its arguments too. The output stays private (7841cb622).
+- A failed fixture command printed only the program name. It now prints its arguments (7841cb622).
+- The shared helper replaced two helpers that printed standard error, so run 4 failed with no cause. It now prints standard error. Standard output stays private (ebc0f9d16).
 
 ## Issue 2
 
@@ -44,7 +45,7 @@ These files are deleted:
 
 Main had already deleted `flow-http.yaml`, `materializer.yaml` and `wms-materializer.yaml`. Each test that read a snapshot as its expected host values now reads the release chart defaults and the values that `env apply` renders. The new helper is `render_check::host_values` in the harness. No test was deleted.
 
-`deploy/infra/cnpg-cluster.yaml` stays. This is the fork reported at scoping: `crates/control/lib/src/platform/journey.rs:103` is a hard stop, and it reads that file. The comment at `services/host/src/host.rs:1276`, also a hard stop, still names `values-host-default.yaml`.
+`deploy/infra/cnpg-cluster.yaml` stays, because the hard stop `crates/control/lib/src/platform/journey.rs:103` reads it. The comment at `services/host/src/host.rs:1276`, also a hard stop, still names `values-host-default.yaml`. The owner moved both to part 2b on 2026-11-03.
 
 ## Issue 3
 
