@@ -732,6 +732,14 @@ use crate as control;
 mod fixture;
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
+
+    use base64::{Engine as _, engine::general_purpose::STANDARD};
+    use serde_json::Value;
+
+    use super::super::job_contract::{self, Contract, Source};
+    use crate::environment::document::{DeclaredRelease, EnvironmentDocument};
+
     #[test]
     fn kind_install_renders_in_install_order() -> anyhow::Result<()> {
         let render = super::fixture::render()?;
@@ -787,1062 +795,531 @@ mod tests {
         Ok(())
     }
 
-    fn object<'a>(
-        render: &'a super::fixture::Render,
-        kind: &str,
-        namespace: &str,
-        name: &str,
-    ) -> (usize, &'a serde_json::Value) {
+    fn pod_spec(object: &Value) -> Option<&Value> {
+        match object["kind"].as_str()? {
+            "Pod" => Some(&object["spec"]),
+            // A suspended Job declares the pod; its resumed rendering consumes inputs.
+            "Job" if object["spec"]["suspend"] == true => None,
+            "Deployment" | "StatefulSet" | "DaemonSet" | "ReplicaSet" | "Job" => {
+                Some(&object["spec"]["template"]["spec"])
+            }
+            "CronJob" => Some(&object["spec"]["jobTemplate"]["spec"]["template"]["spec"]),
+            _ => None,
+        }
+    }
+
+    fn pods(render: &super::fixture::Render) -> impl Iterator<Item = (usize, &Value, &Value)> {
         render
             .objects
             .iter()
             .enumerate()
-            .find(|(_, (_, value))| {
+            .filter_map(|(index, (_, object))| pod_spec(object).map(|spec| (index, object, spec)))
+    }
+
+    fn containers(spec: &Value) -> impl Iterator<Item = &Value> {
+        spec["containers"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .chain(spec["initContainers"].as_array().into_iter().flatten())
+    }
+
+    fn object<'a>(
+        render: &'a super::fixture::Render,
+        before: usize,
+        kind: &str,
+        namespace: &Value,
+        name: &Value,
+    ) -> Option<&'a Value> {
+        render.objects[..before]
+            .iter()
+            .rev()
+            .map(|(_, value)| value)
+            .find(|value| {
                 value["kind"] == kind
-                    && value["metadata"]["namespace"] == namespace
-                    && value["metadata"]["name"] == name
-                    && value["spec"]["suspend"] != true
+                    && &value["metadata"]["namespace"] == namespace
+                    && &value["metadata"]["name"] == name
             })
-            .map(|(index, (_, value))| (index, value))
-            .unwrap()
+    }
+
+    fn volume_sources(volume: &Value) -> impl Iterator<Item = (&'static str, &Value)> {
+        std::iter::once(volume)
+            .chain(
+                volume["projected"]["sources"]
+                    .as_array()
+                    .into_iter()
+                    .flatten(),
+            )
+            .flat_map(|source| {
+                [
+                    ("Secret", &source["secret"]),
+                    ("ConfigMap", &source["configMap"]),
+                ]
+            })
+            .filter(|(_, source)| !source.is_null())
+    }
+
+    fn input_sources(spec: &Value) -> Vec<(&'static str, &Value)> {
+        let mut sources = spec["volumes"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .flat_map(volume_sources)
+            .collect::<Vec<_>>();
+        for container in containers(spec) {
+            for entry in container["env"].as_array().into_iter().flatten() {
+                sources.extend(
+                    [
+                        ("Secret", &entry["valueFrom"]["secretKeyRef"]),
+                        ("ConfigMap", &entry["valueFrom"]["configMapKeyRef"]),
+                    ]
+                    .into_iter()
+                    .filter(|(_, source)| !source.is_null()),
+                );
+            }
+            for entry in container["envFrom"].as_array().into_iter().flatten() {
+                sources.extend(
+                    [
+                        ("Secret", &entry["secretRef"]),
+                        ("ConfigMap", &entry["configMapRef"]),
+                    ]
+                    .into_iter()
+                    .filter(|(_, source)| !source.is_null()),
+                );
+            }
+        }
+        sources
+    }
+
+    fn input<'a>(
+        render: &'a super::fixture::Render,
+        before: usize,
+        kind: &str,
+        namespace: &Value,
+        name: &Value,
+    ) -> Option<&'a Value> {
+        object(render, before, kind, namespace, name)
+            .or_else(|| {
+                render.owner_inputs.iter().find(|value| {
+                    value["kind"] == kind
+                        && &value["metadata"]["namespace"] == namespace
+                        && &value["metadata"]["name"] == name
+                })
+            })
+            .or_else(|| {
+                (kind == "Secret")
+                    .then(|| {
+                        render.objects[..before]
+                            .iter()
+                            .rev()
+                            .map(|(_, value)| value)
+                            .find(|value| {
+                                if &value["metadata"]["namespace"] != namespace {
+                                    return false;
+                                }
+                                if value["kind"] == "Certificate" {
+                                    return &value["spec"]["secretName"] == name;
+                                }
+                                if value["kind"] != "Cluster"
+                                    || value["spec"]["enableSuperuserAccess"] != true
+                                    || !value["apiVersion"].as_str().is_some_and(|version| {
+                                        version.starts_with("postgresql.cnpg.io/")
+                                    })
+                                {
+                                    return false;
+                                }
+                                if value["spec"]["superuserSecret"]["name"].is_string() {
+                                    return &value["spec"]["superuserSecret"]["name"] == name;
+                                }
+                                // CNPG defines the default Secret suffix outside the rendered Cluster.
+                                name == &format!(
+                                    "{}-superuser",
+                                    value["metadata"]["name"].as_str().unwrap()
+                                )
+                            })
+                    })
+                    .flatten()
+            })
+    }
+
+    fn mounted_input<'a>(
+        render: &'a super::fixture::Render,
+        index: usize,
+        spec: &'a Value,
+        container: &Value,
+        path: &str,
+    ) -> Option<(&'a Value, Option<&'a str>)> {
+        let namespace = &render.objects[index].1["metadata"]["namespace"];
+        for mount in container["volumeMounts"].as_array().into_iter().flatten() {
+            let base = mount["mountPath"].as_str().unwrap();
+            let Some(relative) = path
+                .strip_prefix(base)
+                .filter(|tail| tail.is_empty() || tail.starts_with('/'))
+            else {
+                continue;
+            };
+            let relative = relative.trim_start_matches('/');
+            let volume = spec["volumes"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|volume| volume["name"] == mount["name"])
+                .unwrap();
+            for (kind, source) in volume_sources(volume) {
+                let name = source.get("secretName").unwrap_or(&source["name"]);
+                let Some(producer) = input(render, index, kind, namespace, name) else {
+                    continue;
+                };
+                let key = if relative.is_empty() {
+                    None
+                } else if let Some(items) = source["items"].as_array() {
+                    if let Some(item) = items.iter().find(|item| item["path"] == relative) {
+                        Some(item["key"].as_str().unwrap())
+                    } else if items.iter().any(|item| {
+                        item["path"]
+                            .as_str()
+                            .unwrap()
+                            .starts_with(&format!("{relative}/"))
+                    }) {
+                        None
+                    } else {
+                        continue;
+                    }
+                } else {
+                    // The key belongs to the rendered producer, not to the caller's path.
+                    let key = producer["data"]
+                        .as_object()
+                        .into_iter()
+                        .flatten()
+                        .chain(producer["stringData"].as_object().into_iter().flatten())
+                        .map(|(key, _)| key.as_str())
+                        .find(|key| *key == relative);
+                    if key.is_none()
+                        && matches!(producer["kind"].as_str(), Some("Secret" | "ConfigMap"))
+                    {
+                        continue;
+                    }
+                    key
+                };
+                if let Some(key) = key
+                    && matches!(producer["kind"].as_str(), Some("Secret" | "ConfigMap"))
+                    && producer["data"].get(key).is_none()
+                    && producer["stringData"].get(key).is_none()
+                {
+                    continue;
+                }
+                return Some((producer, key));
+            }
+        }
+        None
+    }
+
+    fn mounted_text(
+        render: &super::fixture::Render,
+        index: usize,
+        spec: &Value,
+        container: &Value,
+        path: &str,
+    ) -> anyhow::Result<String> {
+        let (producer, key) = mounted_input(render, index, spec, container, path).unwrap();
+        let key = key.unwrap();
+        if let Some(text) = producer["stringData"][key].as_str() {
+            return Ok(text.to_owned());
+        }
+        Ok(String::from_utf8(
+            STANDARD.decode(producer["data"][key].as_str().unwrap())?,
+        )?)
+    }
+
+    fn contract(container: &Value) -> anyhow::Result<&'static Contract> {
+        let command: Vec<String> = serde::Deserialize::deserialize(&container["command"])?;
+        let arguments: Vec<String> = serde::Deserialize::deserialize(&container["args"])?;
+        job_contract::resolve(&command, &arguments)
+    }
+
+    fn environment_jobs(
+        render: &super::fixture::Render,
+    ) -> anyhow::Result<Vec<(usize, &Value, &'static str, EnvironmentDocument)>> {
+        let work = wamn_test_infrastructure::scratch::ScratchRoot::create()?;
+        let mut documents = Vec::new();
+        for (index, _, spec) in pods(render).filter(|(_, object, _)| object["kind"] == "Job") {
+            for container in containers(spec) {
+                let contract = contract(container)?;
+                // These command verbs define consumers of an environment document.
+                if !matches!(contract.verb, "env apply" | "env connections") {
+                    continue;
+                }
+                let path = container["args"][2].as_str().unwrap();
+                let text = mounted_text(render, index, spec, container, path)?;
+                let file = work.path().join(format!("{index}.k"));
+                std::fs::write(&file, text)?;
+                let document = EnvironmentDocument::compile(&file)?;
+                documents.push((index, container, contract.verb, document));
+            }
+        }
+        Ok(documents)
     }
 
     #[test]
     fn install_service_accounts_precede_consumers() -> anyhow::Result<()> {
         let render = super::fixture::render()?;
-
-        for (kind, namespace, name, account) in [
-            ("Deployment", "platform", "otel-collector", "otel-collector"),
-            ("Deployment", "cert-manager", "cert-manager", "cert-manager"),
-            (
-                "Deployment",
-                "cert-manager",
-                "cert-manager-cainjector",
-                "cert-manager-cainjector",
-            ),
-            (
-                "Deployment",
-                "cert-manager",
-                "cert-manager-webhook",
-                "cert-manager-webhook",
-            ),
-            (
-                "Deployment",
-                "cnpg-system",
-                "cnpg-controller-manager",
-                "cnpg-manager",
-            ),
-            (
-                "Deployment",
-                "platform",
-                "runtime-operator",
-                "wamn-runtime-operator",
-            ),
-            (
-                "Deployment",
-                "hosts",
-                "cdc-reader-test--wms--dev",
-                "event-reader",
-            ),
-            (
-                "Deployment",
-                "hosts",
-                "cdc-reader-test--receiving--dev",
-                "event-reader",
-            ),
-            (
-                "Deployment",
-                "hosts",
-                "hostgroup-c-test",
-                "wamn-control-test",
-            ),
-            (
-                "Deployment",
-                "hosts",
-                "hostgroup-r-dev-e2fc889f978641f76d92",
-                "wamn-host-test--wms--dev",
-            ),
-            (
-                "Deployment",
-                "hosts",
-                "hostgroup-r-dev-092a942d31ab372be553",
-                "wamn-host-test--receiving--dev",
-            ),
-            ("Job", "hosts", "platform-ui-test", "wamn-host"),
-            (
-                "Job",
-                "platform",
-                "platform-first-apply-test--wms--dev",
-                "platform-first-apply-test--wms--dev",
-            ),
-            (
-                "Job",
-                "platform",
-                "platform-first-apply-test--receiving--dev",
-                "platform-first-apply-test--receiving--dev",
-            ),
-            (
-                "Job",
-                "platform",
-                "platform-apply-test--wms--dev",
-                "platform-apply-test--wms--dev",
-            ),
-            (
-                "Job",
-                "platform",
-                "platform-apply-test--receiving--dev",
-                "platform-apply-test--receiving--dev",
-            ),
-            (
-                "Job",
-                "hosts",
-                "platform-connections-test--wms--dev",
-                "platform-connections-test--wms--dev",
-            ),
-            (
-                "Job",
-                "platform",
-                "platform-control-credentials-test",
-                "platform-control-credentials-test",
-            ),
-            (
-                "Job",
-                "platform",
-                "platform-control-operator-test",
-                "platform-control-operator-test",
-            ),
-            (
-                "Job",
-                "platform",
-                "platform-invite-test",
-                "platform-invite-test",
-            ),
-        ] {
-            let (consumer_index, consumer) = object(render, kind, namespace, name);
-            let (account_index, account) = object(render, "ServiceAccount", namespace, account);
-            assert_eq!(
-                consumer["spec"]["template"]["spec"]["serviceAccountName"],
-                account["metadata"]["name"]
-            );
-            assert_eq!(
-                consumer["metadata"]["namespace"],
-                account["metadata"]["namespace"]
-            );
-            assert!(account_index < consumer_index, "{name}");
-        }
-        Ok(())
-    }
-
-    #[test]
-    fn install_job_secrets_precede_consumers() -> anyhow::Result<()> {
-        let render = super::fixture::render()?;
-
-        for (job_name, namespace, variable, secret_name, key) in [
-            (
-                "platform-system",
-                "platform",
-                "WAMN_SYSTEM_ADMIN_URL",
-                "wamn-system-admin",
-                "url",
-            ),
-            (
-                "platform-org",
-                "platform",
-                "WAMN_SYSTEM_ADMIN_URL",
-                "wamn-system-admin",
-                "url",
-            ),
-            (
-                "platform-identity-issuer",
-                "platform",
-                "WAMN_SYSTEM_ADMIN_URL",
-                "wamn-system-admin",
-                "url",
-            ),
-            (
-                "platform-session-key-state",
-                "platform",
-                "PGPASSWORD",
-                "platform-key-probe",
-                "password",
-            ),
-            (
-                "platform-session-key-publish",
-                "identity",
-                "WAMN_IDENTITY_DATABASE_URL",
-                "platform-key-identity",
-                "url",
-            ),
-            (
-                "platform-session-key-activate",
-                "identity",
-                "WAMN_IDENTITY_DATABASE_URL",
-                "platform-key-identity",
-                "url",
-            ),
-            (
-                "platform-connections-test--wms--dev",
-                "hosts",
-                "WAMN_CONTROL_DATABASE_URL",
-                "wamn-system-admin",
-                "url",
-            ),
-        ] {
-            let (job_index, job) = object(render, "Job", namespace, job_name);
-            let (secret_index, secret) = object(render, "Secret", namespace, secret_name);
-            let entry = job["spec"]["template"]["spec"]["containers"][0]["env"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .find(|entry| entry["name"] == variable)
-                .unwrap();
-            assert_eq!(
-                entry["valueFrom"]["secretKeyRef"]["name"],
-                secret["metadata"]["name"]
-            );
-            assert_eq!(entry["valueFrom"]["secretKeyRef"]["key"], key);
-            assert!(secret["stringData"][key].is_string());
-            assert_eq!(
-                job["metadata"]["namespace"],
-                secret["metadata"]["namespace"]
-            );
-            assert!(secret_index < job_index, "{job_name}");
-        }
-        for project in ["wms", "receiving"] {
-            for (prefix, variable, secret_name) in [
-                ("first-apply", "WAMN_SYSTEM_ADMIN_URL", "wamn-system-admin"),
-                ("first-apply", "WAMN_APPLY_DATABASE_URL", "wamn-env-apply"),
-                ("apply", "WAMN_SYSTEM_ADMIN_URL", "wamn-system-admin"),
-                ("apply", "WAMN_APPLY_DATABASE_URL", "wamn-env-apply"),
-                ("session", "WAMN_SYSTEM_ADMIN_URL", "wamn-system-admin"),
-                (
-                    "session",
-                    "WAMN_TARGET_ADMIN_DATABASE_URL",
-                    "platform-session-admin",
-                ),
-            ] {
-                let namespace = if prefix == "session" {
-                    "identity"
-                } else {
-                    "platform"
-                };
-                let name = format!("platform-{prefix}-test--{project}--dev");
-                let (job_index, job) = object(render, "Job", namespace, &name);
-                let (secret_index, secret) = object(render, "Secret", namespace, secret_name);
-                let entry = job["spec"]["template"]["spec"]["containers"][0]["env"]
-                    .as_array()
-                    .unwrap()
-                    .iter()
-                    .find(|entry| entry["name"] == variable)
-                    .unwrap();
-                assert_eq!(
-                    entry["valueFrom"]["secretKeyRef"]["name"],
-                    secret["metadata"]["name"]
-                );
-                assert_eq!(entry["valueFrom"]["secretKeyRef"]["key"], "url");
-                assert!(secret["stringData"]["url"].is_string());
-                assert!(secret_index < job_index, "{name}");
-            }
-        }
-        Ok(())
-    }
-
-    #[test]
-    fn install_workload_inputs_precede_consumers() -> anyhow::Result<()> {
-        let render = super::fixture::render()?;
-
-        for (deployment, volume_name, namespace, certificate_name) in [
-            ("identity", "serving-tls", "identity", "identity-tls"),
-            (
-                "identity",
-                "operator-ca",
-                "identity",
-                "identity-operator-ca",
-            ),
-            ("identity", "auth-nats", "identity", "wamn-identity-nats"),
-            ("wamn-edge", "serving-tls", "edge", "wamn-edge-tls"),
-            (
-                "runtime-operator",
-                "operator-cert",
-                "platform",
-                "wasmcloud-operator-tls",
-            ),
-        ] {
-            let (consumer_index, consumer) = object(render, "Deployment", namespace, deployment);
-            let (certificate_index, certificate) =
-                object(render, "Certificate", namespace, certificate_name);
-            let volume = consumer["spec"]["template"]["spec"]["volumes"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .find(|volume| volume["name"] == volume_name)
-                .unwrap();
-            assert_eq!(
-                volume["secret"]["secretName"],
-                certificate["spec"]["secretName"]
-            );
-            assert_eq!(
-                consumer["metadata"]["namespace"],
-                certificate["metadata"]["namespace"]
-            );
-            assert!(certificate_index < consumer_index);
-        }
-        let (identity_index, identity) = object(render, "Deployment", "identity", "identity");
-        for (volume_name, secret_name) in [
-            (
-                "session-target-0",
-                "wamn-session-role-reader-test--wms--dev",
-            ),
-            (
-                "session-target-1",
-                "wamn-session-role-reader-test--receiving--dev",
-            ),
-        ] {
-            let (secret_index, secret) = object(render, "Secret", "identity", secret_name);
-            let volume = identity["spec"]["template"]["spec"]["volumes"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .find(|volume| volume["name"] == volume_name)
-                .unwrap();
-            assert_eq!(volume["secret"]["secretName"], secret["metadata"]["name"]);
-            assert_eq!(volume["secret"]["items"][0]["key"], "target.json");
-            assert!(secret["stringData"]["target.json"].is_string());
-            assert!(secret_index < identity_index);
-        }
-        let (database_index, database) = object(render, "Secret", "identity", "wamn-identity-db");
-        let variables = identity["spec"]["template"]["spec"]["containers"][0]["env"]
-            .as_array()
-            .unwrap();
-        let database_url = variables
-            .iter()
-            .find(|entry| entry["name"] == "WAMN_IDENTITY_DATABASE_URL")
-            .unwrap();
-        assert_eq!(
-            database_url["valueFrom"]["secretKeyRef"]["name"],
-            database["metadata"]["name"]
-        );
-        assert_eq!(database_url["valueFrom"]["secretKeyRef"]["key"], "url");
-        assert!(database["stringData"]["url"].is_string());
-        assert!(database_index < identity_index);
-        let resend = variables
-            .iter()
-            .find(|entry| entry["name"] == "RESEND_API_KEY")
-            .unwrap();
-        assert_eq!(
-            resend["valueFrom"]["secretKeyRef"]["name"],
-            render.owner_inputs[0]["metadata"]["name"]
-        );
-        assert_eq!(
-            identity["metadata"]["namespace"],
-            render.owner_inputs[0]["metadata"]["namespace"]
-        );
-        assert_eq!(resend["valueFrom"]["secretKeyRef"]["key"], "api-key");
-        assert!(render.owner_inputs[0]["stringData"]["api-key"].is_string());
-        for project in ["wms", "receiving"] {
-            let (capture_index, capture) = object(
-                render,
-                "Deployment",
-                "hosts",
-                &format!("cdc-reader-test--{project}--dev"),
-            );
-            for (index, family) in [(0, "cdc"), (1, "registry-reader")] {
-                let (secret_index, secret) = object(
-                    render,
-                    "Secret",
-                    "hosts",
-                    &format!("wamn-{family}-test--{project}--dev"),
-                );
-                let reference = &capture["spec"]["template"]["spec"]["containers"][0]["env"][index]
-                    ["valueFrom"]["secretKeyRef"];
-                assert_eq!(reference["name"], secret["metadata"]["name"]);
-                assert_eq!(reference["key"], "url");
-                assert!(secret["stringData"]["url"].is_string());
-                assert!(secret_index < capture_index);
-            }
-            let (certificate_index, certificate) =
-                object(render, "Certificate", "hosts", "wamn-cdc-reader-nats");
-            assert_eq!(
-                capture["spec"]["template"]["spec"]["volumes"][0]["secret"]["secretName"],
-                certificate["spec"]["secretName"]
-            );
-            assert!(certificate_index < capture_index);
-        }
-        Ok(())
-    }
-
-    #[test]
-    fn install_configmap_inputs_precede_consumers() -> anyhow::Result<()> {
-        let render = super::fixture::render()?;
-
-        for (kind, namespace, consumer_name, volume_name, producer_name) in [
-            (
-                "StatefulSet",
-                "platform",
-                "wamn-nats",
-                "config",
-                "wamn-nats-config",
-            ),
-            (
-                "Deployment",
-                "platform",
-                "otel-collector",
-                "config",
-                "otel-collector",
-            ),
-            ("Deployment", "edge", "wamn-edge", "config", "wamn-edge"),
-            (
-                "Deployment",
-                "edge",
-                "wamn-edge",
-                "identity-ca",
-                "identity-ca",
-            ),
-            (
-                "Deployment",
-                "hosts",
-                "hostgroup-c-test",
-                "registry-pull",
-                "wamn-registry-helper",
-            ),
-            (
-                "Deployment",
-                "hosts",
-                "hostgroup-c-test",
-                "identity-ca",
-                "identity-ca",
-            ),
-        ] {
-            let (consumer_index, consumer) = object(render, kind, namespace, consumer_name);
-            let (producer_index, producer) = object(render, "ConfigMap", namespace, producer_name);
-            let volume = consumer["spec"]["template"]["spec"]["volumes"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .find(|volume| volume["name"] == volume_name)
-                .unwrap();
-            assert_eq!(volume["configMap"]["name"], producer["metadata"]["name"]);
-            assert_eq!(
-                consumer["metadata"]["namespace"],
-                producer["metadata"]["namespace"]
-            );
+        let consumers = pods(render)
+            .filter(|(_, _, spec)| spec["serviceAccountName"].is_string())
+            .collect::<Vec<_>>();
+        assert!(!consumers.is_empty());
+        for (index, consumer, spec) in consumers {
             assert!(
-                producer_index < consumer_index,
-                "{consumer_name}/{volume_name}"
-            );
-        }
-        let (collector_index, collector) =
-            object(render, "Deployment", "platform", "otel-collector");
-        let (values_index, values) =
-            object(render, "ConfigMap", "platform", "otel-collector-values");
-        assert_eq!(
-            collector["spec"]["template"]["spec"]["containers"][0]["envFrom"][0]["configMapRef"]["name"],
-            values["metadata"]["name"]
-        );
-        assert!(values_index < collector_index);
-        let (_, edge) = object(render, "Deployment", "edge", "wamn-edge");
-        let (_, ca) = object(render, "ConfigMap", "edge", "identity-ca");
-        assert_eq!(
-            edge["spec"]["template"]["spec"]["volumes"][2]["configMap"]["items"][0]["key"],
-            "ca.crt"
-        );
-        assert!(ca["data"]["ca.crt"].is_string());
-        for project in ["wms", "receiving"] {
-            let release = crate::release_chart::release_name("test", project, "dev")?;
-            let (host_index, host) = object(
-                render,
-                "Deployment",
-                "hosts",
-                &format!("hostgroup-{release}"),
-            );
-            for (volume_name, producer_name) in [
-                ("registry-pull", "wamn-registry-helper"),
-                ("identity-ca", "identity-ca"),
-            ] {
-                let (producer_index, producer) =
-                    object(render, "ConfigMap", "hosts", producer_name);
-                let volume = host["spec"]["template"]["spec"]["volumes"]
-                    .as_array()
-                    .unwrap()
-                    .iter()
-                    .find(|volume| volume["name"] == volume_name)
-                    .unwrap();
-                assert_eq!(volume["configMap"]["name"], producer["metadata"]["name"]);
-                assert!(producer_index < host_index);
-            }
-        }
-        Ok(())
-    }
-
-    #[test]
-    fn install_apply_roles_cover_commands() -> anyhow::Result<()> {
-        let render = super::fixture::render()?;
-
-        for project in ["wms", "receiving"] {
-            for prefix in ["first-apply", "apply"] {
-                let name = format!("platform-{prefix}-test--{project}--dev");
-                let (job_index, job) = object(render, "Job", "platform", &name);
-                let spec = &job["spec"]["template"]["spec"];
-                assert_eq!(spec["automountServiceAccountToken"], true);
-                assert_eq!(spec["containers"][0]["args"][0], "env");
-                assert_eq!(spec["containers"][0]["args"][1], "apply");
-                for namespace in ["platform", "hosts"] {
-                    let (role_index, role) = object(render, "Role", namespace, &name);
-                    let (binding_index, binding) = object(render, "RoleBinding", namespace, &name);
-                    assert_eq!(binding["roleRef"]["kind"], role["kind"]);
-                    assert_eq!(binding["roleRef"]["name"], role["metadata"]["name"]);
-                    assert_eq!(binding["subjects"][0]["name"], spec["serviceAccountName"]);
-                    assert_eq!(
-                        binding["subjects"][0]["namespace"],
-                        job["metadata"]["namespace"]
-                    );
-                    assert_eq!(
-                        binding["metadata"]["namespace"],
-                        role["metadata"]["namespace"]
-                    );
-                    if namespace == "platform" {
-                        assert_eq!(
-                            role["rules"],
-                            serde_json::json!([{
-                                "apiGroups":["postgresql.cnpg.io"], "resources":["clusters","databases","publications"],
-                                "verbs":["get","list","watch","create","patch"]
-                            }])
-                        );
-                    } else {
-                        assert_eq!(
-                            role["rules"],
-                            serde_json::json!([
-                                {"apiGroups":[""],"resources":["secrets","services","configmaps"],"verbs":["get","list","watch","create","patch","update","delete"]},
-                                {"apiGroups":[""],"resources":["pods"],"verbs":["get","list","watch"]},
-                                {"apiGroups":[""],"resources":["pods/log"],"verbs":["get"]},
-                                {"apiGroups":[""],"resources":["events"],"verbs":["list"]},
-                                {"apiGroups":[""],"resources":["serviceaccounts"],"verbs":["get","create"]},
-                                {"apiGroups":["rbac.authorization.k8s.io"],"resources":["roles","rolebindings"],"verbs":["get","create"]},
-                                {"apiGroups":["apps"],"resources":["deployments","replicasets"],"verbs":["get","list","watch","create","patch","update","delete"]},
-                                {"apiGroups":["networking.k8s.io"],"resources":["networkpolicies"],"verbs":["get","list","watch","create","patch","update","delete"]},
-                                {"apiGroups":["runtime.wasmcloud.dev"],"resources":["workloaddeployments"],"verbs":["get","list","watch","create","patch","update","delete"]}
-                            ])
-                        );
-                    }
-                    assert!(role_index < job_index && binding_index < job_index);
-                }
-            }
-        }
-        Ok(())
-    }
-
-    #[test]
-    fn install_other_roles_cover_commands() -> anyhow::Result<()> {
-        let render = super::fixture::render()?;
-
-        for (job_namespace, name, role_namespace, verbs) in [
-            (
-                "hosts",
-                "platform-connections-test--wms--dev",
-                "hosts",
-                serde_json::json!(["get", "create", "update"]),
-            ),
-            (
-                "platform",
-                "platform-control-credentials-test",
-                "hosts",
-                serde_json::json!(["get", "create", "patch"]),
-            ),
-            (
-                "platform",
-                "platform-control-operator-test",
-                "identity",
-                serde_json::json!(["get"]),
-            ),
-            (
-                "platform",
-                "platform-control-operator-test",
-                "hosts",
-                serde_json::json!(["get", "create", "patch"]),
-            ),
-            (
-                "platform",
-                "platform-invite-test",
-                "identity",
-                serde_json::json!(["get"]),
-            ),
-        ] {
-            let (job_index, job) = object(render, "Job", job_namespace, name);
-            let (role_index, role) = object(render, "Role", role_namespace, name);
-            let (binding_index, binding) = object(render, "RoleBinding", role_namespace, name);
-            assert_eq!(
-                job["spec"]["template"]["spec"]["automountServiceAccountToken"],
-                true
-            );
-            assert_eq!(binding["roleRef"]["kind"], role["kind"]);
-            assert_eq!(binding["roleRef"]["name"], role["metadata"]["name"]);
-            assert_eq!(binding["subjects"][0]["kind"], "ServiceAccount");
-            assert_eq!(
-                binding["subjects"][0]["name"],
-                job["spec"]["template"]["spec"]["serviceAccountName"]
-            );
-            assert_eq!(
-                binding["subjects"][0]["namespace"],
-                job["metadata"]["namespace"]
-            );
-            assert_eq!(
-                binding["metadata"]["namespace"],
-                role["metadata"]["namespace"]
-            );
-            assert_eq!(
-                role["rules"],
-                serde_json::json!([{"apiGroups":[""],"resources":["secrets"],"verbs":verbs}])
-            );
-            assert!(role_index < job_index && binding_index < job_index);
-        }
-        Ok(())
-    }
-
-    #[test]
-    fn install_apply_command_inputs() -> anyhow::Result<()> {
-        let render = super::fixture::render()?;
-
-        for project in ["wms", "receiving"] {
-            for (prefix, namespace) in [
-                ("first-apply", "platform"),
-                ("apply", "platform"),
-                ("connections", "hosts"),
-            ] {
-                if prefix == "connections" && project == "receiving" {
-                    continue;
-                }
-                let name = format!("platform-{prefix}-test--{project}--dev");
-                let (job_index, job) = object(render, "Job", namespace, &name);
-                let spec = &job["spec"]["template"]["spec"];
-                let container = &spec["containers"][0];
-                let (files_index, files) =
-                    object(render, "Secret", namespace, &format!("{name}-files"));
-                let volume = &spec["volumes"][0];
-                assert_eq!(volume["secret"]["secretName"], files["metadata"]["name"]);
-                assert_eq!(container["volumeMounts"][0]["name"], volume["name"]);
-                assert_eq!(container["volumeMounts"][0]["mountPath"], "/inputs");
-                assert_eq!(container["args"][2], "/inputs/environment.k");
-                assert!(files_index < job_index);
-                for filename in ["environment.k", "kubeconfig", "registry.json"] {
-                    let item = volume["secret"]["items"]
-                        .as_array()
-                        .unwrap()
-                        .iter()
-                        .find(|item| item["path"] == filename)
-                        .unwrap();
-                    assert!(files["stringData"][item["key"].as_str().unwrap()].is_string());
-                }
-                if prefix != "connections" {
-                    for filename in ["Chart.yaml", "values.yaml"] {
-                        let item = volume["secret"]["items"]
-                            .as_array()
-                            .unwrap()
-                            .iter()
-                            .find(|item| item["path"] == filename)
-                            .unwrap();
-                        assert!(files["stringData"][item["key"].as_str().unwrap()].is_string());
-                    }
-                }
-                for (variable, value) in [
-                    ("WAMN_RELEASE_CHART", "/inputs"),
-                    ("WAMN_REGISTRY_AUTH_FILE", "/inputs/registry.json"),
-                    (
-                        "WAMN_RELEASE_ARTIFACT_BASE",
-                        "registry.invalid/wamn/releases",
-                    ),
-                    (
-                        "WAMN_NATS_URL",
-                        "nats://wamn-nats.platform.svc.cluster.local:4222",
-                    ),
-                ] {
-                    let entry = container["env"]
-                        .as_array()
-                        .unwrap()
-                        .iter()
-                        .find(|entry| entry["name"] == variable)
-                        .unwrap();
-                    assert_eq!(entry["value"], value);
-                }
-                for (variable, filename) in [
-                    ("WAMN_NATS_TLS_CA", "ca.crt"),
-                    ("WAMN_NATS_TLS_CERT", "tls.crt"),
-                    ("WAMN_NATS_TLS_KEY", "tls.key"),
-                ] {
-                    let entry = container["env"]
-                        .as_array()
-                        .unwrap()
-                        .iter()
-                        .find(|entry| entry["name"] == variable)
-                        .unwrap();
-                    let item = volume["secret"]["items"]
-                        .as_array()
-                        .unwrap()
-                        .iter()
-                        .find(|item| item["path"] == filename)
-                        .unwrap();
-                    assert_eq!(
-                        entry["value"],
-                        format!("/inputs/{}", item["path"].as_str().unwrap())
-                    );
-                    assert!(files["stringData"][item["key"].as_str().unwrap()].is_string());
-                }
-            }
-        }
-        Ok(())
-    }
-
-    #[test]
-    fn install_package_command_inputs() -> anyhow::Result<()> {
-        let render = super::fixture::render()?;
-
-        for project in ["wms", "receiving"] {
-            let key = format!("test--{project}--dev");
-            let package = format!("wamn_{project}");
-            let tag = format!("{package}-1.0.0");
-            let package_job = format!(
-                "platform-package-{}",
-                &super::super::job::input_digest(&serde_json::json!([key, tag]))[..24]
-            );
-            let replica_job = format!(
-                "platform-replica-{}",
-                &super::super::job::input_digest(&serde_json::json!([key, package]))[..24]
-            );
-            for (name, filenames) in [
-                (package_job, &["registry.json"][..]),
-                (replica_job, &["package/wamn.json"][..]),
-                (
-                    format!("platform-package-access-{key}"),
-                    &["registry.json"][..],
-                ),
-                (
-                    format!("platform-release-{key}"),
-                    &["environment.k", "registry.json"][..],
-                ),
-            ] {
-                let (job_index, job) = object(render, "Job", "platform", &name);
-                let spec = &job["spec"]["template"]["spec"];
-                let container = &spec["containers"][0];
-                let (files_index, files) =
-                    object(render, "Secret", "platform", &format!("{name}-files"));
-                assert_eq!(
-                    spec["volumes"][0]["secret"]["secretName"],
-                    files["metadata"]["name"]
-                );
-                assert_eq!(
-                    container["volumeMounts"][0]["name"],
-                    spec["volumes"][0]["name"]
-                );
-                assert_eq!(container["volumeMounts"][0]["mountPath"], "/inputs");
-                assert!(files_index < job_index);
-                for filename in filenames {
-                    let item = spec["volumes"][0]["secret"]["items"]
-                        .as_array()
-                        .unwrap()
-                        .iter()
-                        .find(|item| item["path"] == *filename)
-                        .unwrap();
-                    assert!(files["stringData"][item["key"].as_str().unwrap()].is_string());
-                }
-                if filenames.contains(&"registry.json") {
-                    let entry = container["env"]
-                        .as_array()
-                        .unwrap()
-                        .iter()
-                        .find(|entry| entry["name"] == "WAMN_REGISTRY_AUTH_FILE")
-                        .unwrap();
-                    assert_eq!(entry["value"], "/inputs/registry.json");
-                }
-                if container["args"][0] == "apply-package" {
-                    for (variable, filename) in [
-                        ("WAMN_NATS_TLS_CA", "ca.crt"),
-                        ("WAMN_NATS_TLS_CERT", "tls.crt"),
-                        ("WAMN_NATS_TLS_KEY", "tls.key"),
-                    ] {
-                        let entry = container["env"]
-                            .as_array()
-                            .unwrap()
-                            .iter()
-                            .find(|entry| entry["name"] == variable)
-                            .unwrap();
-                        let item = spec["volumes"][0]["secret"]["items"]
-                            .as_array()
-                            .unwrap()
-                            .iter()
-                            .find(|item| item["path"] == filename)
-                            .unwrap();
-                        assert_eq!(
-                            entry["value"],
-                            format!("/inputs/{}", item["path"].as_str().unwrap())
-                        );
-                        assert!(files["stringData"][item["key"].as_str().unwrap()].is_string());
-                    }
-                }
-                for (variable, secret_name) in [
-                    ("WAMN_PG_ADMIN_URL", "platform-package-admin"),
-                    ("WAMN_SYSTEM_ADMIN_URL", "wamn-system-admin"),
-                ] {
-                    let entry = container["env"]
-                        .as_array()
-                        .unwrap()
-                        .iter()
-                        .find(|entry| entry["name"] == variable)
-                        .unwrap();
-                    let (secret_index, secret) = object(render, "Secret", "platform", secret_name);
-                    assert_eq!(
-                        entry["valueFrom"]["secretKeyRef"]["name"],
-                        secret["metadata"]["name"]
-                    );
-                    assert_eq!(entry["valueFrom"]["secretKeyRef"]["key"], "url");
-                    assert!(secret["stringData"]["url"].is_string());
-                    assert!(secret_index < job_index);
-                }
-            }
-        }
-        Ok(())
-    }
-
-    #[test]
-    fn install_script_command_inputs() -> anyhow::Result<()> {
-        let render = super::fixture::render()?;
-
-        for (name, filename) in [
-            ("platform-control-credentials-test", "kubeconfig"),
-            ("platform-control-operator-test", "metadata.json"),
-            ("platform-invite-test", "kubeconfig"),
-            ("platform-owner-state-test", "state.sql"),
-        ] {
-            let (job_index, job) = object(render, "Job", "platform", name);
-            let spec = &job["spec"]["template"]["spec"];
-            let (files_index, files) =
-                object(render, "Secret", "platform", &format!("{name}-files"));
-            assert_eq!(
-                spec["volumes"][0]["secret"]["secretName"],
-                files["metadata"]["name"]
-            );
-            assert_eq!(
-                spec["containers"][0]["volumeMounts"][0]["name"],
-                spec["volumes"][0]["name"]
-            );
-            assert_eq!(
-                spec["containers"][0]["volumeMounts"][0]["mountPath"],
-                "/inputs"
-            );
-            let item = spec["volumes"][0]["secret"]["items"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .find(|item| item["path"] == filename)
-                .unwrap();
-            assert!(files["stringData"][item["key"].as_str().unwrap()].is_string());
-            assert!(files_index < job_index);
-        }
-        let (cluster_index, cluster) = object(render, "Cluster", "platform", "wamn-pg");
-        assert_eq!(cluster["spec"]["enableSuperuserAccess"], true);
-        for (name, key) in [
-            ("platform-control-credentials-test", "uri"),
-            ("platform-invite-test", "uri"),
-            ("platform-owner-state-test", "password"),
-        ] {
-            let (job_index, job) = object(render, "Job", "platform", name);
-            let spec = &job["spec"]["template"]["spec"];
-            assert_eq!(
-                spec["volumes"][1]["secret"]["secretName"],
-                format!(
-                    "{}-superuser",
-                    cluster["metadata"]["name"].as_str().unwrap()
+                object(
+                    render,
+                    index,
+                    "ServiceAccount",
+                    &consumer["metadata"]["namespace"],
+                    &spec["serviceAccountName"]
                 )
+                .is_some(),
+                "{}",
+                consumer["metadata"]["name"]
             );
-            assert_eq!(spec["volumes"][1]["secret"]["items"][0]["key"], key);
-            assert_eq!(spec["volumes"][1]["secret"]["items"][0]["path"], key);
-            assert_eq!(
-                spec["containers"][0]["volumeMounts"][1]["name"],
-                spec["volumes"][1]["name"]
-            );
-            assert_eq!(
-                spec["containers"][0]["volumeMounts"][1]["mountPath"],
-                "/etc/wamn/postgres"
-            );
-            assert!(cluster_index < job_index);
         }
-        let (_, operator_job) = object(render, "Job", "platform", "platform-control-operator-test");
-        let (operator_index, operator) = object(render, "Certificate", "identity", "operator-test");
-        let (_, invite) = object(render, "Job", "platform", "platform-invite-test");
-        let (tls_index, _) = object(render, "Certificate", "identity", "identity-tls");
-        let operator_env = operator_job["spec"]["template"]["spec"]["containers"][0]["env"]
-            .as_array()
-            .unwrap();
-        assert_eq!(operator_env[0]["name"], "OPERATOR");
-        assert_eq!(operator_env[0]["value"], operator["spec"]["secretName"]);
-        let (invite_index, _) = object(render, "Job", "platform", "platform-invite-test");
-        assert!(operator_index < invite_index && tls_index < invite_index);
-        let (_, invite_files) = object(render, "Secret", "platform", "platform-invite-test-files");
-        let invite_spec = &invite["spec"]["template"]["spec"];
-        for (variable, filename) in [
-            ("WAMN_NATS_TLS_CA", "ca.crt"),
-            ("WAMN_NATS_TLS_CERT", "tls.crt"),
-            ("WAMN_NATS_TLS_KEY", "tls.key"),
-        ] {
-            let entry = invite_spec["containers"][0]["env"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .find(|entry| entry["name"] == variable)
-                .unwrap();
-            let item = invite_spec["volumes"][0]["secret"]["items"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .find(|item| item["path"] == filename)
-                .unwrap();
-            assert_eq!(
-                entry["value"],
-                format!("/inputs/{}", item["path"].as_str().unwrap())
+        Ok(())
+    }
+
+    #[test]
+    fn install_inputs_precede_consumers() -> anyhow::Result<()> {
+        let render = super::fixture::render()?;
+        let consumers = pods(render)
+            .flat_map(|(index, consumer, spec)| {
+                input_sources(spec)
+                    .into_iter()
+                    // Kubernetes permits an optional reference to omit its producer.
+                    .filter(|(_, source)| source["optional"] != true)
+                    .map(move |(kind, source)| (index, consumer, kind, source))
+            })
+            .collect::<Vec<_>>();
+        assert!(!consumers.is_empty());
+        for (index, consumer, kind, source) in consumers {
+            let name = source.get("secretName").unwrap_or(&source["name"]);
+            assert!(
+                input(
+                    render,
+                    index,
+                    kind,
+                    &consumer["metadata"]["namespace"],
+                    name
+                )
+                .is_some(),
+                "{} -> {kind}/{name}",
+                consumer["metadata"]["name"]
             );
-            assert!(invite_files["stringData"][item["key"].as_str().unwrap()].is_string());
         }
-        for (variable, value) in [
-            ("ORG", render.cluster.org.as_str()),
-            ("OWNER_EMAIL", render.cluster.owner_email.as_str()),
-            (
-                "WAMN_PAT_ISSUER",
-                "https://identity.identity.svc.cluster.local",
-            ),
-        ] {
-            let entry = invite["spec"]["template"]["spec"]["containers"][0]["env"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .find(|entry| entry["name"] == variable)
-                .unwrap();
-            assert_eq!(entry["value"], value);
+        Ok(())
+    }
+
+    #[test]
+    fn install_roles_cover_commands() -> anyhow::Result<()> {
+        let render = super::fixture::render()?;
+        let mut permissions = 0;
+        for (index, job, spec) in pods(render).filter(|(_, object, _)| object["kind"] == "Job") {
+            for container in containers(spec) {
+                for access in contract(container)?.access {
+                    assert_ne!(spec["automountServiceAccountToken"], false);
+                    for resource in access.resources {
+                        for verb in access.verbs {
+                            permissions += 1;
+                            assert!(
+                                render.objects[..index].iter().any(|(_, binding)| {
+                                    binding["kind"] == "RoleBinding"
+                                        && binding["metadata"]["namespace"] == access.namespace
+                                        && binding["subjects"].as_array().unwrap().iter().any(
+                                            |subject| {
+                                                subject["kind"] == "ServiceAccount"
+                                                    && subject["name"] == spec["serviceAccountName"]
+                                                    && subject["namespace"]
+                                                        == job["metadata"]["namespace"]
+                                            },
+                                        )
+                                        && binding["roleRef"]["kind"] == "Role"
+                                        && object(
+                                            render,
+                                            index,
+                                            "Role",
+                                            &binding["metadata"]["namespace"],
+                                            &binding["roleRef"]["name"],
+                                        )
+                                        .is_some_and(
+                                            |role| {
+                                                role["rules"].as_array().unwrap().iter().any(
+                                                    |rule| {
+                                                        [
+                                                            ("apiGroups", access.group),
+                                                            ("resources", *resource),
+                                                            ("verbs", *verb),
+                                                        ]
+                                                        .into_iter()
+                                                        .all(|(field, required)| {
+                                                            rule[field]
+                                                                .as_array()
+                                                                .unwrap()
+                                                                .iter()
+                                                                .any(|value| {
+                                                                    value == required
+                                                                        || value == "*"
+                                                                })
+                                                        })
+                                                    },
+                                                )
+                                            },
+                                        )
+                                }),
+                                "{} {resource}/{verb}",
+                                job["metadata"]["name"]
+                            );
+                        }
+                    }
+                }
+            }
         }
+        assert!(permissions > 0);
+        Ok(())
+    }
+
+    #[test]
+    fn install_command_inputs() -> anyhow::Result<()> {
+        let render = super::fixture::render()?;
+        let mut inputs = 0;
+        for (index, job, spec) in pods(render).filter(|(_, object, _)| object["kind"] == "Job") {
+            for container in containers(spec) {
+                let contract = contract(container)?;
+                for path in contract.files {
+                    inputs += 1;
+                    assert!(
+                        mounted_input(render, index, spec, container, path).is_some(),
+                        "{} {path}",
+                        job["metadata"]["name"]
+                    );
+                }
+                for export in contract.exports {
+                    inputs += 1;
+                    match export.source {
+                        Source::File(path) => {
+                            assert!(mounted_input(render, index, spec, container, path).is_some());
+                        }
+                        Source::Secret {
+                            namespace, name, ..
+                        } => {
+                            let mut name = name.to_owned();
+                            for entry in container["env"].as_array().into_iter().flatten() {
+                                if let Some(value) = entry["value"].as_str() {
+                                    name = name.replace(
+                                        &format!("${}", entry["name"].as_str().unwrap()),
+                                        value,
+                                    );
+                                }
+                            }
+                            assert!(
+                                input(
+                                    render,
+                                    index,
+                                    "Secret",
+                                    &Value::from(namespace),
+                                    &Value::from(name)
+                                )
+                                .is_some()
+                            );
+                        }
+                    }
+                }
+                let shell = container["command"][0]
+                    .as_str()
+                    .is_some_and(|program| program.rsplit('/').next() == Some("sh"));
+                for argument in container["args"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .skip(usize::from(shell))
+                {
+                    for name in argument
+                        .as_str()
+                        .unwrap()
+                        .split("$(")
+                        .skip(1)
+                        .filter_map(|part| part.split_once(')').map(|(name, _)| name))
+                    {
+                        if name.is_empty()
+                            || !name
+                                .bytes()
+                                .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
+                        {
+                            continue;
+                        }
+                        inputs += 1;
+                        assert!(
+                            container["env"]
+                                .as_array()
+                                .into_iter()
+                                .flatten()
+                                .any(|entry| entry["name"] == name)
+                                || contract
+                                    .exports
+                                    .iter()
+                                    .any(|export| export.variable == name)
+                        );
+                    }
+                }
+                for entry in container["env"].as_array().into_iter().flatten() {
+                    if contract.required.contains(&entry["name"].as_str().unwrap())
+                        && let Some(path) = entry["value"]
+                            .as_str()
+                            .filter(|value| value.starts_with('/'))
+                    {
+                        inputs += 1;
+                        assert!(mounted_input(render, index, spec, container, path).is_some());
+                    }
+                }
+            }
+        }
+        assert!(inputs > 0);
         Ok(())
     }
 
     #[test]
     fn install_service_targets_match() -> anyhow::Result<()> {
         let render = super::fixture::render()?;
-
-        for (namespace, service_name, deployment_name, labels) in [
-            (
-                "platform",
-                "otel-collector",
-                "otel-collector",
-                &["app.kubernetes.io/name"][..],
-            ),
-            (
-                "platform",
-                "runtime-operator",
-                "runtime-operator",
-                &["wasmcloud.com/name"][..],
-            ),
-            (
-                "cnpg-system",
-                "cnpg-webhook-service",
-                "cnpg-controller-manager",
-                &["app.kubernetes.io/name"][..],
-            ),
-            (
-                "cert-manager",
-                "cert-manager",
-                "cert-manager",
-                &[
-                    "app.kubernetes.io/name",
-                    "app.kubernetes.io/instance",
-                    "app.kubernetes.io/component",
-                ][..],
-            ),
-            (
-                "cert-manager",
-                "cert-manager-cainjector",
-                "cert-manager-cainjector",
-                &[
-                    "app.kubernetes.io/name",
-                    "app.kubernetes.io/instance",
-                    "app.kubernetes.io/component",
-                ][..],
-            ),
-            (
-                "cert-manager",
-                "cert-manager-webhook",
-                "cert-manager-webhook",
-                &[
-                    "app.kubernetes.io/name",
-                    "app.kubernetes.io/instance",
-                    "app.kubernetes.io/component",
-                ][..],
-            ),
-            (
-                "identity",
-                "identity",
-                "identity",
-                &["app.kubernetes.io/name", "app.kubernetes.io/instance"][..],
-            ),
-            (
-                "edge",
-                "wamn-edge",
-                "wamn-edge",
-                &["app.kubernetes.io/name", "app.kubernetes.io/instance"][..],
-            ),
-        ] {
-            let (_, service) = object(render, "Service", namespace, service_name);
-            let (_, deployment) = object(render, "Deployment", namespace, deployment_name);
-            assert_eq!(
-                service["metadata"]["namespace"],
-                deployment["metadata"]["namespace"]
-            );
-            for label in labels {
-                assert_eq!(
-                    service["spec"]["selector"][label],
-                    deployment["spec"]["template"]["metadata"]["labels"][label]
-                );
-            }
-        }
-        let (_, nats) = object(render, "StatefulSet", "platform", "wamn-nats");
-        for name in ["wamn-nats", "wamn-nats-headless"] {
-            let (_, service) = object(render, "Service", "platform", name);
-            assert_eq!(
-                service["spec"]["selector"]["app.kubernetes.io/name"],
-                nats["spec"]["template"]["metadata"]["labels"]["app.kubernetes.io/name"]
-            );
-        }
-        let releases = [
-            crate::release_chart::release_name("test", "wms", "dev")?,
-            crate::release_chart::release_name("test", "receiving", "dev")?,
-            "c-test".into(),
-        ];
-        for release in releases {
-            let (_, service) = object(render, "Service", "hosts", &format!("{release}-http"));
-            let (_, workload) = object(
-                render,
-                "WorkloadDeployment",
-                "hosts",
-                &format!("{release}-http"),
-            );
-            assert_eq!(
-                workload["spec"]["template"]["spec"]["kubernetes"]["service"]["name"],
-                service["metadata"]["name"]
-            );
-            assert_eq!(
-                workload["metadata"]["namespace"],
-                service["metadata"]["namespace"]
-            );
-            if release == "c-test" {
-                continue;
-            }
-            let (_, files) = object(render, "Service", "hosts", &format!("{release}-files"));
-            let (_, host) = object(
-                render,
-                "Deployment",
-                "hosts",
-                &format!("hostgroup-{release}"),
-            );
-            for label in ["wasmcloud.com/hostgroup", "wamn.release"] {
-                assert_eq!(
-                    files["spec"]["selector"][label],
-                    host["spec"]["template"]["metadata"]["labels"][label]
-                );
-            }
+        let latest = render
+            .objects
+            .iter()
+            .map(|(_, object)| {
+                (
+                    (
+                        object["kind"].as_str().unwrap(),
+                        object["metadata"]["namespace"].as_str(),
+                        object["metadata"]["name"].as_str().unwrap(),
+                    ),
+                    object,
+                )
+            })
+            .collect::<BTreeMap<_, _>>();
+        let services = latest
+            .values()
+            .copied()
+            .filter(|object| object["kind"] == "Service")
+            .collect::<Vec<_>>();
+        assert!(!services.is_empty());
+        for service in services {
+            assert!(latest.values().any(|workload| {
+                if workload["metadata"]["namespace"] != service["metadata"]["namespace"] { return false; }
+                if let Some(selector) = service["spec"]["selector"].as_object().filter(|selector| !selector.is_empty()) {
+                    if pod_spec(workload).is_none() { return false; }
+                    let labels = match workload["kind"].as_str().unwrap() {
+                        "Pod" => &workload["metadata"]["labels"],
+                        "CronJob" => &workload["spec"]["jobTemplate"]["spec"]["template"]["metadata"]["labels"],
+                        _ => &workload["spec"]["template"]["metadata"]["labels"],
+                    };
+                    selector.iter().all(|(key, value)| &labels[key] == value)
+                } else {
+                    workload["kind"] == "WorkloadDeployment" && workload["spec"]["template"]["spec"]["kubernetes"]["service"]["name"] == service["metadata"]["name"]
+                }
+            }), "{}", service["metadata"]["name"]);
         }
         Ok(())
     }
@@ -1850,27 +1327,36 @@ mod tests {
     #[test]
     fn install_scripts_preserve_output() -> anyhow::Result<()> {
         let render = super::fixture::render()?;
-
-        for (namespace, name) in [
-            ("platform", "platform-system"),
-            ("platform", "platform-identity-issuer"),
-            ("identity", "platform-session-test--wms--dev"),
-            ("identity", "platform-session-test--receiving--dev"),
-            ("platform", "platform-control-credentials-test"),
-            ("platform", "platform-control-operator-test"),
-            ("platform", "platform-owner-state-test"),
-            ("platform", "platform-invite-test"),
-            ("hosts", "platform-ui-test"),
-        ] {
-            let (_, job) = object(render, "Job", namespace, name);
-            let container = &job["spec"]["template"]["spec"]["containers"][0];
-            assert_eq!(container["command"], serde_json::json!(["/bin/sh", "-ec"]));
-            let script = container["args"][0].as_str().unwrap();
-            assert!(!script.contains("/dev/null"), "{name}");
-            assert!(
-                !script.contains("1>&-") && !script.contains("2>&-"),
-                "{name}"
-            );
+        let scripts = pods(render)
+            .filter(|(_, object, _)| object["kind"] == "Job")
+            .flat_map(|(_, _, spec)| containers(spec))
+            .filter(|container| {
+                container["command"][0]
+                    .as_str()
+                    .is_some_and(|program| program.rsplit('/').next() == Some("sh"))
+            })
+            .collect::<Vec<_>>();
+        assert!(!scripts.is_empty());
+        for container in scripts {
+            let script = container["args"][0]
+                .as_str()
+                .unwrap()
+                .split_whitespace()
+                .collect::<String>();
+            // /dev/null is the shell's discard sink, independent of any rendered name.
+            let stdout = script
+                .replace("2>/dev/null", "")
+                .replace("2>>/dev/null", "")
+                .contains(">/dev/null")
+                || script.contains("1>&-")
+                || script.contains("&>/dev/null");
+            let stderr = script.contains("2>/dev/null")
+                || script.contains("2>>/dev/null")
+                || script.contains("2>&-")
+                || script.contains("&>/dev/null")
+                || (stdout && script.contains("2>&1"));
+            assert!(!stderr);
+            assert!(contract(container)?.credential_stdout || !stdout);
         }
         Ok(())
     }
@@ -1878,379 +1364,90 @@ mod tests {
     #[test]
     fn install_connections_precede_apply() -> anyhow::Result<()> {
         let render = super::fixture::render()?;
-
-        let environment = &render
-            .documents
-            .iter()
-            .find(|(_, document)| document.project == "wms")
-            .unwrap()
-            .1;
-        let (connection_index, connections) = object(
-            render,
-            "Job",
-            "hosts",
-            "platform-connections-test--wms--dev",
-        );
-        let (apply_index, apply) =
-            object(render, "Job", "platform", "platform-apply-test--wms--dev");
-        assert!(connection_index < apply_index);
-        let (_, files) = object(
-            render,
-            "Secret",
-            "hosts",
-            "platform-connections-test--wms--dev-files",
-        );
-        let items = connections["spec"]["template"]["spec"]["volumes"][0]["secret"]["items"]
-            .as_array()
-            .unwrap();
-        let document_item = items
-            .iter()
-            .find(|item| item["path"] == "environment.k")
-            .unwrap();
-        assert_eq!(
-            files["stringData"][document_item["key"].as_str().unwrap()]
+        let documents = environment_jobs(render)?;
+        let mut created = BTreeMap::new();
+        for (index, container, verb, document) in &documents {
+            if *verb != "env connections" {
+                continue;
+            }
+            let spec = pod_spec(&render.objects[*index].1).unwrap();
+            let arguments = container["args"].as_array().unwrap();
+            let directory = arguments
+                .windows(2)
+                .find(|pair| pair[0] == "--documents")
+                .unwrap()[1]
                 .as_str()
-                .unwrap()
-                .as_bytes(),
-            environment.to_kcl().as_bytes()
-        );
-        let connection_item = items
-            .iter()
-            .find(|item| item["path"] == "wms-labels.json")
-            .unwrap();
-        let integration_item = items
-            .iter()
-            .find(|item| item["path"] == "wms-labels.integration.json")
-            .unwrap();
-        let connection: serde_json::Value = serde_json::from_str(
-            files["stringData"][connection_item["key"].as_str().unwrap()]
-                .as_str()
-                .unwrap(),
-        )?;
-        let integration: serde_json::Value = serde_json::from_str(
-            files["stringData"][integration_item["key"].as_str().unwrap()]
-                .as_str()
-                .unwrap(),
-        )?;
-        assert_eq!(
-            connection["name"],
-            environment.applications["wamn_wms"].connections["labels"]
-        );
-        assert_eq!(integration["name"], connection["name"]);
-        assert_eq!(connection["project"], environment.project);
-        assert_eq!(connection["env"], environment.env);
-        assert_eq!(integration["project"], environment.project);
-        assert!(
-            environment
-                .integrations
-                .contains_key(connection["name"].as_str().unwrap())
-        );
-        assert_eq!(
-            connections["spec"]["template"]["spec"]["containers"][0]["args"][2],
-            apply["spec"]["template"]["spec"]["containers"][0]["args"][2]
-        );
+                .unwrap();
+            for name in document.integrations.keys() {
+                // env connections defines these two file suffixes for each integration name.
+                let connection: Value = serde_json::from_str(&mounted_text(
+                    render,
+                    *index,
+                    spec,
+                    container,
+                    &format!("{directory}/{name}.json"),
+                )?)?;
+                let integration: Value = serde_json::from_str(&mounted_text(
+                    render,
+                    *index,
+                    spec,
+                    container,
+                    &format!("{directory}/{name}.integration.json"),
+                )?)?;
+                assert_eq!(connection["name"], *name);
+                assert_eq!(integration["name"], connection["name"]);
+                assert_eq!(connection["project"], document.project);
+                assert_eq!(connection["env"], document.env);
+                assert_eq!(integration["project"], document.project);
+                created
+                    .entry((&document.org, &document.project, &document.env, name))
+                    .or_insert(*index);
+            }
+        }
+        assert!(!created.is_empty());
+        let mut bindings = 0;
+        for (index, _, verb, document) in &documents {
+            if *verb != "env apply" || document.release == DeclaredRelease::None {
+                continue;
+            }
+            for definition in document.applications.values() {
+                for name in definition.connections.values() {
+                    bindings += 1;
+                    assert!(
+                        created
+                            .get(&(&document.org, &document.project, &document.env, name))
+                            .is_some_and(|producer| producer < index)
+                    );
+                }
+            }
+        }
+        assert!(bindings > 0);
         Ok(())
     }
 
     #[test]
     fn install_documents_keep_package_owners() -> anyhow::Result<()> {
         let render = super::fixture::render()?;
-
-        for (_, environment) in &render.documents {
-            let key = format!("test--{}--dev", environment.project);
+        let documents = environment_jobs(render)?;
+        assert!(!documents.is_empty());
+        for (_, _, _, document) in documents {
+            let key = wamn_control_registry::project_env_key(
+                &document.org,
+                &document.project,
+                &document.env,
+            );
             let member = &render.fixtures.releases[&key]
                 .composed_entry
                 .as_ref()
                 .unwrap()
                 .application;
-            let application = format!("wamn_{}", environment.project);
-            assert_eq!(environment.applications.len(), 1);
-            assert_eq!(
-                environment.applications[&application]
-                    .packages
-                    .iter()
-                    .collect::<Vec<_>>(),
-                [&member.package_id]
-            );
-            for (prefix, namespace) in [
-                ("first-apply", "platform"),
-                ("apply", "platform"),
-                ("connections", "hosts"),
-            ] {
-                if prefix == "connections" && environment.project == "receiving" {
-                    continue;
-                }
-                let name = format!("platform-{prefix}-{key}");
-                let (_, job) = object(render, "Job", namespace, &name);
-                let (_, files) = object(render, "Secret", namespace, &format!("{name}-files"));
-                let volume = &job["spec"]["template"]["spec"]["volumes"][0];
-                let item = volume["secret"]["items"]
-                    .as_array()
-                    .unwrap()
-                    .iter()
-                    .find(|item| item["path"] == "environment.k")
-                    .unwrap();
-                let actual = files["stringData"][item["key"].as_str().unwrap()]
-                    .as_str()
-                    .unwrap()
-                    .as_bytes();
-                if prefix == "first-apply" {
-                    let mut initial = environment.clone();
-                    initial.release = crate::environment::document::DeclaredRelease::None;
-                    assert_eq!(actual, initial.to_kcl().as_bytes());
-                } else {
-                    assert_eq!(actual, environment.to_kcl().as_bytes());
-                }
-            }
-        }
-        Ok(())
-    }
-
-    #[test]
-    fn install_host_inputs_precede_consumers() -> anyhow::Result<()> {
-        let render = super::fixture::render()?;
-        for project in ["wms", "receiving"] {
-            let release = crate::release_chart::release_name("test", project, "dev")?;
-            let (host_index, host) = object(
-                render,
-                "Deployment",
-                "hosts",
-                &format!("hostgroup-{release}"),
-            );
-            let variables = host["spec"]["template"]["spec"]["containers"][0]["env"]
-                .as_array()
-                .unwrap();
-            for (variable, family) in [
-                ("WAMN_PG_URL", "guest"),
-                ("WAMN_SYSTEM_URL", "identity-reader"),
-                ("WAMN_CONNECTION_STORE_URL", "conn-reader"),
-                ("WAMN_EXECUTOR_PLATFORM_PG_URL", "executor-platform"),
-                ("WAMN_HTTP_ADMITTER_PG_URL", "http-admitter"),
-                ("WAMN_EVENT_MATERIALIZER_PG_URL", "event-materializer"),
-                ("WAMN_ADMINISTRATION_PG_URL", "administration"),
-            ] {
-                let (secret_index, secret) = object(
-                    render,
-                    "Secret",
-                    "hosts",
-                    &format!("wamn-{family}-test--{project}--dev"),
-                );
-                let entry = variables
-                    .iter()
-                    .find(|entry| entry["name"] == variable)
-                    .unwrap();
-                assert_eq!(
-                    entry["valueFrom"]["secretKeyRef"]["name"],
-                    secret["metadata"]["name"]
-                );
-                assert_eq!(entry["valueFrom"]["secretKeyRef"]["key"], "url");
-                assert!(secret["stringData"]["url"].is_string());
-                assert!(secret_index < host_index);
-            }
-        }
-        for release in [
-            crate::release_chart::release_name("test", "wms", "dev")?,
-            crate::release_chart::release_name("test", "receiving", "dev")?,
-            "c-test".into(),
-        ] {
-            let (host_index, host) = object(
-                render,
-                "Deployment",
-                "hosts",
-                &format!("hostgroup-{release}"),
-            );
-            let volumes = host["spec"]["template"]["spec"]["volumes"]
-                .as_array()
-                .unwrap();
-            for (volume_name, certificate_name) in [
-                ("runtime-cert", "wasmcloud-runtime-tls"),
-                (
-                    "data-cert",
-                    if release == "c-test" {
-                        "wamn-nats-control-test"
-                    } else if release == crate::release_chart::release_name("test", "wms", "dev")? {
-                        "wamn-nats-test--wms--dev"
-                    } else {
-                        "wamn-nats-test--receiving--dev"
-                    },
-                ),
-            ] {
-                let (certificate_index, certificate) =
-                    object(render, "Certificate", "hosts", certificate_name);
-                let volume = volumes
-                    .iter()
-                    .find(|volume| volume["name"] == volume_name)
-                    .unwrap();
-                assert_eq!(
-                    volume["secret"]["secretName"],
-                    certificate["spec"]["secretName"]
-                );
-                assert!(certificate_index < host_index);
-            }
-            let (oauth_index, oauth) = object(render, "Secret", "hosts", "wamn-oauth");
-            let volume = volumes
-                .iter()
-                .find(|volume| volume["name"] == "oauth-key")
-                .unwrap();
-            assert_eq!(volume["secret"]["secretName"], oauth["metadata"]["name"]);
-            assert!(oauth_index < host_index);
-        }
-        let (host_index, host) = object(render, "Deployment", "hosts", "hostgroup-c-test");
-        let (secret_index, secret) = object(render, "Secret", "hosts", "wamn-control-test");
-        let entry = host["spec"]["template"]["spec"]["containers"][0]["env"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .find(|entry| entry["name"] == "WAMN_CONTROL_URL")
-            .unwrap();
-        assert_eq!(
-            entry["valueFrom"]["secretKeyRef"]["name"],
-            secret["metadata"]["name"]
-        );
-        assert_eq!(entry["valueFrom"]["secretKeyRef"]["key"], "url");
-        assert!(secret["stringData"]["url"].is_string());
-        assert!(secret_index < host_index);
-        for (volume_name, secret_name) in [
-            ("identity-operator", "operator-test"),
-            ("control-administration", "wamn-control-administration-test"),
-        ] {
-            let (secret_index, secret) = object(render, "Secret", "hosts", secret_name);
-            let volume = host["spec"]["template"]["spec"]["volumes"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .find(|volume| volume["name"] == volume_name)
-                .unwrap();
-            assert_eq!(volume["secret"]["secretName"], secret["metadata"]["name"]);
-            assert!(secret_index < host_index);
-        }
-        Ok(())
-    }
-
-    #[test]
-    fn install_nats_inputs_precede_consumers() -> anyhow::Result<()> {
-        let render = super::fixture::render()?;
-        let (nats_index, nats) = object(render, "StatefulSet", "platform", "wamn-nats");
-        let (authorization_index, authorization) =
-            object(render, "Secret", "platform", "wamn-nats-authorization");
-        let (tls_index, tls) = object(render, "Certificate", "platform", "wasmcloud-nats-tls");
-        let volumes = nats["spec"]["template"]["spec"]["volumes"]
-            .as_array()
-            .unwrap();
-        let authorization_volume = volumes
-            .iter()
-            .find(|volume| volume["name"] == "authorization")
-            .unwrap();
-        let tls_volume = volumes
-            .iter()
-            .find(|volume| volume["name"] == "tls")
-            .unwrap();
-        assert_eq!(
-            authorization_volume["secret"]["secretName"],
-            authorization["metadata"]["name"]
-        );
-        assert_eq!(
-            authorization_volume["secret"]["items"][0]["key"],
-            "authorization.conf"
-        );
-        assert!(authorization["data"]["authorization.conf"].is_string());
-        assert_eq!(
-            tls_volume["secret"]["secretName"],
-            tls["spec"]["secretName"]
-        );
-        assert!(authorization_index < nats_index && tls_index < nats_index);
-        Ok(())
-    }
-
-    #[test]
-    fn install_tool_command_inputs() -> anyhow::Result<()> {
-        let render = super::fixture::render()?;
-        for (namespace, name, filename, argument, directory) in [
-            ("hosts", "platform-identity-check", "ca.crt", 4, "/inputs"),
-            ("edge", "platform-edge-check", "web.json", 1, "/inputs"),
-        ] {
-            let (job_index, job) = object(render, "Job", namespace, name);
-            let (secret_index, files) =
-                object(render, "Secret", namespace, &format!("{name}-files"));
-            let spec = &job["spec"]["template"]["spec"];
-            let volume = &spec["volumes"][0];
-            let container = &spec["containers"][0];
-            assert_eq!(volume["secret"]["secretName"], files["metadata"]["name"]);
-            assert_eq!(container["volumeMounts"][0]["name"], volume["name"]);
-            assert_eq!(container["volumeMounts"][0]["mountPath"], directory);
-            let item = volume["secret"]["items"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .find(|item| item["path"] == filename)
-                .unwrap();
-            assert_eq!(
-                container["args"][argument],
-                format!("{directory}/{}", item["path"].as_str().unwrap())
-            );
-            assert!(files["stringData"][item["key"].as_str().unwrap()].is_string());
-            assert!(secret_index < job_index);
-        }
-        let (ui_index, ui) = object(render, "Job", "hosts", "platform-ui-test");
-        let (files_index, files) = object(render, "Secret", "hosts", "platform-ui-test-files");
-        let spec = &ui["spec"]["template"]["spec"];
-        assert_eq!(
-            spec["volumes"][0]["secret"]["secretName"],
-            files["metadata"]["name"]
-        );
-        assert_eq!(
-            spec["containers"][0]["volumeMounts"][0]["name"],
-            spec["volumes"][0]["name"]
-        );
-        assert_eq!(
-            spec["containers"][0]["volumeMounts"][0]["mountPath"],
-            "/inputs"
-        );
-        for filename in [
-            "chart/Chart.yaml",
-            "chart/platform-build.json",
-            "deploy/platform/release/Chart.yaml",
-            "apps/platform_ui/dist/index.html",
-        ] {
-            let item = spec["volumes"][0]["secret"]["items"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .find(|item| item["path"] == filename)
-                .unwrap();
-            assert!(files["data"][item["key"].as_str().unwrap()].is_string());
-        }
-        assert!(files_index < ui_index);
-        let (certificate_index, certificate) =
-            object(render, "Certificate", "edge", "wamn-edge-tls");
-        for (host, path) in [
-            ("control.example.com", "/api/wamn_control/control/mine"),
-            ("wms.example.com", "/api/sample/read"),
-            ("receiving.example.com", "/api/sample/read"),
-            ("control.example.com", "/"),
-            ("control.example.com", "/config.json"),
-        ] {
-            let name = format!(
-                "platform-https-{}",
-                &super::super::job::input_digest(&serde_json::json!([host, "GET", path]))[..16]
-            );
-            let (job_index, job) = object(render, "Job", "edge", &name);
-            let spec = &job["spec"]["template"]["spec"];
-            assert_eq!(
-                spec["volumes"][0]["secret"]["secretName"],
-                certificate["spec"]["secretName"]
-            );
-            assert_eq!(spec["volumes"][0]["secret"]["items"][0]["key"], "tls.crt");
-            assert_eq!(spec["containers"][0]["args"][7], "/etc/edge/tls.crt");
-            assert_eq!(
-                spec["containers"][0]["volumeMounts"][0]["name"],
-                spec["volumes"][0]["name"]
-            );
-            assert_eq!(
-                spec["containers"][0]["volumeMounts"][0]["mountPath"],
-                "/etc/edge"
-            );
-            assert!(certificate_index < job_index);
+            let owners = document
+                .applications
+                .values()
+                .filter(|definition| definition.packages.contains(&member.package_id))
+                .collect::<Vec<_>>();
+            // A composed application package must have one owner, regardless of its name.
+            assert_eq!(owners.len(), 1);
         }
         Ok(())
     }
