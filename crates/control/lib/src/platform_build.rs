@@ -1379,6 +1379,9 @@ async fn submit_cloud_build(
 /// The Docker CLI with buildx, the version that the runner image pins.
 const CLOUD_DOCKER_IMAGE: &str = "docker:28.5.1-cli";
 
+/// The Cloud SDK of the token step: the slim tag's digest, built 2026-11-03.
+const CLOUD_SDK_IMAGE: &str = "gcr.io/google.com/cloudsdktool/cloud-sdk@sha256:08c9cb2c82625689f26172f46f2cefdf30c3449959a71492569a824b537d369f";
+
 /// The token step. `$1` is the registry host, and Cloud Build reads `$$` as `$`.
 const CLOUD_AUTH_SCRIPT: &str = r#"set -eu
 umask 077
@@ -1403,7 +1406,7 @@ fn cloud_configuration(
     let auth = CLOUD_AUTH_SCRIPT.replace('$', "$$");
     let volume = json!([{"name": "cloud-auth", "path": "/cloud-auth"}]);
     let auth_step = json!({
-        "name": "gcr.io/google.com/cloudsdktool/cloud-sdk:slim", "entrypoint": "bash",
+        "name": CLOUD_SDK_IMAGE, "entrypoint": "bash",
         "args": ["-c", auth, "bash", request.registry.split('/').next().context("registry host")?],
         "volumes": volume,
     });
@@ -1726,6 +1729,7 @@ mod tests {
         for (index, step) in steps.iter().enumerate() {
             if pushes(step) {
                 assert_eq!(steps[index - 1]["entrypoint"], "bash");
+                assert_eq!(steps[index - 1]["name"], CLOUD_SDK_IMAGE);
             }
         }
         assert!(
