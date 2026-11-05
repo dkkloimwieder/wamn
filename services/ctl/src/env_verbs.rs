@@ -125,7 +125,11 @@ pub async fn run(command: EnvCommand) -> anyhow::Result<()> {
             if args.data {
                 confirm_data(&args.coordinate)?;
             }
-            for line in environment::delete::delete(&platform, &triple, args.data).await? {
+            let admin_url = std::env::var("WAMN_SYSTEM_ADMIN_URL")
+                .context("set WAMN_SYSTEM_ADMIN_URL for env delete")?;
+            for line in
+                environment::delete::delete(&platform, &triple, args.data, &admin_url).await?
+            {
                 println!("{line}");
             }
         }
@@ -138,7 +142,9 @@ pub async fn run(command: EnvCommand) -> anyhow::Result<()> {
         }
         EnvCommand::Status(args) => {
             let triple = parse_coordinate(&args.coordinate)?;
-            let status = environment::status::status(&platform, &triple).await?;
+            let admin_url = std::env::var("WAMN_SYSTEM_ADMIN_URL")
+                .context("set WAMN_SYSTEM_ADMIN_URL for env status")?;
+            let status = environment::status::status(&platform, &triple, &admin_url).await?;
             println!("{}", serde_json::to_string_pretty(&status)?);
         }
     }

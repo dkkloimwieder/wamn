@@ -177,6 +177,7 @@ A second verb on the same coordinate refuses while the lock is held.
 The platform inputs come from environment variables of the verb, not from flags or document fields.
 Apply reads `WAMN_APPLY_DATABASE_URL`, which authenticates as `wamn_apply`.
 Only its ensure phase opens `WAMN_SYSTEM_ADMIN_URL` for role creation and grant repair.
+`delete` and `status` are lifecycle verbs. They read the registry and run their provisioning writes over `WAMN_SYSTEM_ADMIN_URL`, as the install Jobs do.
 Registry and identity data reads and writes use the restricted apply connection, including those inside ensure.
 Project work uses the granted `wamn_db_owner` role.
 Provisioning writes the apply URL to the `platform/wamn-apply` Secret.

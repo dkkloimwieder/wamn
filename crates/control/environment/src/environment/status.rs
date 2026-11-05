@@ -64,7 +64,11 @@ pub struct RevisionStatus {
 /// # Errors
 ///
 /// When Helm, Kubernetes or the project database cannot be read.
-pub async fn status(platform: &Platform, triple: &Triple) -> anyhow::Result<Status> {
+pub async fn status(
+    platform: &Platform,
+    triple: &Triple,
+    admin_url: &str,
+) -> anyhow::Result<Status> {
     let (org, project, env) = (
         triple.org.as_str(),
         triple.project.as_str(),
@@ -85,7 +89,7 @@ pub async fn status(platform: &Platform, triple: &Triple) -> anyhow::Result<Stat
     })
     .await?;
     let state = environment_state(&observed, &release_name);
-    let stranded = stranded_runs(platform, triple, &state.live).await?;
+    let stranded = stranded_runs(platform, triple, &state.live, admin_url).await?;
     Ok(Status {
         terminating: terminating(&observed.pods),
         release_name,
@@ -103,8 +107,10 @@ async fn stranded_runs(
     platform: &Platform,
     triple: &Triple,
     live: &BTreeMap<String, usize>,
+    admin_url: &str,
 ) -> anyhow::Result<Vec<Stranded>> {
-    let system = connect(&platform.system_database_url).await?;
+    // A lifecycle verb: the provisioning credential, as the install Jobs use.
+    let system = connect(admin_url).await?;
     system
         .batch_execute("SET ROLE wamn_system")
         .await

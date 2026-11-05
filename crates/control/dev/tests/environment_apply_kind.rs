@@ -1868,7 +1868,13 @@ async fn scenario(run: &mut Run, repository: &Path, source: &Path) -> anyhow::Re
     run.retain_failure_diagnostics("http").await?;
     http_task.abort();
     drop(http_project);
-    environment::delete::delete(&platform, &http.triple(), true).await?;
+    environment::delete::delete(
+        &platform,
+        &http.triple(),
+        true,
+        &ensure_admin_url(&platform),
+    )
+    .await?;
     connector_check(run, &context, "rest_connector")
         .await
         .context("4 rest_connector setup or cleanup")?;
@@ -2143,7 +2149,13 @@ async fn scenario(run: &mut Run, repository: &Path, source: &Path) -> anyhow::Re
     let (qa_database, _) = project_database("qa").await?;
     let result = async {
         // 10. delete refuses on the run pinned to A, which no pod serves now.
-        let refused = environment::delete::delete(&platform, &dev_triple, false).await;
+        let refused = environment::delete::delete(
+            &platform,
+            &dev_triple,
+            false,
+            &ensure_admin_url(&platform),
+        )
+        .await;
         let message = refused.as_ref().err().map(|error| format!("{error:#}"));
         run.pass(
             "delete refuses on a stranded run",
@@ -2161,14 +2173,18 @@ async fn scenario(run: &mut Run, repository: &Path, source: &Path) -> anyhow::Re
 
     let result = async {
         // 11. delete --data drops the database; 12. a plain delete keeps it.
-        let dev_result = environment::delete::delete(&platform, &dev_triple, true).await;
+        let dev_result =
+            environment::delete::delete(&platform, &dev_triple, true, &ensure_admin_url(&platform))
+                .await;
         if dev_result.is_ok() {
             run.kept.phases.retain(|phase| phase == "environment");
             run.write_kept(repository)?;
         }
         let dev_lines = dev_result.as_ref().ok().cloned();
         run.collect("11 delete with data", dev_result.map(|_| ()));
-        let qa_result = environment::delete::delete(&platform, &qa_triple, false).await;
+        let qa_result =
+            environment::delete::delete(&platform, &qa_triple, false, &ensure_admin_url(&platform))
+                .await;
         let qa_lines = qa_result.as_ref().ok().cloned();
         run.collect("12 delete without data", qa_result.map(|_| ()));
         let (admin, admin_task) = connect(&admin_url).await?;
@@ -2675,8 +2691,13 @@ async fn host_report_check(run: &mut Run, context: &CheckContext) -> anyhow::Res
     let before = set_budget(BUDGET_SECONDS).await?;
     let applied = apply_platform_document(run, &platform, &document, "broken").await;
     let restored = set_budget(before).await;
-    let deleted =
-        environment::delete::delete(&context.platform, &Triple::new(ORG, PROJECT, ENV), true).await;
+    let deleted = environment::delete::delete(
+        &context.platform,
+        &Triple::new(ORG, PROJECT, ENV),
+        true,
+        &ensure_admin_url(&context.platform),
+    )
+    .await;
 
     let text = applied.as_ref().err().map(|error| format!("{error:#}"));
     let report = format!("host pods of Deployment hostgroup-{name}:");
@@ -3057,8 +3078,13 @@ async fn files_check(run: &mut Run, context: &CheckContext) -> anyhow::Result<()
             true,
         );
     }
-    environment::delete::delete(&context.platform, &Triple::new(ORG, PROJECT, "files"), true)
-        .await?;
+    environment::delete::delete(
+        &context.platform,
+        &Triple::new(ORG, PROJECT, "files"),
+        true,
+        &ensure_admin_url(&context.platform),
+    )
+    .await?;
     Ok(())
 }
 

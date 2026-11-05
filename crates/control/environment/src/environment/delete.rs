@@ -72,9 +72,10 @@ pub async fn delete(
     platform: &Platform,
     triple: &Triple,
     data: bool,
+    admin_url: &str,
 ) -> anyhow::Result<Vec<String>> {
     LifecycleLock::hold(&platform.system_database_url, triple, async |_| {
-        delete_locked(platform, triple, data).await
+        delete_locked(platform, triple, data, admin_url).await
     })
     .await
 }
@@ -88,6 +89,7 @@ async fn delete_locked(
     platform: &Platform,
     triple: &Triple,
     data: bool,
+    admin_url: &str,
 ) -> anyhow::Result<Vec<String>> {
     let (org, project, env) = (
         triple.org.as_str(),
@@ -109,7 +111,8 @@ async fn delete_locked(
         );
     }
 
-    let mut system = connect(&platform.system_database_url).await?;
+    // A lifecycle verb: the provisioning credential, as the install Jobs use.
+    let mut system = connect(admin_url).await?;
     system
         .batch_execute("SET ROLE wamn_system")
         .await
@@ -189,7 +192,7 @@ async fn delete_locked(
         .await?;
         if !prefix.is_empty() {
             crate::provision_project_env::revoke_provisioning_pat(
-                &platform.system_database_url,
+                admin_url,
                 &prefix,
                 &platform.auth_changes().await?,
             )
@@ -281,10 +284,9 @@ async fn delete_locked(
     }
 
     // The replication slot, on the cluster's `postgres` database.
-    let mut admin_url =
-        url::Url::parse(&platform.system_database_url).context("parse the system URL")?;
-    admin_url.set_path("/postgres");
-    let admin = connect(admin_url.as_str()).await?;
+    let mut postgres_url = url::Url::parse(admin_url).context("parse the admin URL")?;
+    postgres_url.set_path("/postgres");
+    let admin = connect(postgres_url.as_str()).await?;
     let slot = cdc_object_name(org, project, env, &instance);
     if let Some(row) = admin
         .query_opt(

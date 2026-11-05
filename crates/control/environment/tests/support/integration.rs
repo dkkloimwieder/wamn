@@ -285,7 +285,13 @@ pub async fn exercise(
             .is_some();
         driver.abort();
         if exists {
-            environment::delete::delete(&platform, &scope, true).await?;
+            environment::delete::delete(
+                &platform,
+                &scope,
+                true,
+                &crate::ensure_admin_url(&platform),
+            )
+            .await?;
         }
     }
     let mut document = fixture_document(connector);
@@ -585,7 +591,8 @@ pub async fn exercise(
         ),
     }
     run.retain_failure_diagnostics(connector).await?;
-    environment::delete::delete(&platform, &scope, true).await?;
+    environment::delete::delete(&platform, &scope, true, &crate::ensure_admin_url(&platform))
+        .await?;
     Ok(())
 }
 
