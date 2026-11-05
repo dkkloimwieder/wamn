@@ -40,8 +40,13 @@ It includes committed, staged, unstaged, deleted, and untracked files.
   `tests/selection.toml` defines documentation as `docs/`, `.beads/`, and root Markdown files.
   A Markdown file below another directory also follows the package rules above.
 
-Without `--tier`, Cargo runs once per selected workspace.
-Kind cases stay ignored, and application cluster targets require the `cluster` feature.
+Without `--tier`, Cargo first runs each selected workspace.
+The root step then runs ignored cases whose `requires:` reasons name only available prerequisites.
+Their package and target must have a tier row that matches the selected tiers and is not `kind`.
+An `env:NAME` prerequisite needs a nonempty variable after input preparation.
+A `bin:PROGRAM` prerequisite needs an executable file on `PATH` or at the named absolute path.
+The step runs each eligible case by its exact name in its own package and target.
+Other ignored cases stay ignored, and application cluster targets require the `cluster` feature.
 An explicit `--tier` filters executable targets within each selected package.
 Without `--tier`, the tool selects unit, contract, live-postgres, and live-nats.
 Use `--tier T[,T]` to select one or more tiers.

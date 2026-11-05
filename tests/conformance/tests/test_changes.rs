@@ -72,9 +72,15 @@ fi
 passed="${WAMN_FAKE_PASSED:-1}"
 if [[ " $* " == *' --exact '* ]]; then passed="${WAMN_FAKE_EXACT_PASSED:-$passed}"; fi
 if ((passed > 0)) && [[ " $* " == *' --exact '* ]]; then
+  name=''
   for argument in "$@"; do
-    [[ "$argument" != fixture::* ]] || printf 'test %s ... ok\n' "${WAMN_FAKE_EXECUTED_TEST:-$argument}"
+    [[ "$argument" != -- ]] || break
+    name="$argument"
   done
+  printf 'test %s ... ok\n' "${WAMN_FAKE_EXECUTED_TEST:-$name}"
+fi
+if [[ " $* " == *' --message-format=json-render-diagnostics '* && -n "${WAMN_FAKE_ROOT_OUTPUT:-}" ]]; then
+  cat "$WAMN_FAKE_ROOT_OUTPUT"
 fi
 printf 'test result: ok. %s passed; 0 failed; 0 ignored; 0 measured;\n' "$passed"
 if [[ "${WAMN_FAKE_EMPTY_TARGET:-false}" == true ]]; then
@@ -483,6 +489,9 @@ impl Fixture {
             "--no-fail-fast".to_owned(),
         ];
         command.extend(selection.iter().map(|argument| (*argument).to_owned()));
+        if manifest == "Cargo.toml" && !selection.contains(&"--ignored") {
+            command.push("--message-format=json-render-diagnostics".to_owned());
+        }
         command
     }
 
@@ -498,6 +507,30 @@ impl Fixture {
                 "test_tiers",
             ],
         )
+    }
+
+    fn ignored_target(
+        &self,
+        package: &str,
+        kind: &str,
+        target: &str,
+        cases: &[(&str, &str)],
+    ) -> String {
+        let executable = self.directory.join(format!("{target}-fixture"));
+        let artifact = json!({
+            "reason": "compiler-artifact",
+            "manifest_path": self.root.join(format!("crates/{package}/Cargo.toml")),
+            "executable": executable,
+            "target": {"kind": [kind], "name": target},
+        });
+        let executable = executable.display();
+        let mut output = format!(
+            "{artifact}\n     Running tests/{target}.rs (kache test-runner \"{executable}\")\n"
+        );
+        for (name, reason) in cases {
+            writeln!(output, "test {name} ... ignored, {reason}").unwrap();
+        }
+        output
     }
 }
 
@@ -1663,5 +1696,346 @@ fn an_unknown_path_keeps_one_default_command_per_workspace() {
             fixture.command("apps/Cargo.toml", &["--workspace"]),
             fixture.command("apps/platform/no-std/Cargo.toml", &["--workspace"]),
         ]
+    );
+}
+
+#[test]
+fn the_root_runs_control_route_cases_after_the_nats_input() {
+    // wamn-inmae.10: the nats preparation supplies these control_route_live cases.
+    let fixture = Fixture::new();
+    let policy = fixture.root.join("tests/selection.toml");
+    let text = fs::read_to_string(&policy)
+        .unwrap()
+        .replacen(
+            "packages = [\"wamn-runtime\"",
+            "packages = [\"core\", \"wamn-runtime\"",
+            1,
+        )
+        .replace(
+            "packages = [\"wamn-execution-host\"]",
+            "packages = [\"core\"]",
+        );
+    fs::write(policy, text).unwrap();
+    fixture.commit("fixture nats input");
+    executable(
+        &fixture.directory.join("nats-server"),
+        "#!/bin/sh\nexit 0\n",
+    );
+    executable(&fixture.directory.join("rustc"), "#!/bin/sh\nexit 0\n");
+    let cases = [
+        (
+            "connection_routes_refuse_mismatches_and_project_only_enabled_rows",
+            "requires: env:WAMN_NATIVE_C_NATS_BIN",
+        ),
+        (
+            "oauth_authorization::project_admin_authorize_and_public_pkce_callback",
+            "requires: env:WAMN_NATIVE_C_NATS_BIN",
+        ),
+        (
+            "connection_test::candidate_http_and_modbus_health_commit_nothing",
+            "requires: env:WAMN_NATIVE_C_NATS_BIN, bin:docker, bin:rustc, bin:/bin/sh",
+        ),
+        (
+            "delayed_grant_cannot_restore_revoked_admin",
+            "requires: env:WAMN_NATIVE_C_NATS_BIN",
+        ),
+    ];
+    let transcript = fixture.directory.join("root output");
+    fs::write(
+        &transcript,
+        fixture.ignored_target("core", "lib", "core", &cases),
+    )
+    .unwrap();
+    fixture.write("crates/core/src/lib.rs", "changed\n");
+    let output = fixture
+        .tool_command(&[])
+        .env("WAMN_NATIVE_C_NATS_BIN", "")
+        .env("WAMN_FAKE_ROOT_OUTPUT", transcript)
+        .env("WAMN_FAKE_PASSED", "0")
+        .env("WAMN_FAKE_EXACT_PASSED", "1")
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let calls = fixture.calls();
+    let ignored = calls
+        .iter()
+        .filter(|call| call.contains(&"--ignored".into()))
+        .collect::<Vec<_>>();
+    assert_eq!(ignored.len(), cases.len(), "{calls:?}");
+    for (call, (name, _)) in ignored.iter().zip(cases) {
+        assert!(call.contains(&"--lib".into()), "{call:?}");
+        assert!(
+            call.windows(2).any(|pair| pair == ["-p", "core"]),
+            "{call:?}"
+        );
+        assert!(call.contains(&name.to_owned()), "{call:?}");
+        assert!(call.contains(&"--exact".into()), "{call:?}");
+        assert!(
+            call.windows(2)
+                .any(|pair| pair == ["--features", "core/test-util"]),
+            "{call:?}"
+        );
+    }
+    fixture.write("Cargo.lock", "changed\n");
+    let output = fixture.tool(&["dry-run"]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    let root = stdout
+        .lines()
+        .find(|line| line.starts_with("root ("))
+        .unwrap();
+    assert!(root.contains("core/test-util"), "{root}");
+}
+
+#[test]
+fn the_root_runs_generated_schema_after_its_output_is_exported() {
+    // wamn-inmae.11: fixture-components exports this application-generated input.
+    let fixture = Fixture::new();
+    let policy = fixture.root.join("tests/selection.toml");
+    let text = fs::read_to_string(&policy).unwrap();
+    let preparation = "[[preparation]]\nid = \"schema\"\npackages = [\"core\"]\noutputs = {WAMN_GENERATED_WIDGET_UPDATE_SCHEMA = \"{target}/widget/update.json\"}\n";
+    fs::write(
+        &policy,
+        text.replacen("[[suites]]", &format!("{preparation}\n[[suites]]"), 1),
+    )
+    .unwrap();
+    fixture.commit("fixture schema output");
+    let name = "generated_update_schema_agrees_with_client_presence_and_null_behavior";
+    let transcript = fixture.directory.join("root output");
+    fs::write(
+        &transcript,
+        fixture.ignored_target(
+            "user",
+            "test",
+            "user_live",
+            &[(name, "requires: env:WAMN_GENERATED_WIDGET_UPDATE_SCHEMA")],
+        ),
+    )
+    .unwrap();
+    fixture.write("crates/core/src/lib.rs", "changed\n");
+    let output = fixture
+        .tool_command(&[])
+        .env("WAMN_GENERATED_WIDGET_UPDATE_SCHEMA", "")
+        .env("WAMN_FAKE_ROOT_OUTPUT", transcript)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let calls = fixture.calls();
+    assert_eq!(
+        calls
+            .iter()
+            .filter(|call| call.contains(&name.to_owned()))
+            .count(),
+        1,
+        "{calls:?}"
+    );
+    let call = calls
+        .iter()
+        .find(|call| call.contains(&name.to_owned()))
+        .unwrap();
+    assert!(
+        call.windows(2).any(|pair| pair == ["--test", "user_live"]),
+        "{call:?}"
+    );
+    assert!(
+        call.windows(2)
+            .any(|pair| pair == ["--features", "user/ops"]),
+        "{call:?}"
+    );
+}
+
+#[test]
+fn the_root_leaves_unsupplied_and_unrecognized_reasons_ignored() {
+    let fixture = Fixture::new();
+    let transcript = fixture.directory.join("root output");
+    let output = fixture.ignored_target(
+        "core",
+        "lib",
+        "core",
+        &[
+            (
+                "fixture::missing_env",
+                "requires: bin:/bin/sh, env:WAMN_FIXTURE_MISSING",
+            ),
+            (
+                "fixture::missing_bin",
+                "requires: bin:wamn-fixture-missing-executable",
+            ),
+            (
+                "fixture::explanation",
+                "an operator must prepare the fixture",
+            ),
+            ("fixture::invalid", "requires: env:PATH, file:input"),
+            ("fixture::empty", "requires: "),
+        ],
+    );
+    fs::write(&transcript, output).unwrap();
+    fixture.write("crates/core/src/lib.rs", "changed\n");
+    let output = fixture
+        .tool_command(&[])
+        .env("WAMN_FIXTURE_MISSING", "")
+        .env("WAMN_FAKE_ROOT_OUTPUT", transcript)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        !fixture
+            .calls()
+            .iter()
+            .any(|call| call.contains(&"--ignored".into()))
+    );
+}
+
+#[test]
+fn equal_names_run_only_in_the_target_with_supplied_prerequisites() {
+    let fixture = Fixture::new();
+    let name = "fixture::same_name";
+    let transcript = fixture.directory.join("root output");
+    let mut output = fixture.ignored_target(
+        "core",
+        "lib",
+        "core",
+        &[(name, "requires: env:WAMN_FIXTURE_PRESENT")],
+    );
+    output.push_str(&fixture.ignored_target(
+        "user",
+        "test",
+        "user_live",
+        &[(
+            name,
+            "requires: env:WAMN_FIXTURE_PRESENT, env:WAMN_FIXTURE_MISSING",
+        )],
+    ));
+    fs::write(&transcript, output).unwrap();
+    fixture.write("crates/core/src/lib.rs", "changed\n");
+    let output = fixture
+        .tool_command(&[])
+        .env("WAMN_FIXTURE_PRESENT", "supplied")
+        .env("WAMN_FIXTURE_MISSING", "")
+        .env("WAMN_FAKE_ROOT_OUTPUT", transcript)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let calls = fixture.calls();
+    let ignored = calls
+        .iter()
+        .filter(|call| call.contains(&"--ignored".into()))
+        .collect::<Vec<_>>();
+    assert_eq!(ignored.len(), 1, "{calls:?}");
+    assert!(
+        ignored[0].windows(2).any(|pair| pair == ["-p", "core"]),
+        "{calls:?}"
+    );
+    assert!(ignored[0].contains(&"--lib".into()), "{calls:?}");
+    assert!(ignored[0].contains(&name.to_owned()), "{calls:?}");
+}
+
+#[test]
+fn a_full_root_keeps_kind_cases_ignored_with_supplied_prerequisites() {
+    let fixture = Fixture::new();
+    let policy = fixture.root.join("tests/selection.toml");
+    let text = fs::read_to_string(&policy).unwrap().replace(
+        "target=\"test:user_live\", tier=\"unit\"",
+        "target=\"test:user_live\", tier=\"kind\"",
+    );
+    fs::write(policy, text).unwrap();
+    fixture.commit("fixture kind target");
+    fixture.write("Cargo.lock", "changed\n");
+    let transcript = fixture.directory.join("root output");
+    fs::write(
+        &transcript,
+        fixture.ignored_target(
+            "user",
+            "test",
+            "user_live",
+            &[(
+                "fixture::kind",
+                "requires: env:WAMN_FIXTURE_PRESENT, bin:/bin/sh",
+            )],
+        ),
+    )
+    .unwrap();
+    let output = fixture
+        .tool_command(&[])
+        .env("WAMN_FIXTURE_PRESENT", "supplied")
+        .env("WAMN_FAKE_ROOT_OUTPUT", transcript)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let calls = fixture.calls();
+    assert!(calls[0].contains(&"--workspace".into()), "{calls:?}");
+    assert!(
+        !calls.iter().any(|call| call.contains(&"--ignored".into())),
+        "{calls:?}"
+    );
+}
+
+#[test]
+fn a_full_root_keeps_cases_without_a_tier_row_ignored() {
+    let fixture = Fixture::new();
+    let policy = fixture.root.join("tests/selection.toml");
+    let text = fs::read_to_string(&policy)
+        .unwrap()
+        .lines()
+        .filter(|line| !line.contains("target=\"test:user_live\""))
+        .collect::<Vec<_>>()
+        .join("\n");
+    fs::write(policy, text).unwrap();
+    fixture.commit("fixture target without a tier row");
+    fixture.write("Cargo.lock", "changed\n");
+    let transcript = fixture.directory.join("root output");
+    fs::write(
+        &transcript,
+        fixture.ignored_target(
+            "user",
+            "test",
+            "user_live",
+            &[(
+                "fixture::unassigned",
+                "requires: env:WAMN_FIXTURE_PRESENT, bin:/bin/sh",
+            )],
+        ),
+    )
+    .unwrap();
+    let output = fixture
+        .tool_command(&[])
+        .env("WAMN_FIXTURE_PRESENT", "supplied")
+        .env("WAMN_FAKE_ROOT_OUTPUT", transcript)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let calls = fixture.calls();
+    assert!(calls[0].contains(&"--workspace".into()), "{calls:?}");
+    assert!(
+        !calls.iter().any(|call| call.contains(&"--ignored".into())),
+        "{calls:?}"
     );
 }

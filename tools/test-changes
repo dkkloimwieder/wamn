@@ -677,6 +677,90 @@ while IFS= read -r suite; do wamn_run_suite "$suite"; done < <(
     | select(.id | IN($suites | split("\n") | .[]))' <<<"$WAMN_POLICY"
 )
 
+wamn_root_test() {
+  local result exit_code=0 manifest kind target name package feature
+  local -a ignored_argv=() ignored_features=()
+  result=$(mktemp "${TMPDIR:-/tmp}/wamn-root-test.XXXXXXXX")
+  "$WAMN_CARGO" "$@" --message-format=json-render-diagnostics >"$result" 2>&1 || exit_code=$?
+  sed '/^{.*"reason":"\(compiler-artifact\|build-script-executed\|build-finished\)"/d' "$result"
+  while IFS=$'\t' read -r manifest kind target name; do
+    package="$(jq -r --arg manifest "$manifest" '.packages[]
+      | select(.manifest_path == $manifest) | .name' <<<"${WAMN_METADATA[0]}")"
+    jq -e --arg package "$package" --arg target "$kind:$target" --arg tiers "$WAMN_TIERS" '
+      any(.targets[]; .workspace == "root" and .package == $package and .target == $target
+        and .tier != "kind" and (.tier | IN($tiers | split(",") | .[])))' \
+      <<<"$WAMN_POLICY" >/dev/null || continue
+    ignored_argv=(--manifest-path "$manifest" -p "$package")
+    ignored_features=()
+    for feature in $features; do
+      [[ "$feature" != "$package/"* ]] || ignored_features+=("$feature")
+    done
+    if ((${#ignored_features[@]} > 0)); then
+      ignored_argv+=(--features "$(IFS=,; echo "${ignored_features[*]}")")
+    fi
+    case "$kind" in
+      lib | cdylib | staticlib | rlib | dylib) ignored_argv+=(--lib) ;;
+      test | bin | example | bench) ignored_argv+=("--$kind" "$target") ;;
+      *) continue ;;
+    esac
+    wamn_test "root ignored $name" --expected-test "$name" --each-target \
+      "${ignored_argv[@]}" "$name" -- --ignored --exact --test-threads=1 |
+      tee -a "$result" || exit_code=1
+  done < <(python3 - "$result" <<'PYTHON'
+import json
+import os
+import re
+import shlex
+import stat
+import sys
+
+def supplied(item):
+    if re.fullmatch(r"env:[A-Z_][A-Z0-9_]*", item):
+        return bool(os.environ.get(item[4:]))
+    if not re.fullmatch(r"bin:[A-Za-z0-9_./+\-]+", item):
+        return False
+    for directory in os.environ.get("PATH", "").split(os.pathsep):
+        try:
+            mode = os.stat(os.path.join(directory, item[4:])).st_mode
+        except OSError:
+            continue
+        if stat.S_ISREG(mode) and mode & 0o111:
+            return True
+    return False
+
+artifacts = {}
+current = None
+with open(sys.argv[1], encoding="utf-8") as source:
+    lines = source.readlines()
+for line in lines:
+    line = re.sub(r"\x1b\[[0-9;]*m", "", line).rstrip("\n")
+    if line.startswith("{"):
+        try:
+            message = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if message.get("reason") == "compiler-artifact" and message.get("executable"):
+            artifacts[os.path.abspath(message["executable"])] = message
+    running = re.match(r"\s*Running .+? \((.*)\)$", line)
+    if running:
+        current = next((artifacts[os.path.abspath(arg)]
+                        for arg in shlex.split(running[1])
+                        if os.path.abspath(arg) in artifacts), None)
+    elif re.match(r"\s*Doc-tests ", line):
+        current = None
+    ignored = re.fullmatch(r"test (.+) \.\.\. ignored, requires: (.+)", line)
+    if current and ignored and all(supplied(item) for item in ignored[2].split(", ")):
+        target = current["target"]
+        print("\t".join((current["manifest_path"], target["kind"][0], target["name"], ignored[1])))
+PYTHON
+  )
+  if ((exit_code == 0)); then
+    "$WAMN_TOOL_DIRECTORY/require-test-result" cat "$result" >/dev/null || exit_code=$?
+  fi
+  rm -f -- "$result"
+  return "$exit_code"
+}
+
 while IFS=$'\t' read -r index full trigger packages features targets; do
   [[ -n "$index" ]] || continue
   argv=(test --manifest-path "$WAMN_REPOSITORY_ROOT/${WAMN_MANIFESTS[$index]}"
@@ -690,7 +774,13 @@ while IFS=$'\t' read -r index full trigger packages features targets; do
       for feature in $features; do
         [[ "$feature" != */cluster ]] || cluster_features+=" $feature"
       done
-      features="$(jq -r '.root_features | join(" ")' <<<"$WAMN_POLICY")$cluster_features"
+      features="$(jq -r --arg packages "$packages" '
+        [.root_features[], (.preparation[] | . as $step | .packages[]?
+          | select(IN($packages | split(" ") | .[])) | . as $package
+          | $step.features[]? | "\($package)/\(.)")]
+        | reduce .[] as $feature ([];
+            if index($feature) == null then . + [$feature] else . end)
+        | join(" ")' <<<"$WAMN_POLICY")$cluster_features"
     fi
   else
     for package in $packages; do
@@ -732,7 +822,11 @@ while IFS=$'\t' read -r index full trigger packages features targets; do
   fi
   printf 'test-changes: %s\n' "$label" >&2
   exit_code=0
-  "$WAMN_TOOL_DIRECTORY/require-test-result" "$WAMN_CARGO" "${argv[@]}" </dev/null || exit_code=$?
+  if ((index == 0)) && [[ "$WAMN_KIND" == false ]]; then
+    wamn_root_test "${argv[@]}" </dev/null || exit_code=$?
+  else
+    "$WAMN_TOOL_DIRECTORY/require-test-result" "$WAMN_CARGO" "${argv[@]}" </dev/null || exit_code=$?
+  fi
   if ((exit_code == 0)); then
     printf 'test-changes: PASS: %s\n' "$label" >&2
   else
