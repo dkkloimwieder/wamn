@@ -857,10 +857,8 @@ kubectl -n hosts run identity-check --restart=Never --rm -i --quiet \
 Publish the packages before installation.
 The shared environment apply implementation installs them from the declared release artifacts.
 It reads registry credentials from `WAMN_REGISTRY_AUTH_FILE` and optional CA files from `WAMN_OCI_CA_PATHS`.
-It pushes a package only when its registry tag is absent.
-It runs `apply-package` and `reconcile-package-data-access` as Jobs, then runs `reconcile-replica-identity` for every package.
-The Jobs skip when their completed input digests match.
-The commands below describe the manual equivalent.
+Its package stage runs `apply-package` and `reconcile-package-data-access` for each package, and its ensure step repairs replica identity.
+It never pushes a package. The commands below push a missing package before installation.
 
 The packages are `wamn_receiving` 2.2.7 and `wamn_wms` 2.1.4. If a tag is missing from the registry, push that package. The tags are immutable, so a push of other bytes under a present tag fails:
 

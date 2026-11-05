@@ -210,9 +210,9 @@ Native async stack zeroing remains disabled, so the stack value currently has no
 These values stay below their slot capacities and do not change allocator limits.
 
 The probe binds to a free loopback port.
-Activation reads pool sizes, the request limit, and Wasmtime resource limits from the embedded `deploy/gcp/host-group-receiving.yaml`.
+Activation reads pool sizes, the request limit, and Wasmtime resource limits from the embedded `deploy/platform/release/values.yaml`, the one host default.
 Warm reuse trusts only the digest of the HTTP route component staged by this developer session.
-Rebuild `wamn` after changing these YAML files.
+Rebuild `wamn` after changing that file.
 
 The URL printed by `wamn dev` reaches the host directly.
 The [local benchmark](benchmark.md#local-run) adds the deployed nginx edge configuration with a plain HTTP listener.

@@ -189,7 +189,7 @@ A build script without such lines gets the same treatment as a procedural macro.
 
 | Image | Packages | Other inputs |
 | --- | --- | --- |
-| `host` | `wamn-host`, `wamn-runtime` | none |
+| `host` | `wamn-host`, `wamn-runtime`, `wamn-cdc-reader` | none |
 | `identity` | `wamn-identity` | none |
 | `edge-web` | `wamn-edge` | none |
 | `gates` | `wamn-host`, `wamn-runtime`, `wamn-gates`, `wamn-ctl`, `wamn-cdc-reader`, and the five guests of the component builder | `tools/guest-rustflags` |
