@@ -162,6 +162,8 @@ pub async fn provision(
     );
     args.emit_management_author_pat_secret = None;
     args.emit_operator_pat_secret = None;
+    // The document names the policy; its env name need not match one.
+    args.policy = Some(document.policy.clone());
     provision_project_env::provision_project_env(&args).await?;
     let project_url = prepare_route_database(system_url, admin, root).await?;
 
