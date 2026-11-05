@@ -158,7 +158,7 @@ fn embedded_components_come_from_the_locked_builder(
     // service images carry native binaries only. Gates embed test fixtures,
     // and the roles stage exports the platform role components (53e4214c2).
     // `stage` reports a stage name that disappears.
-    for image_stage in ["host", "identity", "ctl", "cdc-reader"] {
+    for image_stage in ["host", "identity", "ctl"] {
         if let Some(contents) = stage(dockerfile, image_stage, problems) {
             let contents = if image_stage == "ctl" {
                 problems.require(contents.contains(ctl_route), || {
@@ -278,19 +278,9 @@ fn native_images_share_one_build_stage(dockerfile: &str, problems: &mut Problems
         }
     }
 
-    for (image_stage, outputs) in [
-        ("host", &["wamn-host", "docker-credential-wamn"][..]),
-        ("identity", &["wamn-identity"][..]),
-        (
-            "ctl",
-            &["wamn-ctl", "wamn-ctl-ops", "wamn-scenario-worker"][..],
-        ),
-        ("cdc-reader", &["wamn-cdc-reader"][..]),
-        (
-            "gates",
-            &["wamn-gates", "wamn-ctl", "wamn-ctl-ops", "wamn-cdc-reader"][..],
-        ),
-    ] {
+    // Each image may copy only what build-native installs, and only from
+    // build-native; the Dockerfile owns which image carries which binary.
+    for image_stage in ["host", "identity", "ctl", "gates"] {
         problems.require(
             !dockerfile.contains(&format!(" AS build-{image_stage}\n")),
             || format!("retired build-{image_stage} stage must use build-native"),
@@ -298,19 +288,17 @@ fn native_images_share_one_build_stage(dockerfile: &str, problems: &mut Problems
         let Some(image) = stage(dockerfile, image_stage, problems) else {
             continue;
         };
-        let native_copies: Vec<_> = image
+        for line in image
             .lines()
             .filter(|line| line.contains("/native-output/"))
-            .collect();
-        problems.require(native_copies.len() == outputs.len(), || {
-            format!("{image_stage} native output list drifted: {native_copies:?}")
-        });
-        for output in outputs {
+        {
             problems.require(
-                image.contains(&format!(
-                    "COPY --from=build-native /native-output/{output} /usr/local/bin/{output}"
-                )),
-                || format!("{image_stage} must copy {output} only from build-native"),
+                outputs.iter().any(|output| {
+                    line == format!(
+                        "COPY --from=build-native /native-output/{output} /usr/local/bin/{output}"
+                    )
+                }),
+                || format!("{image_stage} must copy build-native outputs only: `{line}`"),
             );
         }
     }

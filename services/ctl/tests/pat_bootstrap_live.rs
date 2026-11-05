@@ -273,17 +273,14 @@ async fn development_identity_survives_target_recreation_and_owned_teardown() {
         .create(&files.0)
         .unwrap();
     let (admin, driver) = connect(system.url()).await.ok().expect("system connection");
-    let receiving =
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../apps/wamn_receiving");
-    let environment = provision(
-        system.url(),
-        &admin,
-        &files.0,
-        "example.invalid",
-        &[receiving],
+    let document = wamn_environment_control::environment::document::EnvironmentDocument::compile(
+        &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../tests/integration/fixtures/local-environments/acme-receiving.k"),
     )
-    .await
-    .unwrap_or_else(|error| panic!("managed provisioning failed: {error}"));
+    .unwrap();
+    let environment = provision(system.url(), &admin, &files.0, "example.invalid", &document)
+        .await
+        .unwrap_or_else(|error| panic!("managed provisioning failed: {error}"));
     let endpoint = environment.issuer.args.endpoint.as_ref().unwrap().clone();
     let ca = std::fs::read(environment.issuer.args.server_ca.as_ref().unwrap()).unwrap();
     let http = reqwest::Client::builder()
