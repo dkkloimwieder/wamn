@@ -206,6 +206,18 @@ pub fn install_steps(document: &ClusterDocument, platform_version: &str) -> Vec<
             }, dns.clone()],
         },
         InstallStep {
+            number: "4.13", title: "Packages",
+            runs: Runner::Owner("push-package on the build machine before platform apply"),
+            inputs: vec![("environments", environments.into()), ("package artifact base", format!("{registry}/packages")), ("component artifact base", format!("{registry}/components")), ("package versions", "from environment documents".into())],
+            owner_inputs: vec![registry_owner.clone()],
+        },
+        InstallStep {
+            number: "4.14", title: "Releases",
+            runs: Runner::Owner("publish-release on the build machine before platform apply"),
+            inputs: vec![("org", org.clone()), ("environments", environments.into()), ("publisher principals", "wamn-management-author-<org>--<project>--<env>".into()), ("package artifact base", format!("{registry}/packages")), ("release artifact base", format!("{registry}/releases"))],
+            owner_inputs: vec![registry_owner.clone()],
+        },
+        InstallStep {
             number: "4.15", title: "Qualification",
             runs: Runner::Owner("qualify-release on the build machine"),
             inputs: vec![("environments", environments.into()), ("platform_version", platform_version.into()), ("release artifact base", format!("{registry}/releases")), ("release chart", "$HOME/.cache/wamn-install/release-chart".into()), ("release digests", "published before platform apply".into())],

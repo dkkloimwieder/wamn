@@ -226,13 +226,18 @@ mod tests {
         let version = read_platform_version(&chart).expect("read the chart version");
         let steps = install_steps(&document, &version);
         let numbers: Vec<_> = steps.iter().map(|step| step.number).collect();
+        let guide = std::fs::read_to_string(
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/operations/gcp.md"),
+        )
+        .expect("read gcp.md");
+        let documented: Vec<_> = guide
+            .lines()
+            .filter_map(|line| line.strip_prefix("### 4."))
+            .filter_map(|heading| heading.split_once(' '))
+            .map(|(number, _)| format!("4.{number}"))
+            .collect();
         assert_eq!(
-            numbers,
-            [
-                "4.1", "4.2", "4.3", "4.4", "4.4.1", "4.5", "4.6", "4.7", "4.8", "4.9", "4.10",
-                "4.11", "4.12", "4.13", "4.14", "4.15", "4.15.1", "4.16", "4.16.1", "4.17", "4.18",
-                "4.19", "4.19.1", "4.20", "4.21",
-            ],
+            numbers, documented,
             "the subsections of gcp.md section 4, in order"
         );
         for step in &steps {

@@ -477,7 +477,6 @@ fn http_input(project: &str, catalog: &str) -> HttpWorkloadInput {
             catalog: catalog.into(),
             environment: "dev".into(),
             project: project.into(),
-            schema: project.into(),
         },
     }
 }
@@ -537,7 +536,6 @@ fn http_workload_refuses_incomplete_claims_unknown_claims_and_duplicate_fields()
         "wamn.catalog",
         "wamn.environment",
         "wamn.project",
-        "wamn.schema",
     ] {
         let mut values = serde_yaml::Deserializer::from_str(HTTP)
             .map(|doc| Value::deserialize(doc).unwrap())

@@ -211,8 +211,6 @@ pub struct HttpClaims {
     pub environment: String,
     #[serde(rename = "wamn.project")]
     pub project: String,
-    #[serde(rename = "wamn.schema")]
-    pub schema: String,
 }
 
 /// Inputs for one HTTP workload and its Service.
