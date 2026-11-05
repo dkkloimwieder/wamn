@@ -238,23 +238,22 @@ fn declared_consumers<'a>(
 async fn postgres_ready(cluster: &Resources, address: Ipv4Addr, port: u16) -> anyhow::Result<()> {
     let deadline = Instant::now() + Duration::from_secs(90);
     loop {
-        let logs = checked(&mut wamn_test_infrastructure::cluster::container_logs(
-            &format!("{}-postgres", cluster.name),
+        // The image's temporary init server listens on the Unix socket only,
+        // so a TCP answer on both endpoints is the final server. Its log
+        // markers split across stdout and stderr, so they are not counted.
+        if postgres_18(&format!(
+            "postgresql://postgres:probe@127.0.0.1:{port}/postgres"
         ))
-        .await?;
-        let markers = String::from_utf8_lossy(&logs)
-            .matches("database system is ready to accept connections")
-            .count();
-        if markers >= 2
-            && postgres_18(&format!(
-                "postgresql://postgres:probe@127.0.0.1:{port}/postgres"
-            ))
-            .await
+        .await
             && postgres_18(&format!(
                 "postgresql://postgres:probe@{address}:5432/postgres"
             ))
             .await
         {
+            let logs = checked(&mut wamn_test_infrastructure::cluster::container_logs(
+                &format!("{}-postgres", cluster.name),
+            ))
+            .await?;
             fs::write(cluster.evidence.join("postgres-readiness.log"), logs)?;
             return Ok(());
         }
