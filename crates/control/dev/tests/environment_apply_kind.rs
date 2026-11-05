@@ -2136,8 +2136,7 @@ async fn scenario(run: &mut Run, repository: &Path, source: &Path) -> anyhow::Re
         &format!(
             "wamn-ctl env apply qa-none.k; kubectl get pods -l wasmcloud.com/hostgroup={qa_name}"
         ),
-        json!({"live": qa_live, "enabled": enabled, "bindings": bindings,
-            "note": "the fixture's components declare no store alias, so A had no binding"}),
+        json!({"live": qa_live, "enabled": enabled, "bindings": bindings}),
         qa_live.is_empty() && enabled.contains(&"qa-labels".to_owned()) && bindings == 0,
     );
 

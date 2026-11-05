@@ -81,6 +81,20 @@ pub async fn drain(
         };
         bail!("{}; {recovery}", describe(&stranded));
     }
+    // Contract: the rows of releases outside the live set go.
+    let digests: Vec<&str> = live.keys().map(String::as_str).collect();
+    let mut project = super::analyse::connect_project(&project_url).await?;
+    let tx = project.transaction().await?;
+    let mut drops = wamn_platform_identity::connection_changes::ConnectionDrops::default();
+    super::bindings::contract(&tx, &env_key, &digests, &mut drops)
+        .await
+        .context("contract the bindings of releases outside the live set")?;
+    tx.commit().await?;
+    wamn_platform_identity::connection_changes::ConnectionChanges::from(
+        &platform.auth_changes().await?,
+    )
+    .publish(drops)
+    .await;
     Ok(live)
 }
 

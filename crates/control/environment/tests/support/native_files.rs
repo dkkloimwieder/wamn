@@ -514,7 +514,18 @@ async fn sessions(
     let user = uuid::Uuid::new_v4().to_string();
     let email = format!("files-kind-{user}@example.invalid");
     system.execute("INSERT INTO identity.principals(id,type,subject,email,display_name) VALUES ($1::text::uuid,'user',$2,$2,'Kind files')", &[&user, &email]).await?;
-    system.execute("INSERT INTO identity.project_env_memberships(principal_id,org,project,env) VALUES ($1::text::uuid,$2,$3,'files')", &[&user, &ORG, &PROJECT]).await?;
+    // The invitation path writes the active org membership that route
+    // authentication requires, then the environment membership.
+    wamn_platform_identity::org::invite_member(
+        &*system,
+        &user.parse()?,
+        ORG,
+        &wamn_platform_identity::org::MemberGrants {
+            memberships: vec![(PROJECT.to_owned(), "files".to_owned())],
+            ..Default::default()
+        },
+    )
+    .await?;
     project
         .execute(
             "INSERT INTO platform.\"user\"(id,type,email) VALUES ($1::text::uuid,'user',$2)",

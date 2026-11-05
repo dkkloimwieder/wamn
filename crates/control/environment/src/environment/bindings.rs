@@ -230,6 +230,36 @@ pub async fn write(
     Ok(())
 }
 
+/// Contract after the drain (docs/plan/integration-schema.md#deployment):
+/// remove the binding and `release_connection` rows of every release outside
+/// `live`. A removed release's memory key is recorded in `drops`.
+pub async fn contract(
+    tx: &tokio_postgres::Transaction<'_>,
+    env_key: &str,
+    live: &[&str],
+    drops: &mut wamn_platform_identity::connection_changes::ConnectionDrops,
+) -> anyhow::Result<()> {
+    tx.batch_execute(&wamn_control_provision::bind_platform_principal_sql(
+        wamn_control_provision::PlatformComponent::Provisioning,
+    ))
+    .await?;
+    for table in ["catalog.connection_binding", "catalog.release_connection"] {
+        let removed = tx
+            .query(
+                &format!(
+                    "DELETE FROM {table} WHERE env_key = $1 \
+                     AND NOT manifest_digest = ANY($2::text[]) RETURNING manifest_digest"
+                ),
+                &[&env_key, &live],
+            )
+            .await?;
+        for row in removed {
+            drops.release(env_key, row.get(0));
+        }
+    }
+    Ok(())
+}
+
 /// Refresh the environment projection under the caller's lifecycle lock.
 pub async fn project_authority(
     system_url: &str,
