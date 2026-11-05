@@ -27,11 +27,11 @@ The current application declarations give these sets:
 
 | Package set | Cases |
 | --- | --- |
-| `wamn_receiving` | `route_authentication_live::cluster::route_cases::command_histories` |
-| `wamn_receiving`, `client_acme_receiving` | the case above and `route_authentication_live::cluster::postcommit_case::baseline_overlay_and_materializer_progress` |
+| `wamn_receiving` | `route_authentication_live::cluster::route_cases::command_histories`, `route_authentication_live::cluster::route_cases::user_membership_and_permission_revocation` |
+| `wamn_receiving`, `client_acme_receiving` | the cases above and `route_authentication_live::cluster::postcommit_case::baseline_overlay_and_materializer_progress` |
 | `wamn_wms` | `cluster::released_wms_routes`, `cluster::released_wms_routes_retain_committed_work_after_label_failure`, `cluster::restarted_wms_host_retains_compiled_code_and_serves_requests` |
 
-`route_authentication_live::cluster::route_cases::user_membership_and_permission_revocation` is no qualification case, and it also runs only with a Receiving candidate.
+Every qualification case runs only with the candidate that `qualify-release` names, so the `receiving-kind` and `wms-kind` suites run only the delivery cases.
 To use the WMS routes from a browser, set `WAMN_JOURNEY_HOLD_SECONDS` on the released routes case.
 With the variable set, the case keeps its route NodePort Service and serves `http://127.0.0.1:8080/`.
 After the case finishes, it holds the cluster for that many seconds or until interrupted.

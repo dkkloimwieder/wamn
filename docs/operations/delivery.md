@@ -54,6 +54,11 @@ For example, `apps/wamn_receiving/tests/qualification.json` contains:
       "executable": "wamn-receiving-tests",
       "name": "route_authentication_live::cluster::route_cases::command_histories",
       "evidence_env": "WAMN_RECEIVING_EVIDENCE_DIR"
+    },
+    {
+      "executable": "wamn-receiving-tests",
+      "name": "route_authentication_live::cluster::route_cases::user_membership_and_permission_revocation",
+      "evidence_env": "WAMN_RECEIVING_EVIDENCE_DIR"
     }
   ]
 }

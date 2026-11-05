@@ -6,7 +6,7 @@ Private operations use their actual caller or ingress.
 See [database tests](database-tests.md) for state and authority observations.
 
 The [release qualification](../operations/delivery.md#release-qualification) invokes the same application cases against a published release.
-Receiving with Acme runs command histories and the baseline overlay with materializer progress.
+Receiving with Acme runs command histories, membership and permission revocation, and the baseline overlay with materializer progress.
 WMS runs its released routes, partial-label completion, and restart and cache cases.
 
 The [local saved-edit case](../operations/running-tests.md#local-saved-edit-acceptance) runs the existing Receiving developer command against owned services.
