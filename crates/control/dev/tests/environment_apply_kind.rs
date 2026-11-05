@@ -100,7 +100,7 @@
 //! the same taken before Helm's rollback removed its pods.
 //!
 //! The chart supplies the host, HTTP and materializer images. Set
-//! `WAMN_RELEASE_CHART` to the local train chart and use an empty `DOCKER_CONFIG`.
+//! `WAMN_RELEASE_CHART` to the release chart that the local revision build stamps and use an empty `DOCKER_CONFIG`.
 //! Without a chart, the legacy GCP source requires agent credentials.
 //! The fixture copies the two roles into its TLS registry and loads the host
 //! into its private node. The platform images must match this checkout.
@@ -1179,6 +1179,7 @@ async fn scenario(run: &mut Run, repository: &Path, source: &Path) -> anyhow::Re
     run.kept.release_digest.clone_from(&digest);
     run.kept.image_set = Some(set.clone());
     let platform = check_platform(run, &system_url, chart, events);
+    let observer = observer_url(run, &platform).await?;
     let mut context = CheckContext {
         repository: repository.to_owned(),
         platform: platform.clone(),
@@ -1206,7 +1207,7 @@ async fn scenario(run: &mut Run, repository: &Path, source: &Path) -> anyhow::Re
             .get(PACKAGE)
             .and_then(|app| app.connections.get("labels"))
         {
-            let (system, driver) = connect(&platform.system_database_url).await?;
+            let (system, driver) = connect(&observer).await?;
             let exists = system
                 .query_opt(
                     "SELECT 1 FROM registry.connection c JOIN registry.integration i ON i.id=c.integration_id WHERE c.org=$1 AND i.name=$2 AND c.env=$3",
@@ -2657,7 +2658,7 @@ async fn host_report_check(run: &mut Run, context: &CheckContext) -> anyhow::Res
     )
     .await?;
     let mut document = fixture_document(ENV, "broken.orders.example", published.digest.as_str());
-    let (system, task) = connect(&platform.system_database_url).await?;
+    let (system, task) = connect(&observer_url(run, &platform).await?).await?;
     let bound = system
         .query_opt(
             "SELECT 1 FROM registry.connection c JOIN registry.integration i ON i.id=c.integration_id WHERE c.org=$1 AND i.name=$2 AND c.env=$3",
@@ -2755,6 +2756,43 @@ fn ensure_admin_url(platform: &Platform) -> String {
     url.to_string()
 }
 
+/// The system database URL of the bootstrap owner in the CNPG `-app` Secret.
+/// A test's observational read uses this observer credential, never the
+/// worker login of `Platform::system_database_url`.
+async fn observer_url(run: &Run, platform: &Platform) -> anyhow::Result<String> {
+    let mut url = url::Url::parse(&platform.system_database_url)?;
+    let field = async |name: &str| -> anyhow::Result<String> {
+        let encoded = run
+            .run(
+                "kubectl",
+                &[
+                    "-n",
+                    NAMESPACE,
+                    "get",
+                    "secret",
+                    &format!("{PG_CLUSTER}-app"),
+                    "-o",
+                    &format!("jsonpath={{.data.{name}}}"),
+                ],
+            )
+            .await?;
+        Ok(String::from_utf8(base64::Engine::decode(
+            &base64::engine::general_purpose::STANDARD,
+            encoded.trim(),
+        )?)?)
+    };
+    let username = field("username").await?;
+    let password = field("password").await?;
+    url.set_username(&username)
+        .map_err(|()| anyhow::anyhow!("set the observer username"))?;
+    url.set_password(Some(&password))
+        .map_err(|()| anyhow::anyhow!("set the observer password"))?;
+    Ok(url.to_string())
+}
+
+/// The platform under test. Its `system_database_url` is the restricted
+/// `wamn_apply` login, whose grants are the product's least-privilege
+/// contract; a test's own reads use [`observer_url`].
 fn check_platform(
     run: &Run,
     system_url: &str,
