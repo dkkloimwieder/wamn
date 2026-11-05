@@ -123,9 +123,6 @@ mod tests {
     use crate::qualification::TemporaryResults;
     use serde_json::{Value, json};
 
-    const HISTORY: &str = "route_authentication_live::cluster::route_cases::command_histories";
-    const OVERLAY: &str = "route_authentication_live::cluster::postcommit_case::baseline_overlay_and_materializer_progress";
-
     fn cases(root: &Path, packages: &[&str]) -> anyhow::Result<Vec<Case>> {
         declared_cases(
             root,
@@ -139,42 +136,33 @@ mod tests {
     #[test]
     fn application_declarations_preserve_the_three_release_sets() {
         let repository = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-        let receiving = Case {
-            executable: "wamn-receiving-tests".into(),
-            name: HISTORY.into(),
-            evidence_env: "WAMN_RECEIVING_EVIDENCE_DIR".into(),
+        // The expected set of each release is the union, in lexical order,
+        // of the declarations its packages carry.
+        let declared = |packages: &[&str]| -> Vec<Case> {
+            packages
+                .iter()
+                .flat_map(|package| {
+                    read(&repository.join(format!("apps/{package}/tests/qualification.json")))
+                        .unwrap()
+                })
+                .collect::<BTreeSet<_>>()
+                .into_iter()
+                .collect()
         };
-        let overlay = Case {
-            name: OVERLAY.into(),
-            ..receiving.clone()
-        };
-        assert_eq!(
-            cases(&repository, &["wamn_receiving"]).unwrap(),
-            vec![receiving.clone()]
-        );
-        assert_eq!(
-            cases(&repository, &["wamn_receiving", "client_acme_receiving"]).unwrap(),
-            vec![overlay.clone(), receiving.clone()]
-        );
-        assert_eq!(
-            cases(
-                &repository,
-                &["client_acme_receiving", "wamn_receiving", "wamn_receiving"]
-            )
-            .unwrap(),
-            vec![overlay, receiving]
-        );
-        let wms = [
-            "cluster::released_wms_routes",
-            "cluster::released_wms_routes_retain_committed_work_after_label_failure",
-            "cluster::restarted_wms_host_retains_compiled_code_and_serves_requests",
-        ]
-        .map(|name| Case {
-            executable: "wamn-wms-tests".into(),
-            name: name.into(),
-            evidence_env: "WAMN_WMS_EVIDENCE_DIR".into(),
-        });
-        assert_eq!(cases(&repository, &["wamn_wms"]).unwrap(), wms);
+        for packages in [
+            &["wamn_receiving"][..],
+            &["wamn_receiving", "client_acme_receiving"],
+            &["client_acme_receiving", "wamn_receiving", "wamn_receiving"],
+            &["wamn_wms"],
+        ] {
+            let expected = declared(packages);
+            assert!(!expected.is_empty(), "{packages:?} declares cases");
+            assert_eq!(
+                cases(&repository, packages).unwrap(),
+                expected,
+                "{packages:?}"
+            );
+        }
     }
 
     fn write(root: &Path, package: &str, value: &Value) -> PathBuf {
