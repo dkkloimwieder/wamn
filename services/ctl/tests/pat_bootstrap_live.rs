@@ -1,7 +1,7 @@
 //! First-time provisioning sends PAT writes through the separate HTTPS authority.
 
 use std::os::unix::fs::{DirBuilderExt as _, PermissionsExt as _};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -13,6 +13,74 @@ use wamn_platform_identity::{PrincipalType, authenticate_pat};
 
 struct Files(PathBuf);
 
+/// A loopback platform NATS with mutual TLS. Revocation deletes the PAT's key
+/// from the auth bucket that hosts watch, so the verb needs this connection.
+struct PlatformNatsServer {
+    child: std::process::Child,
+    url: String,
+    client: wamn_test_infrastructure::nats_tls::ClientCertificate,
+}
+
+impl Drop for PlatformNatsServer {
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+}
+
+fn start_platform_nats(directory: &Path) -> PlatformNatsServer {
+    use wamn_test_infrastructure::nats_tls::{Authority, DEVELOPMENT_USER, full_permission_user};
+    let binary = std::env::var_os("WAMN_NATIVE_C_NATS_BIN")
+        .expect("set WAMN_NATIVE_C_NATS_BIN to a nats-server executable");
+    std::fs::DirBuilder::new()
+        .mode(0o700)
+        .create(directory)
+        .expect("create the NATS directory");
+    let authority = Authority::new(directory).expect("create the test NATS authority");
+    let client = authority
+        .client(DEVELOPMENT_USER)
+        .expect("sign the platform client certificate");
+    let configuration = directory.join("nats.conf");
+    std::fs::write(
+        &configuration,
+        serde_json::json!({
+            "tls": authority.server_tls(),
+            "authorization": { "users": [full_permission_user(DEVELOPMENT_USER)] }
+        })
+        .to_string(),
+    )
+    .expect("write the NATS configuration");
+    let address = std::net::TcpListener::bind("127.0.0.1:0")
+        .and_then(|listener| listener.local_addr())
+        .expect("reserve a NATS port");
+    let log = std::fs::File::create(directory.join("nats.log")).expect("create the NATS log");
+    let child = std::process::Command::new(binary)
+        .args(["--jetstream", "--addr", "127.0.0.1", "--port"])
+        .arg(address.port().to_string())
+        .arg("--store_dir")
+        .arg(directory.join("data"))
+        .arg("--config")
+        .arg(&configuration)
+        .stdin(Stdio::null())
+        .stdout(log.try_clone().expect("share the NATS log"))
+        .stderr(log)
+        .spawn()
+        .expect("start nats-server");
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while std::net::TcpStream::connect(address).is_err() {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "nats-server did not listen"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    PlatformNatsServer {
+        child,
+        url: format!("nats://{address}"),
+        client,
+    }
+}
+
 impl Drop for Files {
     fn drop(&mut self) {
         let _ = std::fs::remove_dir_all(&self.0);
@@ -20,10 +88,10 @@ impl Drop for Files {
 }
 
 #[tokio::test]
-#[ignore = "requires: bin:/usr/lib/postgresql/18/bin/postgres, env:WAMN_IDENTITY_BINARY"]
+#[ignore = "requires: bin:/usr/lib/postgresql/18/bin/postgres, env:WAMN_IDENTITY_BINARY, env:WAMN_NATIVE_C_NATS_BIN"]
 async fn cli_bootstrap_mints_first_service_pats_over_https() {
     wamn_test_postgres::require_ignored_prerequisites(
-        "requires: bin:/usr/lib/postgresql/18/bin/postgres, env:WAMN_IDENTITY_BINARY",
+        "requires: bin:/usr/lib/postgresql/18/bin/postgres, env:WAMN_IDENTITY_BINARY, env:WAMN_NATIVE_C_NATS_BIN",
     );
     wamn_dev_control::dev::pat_issuer::identity_binary().expect("find the wamn-identity binary");
     let _lock = wamn_test_postgres::lock();
@@ -182,6 +250,16 @@ async fn cli_bootstrap_mints_first_service_pats_over_https() {
         .await
         .expect("read the route PAT issuance time")
         .get(0);
+    let nats = start_platform_nats(&files.0.join("nats"));
+    wamn_platform_identity::kv_memory::create_buckets(
+        &nats
+            .client
+            .connect(&nats.url)
+            .await
+            .expect("connect the platform NATS"),
+    )
+    .await
+    .expect("create the auth memory buckets");
     let revoked = std::process::Command::new(env!("CARGO_BIN_EXE_wamn-ctl"))
         .args([
             "provision-project-env",
@@ -189,6 +267,10 @@ async fn cli_bootstrap_mints_first_service_pats_over_https() {
             &route.token_prefix,
         ])
         .env("WAMN_SYSTEM_ADMIN_URL", &url)
+        .env("WAMN_NATS_URL", &nats.url)
+        .env("WAMN_NATS_TLS_CA", &nats.client.ca)
+        .env("WAMN_NATS_TLS_CERT", &nats.client.cert)
+        .env("WAMN_NATS_TLS_KEY", &nats.client.key)
         .stdin(Stdio::null())
         .output()
         .expect("run the compiled PAT revocation verb");

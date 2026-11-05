@@ -124,7 +124,7 @@ targets = [
   { workspace="root", package="wamn-ctl", target="lib:wamn_ctl", tier="contract" },
   { workspace="root", package="wamn-ctl", target="test:dev_command", tier="contract" },
   { workspace="root", package="wamn-ctl", target="test:identity_issuer_live", tier="live-postgres" },
-  { workspace="root", package="wamn-ctl", target="test:pat_bootstrap_live", tier="live-postgres" },
+  { workspace="root", package="wamn-ctl", target="test:pat_bootstrap_live", tier="live-nats" },
   { workspace="root", package="wamn-ctl", target="test:platform_ui_live", tier="live-nats" },
   { workspace="root", package="wamn-ctl", target="test:protected_relations_live", tier="live-postgres" },
   { workspace="root", package="wamn-ctl", target="test:prune_record_history_live", tier="live-postgres" },
@@ -375,7 +375,7 @@ features = ["test-util"]
 id = "nats"
 outputs = {WAMN_NATIVE_C_NATS_BIN = "nats-server"}
 aliases = {WAMN_HOST_LIVE_NATS_SERVER_BIN = "WAMN_NATIVE_C_NATS_BIN"}
-packages = ["wamn-runtime", "wamn-execution-host", "wamn-host", "wamn-package-control", "wamn-release-control", "wamn-environment-control", "wamn-dev-control", "wamn-integration-tests", "wamn-receiving-tests", "wamn-wms-tests", "wamn-workflow"]
+packages = ["wamn-runtime", "wamn-execution-host", "wamn-host", "wamn-ctl", "wamn-package-control", "wamn-release-control", "wamn-environment-control", "wamn-dev-control", "wamn-integration-tests", "wamn-receiving-tests", "wamn-wms-tests", "wamn-workflow"]
 
 [[preparation]]
 id = "application-components"
