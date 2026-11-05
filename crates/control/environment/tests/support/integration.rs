@@ -328,7 +328,7 @@ pub async fn exercise(
     // Bind only after the connection-free bootstrap. The release below
     // supplies the upstream declaration for the first bound apply.
     super::org_bindings::bind(
-        &platform,
+        &crate::superuser_platform(&platform),
         &mut document,
         connector,
         "upstream",
