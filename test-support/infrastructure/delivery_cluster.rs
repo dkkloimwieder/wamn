@@ -386,7 +386,7 @@ impl Database {
 
 /// Ensure the application's CloudNativePG `Cluster`, a NodePort Service on its
 /// primary, and the proxy container. The `Cluster` is
-/// `deploy/infra/cnpg-cluster.yaml` under another name and namespace. The
+/// `deploy/gcp/cnpg-cluster.yaml` under another name and namespace. The
 /// journeys' `deploy/sql/postgres-init.sql` runs on it once it answers.
 pub async fn ensure_database(
     kept: &KeptCluster,

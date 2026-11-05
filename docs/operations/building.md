@@ -533,7 +533,8 @@ The Dockerfile stage `build-edge-web` builds `wamn-edge` with the `web` feature 
 Keep one Cargo process per target directory.
 
 Each checkout keeps its own Docker target cache and its own host target directory.
-The native images `host`, `ctl`, `cdc-reader`, `identity`, and `gates` use one `build-native` stage.
+The native images `host`, `ctl`, `identity`, and `gates` use one `build-native` stage.
+The host image also carries `wamn-cdc-reader`.
 It compiles every native package in one `cargo build`, so features unify once.
 The `edge-web` image has its own stage, `build-edge-web`. It shares the target cache of `build-native`.
 A second invocation in the same stage builds only `wamn-ctl-ops` with the `ops` feature, because that feature reaches shared code and the shipped `wamn-ctl` builds without it.

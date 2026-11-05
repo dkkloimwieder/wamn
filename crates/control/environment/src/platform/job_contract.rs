@@ -195,47 +195,6 @@ const CONTRACTS: &[Contract] = &[
     },
     Contract {
         program: "wamn-ctl",
-        verb: "apply-package",
-        files: &["/inputs/registry.json"],
-        required: &[
-            "WAMN_PG_ADMIN_URL",
-            "WAMN_COMPONENT_ARTIFACT_BASE",
-            "WAMN_NATS_URL",
-            "WAMN_NATS_TLS_CA",
-            "WAMN_NATS_TLS_CERT",
-            "WAMN_NATS_TLS_KEY",
-        ],
-        ..EMPTY
-    },
-    Contract {
-        program: "wamn-ctl",
-        verb: "reconcile-package-data-access",
-        files: &["/inputs/registry.json"],
-        required: &["WAMN_PG_ADMIN_URL"],
-        ..EMPTY
-    },
-    Contract {
-        program: "wamn-ctl",
-        verb: "reconcile-replica-identity",
-        files: &["/inputs/package/wamn.json"],
-        required: &["WAMN_PG_ADMIN_URL"],
-        ..EMPTY
-    },
-    Contract {
-        program: "wamn-ctl",
-        verb: "publish-release",
-        files: &["/inputs/environment.k", "/inputs/registry.json"],
-        required: &[
-            "WAMN_PG_ADMIN_URL",
-            "WAMN_SYSTEM_ADMIN_URL",
-            "WAMN_REGISTRY_AUTH_FILE",
-            "WAMN_RELEASE_ARTIFACT_BASE",
-            "WAMN_COMPONENT_ARTIFACT_BASE",
-        ],
-        ..EMPTY
-    },
-    Contract {
-        program: "wamn-ctl",
         verb: "env apply",
         files: &[
             "/inputs/environment.k",

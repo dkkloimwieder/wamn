@@ -4,7 +4,7 @@
 //! **placement**: which organizations exist, the projects within them, and the
 //! provisioned `(org, project, env)` databases — each mapped to the CNPG
 //! `Cluster` that holds it and a **reference** to the K8s Secret that
-//! credentials it. It stores no credentials (R8b) and no tenant data; it lives
+//! credentials it. It stores no credentials (R8b) and no application data; it lives
 //! on the T1 system cluster (`docs/archive/platform/postgres-topology.md` §T1).
 //!
 //! [`Triple`] is the first-class control-plane identity every subsystem speaks —
@@ -40,7 +40,7 @@ pub type OrgId = String;
 /// A project id — a lowercase slug, unique within its org.
 pub type ProjectId = String;
 
-/// The durability floor selected by one environment policy.
+/// The durability class selected by one environment policy.
 ///
 /// `standard` is the only class and the default for a missing field.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -389,10 +389,10 @@ impl Triple {
     }
 }
 
-/// The tenant of a project environment: `<org>--<project>--<env>` (owner
+/// The key of a project environment: `<org>--<project>--<env>` (owner
 /// ruling of 2026-10-09 on `wamn-snz0`). The first apply, the analysis of
 /// `env apply` and the host scope all derive it here, so neither the
-/// environment document nor the serving manifest carries a tenant.
+/// environment document nor the serving manifest repeats the composed key.
 pub fn project_env_key(org: &str, project: &str, env: &str) -> String {
     format!("{org}--{project}--{env}")
 }

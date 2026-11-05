@@ -2,7 +2,7 @@
 
 mod broker;
 pub use broker::{kind_nats, render_event_secrets, single_namespace_nats};
-pub mod build;
+mod artifact_plan;
 mod cdc;
 mod check;
 pub mod control;
@@ -24,7 +24,6 @@ mod packages;
 pub mod pools;
 pub mod project;
 pub mod provider;
-mod releases;
 pub mod render;
 pub mod steps;
 pub mod web;

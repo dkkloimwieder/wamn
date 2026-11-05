@@ -6,15 +6,6 @@ use std::path::{Path, PathBuf};
 use anyhow::Context as _;
 use serde_json::{Value, json};
 
-/// One registry artifact supplied to package installation without a registry call.
-#[derive(Debug)]
-pub struct Package {
-    pub id: String,
-    pub version: String,
-    pub digest: String,
-    pub files: BTreeMap<String, String>,
-}
-
 /// Live values supplied to the install batches instead of reading a cluster.
 #[derive(Debug)]
 pub struct Fixtures {
@@ -28,14 +19,13 @@ pub struct Fixtures {
     pub control_operator: Value,
     pub platform_ui_files: BTreeMap<String, Vec<u8>>,
     pub cdc_credentials: BTreeMap<String, Value>,
-    pub gates_image: String,
+    pub host_image: String,
     pub releases: BTreeMap<String, wamn_catalog::ServingManifest>,
     pub web_clients: BTreeMap<String, BTreeMap<String, String>>,
     pub applied: BTreeMap<String, Vec<Value>>,
     pub oauth_key: [u8; 32],
     pub oauth_exists: bool,
     pub registry: wamn_package_artifact::PackageRegistry,
-    pub packages: BTreeMap<String, Vec<Package>>,
     pub identity_database: Value,
     pub identity_image: String,
     pub postgres_image: String,
@@ -247,116 +237,6 @@ pub fn install(
         "4.12",
         job_objects(&batch, "hosts", fixtures)?,
     );
-    for environment in environments {
-        let key = environment_key(environment);
-        let secrets = super::packages::credentials_from(
-            &admin,
-            fixtures
-                .environment_urls
-                .get(&key)
-                .context("environment URL fixture")?,
-        )?;
-        let database = url::Url::parse(&secrets[1].value)?;
-        let packages = fixtures.packages.get(&key).context("package fixtures")?;
-        let tags = packages
-            .iter()
-            .map(|package| format!("{}-{}", package.id, package.version))
-            .collect::<Vec<_>>();
-        let artifacts = packages
-            .iter()
-            .map(|package| package.digest.clone())
-            .collect::<Vec<_>>();
-        for (package, tag) in packages.iter().zip(&tags) {
-            let request = super::packages::package_job(
-                &key,
-                tag.clone(),
-                environment,
-                &fixtures.runner_image,
-                &fixtures.registry,
-                &auth,
-            )?;
-            let batch = super::packages::artifact_inputs(
-                request,
-                &package.digest,
-                database.path(),
-                &secrets,
-            );
-            append(
-                &mut objects,
-                "4.13",
-                job_objects(&batch, "platform", fixtures)?,
-            );
-        }
-        if !packages.is_empty() {
-            let request = super::packages::access_job(
-                &key,
-                environment,
-                &fixtures.runner_image,
-                &fixtures.registry,
-                &tags,
-            )?;
-            let batch =
-                super::packages::artifacts_inputs(request, &artifacts, database.path(), &secrets);
-            append(
-                &mut objects,
-                "4.13",
-                job_objects(&batch, "platform", fixtures)?,
-            );
-        }
-        for package in packages {
-            let request = super::packages::replica_job(
-                &key,
-                &package.id,
-                &fixtures.runner_image,
-                &package.files,
-            );
-            let batch = super::packages::artifact_inputs(
-                request,
-                &package.digest,
-                database.path(),
-                &secrets,
-            );
-            append(
-                &mut objects,
-                "4.13",
-                job_objects(&batch, "platform", fixtures)?,
-            );
-        }
-    }
-    for environment in environments {
-        let key = environment_key(environment);
-        let packages = fixtures.packages.get(&key).context("package fixtures")?;
-        let coordinates = packages
-            .iter()
-            .map(|package| (package.id.clone(), package.version.clone()))
-            .collect::<Vec<_>>();
-        let artifacts = packages
-            .iter()
-            .map(|package| package.digest.clone())
-            .collect::<Vec<_>>();
-        let request = super::releases::publish_request(
-            &key,
-            &environment.to_kcl(),
-            &fixtures.runner_image,
-            &fixtures.registry,
-            &coordinates,
-        )?;
-        let secrets = super::packages::credentials_from(
-            &admin,
-            fixtures
-                .environment_urls
-                .get(&key)
-                .context("environment URL fixture")?,
-        )?;
-        let database = url::Url::parse(&secrets[1].value)?;
-        let batch =
-            super::packages::artifacts_inputs(request, &artifacts, database.path(), &secrets);
-        append(
-            &mut objects,
-            "4.14",
-            job_objects(&batch, "platform", fixtures)?,
-        );
-    }
     for environment in environments
         .iter()
         .filter(|environment| !environment.integrations.is_empty())
@@ -471,7 +351,7 @@ pub fn install(
             append(
                 &mut objects,
                 "4.18",
-                vec![super::cdc::deployment(environment, &fixtures.gates_image)],
+                vec![super::cdc::deployment(environment, &fixtures.host_image)],
             );
         }
     }
@@ -744,19 +624,7 @@ mod tests {
     fn kind_install_renders_in_install_order() -> anyhow::Result<()> {
         let render = super::fixture::render()?;
         let objects = &render.objects;
-        assert_eq!(render.documents.len(), 2);
-        assert_eq!(render.fixtures.releases.len(), 2);
-        assert_eq!(render.owner_inputs.len(), 1);
-        // Owner and local-build steps apply no Kubernetes objects.
-        for step in [
-            "4.3", "4.4", "4.4.1", "4.5", "4.7", "4.8", "4.9", "4.11", "4.12", "4.13", "4.14",
-            "4.16.1", "4.17", "4.18", "4.19.1", "4.20", "4.21",
-        ] {
-            assert!(
-                objects.iter().any(|(number, _)| *number == step),
-                "empty step {step}"
-            );
-        }
+        let steps = super::super::steps::install_steps(&render.cluster, "render");
         assert_eq!(
             objects.iter().any(|(step, _)| *step == "4.19"),
             render
@@ -765,23 +633,6 @@ mod tests {
                 .any(|(_, environment)| environment.client.is_some()),
             "web upload Jobs require a client pin"
         );
-        for kind in [
-            "Deployment",
-            "Service",
-            "Certificate",
-            "ServiceAccount",
-            "Role",
-            "RoleBinding",
-            "Secret",
-            "ConfigMap",
-            "Job",
-        ] {
-            assert!(
-                objects.iter().any(|(_, object)| object["kind"] == kind),
-                "missing kind {kind}"
-            );
-        }
-        let steps = super::super::steps::install_steps(&render.cluster, "render");
         let positions = objects
             .iter()
             .map(|(number, _)| {

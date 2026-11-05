@@ -3,7 +3,7 @@ use super::DevActivationIdentity;
 /// Fingerprint of the standup a template belongs to.
 ///
 /// A template is only pristine FOR THE ENVIRONMENT IT WAS TAKEN FROM. Point
-/// `dev.json` at another database or another tenant and the clone would be
+/// `dev.json` at another database or another environment and the clone would be
 /// someone else's provisioned state, so the run refuses instead.
 ///
 /// Database NAMES and identity, never the URLs: a rotated credential does not
@@ -21,7 +21,6 @@ pub fn template_fingerprint(
         "environment": identity.environment,
         "env_key": identity.env_key(),
         "catalog": identity.catalog,
-        "schema": identity.schema,
     });
     wamn_execution_contract::canonical_json_sha256(&fields)
 }

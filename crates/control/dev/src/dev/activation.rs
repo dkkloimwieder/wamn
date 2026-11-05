@@ -67,7 +67,6 @@ pub struct DevActivationIdentity {
     pub environment: String,
     pub org: String,
     pub project: String,
-    pub schema: String,
     pub host_group: String,
     pub host_name: String,
     pub runner: String,
@@ -1396,7 +1395,6 @@ mod tests {
             "environment": "fixture-dev",
             "org": "example",
             "project": "fixture",
-            "schema": "inventory",
             "host_group": "wamn-dev-fixture",
             "host_name": "wamn-dev-fixture-1",
             "runner": "wamn-dev-fixture-1",
@@ -1412,7 +1410,6 @@ mod tests {
             environment: "fixture-dev".to_owned(),
             org: "example".to_owned(),
             project: "fixture".to_owned(),
-            schema: "inventory".to_owned(),
             host_group: "wamn-dev-fixture".to_owned(),
             host_name: "wamn-dev-fixture-1".to_owned(),
             runner: "wamn-dev-fixture-1".to_owned(),
@@ -1467,7 +1464,6 @@ mod tests {
             environment: "environment-value".to_owned(),
             org: "org-value".to_owned(),
             project: "project-value".to_owned(),
-            schema: "schema-value".to_owned(),
             host_group: "host-group-value".to_owned(),
             host_name: "host-name-value".to_owned(),
             runner: "runner-value".to_owned(),
@@ -1605,188 +1601,191 @@ mod tests {
             &directory.0.join("chart"),
         )
         .unwrap();
-        let (org, project, environment) = ("dkk", "receiving", "dev");
-        let group_path = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../../deploy/gcp/host-group-receiving.yaml");
-        let input = release_chart::ValuesInput {
-            org: org.into(),
-            project: project.into(),
-            env: environment.into(),
-            manifest_digest: digest,
-            artifact_base: "local/releases".into(),
-            route_host: "receiving.localhost".into(),
-            applications: test_applications(),
-            roles: vec![release_chart::Role {
-                entry: Some(format!("entries@sha256:{}", "a".repeat(64))),
-                statements: Vec::new(),
-                name: release_chart::RoleName::Http,
-                config: serde_yaml::Mapping::from_iter([(
-                    "wamn.env_key".into(),
-                    "parity-test".into(),
-                )]),
-                environment: None,
-            }],
-            // The fixture environment policy allows a 70-second drain.
-            drain_bound_seconds: 70,
-            actor: "parity-test".into(),
-            host_group: wamn_environment_control::environment::write::host_group(
-                Some(&group_path),
-                org,
-                project,
-                environment,
-            )
-            .unwrap(),
-        };
-        let values = directory.0.join("values.yaml");
-        std::fs::write(
-            &values,
-            serde_yaml::to_string(&release_chart::values(&input).unwrap()).unwrap(),
-        )
-        .unwrap();
-        let output = std::process::Command::new("helm")
-            .arg("template")
-            .arg("parity-test")
-            .arg(&chart)
-            .args(["--namespace", "platform", "-f"])
-            .arg(&values)
-            .output()
-            .expect("Helm must be installed for the host parity test");
-        assert!(
-            output.status.success(),
-            "{}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-        let documents: Vec<Value> = serde_yaml::Deserializer::from_slice(&output.stdout)
-            .map(|document| Value::deserialize(document).unwrap())
-            .collect();
-        let deployments: Vec<_> = documents
-            .iter()
-            .filter(|document| document["kind"].as_str() == Some("Deployment"))
-            .collect();
-        assert_eq!(deployments.len(), 1);
-        let host = &deployments[0]["spec"]["template"]["spec"]["containers"][0];
-        let deployed_env = host["env"]
-            .as_sequence()
-            .unwrap()
-            .iter()
-            .map(|entry| {
-                (
-                    entry["name"].as_str().unwrap().to_owned(),
-                    entry["value"].as_str().map_or_else(
-                        || serde_json::to_string(&entry["valueFrom"]).unwrap(),
-                        str::to_owned,
-                    ),
+        for project in ["receiving", "wms"] {
+            let (org, environment) = ("dkk", "dev");
+            let group_path = Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join(format!("../../../deploy/gcp/host-group-{project}.yaml"));
+            let input = release_chart::ValuesInput {
+                org: org.into(),
+                project: project.into(),
+                env: environment.into(),
+                manifest_digest: digest.clone(),
+                artifact_base: "local/releases".into(),
+                route_host: "receiving.localhost".into(),
+                applications: test_applications(),
+                roles: vec![release_chart::Role {
+                    entry: Some(format!("entries@sha256:{}", "a".repeat(64))),
+                    statements: Vec::new(),
+                    name: release_chart::RoleName::Http,
+                    config: serde_yaml::Mapping::from_iter([(
+                        "wamn.env_key".into(),
+                        "parity-test".into(),
+                    )]),
+                    environment: None,
+                }],
+                // The fixture environment policy allows a 70-second drain.
+                drain_bound_seconds: 70,
+                actor: "parity-test".into(),
+                host_group: wamn_environment_control::environment::write::host_group(
+                    Some(&group_path),
+                    org,
+                    project,
+                    environment,
                 )
-            })
-            .collect::<Vec<_>>();
-        let deployed_args = host["args"]
-            .as_sequence()
-            .unwrap()
-            .iter()
-            .map(|value| value.as_str().unwrap().to_owned())
-            .collect::<Vec<_>>();
-
-        let mut document = config_document();
-        document["org"] = input.org.into();
-        document["project"] = input.project.into();
-        document["environment"] = input.env.into();
-        document["schema"] = "receiving".into();
-        document["session_identity"] = json!({
-            "issuer": "https://127.0.0.1:8443", "ca": "/tmp/identity-ca.pem", "instance_suffix": "abc12345"
-        });
-        let config = parse_config(&serde_json::to_vec(&document).unwrap()).unwrap();
-        let identity = config.activation_identity();
-        let release = release();
-        let request = DevActivationRequest {
-            applications: &test_applications(),
-            config: &config,
-            release: &release,
-            identity,
-            host_binary: config.host_binary(),
-            wasmtime_cache_dir: config.wasmtime_cache_dir(),
-        };
-        let local = host_process_spec(&request);
-        let workload = flow_http_request(&request).workload.unwrap();
-        let world = workload.wit_world.unwrap();
-        let component = &world.components[0];
-        let deployed_workload = documents
-            .iter()
-            .find(|document| document["kind"].as_str() == Some("WorkloadDeployment"))
-            .expect("the deployed HTTP workload");
-        let deployed_component = &deployed_workload["spec"]["template"]["spec"]["components"][0];
-        for (field, local) in [
-            ("poolSize", component.pool_size),
-            ("maxConcurrency", component.max_concurrency),
-            ("maxInvocations", component.max_invocations),
-            ("reclaimWindowSeconds", component.reclaim_window_seconds),
-            ("reclaimMinInstances", component.reclaim_min_instances),
-        ] {
-            assert_eq!(
-                deployed_component[field].as_i64().unwrap_or_default(),
-                i64::from(local),
-                "HTTP store setting {field} differs"
+                .unwrap(),
+            };
+            let values = directory.0.join("values.yaml");
+            std::fs::write(
+                &values,
+                serde_yaml::to_string(&release_chart::values(&input).unwrap()).unwrap(),
+            )
+            .unwrap();
+            let output = std::process::Command::new("helm")
+                .arg("template")
+                .arg("parity-test")
+                .arg(&chart)
+                .args(["--namespace", "platform", "-f"])
+                .arg(&values)
+                .output()
+                .expect("Helm must be installed for the host parity test");
+            assert!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stderr)
             );
-        }
+            let documents: Vec<Value> = serde_yaml::Deserializer::from_slice(&output.stdout)
+                .map(|document| Value::deserialize(document).unwrap())
+                .collect();
+            let deployments: Vec<_> = documents
+                .iter()
+                .filter(|document| document["kind"].as_str() == Some("Deployment"))
+                .collect();
+            assert_eq!(deployments.len(), 1);
+            let host = &deployments[0]["spec"]["template"]["spec"]["containers"][0];
+            let deployed_env = host["env"]
+                .as_sequence()
+                .unwrap()
+                .iter()
+                .map(|entry| {
+                    (
+                        entry["name"].as_str().unwrap().to_owned(),
+                        entry["value"].as_str().map_or_else(
+                            || serde_json::to_string(&entry["valueFrom"]).unwrap(),
+                            str::to_owned,
+                        ),
+                    )
+                })
+                .collect::<Vec<_>>();
+            let deployed_args = host["args"]
+                .as_sequence()
+                .unwrap()
+                .iter()
+                .map(|value| value.as_str().unwrap().to_owned())
+                .collect::<Vec<_>>();
 
-        let mut deployed = settings(&deployed_env, &deployed_args);
-        let mut local = settings(&local.env, &local.args);
-        // The deployed release exposes file transfers. Local applications use staged files.
-        assert_eq!(
-            deployed.remove("--files-addr").as_deref(),
-            Some("0.0.0.0:8082")
-        );
-        assert!(!local.contains_key("--files-addr"));
-        assert_eq!(
-            local.remove("WAMN_CREDENTIAL_DIR"),
-            std::env::var("WAMN_CREDENTIAL_DIR").ok()
-        );
-        // Exact names only: new settings remain visible and fail the comparison.
-        for key in [
-            "WASMCLOUD_HOST_IP",              // Kubernetes supplies the pod IP.
-            "WASMCLOUD_HOST_ENVIRONMENT", // Local workloads use the session environment, not a pod namespace.
-            "--host-name", // Local sessions choose a process identity instead of a pod IP.
-            "--host-group", // Local sessions choose an isolated host group.
-            "--runner",    // Local sessions choose an isolated runner identity.
-            "--http-addr", // Local HTTP binds a free loopback port.
-            "--probe-addr", // Local probes bind a free loopback port.
-            "--scheduler-nats-url", // Local NATS has a disposable loopback endpoint.
-            "--data-nats-url", // Local activation does not use the deployed data-plane endpoint.
-            "--scheduler-nats-tls-ca", // Local scheduler NATS uses plain TCP.
-            "--scheduler-nats-tls-cert", // Local scheduler NATS uses plain TCP.
-            "--scheduler-nats-tls-key", // Local scheduler NATS uses plain TCP.
-            "--data-nats-tls-ca", // Local data-plane NATS uses plain TCP.
-            "--data-nats-tls-cert", // Local data-plane NATS uses plain TCP.
-            "--data-nats-tls-key", // Local data-plane NATS uses plain TCP.
-            "--oci-ca-path", // Local release bytes require no registry TLS.
-            "--oci-cache-dir", // Local release bytes require no OCI cache.
-            "--release-artifact-base", // Deployed releases use a registry.
-            "--release-manifest-digest", // Deployed releases use a registry.
-            "--local-application", // Local releases use staged files.
-            "--local-application-digest", // Local releases use staged files.
-            "--user-config", // Local sessions store host configuration in their own directory.
-            "DOCKER_CONFIG", // Local releases require no registry credentials.
-            "WAMN_COMPONENT_ARTIFACT_BASE", // Local components use staged files.
-            "WAMN_REGISTRY_TOKEN_METADATA", // Local releases require no registry token.
-            "WAMN_WASMTIME_CACHE_DIR", // Local sessions own their cache directory.
-            "WAMN_PG_URL", // Local databases use disposable credentials and endpoints.
-            "WAMN_SYSTEM_URL", // Local databases use disposable credentials and endpoints.
-            "WAMN_EXECUTOR_PLATFORM_PG_URL", // Local databases use disposable credentials and endpoints.
-            "WAMN_HTTP_ADMITTER_PG_URL", // Local databases use disposable credentials and endpoints.
-            "WAMN_EVENT_MATERIALIZER_PG_URL", // Local databases use disposable credentials and endpoints.
-            "WAMN_ADMINISTRATION_PG_URL", // Local databases use disposable credentials and endpoints.
-            "WAMN_CONNECTION_STORE_URL",  // Local credentials use the database reader.
-            "WAMN_OAUTH_ENCRYPTION",      // Local hosts share a file key.
-            "WAMN_OAUTH_KEY_FILE",        // Local hosts share the target directory.
-            "WAMN_SESSION_ISSUER",        // Local identity uses a disposable issuer.
-            "WAMN_SESSION_JWKS_CA",       // Local identity uses its private TLS CA.
-            "WAMN_SESSION_INSTANCE_SUFFIX", // Local identity uses its provisioned instance.
-            "OTEL_EXPORTER_OTLP_ENDPOINT", // The local collector has a loopback endpoint.
-        ] {
-            let deployed = deployed.remove(key);
-            let local = local.remove(key);
-            assert_ne!(deployed, local, "remove stale exception {key}");
+            let mut document = config_document();
+            document["org"] = input.org.into();
+            document["project"] = input.project.into();
+            document["environment"] = input.env.into();
+            document["session_identity"] = json!({
+                "issuer": "https://127.0.0.1:8443", "ca": "/tmp/identity-ca.pem", "instance_suffix": "abc12345"
+            });
+            let config = parse_config(&serde_json::to_vec(&document).unwrap()).unwrap();
+            let identity = config.activation_identity();
+            let release = release();
+            let request = DevActivationRequest {
+                applications: &test_applications(),
+                config: &config,
+                release: &release,
+                identity,
+                host_binary: config.host_binary(),
+                wasmtime_cache_dir: config.wasmtime_cache_dir(),
+            };
+            let local = host_process_spec(&request);
+            let workload = flow_http_request(&request).workload.unwrap();
+            let world = workload.wit_world.unwrap();
+            let component = &world.components[0];
+            let deployed_workload = documents
+                .iter()
+                .find(|document| document["kind"].as_str() == Some("WorkloadDeployment"))
+                .expect("the deployed HTTP workload");
+            let deployed_component =
+                &deployed_workload["spec"]["template"]["spec"]["components"][0];
+            for (field, local) in [
+                ("poolSize", component.pool_size),
+                ("maxConcurrency", component.max_concurrency),
+                ("maxInvocations", component.max_invocations),
+                ("reclaimWindowSeconds", component.reclaim_window_seconds),
+                ("reclaimMinInstances", component.reclaim_min_instances),
+            ] {
+                assert_eq!(
+                    deployed_component[field].as_i64().unwrap_or_default(),
+                    i64::from(local),
+                    "HTTP store setting {field} differs"
+                );
+            }
+
+            let mut deployed = settings(&deployed_env, &deployed_args);
+            let mut local = settings(&local.env, &local.args);
+            // The deployed release exposes file transfers. Local applications use staged files.
+            assert_eq!(
+                deployed.remove("--files-addr").as_deref(),
+                Some("0.0.0.0:8082")
+            );
+            assert!(!local.contains_key("--files-addr"));
+            assert_eq!(
+                local.remove("WAMN_CREDENTIAL_DIR"),
+                std::env::var("WAMN_CREDENTIAL_DIR").ok()
+            );
+            // Exact names only: new settings remain visible and fail the comparison.
+            for key in [
+                "WASMCLOUD_HOST_IP",              // Kubernetes supplies the pod IP.
+                "WASMCLOUD_HOST_ENVIRONMENT", // Local workloads use the session environment, not a pod namespace.
+                "--host-name", // Local sessions choose a process identity instead of a pod IP.
+                "--host-group", // Local sessions choose an isolated host group.
+                "--runner",    // Local sessions choose an isolated runner identity.
+                "--http-addr", // Local HTTP binds a free loopback port.
+                "--probe-addr", // Local probes bind a free loopback port.
+                "--scheduler-nats-url", // Local NATS has a disposable loopback endpoint.
+                "--data-nats-url", // Local activation does not use the deployed data-plane endpoint.
+                "--scheduler-nats-tls-ca", // Local scheduler NATS uses plain TCP.
+                "--scheduler-nats-tls-cert", // Local scheduler NATS uses plain TCP.
+                "--scheduler-nats-tls-key", // Local scheduler NATS uses plain TCP.
+                "--data-nats-tls-ca", // Local data-plane NATS uses plain TCP.
+                "--data-nats-tls-cert", // Local data-plane NATS uses plain TCP.
+                "--data-nats-tls-key", // Local data-plane NATS uses plain TCP.
+                "--oci-ca-path",   // Local release bytes require no registry TLS.
+                "--oci-cache-dir", // Local release bytes require no OCI cache.
+                "--release-artifact-base", // Deployed releases use a registry.
+                "--release-manifest-digest", // Deployed releases use a registry.
+                "--local-application", // Local releases use staged files.
+                "--local-application-digest", // Local releases use staged files.
+                "--user-config", // Local sessions store host configuration in their own directory.
+                "DOCKER_CONFIG", // Local releases require no registry credentials.
+                "WAMN_COMPONENT_ARTIFACT_BASE", // Local components use staged files.
+                "WAMN_REGISTRY_TOKEN_METADATA", // Local releases require no registry token.
+                "WAMN_WASMTIME_CACHE_DIR", // Local sessions own their cache directory.
+                "WAMN_SCHEMA",   // Local packages declare their own model schemas.
+                "WAMN_PG_URL",   // Local databases use disposable credentials and endpoints.
+                "WAMN_SYSTEM_URL", // Local databases use disposable credentials and endpoints.
+                "WAMN_EXECUTOR_PLATFORM_PG_URL", // Local databases use disposable credentials and endpoints.
+                "WAMN_HTTP_ADMITTER_PG_URL", // Local databases use disposable credentials and endpoints.
+                "WAMN_EVENT_MATERIALIZER_PG_URL", // Local databases use disposable credentials and endpoints.
+                "WAMN_ADMINISTRATION_PG_URL", // Local databases use disposable credentials and endpoints.
+                "WAMN_CONNECTION_STORE_URL",  // Local credentials use the database reader.
+                "WAMN_OAUTH_ENCRYPTION",      // Local hosts share a file key.
+                "WAMN_OAUTH_KEY_FILE",        // Local hosts share the target directory.
+                "WAMN_SESSION_ISSUER",        // Local identity uses a disposable issuer.
+                "WAMN_SESSION_JWKS_CA",       // Local identity uses its private TLS CA.
+                "WAMN_SESSION_INSTANCE_SUFFIX", // Local identity uses its provisioned instance.
+                "OTEL_EXPORTER_OTLP_ENDPOINT", // The local collector has a loopback endpoint.
+            ] {
+                let deployed = deployed.remove(key);
+                let local = local.remove(key);
+                assert_ne!(deployed, local, "remove stale exception {key}");
+            }
+            assert_eq!(deployed, local, "unapproved host contract difference");
         }
-        assert_eq!(deployed, local, "unapproved host contract difference");
     }
 
     #[test]
@@ -2155,150 +2154,6 @@ mod tests {
             .clone()
             .expect("one host was spawned");
         assert_eq!(spec.program, Path::new("/opt/wamn/bin/wamn-host"));
-        let expected_digest = format!("sha256:{}", "7".repeat(64));
-        let expected_args = [
-            "host",
-            "--host-group",
-            "wamn-dev-fixture",
-            "--scheduler-nats-url",
-            "nats://127.0.0.1:41009",
-            "--data-nats-url",
-            "nats://127.0.0.1:41009",
-            "--host-name",
-            "wamn-dev-fixture-1",
-            "--runner",
-            "wamn-dev-fixture-1",
-            "--environment",
-            "fixture-dev",
-            "--applications",
-            r#"{"receiving":{"packages":["base","overlay"]}}"#,
-            "--http-addr",
-            "127.0.0.1:0",
-            "--local-application",
-            "/tmp/wamn-local-candidate",
-            "--local-application-digest",
-            expected_digest.as_str(),
-            "--wasmtime-cache-dir",
-            "/tmp/wamn-dev-cache",
-            "--user-config",
-            "/tmp/wamn-dev/host-config.yaml",
-            "--project",
-            "fixture",
-            "--org",
-            "example",
-            "--schema",
-            "inventory",
-            "--drain-bound-seconds",
-            "70",
-            "--scheduler-nats-tls-ca",
-            "/run/wamn-dev/nats/ca.crt",
-            "--scheduler-nats-tls-cert",
-            "/run/wamn-dev/nats/client.crt",
-            "--scheduler-nats-tls-key",
-            "/run/wamn-dev/nats/client.key",
-            "--data-nats-tls-ca",
-            "/run/wamn-dev/nats/ca.crt",
-            "--data-nats-tls-cert",
-            "/run/wamn-dev/nats/client.crt",
-            "--data-nats-tls-key",
-            "/run/wamn-dev/nats/client.key",
-            "--drain-delay",
-            "5s",
-            "--nats-connect-timeout",
-            "60s",
-            "--socket-egress",
-            "count",
-            "--probe-addr",
-            "127.0.0.1:0",
-        ]
-        .map(str::to_owned);
-        assert_eq!(&*spec.args, &expected_args);
-        assert_eq!(
-            &*spec.env,
-            &[
-                (
-                    "WASMCLOUD_HOST_ENVIRONMENT".to_owned(),
-                    identity.environment.clone(),
-                ),
-                (
-                    "WAMN_SYSTEM_URL".to_owned(),
-                    "postgresql://identity:identity-secret@127.0.0.1:41004/system".to_owned(),
-                ),
-                (
-                    "WAMN_PG_URL".to_owned(),
-                    "postgresql://guest:guest-secret@127.0.0.1:41005/target".to_owned(),
-                ),
-                (
-                    "WAMN_EXECUTOR_PLATFORM_PG_URL".to_owned(),
-                    "postgresql://platform:platform-secret@127.0.0.1:41006/target".to_owned(),
-                ),
-                (
-                    "WAMN_HTTP_ADMITTER_PG_URL".to_owned(),
-                    "postgresql://admitter:admitter-secret@127.0.0.1:41007/target".to_owned(),
-                ),
-                (
-                    "WAMN_EVENT_MATERIALIZER_PG_URL".to_owned(),
-                    "postgresql://materializer:materializer-secret@127.0.0.1:41008/target"
-                        .to_owned(),
-                ),
-                (
-                    "WAMN_ADMINISTRATION_PG_URL".to_owned(),
-                    "postgresql://administration:administration-secret@127.0.0.1:41013/target"
-                        .to_owned(),
-                ),
-                ("WAMN_EVT_STREAM_REPLICAS".to_owned(), "1".to_owned()),
-                ("WAMN_EVT_DUP_WINDOW_SECS".to_owned(), "120".to_owned()),
-                ("WAMN_EVT_ORG".to_owned(), "example".to_owned()),
-                ("WAMN_EVT_PROJECT".to_owned(), "fixture".to_owned()),
-                ("WAMN_EVT_ENV".to_owned(), "fixture-dev".to_owned()),
-                (
-                    "WAMN_MATERIALIZER_DRAIN_BOUND_SECONDS".to_owned(),
-                    "10".to_owned(),
-                ),
-                (
-                    "OTEL_EXPORTER_OTLP_ENDPOINT".to_owned(),
-                    "http://127.0.0.1:41016".to_owned(),
-                ),
-                ("OTEL_SERVICE_NAME".to_owned(), "wamn-host".to_owned()),
-                (
-                    "OTEL_TRACES_SAMPLER".to_owned(),
-                    "parentbased_traceidratio".to_owned()
-                ),
-                ("OTEL_TRACES_SAMPLER_ARG".to_owned(), "0.1".to_owned()),
-                ("HOME".to_owned(), "/tmp".to_owned()),
-                (
-                    "WAMN_OAUTH_ENCRYPTION".to_owned(),
-                    r#"{"provider":"local"}"#.to_owned(),
-                ),
-                (
-                    "WAMN_OAUTH_KEY_FILE".to_owned(),
-                    "/tmp/oauth.key".to_owned()
-                ),
-                (
-                    "WASMTIME_POOLING_LINEAR_MEMORY_KEEP_RESIDENT".to_owned(),
-                    "65536".to_owned(),
-                ),
-                (
-                    "WASMTIME_POOLING_TABLE_KEEP_RESIDENT".to_owned(),
-                    "4096".to_owned(),
-                ),
-                (
-                    "WASMTIME_POOLING_ASYNC_STACK_KEEP_RESIDENT".to_owned(),
-                    "8192".to_owned(),
-                ),
-                ("WAMN_PG_GUEST_POOL_MAX".to_owned(), "16".to_owned()),
-                ("WAMN_PG_PLATFORM_POOL_MAX".to_owned(), "8".to_owned()),
-                (
-                    "WAMN_HTTP_ROUTE_IN_FLIGHT_LIMIT".to_owned(),
-                    "64".to_owned()
-                ),
-                ("WASH_DEFAULT_HEAP_MEMORY".to_owned(), "256MiB".to_owned()),
-                ("WASH_CORE_INSTANCES".to_owned(), "512".to_owned()),
-                ("WASH_GUEST_MEMORY_MODE".to_owned(), "count".to_owned()),
-                ("WASH_MAX_CONCURRENT_STARTS".to_owned(), "4".to_owned()),
-            ]
-        );
-
         let requests = shared
             .requests
             .lock()

@@ -3,7 +3,7 @@ use super::control;
 use anyhow::Context as _;
 use control::environment::document::EnvironmentDocument;
 use control::platform::document::ClusterDocument;
-use control::platform::render::{Fixtures, Package, install};
+use control::platform::render::{Fixtures, install};
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -121,14 +121,13 @@ pub(super) fn build() -> anyhow::Result<Render> {
             control_operator:json!({"apiVersion":"v1","kind":"Secret","metadata":{"name":"operator-test","namespace":"identity","resourceVersion":"1"},"type":"kubernetes.io/tls","data":{"ca.crt":"Zml4dHVyZS1jYQ==","tls.crt":"Zml4dHVyZS1jcnQ=","tls.key":"Zml4dHVyZS1rZXk="}}),
             platform_ui_files:BTreeMap::new(),
             cdc_credentials:BTreeMap::new(),
-            gates_image:format!("registry.invalid/wamn/gates@sha256:{}","1".repeat(64)),
+            host_image:format!("registry.invalid/wamn/host@sha256:{}","1".repeat(64)),
             releases:BTreeMap::new(),
             web_clients:BTreeMap::new(),
             applied:BTreeMap::new(),
             oauth_key:[0x41;32],
             oauth_exists:false,
             registry: wamn_package_artifact::PackageRegistry {artifact_base:"registry.invalid/wamn/packages".into(), registry_auth_file:work.path().join("registry.json"), insecure_registry:true, oci_ca_paths:Vec::new()},
-            packages:BTreeMap::new(),
             identity_database: json!({"data":{"url":"cG9zdGdyZXNxbDovL2lkZW50aXR5OmZpeHR1cmVAZGF0YWJhc2Uvd2Ftbl9zeXN0ZW0="}}),
             identity_image: format!("registry.invalid/wamn/identity@sha256:{}", "1".repeat(64)),
             postgres_image: "postgres:18".into(),
@@ -234,34 +233,6 @@ pub(super) fn build() -> anyhow::Result<Render> {
 
         fixtures.releases.insert(key.clone(), manifest.clone());
         fixtures.web_clients.insert(key.clone(), BTreeMap::new());
-
-        fixtures.outputs.insert(
-            format!("platform-release-{key}"),
-            environment.release.to_string(),
-        );
-
-        let id = environment
-            .applications
-            .keys()
-            .next()
-            .context("fixture application")?
-            .clone();
-        fixtures.packages.insert(
-            key.clone(),
-            vec![Package {
-                id: id.clone(),
-                version: "1.0.0".into(),
-                digest: format!("sha256:{}", "2".repeat(64)),
-                files: [
-                    (
-                        "wamn.json".into(),
-                        json!({"package":{"id":id,"version":"1.0.0"}}).to_string(),
-                    ),
-                    ("migrations/0001.sql".into(), "SELECT 1;".into()),
-                ]
-                .into(),
-            }],
-        );
 
         let database = wamn_control_provision::project_env_database_name(
             &environment.org,

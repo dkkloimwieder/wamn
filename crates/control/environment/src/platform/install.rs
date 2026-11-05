@@ -15,12 +15,9 @@ use wamn_release_control::release_chart::Target;
 
 use super::document::{ClusterDocument, Provider};
 use super::job::{self, JobRequest, JobSecret};
+use super::lock;
 use super::manifests::{already_applied, objects, operator_values};
 use super::steps::{InstallStep, install_steps};
-use super::{build, lock};
-
-// The runtime operator version pinned by docs/operations/gcp.md section 4.4.
-const OPERATOR_VERSION: &str = "2.11.0";
 
 /// Apply steps 4.3 through 4.21 under the install lock, excluding owner steps.
 ///
@@ -38,6 +35,7 @@ pub async fn apply(
     registry: &wamn_package_artifact::PackageRegistry,
     mut progress: impl FnMut(&str) -> anyhow::Result<()>,
 ) -> anyhow::Result<()> {
+    require_artifacts(document, platform_version, environments, work_directory)?;
     let _lock = lock::take(work_directory)?;
     let kubeconfig = work_directory.join(format!("{}.kubeconfig", document.cluster_name));
     let context = document.provider.kubeconfig(document, &kubeconfig).await?;
@@ -46,7 +44,6 @@ pub async fn apply(
         context,
         namespace: "platform".into(),
     };
-    let mut published = None;
     for step in applied_steps(document, platform_version) {
         let started = Instant::now();
         progress(&format!("{} {}: starting", step.number, step.title))?;
@@ -55,16 +52,6 @@ pub async fn apply(
             "4.4" => runtime(&target, document, repository, work_directory, &step).await?,
             "4.4.1" => collector(&target, document, repository, &step).await?,
             "4.5" => postgres(&target, document, repository, &step).await?,
-            "4.6" => {
-                build::apply(
-                    document,
-                    platform_version,
-                    repository,
-                    environments,
-                    work_directory,
-                )
-                .await?
-            }
             "4.7" => provisioning(&target, document, repository, work_directory, &step).await?,
             "4.8" => broker(&target, document, repository, environments, &step).await?,
             "4.9" => platform_inputs(&target, document, repository).await?,
@@ -76,23 +63,6 @@ pub async fn apply(
                 super::identity::apply(&target, document, repository, environments, work_directory)
                     .await?
             }
-            "4.13" => {
-                super::packages::apply(&target, repository, environments, work_directory, registry)
-                    .await?
-            }
-            "4.14" => {
-                let result = super::releases::apply(
-                    &target,
-                    repository,
-                    environments,
-                    work_directory,
-                    registry,
-                )
-                .await?;
-                let changed = result.changed;
-                published = Some(result);
-                changed
-            }
             _ => unreachable!("the install step filter selects only implemented steps"),
         };
         progress(&format!(
@@ -103,23 +73,6 @@ pub async fn apply(
             started.elapsed().as_secs_f64()
         ))?;
     }
-    if let Some(published) = published {
-        for (path, _, digest) in &published.releases {
-            progress(&format!("{}: release = \"{digest}\"", path.display()))?;
-        }
-        if published
-            .releases
-            .iter()
-            .any(|(_, environment, digest)| unrecorded(&environment.release, digest))
-        {
-            progress(
-                "Commit the release lines in the environment files, then rerun platform apply for step 4.17.",
-            )?;
-            return Ok(());
-        }
-    }
-    progress("4.15 Qualification: skipped: qualify-release on the build machine")?;
-    progress("4.16 Record the releases: skipped: owner input")?;
     let started = Instant::now();
     progress("4.16.1 Connections: starting")?;
     let changed =
@@ -249,11 +202,36 @@ pub fn registry(
     super::packages::registry(document)
 }
 
-/// Whether 4.16 must stop for this environment: its committed release is
-/// `none` or a digest other than the one 4.14 published, so 4.17 would apply
-/// an old release (wamn-ky3mq).
-fn unrecorded(declared: &crate::environment::document::DeclaredRelease, published: &str) -> bool {
-    *declared != crate::environment::document::DeclaredRelease::Digest(published.to_owned())
+/// Require published inputs before the installer changes the cluster.
+fn require_artifacts(
+    document: &ClusterDocument,
+    version: &str,
+    environments: &Path,
+    directory: &Path,
+) -> anyhow::Result<()> {
+    let chart = directory.join("release-chart");
+    ensure!(
+        wamn_release_control::release_chart::read_platform_version(&chart.join("Chart.yaml"))?
+            == version,
+        "the prepared release chart must name platform {version}"
+    );
+    let values: Value = serde_yaml::from_slice(&std::fs::read(chart.join("values.yaml"))?)?;
+    ensure!(
+        super::artifact_plan::images_match(&values, &document.registry, version),
+        "prepare the published platform {version} chart in {} before platform apply",
+        chart.display()
+    );
+    for (path, environment) in super::broker::documents(environments)? {
+        ensure!(
+            matches!(
+                environment.release,
+                crate::environment::document::DeclaredRelease::Digest(_)
+            ),
+            "{} must select a published, qualified release before platform apply",
+            path.display()
+        );
+    }
+    Ok(())
 }
 
 fn applied_steps(
@@ -265,18 +243,7 @@ fn applied_steps(
         .filter(|step| {
             matches!(
                 step.number,
-                "4.3"
-                    | "4.4"
-                    | "4.4.1"
-                    | "4.5"
-                    | "4.6"
-                    | "4.7"
-                    | "4.8"
-                    | "4.9"
-                    | "4.11"
-                    | "4.12"
-                    | "4.13"
-                    | "4.14"
+                "4.3" | "4.4" | "4.4.1" | "4.5" | "4.7" | "4.8" | "4.9" | "4.11" | "4.12"
             )
         })
 }
@@ -557,14 +524,39 @@ pub(super) fn operator_objects(
         repository,
         "platform",
         &operator_values(repository, document)?,
-    )])
+    )?])
 }
 
 /// Keep the pinned operator chart and its values in one install input.
-pub fn operator_entry(repository: &Path, namespace: &str, values: &Value) -> Value {
-    json!({"chart": "oci://ghcr.io/wasmcloud/charts/runtime-operator", "version": OPERATOR_VERSION,
-        "name":"wamn", "namespace":namespace, "render_chart": repository.join(format!("deploy/platform/release/charts/runtime-operator-{OPERATOR_VERSION}.tgz")),
-        "values": values})
+///
+/// # Errors
+/// Returns an error when the dependency or its local archive is missing.
+pub fn operator_entry(repository: &Path, namespace: &str, values: &Value) -> anyhow::Result<Value> {
+    let chart = repository.join("deploy/platform/release");
+    let metadata: Value = serde_yaml::from_slice(&std::fs::read(chart.join("Chart.yaml"))?)?;
+    let dependency = metadata["dependencies"]
+        .as_array()
+        .and_then(|dependencies| {
+            dependencies
+                .iter()
+                .find(|entry| entry["name"] == "runtime-operator")
+        })
+        .context("release chart has no runtime-operator dependency")?;
+    let version = dependency["version"]
+        .as_str()
+        .context("operator dependency has no version")?;
+    let archive = chart
+        .join("charts")
+        .join(format!("runtime-operator-{version}.tgz"));
+    ensure!(
+        archive.is_file(),
+        "missing pinned operator archive {}",
+        archive.display()
+    );
+    Ok(
+        json!({"chart": archive, "version": version, "name":"wamn", "namespace":namespace,
+        "values": values}),
+    )
 }
 
 async fn provisioning(
@@ -1012,11 +1004,15 @@ fn write_operator_values(path: &Path, values: &Value) -> anyhow::Result<()> {
     std::fs::write(path, bytes).with_context(|| format!("write {}", path.display()))
 }
 
-fn skip_operator(releases: &Value, live_values: Option<&Value>, desired: &Value) -> bool {
+fn skip_operator(
+    releases: &Value,
+    live_values: Option<&Value>,
+    desired: &Value,
+    version: &str,
+) -> bool {
     releases.as_array().is_some_and(|releases| {
         releases.iter().any(|release| {
-            release["name"] == "wamn"
-                && release["chart"] == format!("runtime-operator-{OPERATOR_VERSION}")
+            release["name"] == "wamn" && release["chart"] == format!("runtime-operator-{version}")
         })
     }) && live_values == Some(desired)
 }
@@ -1069,7 +1065,14 @@ async fn install_operator(
     } else {
         None
     };
-    if skip_operator(&releases, live_values.as_ref(), values) {
+    if skip_operator(
+        &releases,
+        live_values.as_ref(),
+        values,
+        operator["version"]
+            .as_str()
+            .context("operator chart version")?,
+    ) {
         return Ok(false);
     }
     helm(
@@ -1083,11 +1086,6 @@ async fn install_operator(
             operator["chart"]
                 .as_str()
                 .context("operator chart input")?
-                .as_ref(),
-            "--version".as_ref(),
-            operator["version"]
-                .as_str()
-                .context("operator chart version")?
                 .as_ref(),
             "-f".as_ref(),
             values_path.as_os_str(),
@@ -1227,8 +1225,9 @@ mod tests {
                 .to_string()
                 .contains("cannot fetch")
         );
-        let chart = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../../deploy/platform/release/charts/runtime-operator-2.11.0.tgz");
+        let repository = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
+        let operator = operator_entry(&repository, "platform", &json!({})).unwrap();
+        let chart = Path::new(operator["chart"].as_str().unwrap());
         let wrong = json!({"chart":chart, "version":"wrong", "name":"test", "namespace":"test", "values":{}});
         assert!(
             helm_template(&wrong)
@@ -1351,21 +1350,6 @@ mod tests {
     }
 
     #[test]
-    fn a_none_or_stale_committed_release_stops_at_4_16() {
-        use crate::environment::document::DeclaredRelease;
-        let published = format!("sha256:{}", "a".repeat(64));
-        assert!(unrecorded(&DeclaredRelease::None, &published));
-        assert!(unrecorded(
-            &DeclaredRelease::Digest(format!("sha256:{}", "b".repeat(64))),
-            &published
-        ));
-        assert!(!unrecorded(
-            &DeclaredRelease::Digest(published.clone()),
-            &published
-        ));
-    }
-
-    #[test]
     fn first_authorization_holds_only_certificate_users() {
         let text = super::super::broker::initial_authorization();
         let authorization: Value =
@@ -1415,8 +1399,7 @@ mod tests {
         assert_eq!(
             numbers,
             [
-                "4.3", "4.4", "4.4.1", "4.5", "4.6", "4.7", "4.8", "4.9", "4.11", "4.12", "4.13",
-                "4.14"
+                "4.3", "4.4", "4.4.1", "4.5", "4.7", "4.8", "4.9", "4.11", "4.12"
             ]
         );
     }
@@ -1510,25 +1493,37 @@ mod tests {
 
     #[test]
     fn operator_skip_requires_the_named_release_version_and_equal_values() {
-        let releases = json!([{"name": "wamn", "chart": "runtime-operator-2.11.0"}]);
+        let repository = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
+        let operator = operator_entry(&repository, "platform", &json!({})).unwrap();
+        let version = operator["version"].as_str().unwrap();
+        let chart = format!("runtime-operator-{version}");
+        let releases = json!([{"name": "wamn", "chart": chart}]);
         let desired = json!({"operator": {"watchNamespaces": ["hosts"]}});
-        assert!(skip_operator(&releases, Some(&desired), &desired));
-        assert!(!skip_operator(&json!([]), Some(&desired), &desired));
-        assert!(!skip_operator(&releases, None, &desired));
+        assert!(skip_operator(&releases, Some(&desired), &desired, version));
+        assert!(!skip_operator(
+            &json!([]),
+            Some(&desired),
+            &desired,
+            version
+        ));
+        assert!(!skip_operator(&releases, None, &desired, version));
         assert!(!skip_operator(
             &releases,
             Some(&json!({"operator": {}})),
-            &desired
+            &desired,
+            version
         ));
         assert!(!skip_operator(
-            &json!([{"name": "wamn", "chart": "runtime-operator-2.10.2"}]),
+            &json!([{"name":"wamn","chart":"runtime-operator-other"}]),
             Some(&desired),
-            &desired
+            &desired,
+            version
         ));
         assert!(!skip_operator(
-            &json!([{"name": "other", "chart": "runtime-operator-2.11.0"}]),
+            &json!([{"name":"other","chart":chart}]),
             Some(&desired),
-            &desired
+            &desired,
+            version
         ));
     }
 

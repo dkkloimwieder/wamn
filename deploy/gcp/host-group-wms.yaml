@@ -10,12 +10,6 @@ replicas: 1
 env:
 - name: WAMN_OAUTH_ENCRYPTION
   value: '{"provider":"gcp","project":"wamn-dev","region":"us-central1"}'
-- name: WAMN_PG_GUEST_POOL_MAX
-  value: '16'
-- name: WAMN_PG_PLATFORM_POOL_MAX
-  value: '8'
-- name: WAMN_HTTP_ROUTE_IN_FLIGHT_LIMIT
-  value: '64'
 - name: WAMN_WASMTIME_CACHE_DIR
   value: /tmp/wamn-wasmtime-cache
 - name: DOCKER_CONFIG
@@ -63,10 +57,6 @@ resources:
   limits:
     memory: 4Gi
     cpu: '2'
-  defaultHeapMemory: 256MiB
-  coreInstances: 512
-  guestMemoryMode: count
-  maxConcurrentStarts: 1
 volumeMounts:
 - name: registry-pull
   mountPath: /etc/wamn/registry

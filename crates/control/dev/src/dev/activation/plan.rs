@@ -13,7 +13,6 @@ pub(super) fn validate_request(
         ("environment", identity.environment.as_str()),
         ("org", identity.org.as_str()),
         ("project", identity.project.as_str()),
-        ("schema", identity.schema.as_str()),
         ("host-group", identity.host_group.as_str()),
         ("host-name", identity.host_name.as_str()),
         ("runner", identity.runner.as_str()),
@@ -73,13 +72,12 @@ pub(super) fn host_namespace(identity: &DevActivationIdentity) -> &str {
 /// `deploy/platform/http-route-workload.example.yaml` is held equal to this
 /// by a test in this module, so the template gaining or losing a claim fails
 /// here rather than in a cluster.
-pub fn flow_http_identity_claims(identity: &DevActivationIdentity) -> [(&'static str, String); 5] {
+pub fn flow_http_identity_claims(identity: &DevActivationIdentity) -> [(&'static str, String); 4] {
     [
         ("wamn.env_key", identity.env_key()),
         ("wamn.catalog", identity.catalog.clone()),
         ("wamn.environment", identity.environment.clone()),
         ("wamn.project", identity.project.clone()),
-        ("wamn.schema", identity.schema.clone()),
     ]
 }
 
@@ -308,10 +306,6 @@ pub(super) fn host_process_spec(
     ))
     .expect("the platform chart defaults are valid YAML");
     let runtime = &platform["runtime-operator"]["runtime"];
-    let group: serde_yaml::Value = serde_yaml::from_str(include_str!(
-        "../../../../../../deploy/gcp/host-group-receiving.yaml"
-    ))
-    .expect("the Receiving host group is valid YAML");
     let identity = request.identity;
     let event_identity = request.config.activation_identity();
     let local = request.config.local_artifacts();
@@ -345,8 +339,6 @@ pub(super) fn host_process_spec(
         identity.project.clone(),
         "--org".to_owned(),
         identity.org.clone(),
-        "--schema".to_owned(),
-        identity.schema.clone(),
         "--drain-bound-seconds".to_owned(),
         HOST_SHUTDOWN_TIMEOUT.as_secs().to_string(),
     ];
@@ -467,23 +459,7 @@ pub(super) fn host_process_spec(
                 .to_owned(),
         ));
     }
-    for variable in group["env"].as_sequence().expect("host group environment") {
-        let name = variable["name"].as_str().expect("environment name");
-        if [
-            "WAMN_COMPONENT_POOL_SIZE",
-            "WAMN_PG_GUEST_POOL_MAX",
-            "WAMN_PG_PLATFORM_POOL_MAX",
-            "WAMN_HTTP_ROUTE_IN_FLIGHT_LIMIT",
-        ]
-        .contains(&name)
-        {
-            env.push((
-                name.to_owned(),
-                variable["value"].as_str().expect("tuning value").to_owned(),
-            ));
-        }
-    }
-    let resources = &group["resources"];
+    let resources = &runtime["resources"];
     for (name, value) in [
         ("WASH_DEFAULT_HEAP_MEMORY", &resources["defaultHeapMemory"]),
         ("WASH_CORE_INSTANCES", &resources["coreInstances"]),

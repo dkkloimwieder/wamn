@@ -1,7 +1,6 @@
 # wamn images (SR1 pattern: one build, one final stage per artifact; SR9 split).
 #   docker build --build-arg WAMN_CHECKOUT_KEY="$(printf '%s' "$(realpath .)" | sha256sum | cut -c1-16)" --target host       -t wamn-host:dev       .  # HTTP + durable queue host
 #   docker build --build-arg WAMN_CHECKOUT_KEY="$(printf '%s' "$(realpath .)" | sha256sum | cut -c1-16)" --target ctl        -t wamn-ctl:dev        .  # one-shot verbs
-#   docker build --build-arg WAMN_CHECKOUT_KEY="$(printf '%s' "$(realpath .)" | sha256sum | cut -c1-16)" --target cdc-reader -t wamn-cdc-reader:dev .  # CDC event reader
 #   docker build --build-arg WAMN_CHECKOUT_KEY="$(printf '%s' "$(realpath .)" | sha256sum | cut -c1-16)" --target identity   -t wamn-identity:dev   .  # identity authority and JWKS
 #   docker build --build-arg WAMN_CHECKOUT_KEY="$(printf '%s' "$(realpath .)" | sha256sum | cut -c1-16)" --target gates      -t wamn-gates:dev      .  # gates: FROM host + suite + fixtures
 #   docker build --build-arg WAMN_CHECKOUT_KEY="$(printf '%s' "$(realpath .)" | sha256sum | cut -c1-16)" --target edge --output type=local,dest=target/edge .  # aarch64 edge box binary
@@ -13,7 +12,7 @@
 # Later invocations reuse shared BuildKit registry and Git caches with locks
 # that prevent concurrent writes, and one locked native target cache per checkout.
 # One build-native stage compiles all native packages in one invocation. The
-# host artifact ships no provisioning / replication-credential / gate code
+# host executable links no provisioning / replication-credential / gate code
 # (SR9 strings spot-check); the gates image layers the suite on top of the
 # IDENTICAL host stage so Jobs exercise the same host lib code they verify.
 FROM rust:1.99-trixie AS toolchain
@@ -159,6 +158,7 @@ RUN --mount=type=cache,id=wamn-component-cargo-registry,target=/usr/local/cargo/
 FROM debian:trixie-slim AS host
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates && rm -rf /var/lib/apt/lists/*
 COPY --from=build-native /native-output/wamn-host /usr/local/bin/wamn-host
+COPY --from=build-native /native-output/wamn-cdc-reader /usr/local/bin/wamn-cdc-reader
 # The Docker credential helper wash-runtime runs for a registry that the
 # mounted config.json names under credHelpers (docs/plan/component-pull.md).
 COPY --from=build-native /native-output/docker-credential-wamn /usr/local/bin/docker-credential-wamn
@@ -179,13 +179,6 @@ ADD --chmod=0755 --checksum=sha256:629d3f410e09bf49b64ae7079f7f0bda1191efed311f7
 ENV HOME=/tmp
 ENTRYPOINT ["/usr/local/bin/wamn-ctl"]
 
-# ---- cdc-reader image: the CDC event reader service (SR9) -------------------
-FROM debian:trixie-slim AS cdc-reader
-RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates && rm -rf /var/lib/apt/lists/*
-COPY --from=build-native /native-output/wamn-cdc-reader /usr/local/bin/wamn-cdc-reader
-ENV HOME=/tmp
-ENTRYPOINT ["/usr/local/bin/wamn-cdc-reader"]
-
 # ---- identity image: separate signing authority and public JWKS ------------
 FROM debian:trixie-slim AS identity
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates && rm -rf /var/lib/apt/lists/*
@@ -201,9 +194,6 @@ COPY --from=build-native /native-output/wamn-gates /usr/local/bin/wamn-gates
 COPY --from=build-native /native-output/wamn-ctl /usr/local/bin/wamn-ctl
 # Operations-only impact analysis crosses its own executable boundary.
 COPY --from=build-native /native-output/wamn-ctl-ops /usr/local/bin/wamn-ctl-ops
-# Reader-inclusive gates exercise the native CDC service through its executable
-# boundary; the gates package does not link the service crate.
-COPY --from=build-native /native-output/wamn-cdc-reader /usr/local/bin/wamn-cdc-reader
 # Test fixtures baked in so the retained gates run with no volume plumbing.
 COPY --from=component-builder /component-output/busyloop.wasm /bench/busyloop.wasm
 COPY --from=component-builder /component-output/sockprobe.wasm /bench/sockprobe.wasm

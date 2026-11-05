@@ -119,7 +119,7 @@ pub fn install_steps(document: &ClusterDocument, platform_version: &str) -> Vec<
     let mut steps = vec![
         InstallStep {
             number: "4.1", title: "Work directory and binaries",
-            runs: Runner::Verb("local build"),
+            runs: Runner::Owner("prepare the work directory and tools"),
             inputs: vec![("work directory", "$HOME/.cache/wamn-install".into()), ("binaries", "wamn, wamn-ctl, wamn-scenario-worker".into())],
             owner_inputs: vec![],
         },
@@ -142,7 +142,7 @@ pub fn install_steps(document: &ClusterDocument, platform_version: &str) -> Vec<
         InstallStep {
             number: "4.4", title: "Namespaces, internal CA, NATS and runtime operator",
             runs: Runner::Verb("Helm SDK, Kubernetes API"),
-            inputs: vec![("namespaces", "platform, identity, hosts, edge".into()), ("CA Secret and issuer", "cert-manager/wasmcloud-ca; ClusterIssuer wasmcloud-ca".into()), ("chart certificates", "platform/wasmcloud-nats-tls, platform/wasmcloud-operator-tls, hosts/wasmcloud-runtime-tls, hosts/wasmcloud-data-tls".into()), ("NATS", "nats://wamn-nats.platform.svc.cluster.local:4222".into()), ("NATS authorization", "platform/wamn-nats-authorization".into()), ("operator release", "platform/wamn (runtime-operator 2.11.0); watches hosts".into())],
+            inputs: vec![("namespaces", "platform, identity, hosts, edge".into()), ("CA Secret and issuer", "cert-manager/wasmcloud-ca; ClusterIssuer wasmcloud-ca".into()), ("chart certificates", "platform/wasmcloud-nats-tls, platform/wasmcloud-operator-tls, hosts/wasmcloud-runtime-tls, hosts/wasmcloud-data-tls".into()), ("NATS", "nats://wamn-nats.platform.svc.cluster.local:4222".into()), ("NATS authorization", "platform/wamn-nats-authorization".into()), ("operator release", "platform/wamn (the release chart dependency); watches hosts".into())],
             owner_inputs: vec![],
         },
         InstallStep {
@@ -161,8 +161,8 @@ pub fn install_steps(document: &ClusterDocument, platform_version: &str) -> Vec<
             owner_inputs: vec![quota],
         },
         InstallStep {
-            number: "4.6", title: "Packages and platform build",
-            runs: Runner::Verb("local build"),
+            number: "4.6", title: "Published platform artifacts",
+            runs: Runner::Owner("build-platform on the build machine before platform apply"),
             inputs: vec![("platform_version", platform_version.into()), ("registry", registry.clone()), ("platform images", format!("{registry}/{{wamn-host,wamn-runner,wamn-gates,wamn-identity,wamn-edge-web,wamn/http,wamn/materializer}}:{platform_version}")), ("release chart", "$HOME/.cache/wamn-install/release-chart".into())],
             owner_inputs: vec![registry_owner.clone()],
         },
@@ -206,21 +206,9 @@ pub fn install_steps(document: &ClusterDocument, platform_version: &str) -> Vec<
             }, dns.clone()],
         },
         InstallStep {
-            number: "4.13", title: "Packages",
-            runs: Runner::Job("platform/platform-packages-<org>--<project>--<env>"),
-            inputs: vec![("environments", environments.into()), ("environment keys", env_keys.into()), ("package artifact base", format!("{registry}/packages")), ("component artifact base", format!("{registry}/components")), ("package versions", "from environment documents".into())],
-            owner_inputs: vec![registry_owner.clone()],
-        },
-        InstallStep {
-            number: "4.14", title: "Publish releases",
-            runs: Runner::Job("platform/platform-release-<org>--<project>--<env>"),
-            inputs: vec![("org", org.clone()), ("environments", environments.into()), ("environment keys", env_keys.into()), ("publisher principals", "wamn-management-author-<org>--<project>--<env>".into()), ("package artifact base", format!("{registry}/packages")), ("release artifact base", format!("{registry}/releases")), ("operator certificate", format!("identity/operator-{org}")), ("skip inputs", "package artifact digests and database path".into()), ("packages", "from environment documents and package artifacts".into())],
-            owner_inputs: vec![registry_owner.clone()],
-        },
-        InstallStep {
             number: "4.15", title: "Qualification",
             runs: Runner::Owner("qualify-release on the build machine"),
-            inputs: vec![("environments", environments.into()), ("platform_version", platform_version.into()), ("release artifact base", format!("{registry}/releases")), ("release chart", "$HOME/.cache/wamn-install/release-chart".into()), ("release digests", "from 4.14".into())],
+            inputs: vec![("environments", environments.into()), ("platform_version", platform_version.into()), ("release artifact base", format!("{registry}/releases")), ("release chart", "$HOME/.cache/wamn-install/release-chart".into()), ("release digests", "published before platform apply".into())],
             owner_inputs: vec![registry_owner],
         },
         InstallStep {
@@ -231,8 +219,8 @@ pub fn install_steps(document: &ClusterDocument, platform_version: &str) -> Vec<
         },
         InstallStep {
             number: "4.16", title: "Record the releases",
-            runs: Runner::Owner("commit the release lines printed by platform apply"),
-            inputs: vec![("environments", environments.into()), ("route hosts", routes.clone()), ("web bucket", format!("gs://{}/clients/<package>/<release digest hex>/", document.buckets.web)), ("release digests", "from 4.14, qualified by 4.15".into())],
+            runs: Runner::Owner("commit the qualified release digests before platform apply"),
+            inputs: vec![("environments", environments.into()), ("route hosts", routes.clone()), ("web bucket", format!("gs://{}/clients/<package>/<release digest hex>/", document.buckets.web)), ("release digests", "published and qualified before platform apply".into())],
             owner_inputs: vec![],
         },
         InstallStep {
@@ -250,7 +238,7 @@ pub fn install_steps(document: &ClusterDocument, platform_version: &str) -> Vec<
         InstallStep {
             number: "4.18", title: "CDC readers",
             runs: Runner::Verb("Kubernetes API"),
-            inputs: vec![("environments", environments.into()), ("replication Secrets", "hosts/wamn-cdc-<org>--<project>--<env>".into()), ("registry-reader Secrets", "hosts/wamn-registry-reader-<org>--<project>--<env>".into()), ("reader image", "stamped platform.gates.image; /usr/local/bin/wamn-cdc-reader".into()), ("NATS", "nats://wamn-nats.platform.svc.cluster.local:4222; certificate hosts/wamn-cdc-reader-nats".into()), ("service account", "hosts/event-reader".into())],
+            inputs: vec![("environments", environments.into()), ("replication Secrets", "hosts/wamn-cdc-<org>--<project>--<env>".into()), ("registry-reader Secrets", "hosts/wamn-registry-reader-<org>--<project>--<env>".into()), ("reader image", "stamped host image; /usr/local/bin/wamn-cdc-reader".into()), ("NATS", "nats://wamn-nats.platform.svc.cluster.local:4222; certificate hosts/wamn-cdc-reader-nats".into()), ("service account", "hosts/event-reader".into())],
             owner_inputs: vec![],
         },
         InstallStep {

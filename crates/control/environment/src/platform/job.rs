@@ -1098,7 +1098,7 @@ pub async fn output(target: &Target, request: &JobRequest) -> anyhow::Result<Str
 pub fn install_job_requests(
     registry: &wamn_package_artifact::PackageRegistry,
 ) -> anyhow::Result<Vec<(&'static str, JobRequest, Vec<JobSecret>)>> {
-    use super::{control, environments, identity, install, invite, packages, releases, web};
+    use super::{control, environments, identity, install, invite, web};
     let document = serde_json::from_value(json!({
         "provider": "kind", "project_id": "", "zone": "", "cluster_name": "test",
         "org": "test", "owner_email": "owner@example.com", "registry": "registry",
@@ -1116,7 +1116,6 @@ pub fn install_job_requests(
         "tls.key": STANDARD.encode("test-key")
     }}))?;
     let image = "registry/runner@sha256:abc";
-    let env_key = "test--receiving--dev";
     let mut requests = Vec::new();
     for request in install::provisioning_jobs(&document, image) {
         let verb = match request.name.as_str() {
@@ -1137,33 +1136,6 @@ pub fn install_job_requests(
             "provision-project-env",
             identity::session_request(&environment, image),
             vec!["WAMN_SYSTEM_ADMIN_URL", "WAMN_TARGET_ADMIN_DATABASE_URL"],
-        ),
-        (
-            "apply-package",
-            packages::package_request(
-                env_key,
-                "fixture-1".into(),
-                &environment,
-                image,
-                registry,
-                &auth,
-            )?,
-            vec!["WAMN_SYSTEM_ADMIN_URL", "WAMN_PG_ADMIN_URL"],
-        ),
-        (
-            "reconcile-package-data-access",
-            packages::access_request(env_key, &environment, image, registry),
-            vec!["WAMN_SYSTEM_ADMIN_URL", "WAMN_PG_ADMIN_URL"],
-        ),
-        (
-            "reconcile-replica-identity",
-            packages::replica_request(env_key, "fixture", image),
-            vec!["WAMN_SYSTEM_ADMIN_URL", "WAMN_PG_ADMIN_URL"],
-        ),
-        (
-            "publish-release",
-            releases::request(env_key, "", image, registry)?,
-            vec!["WAMN_SYSTEM_ADMIN_URL", "WAMN_PG_ADMIN_URL"],
         ),
         (
             "web upload",

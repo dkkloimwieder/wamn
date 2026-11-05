@@ -48,6 +48,12 @@ runtime-operator:
     # Residency in bytes. A release probe chose 64 KiB of linear memory: keeping more makes each drop clear it.
     # These values leave allocator capacity unchanged. Dev and bench read this list.
     env:
+      - name: WAMN_PG_GUEST_POOL_MAX
+        value: "16"
+      - name: WAMN_PG_PLATFORM_POOL_MAX
+        value: "8"
+      - name: WAMN_HTTP_ROUTE_IN_FLIGHT_LIMIT
+        value: "64"
       - name: WASMTIME_POOLING_LINEAR_MEMORY_KEEP_RESIDENT
         value: "65536"
       - name: WASMTIME_POOLING_TABLE_KEEP_RESIDENT
@@ -57,6 +63,9 @@ runtime-operator:
       - name: WASMTIME_POOLING_ASYNC_STACK_KEEP_RESIDENT
         value: "8192"
     resources:
+      defaultHeapMemory: 256MiB
+      coreInstances: 512
+      maxConcurrentStarts: 4
       guestMemoryMode: count
       requests:
         memory: "64Mi"

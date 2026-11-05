@@ -42,7 +42,7 @@ use wamn_environment_control::provision_org::{OrgRecord, ProvisionOrgRequest, pr
 
 /// The deployment-owned inputs a standing development environment needs.
 ///
-/// The live gate reads them from its harness environment and the operator
+/// The live test reads them from its explicit inputs and the operator
 /// command takes them as flags; neither builds a second set of arguments.
 #[derive(Debug)]
 pub struct DevEnvironmentInputs {
@@ -118,10 +118,10 @@ pub async fn provision(
     admin: &Client,
     root: &Path,
     platform_domain: &str,
-    package_sources: &[PathBuf],
+    document: &wamn_environment_control::environment::document::EnvironmentDocument,
 ) -> anyhow::Result<DevEnvironment> {
     wamn_control_provision::validate_platform_domain(platform_domain)?;
-    let identity = dev_activation_identity(package_sources)?;
+    let identity = dev_activation_identity(document);
     let version: i32 = admin
         .query_one("SHOW server_version_num", &[])
         .await
@@ -138,7 +138,11 @@ pub async fn provision(
         !root.join("identity-process.json").exists(),
         "stop the existing development environment before provisioning again"
     );
-    let scope = JourneyScope::receiving();
+    let scope = JourneyScope {
+        org: identity.org.clone(),
+        project: identity.project.clone(),
+        environment: identity.environment.clone(),
+    };
     provision_journey_control(&scope, system_url, admin).await?;
     let (mut system, connection) =
         tokio_postgres::connect(system_url, tokio_postgres::NoTls).await?;
@@ -233,7 +237,7 @@ pub const ENVIRONMENT: &str = "dev";
 /// derives it.
 pub const ENV_KEY: &str = "acme--receiving--dev";
 
-/// The org, project, environment and tenant that one journey provisions.
+/// The org, project, and environment that one journey provisions.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct JourneyScope {
     pub org: String,
@@ -1068,38 +1072,23 @@ pub async fn spawn_journey_management_gate(
     )
 }
 
-/// The identity every run of this environment activates under. Its schema is
-/// the one the package sources declare for their models, or the id of a
-/// package with no SQL.
+/// The identity declared by the local environment document.
 pub fn dev_activation_identity(
-    package_sources: &[PathBuf],
-) -> anyhow::Result<DevActivationIdentity> {
-    let mut schemas = std::collections::BTreeSet::new();
-    for root in package_sources {
-        let manifest = super::config::read_package_manifest(root)?;
-        // A package with no SQL declares no model, and its host still names
-        // one schema: the package's own id.
-        if manifest.declares_no_sql() {
-            schemas.insert(manifest.package.id);
-            continue;
-        }
-        schemas.extend(manifest.models.into_values().map(|model| model.schema));
-    }
-    let mut schemas = schemas.into_iter();
-    let (Some(schema), None) = (schemas.next(), schemas.next()) else {
-        anyhow::bail!("the package sources must declare exactly one model schema");
-    };
+    document: &wamn_environment_control::environment::document::EnvironmentDocument,
+) -> DevActivationIdentity {
     let process = std::process::id();
-    Ok(DevActivationIdentity {
+    let key =
+        wamn_control_registry::project_env_key(&document.org, &document.project, &document.env);
+    let host_group = format!("wamn-dev-{key}");
+    DevActivationIdentity {
         catalog: "default".to_owned(),
-        environment: ENVIRONMENT.to_owned(),
-        org: ORG.to_owned(),
-        project: PROJECT.to_owned(),
-        schema,
-        host_group: "wamn-dev-receiving".to_owned(),
-        host_name: format!("wamn-dev-receiving-{process}"),
-        runner: format!("wamn-dev-receiving-{process}"),
-    })
+        environment: document.env.clone(),
+        org: document.org.clone(),
+        project: document.project.clone(),
+        host_name: format!("{host_group}-{process}"),
+        runner: format!("{host_group}-{process}"),
+        host_group,
+    }
 }
 
 pub fn write_dev_config(
@@ -1154,7 +1143,6 @@ pub fn write_dev_config(
         "environment": identity.environment.as_str(),
         "org": identity.org.as_str(),
         "project": identity.project.as_str(),
-        "schema": identity.schema.as_str(),
         "host_group": identity.host_group.as_str(),
         "host_name": identity.host_name.as_str(),
         "runner": identity.runner.as_str(),
@@ -1182,11 +1170,21 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_activation_schema_is_the_one_the_package_declares() {
-        let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../apps/platform_fixture");
-        let identity =
-            dev_activation_identity(&[fixture]).expect("the fixture declares one schema");
-        assert_eq!(identity.schema, "inventory");
+    fn activation_uses_the_authored_coordinate() {
+        let document = serde_json::from_value(serde_json::json!({
+            "org":"other", "project":"stock", "env":"preview", "target":"cloud",
+            "release":"none", "route_host":"stock.localhost", "policy":"dev",
+            "applications":{"stock":{"packages":["inventory", "orders"]}}
+        }))
+        .unwrap();
+        let identity = dev_activation_identity(&document);
+        assert_eq!(identity.org, "other");
+        assert_eq!(identity.project, "stock");
+        assert_eq!(identity.environment, "preview");
+        assert_eq!(
+            identity.env_key(),
+            wamn_control_registry::project_env_key(&document.org, &document.project, &document.env)
+        );
     }
 
     #[test]

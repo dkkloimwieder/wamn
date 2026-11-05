@@ -146,12 +146,21 @@ async fn routes_answer_during_a_scheduler_outage_and_recover() -> anyhow::Result
     let root = scratch.path();
     inputs.environment.local_artifacts.directory = root.join("local-artifacts");
     let (admin, admin_task) = connect(&system_url).await?;
+    std::fs::write(
+        root.join("environment.k"),
+        include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../../tests/integration/fixtures/local-environments/acme-receiving.k"
+        )),
+    )?;
     let environment = wamn_dev_control::dev::environment::provision(
         &system_url,
         admin.as_ref(),
         root,
         PLATFORM_DOMAIN,
-        &inputs.environment.package_sources,
+        &wamn_environment_control::environment::document::EnvironmentDocument::compile(
+            &root.join("environment.k"),
+        )?,
     )
     .await?;
     let provisioning = inputs.environment.nats.connect().await?;
@@ -167,13 +176,7 @@ async fn routes_answer_during_a_scheduler_outage_and_recover() -> anyhow::Result
         &[],
     )
     .await?;
-    std::fs::write(
-        root.join("environment.k"),
-        include_str!(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../../../tests/integration/fixtures/local-environments/acme-receiving.k"
-        )),
-    )?;
+
     let config = write_dev_config(
         root,
         &system_url,

@@ -19,10 +19,10 @@ pub(super) async fn apply(
     directory: &Path,
     mut progress: impl FnMut(&str) -> anyhow::Result<()>,
 ) -> anyhow::Result<bool> {
-    // The stamped gates image already carries the native reader executable.
-    let image = release_chart::qualification_images(&directory.join("release-chart"))
+    // The published host image carries the native reader executable.
+    let image = release_chart::image_set(&directory.join("release-chart"))
         .await?
-        .gates;
+        .host;
     let mut changed = apply_object(target, &account()).await?;
     for (_, environment) in super::broker::documents(environments)? {
         let env_key = env_key(&environment);
@@ -133,10 +133,10 @@ mod tests {
                 "target": "cloud", "route_host": "test.example.com", "policy": "dev", "applications": {}
             }))
             .unwrap();
-            let desired = deployment(&environment, "registry/gates@sha256:abc");
+            let desired = deployment(&environment, "registry/host@sha256:abc");
             let pod = &desired["spec"]["template"]["spec"];
             let reader = &pod["containers"][0];
-            assert_eq!(reader["image"], "registry/gates@sha256:abc");
+            assert_eq!(reader["image"], "registry/host@sha256:abc");
             assert_eq!(
                 reader["env"][0]["valueFrom"]["secretKeyRef"]["name"],
                 format!("wamn-cdc-test--{project}--dev")

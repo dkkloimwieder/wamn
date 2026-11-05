@@ -183,9 +183,6 @@
     "scheduler_nats_url": {
       "type": "string"
     },
-    "schema": {
-      "type": "string"
-    },
     "session_identity": {
       "anyOf": [
         {
@@ -248,7 +245,6 @@
     "route_host",
     "runner",
     "scheduler_nats_url",
-    "schema",
     "stream_replicas",
     "system_database_url",
     "target_database_acl_file",

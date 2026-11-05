@@ -176,7 +176,7 @@ pub(super) async fn platform_ui(
 
 /// The platform UI Job with every file `wamn web upload --platform-ui` reads
 /// under its working directory `/inputs`: the stamped chart and its build
-/// receipt, the platform chart of the repository, and the built UI.
+/// record, the platform chart of the repository, and the built UI.
 fn platform_ui_inputs(
     document: &ClusterDocument,
     image: &str,

@@ -6,8 +6,7 @@ version: 0.1.143
 appVersion: "0.1.143"
 dependencies:
   # Host-only: values.yaml switches off every cluster-singular half, which the
-  # operator release owns. The pin is the operator release's
-  # (tests/conformance/tests/chart_seam_governance.rs EXPECTED_CHART_VERSION).
+  # operator release owns. Both releases use this pinned chart archive.
   - name: runtime-operator
     version: 2.11.0
     repository: oci://ghcr.io/wasmcloud/charts

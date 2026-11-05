@@ -772,17 +772,21 @@ async fn scenario(run: &mut Run, repository: &Path, source: &Path) -> anyhow::Re
         ],
     )
     .await?;
-    run.run(
-        "kubectl",
-        &[
-            "apply",
-            "-f",
-            &repository
-                .join("deploy/infra/cnpg-cluster.yaml")
-                .to_string_lossy(),
-        ],
-    )
-    .await?;
+    for object in wamn_environment_control::platform::install::postgres_cluster_inputs(
+        repository,
+        "deploy/gcp/cnpg-cluster.yaml",
+        wamn_environment_control::platform::document::Provider::Kind,
+        PG_CLUSTER,
+        NAMESPACE,
+    )? {
+        wamn_environment_control::kubectl::apply(
+            &run.kept.kubeconfig,
+            &format!("kind-{cluster}"),
+            NAMESPACE,
+            &object,
+        )
+        .await?;
+    }
     run.run(
         "kubectl",
         &[
@@ -962,9 +966,6 @@ async fn scenario(run: &mut Run, repository: &Path, source: &Path) -> anyhow::Re
     // The system database on the CNPG cluster, through a port forward.
     let (password, port, forward) = database_forward(run).await?;
     let admin_url = format!("postgresql://postgres:{password}@127.0.0.1:{port}/postgres");
-    let (admin, admin_task) = connect(&admin_url).await?;
-    admin.batch_execute("CREATE DATABASE wamn_system").await?;
-    admin_task.abort();
     let system_url = format!("postgresql://postgres:{password}@127.0.0.1:{port}/wamn_system");
     let (system, system_task) = connect(&system_url).await?;
     reset_control_store(system.as_ref()).await?;

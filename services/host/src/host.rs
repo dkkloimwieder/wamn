@@ -586,9 +586,9 @@ async fn load_release(
     Ok(Some(Arc::new(loaded_release)))
 }
 
-/// The tenant, environment and declared applications this host serves (R1).
+/// The environment key and declared applications that this host serves (R1).
 /// The manifest names none of them, so they come from `--org`, `--project`,
-/// `--environment` and `--applications`, and the tenant is
+/// `--environment` and `--applications`, and the environment key is
 /// [`project_env_key`] of the first three.
 fn release_scope(args: &HostArgs) -> anyhow::Result<ReleaseScope> {
     let org = args
@@ -1663,7 +1663,7 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
                 .build(),
         ),
         // S5: the custom wamn:logging plugin replaces the native TracingLogger
-        // — it enriches (host-trusted tenant/project + guest flow/run/node),
+        // — it enriches (host-trusted environment/project + guest flow/run/node),
         // owns a bounded front queue + drop counter, and ships enriched OTel log
         // records to the collector. Both claim wasi:logging/logging, so exactly
         // one may be registered.

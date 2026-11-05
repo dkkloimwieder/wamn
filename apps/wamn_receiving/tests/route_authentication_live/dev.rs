@@ -390,12 +390,21 @@ pub(super) async fn assert_dev_command(
     let root = scratch.path();
     inputs.environment.local_artifacts.directory = root.join("local-artifacts");
     let (admin, admin_task) = connect(system_url).await?;
+    std::fs::write(
+        root.join("environment.k"),
+        include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../../tests/integration/fixtures/local-environments/acme-receiving.k"
+        )),
+    )?;
     let environment = wamn_dev_control::dev::environment::provision(
         system_url,
         admin.as_ref(),
         root,
         PLATFORM_DOMAIN,
-        &inputs.environment.package_sources,
+        &wamn_environment_control::environment::document::EnvironmentDocument::compile(
+            &root.join("environment.k"),
+        )?,
     )
     .await?;
     let (project, project_task) = connect(&environment.route.database_url).await?;
@@ -416,13 +425,7 @@ pub(super) async fn assert_dev_command(
         &[],
     )
     .await?;
-    std::fs::write(
-        root.join("environment.k"),
-        include_str!(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../../../tests/integration/fixtures/local-environments/acme-receiving.k"
-        )),
-    )?;
+
     let config = write_dev_config(
         root,
         system_url,

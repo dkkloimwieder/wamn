@@ -71,12 +71,21 @@ async fn local_watch_preserves_data_refuses_bad_sql_and_recreates_schema() -> an
     inputs.environment.local_artifacts.directory = root.join("local-artifacts");
 
     let (admin, admin_task) = connect(&system_url).await?;
+    std::fs::write(
+        root.join("environment.k"),
+        include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../../tests/integration/fixtures/local-environments/acme-receiving.k"
+        )),
+    )?;
     let environment = wamn_dev_control::dev::environment::provision(
         &system_url,
         admin.as_ref(),
         root,
         PLATFORM_DOMAIN,
-        &inputs.environment.package_sources,
+        &wamn_environment_control::environment::document::EnvironmentDocument::compile(
+            &root.join("environment.k"),
+        )?,
     )
     .await?;
     let system_acl = current_database_acl(admin.as_ref()).await?;
@@ -94,13 +103,7 @@ async fn local_watch_preserves_data_refuses_bad_sql_and_recreates_schema() -> an
         &[],
     )
     .await?;
-    std::fs::write(
-        root.join("environment.k"),
-        include_str!(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../../../tests/integration/fixtures/local-environments/acme-receiving.k"
-        )),
-    )?;
+
     let config = write_dev_config(
         root,
         &system_url,

@@ -57,7 +57,6 @@ const CATALOG: &str = "catalog";
 const ENVIRONMENT: &str = "environment";
 const ORG: &str = "org";
 const PROJECT: &str = "project";
-const SCHEMA: &str = "schema";
 const HOST_GROUP: &str = "host_group";
 const HOST_NAME: &str = "host_name";
 const RUNNER: &str = "runner";
@@ -156,7 +155,6 @@ struct DevConfigDocument {
     environment: String,
     org: String,
     project: String,
-    schema: String,
     host_group: String,
     host_name: String,
     runner: String,
@@ -1241,7 +1239,6 @@ pub(crate) mod tests {
             (ENVIRONMENT): "fixture-dev",
             (ORG): "acme",
             (PROJECT): "fixture",
-            (SCHEMA): "inventory",
             (HOST_GROUP): "wamn-dev-fixture",
             (HOST_NAME): "wamn-dev-fixture-1",
             (RUNNER): "wamn-dev-fixture-1",

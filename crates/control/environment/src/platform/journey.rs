@@ -77,7 +77,7 @@ pub fn cluster(repository: &Path, input: &ClusterInput<'_>) -> anyhow::Result<Cl
             input.org,
             input.environments,
         )?,
-        operator: install::operator_entry(repository, input.operator_namespace, &values),
+        operator: install::operator_entry(repository, input.operator_namespace, &values)?,
     })
 }
 
@@ -100,7 +100,7 @@ pub fn delivery_database(
     let mut objects = vec![install::namespace_object(namespace)];
     objects.extend(install::postgres_cluster_inputs(
         repository,
-        "deploy/infra/cnpg-cluster.yaml",
+        "deploy/gcp/cnpg-cluster.yaml",
         Provider::Kind,
         name,
         namespace,

@@ -56,14 +56,22 @@ impl Drop for RenderDirectory {
 
 fn render_chart(root: &Path, release: &str, values: &[&str]) -> RenderDirectory {
     let output = RenderDirectory::create();
+    let metadata: Value = serde_yaml::from_str(&read_repository_file(
+        root,
+        "deploy/platform/release/Chart.yaml",
+    ))
+    .expect("release chart metadata");
+    let version = metadata["dependencies"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|dependency| dependency["name"] == "runtime-operator")
+        .and_then(|dependency| dependency["version"].as_str())
+        .expect("the release chart selects the operator version");
+    let chart = format!("deploy/platform/release/charts/runtime-operator-{version}.tgz");
     let mut helm = Command::new("helm");
-    helm.current_dir(root).args([
-        "template",
-        release,
-        "deploy/platform/release/charts/runtime-operator-2.11.0.tgz",
-        "--namespace",
-        "wamn-system",
-    ]);
+    helm.current_dir(root)
+        .args(["template", release, &chart, "--namespace", "wamn-system"]);
     for value in values {
         helm.args(["--values", value]);
     }

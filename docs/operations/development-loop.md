@@ -139,7 +139,7 @@ It leaves externally supplied PostgreSQL, NATS, and telemetry services running.
 Stop the environment before running `dev up` again against the same directory.
 Local identity certificates last 30 days. A new disposable environment creates new certificates.
 
-Write `environment.k` beside the emitted `dev.json` before you start the loop.
+Write `environment.k` in the directory selected by `dev up --root` before you provision the environment.
 Use the same KCL format as deployed environments.
 Declare every candidate package in exactly one application.
 For Acme Receiving, the file can contain:

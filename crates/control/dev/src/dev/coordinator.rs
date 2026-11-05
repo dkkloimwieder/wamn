@@ -1912,14 +1912,14 @@ async fn reconcile_local_replica_identity(
     result
 }
 
-/// Stamp the creation the recreate just minted onto the tenant's projected
+/// Stamp the creation the recreate just minted onto the environment's projected
 /// environment, so every control-plane fact this run writes keys to it
 /// (wamn-10yt.52).
 ///
 /// One short-lived connection to the control database, not a member of the
 /// coordinator's state: this happens once per run, before any stage, and holding
 /// a connection open across the whole loop for one UPDATE would outlive its
-/// purpose. The routine refuses a tenant that provisioning never projected —
+/// purpose. The routine refuses an environment that provisioning never projected —
 /// absence means durable, and a durable environment is never recreated.
 pub(crate) async fn claim_environment_instance(
     system_database_url: &str,

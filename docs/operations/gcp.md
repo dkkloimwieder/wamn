@@ -458,12 +458,13 @@ The pools have a fixed size and no autoscaler, so a scale to 0 holds. If `kubect
 
 Run sections 4.1 and 4.2 by hand first. Then set `WAMN_REGISTRY_AUTH_FILE` to the credentials file that `registry_token` writes (section 4.10).
 From the repository root, run `$CARGO_TARGET_DIR/debug/wamn-ctl platform apply <cluster.k>`.
-The verb runs sections 4.3 through 4.9 and 4.11 through 4.14 in order. It skips 4.10.
-If a release line is not yet committed, it stops after 4.14. Otherwise it goes on to 4.17.
-It holds one install lock in its work directory. It writes its kubeconfig, stamped chart, and Job logs there.
+Before installation, prepare the published chart in `$HOME/.cache/wamn-install/release-chart` and commit a qualified release digest in each environment document.
+The verb requires these artifacts before it changes the cluster.
+It runs provisioning, installation, rollout, and readiness through the shared environment apply implementation.
+It holds one install lock in its work directory and writes its kubeconfig and Job logs there.
 Each done or skipped progress line includes elapsed seconds.
 On GCP, it requests the production certificate directly.
-It stamps the registry images in 4.6, provisions in 4.7, and writes platform inputs in 4.9 without editing committed files.
+It provisions in 4.7 and writes platform inputs in 4.9.
 Step 4.8 adds one certificate user for each `environments/*.k` beside `cluster.k`.
 The user is `wamn-env-<org>--<project>--<env>`, and its Certificate and Secret are `hosts/wamn-nats-<org>--<project>--<env>`.
 It also writes the control host user `wamn-control-<org>` and drops every password user of an older install.
@@ -479,11 +480,8 @@ Step 4.12 reads the key from the Secret Manager secret `identity-resend` and wri
 It prepares session targets as Jobs, then installs the identity chart with values derived from the document and stamped images.
 Jobs read the active session key, publish and activate a key when none is active, and request the public keys over TLS.
 The public Job results stay with their completion digests so a retry can reuse a published key.
-Step 4.13 pushes missing packages and applies them as Jobs.
-Step 4.14 publishes each release through a Job.
-For a wired release, one pod runs the gate, authorship, and publication with an in-memory PAT.
-The verb prints release lines for the owner to commit, then resumes at 4.17 on a rerun.
-It prints 4.15 and 4.16 as skipped. Qualification stays on the build machine in section 4.15.
+The environment apply Job installs the packages from the published release artifacts.
+Build, publication, qualification, and release selection finish before `platform apply` starts.
 The verb then runs sections 4.16.1 through 4.21.
 The manual commands of each section follow the verb's description.
 
@@ -593,8 +591,8 @@ docker rm -f wamn-install-build-pg
 
 If another `build-platform` runs on this machine, or if you pass `--cloud`, the command builds in Cloud Build. In that case, pass `--cluster deploy/gcp/cluster.k`, which names the project and the daily spend cap ([building](building.md#cloud-platform-builds)).
 
-`platform apply` skips this step when the stamped chart in its work directory already matches the version and registry.
-Otherwise it builds the environment packages and the local UI, then runs `build-platform --stamp-only`.
+`platform apply` requires a stamped chart that matches the version and registry.
+It never builds packages, compiles the UI, or invokes `build-platform`.
 It never builds platform images.
 If registry images are missing, it stops with the version and the explicit build command.
 
@@ -773,7 +771,7 @@ EOF
 chmod 600 $W/platform.sh
 ```
 
-Leave `WAMN_IDENTITY_URL` unset. The identity certificate names only `identity.identity.svc.cluster.local`, so this machine cannot reach identity, and `apply` issues no PAT. Section 4.14 mints the PAT in the cluster.
+Leave `WAMN_IDENTITY_URL` unset. The identity certificate names only `identity.identity.svc.cluster.local`, so this machine cannot reach identity, and `apply` issues no PAT. The publication workflow mints its PAT before installation.
 
 ### 4.11 First apply
 
@@ -856,7 +854,8 @@ kubectl -n hosts run identity-check --restart=Never --rm -i --quiet \
 
 ### 4.13 Packages
 
-`platform apply` reads package roots from each environment's adjacent JSON file and versions from their built manifests.
+Publish the packages before installation.
+The shared environment apply implementation installs them from the declared release artifacts.
 It reads registry credentials from `WAMN_REGISTRY_AUTH_FILE` and optional CA files from `WAMN_OCI_CA_PATHS`.
 It pushes a package only when its registry tag is absent.
 It runs `apply-package` and `reconcile-package-data-access` as Jobs, then runs `reconcile-replica-identity` for every package.
@@ -876,39 +875,11 @@ for project in receiving wms; do
 done
 ```
 
-Install each package into its environment. `reconcile-replica-identity` runs for WMS, because the workflow `movement_label` compares the old location of `wms.packaging`:
-
-```bash
-. $HOME/.cache/wamn-install/platform.sh
-R="--artifact-base $WAMN_PACKAGE_ARTIFACT_BASE --registry-auth-file $WAMN_REGISTRY_AUTH_FILE"
-declare -A V=([receiving]=2.2.7 [wms]=2.1.4)
-for project in receiving wms; do
-  $CARGO_TARGET_DIR/debug/wamn-ctl apply-package --package-artifact wamn_$project-${V[$project]} $R \
-    --database-url "$(db_url $project)" --org dkk --project "$project" --environment dev
-  $CARGO_TARGET_DIR/debug/wamn-ctl reconcile-package-data-access --package-artifact wamn_$project-${V[$project]} $R \
-    --database-url "$(db_url $project)" --org dkk --project "$project" --environment dev
-done
-$CARGO_TARGET_DIR/debug/wamn-ctl reconcile-replica-identity --admin-database-url "$(db_url wms)" --package apps/wamn_wms
-```
-
 ### 4.14 Releases
 
-`platform apply` runs `publish-release` as a Job for each environment without a wiring.
-For a wired release, it creates one Job pod in namespace `identity`.
-A setup container runs `provision-project-env` to prepare the identity reader, control author, and management admitter database logins.
-It uses cluster service DNS names and creates Secrets owned by that Job.
-The native sidecar runs `wamn-scenario-worker serve` on the pod's loopback address.
-The main container runs `wamn-ctl publish-wired-release`.
-It mints the management-author PAT in memory, waits for the sidecar, and posts each wiring with the PAT as a bearer header.
-It requires a completed gate outcome, calls the `author-wiring` and `publish-release` library functions, and prints one release digest.
-The PAT never enters a file or a Secret.
-The Job mounts `operator-<org>` and `identity-tls` read-only, so the operator certificate stays in the cluster.
-The runner saves all container logs before deleting the Job and its owned Secrets.
-
-Publication skips when the completed input digest matches the package artifact digests, wiring document digests, database path, and Job inputs.
-The manual commands below remain an alternative to `platform apply`.
-They pass the authored environment file as the positional argument.
-The publication Job mounts that file at `/inputs/environment.k` and compiles it there.
+Publish each release from the isolated build catalog before installation.
+The installer consumes the resulting manifest and never publishes it.
+The publication command takes the authored environment file as its positional argument.
 
 `publish-release` prints the digest of the release manifest. Publish Receiving, which has no wiring:
 
@@ -924,12 +895,12 @@ RELEASE_receiving=$($CARGO_TARGET_DIR/debug/wamn-ctl publish-release --database-
 echo "$RELEASE_receiving" > $W/release-receiving
 ```
 
-The [publication owner](../../crates/control/environment/src/platform/job.rs) prepares and publishes wired WMS releases through `platform apply`.
+The [release owner](../../crates/control/release/src/publish_release.rs) constructs the published release before installation.
 
 ### 4.15 Qualification
 
 Qualification stays on the build machine, outside `platform apply`.
-Step 4.15 reports a skip and never starts a qualification Job.
+The installer never starts a qualification Job.
 
 `qualify-release` runs the release's cases in kind clusters on this machine against the release chart. If every case passes, it pushes the qualification beside the release ([delivery](delivery.md#release-qualification)). It pulls the chart images with `docker pull`, so it reads `DOCKER_CONFIG` of the platform file. Each run takes longer than one hour, so each run gets a new registry token:
 
@@ -965,9 +936,8 @@ git commit -m "Record platform $version benchmark"
 
 ### 4.16 Record the releases
 
-`platform apply` prints each environment path and its `release = "sha256:..."` line.
-It stops when any environment still declares `release = "none"`.
-Commit the printed lines in the environment files, then rerun the verb for step 4.17.
+Write each qualified release digest in its environment document before installation.
+`platform apply` refuses a document that still declares `release = "none"`.
 The verb never edits a committed file.
 
 The Rust edge reads each live release row. No edge values or URL map contains a copied release digest.
@@ -1019,7 +989,7 @@ $CARGO_TARGET_DIR/debug/wamn-ctl env show dkk/wms/dev
 `platform apply` renders one CDC reader Deployment in `hosts` for each environment that has a `wamn-cdc-<org>--<project>--<env>` Secret, and waits for its rollout.
 `env apply` writes that Secret only for a release with an event registration.
 For an environment without the Secret, the step prints `4.18 CDC reader <org>/<project>/<env>: skipped: no registration`.
-The reader uses the stamped gates image, which contains `/usr/local/bin/wamn-cdc-reader`.
+The reader uses the stamped host image, which contains `/usr/local/bin/wamn-cdc-reader`.
 The Deployment mounts the replication, registry-reader, and event publisher Secrets by name.
 The verb does not read their values.
 The reader loads its registration from the environment row with its registry-reader login.

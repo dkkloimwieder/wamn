@@ -34,6 +34,8 @@ pub struct DevUpRequest {
 
 /// Provision the environment and return the configuration file.
 pub async fn provision_environment(mut args: DevUpRequest) -> anyhow::Result<PathBuf> {
+    let document = super::session::read_environment(&args.root.join("environment.k"))?;
+    args.route_host = document.route_host.clone();
     // Settled before a single credential is minted: an environment is
     // expensive to stand up.
     wamn_control_provision::validate_platform_domain(&args.platform_domain)?;
@@ -97,7 +99,7 @@ pub async fn provision_environment(mut args: DevUpRequest) -> anyhow::Result<Pat
         admin.as_ref(),
         &args.root,
         &inputs.platform_domain,
-        &inputs.package_sources,
+        &document,
     )
     .await?;
     inputs.cdc_reader = Some(
@@ -173,7 +175,6 @@ async fn enable_cdc(
     let schemas = manifests
         .iter()
         .flat_map(|manifest| manifest.models.values().map(|model| model.schema.clone()))
-        .chain(std::iter::once(identity.schema.clone()))
         .collect::<std::collections::BTreeSet<_>>()
         .into_iter()
         .collect::<Vec<_>>();
@@ -264,7 +265,11 @@ async fn enable_cdc(
     let reader_secret = args.root.join("registry-reader.json");
     wamn_environment_control::provision_project_env::run_workload_action(
         &super::environment::generation_args(
-            &super::environment::JourneyScope::receiving(),
+            &super::environment::JourneyScope {
+                org: identity.org.clone(),
+                project: identity.project.clone(),
+                environment: identity.environment.clone(),
+            },
             wamn_control_provision::WorkloadRoleFamily::RegistryReader,
             &args.system_database_url,
             None,
