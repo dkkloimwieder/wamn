@@ -437,6 +437,16 @@ Keep credentials in private files and out of shared output.
 No permanent archive or result-only commit is required, except the sweep log of an epic closeout ([the full sweep](#the-full-sweep)).
 [Result interpretation](../testing/evidence.md) defines passes, failures, and unexecuted cases.
 
+### Acceptance runs
+
+Owner ruling 2026-11-05: the non-kind selection of an acceptance run always runs to completion.
+It does not stop at the first red. Every step runs.
+Report every red together in one report, with its log lines.
+Do all the diagnosis that the reds need in the same pass, without further approval.
+This diagnosis includes single-case reruns that keep their artifacts and builds of the same case at the base commit.
+The result is one run, one complete list of findings, and one ruling session.
+A kind stage or another cluster stage still stops at its first red.
+
 ## The full sweep
 
 Workspace sweeps require an explicit user request.
