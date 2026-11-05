@@ -192,7 +192,11 @@ async fn cli_bootstrap_mints_first_service_pats_over_https() {
         .stdin(Stdio::null())
         .output()
         .expect("run the compiled PAT revocation verb");
-    assert!(revoked.status.success(), "the PAT revocation verb failed");
+    assert!(
+        revoked.status.success(),
+        "the PAT revocation verb failed: {}",
+        String::from_utf8_lossy(&revoked.stderr)
+    );
     let revocation: bool = admin
         .query_one(
             "SELECT revoked_at IS NOT NULL AND created_at::text = $2 \

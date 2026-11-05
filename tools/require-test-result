@@ -30,7 +30,13 @@ if [[ "$each_target" == true ]] && grep -q '^test result: ok\. 0 passed;' "$resu
   printf 'required test target reported no executed passing cases\n' >&2
   exit 1
 fi
-if [[ -n "$expected" ]] && ! grep -qxF -- "test $expected ... ok" "$result"; then
+# The command exited zero, so no case failed. A case that ran prints its
+# result after its own output, which may split "test NAME ... " from "ok";
+# an ignored case prints "ignored" on its own line at once.
+if [[ -n "$expected" ]] && ! awk -v start="test $expected ... " '
+  index($0, start) == 1 && substr($0, length(start) + 1) !~ /^ignored/ { found = 1 }
+  END { exit !found }
+' "$result"; then
   printf 'required test did not pass: %s\n' "$expected" >&2
   exit 1
 fi
