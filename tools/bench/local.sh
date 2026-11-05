@@ -322,6 +322,9 @@ if sys.argv[3] == "true":
 print(f'exec /usr/bin/taskset -c 0-3 {shlex.quote(sys.argv[1])} "$@"')
 PY
 chmod +x "$work/host"
+# dev up reads the environment document before it provisions.
+mkdir -p "$root"
+cp "$repository/tests/integration/fixtures/local-environments/receiving.k" "$root/environment.k"
 "$bin/wamn" dev up --package "$repository/apps/wamn_receiving" \
   --system-database-url "postgresql://postgres:probe@127.0.0.1:$pg_port/wamn_system" \
   --root "$root" --nats-url "nats://127.0.0.1:$event_port" \
