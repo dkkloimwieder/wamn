@@ -1217,7 +1217,7 @@ async fn scenario(run: &mut Run, repository: &Path, source: &Path) -> anyhow::Re
                 .is_some();
             driver.abort();
             if !exists {
-                org_bindings::bind(&platform,&mut declaration,PACKAGE,"labels",connection,"s3",
+                org_bindings::bind(&superuser_platform(&platform),&mut declaration,PACKAGE,"labels",connection,"s3",
                     json!({"provider":"s3","endpoint":"http://store.invalid","container":"labels","prefix":"a/"})).await?;
             }
         }
@@ -1387,7 +1387,7 @@ async fn scenario(run: &mut Run, repository: &Path, source: &Path) -> anyhow::Re
         connection_generation(system, &admin_url).await
     };
     let mut connected = dev.clone();
-    org_bindings::bind(&platform, &mut connected, PACKAGE, "labels", "labels-dev-next", "s3",
+    org_bindings::bind(&superuser_platform(&platform), &mut connected, PACKAGE, "labels", "labels-dev-next", "s3",
         json!({"provider":"s3", "endpoint":"http://store.invalid", "container":"labels", "prefix":"a/"})).await?;
     apply(&connected, "dev-connection").await?;
     run.phase("bindings")?;
@@ -1441,7 +1441,7 @@ async fn scenario(run: &mut Run, repository: &Path, source: &Path) -> anyhow::Re
         http_connection::AWS_HANDLE,
     ] {
         org_bindings::bind(
-            &platform,
+            &superuser_platform(&platform),
             &mut http,
             PACKAGE,
             handle,
@@ -1454,7 +1454,7 @@ async fn scenario(run: &mut Run, repository: &Path, source: &Path) -> anyhow::Re
         )
         .await?;
     }
-    http_connection::configure(run, &platform.system_database_url, "http").await?;
+    http_connection::configure(run, &ensure_admin_url(&platform), "http").await?;
     apply(&http, "http-first").await?;
     let http_name = release_name(ORG, PROJECT, "http")?;
     let http_revisions = run.revisions(&http_name).await?;
@@ -1517,7 +1517,7 @@ async fn scenario(run: &mut Run, repository: &Path, source: &Path) -> anyhow::Re
             run,
             &http_project,
             &integration::WorkflowEnvironment {
-                system_url: &platform.system_database_url,
+                system_url: &observer,
                 project_url: &http_project_url,
                 scope: &http.triple(),
                 env_key: &http_env_key,
@@ -1596,7 +1596,7 @@ async fn scenario(run: &mut Run, repository: &Path, source: &Path) -> anyhow::Re
     let (auth, _auth_forward) = integration::auth_changes(run).await?;
     integration::enable_trigger(
         &integration::WorkflowEnvironment {
-            system_url: &platform.system_database_url,
+            system_url: &observer,
             project_url: &http_project_url,
             scope: &http.triple(),
             env_key: &env_key,
@@ -2101,7 +2101,7 @@ async fn scenario(run: &mut Run, repository: &Path, source: &Path) -> anyhow::Re
     // enabled, and the release's bindings are gone.
     let mut qa_none = environment::show::show(&platform, &qa_triple).await?;
     qa_none.release = DeclaredRelease::None;
-    org_bindings::bind(&platform, &mut qa_none, PACKAGE, "labels", "qa-labels", "s3",
+    org_bindings::bind(&superuser_platform(&platform), &mut qa_none, PACKAGE, "labels", "qa-labels", "s3",
         json!({"provider":"s3", "endpoint":"http://store.invalid", "container":"labels", "prefix":"qa/"})).await?;
     apply(&qa_none, "qa-none").await?;
     let qa_live = run.live_digests(&qa_name).await?;
@@ -2595,8 +2595,9 @@ async fn host_report_check(run: &mut Run, context: &CheckContext) -> anyhow::Res
     let actor = wamn_control_provision::PlatformComponent::Provisioning
         .principal_id()
         .to_string();
+    let observer = observer_url(run, &platform).await?;
     let set_budget = async |budget: i32| -> anyhow::Result<i32> {
-        let (system, task) = connect(&platform.system_database_url).await?;
+        let (system, task) = connect(&observer).await?;
         system.batch_execute("SET ROLE wamn_system").await?;
         let before: i32 = system
             .query_one(
@@ -2668,7 +2669,7 @@ async fn host_report_check(run: &mut Run, context: &CheckContext) -> anyhow::Res
         .is_some();
     task.abort();
     if !bound {
-        org_bindings::bind(&platform, &mut document, PACKAGE, "labels", &format!("labels-{ENV}"), "s3",
+        org_bindings::bind(&superuser_platform(&platform), &mut document, PACKAGE, "labels", &format!("labels-{ENV}"), "s3",
             json!({"provider":"s3","endpoint":"http://store.invalid","container":"labels","prefix":"a/"})).await?;
     }
     let before = set_budget(BUDGET_SECONDS).await?;
@@ -2754,6 +2755,16 @@ fn ensure_admin_url(platform: &Platform) -> String {
     let mut url = url::Url::parse(&platform.system_database_url).unwrap();
     url.set_username("postgres").unwrap();
     url.to_string()
+}
+
+/// The platform under test with the superuser URL that reset and provisioning
+/// use. A setup helper that runs `SET LOCAL ROLE wamn_control` takes it,
+/// because the observer login is not a member of `wamn_control`; the write
+/// keeps wamn_control's rights, as the install's superuser Jobs do.
+fn superuser_platform(platform: &Platform) -> Platform {
+    let mut superuser = platform.clone();
+    superuser.system_database_url = ensure_admin_url(platform);
+    superuser
 }
 
 /// The system database URL of the bootstrap owner in the CNPG `-app` Secret.
@@ -2953,7 +2964,7 @@ async fn connection_generation(
 async fn show_check(run: &mut Run, context: &CheckContext) -> anyhow::Result<EnvironmentDocument> {
     let platform = &context.platform;
     let name = release_name(ORG, PROJECT, "dev")?;
-    let (system, task) = connect(&platform.system_database_url).await?;
+    let (system, task) = connect(&observer_url(run, &platform).await?).await?;
     system.batch_execute("SET ROLE wamn_system").await?;
     let before = if let Some(expected) = context.show_expected {
         expected

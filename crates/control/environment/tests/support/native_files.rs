@@ -336,7 +336,7 @@ pub async fn exercise(
         ));
     }
     let (mut system, system_task) =
-        tokio_postgres::connect(&platform.system_database_url, tokio_postgres::NoTls).await?;
+        tokio_postgres::connect(&crate::ensure_admin_url(platform), tokio_postgres::NoTls).await?;
     let system_task = tokio::spawn(system_task);
     let tx = system.transaction().await?;
     tx.batch_execute("SET LOCAL ROLE wamn_control").await?;

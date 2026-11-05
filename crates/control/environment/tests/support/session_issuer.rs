@@ -30,7 +30,7 @@ pub async fn deploy(
     let secret = run.kept.secret_work.join("integration-session-db.json");
     provision_identity_issuer(IdentityIssuerRequest {
         issuer: issuer.clone(),
-        system_database_url: platform.system_database_url.clone(),
+        system_database_url: crate::ensure_admin_url(platform),
         prepare_generation: Some(CredentialGeneration::A),
         retire_generation: None,
         abort_generation: None,

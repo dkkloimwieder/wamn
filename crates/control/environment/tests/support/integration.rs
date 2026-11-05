@@ -275,7 +275,7 @@ pub async fn exercise(
     });
     if run.reuse {
         // A required setup error can leave the check's environment partly applied.
-        let (system, driver) = connect(&platform.system_database_url).await?;
+        let (system, driver) = connect(&crate::observer_url(run, &platform).await?).await?;
         let exists = system
             .query_opt(
                 "SELECT 1 FROM registry.project_envs WHERE org=$1 AND project=$2 AND env=$3",
@@ -336,9 +336,10 @@ pub async fn exercise(
     )
     .await?;
 
-    http_connection::configure(run, &platform.system_database_url, ENVIRONMENT).await?;
+    http_connection::configure(run, &crate::ensure_admin_url(&platform), ENVIRONMENT).await?;
 
-    let (system, system_task) = connect(&platform.system_database_url).await?;
+    let observer = crate::observer_url(run, &platform).await?;
+    let (system, system_task) = connect(&observer).await?;
     let suffix: String = system.query_one(
         "SELECT instance_suffix FROM registry.project_envs WHERE org=$1 AND project=$2 AND env=$3",
         &[&ORG, &PROJECT, &ENVIRONMENT],
@@ -491,7 +492,7 @@ pub async fn exercise(
     // (docs/architecture/execution.md#workflows).
     let (auth, _auth_forward) = auth_changes(run).await?;
     let workflows = WorkflowEnvironment {
-        system_url: &platform.system_database_url,
+        system_url: &observer,
         project_url: project_url.as_str(),
         scope: &scope,
         env_key: &env_key,
