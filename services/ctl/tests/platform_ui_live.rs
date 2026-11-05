@@ -154,8 +154,10 @@ async fn local_control_projects_and_membership() -> anyhow::Result<()> {
         .env("WAMN_DEV_ENV_PLATFORM_DOMAIN", "example.invalid");
     let mut application = None;
     let result = async {
-        run(&mut up).await?;
+        // `dev up` reads the document before it provisions.
+        std::fs::create_dir_all(&root)?;
         std::fs::write(root.join("environment.k"), include_str!("../../../tests/integration/fixtures/local-environments/receiving.k"))?;
+        run(&mut up).await?;
         let mut child = Command::new(&wamn)
             .current_dir(&repository)
             .args(["dev", "--config"])

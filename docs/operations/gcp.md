@@ -877,8 +877,10 @@ done
 
 ### 4.14 Releases
 
-Publish each release from the isolated build catalog before installation.
+Publish each release before installation.
 The installer consumes the resulting manifest and never publishes it.
+The publication below still reads the deployed project and control databases through the forward of section 4.5.
+It therefore works only against an installed platform. An isolated build catalog is open work (wamn-vdu38).
 The publication command takes the authored environment file as its positional argument.
 
 `publish-release` prints the digest of the release manifest. Publish Receiving, which has no wiring:

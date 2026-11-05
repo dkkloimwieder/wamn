@@ -132,10 +132,7 @@ async fn run(
         &database_inputs.fixture_objects,
     )
     .await?;
-    let (admin, task) = connect(&database.url("postgres")).await?;
-    let created = admin.batch_execute("CREATE DATABASE wamn_system").await;
-    task.abort();
-    created.context("create the Receiving system database")?;
+    // The CNPG bootstrap of deploy/gcp/cnpg-cluster.yaml creates wamn_system.
 
     // The fixture: control store, environment, packages and release.
     let inputs = JourneyDocument {
