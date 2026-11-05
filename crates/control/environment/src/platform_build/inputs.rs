@@ -74,7 +74,7 @@ fn declared(target: &str) -> anyhow::Result<Declared> {
     let none: &[&str] = &[];
     Ok(match target {
         "host" => Declared {
-            native: &["wamn-host", "wamn-runtime"],
+            native: &["wamn-host", "wamn-runtime", "wamn-cdc-reader"],
             cases: none,
             components: none,
             paths: none,
@@ -789,6 +789,8 @@ pub(super) mod tests {
         let host = input_files(&repository, "host", &root, &apps).unwrap();
         assert!(host.contains_key("deploy/sql/run-state.sql"));
         assert!(host.contains_key("services/host/src/main.rs"));
+        // The host image carries the CDC reader (D1-6).
+        assert!(host.contains_key("services/cdc-reader/src/main.rs"));
     }
 
     #[test]
