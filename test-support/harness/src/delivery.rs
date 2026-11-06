@@ -492,6 +492,20 @@ async fn apply(app: &Application<'_>, platform: &Platform) -> anyhow::Result<Str
     }
     let file = app.evidence.join("environment.k");
     fs::write(&file, document.to_kcl())?;
+    // `env apply` runs as the restricted apply login, as the platform Job
+    // does. The installer created the login; the product emits its password
+    // into the wamn-apply Secret (provision_system::emit_apply_credential).
+    let system = url::Url::parse(&platform.system_database_url)?;
+    let apply_secret = app.work.join("wamn-apply-secret.json");
+    wamn_environment_control::provision_system::emit_apply_credential(
+        &platform.system_database_url,
+        system.host_str().context("the system URL has a host")?,
+        system.port().unwrap_or(5432),
+        &apply_secret,
+    )
+    .await?;
+    let apply_url =
+        wamn_environment_control::provision_project_env::secret_value(&apply_secret, "url")?;
     let mut command = Command::new(app.ctl());
     command.args(["env", "apply"]).arg(&file);
     for (name, value) in variables(platform) {
@@ -500,6 +514,9 @@ async fn apply(app: &Application<'_>, platform: &Platform) -> anyhow::Result<Str
             None => command.env_remove(name),
         };
     }
+    command
+        .env("WAMN_APPLY_DATABASE_URL", &apply_url)
+        .env("WAMN_SYSTEM_ADMIN_URL", &platform.system_database_url);
     let output = step(app, "env-apply", &mut command).await?;
     Ok(String::from_utf8_lossy(&output).into_owned())
 }
