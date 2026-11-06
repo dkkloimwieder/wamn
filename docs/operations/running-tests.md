@@ -700,22 +700,31 @@ To retry deployment, invoke `wamn platform deploy` with the same cluster documen
 
 ### Retained application-test adapters
 
-The application journeys did not migrate to the platform journey in this epic.
-Their shared adapters remain because current application callers still use them:
+The application journeys remain outside Deploy Epic 1 (`wamn-moz3o`).
+The platform journey calls the product command and uses none of the installation adapters below.
+These adapters remain for their application and environment callers:
 
-- `crates/control/environment/src/platform/journey.rs` supplies cluster inputs to `test-support/harness/src/delivery.rs`.
-- The same module supplies releases to `test-support/harness/src/case_release.rs` and identity inputs to `test-support/harness/src/session_issuer.rs`.
-- `crates/control/environment/examples/identity-chart-input.rs` also calls its identity adapter.
-- `test-support/infrastructure/cluster.rs` calls `test-support/infrastructure/platform.rs` for shared application infrastructure.
-- `crates/control/dev/tests/environment_apply_kind.rs` retains PostgreSQL resource helpers and `crates/control/environment/tests/support/platform_images.rs`.
+- `test-support/infrastructure/platform.rs::install` applies certificates, NATS, the runtime operator, and platform manifests through `cluster.rs::Cluster::install`.
+  Its callers are `apps/wamn_receiving/tests/route_authentication_live/cluster.rs`, `apps/wamn_wms/tests/cluster.rs`, and `tests/integration/src/rc/deployment.rs`.
+  `test-support/infrastructure/delivery_cluster.rs` also calls it and creates PostgreSQL for the Receiving and WMS delivery cases through `test-support/harness/src/delivery.rs::kept_cluster`.
+- `crates/control/environment/src/platform/journey.rs` supplies those cluster inputs and application releases through `test-support/harness/src/case_release.rs`.
+- `test-support/harness/src/session_issuer.rs` installs identity for Receiving, WMS, and `tests/integration/src/identity_session_test/journey.rs`.
+  It uses the identity adapter in `platform/journey.rs`, as does `crates/control/environment/examples/identity-chart-input.rs`.
+- `crates/control/dev/tests/environment_apply_kind.rs` installs cert-manager, CNPG, PostgreSQL, and the runtime operator.
+  Its `support/integration.rs::install_one_nats` and `support/session_issuer.rs::deploy` install NATS and identity for the same environment suite.
+  Both support modules live under `crates/control/environment/tests/`.
+- `crates/control/environment/tests/support/platform_images.rs` resolves the prepared chart for both kind cases and transfers role components for the environment case.
+  It does not install infrastructure.
 - `crates/control/environment/tests/support/environment_checks.rs` uses `kind_checks.rs` for the retained environment case's cleanup policy.
 
 The next application epic must replace this setup with product operations for databases, application SQL, release activation, and rollback.
 Remove each adapter when its application callers use those operations.
 These retained paths do not prove that application journeys use `wamn platform deploy`.
+The database tests in `install_sequence_live.rs` also remain: they exercise restricted SQL roles, package grants, and invitation refusal without a Kubernetes installer.
 
-The separate `environment_apply_kind` case still needs its application fixtures and qualification images.
-A minimal local platform chart does not supply those images.
+The separate `environment_apply_kind` case does not gate Deploy Epic 1.
+Its application fixtures and qualification images remain outside the platform artifact set.
+Do not add runner images or a GCP chart build solely to make this historical case pass.
 Its [source](../../crates/control/dev/tests/environment_apply_kind.rs) owns the required artifacts and fixture inputs.
 The case uses `rest_connector`, `rest_consumer_fixture`, and `wamn_integration` to exercise capture and event delivery.
 It requires one publication and one logical replication slot for the environment.
@@ -725,8 +734,42 @@ Each trigger must receive only the change from its own schema.
 With the application fixtures and chart prepared, run that case separately:
 
 ```bash
-WAMN_RELEASE_CHART=<application-test-chart> cargo test -p wamn-dev-control --test environment_apply_kind -- --ignored --nocapture
+WAMN_RELEASE_CHART=<prepared-chart> cargo test -p wamn-dev-control --test environment_apply_kind -- --ignored --nocapture
 ```
+
+### Environment coverage outside Epic 1
+
+The following map describes test ownership, not a passing execution result.
+The platform journey does not establish application behavior.
+DEP-05a owns the focused Helm reapply and data-preservation replacement for check 2 and check 4's HTTP reapply assertion.
+The broader application assertions are not prerequisites for that replacement.
+
+| Environment check | Other coverage and remaining gap |
+| --- | --- |
+| 1: first environment apply | `install_sequence_live.rs` covers database setup under restricted roles. The combined environment row, CNPG database, and first Helm revision remain environment-case-only. |
+| 2: unchanged apply and interruption | DEP-05a owns the focused replacement. `platform_apply_kind` covers system data across platform reapply and retry, not application release selection. |
+| 3: connection-only change | `environment_bindings_live.rs::two_packages_can_bind_distinct_names_to_one_connection_without_authority_writes` covers binding authority. Preserving the running release and generation across env apply remains environment-case-only. |
+| 4: show, HTTP, schedules, connectors | `native_host` covers the real HTTP guest and bearer request. `workflow_schedule_live.rs` covers scheduled admission, actor, and ticks. The full show/apply round trip, deployed signed requests, API key and SigV4 requests, REST retries, and NetSuite pull remain environment-case-only. |
+| 5 / A12: environment isolation | Receiving and WMS delivery cases call `test-support/harness/src/delivery.rs::check`, then `release_chart.rs::environments_isolated`. This covers live objects and Secret references when the kept cluster contains at least two environments. A single-environment run reports this assertion as unexecuted. |
+| 6: rollback | `environment_render.rs::prekind_environment_renders` renders the prior release. Live rollback with unchanged route and connections remains environment-case-only. |
+| 7: rollback refusal | No equivalent deployed test identified. The retained-revision refusal and unchanged Helm history remain environment-case-only. |
+| 8: host drain | `services/host/tests/native_lifecycle_live.rs` covers signal shutdown. `services/host/src/host/lease_tests.rs` covers lease handoff. Kubernetes grace-period exit with the pinned backlog remains environment-case-only. |
+| 9: release none | No equivalent deployed test identified. Host removal with the instance enabled and no binding remains environment-case-only. |
+| 10: stranded-run deletion refusal | No equivalent deployed test identified. This refusal remains environment-case-only. |
+| 11: delete with data | No equivalent deployed test identified. Database and registry-row removal remain environment-case-only. |
+| 12: delete without data | No equivalent deployed test identified. Database retention with registry-row removal remains environment-case-only. |
+| 13 / A7: route isolation | Render tests cover route values. Routing one shared release through only each environment's own host remains environment-case-only. |
+| 14 / A1: heartbeat labels | Receiving and WMS cluster and delivery cases call `test-support/infrastructure/release_chart.rs::hosts_ready`. It reads live Host objects and asserts both `hostgroup` and `wamn.release`. |
+| 15: wrong-release placement | Receiving and WMS delivery cases call `test-support/infrastructure/release_chart.rs::a1_probe` for HTTP releases. It submits a mismatched WorkloadDeployment and asserts that the operator places no workload. |
+| 16: operator unchanged | No equivalent application test identified. Stable operator revision and resourceVersion across environment operations remain environment-case-only. |
+| 17: administration configuration | `run_plane_live.rs` runs `run_plane_live/platform_configuration.rs::platform_configuration_leg` for writes, history, and guest reads. The credential delivered through the Kubernetes Secret remains environment-case-only. |
+| F2: failed host report | `environment_render.rs::host_report_release_requires_component_preload` covers the fixture manifest. The report from an actual failed rollout remains environment-case-only. |
+| Native files on kind MinIO | `files_live.rs` covers file grants, active generations, and MinIO mutations. The deployed file listener with identity sessions remains environment-case-only. |
+| REST and NetSuite capture | Render and schedule tests cover parts of these flows. Deployed CDC across both application schemas and trigger isolation remain environment-case-only. |
+
+All environment-case-only behavior above remains untested when this case is omitted.
+The platform journey retains its assertion that deployment creates no generic completion ConfigMaps because that absence is an Epic 1 contract.
+The retired numbered installer and its positive completion assertions supply no coverage.
 
 ### Add a check to an application kind case
 

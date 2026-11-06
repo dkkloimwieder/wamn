@@ -1,7 +1,8 @@
 //! `wamn-ctl env apply` on kind
 //! (docs/architecture/overview.md#environment-lifecycle, wamn-snz0.3).
 //!
-//! This is the one kind suite of the platform. `apply` ensures the
+//! This application suite is separate from the platform deployment journey.
+//! `apply` ensures the
 //! environment's `Database` CR, so the suite runs CloudNativePG: a fresh kind
 //! cluster `wamn-apply-<checkout hash>`,
 //! cert-manager, the operator release, the CNPG operator and one `Cluster`,
@@ -102,12 +103,7 @@
 //! events, the descriptions, the container logs and, for a failed rollout,
 //! the same taken before Helm's rollback removed its pods.
 //!
-//! The application-test chart supplies the host, HTTP, materializer, runner,
-//! gates and identity images. Build it with
-//! `wamn-ctl build-platform --registry localhost:5001 --cluster deploy/gcp/cluster.k --out /var/tmp/wamn-application-test-chart`.
-//! This selects qualification artifacts and does not deploy to GCP.
-//! Set `WAMN_RELEASE_CHART` to that directory and use an empty `DOCKER_CONFIG`.
-//! The minimal `deploy/kind/cluster.k` platform chart omits qualification images.
+//! Set `WAMN_RELEASE_CHART` to the prepared chart and use an empty `DOCKER_CONFIG`.
 //! The fixture copies the two roles into its TLS registry and loads the host
 //! into its private node. The platform images must match this checkout.
 //! The suite builds its HTTP fixture image and reuses the existing Cargo target.
@@ -125,7 +121,7 @@
 //! Epic 4 waits at most 150 seconds. NetSuite waits at most 360 seconds for
 //! its one scheduled pull. HTTP evidence comes from GET /recorded.
 //!
-//! Before the epic closeout run, build the debug `wamn-ctl`, `wamn-cdc-reader`
+//! Before running this application suite, build the debug `wamn-ctl`, `wamn-cdc-reader`
 //! and `wamn-component-virtualizer` binaries. Build the packages `edge_device`,
 //! `platform/wamn_integration`, `rest_consumer_fixture`, `rest_connector` and
 //! `netsuite` with `wamn build`.
@@ -583,18 +579,10 @@ async fn environment_apply_kind() -> anyhow::Result<()> {
         run.registry.clone_from(&previous.registry);
         run.kept = previous;
         run.reuse = true;
-    }
-    let chart = platform_images::source_chart(&repository, &run.work)?;
-    wamn_release_control::release_chart::qualification_images(&chart)
-        .await
-        .context(
-            "environment_apply_kind requires an application-test chart: set WAMN_RELEASE_CHART \
-             to the output of wamn-ctl build-platform --registry localhost:5001 \
-             --cluster deploy/gcp/cluster.k --out /var/tmp/wamn-application-test-chart",
-        )?;
-    if !run.reuse {
+    } else {
         refuse_existing(&mut run, &repository).await?;
     }
+    let chart = platform_images::source_chart(&repository, &run.work)?;
     let started = Instant::now();
     let result = if let Some((_, checks)) = selection {
         Box::pin(rerun(&mut run, &repository, &chart, &checks)).await
