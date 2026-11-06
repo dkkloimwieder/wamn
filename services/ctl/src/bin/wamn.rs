@@ -20,6 +20,9 @@ struct Cli {
 #[cfg(target_os = "linux")]
 #[derive(Debug, Subcommand)]
 enum Command {
+    /// Deploy or inspect platform configuration.
+    #[command(subcommand)]
+    Platform(wamn_ctl::platform_verbs::ProductPlatformCommand),
     /// Build packages: generate every output from wamn.k into target/wamn.
     Build(wamn_ctl::build_verbs::BuildArgs),
     /// Build or publish a wasm connector.
@@ -86,6 +89,9 @@ async fn main() -> anyhow::Result<()> {
             .init();
     }
     match Cli::parse().command {
+        Command::Platform(command) => {
+            wamn_ctl::platform_verbs::run_product(command, std::io::stdout().lock()).await
+        }
         Command::Build(args) => wamn_ctl::build_verbs::run(args).await,
         Command::Integration(args) => wamn_ctl::integration_verbs::run(args).await,
         Command::Web(args) => wamn_ctl::web::run(args).await,
@@ -158,5 +164,32 @@ mod tests {
         assert!(
             matches!(reset.command, Command::Dev(dev) if matches!(dev.environment, Some(DevEnvironmentCommand::Reset(_))))
         );
+    }
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod platform_tests {
+    use super::*;
+
+    #[test]
+    fn platform_deploy_requires_an_explicit_chart() {
+        assert!(Cli::try_parse_from(["wamn", "platform", "deploy", "cluster.k"]).is_err());
+        let cli = Cli::try_parse_from([
+            "wamn",
+            "platform",
+            "deploy",
+            "cluster.k",
+            "--chart",
+            "/prepared/chart",
+        ])
+        .unwrap();
+        let Command::Platform(wamn_ctl::platform_verbs::ProductPlatformCommand::Deploy(args)) =
+            cli.command
+        else {
+            panic!("expected platform deploy");
+        };
+        assert_eq!(args.file, std::path::Path::new("cluster.k"));
+        assert_eq!(args.chart, std::path::Path::new("/prepared/chart"));
+        assert!(Cli::try_parse_from(["wamn", "platform", "apply", "cluster.k"]).is_err());
     }
 }

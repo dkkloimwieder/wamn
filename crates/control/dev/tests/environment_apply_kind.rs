@@ -774,9 +774,9 @@ async fn scenario(run: &mut Run, repository: &Path, source: &Path) -> anyhow::Re
         ],
     )
     .await?;
-    for object in wamn_environment_control::platform::install::postgres_cluster_inputs(
+    for object in wamn_environment_control::platform::resources::postgres_cluster_inputs(
         repository,
-        "deploy/gcp/cnpg-cluster.yaml",
+        "deploy/infra/cnpg-cluster.yaml",
         wamn_environment_control::platform::document::Provider::Kind,
         PG_CLUSTER,
         NAMESPACE,

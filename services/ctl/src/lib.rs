@@ -21,6 +21,7 @@ pub mod integration_verbs;
 #[cfg(feature = "ops")]
 pub mod ops_verbs;
 pub mod package_verbs;
+pub mod platform_verbs;
 pub mod provisioning_verbs;
 mod qualification;
 pub mod release_verbs;

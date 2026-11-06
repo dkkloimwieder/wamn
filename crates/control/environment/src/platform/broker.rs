@@ -14,7 +14,7 @@ use crate::environment::document::EnvironmentDocument;
 use crate::kubectl;
 use wamn_release_control::release_chart::Target;
 
-use super::install::apply_object;
+use super::resources::apply_object;
 
 /// The Secret that holds the authorization file of the one NATS.
 pub(super) const AUTHORIZATION: &str = "wamn-nats-authorization";
@@ -218,9 +218,52 @@ pub(super) async fn apply(target: &Target, environments: &Path, org: &str) -> an
         .collect::<Vec<_>>();
     let mut changed = false;
     for object in objects(&live, org, &documents)? {
-        changed |= apply_object(target, &object).await?;
+        apply_object(target, &object).await?;
+        changed = true;
     }
     Ok(changed)
+}
+
+/// Ensure platform and initial-org users while preserving existing application users.
+///
+/// # Errors
+/// Returns an error if the live authorization Secret cannot be decoded.
+pub fn platform_objects(live: Option<&Value>, org: &str) -> anyhow::Result<Vec<Value>> {
+    let mut authorization = match live {
+        Some(live) => {
+            let encoded = live["data"]["authorization.conf"]
+                .as_str()
+                .context("the broker Secret has no authorization.conf")?;
+            let bytes = STANDARD
+                .decode(encoded)
+                .map_err(|_| anyhow::anyhow!("decode the broker authorization"))?;
+            let text = std::str::from_utf8(&bytes)
+                .map_err(|_| anyhow::anyhow!("decode the broker authorization"))?;
+            serde_json::from_str::<Authorization>(
+                text.strip_prefix("authorization: ")
+                    .context("the broker authorization has no prefix")?,
+            )
+            .map_err(|_| anyhow::anyhow!("decode the broker authorization"))?
+        }
+        None => Authorization { users: Vec::new() },
+    };
+    for user in platform_users() {
+        keep_user(&mut authorization, user);
+    }
+    let (control, certificate) = control_user(org);
+    keep_user(&mut authorization, control);
+    Ok(vec![
+        certificate,
+        serde_json::to_value(secret(
+            "platform",
+            AUTHORIZATION,
+            [(
+                "authorization.conf".into(),
+                format!("authorization: {}\n", json!(authorization)),
+            )]
+            .into(),
+        ))?,
+    ])
 }
 
 pub(super) fn objects(
@@ -478,6 +521,56 @@ mod tests {
         .unwrap();
         document.project = project.into();
         document
+    }
+
+    #[test]
+    fn platform_reapply_preserves_application_users_without_rendering_applications() {
+        let scope = document("one").triple();
+        let existing = single_namespace_nats("platform", "test", &[scope]).unwrap();
+        let live = existing
+            .iter()
+            .find(|object| object["kind"] == "Secret")
+            .unwrap();
+        let objects = platform_objects(Some(live), "test").unwrap();
+        let updated = objects
+            .iter()
+            .find(|object| object["kind"] == "Secret")
+            .unwrap();
+        let decode = |object: &Value| {
+            let bytes = STANDARD
+                .decode(object["data"]["authorization.conf"].as_str().unwrap())
+                .unwrap();
+            let text = std::str::from_utf8(&bytes).unwrap();
+            serde_json::from_str::<Value>(text.strip_prefix("authorization: ").unwrap()).unwrap()
+        };
+        assert_eq!(decode(updated), decode(live));
+        let repeated = platform_objects(Some(updated), "test").unwrap();
+        assert_eq!(repeated, objects);
+        for object in objects
+            .iter()
+            .filter(|object| object["kind"] == "Certificate")
+        {
+            assert_eq!(object["metadata"]["name"], "wamn-nats-control-test");
+        }
+        let fresh = platform_objects(None, "test").unwrap();
+        let authorization = decode(
+            fresh
+                .iter()
+                .find(|object| object["kind"] == "Secret")
+                .unwrap(),
+        );
+        for user in platform_users()
+            .into_iter()
+            .chain(std::iter::once(control_user("test").0))
+        {
+            assert!(
+                authorization["users"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|actual| actual == &json!(user))
+            );
+        }
     }
 
     #[test]

@@ -1,14 +1,16 @@
 //! The declared cluster and its platform install inputs (docs/plan/platform-install.md P1).
 
-mod broker;
+pub mod broker;
 pub use broker::{kind_nats, render_event_secrets, single_namespace_nats};
 pub mod artifact_plan;
 mod cdc;
 mod check;
 pub mod control;
+pub mod deploy;
 pub mod document;
 mod edge;
 mod environments;
+pub mod resources;
 pub use environments::render_host_group;
 pub mod identity;
 pub mod install;

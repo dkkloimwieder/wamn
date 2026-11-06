@@ -19,9 +19,11 @@ pub fn objects(
     document: &ClusterDocument,
 ) -> anyhow::Result<Vec<Value>> {
     let hosts = matches!(
-        path,
-        "deploy/platform/wamn-host-serviceaccount.yaml"
-            | "deploy/platform/control-status-rbac.yaml"
+        Path::new(path)
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or_default(),
+        "wamn-host-serviceaccount.yaml" | "control-status-rbac.yaml"
     );
     let mut objects = read_objects(repository, path)?;
     for object in &mut objects {
@@ -89,7 +91,7 @@ pub fn one_nats(repository: &Path, namespace: &str) -> anyhow::Result<Vec<Value>
     let mut objects = Vec::new();
     for path in [
         "deploy/infra/nats-certificates.yaml",
-        "deploy/gcp/nats-jetstream.yaml",
+        "deploy/infra/nats-jetstream.yaml",
     ] {
         let path = repository.join(path);
         let source = std::fs::read_to_string(&path)
@@ -144,7 +146,7 @@ pub(super) fn platform_inputs(
     let mut inputs = Vec::new();
     inputs.extend(objects(
         repository,
-        "deploy/gcp/registry-helper.yaml",
+        "deploy/platform/registry-helper.yaml",
         document,
     )?);
     inputs.extend(host_account_objects(repository, "hosts")?);
@@ -182,7 +184,7 @@ pub fn operator_base_values(repository: &Path) -> anyhow::Result<Value> {
     let mut values = json!({});
     for relative in [
         "deploy/infra/values-wamn.yaml",
-        "deploy/gcp/values-operator.yaml",
+        "deploy/platform/values-operator.yaml",
     ] {
         let path = repository.join(relative);
         let source = std::fs::read_to_string(&path)
@@ -194,7 +196,7 @@ pub fn operator_base_values(repository: &Path) -> anyhow::Result<Value> {
     Ok(values)
 }
 
-fn merge(base: &mut Value, overlay: Value) {
+pub(super) fn merge(base: &mut Value, overlay: Value) {
     match (base, overlay) {
         (Value::Object(base), Value::Object(overlay)) => {
             for (key, value) in overlay {
@@ -205,7 +207,7 @@ fn merge(base: &mut Value, overlay: Value) {
     }
 }
 
-fn provider_edits(value: &mut Value, document: &ClusterDocument) -> anyhow::Result<()> {
+pub(super) fn provider_edits(value: &mut Value, document: &ClusterDocument) -> anyhow::Result<()> {
     if value["kind"] == "Certificate" && value["metadata"]["name"] == "operator-dkk" {
         let name = format!("operator-{}", document.org);
         value["metadata"]["name"] = name.clone().into();
@@ -482,9 +484,9 @@ mod tests {
                     .unwrap(),
             )
             .unwrap();
-            let pg = render("deploy/gcp/cnpg-cluster.yaml");
+            let pg = render("deploy/infra/cnpg-cluster.yaml");
             let pg = object(&pg, "Cluster", "wamn-pg");
-            let broker = render("deploy/gcp/nats-jetstream.yaml");
+            let broker = render("deploy/infra/nats-jetstream.yaml");
             let server = object(&broker, "StatefulSet", "wamn-nats");
             assert_eq!(server["spec"]["replicas"], 1);
             let nats = object(&broker, "ConfigMap", "wamn-nats-config")["data"]["nats.conf"]
@@ -559,7 +561,7 @@ mod tests {
             document.registry = "registry.example.com/team".into();
             let certificates = objects(
                 repository(),
-                "deploy/gcp/identity-certificate.yaml",
+                "deploy/platform/identity-certificate.yaml",
                 &document,
             )
             .unwrap();
@@ -569,7 +571,7 @@ mod tests {
             );
             let operator = objects(
                 repository(),
-                "deploy/gcp/identity-operator-ca.yaml",
+                "deploy/platform/identity-operator-ca.yaml",
                 &document,
             )
             .unwrap();

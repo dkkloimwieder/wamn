@@ -59,20 +59,21 @@ type Pinned = (BTreeMap<&'static str, String>, (String, String));
 
 /// Authored resources carried beside the stamped release chart.
 const RESOURCES: &[&str] = &[
+    "deploy/kind/registry.yaml",
     "deploy/infra/cert-manager.yaml",
     "deploy/infra/cnpg-operator.yaml",
     "deploy/infra/nats-certificates.yaml",
-    "deploy/gcp/cnpg-cluster.yaml",
-    "deploy/gcp/nats-jetstream.yaml",
-    "deploy/gcp/values-operator.yaml",
+    "deploy/infra/cnpg-cluster.yaml",
+    "deploy/infra/nats-jetstream.yaml",
+    "deploy/platform/values-operator.yaml",
     "deploy/infra/values-wamn.yaml",
-    "deploy/gcp/identity-operator-ca.yaml",
-    "deploy/gcp/identity-certificate.yaml",
+    "deploy/platform/identity-operator-ca.yaml",
+    "deploy/platform/identity-certificate.yaml",
     "deploy/platform/wamn-host-serviceaccount.yaml",
-    "deploy/gcp/registry-helper.yaml",
+    "deploy/platform/registry-helper.yaml",
     "deploy/platform/runtime-operator-events-rbac.example.yaml",
     "deploy/platform/control-status-rbac.yaml",
-    "deploy/gcp/control-service.yaml",
+    "deploy/platform/control-service.yaml",
 ];
 
 /// The files of the roles target, each with the role it is pushed as.

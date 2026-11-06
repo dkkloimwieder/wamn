@@ -189,7 +189,7 @@ pub(super) fn service_objects(
         .as_str()
         .filter(|image| image.contains("@sha256:"))
         .context("the chart has no pinned HTTP image")?;
-    let source = std::fs::read_to_string(repository.join("deploy/gcp/control-service.yaml"))?;
+    let source = std::fs::read_to_string(repository.join("deploy/platform/control-service.yaml"))?;
     let mut objects = serde_yaml::Deserializer::from_str(&source)
         .map(Value::deserialize)
         .collect::<Result<Vec<_>, _>>()?;
@@ -252,7 +252,7 @@ pub(super) async fn release(
             .as_str()
             .context("control chart reference")?,
     );
-    let objects = super::install::helm_template(&entry[0])?;
+    let objects = super::resources::helm_template(&entry[0])?;
     let mut release_changed = false;
     for object in objects.iter().filter(|object| !object.is_null()) {
         let kind = object["kind"].as_str().context("control manifest kind")?;
@@ -293,7 +293,8 @@ pub(super) async fn release(
     changed |= release_changed;
     let stamped: Value = serde_yaml::from_slice(&std::fs::read(chart.join("values.yaml"))?)?;
     for object in service_objects(repository, document, &stamped)? {
-        changed |= super::install::apply_object(target, &object).await?;
+        super::resources::apply_object(target, &object).await?;
+        changed = true;
     }
     kubectl::kubectl(
         &target.kubeconfig,
@@ -319,7 +320,8 @@ async fn registry_ca(
 ) -> anyhow::Result<bool> {
     let mut changed = false;
     for object in registry_ca_objects(org, registry, values)? {
-        changed |= super::install::apply_object(target, &object).await?;
+        super::resources::apply_object(target, &object).await?;
+        changed = true;
     }
     Ok(changed)
 }

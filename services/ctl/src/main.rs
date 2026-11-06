@@ -6,7 +6,7 @@ mod help_env_tests;
 
 use std::str::FromStr as _;
 
-mod platform_verbs;
+use wamn_ctl::platform_verbs;
 mod print_platform_principals;
 mod project_verbs;
 

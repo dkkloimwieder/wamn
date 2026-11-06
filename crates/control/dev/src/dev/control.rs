@@ -67,7 +67,7 @@ pub(super) async fn start(
     std::fs::write(&entry_path, bytes)?;
     // Read the deployed interfaces instead of defining another HTTP contract.
     let deployment = serde_yaml::Deserializer::from_str(include_str!(
-        "../../../../../deploy/gcp/control-service.yaml"
+        "../../../../../deploy/platform/control-service.yaml"
     ))
     .map(serde_json::Value::deserialize)
     .collect::<Result<Vec<_>, _>>()?;

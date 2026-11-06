@@ -21,7 +21,7 @@
 #   # then this environment's release chart through `wamn-ctl env apply`
 #
 # NATS AND CERTIFICATES (docs/plan/alignment.md R1-R3). The platform runs one
-# NATS (deploy/gcp/nats-jetstream.yaml), so this release renders none. The
+# NATS (deploy/infra/nats-jetstream.yaml), so this release renders none. The
 # cert-manager CA (deploy/infra/nats-certificates.yaml) issues the four Secrets
 # that the chart mounts, so the chart generates no certificate. Install the CA
 # and the NATS before this release.

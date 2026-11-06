@@ -605,7 +605,7 @@ mod tests {
         include_str!("../../deploy/platform/runtime-operator-events-rbac.example.yaml");
 
     fn rbac() -> Vec<EventRbac> {
-        wamn_environment_control::platform::install::runtime_events(
+        wamn_environment_control::platform::resources::runtime_events(
             &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../.."),
             "test-warehouse",
             SYSTEM_NAMESPACE,

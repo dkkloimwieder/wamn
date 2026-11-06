@@ -7,6 +7,7 @@ use serde_json::Value;
 
 // The portable payload emitted by platform_build (DEP-02).
 const PAYLOAD_FILES: &[&str] = &[
+    "platform/resources/registry.yaml",
     "platform/identity/Chart.yaml",
     "platform/identity/values.yaml",
     "platform/identity/templates/deployment.yaml",
@@ -285,7 +286,7 @@ mod tests {
                 repository.join("deploy/platform/identity").join(identity)
             } else {
                 let basename = Path::new(file).file_name().unwrap();
-                ["deploy/infra", "deploy/gcp", "deploy/platform"]
+                ["deploy/infra", "deploy/platform", "deploy/kind"]
                     .into_iter()
                     .map(|root| repository.join(root).join(basename))
                     .find(|path| path.is_file())

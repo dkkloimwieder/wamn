@@ -149,7 +149,7 @@ import pathlib
 import re
 import sys
 work = pathlib.Path(sys.argv[1])
-postgres = pathlib.Path("deploy/gcp/cnpg-cluster.yaml").read_text()
+postgres = pathlib.Path("deploy/infra/cnpg-cluster.yaml").read_text()
 parameters = []
 for name in ("max_slot_wal_keep_size", "pg_stat_statements.max", "pg_stat_statements.track"):
     value, = re.findall(r'^      ' + re.escape(name) + r': "([^"]+)"$', postgres, re.M)
@@ -264,7 +264,7 @@ import sys
 import textwrap
 
 work = pathlib.Path(sys.argv[1])
-deployment = pathlib.Path("deploy/gcp/nats-jetstream.yaml").read_text()
+deployment = pathlib.Path("deploy/infra/nats-jetstream.yaml").read_text()
 configuration, = re.findall(r"^  nats.conf: \|\n(.*?)(?=^---$)", deployment, re.M | re.S)
 configuration = textwrap.dedent(configuration).replace("$POD_NAME", sys.argv[2])
 (work / "events.conf").write_text(configuration)

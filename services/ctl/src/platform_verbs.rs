@@ -1,4 +1,4 @@
-//! Arguments and output of the `platform` verbs.
+//! Thin platform command adapters.
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -7,20 +7,36 @@ use anyhow::Context as _;
 use clap::{Args, Subcommand};
 use wamn_environment_control::platform::document::ClusterDocument;
 use wamn_environment_control::platform::pools::Direction;
-use wamn_environment_control::platform::steps::install_steps;
-use wamn_release_control::release_chart::read_platform_version;
+use wamn_environment_control::platform::{artifact_plan, deploy};
+use wamn_release_control::release_chart::Target;
 
-/// One `platform` verb.
+/// Management verbs also available through the low-level control tool.
 #[derive(Debug, Subcommand)]
 pub enum PlatformCommand {
     /// Print a cluster.k file in its standard KCL form.
     Show(ShowArgs),
-    /// Install the platform, or print its plan with --dry-run.
-    Apply(ApplyArgs),
     /// Set every node pool to its declared size and wait for PostgreSQL and NATS.
     Wake(PoolsArgs),
     /// Set every node pool to 0 nodes.
     Sleep(PoolsArgs),
+}
+
+/// Platform verbs exposed by the product command.
+#[derive(Debug, Subcommand)]
+pub enum ProductPlatformCommand {
+    /// Deploy platform resources from a prepared chart.
+    Deploy(DeployArgs),
+    #[command(flatten)]
+    Manage(PlatformCommand),
+}
+
+#[derive(Debug, Args)]
+pub struct DeployArgs {
+    /// The cluster.k document.
+    pub file: PathBuf,
+    /// The prepared platform chart directory.
+    #[arg(long)]
+    pub chart: PathBuf,
 }
 
 #[derive(Debug, Args)]
@@ -30,18 +46,57 @@ pub struct PoolsArgs {
 }
 
 #[derive(Debug, Args)]
-pub struct ApplyArgs {
-    /// The cluster.k document.
-    pub file: PathBuf,
-    /// Print the install plan without changing resources.
-    #[arg(long)]
-    pub dry_run: bool,
-}
-
-#[derive(Debug, Args)]
 pub struct ShowArgs {
     /// The cluster.k document.
     pub file: PathBuf,
+}
+
+pub async fn run_product(
+    command: ProductPlatformCommand,
+    mut output: impl Write,
+) -> anyhow::Result<()> {
+    let ProductPlatformCommand::Deploy(args) = command else {
+        let ProductPlatformCommand::Manage(command) = command else {
+            unreachable!()
+        };
+        return run(command, output).await;
+    };
+    let file = args
+        .file
+        .canonicalize()
+        .with_context(|| format!("resolve cluster {}", args.file.display()))?;
+    let document = ClusterDocument::compile(&file)?;
+    let chart = artifact_plan::select(&args.chart)?;
+    writeln!(output, "cluster: {}", file.display())?;
+    writeln!(output, "chart: {}", chart.directory().display())?;
+    // The provider can mount files below this directory into kind nodes. Keep
+    // the invocation's directory for the lifetime of those nodes.
+    let directory = std::env::temp_dir().join(format!(
+        "wamn-deploy-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)?
+            .as_nanos()
+    ));
+    let mut builder = std::fs::DirBuilder::new();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::DirBuilderExt as _;
+        builder.mode(0o700);
+    }
+    builder
+        .create(&directory)
+        .context("create private deployment directory")?;
+    writeln!(output, "work directory: {}", directory.display())?;
+    output.flush()?;
+    let kubeconfig = directory.join("kubeconfig");
+    let context = document.provider.kubeconfig(&document, &kubeconfig).await?;
+    let target = Target {
+        kubeconfig,
+        context,
+        namespace: "platform".into(),
+    };
+    deploy::deploy(&document, &chart, &target, &directory, &mut output).await
 }
 
 pub async fn run(command: PlatformCommand, mut output: impl Write) -> anyhow::Result<()> {
@@ -67,101 +122,40 @@ pub async fn run(command: PlatformCommand, mut output: impl Write) -> anyhow::Re
         )
         .await;
     }
-    if let PlatformCommand::Apply(args) = &command
-        && !args.dry_run
-    {
-        let document = ClusterDocument::compile(&args.file)?;
-        let version = read_platform_version(Path::new("deploy/platform/release/Chart.yaml"))?;
-        let directory = wamn_environment_control::platform::lock::work_directory()?;
-        return wamn_environment_control::platform::install::apply(
-            &document,
-            &version,
-            Path::new("."),
-            &args
-                .file
-                .parent()
-                .unwrap_or(Path::new("."))
-                .join("environments"),
-            &directory,
-            &wamn_environment_control::platform::install::registry(&document)?,
-            |line| {
-                writeln!(output, "{line}")?;
-                output.flush().context("write install progress")
-            },
-        )
-        .await;
-    }
-    run_with_chart(
-        command,
-        Path::new("deploy/platform/release/Chart.yaml"),
-        output,
-    )
+    let PlatformCommand::Show(args) = command else {
+        unreachable!()
+    };
+    show(&args, output)
 }
 
-fn run_with_chart(
-    command: PlatformCommand,
-    chart: &Path,
-    mut output: impl Write,
-) -> anyhow::Result<()> {
-    match command {
-        PlatformCommand::Show(args) => {
-            let document = ClusterDocument::compile(&args.file)?;
-            output
-                .write_all(document.to_kcl().as_bytes())
-                .context("write the cluster document")?;
-        }
-        PlatformCommand::Apply(args) => {
-            let document = ClusterDocument::compile(&args.file)?;
-            let version = read_platform_version(chart)?;
-            for step in install_steps(&document, &version) {
-                writeln!(output, "{} {}", step.number, step.title)?;
-                writeln!(output, "  runs: {}", step.runs)?;
-                for (name, value) in step.inputs {
-                    let mut lines = value.lines();
-                    writeln!(output, "  {name}: {}", lines.next().unwrap_or_default())?;
-                    for line in lines {
-                        writeln!(output, "    {line}")?;
-                    }
-                }
-                if step.owner_inputs.is_empty() {
-                    writeln!(output, "  owner inputs: none")?;
-                }
-                for input in step.owner_inputs {
-                    writeln!(output, "  owner input: {}", input.name)?;
-                    for line in input.instructions.lines() {
-                        writeln!(output, "    {line}")?;
-                    }
-                }
-                writeln!(output)?;
-            }
-        }
-        PlatformCommand::Wake(_) | PlatformCommand::Sleep(_) => {
-            unreachable!("run resizes the pools before it reads the chart")
-        }
-    }
-    Ok(())
+fn show(args: &ShowArgs, mut output: impl Write) -> anyhow::Result<()> {
+    let document = ClusterDocument::compile(&args.file)?;
+    output
+        .write_all(document.to_kcl().as_bytes())
+        .context("write the cluster document")
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{ClusterDocument, install_steps, read_platform_version, run, run_with_chart};
-    use crate::{Cli, Command};
+    use super::{ClusterDocument, run, show};
+    #[derive(clap::Parser)]
+    struct Cli {
+        #[command(subcommand)]
+        command: Command,
+    }
+    #[derive(clap::Subcommand)]
+    enum Command {
+        #[command(subcommand)]
+        Platform(super::PlatformCommand),
+    }
     use clap::Parser as _;
-    use std::collections::BTreeSet;
     use std::path::Path;
-    use wamn_environment_control::platform::steps::Runner;
 
-    #[tokio::test]
-    async fn apply_without_dry_run_reads_the_document_before_starting() {
-        let cli = Cli::try_parse_from(["wamn-ctl", "platform", "apply", "/missing/cluster.k"])
-            .expect("parse platform apply");
-        let Command::Platform(command) = cli.command else {
-            panic!("expected a platform command");
-        };
-        let mut output = Vec::new();
-        let error = run(command, &mut output).await.unwrap_err();
-        assert_eq!(error.to_string(), "read /missing/cluster.k");
-        assert!(output.is_empty());
+    #[test]
+    fn control_tool_has_no_platform_apply_or_deploy() {
+        for verb in ["apply", "deploy"] {
+            assert!(Cli::try_parse_from(["wamn-ctl", "platform", verb, "cluster.k"]).is_err());
+        }
     }
 
     #[tokio::test]
@@ -186,9 +180,7 @@ mod tests {
                 file.as_os_str(),
             ])
             .expect("parse the platform verb");
-            let Command::Platform(command) = cli.command else {
-                panic!("expected a platform command");
-            };
+            let Command::Platform(command) = cli.command;
             let mut output = Vec::new();
             errors.push(run(command, &mut output).await.unwrap_err().to_string());
             assert!(output.is_empty());
@@ -202,83 +194,7 @@ mod tests {
         }
     }
 
-    #[test]
-    fn apply_dry_run_lists_every_step_once_with_its_runner_and_the_chart_version() {
-        let committed = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../deploy/gcp/cluster.k");
-        let cli = Cli::try_parse_from([
-            "wamn-ctl".as_ref(),
-            "platform".as_ref(),
-            "apply".as_ref(),
-            committed.as_os_str(),
-            "--dry-run".as_ref(),
-        ])
-        .expect("parse platform apply --dry-run");
-        let Command::Platform(command) = cli.command else {
-            panic!("expected a platform command");
-        };
-        let mut output = Vec::new();
-        let chart =
-            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../deploy/platform/release/Chart.yaml");
-        run_with_chart(command, &chart, &mut output).expect("print the install plan");
-        assert!(!output.is_empty());
-
-        let document = ClusterDocument::compile(&committed).expect("compile the document");
-        let version = read_platform_version(&chart).expect("read the chart version");
-        let steps = install_steps(&document, &version);
-        let numbers: Vec<_> = steps.iter().map(|step| step.number).collect();
-        let guide = std::fs::read_to_string(
-            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/operations/gcp.md"),
-        )
-        .expect("read gcp.md");
-        let documented: Vec<_> = guide
-            .lines()
-            .filter_map(|line| line.strip_prefix("### 4."))
-            .filter_map(|heading| heading.split_once(' '))
-            .map(|(number, _)| format!("4.{number}"))
-            .collect();
-        assert_eq!(
-            numbers, documented,
-            "the subsections of gcp.md section 4, in order"
-        );
-        for step in &steps {
-            match step.runs {
-                Runner::Verb(name) | Runner::Job(name) | Runner::Owner(name) => {
-                    assert!(!name.is_empty(), "{} names its runner", step.number);
-                }
-            }
-        }
-        let mut named = BTreeSet::new();
-        for input in steps.iter().flat_map(|step| &step.owner_inputs) {
-            assert!(named.insert(&input.name), "{} is named once", input.name);
-        }
-        assert!(
-            steps
-                .iter()
-                .flat_map(|step| &step.inputs)
-                .any(|(_, value)| *value == version),
-            "the plan uses the chart's version"
-        );
-    }
-
-    #[test]
-    fn apply_dry_run_names_an_unreadable_chart_before_printing() {
-        let committed = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../deploy/gcp/cluster.k");
-        let chart = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../deploy/platform/release/Chart.yaml/missing");
-        let command = super::PlatformCommand::Apply(super::ApplyArgs {
-            file: committed,
-            dry_run: true,
-        });
-        let mut output = Vec::new();
-        let error = run_with_chart(command, &chart, &mut output).unwrap_err();
-        assert_eq!(
-            error.to_string(),
-            format!("read platform chart {}", chart.display())
-        );
-        assert!(output.is_empty());
-    }
-
-    fn show(file: &Path) -> Vec<u8> {
+    fn shown(file: &Path) -> Vec<u8> {
         let cli = Cli::try_parse_from([
             "wamn-ctl".as_ref(),
             "platform".as_ref(),
@@ -286,16 +202,12 @@ mod tests {
             file.as_os_str(),
         ])
         .expect("parse platform show");
-        let Command::Platform(command) = cli.command else {
-            panic!("expected a platform command");
-        };
+        let Command::Platform(command) = cli.command;
         let mut output = Vec::new();
-        run_with_chart(
-            command,
-            Path::new("deploy/platform/release/Chart.yaml"),
-            &mut output,
-        )
-        .expect("show the cluster document");
+        let super::PlatformCommand::Show(args) = command else {
+            panic!("expected show");
+        };
+        show(&args, &mut output).expect("show the cluster document");
         output
     }
 
@@ -304,14 +216,14 @@ mod tests {
         let committed = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../deploy/gcp/cluster.k");
         let document =
             ClusterDocument::compile(&committed).expect("compile the committed document");
-        let output = show(&committed);
+        let output = shown(&committed);
         let directory =
             std::env::temp_dir().join(format!("wamn-platform-show-{}", std::process::id()));
         std::fs::create_dir(&directory).expect("create the directory");
         let file = directory.join("cluster.k");
         std::fs::write(&file, &output).expect("write show's output");
         let compiled = ClusterDocument::compile(&file).expect("compile show's output");
-        let repeated = show(&file);
+        let repeated = shown(&file);
         std::fs::remove_dir_all(&directory).expect("remove the directory");
 
         assert_eq!(compiled, document);

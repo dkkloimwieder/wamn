@@ -7,7 +7,7 @@ use serde_json::{Value, json};
 use wamn_control_registry::Triple;
 
 use super::document::Provider;
-use super::{identity, install, manifests};
+use super::{identity, manifests, resources};
 use wamn_release_control::release_chart::{self, ValuesInput};
 
 /// The explicit scope of a cluster's operator and NATS users.
@@ -38,7 +38,7 @@ pub fn delivery(repository: &Path, input: &ClusterInput<'_>) -> anyhow::Result<C
     let mut inputs = cluster(repository, input)?;
     inputs
         .prerequisites
-        .extend(install::postgres_operator_objects(
+        .extend(resources::postgres_operator_objects(
             repository,
             Provider::Kind,
         )?);
@@ -50,12 +50,12 @@ pub fn delivery(repository: &Path, input: &ClusterInput<'_>) -> anyhow::Result<C
 /// # Errors
 /// Returns an error when a production input cannot be rendered.
 pub fn cluster(repository: &Path, input: &ClusterInput<'_>) -> anyhow::Result<Cluster> {
-    let mut prerequisites = vec![install::namespace_object(input.operator_namespace)];
+    let mut prerequisites = vec![resources::namespace_object(input.operator_namespace)];
     if input.host_namespace != input.operator_namespace {
-        prerequisites.push(install::namespace_object(input.host_namespace));
+        prerequisites.push(resources::namespace_object(input.host_namespace));
     }
-    prerequisites.extend(install::cert_manager_objects(repository, Provider::Kind)?);
-    prerequisites.extend(install::runtime_events(
+    prerequisites.extend(resources::cert_manager_objects(repository, Provider::Kind)?);
+    prerequisites.extend(resources::runtime_events(
         repository,
         input.host_namespace,
         input.operator_namespace,
@@ -86,7 +86,11 @@ pub fn cluster(repository: &Path, input: &ClusterInput<'_>) -> anyhow::Result<Cl
             input.org,
             input.environments,
         )?,
-        operator: install::operator_entry(input.release_chart, input.operator_namespace, &values)?,
+        operator: resources::operator_entry(
+            input.release_chart,
+            input.operator_namespace,
+            &values,
+        )?,
     })
 }
 
@@ -106,10 +110,10 @@ pub fn delivery_database(
     namespace: &str,
     name: &str,
 ) -> anyhow::Result<Database> {
-    let mut objects = vec![install::namespace_object(namespace)];
-    objects.extend(install::postgres_cluster_inputs(
+    let mut objects = vec![resources::namespace_object(namespace)];
+    objects.extend(resources::postgres_cluster_inputs(
         repository,
-        "deploy/gcp/cnpg-cluster.yaml",
+        "deploy/infra/cnpg-cluster.yaml",
         Provider::Kind,
         name,
         namespace,

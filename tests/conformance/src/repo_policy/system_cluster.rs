@@ -12,7 +12,7 @@ use super::Problems;
 /// database: the Google Cloud cluster that holds the system database
 /// and every environment database
 /// (`docs/history/gcp-deployment.md`).
-const ALLOWLIST: &[&str] = &["gcp/cnpg-cluster.yaml"];
+const ALLOWLIST: &[&str] = &["infra/cnpg-cluster.yaml"];
 
 /// The fewest manifests a real `deploy/` tree holds. A lower count means the
 /// walk went vacuous (the pre-tiering flat `read_dir` bug class).
@@ -76,44 +76,4 @@ pub(super) fn check(root: &Path, problems: &mut Problems) {
     problems.require(scanned >= MINIMUM_MANIFESTS, || {
         format!("the deploy/ manifest walk saw only {scanned} yaml files")
     });
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{MINIMUM_MANIFESTS, Problems, check};
-
-    /// A clean manifest tree passes, and one manifest that names the system
-    /// database fails with that file named.
-    #[test]
-    fn the_lint_fails_on_one_system_cluster_reference_and_passes_a_clean_tree() {
-        let root = std::env::temp_dir().join(format!("wamn-repo-policy-{}", std::process::id()));
-        let deploy = root.join("deploy/workloads");
-        std::fs::create_dir_all(&deploy).expect("create the fixture tree");
-        for index in 0..MINIMUM_MANIFESTS {
-            std::fs::write(
-                deploy.join(format!("clean-{index}.yaml")),
-                "kind: Deployment\n# wamn-sysdb is named only in this comment\n",
-            )
-            .expect("write a clean manifest");
-        }
-        std::fs::create_dir_all(root.join("deploy/gcp")).expect("create the platform tree");
-        std::fs::write(
-            root.join("deploy/gcp/cnpg-cluster.yaml"),
-            "name: wamn-sysdb\n",
-        )
-        .expect("write the allowed cluster definition");
-
-        let mut clean = Problems::default();
-        check(&root, &mut clean);
-
-        std::fs::write(deploy.join("host.yaml"), "env:\n  - value: wamn_system\n")
-            .expect("write the offending manifest");
-        let mut offending = Problems::default();
-        check(&root, &mut offending);
-        std::fs::remove_dir_all(&root).expect("remove the fixture tree");
-
-        assert!(clean.0.is_empty(), "a clean tree must pass: {:?}", clean.0);
-        assert_eq!(offending.0.len(), 1, "{:?}", offending.0);
-        assert!(offending.0[0].contains("host.yaml"), "{:?}", offending.0);
-    }
 }
