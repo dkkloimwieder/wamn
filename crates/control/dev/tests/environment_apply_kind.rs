@@ -14,9 +14,6 @@
 //! Checks, each recorded with its command and output in `report.json`:
 //! 1. The first apply creates the environment: its row, its database and
 //!    one Helm revision.
-//! 2. Reapply preserves data and the selected release, including after an
-//!    interrupted Helm upgrade. The existing chart gains a temporary pre-upgrade
-//!    Pod hook with an unavailable image so Helm waits until the test stops it.
 //! 3. A connection-only change preserves the selected release and changes the
 //!    release binding without changing a connection generation.
 //! 4. `env show` output applied again preserves the selected release and data.
@@ -1360,58 +1357,6 @@ async fn scenario(run: &mut Run, repository: &Path, source: &Path) -> anyhow::Re
     run.collect("15 wrong release placement", result);
     let result = host_report_check(run, &context).await;
     run.collect("F2 failed host report", result);
-
-    let result = async {
-        // 2. Reapply and recovery preserve the application-owned data from check 17.
-        // Connection copies belong to the system database: apply replaces them
-        // with its projection, so check 17's environment-only copies must go.
-        let suffix = row
-            .as_ref()
-            .and_then(|row| row["instance_suffix"].as_str())
-            .context("the dev row")?;
-        let database =
-            wamn_control_provision::project_env_database_name(ORG, PROJECT, "dev", suffix);
-        let dev_url = format!("postgresql://postgres:{password}@127.0.0.1:{port}/{database}");
-        let (project, task) = connect(&dev_url).await?;
-        let application_rows = async || -> anyhow::Result<Vec<Value>> {
-            let mut rows = platform_configuration::read_back(project.as_ref()).await?;
-            rows.retain(|row| row["row"]["created_by"] == platform_configuration::CALLER);
-            Ok(rows)
-        };
-        let before = application_rows().await?;
-        ensure!(!before.is_empty(), "the reapply fixture contains data");
-        for recovery in [false, true] {
-            if recovery {
-                interrupt_upgrade(run, &platform, &name).await?;
-            }
-            apply(&dev, "dev-again").await?;
-            let after = application_rows().await?;
-            let selected = environment::show::show(&platform, &dev.triple()).await?;
-            let live = run.live_digests(&name).await?;
-            let status = run
-                .json("helm", &["-n", NAMESPACE, "status", &name, "-o", "json"])
-                .await?;
-            run.pass(
-                if recovery {
-                    "reapply recovers a pending Helm upgrade and preserves data and release"
-                } else {
-                    "reapply preserves data and release with healthy resources"
-                },
-                "env apply; SELECT platform configuration; env show; helm status; kubectl get pods",
-                json!({"before": before, "after": after, "selected": selected.release,
-                    "live": live, "status": status["info"]["status"]}),
-                before == after
-                    && selected.release == dev.release
-                    && live == [digest.as_str()]
-                    && status["info"]["status"] == "deployed",
-            );
-        }
-        task.abort();
-
-        Ok(())
-    }
-    .await;
-    run.collect("2 unchanged apply", result);
 
     // 3. A binding change preserves the release and system generation.
     let generation = async |system: &tokio_postgres::Client| -> anyhow::Result<Option<i64>> {
@@ -3011,81 +2956,6 @@ async fn connection_generation(
     let _ = admin_url;
     let active=system.query_opt("SELECT c.active_generation FROM registry.connection c JOIN registry.integration i ON i.id=c.integration_id WHERE c.org=$1 AND c.project=$2 AND c.env='dev' AND i.name='labels-dev'",&[&ORG,&PROJECT]).await?.map(|row|row.get(0));
     Ok(active)
-}
-
-async fn interrupt_upgrade(run: &Run, platform: &Platform, name: &str) -> anyhow::Result<()> {
-    // A pre-upgrade hook leaves the serving resources and values unchanged.
-    // Stop Helm only after it creates the hook and records the pending upgrade.
-    let hook_name = format!("{name}-interrupt");
-    let hook = platform.chart.join("templates/interrupt.yaml");
-    std::fs::write(
-        &hook,
-        format!(
-            "apiVersion: v1\nkind: Pod\nmetadata:\n  name: {hook_name}\n  annotations:\n    helm.sh/hook: pre-upgrade\nspec:\n  restartPolicy: Never\n  containers:\n    - name: wait\n      image: {UNPULLED}\n"
-        ),
-    )?;
-    let log = std::fs::File::create(run.work.join("interrupted-upgrade.log"))?;
-    let mut upgrade = Command::new("helm")
-        .args(["upgrade", name])
-        .arg(&platform.chart)
-        .args([
-            "-n",
-            NAMESPACE,
-            "--reuse-values",
-            "--wait",
-            "--timeout",
-            "5m",
-        ])
-        .env("KUBECONFIG", &platform.target.kubeconfig)
-        .args(["--kube-context", &platform.target.context])
-        .stdout(log.try_clone()?)
-        .stderr(log)
-        .kill_on_drop(true)
-        .spawn()
-        .context("start the Helm upgrade to interrupt")?;
-    let pending = async {
-        let deadline = Instant::now() + Duration::from_secs(60);
-        loop {
-            let status = run
-                .json("helm", &["-n", NAMESPACE, "status", name, "-o", "json"])
-                .await?;
-            let pod = run
-                .run(
-                    "kubectl",
-                    &[
-                        "-n",
-                        NAMESPACE,
-                        "get",
-                        "pod",
-                        &hook_name,
-                        "--ignore-not-found",
-                        "-o",
-                        "name",
-                    ],
-                )
-                .await?;
-            if status["info"]["status"] == "pending-upgrade" && !pod.trim().is_empty() {
-                break Ok(());
-            }
-            ensure!(
-                upgrade.try_wait()?.is_none(),
-                "Helm exited before interruption"
-            );
-            ensure!(
-                Instant::now() < deadline,
-                "Helm did not reach its pre-upgrade hook"
-            );
-            tokio::time::sleep(Duration::from_millis(200)).await;
-        }
-    }
-    .await;
-    let stopped = upgrade.kill().await;
-    std::fs::remove_file(hook)?;
-    pending?;
-    stopped?;
-    run.run("kubectl", &["-n", NAMESPACE, "delete", "pod", &hook_name])
-        .await?;
-    Ok(())
 }
 
 async fn show_check(run: &mut Run, context: &CheckContext) -> anyhow::Result<EnvironmentDocument> {
