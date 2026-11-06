@@ -21,6 +21,16 @@ The following decisions control the entire proposal:
 
 ### Deployment ownership
 
+An application release is the unit of publication, deployment, and rollback. It holds that application's packages, composed entry, routes, and component artifacts. A composed entry is the application's executable component.
+
+`environment.k` holds one selection per application, with its current and previous release, plus the shared environment configuration. Each application has its own Helm release, composed entry, routes, HTTP workload, Service, hostname, and initially its own host group.
+
+Shared database infrastructure has a separate owner: the CNPG cluster, environment database, and roles belong to platform and environment provisioning. Shared environment configuration belongs to the environment operation. Application releases consume these resources without owning or reapplying them.
+
+Environment provisioning also owns the shared event stream, CDC resources, and environment materializer. These resources serve the shared database and remain outside application Helm releases. Application updates do not duplicate or restart them.
+
+Deploy and rollback persist and apply only the targeted application's selection and Helm release. Code-only deployment runs no SQL, resets no data, reapplies no other application, and restarts no other application's workloads. Kubernetes, wasmCloud, and CNPG own the resources. WAMN adds no deployment controller. SQL is never reversed.
+
 ```text
 Developer or deployment API
   -> select immutable package/platform artifacts
@@ -68,7 +78,7 @@ Local `wamn dev`
 | `.../platform/lock.rs` | One local file lock coordinates the entire installation process | Remove broad coordination as the giant process is deleted. Keep small locks only for actual competing SQL mutations or other identified shared writes. |
 | `.../environment/analyse/plan.rs::package_compatible` | Rejects every package version change regardless of SQL | Delete version-equality refusal. Compare code and schema identities independently; report useful warnings. |
 | `.../environment/stage.rs` | Package installation and release activation still have coupled assumptions | Keep required SQL/binding work but extract it into independent operations; remove code-only upgrade restrictions. |
-| `crates/control/release/src/publish_release.rs` | Publication requires the exact package artifact to have been installed in the target database | Build releases from published package facts. Resolve target-specific configuration during deployment; retain environment-scoped release selection for now. |
+| `crates/control/release/src/publish_release.rs` | Publication requires the exact package artifact to have been installed in the target database | Build each application release from its published package facts. Resolve target configuration during deployment. Keep selection separate for each application. |
 | `.../environment/analyse.rs::read_release` | Requires a qualification artifact before a release can be selected | Make qualification an optional test result and report its absence as a warning, not a deployment refusal. |
 | `crates/control/package/src/schema_baseline.rs` | System/project schema hash mismatch always refuses | Keep initial schema records; replace blanket mismatch refusal with an explicit platform SQL operation and diagnostics. Preserve actual SQL/query failures. |
 | `.../platform/web.rs` | Platform UI upload still reads built files from a source checkout | Publish UI files once, then deploy the selected web artifact; do not rebuild or copy local source output during platform deployment. |
@@ -86,26 +96,24 @@ The following command forms describe the intended developer experience. They are
 | Command | Responsibility |
 |---|---|
 | `wamn platform deploy deploy/kind/cluster.k` | Render/apply selected platform resources and report readiness. Zero applications required. |
-| `wamn deploy sample_app --env dev` | Build/publish changed application artifacts from source. Publish an environment release changing only this application's selection. Initialize an empty target if needed, then deploy. |
-| `wamn deploy --release sha256:... --env dev` | Select an already published **environment release**; no local source build. |
+| `wamn deploy sample_app --env dev` | Build and publish the selected application. Initialize its empty target if needed, then apply only its Helm release. |
+| `wamn deploy --release sha256:... --env dev` | Select a published application release without a local source build. Resolve its application from the declared membership. |
 | `wamn schema apply sample_app --env dev` | Run explicitly selected application SQL or apply the configured reset behavior; independent from application activation. |
 | `wamn platform schema apply --scope system` | Apply selected WAMN system SQL; independent from platform image deployment. A project schema operation selects project environments explicitly. |
 | `wamn schema reset --env dev` | Explicitly reset a disposable application environment. |
 | `wamn schema adopt --env dev` | Start migration tracking from an existing selected schema state. |
-| `wamn rollback sample_app --env dev` | Publish an environment release using this application's previous artifact selection. Retain every other application's selection. Persist and apply the new release without reversing SQL. |
-| `wamn status --env dev` | Show the selected environment release and each application's selected artifacts, running artifacts, hostname, readiness, schema state, and warnings. |
+| `wamn rollback sample_app --env dev` | Select that application's previous release from `environment.k`. Persist it and apply only that application's Helm release. Never reverse SQL. |
+| `wamn status --env dev` | Show each application's current and previous release, observed running artifacts, hostname, readiness, schema state, and warnings. |
 
-Each environment has one selected environment release and one Helm release. Each routed application has its own composed entry, HTTP workload, Service, and hostname inside that release. A composed entry is the application's executable component. Do not combine unrelated applications into one entry or create a Helm release per application.
+Each application owns one Helm release and initially one host group. Their names derive from the environment coordinate and application identity. An application update cannot change another application's Helm revision, workload definitions, or pod identities. Shared database infrastructure and environment configuration remain separately owned.
 
-An application update or rollback publishes a new environment release changing only the targeted application's artifact selection. Other applications retain their selections, artifact bytes, and data. They are not guaranteed independent runtime rollout. One Helm upgrade can restart or roll their workloads.
+Source of release selection: `environment.k` is the authored reference. Each application records `current` and `previous` release digests. On first installation, `previous` is absent. Deploy moves that application's current release to previous and writes the new release as current. Reapplying the same selection leaves both fields unchanged.
 
-Kubernetes, wasmCloud, and CloudNativePG remain the resource owners. Do not add a deployment controller. SQL is never reversed.
+Rollback selects that application's previous release. It swaps current and previous, then applies the selected published bytes. It publishes no replacement release. Helm history never chooses the target. Do not invoke `helm rollback` to select application code.
 
-**Source of release selection:** `environment.k` remains the authored reference. An application update reads the persisted environment selection and replaces only the targeted application's artifacts in a newly published environment release. Rollback uses that application's previous artifact selection from the persisted environment selection. It publishes a new environment release retaining every other application's current selection. The rollback target is neither the previous environment release nor a target read from Helm history. Do not invoke `helm rollback`.
+After artifact preparation succeeds, deploy or rollback atomically writes only the targeted selection before invoking that application's Helm release. Other application selections and shared configuration remain unchanged. Neither command creates a Git commit or another selection store. A failed rollout leaves the pending selection in the file. A retry applies it without rotating previous. Status reports observed artifacts, including mixed or unknown state within the targeted application.
 
-After publication succeeds, deploy or rollback writes the resulting environment release to `environment.k` before invoking Helm. Neither command creates a Git commit. On a failed rollout, the file retains the pending selection. Status reports the artifacts actually running for each application, including mixed or unknown state. A retry applies the persisted selection. Do not create another independent selection database.
-
-A prebuilt package digest is not interchangeable with a release digest. `--release` always refers to a published environment release. Full portability of the same release digest across different environments is not required in the initial implementation.
+A package digest is not a release digest. `--release` always selects an application release containing that application's dependency closure. The publisher, chart, host, CLI, and status readers use the same application boundary. A host receives only its application's release and membership. The chart routes its hostname to its own HTTP workload and Service. Full reuse of a release digest across environments is not required initially.
 
 **Warnings by default:** Missing test results, deprecated interfaces, changed schema hashes, uncertain runtime combinations, and potentially destructive SQL should produce concise notices with the relevant artifact/database names and an actionable command. Do not demand an override to proceed. Operations that cannot execute because an artifact is absent, a component will not load, the target is unauthorized, or SQL/Helm actually fails must report failure.
 
@@ -225,45 +233,45 @@ Next: inspect identity configuration, then rerun platform deploy
 
 ### 5.2 Fresh application installation, including its initial SQL
 
-**Intent:** A developer can install a new application on an existing platform with one command. The project environment may be new or may already contain other applications.
+Intent: Install a new application on an existing platform with one command. The environment can be new or already contain other applications.
 
 ```bash
 wamn deploy sample_app --env dev
 
-# No local source build when the environment release already exists:
+# Use published application bytes without a source build:
 wamn deploy --release sha256:<release-digest> --env dev
 ```
 
-`--release` selects a **published environment release**, not a package artifact. Full reuse of an identical release digest across different environments is not a requirement for this first implementation.
+`--release` selects a published application release. It contains the selected application's packages, composed entry, routes, and component artifacts. It does not contain another application's selection.
 
-**Execution:**
+1. Identify the selected application and its package dependency closure from the declared membership.
+2. For source deployment, build changed components and recompose the targeted application. Use a disposable build database when SQL introspection needs one.
+3. Publish immutable package and component artifacts, then construct that application's release from those facts. Publication requires no destination application database or installed candidate version.
+4. For a new environment, invoke its separate provisioning operation. CNPG owns the database, and provisioning owns shared roles, credentials, and environment configuration.
+5. Initialize an absent application's SQL through the independent SQL operation. For existing `migrate` state, report pending SQL without applying it. A schema change in a disposable `reset` environment follows section 4. Code-only deployment runs no SQL and performs no reset.
+6. Resolve the targeted application's connections, credentials, hostname, and permissions. Report absent optional configuration. Refuse unavailable required resources.
+7. Persist only that application's current and previous selections as section 3 specifies. Apply its Helm release with its own host group, composed entry, HTTP workload, Service, and hostname. Report its observed running artifacts and readiness.
 
-1. **Identify application inputs.** Read the selected package declarations, effective environment membership, base-package dependencies, and any dependent overlay. Retain each other application's exact artifact selection from the persisted environment release, including its composed entry.
-2. **Prepare only changed source inputs.** For source deployment, generate the selected code and compile affected components. When a base changes, recompose dependent executable bytes within the targeted application. Reuse unchanged outputs. SQL introspection can use a disposable build database; it must not require installing the candidate into the destination database.
-3. **Publish and construct the release.** Publish immutable package/component artifacts and create one environment release from published facts. Include a separate composed entry for each routed application. Change only the targeted application's artifact selection. The release constructor must not require the destination `catalog.packages` table to have the candidate version or exact artifact digest already installed.
-4. **Ensure target database infrastructure.** Create the CNPG `Database` resource for a new project environment and initialize the WAMN-owned project state. The resource remains under CNPG management. An existing project environment retains its database and existing application state unless the selected schema strategy authorizes a reset.
-5. **Apply initial or changed SQL according to mode.** An empty application target receives the selected complete SQL baseline. For an existing `migrate` environment, pending SQL is reported but not automatically run during a code deployment. For an existing explicitly disposable `reset` environment, a different selected **physical schema** triggers replacement of the whole project-environment database. The decision must be the same whether the selected release came from source or `--release`.
-6. **Resolve runtime configuration.** Use the target's actual connection references, permissions, credentials, application membership, and route configuration. Resolve a separate hostname for each routed application. Missing optional configuration is reported; invalid required configuration fails the requested activation.
-7. **Select and deploy.** Update the owning `environment.k` release selection without automatically creating a Git commit. Apply the environment's single Helm release with an HTTP workload and Service for each routed application. The wasmCloud operator starts or updates those workloads. Report each application's running artifacts, readiness, and hostname. Other applications retain their selections, but the Helm upgrade can restart or roll their workloads.
+Shared database ownership does not merge application deployment ownership. Adding an application initializes its absent baseline unless section 4 requires a whole-environment schema reset. That database operation lists every affected application before replacement. It cannot occur as a side effect of a code-only application deployment.
 
-**Shared-database case:** If `sample_app` is added to an existing `migrate` environment and has not yet been installed, apply only the new application's initialization SQL while preserving other application rows. In `reset` mode, adding a package changes the complete selected schema. If that requires resetting a shared disposable database, **all applications in that project environment lose their data** and their selected schemas must be reconstructed. The command lists every affected application before replacement. It must not claim per-application isolation where there is one project-environment database.
+Application rollout does not reinstall the platform or reapply another application's Helm release. Code-only operations preserve every other application's selection, workloads, and data. Shared resources change only through their separate owner when initialization needs them.
 
-**Must remain unchanged:** WAMN host/control/identity binaries, unrelated external environments, and unrelated application artifact bytes. Initializing an empty project environment is not a reason to run the entire platform installation command.
-
-**Failure and retry:** If initial SQL succeeds but the component fails readiness, leave the SQL record intact. Report the running artifacts for each application, including mixed or unknown state. Retrying the release uses the published bytes and does not repeat committed SQL. If a `reset` requires reconstructing several packages, verify the selected SQL and artifacts are available **before** selecting a replacement database. Retain the former database instance when preparing the replacement fails.
+If initial SQL succeeds but rollout fails, keep the SQL record. Retrying the selection uses published bytes and does not repeat committed initialization. The file retains the pending application release, and status reports what actually runs.
 
 ```text
 Deploy sample_app -> org/project/dev
-  Environment selected      sha256:E1
-  sample_app selected       sha256:B1
-  sample_app running        sha256:B0 (ready)
-  App SQL                   installed successfully
-  Application workload      failed to start
+  sample_app current        sha256:A1
+  sample_app previous       none
+  sample_app running        unknown (not ready)
+  other_app current         sha256:B0 (unchanged)
+  other_app Helm revision   unchanged
+  App SQL                   initialized successfully
 Result: incomplete
-Next: retry E1 or roll back sample_app if it has a previous artifact selection
+Next: retry sample_app current selection
+SQL already applied is not reversed
 ```
 
-**Useful warnings:** Schema recorded for the destination differs from the selected package, deprecated interface in use, or selected release lacks optional tests. **Actual failures:** No published component, unauthorized database access, required connection unavailable, failed SQL, or component unable to start.
+Warnings identify schema differences, deprecated interfaces, and missing optional test results. Missing artifacts, unauthorized access, unavailable required connections, failed SQL, and failed component startup remain errors.
 
 ### 5.3 Platform upgrades: behavior, WAMN SQL, and infrastructure
 
@@ -384,45 +392,44 @@ A physical schema change on an environment already recorded as disposable trigge
 
 ### 5.5 Application code upgrade, hotfix and rollback
 
-**Intent:** Fix code, change only the targeted application's artifact selection, and preserve database rows and unrelated platform resources. Other applications retain their bytes and data, but the shared Helm upgrade can restart or roll their workloads.
+Intent: Change one application's release while preserving database rows and every other application's selection and workloads.
 
 ```bash
 wamn deploy sample_app --env dev
 wamn rollback sample_app --env dev
 
-# Select already published bytes without a source build:
+# Select published application bytes without a source build:
 wamn deploy --release sha256:<release-digest> --env dev
 ```
 
-1. **Build selected changes.** For a source-based deploy, compile the changed code. Recompose affected executables within the targeted application, including its base dependencies. Leave other applications' selected artifacts untouched. Do not rebuild the WAMN host or platform UI.
-2. **Publish immutable bytes.** Publish the changed package/component and construct a new environment release from the persisted selection. Replace only the targeted application's artifact selection. Retain every other application's exact selection and composed entry. Construction does not require installing the candidate code version as SQL in the target database.
-3. **Inspect schema information.** Compare the executable's build-time schema information with the installed schema; show differences and likely SQL errors when known. No SQL is run solely because the application code version changed.
-4. **Select and activate.** Write the new environment release to `environment.k`, then upgrade the environment's single Helm release. Keep each application's composed entry, HTTP workload, Service, and hostname separate. The wasmCloud operator manages the workloads. Other applications retain their selections, but this upgrade can restart or roll their workloads.
-5. **Report running state.** A successful artifact publication is not a successful deployment until the selected workload is running. Show the environment selection and each application's selected and running artifacts separately, even after failure.
-6. **Rollback if requested.** Read the targeted application's previous artifact selection from the persisted environment selection. Publish a new environment release replacing only that application's selection. Retain every other application's current selection, bytes, and data. Write the new release to `environment.k` before upgrading the same Helm release. Do not select the previous environment release or use Helm history to choose the target. Never reverse SQL. If the installed schema differs, warn that earlier code can fail. Attempt the requested rollback when its artifacts and target are valid.
+1. Build only changed inputs within the targeted application's dependency closure. Recompose its affected executable. Leave other applications and platform artifacts untouched.
+2. Publish the targeted application's immutable release. Publication uses verified package facts without installing the candidate into the destination database.
+3. Report differences between selected schema information and recorded installed state. Code-only deployment runs no SQL, resets no data, and changes no installed SQL record.
+4. Move the application's current selection to previous and persist the new current selection. Apply only its Helm release. Kubernetes and wasmCloud manage its host group and workloads.
+5. Report that application's selected and observed running releases separately. Report readiness from the actual workload, including after failure.
+6. For rollback, read previous from that application's selection in `environment.k`. Swap current and previous, then apply only that application's Helm release. Never use Helm history to choose code, republish an environment aggregate, or reverse SQL. Warn when the older code expects different SQL. Attempt rollback when the artifacts and target are valid.
 
 ```text
 Deploy sample_app -> org/project/dev
-  Application code          rebuilt -> sha256:A1
-  Dependent components      reused or recomposed as necessary
+  Application release       sha256:A1
   Host image                unchanged
   Installed schema          sha256:S1
   Build-time schema         sha256:S1
   SQL operations            none
-  Environment selected      sha256:E1
-  sample_app selected       sha256:A1
-  sample_app running        sha256:A1 (ready)
+  sample_app current        sha256:A1
   sample_app previous       sha256:A0
+  sample_app running        sha256:A1 (ready)
+  other_app current         sha256:B1 (unchanged)
+  other_app Helm revision   unchanged
+  other_app pod UIDs        unchanged
 Result: deployed
 ```
 
-**Failure examples:** A compiler error leaves the persisted selection and running artifacts unchanged. Publication succeeds but Helm fails: `environment.k` retains E1 with `sample_app` selecting A1. If A0 still runs, status reports A0. If rollout partially completes, status reports the observed artifacts for each application. If the new component cannot instantiate, report an execution failure.
+A build or publication failure leaves the file and running workloads unchanged. If Helm fails after selection, the file retains A1 as current and A0 as previous. Status reports A0 if it still runs, or the observed mixed state. Retrying A1 uses the same bytes and preserves A0 as previous.
 
-Retrying E1 does not rebuild its published bytes. Rollback publishes a new environment release with `sample_app` selecting A0 and all other applications retaining their current selections.
+Start with application selections A0 and B0. Updating the first selects A1 and keeps A0 as its previous release. Updating the second selects B1 and keeps B0 as its previous release. Rolling back the first selects A0 and leaves B1 selected. The second application's Helm revision and pod UIDs stay unchanged during that rollback. Both applications keep their data throughout.
 
-For example, E0 selects applications A0 and B0. Updating the first application publishes E1 with A1 and B0. Updating the second publishes E2 with A1 and B1. Rolling back the first publishes E3 with A0 and B1, not E0 or E1. Both applications retain their data throughout these code operations.
-
-**Fast/default:** Build, publish and deploy selected code with inexpensive warnings. **Optional guidance:** Preview resource changes, show structural schema differences, or run a targeted test. **Optional team restrictions:** Accept only separately tested artifacts for selected environments. These choices do not create a second deployment path.
+Resource previews, schema differences, and targeted tests remain optional guidance. Missing optional qualification produces a warning. These features use the same application deployment path.
 
 ### 5.6 Local edit loop is not deployed kind
 
@@ -446,33 +453,36 @@ A mode change never resets the system database or automatically changes the appl
 
 ### 5.8 Cross-cutting recovery and status
 
-Every workflow reports the selected environment release and each application's selected artifacts, running artifacts, hostname, and readiness. SQL status reports what the database recorded as successfully applied. When a target cannot be read, report `unknown`, not an assumed state. Retain ordinary Helm history for operation recovery and diagnostics, never for choosing an application's rollback target. Do not introduce a new database tracking each deployment action.
+Every workflow reports each application's current and previous release, observed running artifacts, hostname, and readiness. Shared environment and database state appears separately. SQL status reports only completed SQL recorded by the database. Unreadable state is `unknown` with its cause.
+
+Helm history supports operation recovery and diagnostics within the targeted application's Helm release. It never chooses the application rollback target. Do not add a database that tracks deployment actions.
 
 ```text
 Target: org/project/dev
   Platform host              H2 (ready)
   System SQL                 PS4 (recorded)
   Project schema             PP2 (recorded)
-  Environment selected       E9
-  sample_app selected        A9
+  sample_app current         A9
+  sample_app previous        A8
   sample_app running         A8 (ready)
   sample_app hostname        sample.example.test
-  other_app selected         B4
+  other_app current          B4
+  other_app previous         B3
   other_app running          B4 (ready)
   other_app hostname         other.example.test
   Application SQL            S5 (recorded)
-  Last application apply     failed at readiness
+  Last sample_app apply      failed at readiness
   WARN schema-mismatch: A9 was built using different schema inputs
   NOT CHECKED: optional application test
-Next: retry E9 or roll back sample_app to A8 in a new environment release retaining B4
+Next: retry sample_app current selection or roll back sample_app to A8
 SQL already applied is not reversed
 ```
 
-After an interruption during a Helm write, read Helm/Kubernetes resources and reapply the selected configuration if needed. An application rollback publishes and persists a new environment release as section 3 specifies. It does not restore a whole earlier environment release. Other applications retain their selections and data, but the Helm upgrade can restart or roll their workloads.
+After an interrupted Helm write, read that application's Helm and Kubernetes resources and reapply its persisted selection. Preserve its previous selection during retry. Rollback uses the previous release in `environment.k` as section 3 specifies. Other application selections, Helm revisions, workloads, and data stay unchanged.
 
-After an interruption during SQL execution, read the database's applied SQL records and report incomplete work. Do not trust an installer completion ConfigMap. A failed app deploy after a successful schema change leaves the SQL in place. A platform executable rollback similarly does not undo committed platform SQL.
+After interrupted SQL execution, read the applied SQL records and report incomplete work. Do not trust installer completion ConfigMaps. A failed application rollout leaves committed SQL in place. Platform executable rollback also leaves committed platform SQL in place.
 
-**Coordination:** Only mutations that can conflict need operation-specific coordination. In particular, serialize SQL writes to the same database. Different application environments should not depend on a global platform-install lock for a normal code deployment.
+Serialize SQL mutations to the same database. Protect the shared file during selection updates so that concurrent application commands cannot overwrite each other's selections. Keep this protection separate from application Helm operations. Normal application rollout needs no global platform installation lock.
 
 ## 6. Warnings and operation results
 
@@ -485,14 +495,14 @@ The selected application was built against different schema input.
   installed:   sha256:...
   next:        wamn schema diff sample_app --env dev
 
-Environment selected: sha256:...
 Application: sample_app
-Artifact selected: sha256:...
-Artifact running:  sha256:...
-Status: ready | not-ready | failed | not-checked
+Release current:  sha256:...
+Release previous: sha256:...
+Release running:  sha256:...
+Status: ready | not-ready | failed | not-checked | unknown
 ```
 
-Each notice should identify the actual source of the finding and one next action. A warning is not a hidden refusal. Show each application's selected and running artifacts separately, including when Helm failed after the environment release pin changed. Output must not expose secrets.
+Each notice identifies the application, the evidence, and one next action. A warning is not a hidden refusal. Show current, previous, and observed running releases separately after a failed apply. Report shared environment configuration and recorded SQL under their own owners. Output must not expose secrets.
 
 Optional targeted tests, SQL previews, deeper diff analysis, and team deployment restrictions can be added later without changing the core execution path. Mandatory release qualification is not the default developer workflow.
 
@@ -503,10 +513,10 @@ Optional targeted tests, SQL previews, deeper diff analysis, and team deployment
 | Order | Implement | Delete in the same change or immediately after | Completion condition |
 |---|---|---|---|
 | **1 — Thin platform path** | Create `deploy/kind/cluster.k` (new file); KCL → Helm/Kubernetes apply for platform resources; narrow initial SQL operation | `platform/install.rs` numbered dispatcher; `platform/steps.rs` execution model; environment work inside platform installation | Empty kind cluster installs platform without applications or GCP inputs |
-| **2 — Thin application path** | Select prebuilt environment release, render/apply existing application chart, update `environment.k`, report running status | First `release = none` pass, release marker exemption, redundant environment install flow | Existing release deploys on kind without platform install |
+| **2 — Thin application path** | Select one application release, render/apply its own Helm release and host group, persist its selection in `environment.k`, report running status | First `release = none` pass, release marker exemption, redundant environment install flow | An application deploys on kind without platform installation or another application apply |
 | **3 — Delete historical install state** | Keep only actual SQL result tracking and minimal Job execution | Generic `wamn-install-*` ConfigMaps, completion hashes, skip predicates, `skip_operator`, Helm-values shortcut, broad installer file lock | Repeated Helm apply works; no custom completion state decides whether workloads exist |
 | **4 — Independent schema handling** | Physical schema fingerprints; `reset`/`migrate`, baseline adoption, deployed SQL Job; baseline warnings | Package-version refusal; blanket baseline mismatch refusal; coupled schema application during code deploy | Code-only changes preserve data; schema operations run independently |
-| **5 — Release construction and DX** | Construct releases without an applied-target prerequisite. Keep one environment release and one Helm release, with a composed entry, HTTP workload, Service, and hostname per routed application. Publish application updates and rollbacks as new environment releases changing only the targeted selection. Report each application's running artifacts. | Target-installed-digest requirement, single-entry routing assumption, whole-environment rollback, Helm-history target selection, and remaining local source dependencies in UI deployment | Deploy two routed applications, update each, then roll back the first while retaining the second's update and both applications' data. Shared Helm upgrades can restart or roll either workload. |
+| **5 — Release construction and DX** | Publish application releases without an installed-target prerequisite. Give each application its own selection, Helm release, host group, entry, routes, HTTP workload, Service, and hostname. Keep shared infrastructure and configuration separately owned. | Environment aggregate publication, environment-wide Helm selection, Helm-history rollback targets, and remaining local source dependencies in UI deployment | Install two applications, update each independently, and roll back the first. The second keeps its release, Helm revision, and pod UIDs. Both keep their data. |
 | **6 — Remove parallel implementations** | Replace remaining direct resource constructors with a small chart/KCL owner where practical; retain only useful tests | Duplicate test-only installers, historical rendering paths, obsolete runbook execution rules | One product path and tests that invoke it |
 | **7 — GCP integration** | Use the same commands and resource rendering; add GCP project/IAM/Artifact Registry/storage/networking configuration | GCP-only forks of deployment behavior where unnecessary | Equivalent platform/app/schema operations work on GCP |
 
@@ -517,9 +527,9 @@ Optional targeted tests, SQL previews, deeper diff analysis, and team deployment
 The existing kind tests provide reusable assertions, but not a finished developer-facing deployment command. Test the **actual product operations** rather than adding another test-only platform installer:
 
 1. **Platform:** Fresh kind installation succeeds with zero applications, a local OCI registry, wasmCloud, CloudNativePG, identity, and no GCP account.
-2. **Application:** Publish and select one environment release containing two routed applications. Initialize their database through product commands. Deploy one Helm release with a composed entry, HTTP workload, Service, and reachable hostname per application.
+2. **Application:** Publish and select two application releases in one environment. Initialize through product commands. Give each application its own Helm release, host group, entry, HTTP workload, Service, and reachable hostname.
 3. **Development separation:** `wamn dev` remains a fast source edit loop; deployed kind behavior uses the real Helm/registry/operator path.
-4. **Hotfix:** Update the first application, then the second, then roll back the first through product commands. Each operation publishes a new environment release changing only its targeted application's artifact selection. The final release retains the second application's update and the first application's previous artifacts. Both applications retain their data. Do not assert independent runtime rollout or unchanged pod identities.
+4. **Hotfix:** Update each application independently, then roll back the first through product commands. After each operation, make sure that the other application's release, Helm revision, and pod UIDs remain unchanged. The final selections are A0 and B1. Both applications retain their data. Code-only operations run no SQL and perform no reset.
 5. **SQL:** Standalone migration, disposable reset, baseline adoption, and a multi-step SQL/application sequence work without rebuilding the platform.
 6. **Platform upgrade:** Host/control-only changes and platform SQL changes can run independently of application publication.
 7. **Recovery:** Interrupt and repeat deployment; verify actual Helm and Kubernetes state, accurate failures, and no dependency on generic completion markers.
