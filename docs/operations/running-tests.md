@@ -741,13 +741,14 @@ WAMN_RELEASE_CHART=<prepared-chart> cargo test -p wamn-dev-control --test enviro
 
 The following map describes test ownership, not a passing execution result.
 The platform journey does not establish application behavior.
-DEP-05a owns the focused Helm reapply and data-preservation replacement for check 2 and check 4's HTTP reapply assertion.
-The broader application assertions are not prerequisites for that replacement.
+DEP-05a's focused `support/environment_reapply.rs` check covers unchanged Helm application, the selected digest, and pending-upgrade recovery.
+Application-data preservation across env apply is untested outside `environment_apply_kind`.
+The focused check does not cover check 4's HTTP reapply assertion or interruption during Secret transfer.
 
 | Environment check | Other coverage and remaining gap |
 | --- | --- |
 | 1: first environment apply | `install_sequence_live.rs` covers database setup under restricted roles. The combined environment row, CNPG database, and first Helm revision remain environment-case-only. |
-| 2: unchanged apply and interruption | DEP-05a owns the focused replacement. `platform_apply_kind` covers system data across platform reapply and retry, not application release selection. |
+| 2: unchanged apply and interruption | DEP-05a covers unchanged Helm application, the selected digest, and pending-upgrade recovery through `support/environment_reapply.rs`. `platform_apply_kind` also covers system data across platform reapply and retry. Application-data preservation across env apply remains environment-case-only. |
 | 3: connection-only change | `environment_bindings_live.rs::two_packages_can_bind_distinct_names_to_one_connection_without_authority_writes` covers binding authority. Preserving the running release and generation across env apply remains environment-case-only. |
 | 4: show, HTTP, schedules, connectors | `native_host` covers the real HTTP guest and bearer request. `workflow_schedule_live.rs` covers scheduled admission, actor, and ticks. The full show/apply round trip, deployed signed requests, API key and SigV4 requests, REST retries, and NetSuite pull remain environment-case-only. |
 | 5 / A12: environment isolation | Receiving and WMS delivery cases call `test-support/harness/src/delivery.rs::check`, then `release_chart.rs::environments_isolated`. This covers live objects and Secret references when the kept cluster contains at least two environments. A single-environment run reports this assertion as unexecuted. |

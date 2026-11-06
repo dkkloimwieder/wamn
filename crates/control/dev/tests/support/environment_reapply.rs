@@ -1,7 +1,6 @@
-//! Exercise the environment write boundary with real Helm and PostgreSQL.
-//! The platform journey supplies the cluster and CNPG database. A small chart
-//! records the selected digest without application images or guest artifacts.
-//! This does not exercise environment provisioning, expansion or host readiness.
+//! Exercise unchanged Helm application and pending-upgrade recovery.
+//! The platform journey supplies the cluster. A small chart records the selected
+//! digest without application images or guest artifacts.
 
 use super::{POLL_LIMIT, Run, get, kubectl, success};
 use anyhow::{Context as _, ensure};
@@ -88,20 +87,6 @@ pub(super) async fn check(run: &Run) -> anyhow::Result<()> {
         packages: Vec::new(),
     };
     let clients = BTreeMap::new();
-    let cluster = get(run, "platform", "cluster.postgresql.cnpg.io", "wamn-pg").await?;
-    let primary = cluster["status"]["currentPrimary"]
-        .as_str()
-        .context("CNPG primary")?;
-    sql(run, primary, "postgres", "CREATE DATABASE reapply_data").await?;
-    sql(run, primary, "reapply_data", "CREATE TABLE application_data (value text NOT NULL); INSERT INTO application_data VALUES ('retain this application row')").await?;
-    let before = sql(
-        run,
-        primary,
-        "reapply_data",
-        "SELECT value FROM application_data",
-    )
-    .await?;
-    ensure!(!before.is_empty(), "application data fixture is empty");
     write::write(&platform, &document, &analysis, &release, None, &clients).await?;
     for interrupted in [false, true] {
         let status = helm_json(run, &["status", &name, "-o", "json"]).await?;
@@ -133,20 +118,8 @@ pub(super) async fn check(run: &Run) -> anyhow::Result<()> {
             selected["data"]["digest"] == release.digest,
             "write changed the selected release"
         );
-        ensure!(
-            sql(
-                run,
-                primary,
-                "reapply_data",
-                "SELECT value FROM application_data"
-            )
-            .await?
-                == before,
-            "write changed application data (interrupted={interrupted})"
-        );
     }
     success(helm(run).args(["uninstall", &name, "--wait"])).await?;
-    sql(run, primary, "postgres", "DROP DATABASE reapply_data").await?;
     Ok(())
 }
 
@@ -168,30 +141,6 @@ async fn helm_json(run: &Run, arguments: &[&str]) -> anyhow::Result<Value> {
     Ok(serde_json::from_slice(
         &success(helm(run).args(arguments)).await?.stdout,
     )?)
-}
-
-async fn sql(run: &Run, primary: &str, database: &str, statement: &str) -> anyhow::Result<Vec<u8>> {
-    Ok(success(kubectl(run).args([
-        "-n",
-        "platform",
-        "exec",
-        primary,
-        "-c",
-        "postgres",
-        "--",
-        "psql",
-        "-XAt",
-        "-v",
-        "ON_ERROR_STOP=1",
-        "-U",
-        "postgres",
-        "-d",
-        database,
-        "-c",
-        statement,
-    ]))
-    .await?
-    .stdout)
 }
 
 async fn interrupt_upgrade(run: &Run, platform: &Platform, name: &str) -> anyhow::Result<()> {
