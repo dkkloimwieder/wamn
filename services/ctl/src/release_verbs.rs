@@ -81,7 +81,11 @@ pub async fn publish(args: PublishReleaseArgs) -> anyhow::Result<()> {
         });
     let digest = publish_release::publish_release(
         PublishReleaseRequest {
-            applications: environment.applications,
+            applications: environment
+                .applications
+                .into_iter()
+                .map(|(name, application)| (name, application.into()))
+                .collect(),
             application: args.application,
             database_url: args.database_url,
             control_database_url: args.control_database_url,

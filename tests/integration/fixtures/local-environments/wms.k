@@ -5,8 +5,6 @@ environment.Environment {
     org = "acme"
     project = "wms"
     env = "dev"
-    release = "none"
-    route_host = "wms.localhost"
     policy = "dev"
-    applications = {warehouse = {packages = ["wamn_wms"]}}
+    applications = {warehouse = {current = "none", hostname = "wms.localhost", packages = ["wamn_wms"]}}
 }

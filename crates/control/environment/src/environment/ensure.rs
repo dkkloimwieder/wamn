@@ -865,9 +865,9 @@ mod tests {
         };
         let document: EnvironmentDocument = serde_json::from_value(serde_json::json!({
             "org": "example", "project": "fixture", "env": "dev",
-            "target": "test", "release": "none", "route_host": "fixture.test",
-            "policy": "default", "applications": {}
-        }))
+            "target": "test",
+            "policy": "default",
+            "applications": {}}))
         .unwrap();
         let private = PrivateDirectory::create().unwrap();
         let group = super::super::write::host_group(None, "example", "fixture", "dev").unwrap();

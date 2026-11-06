@@ -385,10 +385,7 @@ mod tests {
 
     fn document(project: &str) -> EnvironmentDocument {
         let mut document = EnvironmentDocument::from_json(
-            br#"{
-            "org":"test","project":"one","env":"dev","release":"none",
-            "target": "cloud", "route_host":"one.example.com","policy":"dev","applications":{}
-        }"#,
+            br#"{"org":"test","project":"one","env":"dev","target":"cloud","policy":"dev","applications": {}}"#,
         )
         .unwrap();
         document.project = project.into();

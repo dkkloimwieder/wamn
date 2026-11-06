@@ -352,7 +352,8 @@ impl Authority {
         }
     }
     fn document(digest: &str) -> EnvironmentDocument {
-        serde_json::from_value(json!({"org":"connection-binding-tenant","project":DEFAULT_PROJECT,"env":"dev","target":"cloud","release":digest,"route_host":"fixture.example","policy":"dev", "integrations":{"labels-store":{"version":1},"http-read":{"version":1}},"applications":{PACKAGE:{"packages":[PACKAGE,"nested_origin","nested_wiring"],"connections":{"labels":"labels-store","erp":"http-read"}}}})).unwrap()
+        serde_json::from_value(json!({"org":"connection-binding-tenant","project":DEFAULT_PROJECT,"env":"dev","target":"cloud","policy":"dev", "integrations":{"labels-store":{"version":1},"http-read":{"version":1}},
+        "applications": {PACKAGE:{"current": digest, "hostname": "fixture.example", "packages":[PACKAGE,"nested_origin","nested_wiring"],"connections":{"labels":"labels-store","erp":"http-read"}}}})).unwrap()
     }
     async fn apply(
         &mut self,
@@ -371,7 +372,7 @@ impl Authority {
         let _ = bindings::project_authority(self.database.url(), url, document)
             .await
             .unwrap();
-        let digest = match &document.release {
+        let digest = match document.legacy_release() {
             wamn_environment_control::environment::document::DeclaredRelease::Digest(digest) => {
                 digest.as_str()
             }

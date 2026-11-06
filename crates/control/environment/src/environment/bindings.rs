@@ -69,7 +69,7 @@ pub async fn analyse(
     for (name, version) in document
         .integrations
         .iter()
-        .filter(|_| document.release != super::document::DeclaredRelease::None)
+        .filter(|_| *document.legacy_release() != super::document::DeclaredRelease::None)
     {
         let row = system
             .query_opt(
@@ -123,7 +123,7 @@ pub async fn analyse(
                 }
             }
         }
-        if document.release == super::document::DeclaredRelease::None {
+        if *document.legacy_release() == super::document::DeclaredRelease::None {
             continue;
         }
         for name in definition.connections.keys() {
@@ -209,7 +209,7 @@ pub async fn write(
     }
     for row in tx.query("SELECT component_digest,package_id,name,interface,mode FROM catalog.connection_requirement WHERE env_key=$1", &[&env_key]).await? {
         let package: String=row.get(1);
-        let Some(application)=wamn_catalog::application_for_package(&document.applications,&package) else {continue};
+        let Some(application)=document.application_for_package(&package) else {continue};
         let name: String=row.get(2);
         let Some(binding)=bindings.iter().find(|b| b.application==application && b.alias==name) else {continue};
         let required: String=row.get(3);

@@ -5,8 +5,6 @@ environment.Environment {
     project = "orders"
     env = "files"
     target = "cloud"
-    release = "__RELEASE_DIGEST__"
-    route_host = "files.orders.example"
     policy = "dev"
     integrations = {
         "file-store" = {version = 1}
@@ -14,7 +12,7 @@ environment.Environment {
     }
     applications = {
         files = {
-            packages = ["file_fixture"]
+            current = "__RELEASE_DIGEST__", hostname = "files.orders.example", packages = ["file_fixture"]
             connections = {
                 files = "file-store"
                 "files-read" = "file-store"

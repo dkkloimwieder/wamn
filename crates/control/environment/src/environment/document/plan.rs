@@ -10,18 +10,52 @@ pub struct EnvironmentDocument {
     pub env: String,
     /// The immutable deployment target name.
     pub target: String,
-    /// `none`, or a full `sha256:` digest.
-    pub release: DeclaredRelease,
-    pub route_host: String,
-    /// The package and pinned web artifact this route host serves. Absent means no client.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub client: Option<Client>,
     /// A policy of `registry.env_policies`, by name.
     pub policy: String,
-    /// Application name to the packages of the release that belong to it.
-    pub applications: EnvironmentApplications,
+    /// Application name to its selection and membership.
+    #[serde(deserialize_with = "read_applications")]
+    pub applications: BTreeMap<String, ApplicationSelection>,
     #[serde(default)]
     pub integrations: BTreeMap<String, Integration>,
+}
+
+/// An application's deployment selection and declared membership.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ApplicationSelection {
+    pub current: DeclaredRelease,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub previous: Option<String>,
+    pub hostname: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub client: Option<Client>,
+    pub packages: std::collections::BTreeSet<String>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub connections: BTreeMap<String, String>,
+}
+
+impl From<ApplicationSelection> for wamn_catalog::ApplicationDefinition {
+    fn from(application: ApplicationSelection) -> Self {
+        Self {
+            packages: application.packages,
+            connections: application.connections,
+        }
+    }
+}
+
+fn read_applications<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<BTreeMap<String, ApplicationSelection>, D::Error> {
+    let values = BTreeMap::<String, serde_json::Value>::deserialize(deserializer)?;
+    values
+        .into_iter()
+        .map(|(name, value)| {
+            let selection = serde_json::from_value(value).map_err(|error| {
+                serde::de::Error::custom(format!("application {name}: {error}"))
+            })?;
+            Ok((name, selection))
+        })
+        .collect()
 }
 
 /// The package id and immutable web artifact of an environment's client.
@@ -39,7 +73,7 @@ pub struct Integration {
     pub version: i32,
 }
 
-/// The `release` field: a full digest or `none`.
+/// A current release: a full digest or `none`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DeclaredRelease {
     /// Installed but not serving: `apply` uninstalls the release chart.
@@ -105,25 +139,28 @@ impl EnvironmentDocument {
     fn check(&self) -> anyhow::Result<()> {
         wamn_control_provision::validate_project_env(&self.org, &self.project, &self.env)
             .context("the environment coordinate is not valid")?;
-        ensure!(
-            !self.route_host.is_empty()
-                && self.route_host.len() <= 253
-                && self.route_host.bytes().all(|byte| {
-                    byte.is_ascii_lowercase()
+        ensure!(!self.policy.is_empty(), "policy is empty");
+        for (name, application) in &self.applications {
+            let hostname = &application.hostname;
+            ensure!(
+                !hostname.is_empty()
+                    && hostname.len() <= 253
+                    && hostname.bytes().all(|byte| byte.is_ascii_lowercase()
                         || byte.is_ascii_digit()
                         || byte == b'.'
-                        || byte == b'-'
-                })
-                && !self.route_host.starts_with(['.', '-'])
-                && !self.route_host.ends_with(['.', '-']),
-            "route_host {:?} is not a lowercase DNS name",
-            self.route_host
-        );
-        ensure!(!self.policy.is_empty(), "policy is empty");
-        if let Some(client) = &self.client {
-            wamn_package_artifact::ensure_digest(&client.web).context("client.web")?;
-        }
-        for (name, application) in &self.applications {
+                        || byte == b'-')
+                    && !hostname.starts_with(['.', '-'])
+                    && !hostname.ends_with(['.', '-']),
+                "application {name}: hostname {hostname:?} is not a lowercase DNS name"
+            );
+            if let Some(previous) = &application.previous {
+                wamn_package_artifact::ensure_digest(previous)
+                    .with_context(|| format!("application {name}: previous"))?;
+            }
+            if let Some(client) = &application.client {
+                wamn_package_artifact::ensure_digest(&client.web)
+                    .with_context(|| format!("application {name}: client.web"))?;
+            }
             ensure!(!name.is_empty(), "an application has an empty name");
             ensure!(
                 !application.packages.is_empty(),
@@ -153,6 +190,60 @@ impl EnvironmentDocument {
         Ok(())
     }
 
+    /// Find the sole application that owns a package.
+    pub fn application_for_package(&self, package: &str) -> Option<&str> {
+        let mut owners = self
+            .applications
+            .iter()
+            .filter(|(_, application)| application.packages.contains(package))
+            .map(|(name, _)| name.as_str());
+        let owner = owners.next()?;
+        owners.next().is_none().then_some(owner)
+    }
+
+    /// Runtime membership excludes deployment selections.
+    pub fn membership(&self) -> EnvironmentApplications {
+        self.applications
+            .iter()
+            .map(|(name, application)| {
+                (
+                    name.clone(),
+                    wamn_catalog::ApplicationDefinition {
+                        packages: application.packages.clone(),
+                        connections: application.connections.clone(),
+                    },
+                )
+            })
+            .collect()
+    }
+
+    /// The release used by the existing environment-wide consumer.
+    pub fn legacy_release(&self) -> &DeclaredRelease {
+        // DEP2-03 replaces the single release consumer with application publication.
+        self.applications
+            .values()
+            .next()
+            .map_or(&DeclaredRelease::None, |app| &app.current)
+    }
+
+    /// The hostname used by the existing environment-wide route.
+    pub fn legacy_hostname(&self) -> &str {
+        // DEP2-17 replaces the environment-wide route with application routing.
+        self.applications
+            .values()
+            .next()
+            .map_or("", |app| app.hostname.as_str())
+    }
+
+    /// The client used by the existing environment-wide chart.
+    pub fn legacy_client(&self) -> Option<&Client> {
+        // DEP2-11 replaces the environment-wide chart with application charts.
+        self.applications
+            .values()
+            .next()
+            .and_then(|app| app.client.as_ref())
+    }
+
     /// The coordinate.
     pub fn triple(&self) -> Triple {
         Triple::new(self.org.as_str(), self.project.as_str(), self.env.as_str())
@@ -175,22 +266,13 @@ impl EnvironmentDocument {
         let mut lines = vec!["import environment".to_owned(), String::new()];
         lines.push("environment.Environment {".to_owned());
         for (key, value) in [
-            ("org", self.org.clone()),
-            ("project", self.project.clone()),
-            ("env", self.env.clone()),
-            ("target", self.target.clone()),
-            ("release", self.release.to_string()),
-            ("route_host", self.route_host.clone()),
-            ("policy", self.policy.clone()),
+            ("org", self.org.as_str()),
+            ("project", self.project.as_str()),
+            ("env", self.env.as_str()),
+            ("target", self.target.as_str()),
+            ("policy", self.policy.as_str()),
         ] {
-            lines.push(format!("    {key} = {}", quote(&value)));
-        }
-        if let Some(client) = &self.client {
-            lines.push(format!(
-                "    client = {{package = {}, web = {}}}",
-                quote(&client.package),
-                quote(&client.web)
-            ));
+            lines.push(format!("    {key} = {}", quote(value)));
         }
         lines.push("    integrations = {".to_owned());
         for (name, integration) in &self.integrations {
@@ -211,10 +293,23 @@ impl EnvironmentDocument {
                 .collect::<Vec<_>>()
                 .join(", ");
             lines.push(format!(
-                "        {} = {{packages = [{}], connections = {{{bindings}}}}}",
+                "        {} = {{\n            current = {}\n            hostname = {}\n            packages = [{}]\n            connections = {{{bindings}}}",
                 quote(name),
+                quote(&application.current.to_string()),
+                quote(&application.hostname),
                 packages.join(", ")
             ));
+            if let Some(previous) = &application.previous {
+                lines.push(format!("            previous = {}", quote(previous)));
+            }
+            if let Some(client) = &application.client {
+                lines.push(format!(
+                    "            client = {{package = {}, web = {}}}",
+                    quote(&client.package),
+                    quote(&client.web)
+                ));
+            }
+            lines.push("        }".to_owned());
         }
         lines.push("    }".to_owned());
         lines.push("}".to_owned());

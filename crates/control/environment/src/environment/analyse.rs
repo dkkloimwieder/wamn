@@ -129,7 +129,7 @@ pub async fn analyse(
         Some(row) => read_project(platform, document, row).await?,
         None => None,
     };
-    let release = match &document.release {
+    let release = match document.legacy_release() {
         DeclaredRelease::None => None,
         DeclaredRelease::Digest(declared) => Some(read_release(platform, declared).await?),
     };
@@ -174,7 +174,7 @@ pub async fn analyse(
     let mut refusals = refusals(document, &authorities);
     refusals.extend(replica_refusals);
     if refusals.is_empty() {
-        refusals = sequence_refusals(&document.applications, &packages);
+        refusals = sequence_refusals(&document.membership(), &packages);
     }
     if !refusals.is_empty() {
         bail!("refused:\n- {}", refusals.join("\n- "));

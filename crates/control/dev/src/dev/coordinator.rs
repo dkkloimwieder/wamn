@@ -829,7 +829,7 @@ impl ProductionDevStageRunner {
             .collect::<Vec<_>>();
         let identity = self.config.activation_identity();
         let request = PublishReleaseRequest {
-            applications: self.environment.applications.clone(),
+            applications: self.environment.membership(),
             application: None,
             database_url: self.config.target_database_url().to_owned(),
             control_database_url: self.config.system_database_url().to_owned(),
@@ -850,6 +850,7 @@ impl ProductionDevStageRunner {
         fs::create_dir_all(&local.directory).map_err(|source| {
             ProductionDevStageError::owner("create local artifact directory", source.into())
         })?;
+        let applications = self.environment.membership();
         let entry_changed = publish_release::refresh_composed_entry(
             &mut self.composed_entry,
             &published,
@@ -861,7 +862,7 @@ impl ProductionDevStageRunner {
             &fs::read(&local.flow_http_component).map_err(|source| {
                 ProductionDevStageError::owner("read pinned route component", source.into())
             })?,
-            &self.environment.applications,
+            &applications,
         )
         .map_err(|source| ProductionDevStageError::owner("compose released HTTP entry", source))?;
         let entry = self
@@ -902,7 +903,7 @@ impl ProductionDevStageRunner {
         .await
         .map_err(|source| ProductionDevStageError::owner("install local release", source))?;
         let defaults = wamn_environment_control::environment::stage::sequence_defaults(
-            &self.environment.applications,
+            &applications,
             self.package_inputs()?
                 .iter()
                 .map(|package| &package.manifest),
@@ -1005,7 +1006,7 @@ impl ProductionDevStageRunner {
         })?;
         let serving = wamn_runtime::local_application::LocalRelease {
             manifest_digest: published.digest.clone(),
-            applications: self.environment.applications.clone(),
+            applications,
         };
         let bytes = serde_json::to_vec(&serving).map_err(|source| {
             ProductionDevStageError::owner("encode local release facts", source.into())
@@ -1025,7 +1026,7 @@ impl ProductionDevStageRunner {
         };
         activation::prepare_local(&DevActivationRequest {
             config: &self.config,
-            applications: &self.environment.applications,
+            applications: &serving.applications,
             release: &carrier,
             identity: self.config.activation_identity(),
             host_binary: self.config.host_binary(),
@@ -1112,7 +1113,7 @@ impl ProductionDevStageRunner {
         })?;
         let activation = activation::activate(DevActivationRequest {
             config: &self.config,
-            applications: &self.environment.applications,
+            applications: &self.environment.membership(),
             release,
             identity: self.config.activation_identity(),
             host_binary: self.config.host_binary(),
@@ -1479,8 +1480,9 @@ impl DevStageRunner for ProductionDevStageRunner {
             )?,
         );
         let packages = self.package_inputs()?;
+        let applications = self.environment.membership();
         let refusals = wamn_environment_control::environment::analyse::application_refusals(
-            &self.environment.applications,
+            &applications,
             packages
                 .iter()
                 .map(|package| package.manifest.package.id.as_str()),
@@ -1492,7 +1494,7 @@ impl DevStageRunner for ProductionDevStageRunner {
             ));
         }
         wamn_environment_control::environment::stage::sequence_defaults(
-            &self.environment.applications,
+            &applications,
             packages.iter().map(|package| &package.manifest),
         )
         .map_err(|source| ProductionDevStageError::owner("read local sequence defaults", source))?;
@@ -1641,9 +1643,13 @@ async fn prepare_local_bindings(
     let system = wamn_package_control::database::connect(config.system_database_url()).await?;
     system.batch_execute("SET ROLE wamn_db_owner").await?;
     let mut document = environment.clone();
-    document.release = wamn_environment_control::environment::document::DeclaredRelease::Digest(
-        manifest_digest.into(),
-    );
+    // DEP2-03 replaces the shared candidate with application publication.
+    for application in document.applications.values_mut() {
+        application.current =
+            wamn_environment_control::environment::document::DeclaredRelease::Digest(
+                manifest_digest.into(),
+            );
+    }
     let bindings =
         wamn_environment_control::environment::bindings::analyse(&system, &document, packages)
             .await?;
@@ -1659,11 +1665,9 @@ async fn prepare_local_bindings(
 
     let mut prepared = Vec::new();
     for admission in admissions {
-        let application = wamn_catalog::application_for_package(
-            &environment.applications,
-            admission.package_id(),
-        )
-        .context("local component has no application")?;
+        let application = environment
+            .application_for_package(admission.package_id())
+            .context("local component has no application")?;
         for requirement in admission.requirements() {
             let binding = bindings
                 .iter()
@@ -1736,14 +1740,17 @@ async fn reserve_local_bindings(
     ))
     .await?;
     let mut document = environment.clone();
-    document.release =
-        wamn_environment_control::environment::document::DeclaredRelease::Digest(digest.into());
+    // DEP2-03 replaces the shared candidate with application publication.
+    for application in document.applications.values_mut() {
+        application.current =
+            wamn_environment_control::environment::document::DeclaredRelease::Digest(digest.into());
+    }
     let bindings =
         wamn_environment_control::environment::bindings::analyse(&tx, &document, packages).await?;
     for input in prepared {
-        let application =
-            wamn_catalog::application_for_package(&environment.applications, &input.package_id)
-                .context("local component has no application")?;
+        let application = environment
+            .application_for_package(&input.package_id)
+            .context("local component has no application")?;
         anyhow::ensure!(
             bindings.iter().any(|binding| {
                 binding.application == application
@@ -1786,8 +1793,11 @@ async fn resolve_local_bindings(
         ))
         .await?;
     let mut document = environment.clone();
-    document.release =
-        wamn_environment_control::environment::document::DeclaredRelease::Digest(digest.into());
+    // DEP2-03 replaces the shared candidate with application publication.
+    for application in document.applications.values_mut() {
+        application.current =
+            wamn_environment_control::environment::document::DeclaredRelease::Digest(digest.into());
+    }
     let resolved =
         wamn_environment_control::environment::bindings::analyse(&authority, &document, packages)
             .await?;
@@ -2295,9 +2305,9 @@ mod tests {
             .unwrap();
         let environment = serde_json::from_value(serde_json::json!({
             "org": "acme", "project": "fixture", "env": "fixture-dev",
-            "target": "local", "release": "none", "route_host": "fixture.localhost",
-            "policy": "default", "applications": {}
-        }))
+            "target": "local",
+            "policy": "default",
+            "applications": {}}))
         .unwrap();
         let mut runner = ProductionDevStageRunner::new(
             config,

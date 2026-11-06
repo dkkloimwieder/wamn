@@ -82,9 +82,9 @@ async fn two_applications_with_different_model_schemas_publish_and_pass_apply_an
     .unwrap();
     assert_eq!(published.manifest.components.len(), 2);
     let document = crate::environment::document::EnvironmentDocument::from_json(
-            serde_json::json!({"org":"acme", "project":"erp", "env":"dev", "release":published.digest.as_str(),
-                "target": "cloud", "route_host":"erp.acme.example", "policy":"dev",
-                "applications": {"erp": {"packages": ["consumer", "integration"]}}}).to_string().as_bytes()
+            serde_json::json!({"org":"acme", "project":"erp", "env":"dev",
+                "target": "cloud", "policy":"dev",
+                "applications": {"erp": {"current": published.digest.as_str(), "hostname": "erp.acme.example", "packages": ["consumer", "integration"]}}}).to_string().as_bytes()
         ).unwrap();
     let authorities = Authorities {
         release_name: "acme--erp--dev".to_owned(),

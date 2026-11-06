@@ -81,7 +81,7 @@ pub(super) fn release_values(
 ) -> anyhow::Result<(Value, Vec<RoleName>)> {
     let roles = release_chart::roles(manifest, &document.org, &document.project, &document.env);
     let names = roles.iter().map(|role| role.name).collect();
-    let mut applications = document.applications.clone();
+    let mut applications = document.membership();
     for application in applications.values_mut() {
         application.connections.clear();
     }
@@ -91,7 +91,7 @@ pub(super) fn release_values(
         env: document.env.clone(),
         manifest_digest: manifest_digest.to_owned(),
         artifact_base: artifact_base.to_owned(),
-        route_host: document.route_host.clone(),
+        route_host: document.legacy_hostname().to_owned(),
         applications,
         roles,
         drain_bound_seconds,
@@ -101,9 +101,8 @@ pub(super) fn release_values(
     rendered["webClients"] = serde_yaml::to_value(clients)?;
     rendered["webDigests"] = serde_yaml::to_value(
         document
-            .client
-            .as_ref()
-            .map(|client| (document.route_host.clone(), client.web.clone()))
+            .legacy_client()
+            .map(|client| (document.legacy_hostname().to_owned(), client.web.clone()))
             .into_iter()
             .collect::<std::collections::BTreeMap<_, _>>(),
     )?;

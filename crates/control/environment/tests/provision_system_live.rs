@@ -236,7 +236,7 @@ async fn provision_system_repeats_without_changing_the_platform_domain() {
     .await
     .expect("ensure reconciles with separate admin and apply connections");
     let document = wamn_environment_control::environment::document::EnvironmentDocument::from_json(
-        br#"{"org":"applyprobe","project":"created","env":"dev","target":"cloud","release":"none","route_host":"created.example.test","policy":"dev","integrations":{},"applications":{}}"#,
+        br#"{"org":"applyprobe","project":"created","env":"dev","target":"cloud","policy":"dev","integrations":{},"applications": {}}"#,
     )
     .unwrap();
     let drops = wamn_environment_control::environment::bindings::project_authority(

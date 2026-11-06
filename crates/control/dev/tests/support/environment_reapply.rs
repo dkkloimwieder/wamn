@@ -33,9 +33,8 @@ pub(super) async fn check(run: &Run) -> anyhow::Result<()> {
     }))?;
     let digest = wamn_execution_contract::bytes_sha256(&manifest.canonical_bytes());
     let document = EnvironmentDocument::from_json(&serde_json::to_vec(&json!({
-        "org": run.document.org, "project": "reapply", "env": "dev", "target": "cloud",
-        "release": digest, "route_host": "reapply.example", "policy": "dev", "applications": {},
-    }))?)?;
+        "org": run.document.org, "project": "reapply", "env": "dev", "target": "cloud", "policy": "dev",
+        "applications": {"fixture": {"current": digest, "hostname": "reapply.example", "packages": ["fixture"]}}}))?)?;
     let name = release_name(&document.org, &document.project, &document.env)?;
     // The write boundary consumes the manifest and policy, not registry or DB credentials.
     let release = ReleaseFacts {

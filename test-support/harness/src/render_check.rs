@@ -475,7 +475,7 @@ pub fn environment(
     host_group: &Path,
     drain_bound_seconds: u32,
 ) -> anyhow::Result<serde_yaml::Value> {
-    let mut applications = document.applications.clone();
+    let mut applications = document.membership();
     for application in applications.values_mut() {
         application.connections.clear();
     }
@@ -486,7 +486,7 @@ pub fn environment(
             env: document.env.clone(),
             manifest_digest: manifest.digest().as_str().to_owned(),
             artifact_base: "registry.invalid/wamn/releases".into(),
-            route_host: document.route_host.clone(),
+            route_host: document.legacy_hostname().to_owned(),
             applications,
             roles: fixture_roles(manifest, &document.org, &document.project, &document.env),
             drain_bound_seconds,

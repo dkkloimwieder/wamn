@@ -134,16 +134,17 @@ pub fn fixture_document(env: &str, route_host: &str, digest: &str) -> Environmen
         )]
         .into(),
         target: "cloud".into(),
-        client: None,
         org: ORG.to_owned(),
         project: PROJECT.to_owned(),
         env: env.to_owned(),
-        release: DeclaredRelease::Digest(digest.to_owned()),
-        route_host: route_host.to_owned(),
         policy: POLICY.to_owned(),
         applications: std::collections::BTreeMap::from([(
             PACKAGE.to_owned(),
-            wamn_catalog::ApplicationDefinition {
+            environment::document::ApplicationSelection {
+                current: DeclaredRelease::Digest(digest.to_owned()),
+                previous: None,
+                hostname: route_host.to_owned(),
+                client: None,
                 connections: [("labels".to_owned(), format!("labels-{env}"))].into(),
                 packages: std::collections::BTreeSet::from([
                     PACKAGE.to_owned(),
@@ -1055,15 +1056,16 @@ pub mod workflow {
             org: ORG.into(),
             project: PROJECT.into(),
             env: ENVIRONMENT.into(),
-            release: DeclaredRelease::None,
-            route_host: "integration.orders.example".into(),
-            client: None,
             policy: POLICY.into(),
             // The existing consumer and integration packages put this application's
             // models in two schemas. The connector supplies the workflow components.
             applications: BTreeMap::from([(
                 connector.to_owned(),
-                wamn_catalog::ApplicationDefinition {
+                wamn_environment_control::environment::document::ApplicationSelection {
+                    current: DeclaredRelease::None,
+                    previous: None,
+                    hostname: "integration.orders.example".into(),
+                    client: None,
                     connections: std::collections::BTreeMap::new(),
                     packages: [connector, "wamn_integration", CONSUMER]
                         .map(str::to_owned)

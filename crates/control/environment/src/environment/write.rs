@@ -155,7 +155,7 @@ mod tests {
     #[test]
     fn release_values_keep_both_client_maps_and_clear_an_absent_pin() {
         let mut document = EnvironmentDocument::from_json(
-            br#"{"org":"acme","project":"wms","env":"dev","target":"cloud","release":"none","route_host":"wms.example.com","policy":"dev","applications":{}}"#,
+            br#"{"org":"acme","project":"wms","env":"dev","target":"cloud","policy":"dev","applications":{"fixture":{"packages":["fixture"],"current":"none","hostname":"wms.example.com"}}}"#,
         ).unwrap();
         let manifest = serde_json::from_value(json!({
             "format-version": wamn_catalog::SERVING_MANIFEST_FORMAT_VERSION,
@@ -170,7 +170,7 @@ mod tests {
             }),
             None,
         ] {
-            document.client = client;
+            document.applications.get_mut("fixture").unwrap().client = client;
             let clients = super::super::clients::resolve(&document, ["wms"].into_iter()).unwrap();
             let (values, _) = release_values(
                 &document,
@@ -183,7 +183,7 @@ mod tests {
                 &clients,
             )
             .unwrap();
-            if document.client.is_some() {
+            if document.legacy_client().is_some() {
                 assert_eq!(
                     values["webClients"]["wms.example.com"].as_str(),
                     Some("wms")

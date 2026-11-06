@@ -363,7 +363,7 @@ fn loaded_release(
         &manifest.canonical_bytes(),
         "connection read fixture",
         wamn_engine::release_manifest::ReleaseScope::new("acme--one--dev", "dev")
-            .with_applications(document.applications.clone()),
+            .with_applications(document.membership()),
     )
     .map_err(Into::into)
 }
@@ -405,7 +405,7 @@ async fn apply(
     ))
     .await?;
     let env_key = "acme--one--dev";
-    let digest = document.release.to_string();
+    let digest = document.legacy_release().to_string();
     let members = [
         ("modbus_reader", format!("sha256:{}", "a".repeat(64))),
         ("observer_fixture", format!("sha256:{}", "b".repeat(64))),
@@ -501,15 +501,20 @@ async fn published_modbus_versions_link_before_the_next_call() -> anyhow::Result
     }
     tx.commit().await?;
     let mut document = EnvironmentDocument::from_json(&serde_json::to_vec(
-        &json!({"org":"acme","project":"one","env":"dev","target":"cloud","release":format!("sha256:{}","c".repeat(64)),"integrations":{"meter":{"version":2},"observer-meter":{"version":2}},"route_host":"reader.example","policy":"dev","applications":{
-            "reader":{"packages":["modbus_reader"],"connections":{"registers":"meter"}},
-            "observer":{"packages":["observer_fixture"],"connections":{"registers":"observer-meter"}}
+        &json!({"org":"acme","project":"one","env":"dev","target":"cloud","integrations":{"meter":{"version":2},"observer-meter":{"version":2}},"policy":"dev",
+        "applications": {
+            "reader":{"current": format!("sha256:{}","c".repeat(64)), "hostname": "reader.example", "packages":["modbus_reader"],"connections":{"registers":"meter"}},
+            "observer":{"current": format!("sha256:{}","c".repeat(64)), "hostname": "reader.example", "packages":["observer_fixture"],"connections":{"registers":"observer-meter"}}
         }}),
     )?)?;
     let release = loaded_release(&document)?;
-    document.release = wamn_environment_control::environment::document::DeclaredRelease::Digest(
-        release.release().manifest_digest.to_string(),
-    );
+    // DEP2-03 replaces the shared candidate with application publication.
+    for application in document.applications.values_mut() {
+        application.current =
+            wamn_environment_control::environment::document::DeclaredRelease::Digest(
+                release.release().manifest_digest.to_string(),
+            );
+    }
     let package = wamn_catalog::manifest::PackageManifest::from_slice(&serde_json::to_vec(
         &json!({"package":{"id":"modbus_reader","version":"0.1.0"},"required_platform_policy_contract":{"id":"modbus_reader_data_access","state":"satisfied"},"models":{},"components":{},"connections":{"registers":{"interface":"wamn:modbus/read@1.0.0","mode":"read"}}}),
     )?)?;

@@ -1,15 +1,15 @@
-"""
-The schema module of an environment document (docs/architecture/overview.md#environment-lifecycle).
-
-An environment file imports this module, and `wamn-ctl env apply` compiles it
-to canonical JSON. The schema has exactly the fields the reference page names: the
-coordinate, the release digest or "none", the route host, the policy name, the
-applications (docs/plan/platform-config.md), the target, and the connection names.
-"""
+"""Shared environment configuration and each application's release selection."""
 import regex
 
+schema Client:
+    package: str
+    web: str
+
 schema Application:
-    """An application of the environment: the packages of the release that belong to it."""
+    current: str
+    previous?: str
+    hostname: str
+    client?: Client
     packages: [str]
     connections: {str:str} = {}
 
@@ -19,30 +19,21 @@ schema Integration:
     check:
         version > 0, "version must be positive"
 
-schema Client:
-    package: str
-    web: str
-
-    check:
-        regex.match(web, r"^sha256:[0-9a-f]{64}$"), "web is a full sha256: digest"
-
 schema Environment:
     org: str
     project: str
     env: str
     target: str
-    # A published, qualified release by its full digest, or "none".
-    release: str
-    route_host: str
-    # The package and immutable web artifact for route_host. Absent means no client.
-    client?: Client
-    # A policy of registry.env_policies, by name.
     policy: str
-    # Application name to its packages. Every package of the release belongs
-    # to exactly one application.
     applications: {str:Application}
     integrations: {str:Integration} = {}
 
+    _invalid_current = [name for name, app in applications if app.current != "none" and not regex.match(app.current, r"^sha256:[0-9a-f]{64}$")]
+    _invalid_previous = [name for name, app in applications if app.previous != Undefined and app.previous != None and not regex.match(app.previous, r"^sha256:[0-9a-f]{64}$")]
+    _invalid_client = [name for name, app in applications if app.client != Undefined and app.client != None and not regex.match(app.client.web, r"^sha256:[0-9a-f]{64}$")]
+
     check:
+        len(_invalid_current) == 0, "invalid current release for applications ${_invalid_current}"
+        len(_invalid_previous) == 0, "invalid previous release for applications ${_invalid_previous}"
+        len(_invalid_client) == 0, "invalid client web digest for applications ${_invalid_client}"
         len(target) > 0, "target is required"
-        release == "none" or regex.match(release, r"^sha256:[0-9a-f]{64}$"), "release is a full sha256: digest, or none"

@@ -84,11 +84,9 @@ pub fn refusals(document: &EnvironmentDocument, authorities: &Authorities) -> Ve
         for component in &release.manifest.components {
             for requirement in &component.descriptor.connections {
                 if let Some(connection) = authorities.connections.get(&super::super::bindings::key(
-                    wamn_catalog::application_for_package(
-                        &document.applications,
-                        &component.package_id,
-                    )
-                    .unwrap_or(""),
+                    document
+                        .application_for_package(&component.package_id)
+                        .unwrap_or(""),
                     &requirement.store_alias,
                 )) && !matches!(
                     (connection.requirement_type, requirement.requirement_type),
@@ -108,11 +106,9 @@ pub fn refusals(document: &EnvironmentDocument, authorities: &Authorities) -> Ve
             }
         }
         for component in &release.manifest.components {
-            let application = wamn_catalog::application_for_package(
-                &document.applications,
-                &component.package_id,
-            )
-            .unwrap_or("");
+            let application = document
+                .application_for_package(&component.package_id)
+                .unwrap_or("");
             for requirement in &component.descriptor.connections {
                 let key = super::super::bindings::key(application, &requirement.store_alias);
                 if !authorities.connections.contains_key(&key)
@@ -126,7 +122,7 @@ pub fn refusals(document: &EnvironmentDocument, authorities: &Authorities) -> Ve
             }
         }
         refusals.extend(application_refusals(
-            &document.applications,
+            &document.membership(),
             release
                 .manifest
                 .release
@@ -184,8 +180,11 @@ pub(super) fn plan(document: &EnvironmentDocument, authorities: &Authorities) ->
         None => {
             plan.push("create the environment row, database, credentials and run plane".to_owned());
         }
-        Some(row) if row.route_host.as_deref() != Some(document.route_host.as_str()) => {
-            plan.push(format!("set the route host to {}", document.route_host));
+        Some(row) if row.route_host.as_deref() != Some(document.legacy_hostname()) => {
+            plan.push(format!(
+                "set the route host to {}",
+                document.legacy_hostname()
+            ));
         }
         Some(_) => {}
     }

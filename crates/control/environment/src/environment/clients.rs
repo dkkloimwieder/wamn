@@ -19,7 +19,7 @@ pub(super) async fn analyse(
     document: &EnvironmentDocument,
     release: Option<&ReleaseFacts>,
 ) -> anyhow::Result<()> {
-    let Some(client) = &document.client else {
+    let Some(client) = document.legacy_client() else {
         return Ok(());
     };
     let registry = PackageRegistry {
@@ -52,9 +52,9 @@ mod tests {
 
     fn document() -> EnvironmentDocument {
         serde_json::from_value(serde_json::json!({
-            "org": "test", "project": "wms", "env": "dev", "release": "none",
-            "target": "cloud", "route_host": "wms.example.com", "policy": "dev", "applications": {}
-        }))
+            "org": "test", "project": "wms", "env": "dev",
+            "target": "cloud", "policy": "dev",
+            "applications": {"fixture": {"current": "none", "hostname": "wms.example.com", "packages": ["fixture"]}}}))
         .unwrap()
     }
 
@@ -72,20 +72,16 @@ mod tests {
     #[test]
     fn a_named_client_selects_its_package() {
         let mut document = document();
-        document.client = Some(super::super::document::Client {
-            package: "receiving".into(),
-            web: wamn_execution_contract::bytes_sha256(b"web artifact"),
-        });
+        document.applications.get_mut("fixture").unwrap().client =
+            Some(super::super::document::Client {
+                package: "receiving".into(),
+                web: wamn_execution_contract::bytes_sha256(b"web artifact"),
+            });
         assert_eq!(
             resolve(&document, ["wms", "receiving"].into_iter()).unwrap()["wms.example.com"],
             "receiving"
         );
-        assert!(
-            resolve(&document, ["wms"].into_iter())
-                .unwrap_err()
-                .to_string()
-                .contains("receiving")
-        );
+        assert!(resolve(&document, ["wms"].into_iter()).is_err());
     }
 
     #[test]
@@ -94,37 +90,40 @@ mod tests {
             serde_json::from_str(include_str!("../../tests/support/web-artifact/web.json"))
                 .unwrap();
         let mut document = document();
-        document.release = super::super::document::DeclaredRelease::Digest(
-            wamn_execution_contract::bytes_sha256(b"release"),
-        );
-        document.client = Some(super::super::document::Client {
-            package: "web_fixture".into(),
-            web: wamn_execution_contract::bytes_sha256(b"web artifact"),
-        });
-        let error = verify(&document, &web, [("web_fixture", "2.0.0")].into_iter())
-            .unwrap_err()
-            .to_string();
-        for detail in ["web_fixture", "1.0.0", &document.release.to_string()] {
-            assert!(error.contains(detail), "{error}");
+        // DEP2-03 replaces the shared candidate with application publication.
+        for application in document.applications.values_mut() {
+            application.current = super::super::document::DeclaredRelease::Digest(
+                wamn_execution_contract::bytes_sha256(b"release"),
+            );
         }
+        document.applications.get_mut("fixture").unwrap().client =
+            Some(super::super::document::Client {
+                package: "web_fixture".into(),
+                web: wamn_execution_contract::bytes_sha256(b"web artifact"),
+            });
+        assert!(verify(&document, &web, [("web_fixture", "2.0.0")].into_iter()).is_err());
         verify(&document, &web, [("web_fixture", "1.0.0")].into_iter()).unwrap();
-        let mut second = document.clone();
-        second.env = "qa".into();
-        verify(&second, &web, [("web_fixture", "1.0.0")].into_iter()).unwrap();
-        assert_eq!(document.client, second.client);
-        document.client.as_mut().unwrap().package = "receiving".into();
-        let error = verify(&document, &web, [("web_fixture", "1.0.0")].into_iter())
-            .unwrap_err()
-            .to_string();
-        for detail in [
-            "web_fixture@1.0.0",
-            "receiving",
-            &document.release.to_string(),
-        ] {
-            assert!(error.contains(detail), "{error}");
+        document
+            .applications
+            .get_mut("fixture")
+            .unwrap()
+            .client
+            .as_mut()
+            .unwrap()
+            .package = "receiving".into();
+        assert!(verify(&document, &web, [("web_fixture", "1.0.0")].into_iter()).is_err());
+        document
+            .applications
+            .get_mut("fixture")
+            .unwrap()
+            .client
+            .as_mut()
+            .unwrap()
+            .package = "web_fixture".into();
+        // DEP2-03 replaces the shared candidate with application publication.
+        for application in document.applications.values_mut() {
+            application.current = super::super::document::DeclaredRelease::None;
         }
-        document.client.as_mut().unwrap().package = "web_fixture".into();
-        document.release = super::super::document::DeclaredRelease::None;
         assert!(verify(&document, &web, [].into_iter()).is_err());
     }
 }

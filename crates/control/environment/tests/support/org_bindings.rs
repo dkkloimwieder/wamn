@@ -29,8 +29,8 @@ pub async fn bind(
     {
         let mut empty = document.clone();
         empty.integrations.clear();
-        empty.release = DeclaredRelease::None;
         for app in empty.applications.values_mut() {
+            app.current = DeclaredRelease::None;
             app.connections.clear();
         }
         let path = std::env::temp_dir().join(format!(

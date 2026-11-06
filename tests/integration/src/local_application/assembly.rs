@@ -297,11 +297,16 @@ pub(super) async fn assemble(
         digest,
         canonical_bytes,
     };
+    let applications = environment
+        .applications
+        .into_iter()
+        .map(|(name, application)| (name, application.into()))
+        .collect();
     let entry = wamn_release_control::publish_release::compose_release_entry(
         &published,
         &admissions,
         &std::fs::read(input.flow_http_wasm)?,
-        &environment.applications,
+        &applications,
         None,
     )?;
     let entry_path =
@@ -318,7 +323,7 @@ pub(super) async fn assemble(
         &canonical,
         "local application",
         wamn_engine::release_manifest::ReleaseScope::new(input.env_key, input.environment)
-            .with_applications(environment.applications),
+            .with_applications(applications),
     )?);
     project.execute("INSERT INTO catalog.releases (env_key,manifest_digest,canonical_bytes) VALUES ($1,$2,$3)", &[&input.env_key,&release.release().manifest_digest.as_str(),&canonical]).await?;
 

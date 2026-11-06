@@ -43,12 +43,15 @@ pub async fn rollback(
         let name = release_chart::release_name(&triple.org, &triple.project, triple.env.as_str())?;
         let mut document = super::show::show(platform, triple).await?;
         let Some((release, client)) =
-            previous_intended(platform, &name, &document.route_host).await?
+            previous_intended(platform, &name, document.legacy_hostname()).await?
         else {
             bail!("{NO_RETAINED_PRIOR_RELEASE} of {triple}; nothing was written");
         };
-        document.release = DeclaredRelease::Digest(release);
-        document.client = client;
+        // DEP2-09 replaces environment rollback with the authored previous selection.
+        for application in document.applications.values_mut() {
+            application.current = DeclaredRelease::Digest(release.clone());
+            application.client.clone_from(&client);
+        }
         super::apply_locked(platform, &document, Some(reason), admin_url).await
     })
     .await

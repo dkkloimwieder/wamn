@@ -1174,10 +1174,8 @@ mod tests {
     #[test]
     fn activation_uses_the_authored_coordinate() {
         let document = serde_json::from_value(serde_json::json!({
-            "org":"other", "project":"stock", "env":"preview", "target":"cloud",
-            "release":"none", "route_host":"stock.localhost", "policy":"dev",
-            "applications":{"stock":{"packages":["inventory", "orders"]}}
-        }))
+            "org":"other", "project":"stock", "env":"preview", "target":"cloud", "policy":"dev",
+            "applications": {"stock":{"current": "none", "hostname": "stock.localhost", "packages":["inventory", "orders"]}}}))
         .unwrap();
         let identity = dev_activation_identity(&document);
         assert_eq!(identity.org, "other");

@@ -81,17 +81,20 @@ impl Fixture {
             tx.commit().await?;
         }
         let mut document = EnvironmentDocument::from_json(&serde_json::to_vec(&json!({
-            "org":"acme","project":"one","env":"dev","target":"cloud","release":format!("sha256:{}","c".repeat(64)),
-            "integrations":{"meter":{"version":2}},"route_host":"reader.example","policy":"dev",
-            "applications":{
-                "reader":{"packages":["modbus_reader"],"connections":{"registers":"meter"}},
-                "writer":{"packages":["observer_fixture"],"connections":{"registers":"meter"}}
-            }
-        }))?)?;
+        "org":"acme","project":"one","env":"dev","target":"cloud",
+        "integrations":{"meter":{"version":2}},"policy":"dev",
+        "applications": {
+            "reader":{"current": format!("sha256:{}","c".repeat(64)), "hostname": "reader.example", "packages":["modbus_reader"],"connections":{"registers":"meter"}},
+            "writer":{"current": format!("sha256:{}","c".repeat(64)), "hostname": "reader.example", "packages":["observer_fixture"],"connections":{"registers":"meter"}}
+        }}))?)?;
         let release = loaded_release(&document)?;
-        document.release = wamn_environment_control::environment::document::DeclaredRelease::Digest(
-            release.release().manifest_digest.to_string(),
-        );
+        // DEP2-03 replaces the shared candidate with application publication.
+        for application in document.applications.values_mut() {
+            application.current =
+                wamn_environment_control::environment::document::DeclaredRelease::Digest(
+                    release.release().manifest_digest.to_string(),
+                );
+        }
         let package = wamn_catalog::manifest::PackageManifest::from_slice(&serde_json::to_vec(
             &json!({
                 "package":{"id":"modbus_reader","version":"0.1.0"},

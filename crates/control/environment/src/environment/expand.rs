@@ -44,7 +44,7 @@ pub async fn expand(
             &document.project,
             &document.env,
             &document.policy,
-            &document.route_host,
+            &document.legacy_hostname(),
         ],
     )
     .await

@@ -17,7 +17,7 @@ use wamn_control_registry::Triple;
 
 use super::Platform;
 use super::analyse::{read_revision, read_row};
-use super::document::{Client, DeclaredRelease, EnvironmentDocument};
+use super::document::{ApplicationSelection, Client, DeclaredRelease, EnvironmentDocument};
 use wamn_package_control::database::connect;
 use wamn_release_control::release_chart;
 
@@ -32,9 +32,6 @@ pub async fn show(platform: &Platform, triple: &Triple) -> anyhow::Result<Enviro
         org: triple.org.clone(),
         project: triple.project.clone(),
         env: triple.env.as_str().to_owned(),
-        release: DeclaredRelease::None,
-        route_host: String::new(),
-        client: None,
         policy: String::new(),
         applications: BTreeMap::new(),
         integrations: BTreeMap::new(),
@@ -43,18 +40,37 @@ pub async fn show(platform: &Platform, triple: &Triple) -> anyhow::Result<Enviro
     let row = read_row(&system, &document)
         .await?
         .with_context(|| format!("environment {triple} has no row"))?;
-    document.route_host = row.route_host.clone().unwrap_or_default();
+    let hostname = row.route_host.clone().unwrap_or_default();
     document.policy = row.policy_name.clone();
     document.target = system.query_one("SELECT t.name FROM registry.project_envs e JOIN registry.target t ON t.id = e.target_id WHERE e.org = $1 AND e.project = $2 AND e.env = $3", &[&document.org, &document.project, &document.env]).await?.get(0);
     let name = release_chart::release_name(&document.org, &document.project, &document.env)?;
+    let mut current = DeclaredRelease::None;
     if let Some(revision) = read_revision(platform, &name).await? {
-        if let Some(digest) = revision.manifest_digest() {
-            document.release = DeclaredRelease::Digest(digest.to_owned());
-        }
-        document.client = revision_client(&revision.values, &document.route_host)?;
-        document.applications = revision_applications(&revision.values)?;
+        // DEP2-11 replaces the shared Helm revision with application charts.
+        current = revision
+            .manifest_digest()
+            .map_or(DeclaredRelease::None, |digest| {
+                DeclaredRelease::Digest(digest.to_owned())
+            });
+        let client = revision_client(&revision.values, &hostname)?;
+        document.applications = revision_applications(&revision.values)?
+            .into_iter()
+            .map(|(name, membership)| {
+                (
+                    name,
+                    ApplicationSelection {
+                        current: current.clone(),
+                        previous: None,
+                        hostname: hostname.clone(),
+                        client: client.clone(),
+                        packages: membership.packages,
+                        connections: membership.connections,
+                    },
+                )
+            })
+            .collect();
     }
-    if let DeclaredRelease::Digest(digest) = &document.release {
+    if let DeclaredRelease::Digest(digest) = &current {
         let url = super::ensure::project_url(platform, &document.triple()).await?;
         let project = super::analyse::connect_project(&url).await?;
         let env_key = wamn_control_provision::project_env_key(
@@ -71,7 +87,7 @@ pub async fn show(platform: &Platform, triple: &Triple) -> anyhow::Result<Enviro
         ).await? {
             let package: String = binding.get(0);
             let integration: String = binding.get(2);
-            if let Some(application) = wamn_catalog::application_for_package(&document.applications,&package).map(str::to_owned) {
+            if let Some(application) = document.application_for_package(&package).map(str::to_owned) {
                 document.applications.get_mut(&application).expect("declared application").connections.insert(binding.get(1), integration.clone());
                 document.integrations.insert(integration, super::document::Integration {version:binding.get(3)});
             }

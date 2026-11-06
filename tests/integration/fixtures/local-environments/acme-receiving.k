@@ -5,8 +5,6 @@ environment.Environment {
     org = "acme"
     project = "receiving"
     env = "dev"
-    release = "none"
-    route_host = "receiving.localhost"
     policy = "dev"
-    applications = {receiving = {packages = ["wamn_receiving", "client_acme_receiving"]}}
+    applications = {receiving = {current = "none", hostname = "receiving.localhost", packages = ["wamn_receiving", "client_acme_receiving"]}}
 }

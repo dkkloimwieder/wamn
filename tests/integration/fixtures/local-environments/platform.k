@@ -5,8 +5,6 @@ environment.Environment {
     org = "acme"
     project = "platform"
     env = "dev"
-    release = "none"
-    route_host = "platform.localhost"
     policy = "dev"
-    applications = {orders = {packages = ["platform_fixture"]}}
+    applications = {orders = {current = "none", hostname = "platform.localhost", packages = ["platform_fixture"]}}
 }

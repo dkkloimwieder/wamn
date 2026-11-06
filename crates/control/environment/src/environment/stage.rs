@@ -137,7 +137,7 @@ pub async fn stage(
     create_number_sequences(
         project_url,
         &sequence_defaults(
-            &document.applications,
+            &document.membership(),
             packages.iter().map(|(_, _, _, manifest)| manifest),
         )?,
     )

@@ -22,18 +22,16 @@ async fn two_environments_with_the_same_web_digest_share_one_completed_upload() 
     .await;
     let registry = fixture_registry(&scratch, &server);
     let first: EnvironmentDocument = serde_json::from_value(serde_json::json!({
-        "org": "acme", "project": "web-fixture", "env": "dev", "target": "dev",
-        "release": HEAD, "route_host": "dev.example.com", "policy": "dev",
-        "applications": {}, "client": {"package": "web_fixture", "web": packed.digest},
-    }))
+        "org": "acme", "project": "web-fixture", "env": "dev", "target": "dev", "policy": "dev",
+        "applications": {"fixture": {"current": HEAD, "hostname": "dev.example.com", "client": {"package": "web_fixture", "web": packed.digest}, "packages": ["fixture"]}}}))
     .unwrap();
     let mut second = first.clone();
     second.env = "staging".into();
-    second.route_host = "staging.example.com".into();
+    second.applications.get_mut("fixture").unwrap().hostname = "staging.example.com".into();
     let store = InMemory::new();
     let upload = |environment: &EnvironmentDocument| {
         (
-            environment.client.as_ref().unwrap().web.clone(),
+            environment.legacy_client().unwrap().web.clone(),
             environment.org.clone(),
         )
     };
