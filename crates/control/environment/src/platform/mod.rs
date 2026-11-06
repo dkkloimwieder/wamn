@@ -2,7 +2,7 @@
 
 mod broker;
 pub use broker::{kind_nats, render_event_secrets, single_namespace_nats};
-mod artifact_plan;
+pub mod artifact_plan;
 mod cdc;
 mod check;
 pub mod control;
