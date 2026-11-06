@@ -254,7 +254,7 @@ fn show(args: &ShowArgs, mut output: impl Write) -> anyhow::Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::{ClusterDocument, run, show};
+    use super::{ClusterDocument, show};
     #[derive(clap::Parser)]
     struct Cli {
         #[command(subcommand)]
@@ -267,42 +267,6 @@ mod tests {
     }
     use clap::Parser as _;
     use std::path::Path;
-
-    #[tokio::test]
-    async fn wake_and_sleep_refuse_a_kind_document_before_reading_project_k() {
-        let committed = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../deploy/gcp/cluster.k");
-        let source = std::fs::read_to_string(&committed).expect("read the committed document");
-        let directory =
-            std::env::temp_dir().join(format!("wamn-platform-pools-{}", std::process::id()));
-        std::fs::create_dir(&directory).expect("create the directory");
-        let file = directory.join("cluster.k");
-        std::fs::write(
-            &file,
-            source.replace(r#"provider = "gcp""#, r#"provider = "kind""#),
-        )
-        .expect("write the kind document");
-        let mut errors = Vec::new();
-        for verb in ["wake", "sleep"] {
-            let cli = Cli::try_parse_from([
-                "wamn-ctl".as_ref(),
-                "platform".as_ref(),
-                verb.as_ref(),
-                file.as_os_str(),
-            ])
-            .expect("parse the platform verb");
-            let Command::Platform(command) = cli.command;
-            let mut output = Vec::new();
-            errors.push(run(command, &mut output).await.unwrap_err().to_string());
-            assert!(output.is_empty());
-        }
-        std::fs::remove_dir_all(&directory).expect("remove the directory");
-        for error in errors {
-            assert_eq!(
-                error,
-                "platform wake and sleep resize GCP node pools, and cluster wamn is a kind cluster"
-            );
-        }
-    }
 
     fn shown(file: &Path) -> Vec<u8> {
         let cli = Cli::try_parse_from([

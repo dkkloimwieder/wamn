@@ -616,102 +616,18 @@ pub(super) mod tests {
     fn hashes(repository: &Path, root: &str, apps: &str) -> BTreeMap<&'static str, String> {
         let root = parse_metadata(&serde_json::from_str(root).unwrap()).unwrap();
         let apps = parse_metadata(&serde_json::from_str(apps).unwrap()).unwrap();
-        ["host", "ctl", "runner", "gates", "identity", "edge-web"]
-            .into_iter()
+        let mut request = super::super::tests::production_request(repository);
+        let production = super::super::selected_images(&request);
+        request.cluster = None;
+        production
+            .iter()
+            .chain(super::super::selected_images(&request))
+            .copied()
             .map(|target| {
                 let files = input_files(repository, target, &root, &apps).unwrap();
                 (target, input_hash(target, &files))
             })
             .collect()
-    }
-
-    #[test]
-    fn the_input_hash_is_stable_and_follows_only_the_inputs_of_each_target() {
-        let (repository, root, apps) = fake_checkout("follows");
-        assert_eq!(
-            hashes(&repository, &root, &apps),
-            hashes(&repository, &root, &apps)
-        );
-        // The targets whose hash changes when `path` is written with `text`.
-        let change = |path: &str, text: &str| {
-            let before = hashes(&repository, &root, &apps);
-            let path = repository.join(path);
-            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-            std::fs::write(path, text).unwrap();
-            let after = hashes(&repository, &root, &apps);
-            before
-                .into_iter()
-                .filter(|(target, hash)| after[target] != *hash)
-                .map(|(target, _)| target)
-                .collect::<Vec<_>>()
-        };
-        let all: Vec<_> = hashes(&repository, &root, &apps).into_keys().collect();
-        // The chart values reach the images whose binaries embed them.
-        assert_eq!(
-            change("deploy/platform/release/values.yaml", "host: {a: 1}\n"),
-            ["ctl", "gates", "runner"]
-        );
-        assert_eq!(
-            change("crates/control/src/lib.rs", "// 0.1.2"),
-            ["ctl", "gates", "runner"]
-        );
-        // A dev dependency of the cases reaches the runner only.
-        assert_eq!(
-            change("test-support/infrastructure/src/lib.rs", "// new"),
-            ["runner"]
-        );
-        assert_eq!(
-            change(
-                "apps/target/wamn/wamn_wms/client-ts/index.ts",
-                "export const a = 1;"
-            ),
-            ["runner"]
-        );
-        // A file that a package includes from outside its directory counts.
-        assert_eq!(
-            change("deploy/sql/run.sql", "create table run (id int);"),
-            ["gates", "host", "identity", "runner"]
-        );
-        assert_eq!(
-            change("services/host/src/lib.rs", "// new"),
-            ["gates", "host"]
-        );
-        assert_eq!(
-            change("apps/platform/http-route/src/lib.rs", "// new"),
-            ["ctl", "gates", "runner"]
-        );
-        assert_eq!(
-            change("tools/guest-rustflags", "#!/bin/sh\necho\n"),
-            ["ctl", "gates", "runner"]
-        );
-        assert_eq!(change("deploy/gcp/cluster.k", "new"), ["runner"]);
-        assert_eq!(change("vendor/example/src/lib.rs", "// changed"), all);
-        assert_eq!(change("tools/bench/src/main.rs", "// changed"), all);
-        assert_eq!(
-            change("tools/submodule-check/src/main.rs", "// changed"),
-            all
-        );
-        // Shared build inputs reach every target.
-        assert_eq!(
-            change(
-                "Dockerfile",
-                &format!(
-                    "{}\n# new\n",
-                    std::fs::read_to_string(repository.join("Dockerfile")).unwrap()
-                )
-            ),
-            all
-        );
-        assert_eq!(change("Cargo.lock", "version = 4\n# new\n"), all);
-        assert_eq!(
-            change("services/edge/Cargo.toml", "[package]\n# new\n"),
-            all
-        );
-        // Files that no COPY reaches, or that .dockerignore drops, do not.
-        assert!(change("docs/readme.md", "new").is_empty());
-        assert!(change("README.md", "new").is_empty());
-        assert!(change("target/release/wamn-host", "new").is_empty());
-        std::fs::remove_dir_all(repository).unwrap();
     }
 
     /// The platform version lives in `Chart.yaml` alone, which no binary

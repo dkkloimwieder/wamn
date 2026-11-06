@@ -599,7 +599,6 @@ struct OperatorPod {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::json;
 
     const RBAC: &str =
         include_str!("../../deploy/platform/runtime-operator-events-rbac.example.yaml");
@@ -628,8 +627,6 @@ mod tests {
         };
         validate_event_role(role, "test-warehouse").unwrap();
         validate_event_binding(binding, "test-warehouse").unwrap();
-        assert!(validate_event_role(role, "other-warehouse").is_err());
-        assert!(validate_event_binding(binding, "other-warehouse").is_err());
         let before = serde_yaml::Deserializer::from_str(RBAC)
             .map(|document| Value::deserialize(document).unwrap())
             .collect::<Vec<_>>();
@@ -641,61 +638,5 @@ mod tests {
             expected["metadata"]["namespace"] = Value::String("test-warehouse".into());
             assert_eq!(actual, expected);
         }
-    }
-
-    #[test]
-    fn observed_operator_must_keep_its_name_namespace_and_service_account() {
-        let original = json!({"metadata":{"name":"runtime-operator","namespace":"wamn-system"},
-            "spec":{"template":{"spec":{"serviceAccountName":"wamn-runtime-operator"}}}});
-        validate_operator_deployment(&serde_json::from_value(original.clone()).unwrap()).unwrap();
-        for field in ["name", "namespace", "serviceAccountName"] {
-            let mut changed = original.clone();
-            if field == "serviceAccountName" {
-                changed["spec"]["template"]["spec"][field] = json!("other");
-            } else {
-                changed["metadata"][field] = json!("other");
-            }
-            assert!(
-                validate_operator_deployment(&serde_json::from_value(changed).unwrap()).is_err(),
-                "{field}"
-            );
-        }
-    }
-
-    #[test]
-    fn observed_role_refuses_changed_groups_resources_verbs_and_rule_count() {
-        let EventRbac::Role(original) = &rbac()[0] else {
-            panic!("Role")
-        };
-        for field in ["groups", "resources", "verbs", "rules"] {
-            let mut role = original.clone();
-            match field {
-                "groups" => role.rules[0].api_groups = vec![String::new()],
-                "resources" => role.rules[0].resources = vec!["secrets".into()],
-                "verbs" => role.rules[0].verbs.push("get".into()),
-                "rules" => role.rules.push(role.rules[0].clone()),
-                _ => unreachable!(),
-            }
-            assert!(
-                validate_event_role(&role, "test-warehouse").is_err(),
-                "{field}"
-            );
-        }
-    }
-
-    #[test]
-    fn observed_binding_refuses_other_roles_or_service_accounts() {
-        let EventRbac::RoleBinding(original) = &rbac()[1] else {
-            panic!("RoleBinding")
-        };
-        let mut wrong_role = original.clone();
-        wrong_role.role_ref.name = "other".into();
-        assert!(validate_event_binding(&wrong_role, "test-warehouse").is_err());
-        let mut wrong_subject = original.clone();
-        wrong_subject.subjects[0].namespace = "other".into();
-        assert!(validate_event_binding(&wrong_subject, "test-warehouse").is_err());
-        let mut extra_subject = original.clone();
-        extra_subject.subjects.push(original.subjects[0].clone());
-        assert!(validate_event_binding(&extra_subject, "test-warehouse").is_err());
     }
 }

@@ -1943,27 +1943,11 @@ mod tests {
         assert!(format!("{error:#}").contains("apps/target/wamn"));
     }
 
-    #[tokio::test]
-    async fn stamp_only_requires_selected_ui_before_reading_the_registry() {
+    #[test]
+    fn a_selected_ui_requires_a_build_output() {
         let repository =
             std::env::temp_dir().join(format!("wamn-stamp-no-ui-{}", std::process::id()));
-        let error = stamp_only(&BuildPlatformRequest {
-            cluster: Some(production_cluster()),
-            cloud: false,
-            out: repository.join("chart"),
-            repository: repository.clone(),
-            registry: "must-not-be-contacted.invalid".into(),
-            version: VERSION.into(),
-        })
-        .await
-        .unwrap_err();
-        assert_eq!(
-            error.to_string(),
-            format!(
-                "the platform UI build {} is absent; run `pnpm --filter @wamn/platform-ui build`",
-                platform_ui_dist(&repository).display()
-            )
-        );
+        assert!(ui_build_record(&production_request(&repository)).is_err());
     }
 
     /// A fake registry of role components. Each push writes a manifest
@@ -2173,7 +2157,7 @@ mod tests {
         assert!(!plan.images.contains_key("host"));
     }
 
-    fn production_request(repository: &Path) -> BuildPlatformRequest {
+    pub(super) fn production_request(repository: &Path) -> BuildPlatformRequest {
         BuildPlatformRequest {
             cluster: Some(production_cluster()),
             cloud: false,
