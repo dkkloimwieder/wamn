@@ -36,7 +36,7 @@ impl std::fmt::Display for JobError {
 impl std::error::Error for JobError {}
 
 /// A temporary Kubernetes Secret. Debug output excludes its values.
-pub(super) struct Secret(pub(super) Value);
+pub(crate) struct Secret(pub(crate) Value);
 impl std::fmt::Debug for Secret {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Secret")
@@ -45,7 +45,7 @@ impl std::fmt::Debug for Secret {
     }
 }
 
-pub(super) fn manifest(name: &str, image: &str, command: &[&str], arguments: &[&str]) -> Value {
+pub(crate) fn manifest(name: &str, image: &str, command: &[&str], arguments: &[&str]) -> Value {
     json!({"apiVersion":"batch/v1", "kind":"Job", "metadata":{"name":name},
         "spec":{"suspend":true, "backoffLimit":0, "activeDeadlineSeconds":INSTALL_DEADLINE.as_secs(),
             "template":{"spec":{"restartPolicy":"Never", "automountServiceAccountToken":false,
@@ -53,17 +53,17 @@ pub(super) fn manifest(name: &str, image: &str, command: &[&str], arguments: &[&
                 "volumes":[]}}}})
 }
 
-pub(super) fn name(job: &Value) -> &str {
+pub(crate) fn name(job: &Value) -> &str {
     job["metadata"]["name"]
         .as_str()
         .expect("initialization Job name")
 }
 
-pub(super) fn container(job: &mut Value) -> &mut Value {
+pub(crate) fn container(job: &mut Value) -> &mut Value {
     &mut job["spec"]["template"]["spec"]["containers"][0]
 }
 
-pub(super) fn environment(job: &mut Value, values: &[(&str, &str)]) {
+pub(crate) fn environment(job: &mut Value, values: &[(&str, &str)]) {
     let env = container(job)["env"].as_array_mut().unwrap();
     env.extend(
         values
@@ -72,7 +72,7 @@ pub(super) fn environment(job: &mut Value, values: &[(&str, &str)]) {
     );
 }
 
-pub(super) fn credential(
+pub(crate) fn credential(
     job: &mut Value,
     name: &str,
     environment: &str,
@@ -88,7 +88,7 @@ pub(super) fn credential(
     )
 }
 
-pub(super) fn mount(job: &mut Value, name: &str, secret: &str, path: &str, keys: &[&str]) {
+pub(crate) fn mount(job: &mut Value, name: &str, secret: &str, path: &str, keys: &[&str]) {
     job["spec"]["template"]["spec"]["volumes"]
         .as_array_mut()
         .unwrap()
@@ -102,7 +102,7 @@ pub(super) fn mount(job: &mut Value, name: &str, secret: &str, path: &str, keys:
         .push(json!({"name":name, "mountPath":path, "readOnly":true}));
 }
 
-pub(super) fn files(job: &mut Value, files: BTreeMap<String, String>) -> Secret {
+pub(crate) fn files(job: &mut Value, files: BTreeMap<String, String>) -> Secret {
     let secret = format!("{}-files", name(job));
     mount(
         job,
@@ -122,7 +122,7 @@ pub(super) fn files(job: &mut Value, files: BTreeMap<String, String>) -> Secret 
     Secret(object)
 }
 
-pub(super) fn secret_output(job: &mut Value) {
+pub(crate) fn secret_output(job: &mut Value) {
     let name = name(job).to_owned();
     let container = container(job);
     container["command"] = json!(["/bin/sh", "-ec"]);
@@ -158,7 +158,7 @@ fn owner_reference(metadata: &Value) -> anyhow::Result<Value> {
 ///
 /// # Errors
 /// Returns execution, handoff, log, or cleanup failures.
-pub(super) async fn run(
+pub(crate) async fn run(
     target: &Target,
     directory: &Path,
     job: &mut Value,

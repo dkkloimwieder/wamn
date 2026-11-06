@@ -15,6 +15,10 @@ use wamn_environment_control::environment::{self, Platform};
 /// One `env` verb.
 #[derive(Debug, Subcommand)]
 pub enum EnvCommand {
+    /// Record an environment and create roles before CNPG creates its database.
+    Provision(ProvisionArgs),
+    /// Initialize absent application baselines after CNPG creates the database.
+    Initialize(InitializeArgs),
     /// Move one environment toward its environment.k document.
     Apply(ApplyArgs),
     /// Write the committed integration documents of one environment.
@@ -27,6 +31,24 @@ pub enum EnvCommand {
     Show(ShowArgs),
     /// Print the current state of one environment as JSON.
     Status(ShowArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct ProvisionArgs {
+    /// The environment document, in KCL or compiled JSON.
+    pub file: PathBuf,
+    /// Write the protected database Secret for the caller to apply.
+    #[arg(long)]
+    pub emit_secret: PathBuf,
+}
+
+#[derive(Debug, Args)]
+pub struct InitializeArgs {
+    /// The environment document, in KCL or compiled JSON.
+    pub file: PathBuf,
+    /// The application whose absent baselines to initialize.
+    #[arg(long)]
+    pub application: Option<String>,
 }
 
 #[derive(Debug, Args)]
@@ -78,10 +100,35 @@ pub struct ShowArgs {
 
 pub async fn run(command: EnvCommand) -> anyhow::Result<()> {
     let platform = match &command {
+        EnvCommand::Provision(_) | EnvCommand::Initialize(_) => Platform::sql_from_env()?,
         EnvCommand::Apply(_) | EnvCommand::Rollback(_) => Platform::apply_from_env()?,
         _ => Platform::from_env()?,
     };
     match command {
+        EnvCommand::Provision(args) => {
+            let document = sql_document(&args.file)?;
+            let outcome = environment::ensure::provision(
+                &platform,
+                &document,
+                &document.policy,
+                &std::env::var("WAMN_SYSTEM_ADMIN_URL")
+                    .context("set WAMN_SYSTEM_ADMIN_URL for env provision")?,
+                &args.emit_secret,
+                None,
+            )
+            .await?;
+            println!("{}", serde_json::to_string(&outcome.database_cr)?);
+        }
+        EnvCommand::Initialize(args) => {
+            environment::sql::initialize(
+                &platform,
+                &sql_document(&args.file)?,
+                &std::env::var("WAMN_SYSTEM_ADMIN_URL")
+                    .context("set WAMN_SYSTEM_ADMIN_URL for env initialize")?,
+                args.application.as_deref(),
+            )
+            .await?;
+        }
         EnvCommand::Apply(args) => {
             let analysis = if args.dry_run {
                 environment::dry_run(&platform, &args.file, args.application.as_deref()).await?
@@ -156,6 +203,19 @@ pub async fn run(command: EnvCommand) -> anyhow::Result<()> {
         }
     }
     Ok(())
+}
+
+fn sql_document(
+    file: &std::path::Path,
+) -> anyhow::Result<environment::document::EnvironmentDocument> {
+    if file
+        .extension()
+        .is_some_and(|extension| extension == "json")
+    {
+        environment::document::EnvironmentDocument::from_json(&std::fs::read(file)?)
+    } else {
+        environment::document::EnvironmentDocument::compile(file)
+    }
 }
 
 /// `--data` drops the database, so the coordinate is typed again at a

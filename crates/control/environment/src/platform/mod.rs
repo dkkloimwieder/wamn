@@ -8,8 +8,7 @@ pub mod control;
 pub mod deploy;
 pub mod document;
 pub mod identity;
-mod job;
-#[cfg(feature = "test-util")]
+pub(crate) mod job;
 pub mod manifests;
 pub mod oauth;
 pub mod pools;

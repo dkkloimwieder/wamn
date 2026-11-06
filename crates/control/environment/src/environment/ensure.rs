@@ -80,36 +80,16 @@ pub async fn ensure(
         && !secret_exists(platform, namespace, &pat_name).await?;
     let database_secret = private.path("database.json");
     let pat_secret = private.path("management-author-pat.json");
-    let outcome = provision_project_env(&ProvisionProjectEnvRequest {
-        changes: platform.auth_changes().await?,
-        org: document.org.clone(),
-        project: document.project.clone(),
-        env: document.env.clone(),
-        policy: Some(policy.to_owned()),
-        target: document.target.clone(),
-        disposable: None,
-        system_database_url: Some(platform.system_database_url.clone()),
-        cluster: Some(cluster.clone()),
-        connection_limit: None,
-        cluster_namespace: platform.database_namespace.clone(),
-        namespace: namespace.to_owned(),
-        secret_namespace: Some(namespace.to_owned()),
-        // `-` returns these three in the outcome and writes no file.
-        emit_database: Some(PathBuf::from("-")),
-        emit_role_sql: Some(PathBuf::from("-")),
-        emit_privilege_sql: Some(PathBuf::from("-")),
-        emit_secret: Some(database_secret.clone()),
-        pat_issuer: platform.pat_issuer.clone(),
-        emit_management_author_pat_secret: issue_pat.then(|| pat_secret.clone()),
-        emit_operator_pat_secret: None,
-    })
-    .await
-    .context("record the environment and render its database")?;
+    let outcome = provision(
+        platform,
+        document,
+        policy,
+        admin_url,
+        &database_secret,
+        issue_pat.then_some(pat_secret.as_path()),
+    )
+    .await?;
     ensure_credential_access(platform, document).await?;
-    admin
-        .batch_execute(&outcome.role_sql)
-        .await
-        .context("ensure the database roles")?;
     kubectl(
         platform,
         &platform.database_namespace,
@@ -205,6 +185,49 @@ pub async fn ensure(
     )
     .await?;
     Ok(())
+}
+
+/// Record the environment and create roles before CNPG creates its database.
+/// The caller applies the returned Database resource and the protected Secret output.
+pub async fn provision(
+    platform: &Platform,
+    document: &EnvironmentDocument,
+    policy: &str,
+    admin_url: &str,
+    secret: &Path,
+    pat_secret: Option<&Path>,
+) -> anyhow::Result<crate::provision_project_env::ProvisionProjectEnvOutcome> {
+    let outcome = provision_project_env(&ProvisionProjectEnvRequest {
+        changes: platform.auth_changes().await?,
+        org: document.org.clone(),
+        project: document.project.clone(),
+        env: document.env.clone(),
+        policy: Some(policy.to_owned()),
+        target: document.target.clone(),
+        disposable: None,
+        system_database_url: Some(platform.system_database_url.clone()),
+        cluster: None,
+        connection_limit: None,
+        cluster_namespace: platform.database_namespace.clone(),
+        namespace: platform.target.namespace.clone(),
+        secret_namespace: Some(platform.target.namespace.clone()),
+        // `-` returns these three in the outcome and writes no file.
+        emit_database: Some(PathBuf::from("-")),
+        emit_role_sql: Some(PathBuf::from("-")),
+        emit_privilege_sql: Some(PathBuf::from("-")),
+        emit_secret: Some(secret.to_path_buf()),
+        pat_issuer: platform.pat_issuer.clone(),
+        emit_management_author_pat_secret: pat_secret.map(Path::to_path_buf),
+        emit_operator_pat_secret: None,
+    })
+    .await
+    .context("record the environment and render its database")?;
+    connect(admin_url)
+        .await?
+        .batch_execute(&outcome.role_sql)
+        .await
+        .context("ensure the database roles")?;
+    Ok(outcome)
 }
 
 /// Ensure the project database grants and run plane after its database exists.

@@ -25,6 +25,7 @@ pub mod lock;
 pub mod readiness;
 pub mod rollback;
 pub mod show;
+pub mod sql;
 pub mod stage;
 pub mod status;
 pub mod write;
@@ -121,11 +122,43 @@ impl Platform {
             None => PathBuf::from(variable("HOME")?).join(".kube/config"),
         };
         let context = current_context(&kubeconfig)?;
-        let namespace = std::env::var("WAMN_RELEASE_NAMESPACE")
-            .unwrap_or_else(|_| DEFAULT_NAMESPACE.to_owned());
+        Self::from_inputs(
+            database_variable,
+            release_chart::Target {
+                kubeconfig,
+                context,
+                namespace: std::env::var("WAMN_RELEASE_NAMESPACE")
+                    .unwrap_or_else(|_| DEFAULT_NAMESPACE.to_owned()),
+            },
+            PathBuf::from(variable("WAMN_RELEASE_CHART")?),
+        )
+    }
+
+    /// Read SQL Job inputs without invoking Kubernetes or requiring a release chart.
+    pub fn sql_from_env() -> anyhow::Result<Self> {
+        Self::from_inputs(
+            "WAMN_APPLY_DATABASE_URL",
+            release_chart::Target {
+                kubeconfig: PathBuf::new(),
+                context: String::new(),
+                namespace: std::env::var("WAMN_RELEASE_NAMESPACE")
+                    .unwrap_or_else(|_| DEFAULT_NAMESPACE.to_owned()),
+            },
+            PathBuf::new(),
+        )
+    }
+
+    fn from_inputs(
+        database_variable: &str,
+        target: release_chart::Target,
+        chart: PathBuf,
+    ) -> anyhow::Result<Self> {
+        let variable = |name: &str| {
+            std::env::var(name).with_context(|| format!("set {name} for wamn-ctl env"))
+        };
         Ok(Self {
             system_database_url: variable(database_variable)?,
-            chart: PathBuf::from(variable("WAMN_RELEASE_CHART")?),
+            chart,
             release_artifact_base: variable("WAMN_RELEASE_ARTIFACT_BASE")?,
             registry_auth_file: PathBuf::from(variable("WAMN_REGISTRY_AUTH_FILE")?),
             oci_ca_paths: std::env::var("WAMN_OCI_CA_PATHS")
@@ -140,7 +173,7 @@ impl Platform {
             package_artifact_base: std::env::var("WAMN_PACKAGE_ARTIFACT_BASE").ok(),
             component_artifact_base: std::env::var("WAMN_COMPONENT_ARTIFACT_BASE").ok(),
             database_namespace: std::env::var("WAMN_DATABASE_NAMESPACE")
-                .unwrap_or_else(|_| namespace.clone()),
+                .unwrap_or_else(|_| target.namespace.clone()),
             database_host: std::env::var("WAMN_DATABASE_HOST").ok(),
             database_port: std::env::var("WAMN_DATABASE_PORT")
                 .ok()
@@ -156,11 +189,7 @@ impl Platform {
             },
             events: event_broker_from_env()?,
             auth_nats: Some(wamn_platform_identity::nats::PlatformNats::from_env()?),
-            target: release_chart::Target {
-                kubeconfig,
-                context,
-                namespace,
-            },
+            target,
         })
     }
 

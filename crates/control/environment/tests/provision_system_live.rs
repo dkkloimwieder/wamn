@@ -159,38 +159,74 @@ async fn provision_system_repeats_without_changing_the_platform_domain() {
         )
         .await
         .unwrap();
-    let recorded = wamn_environment_control::provision_project_env::provision_project_env(
-        &wamn_environment_control::provision_project_env::ProvisionProjectEnvRequest {
-            changes: wamn_platform_identity::auth_changes::AuthChanges::default(),
-            org: "applyprobe".into(),
-            project: "created".into(),
-            env: "dev".into(),
-            policy: Some("dev".into()),
-            target: "cloud".into(),
-            disposable: None,
-            system_database_url: Some(apply_secret["stringData"]["url"].as_str().unwrap().into()),
-            cluster: Some("test-cluster".into()),
-            connection_limit: None,
-            cluster_namespace: "platform".into(),
+    let document = wamn_environment_control::environment::document::EnvironmentDocument::from_json(
+        br#"{"org":"applyprobe","project":"created","env":"dev","target":"cloud","policy":"dev","integrations":{},"applications": {}}"#,
+    ).unwrap();
+    let platform = wamn_environment_control::environment::Platform {
+        system_database_url: apply_secret["stringData"]["url"].as_str().unwrap().into(),
+        target: wamn_release_control::release_chart::Target {
+            kubeconfig: std::path::PathBuf::new(),
+            context: String::new(),
             namespace: "hosts".into(),
-            secret_namespace: Some("hosts".into()),
-            emit_database: None,
-            emit_role_sql: None,
-            emit_privilege_sql: None,
-            emit_secret: None,
-            pat_issuer: wamn_identity_client::PatIssuerConfig::default(),
-            emit_management_author_pat_secret: None,
-            emit_operator_pat_secret: None,
         },
+        chart: std::path::PathBuf::new(),
+        release_artifact_base: String::new(),
+        registry_auth_file: std::path::PathBuf::new(),
+        oci_ca_paths: Vec::new(),
+        package_artifact_base: None,
+        component_artifact_base: None,
+        database_namespace: "platform".into(),
+        database_host: None,
+        database_port: 5432,
+        host_group: None,
+        pat_issuer: wamn_identity_client::PatIssuerConfig::default(),
+        events: None,
+        auth_nats: None,
+    };
+    let secret_path =
+        std::env::temp_dir().join(format!("wamn-env-provision-{}.json", std::process::id()));
+    let recorded = wamn_environment_control::environment::ensure::provision(
+        &platform,
+        &document,
+        &document.policy,
+        &url,
+        &secret_path,
+        None,
     )
     .await
-    .expect("the apply login records the environment without owner authority");
-    assert!(!recorded.database.is_empty());
+    .expect("the SQL provisioning operation uses the apply login for registry writes");
+    assert!(
+        !client
+            .query_one(
+                "SELECT EXISTS (SELECT FROM pg_database WHERE datname=$1)",
+                &[&recorded.database]
+            )
+            .await
+            .unwrap()
+            .get::<_, bool>(0),
+        "CNPG, not provisioning SQL, creates the database"
+    );
+    let retry = wamn_environment_control::environment::ensure::provision(
+        &platform,
+        &document,
+        &document.policy,
+        &url,
+        &secret_path,
+        None,
+    )
+    .await
+    .unwrap();
+    assert_eq!(retry.database, recorded.database);
+    assert_eq!(
+        std::fs::metadata(&secret_path)
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o777,
+        0o600
+    );
+    std::fs::remove_file(&secret_path).unwrap();
 
-    client
-        .batch_execute(&wamn_control_provision::sql::ensure_platform_group_role_sql())
-        .await
-        .unwrap();
     client
         .batch_execute(&format!(
             "CREATE DATABASE {} OWNER wamn_db_owner",
@@ -198,47 +234,17 @@ async fn provision_system_repeats_without_changing_the_platform_domain() {
         ))
         .await
         .unwrap();
-    client
-        .batch_execute(&format!(
-            "GRANT CONNECT ON DATABASE {} TO wamn_apply; \
-             GRANT wamn_platform TO wamn_db_owner WITH INHERIT TRUE, SET FALSE",
-            wamn_pg_core::quote_ident(&recorded.database),
-        ))
-        .await
-        .unwrap();
-    let mut project_admin = parsed_admin.clone();
-    project_admin.set_path(&recorded.database);
-    let (project, project_driver) = tokio_postgres::connect(project_admin.as_str(), NoTls)
-        .await
-        .unwrap();
-    let project_driver = tokio::spawn(project_driver);
-    project
-        .batch_execute(&wamn_control_provision::sql::install_platform_extensions_sql())
-        .await
-        .unwrap();
-    drop(project);
-    project_driver.await.unwrap().unwrap();
-    let mut project_apply =
-        url::Url::parse(apply_secret["stringData"]["url"].as_str().unwrap()).unwrap();
+    let mut project_apply = url::Url::parse(&platform.system_database_url).unwrap();
     project_apply.set_path(&recorded.database);
-    wamn_environment_control::reconcile_run_plane::reconcile_run_plane(
-        wamn_environment_control::reconcile_run_plane::ReconcileRunPlaneRequest {
-            system_database_url: apply_secret["stringData"]["url"].as_str().unwrap().into(),
-            admin_database_url: project_admin.to_string(),
-            org: "applyprobe".into(),
-            project: "created".into(),
-            env: "dev".into(),
-            schema: "wamn_run".into(),
-            dry_run: false,
-            changes: wamn_platform_identity::auth_changes::AuthChanges::default(),
-        },
+    wamn_environment_control::environment::ensure::ensure_project_database(
+        &platform,
+        &document,
+        &[],
+        &client,
+        &url,
     )
     .await
-    .expect("ensure reconciles with separate admin and apply connections");
-    let document = wamn_environment_control::environment::document::EnvironmentDocument::from_json(
-        br#"{"org":"applyprobe","project":"created","env":"dev","target":"cloud","policy":"dev","integrations":{},"applications": {}}"#,
-    )
-    .unwrap();
+    .expect("project initialization uses separate admin and apply connections");
     let drops = wamn_environment_control::environment::bindings::project_authority(
         apply_secret["stringData"]["url"].as_str().unwrap(),
         project_apply.as_str(),

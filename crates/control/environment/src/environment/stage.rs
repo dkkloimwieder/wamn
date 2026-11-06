@@ -1,15 +1,4 @@
-//! The package stage of `apply`
-//! (docs/architecture/overview.md#environment-lifecycle), run in the project
-//! database before any Kubernetes write.
-//!
-//! Under the lifecycle lock, install each package the
-//! environment never had from its verified artifact; write the release cache row;
-//! materialize the release's connection requirements from the admitted
-//! descriptors the release manifest carries (contract D, R2 (3)); reconcile
-//! the packages' data access; create the number sequence row of each
-//! package default that the environment does not have yet. A failed stage
-//! stops here, and
-//! nothing was written to Kubernetes.
+//! Application baseline initialization and immutable release caching.
 
 pub(super) mod plan;
 use plan::apply_order;
@@ -41,6 +30,22 @@ pub async fn stage(
     document: &EnvironmentDocument,
     analysed: &BTreeMap<String, Installed>,
     digest: &str,
+    manifest: &wamn_catalog::ServingManifest,
+    project_url: &str,
+) -> anyhow::Result<Vec<PackageManifest>> {
+    let packages = initialize(platform, document, analysed, manifest, project_url).await?;
+    let env_key =
+        wamn_control_provision::project_env_key(&document.org, &document.project, &document.env);
+    write_release(project_url, &env_key, digest, manifest).await?;
+    Ok(packages)
+}
+
+/// Initialize absent package baselines in dependency order, without selecting a release.
+/// Existing baselines keep their SQL records even when the selected version changes.
+pub async fn initialize(
+    platform: &Platform,
+    document: &EnvironmentDocument,
+    analysed: &BTreeMap<String, Installed>,
     manifest: &wamn_catalog::ServingManifest,
     project_url: &str,
 ) -> anyhow::Result<Vec<PackageManifest>> {
@@ -116,9 +121,6 @@ pub async fn stage(
         packages.push((id, version, opened, package_manifest));
     }
 
-    // 2. The release cache row, once its package versions are installed: the
-    // row seals the migrations of every version it names.
-    write_release(project_url, &env_key, digest, manifest).await?;
     materialize_application_principals(
         &platform.system_database_url,
         project_url,
@@ -141,19 +143,18 @@ pub async fn stage(
     .await
     .context("create the number sequences of the release's packages")?;
 
-    // 3. Reconcile data access for the installed package baselines.
+    // Shared SQL grants require the complete installed set, including other applications.
     let installed = installed(platform, document).await?;
-    let current = packages.iter().all(|(id, version, _, _)| {
-        installed
-            .get(id)
-            .is_some_and(|installed| &installed.current == version)
-    });
-    if current && !packages.is_empty() {
+    let mut grant_packages = Vec::new();
+    for (id, baseline) in &installed {
+        grant_packages.push(open(platform, id, &baseline.current).await?);
+    }
+    if !grant_packages.is_empty() {
         crate::reconcile_package_data_access::reconcile_package_data_access(
             crate::reconcile_package_data_access::ReconcilePackageDataAccessRequest {
-                packages: packages
+                packages: grant_packages
                     .iter()
-                    .map(|(_, _, opened, _)| opened.package_root())
+                    .map(OpenedPackage::package_root)
                     .collect(),
                 database_url: project_url.to_owned(),
                 org: document.org.clone(),
@@ -162,7 +163,7 @@ pub async fn stage(
             },
         )
         .await
-        .context("reconcile the packages' data access")?;
+        .context("reconcile installed SQL grants")?;
     }
     Ok(packages
         .into_iter()

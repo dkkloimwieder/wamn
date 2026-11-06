@@ -37,7 +37,7 @@ impl std::fmt::Debug for SecretData {
     }
 }
 
-pub(super) fn secret_text(secret: &SecretData, key: &str) -> anyhow::Result<String> {
+pub(crate) fn secret_text(secret: &SecretData, key: &str) -> anyhow::Result<String> {
     let encoded = secret
         .data
         .get(key)

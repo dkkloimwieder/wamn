@@ -297,7 +297,7 @@ pub async fn analyse(
 
 /// The package manifests of the release, read from their verified artifacts
 /// for their sequence defaults.
-async fn read_release_packages(
+pub(super) async fn read_release_packages(
     platform: &Platform,
     manifest: &ServingManifest,
 ) -> anyhow::Result<(
