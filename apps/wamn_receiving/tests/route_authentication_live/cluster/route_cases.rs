@@ -209,7 +209,7 @@ async fn membership_job(
     fs::write(&path, serde_json::to_vec_pretty(&job)?)?;
     fs::copy(&path, resources.evidence.join("membership-test-job.json"))?;
     apply(resources, &path).await?;
-    checked(kubectl(resources).args([
+    let waited = checked(kubectl(resources).args([
         "-n",
         &resources.name,
         "wait",
@@ -217,7 +217,18 @@ async fn membership_job(
         "job/membership-test",
         "--timeout=720s",
     ]))
-    .await?;
+    .await;
+    if let Err(error) = waited {
+        // The job's own output names the step that kept it from completing.
+        let logs = kubectl(resources)
+            .args(["-n", &resources.name, "logs", "job/membership-test", "--all-containers"])
+            .output()
+            .await
+            .map(|output| String::from_utf8_lossy(&output.stdout).into_owned())
+            .unwrap_or_default();
+        fs::write(resources.evidence.join("membership-test.log"), &logs)?;
+        return Err(error.context(format!("membership-test output: {logs}")));
+    }
     let job: Value = serde_json::from_slice(
         &checked(kubectl(resources).args([
             "-n",
