@@ -179,16 +179,7 @@ pub async fn deploy(
     identity::apply(target, document, chart, directory).await?;
     control::credentials(target, document, chart, directory).await?;
     control::release(target, document, chart, directory).await?;
-    probe_control(target, document)
-}
-
-#[expect(
-    clippy::unnecessary_wraps,
-    reason = "DEP-07c supplies the fallible probe at merge"
-)]
-fn probe_control(_target: &Target, _document: &ClusterDocument) -> anyhow::Result<()> {
-    // TODO(DEP-07c): replace this stub with control::probe at merge.
-    Ok(())
+    control::probe(target, document).await
 }
 
 async fn apply(target: &Target, objects: &[Value]) -> anyhow::Result<()> {
