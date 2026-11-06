@@ -170,7 +170,8 @@ pub async fn ensure(
         .with_context(|| format!("create {}", work.display()))?;
     let clusters = String::from_utf8(crate::cluster::run(&mut crate::cluster::clusters()).await?)?;
     let mut fixture = crate::cluster::Cluster::new(name, &work)?;
-    if clusters.lines().any(|line| line == name) {
+    let attached = clusters.lines().any(|line| line == name);
+    if attached {
         fixture.attach().await?;
     } else {
         fixture
@@ -197,10 +198,15 @@ pub async fn ensure(
     }
     write_private(&listed, &serde_json::to_vec(&environments)?)?;
     let PlatformInputs {
-        prerequisites,
+        mut prerequisites,
         nats,
         operator,
     } = render(&environments)?;
+    // A Secret is created once: an attaching case keeps the first case's
+    // values, such as the OAuth key that running hosts already loaded.
+    if attached {
+        prerequisites.retain(|object| object["kind"] != "Secret");
+    }
     fixture
         .install(
             &Path::new(env!("CARGO_MANIFEST_DIR")).join("../.."),
