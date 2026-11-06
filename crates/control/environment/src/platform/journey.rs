@@ -64,6 +64,12 @@ pub fn cluster(repository: &Path, input: &ClusterInput<'_>) -> anyhow::Result<Cl
         repository,
         input.host_namespace,
     )?);
+    // A kind host group uses the local OAuth provider, whose key Secret the
+    // hosts mount; platform apply creates it the same way (oauth::ensure_key).
+    prerequisites.extend(super::oauth::key_objects(
+        &super::oauth::new_key()?,
+        input.host_namespace,
+    ));
     let mut values = manifests::operator_base_values(repository)?;
     let url = format!(
         "nats://wamn-nats.{}.svc.cluster.local:4222",

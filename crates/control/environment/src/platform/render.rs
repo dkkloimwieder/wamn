@@ -263,7 +263,7 @@ pub fn install(
         append(
             &mut objects,
             "4.17",
-            super::oauth::key_objects(&fixtures.oauth_key),
+            super::oauth::key_objects(&fixtures.oauth_key, "hosts"),
         );
     }
     for environment in environments {
@@ -397,7 +397,7 @@ pub fn install(
         append(
             &mut objects,
             "4.19.1",
-            super::oauth::key_objects(&fixtures.oauth_key),
+            super::oauth::key_objects(&fixtures.oauth_key, "hosts"),
         );
     }
     let mut control_values = super::control::release_values(document)?;

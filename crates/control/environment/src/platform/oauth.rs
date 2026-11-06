@@ -72,6 +72,15 @@ pub(crate) fn host_group(group: &mut Value, configuration: &Value) -> anyhow::Re
     Ok(())
 }
 
+/// A new random key for a local OAuth provider.
+pub(super) fn new_key() -> anyhow::Result<[u8; 32]> {
+    let mut key = [0_u8; 32];
+    ring::rand::SystemRandom::new()
+        .fill(&mut key)
+        .map_err(|_| anyhow::anyhow!("OAuth key entropy unavailable"))?;
+    Ok(key)
+}
+
 /// Create a target's key once, without changing an existing key.
 pub fn local_key(path: &Path) -> anyhow::Result<()> {
     let mut key = [0_u8; 32];
@@ -115,12 +124,9 @@ pub(super) async fn ensure_key(
     if existing.is_some() {
         return Ok(false);
     }
-    let mut key = [0_u8; 32];
-    ring::rand::SystemRandom::new()
-        .fill(&mut key)
-        .map_err(|_| anyhow::anyhow!("OAuth key entropy unavailable"))?;
+    let key = new_key()?;
     // Create refuses a concurrent winner rather than replacing the target key.
-    for object in key_objects(&key) {
+    for object in key_objects(&key, "hosts") {
         crate::kubectl::kubectl(
             &target.kubeconfig,
             &target.context,
@@ -134,9 +140,10 @@ pub(super) async fn ensure_key(
     Ok(true)
 }
 
-pub(super) fn key_objects(key: &[u8; 32]) -> Vec<Value> {
+/// The Secret that the hosts of a local OAuth provider mount (host_group).
+pub(super) fn key_objects(key: &[u8; 32], namespace: &str) -> Vec<Value> {
     vec![
-        json!({"apiVersion":"v1", "kind":"Secret", "metadata":{"name":SECRET,"namespace":"hosts"},
+        json!({"apiVersion":"v1", "kind":"Secret", "metadata":{"name":SECRET,"namespace":namespace},
         "data":{"key":base64::engine::general_purpose::STANDARD.encode(key)}}),
     ]
 }

@@ -210,6 +210,16 @@ fn journey_cluster_change(
                 && object["metadata"]["name"] == "wamn-host"
                 && object["metadata"]["namespace"] == "wamn-system")
     );
+    // The local OAuth key that the hosts' oauth-key volume mounts.
+    assert!(
+        bundle
+            .prerequisites
+            .iter()
+            .any(|object| object["kind"] == "Secret"
+                && object["metadata"]["name"] == "wamn-oauth"
+                && object["metadata"]["namespace"] == "wamn-system"),
+        "{project} creates the OAuth key Secret its hosts mount"
+    );
     if project == "delivery" {
         let database =
             journey::delivery_database(work.path(), "application-database", "application-pg")?;
