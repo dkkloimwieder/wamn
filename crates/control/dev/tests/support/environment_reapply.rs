@@ -45,7 +45,7 @@ pub(super) async fn check(run: &Run) -> anyhow::Result<()> {
             http: String::new(),
             materializer: String::new(),
         },
-        qualification: String::new(),
+        qualification: Ok(None),
         required_connections: BTreeSet::new(),
     };
     let platform = Platform {
@@ -81,6 +81,8 @@ pub(super) async fn check(run: &Run) -> anyhow::Result<()> {
             revision: None,
             live: BTreeMap::new(),
         },
+        application: "fixture".into(),
+        notices: Vec::new(),
         actor: "reapply-test".into(),
         plan: Vec::new(),
         packages: Vec::new(),

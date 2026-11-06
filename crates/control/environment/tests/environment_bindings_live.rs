@@ -64,6 +64,17 @@ async fn apply_refuses_invalid_names_interfaces_environments_and_versions() {
         .unwrap();
     let mut doc = document();
     let packages = [package("http")];
+    // Neither an unreferenced integration nor another application's connection is a prerequisite.
+    doc.integrations.insert(
+        "unavailable".into(),
+        wamn_environment_control::environment::document::Integration { version: 1 },
+    );
+    let mut unrelated = doc.applications["app"].clone();
+    unrelated.packages = std::collections::BTreeSet::from(["unrelated".into()]);
+    unrelated
+        .connections
+        .insert("upstream".into(), "unavailable".into());
+    doc.applications.insert("other".into(), unrelated);
     let selected = bindings::analyse(&client, &doc, &packages).await.unwrap();
     assert_eq!(selected.len(), 1);
     assert_eq!(selected[0].version, 1);
@@ -664,5 +675,55 @@ async fn publish_refuses_write_interfaces_outside_the_exports() {
     assert_eq!(
         error.as_db_error().unwrap().message(),
         "write_interface_not_exported"
+    );
+}
+
+#[tokio::test]
+async fn project_observation_preserves_the_baseline_and_refuses_unknown_state() {
+    let _lock = wamn_test_postgres::lock();
+    let database = wamn_project_state::test_database::tenant_platform();
+    let client = connect(database.url()).await;
+    client
+        .batch_execute(wamn_control_provision::sql::ensure_db_owner_role_sql())
+        .await
+        .unwrap();
+    client.batch_execute(&format!("GRANT wamn_platform TO wamn_db_owner WITH INHERIT TRUE, SET FALSE; ALTER DATABASE {} OWNER TO wamn_db_owner; ALTER SCHEMA catalog OWNER TO wamn_db_owner; GRANT USAGE ON SCHEMA platform TO wamn_db_owner; GRANT SELECT ON ALL TABLES IN SCHEMA catalog, platform TO wamn_db_owner", wamn_pg_core::quote_ident(database.name()))).await.unwrap();
+    let fingerprint = format!("sha256:{}", "a".repeat(64));
+    client
+        .batch_execute(&format!(
+            "BEGIN; {}",
+            wamn_control_provision::bind_platform_principal_sql(
+                wamn_control_provision::PlatformComponent::Provisioning
+            )
+        ))
+        .await
+        .unwrap();
+    client.execute("INSERT INTO catalog.packages (env_key, package_id, package_version, artifact_digest, physical_schema_fingerprint) VALUES ('acme--one--dev', 'fixture', '1.0.0', $1, $1)", &[&fingerprint]).await.unwrap();
+    client.batch_execute("COMMIT").await.unwrap();
+    let observed = analyse::read_project(database.url(), "acme--one--dev")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(observed.installed["fixture"].current, "1.0.0");
+    assert_eq!(
+        observed.installed["fixture"].physical_schema_fingerprint,
+        fingerprint
+    );
+    client
+        .batch_execute("REVOKE SELECT ON catalog.packages FROM wamn_db_owner")
+        .await
+        .unwrap();
+    assert!(
+        analyse::read_project(database.url(), "acme--one--dev")
+            .await
+            .is_err()
+    );
+    let mut missing = url::Url::parse(database.url()).unwrap();
+    missing.set_path(&format!("/{}_absent", database.name()));
+    assert!(
+        analyse::read_project(missing.as_str(), "acme--one--dev")
+            .await
+            .unwrap()
+            .is_none()
     );
 }

@@ -1,15 +1,11 @@
-use super::BaselineMismatch;
+use super::BaselineDifference;
 
 pub(super) fn compare_digest(
     installed: Option<&str>,
     candidate: &str,
-) -> Result<(), BaselineMismatch> {
-    if installed == Some(candidate) {
-        Ok(())
-    } else {
-        Err(BaselineMismatch {
-            installed: installed.map(str::to_owned),
-            candidate: candidate.to_owned(),
-        })
-    }
+) -> Option<BaselineDifference> {
+    (installed != Some(candidate)).then(|| BaselineDifference {
+        installed: installed.map(str::to_owned),
+        candidate: candidate.to_owned(),
+    })
 }

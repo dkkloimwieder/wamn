@@ -1,6 +1,6 @@
 //! Arguments and output of the `env` verbs
-//! (docs/architecture/overview.md#environment-lifecycle). `apply` has one flag,
-//! `--dry-run`; `rollback` one argument, `--reason`; `delete` one flag,
+//! (docs/architecture/overview.md#environment-lifecycle). `apply` selects an
+//! application and supports `--dry-run`; `rollback` takes `--reason`; `delete` takes
 //! `--data`. Every other input is a field of the environment document, or a
 //! platform input that [`wamn_environment_control::environment::Platform::from_env`] reads.
 
@@ -36,6 +36,9 @@ pub struct ApplyArgs {
     /// Print the plan without the lock. The plan describes this moment only.
     #[arg(long)]
     pub dry_run: bool,
+    /// The application whose release to analyse or apply.
+    #[arg(long)]
+    pub application: Option<String>,
 }
 
 #[derive(Debug, Args)]
@@ -81,16 +84,20 @@ pub async fn run(command: EnvCommand) -> anyhow::Result<()> {
     match command {
         EnvCommand::Apply(args) => {
             let analysis = if args.dry_run {
-                environment::dry_run(&platform, &args.file).await?
+                environment::dry_run(&platform, &args.file, args.application.as_deref()).await?
             } else {
                 environment::apply(
                     &platform,
                     &args.file,
                     &std::env::var("WAMN_SYSTEM_ADMIN_URL")
                         .context("set WAMN_SYSTEM_ADMIN_URL for ensure")?,
+                    args.application.as_deref(),
                 )
                 .await?
             };
+            for notice in &analysis.notices {
+                println!("{}", serde_json::to_string(notice)?);
+            }
             for line in &analysis.plan {
                 println!("{line}");
             }
@@ -181,4 +188,52 @@ pub(crate) fn parse_coordinate(coordinate: &str) -> anyhow::Result<Triple> {
     wamn_control_provision::validate_project_env(org, project, env)
         .with_context(|| format!("coordinate {coordinate:?} is not valid"))?;
     Ok(Triple::new(org, project, env))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::Parser as _;
+
+    #[test]
+    fn dry_run_selects_the_named_application_through_the_analysis_owner() {
+        #[derive(clap::Parser)]
+        struct Command {
+            #[command(subcommand)]
+            command: EnvCommand,
+        }
+        let command = Command::try_parse_from([
+            "env",
+            "apply",
+            "environment.k",
+            "--application",
+            "second",
+            "--dry-run",
+        ])
+        .unwrap();
+        let EnvCommand::Apply(args) = command.command else {
+            panic!("apply command")
+        };
+        let document = environment::document::EnvironmentDocument::from_json(
+            br#"{
+            "org":"acme", "project":"one", "env":"dev", "target":"cloud", "policy":"dev",
+            "applications": {
+                "first":{"current":"none", "hostname":"first.example", "packages":["first"]},
+                "second":{"current":"none", "hostname":"second.example", "packages":["second"]}
+            }
+        }"#,
+        )
+        .unwrap();
+        let selected =
+            environment::analyse::select_application(&document, args.application.as_deref())
+                .unwrap();
+        assert!(args.dry_run);
+        assert_eq!(
+            selected.applications,
+            std::collections::BTreeMap::from([(
+                "second".into(),
+                document.applications["second"].clone()
+            )])
+        );
+    }
 }

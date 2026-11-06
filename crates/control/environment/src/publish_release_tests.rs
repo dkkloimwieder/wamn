@@ -8,7 +8,10 @@ use wamn_release_control::publish_release::{
 
 #[test]
 fn application_packages_with_different_model_schemas_publish_and_pass_apply_analysis() {
-    use crate::environment::analyse::{Authorities, Policy, ProjectState, ReleaseFacts};
+    use crate::environment::analyse::{
+        Authorities, Installed, Observation, Policy, ProjectState, ReleaseFacts, notices, refusals,
+        select_application,
+    };
     let mut manifests = BTreeMap::new();
     let mut components = ReleaseComponents::default();
     let mut packages = BTreeSet::new();
@@ -61,12 +64,12 @@ fn application_packages_with_different_model_schemas_publish_and_pass_apply_anal
     )
     .unwrap();
     assert_eq!(published.manifest.components.len(), 2);
-    let document = crate::environment::document::EnvironmentDocument::from_json(
+    let mut document = crate::environment::document::EnvironmentDocument::from_json(
             serde_json::json!({"org":"acme", "project":"erp", "env":"dev",
                 "target": "cloud", "policy":"dev",
                 "applications": {"erp": {"current": published.digest.as_str(), "hostname": "erp.acme.example", "packages": ["consumer", "integration"]}}}).to_string().as_bytes()
         ).unwrap();
-    let authorities = Authorities {
+    let mut authorities = Authorities {
         release_name: "acme--erp--dev".to_owned(),
         artifact_bindings: BTreeSet::new(),
         connections: BTreeMap::new(),
@@ -85,11 +88,84 @@ fn application_packages_with_different_model_schemas_publish_and_pass_apply_anal
                 http: DIGEST.to_owned(),
                 materializer: DIGEST.to_owned(),
             },
-            qualification: "fixture".to_owned(),
+            qualification: Ok(Some("fixture".to_owned())),
             required_connections: BTreeSet::new(),
         }),
         revision: None,
         live: BTreeMap::new(),
     };
-    assert!(crate::environment::analyse::refusals(&document, &authorities).is_empty());
+    let mut unrelated = document.applications["erp"].clone();
+    unrelated.packages = BTreeSet::from(["unrelated".into()]);
+    document.applications.insert("other".into(), unrelated);
+    assert!(select_application(&document, None).is_err());
+    assert!(select_application(&document, Some("absent")).is_err());
+    let selected = select_application(&document, Some("erp")).unwrap();
+    assert!(refusals(&selected, &authorities).is_empty());
+    assert_ne!(
+        crate::environment::analyse::application_release_name(&document, "erp").unwrap(),
+        crate::environment::analyse::application_release_name(&document, "other").unwrap()
+    );
+    let fingerprints: BTreeMap<_, _> = packages
+        .iter()
+        .map(|package| (package.package_id().to_owned(), "sha256:selected".into()))
+        .collect();
+    for package in &packages {
+        authorities.project.as_mut().unwrap().installed.insert(
+            package.package_id().to_owned(),
+            Installed {
+                current: "0.9.0".into(),
+                physical_schema_fingerprint: "sha256:installed".into(),
+            },
+        );
+    }
+    for qualification in [
+        Ok(None),
+        Err("unreadable optional result".into()),
+        Ok(Some("verified".into())),
+    ] {
+        authorities.release.as_mut().unwrap().qualification = qualification.clone();
+        assert!(refusals(&selected, &authorities).is_empty());
+        let notices = notices(&selected, "erp", &authorities, &fingerprints);
+        for package in &packages {
+            assert!(notices.iter().any(|notice| {
+                notice.application == "erp"
+                    && notice
+                        .identity
+                        .ends_with(&format!("/catalog.packages/{}", package.package_id()))
+                    && notice.observed
+                        == Observation::SchemaDifference {
+                            installed: Some("sha256:installed".into()),
+                            selected: "sha256:selected".into(),
+                        }
+                    && !notice.next_action.is_empty()
+            }));
+        }
+        let optional = notices
+            .iter()
+            .find(|notice| matches!(notice.observed, Observation::NotChecked { .. }));
+        match qualification {
+            Ok(Some(_)) => assert!(optional.is_none()),
+            other => {
+                let notice = optional.unwrap();
+                assert_eq!(notice.application, "erp");
+                assert_eq!(
+                    notice.identity,
+                    authorities.release.as_ref().unwrap().digest
+                );
+                let Observation::NotChecked { cause, image_set } = &notice.observed else {
+                    unreachable!()
+                };
+                assert_eq!(cause.as_ref(), other.as_ref().err());
+                assert_eq!(
+                    image_set["host"],
+                    authorities.release.as_ref().unwrap().image_set.host
+                );
+                assert!(!notice.next_action.is_empty());
+            }
+        }
+    }
+    for installed in authorities.project.as_mut().unwrap().installed.values_mut() {
+        installed.physical_schema_fingerprint = "sha256:selected".into();
+    }
+    assert!(notices(&selected, "erp", &authorities, &fingerprints).is_empty());
 }

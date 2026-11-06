@@ -43,6 +43,7 @@ pub async fn bind(
             platform,
             &path,
             &crate::ensure_admin_url(platform),
+            Some(application),
         ))
         .await;
         std::fs::remove_file(path)?;

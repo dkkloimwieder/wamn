@@ -2,8 +2,7 @@
 //! (docs/architecture/overview.md#environment-lifecycle), run in the project
 //! database before any Kubernetes write.
 //!
-//! Under the lifecycle lock, compare the installed schema baseline with this
-//! binary and refuse a mismatch. Install each package the
+//! Under the lifecycle lock, install each package the
 //! environment never had from its verified artifact; write the release cache row;
 //! materialize the release's connection requirements from the admitted
 //! descriptors the release manifest carries (contract D, R2 (3)); reconcile
@@ -47,8 +46,6 @@ pub async fn stage(
 ) -> anyhow::Result<Vec<PackageManifest>> {
     let env_key =
         wamn_control_provision::project_env_key(&document.org, &document.project, &document.env);
-
-    wamn_package_control::schema_baseline::compare_project(project_url).await?;
 
     // 1. The predecessor: the installed versions are those analysis judged.
     let observed = installed(platform, document).await?;
@@ -333,10 +330,13 @@ pub(super) async fn installed(
     let row = analyse::read_row(&system, document)
         .await?
         .context("the environment row is missing after step 4")?;
-    Ok(analyse::read_project(platform, document, &row)
-        .await?
-        .context("the project database is missing after step 4")?
-        .installed)
+    Ok(analyse::read_project(
+        &analyse::project_url(platform, document, &row)?,
+        &wamn_control_provision::project_env_key(&document.org, &document.project, &document.env),
+    )
+    .await?
+    .context("the project database is missing after step 4")?
+    .installed)
 }
 
 /// The package artifact `<id>-<version>`, pulled from the registry.
@@ -468,10 +468,7 @@ mod tests {
 
     #[test]
     fn sequence_defaults_use_map_names_and_refuse_conflicting_declarations() {
-        let mut base = wamn_catalog::manifest::PackageManifest::from_slice(
-            &wamn_package_control::test_support::fixture_manifest(),
-        )
-        .unwrap();
+        let mut base = wamn_package_control::test_support::source_manifest();
         base.package.id = "base".into();
         base.sequences = serde_json::from_value(serde_json::json!({
             "order": {"pattern": "PO-{seq:po}"}

@@ -81,15 +81,6 @@ async fn a_qualification_is_pushed_once_and_read_by_its_release_and_image_set() 
     assert_eq!(release, vector::DIGEST);
     let size = vector::CANONICAL_BYTES.len();
 
-    // apply refuses a release with no qualification and names the tag.
-    let missing = qualification_artifact::find(&releases, release, &image_set('c'))
-        .await
-        .expect_err("no qualification yet");
-    assert!(
-        format!("{missing:#}").contains(&format!("qualification-{}-", &release[7..])),
-        "{missing:#}"
-    );
-
     // qualify-release pushes it. A re-run on the same inputs, by any runner,
     // builds the same bytes and finds them already present.
     let key = image_set_digests(&image_set('c')).expect("the image set is pinned");
@@ -150,16 +141,23 @@ async fn a_qualification_is_pushed_once_and_read_by_its_release_and_image_set() 
     let mut renamed = image_set('c');
     renamed.http = format!("elsewhere.example/http@sha256:{}", "c".repeat(64));
     assert_eq!(
-        qualification_artifact::find(&releases, release, &renamed)
+        qualification_artifact::lookup(&releases, release, &image_set_digests(&renamed).unwrap())
             .await
-            .expect("apply finds the qualification"),
+            .expect("read optional qualification")
+            .unwrap()
+            .digest,
         pushed
     );
     // Another role digest is another image set, with no qualification.
     assert!(
-        qualification_artifact::find(&releases, release, &image_set('e'))
-            .await
-            .is_err()
+        qualification_artifact::lookup(
+            &releases,
+            release,
+            &image_set_digests(&image_set('e')).unwrap()
+        )
+        .await
+        .unwrap()
+        .is_none()
     );
 
     drop(local);

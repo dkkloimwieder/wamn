@@ -140,34 +140,9 @@ pub async fn push(
     Ok((digest, QualificationPushDisposition::Pushed))
 }
 
-/// Read the qualification of `release_digest` on `image_set` from the
-/// release repository of `releases`, check it, and return its manifest
-/// digest.
-///
-/// # Errors
-///
-/// When the tag is absent, which names it, or the artifact is not a
-/// qualification of that release on that image set.
-pub async fn find(
-    releases: &PackageRegistry,
-    release_digest: &str,
-    image_set: &ImageSet,
-) -> anyhow::Result<String> {
-    let image_set = image_set_digests(image_set)?;
-    let Some(found) = lookup(releases, release_digest, &image_set).await? else {
-        let tag = qualification_tag(release_digest, &image_set)?;
-        bail!(
-            "release {release_digest} has no qualification on the chart's image set: \
-             {} is absent",
-            Repository::open(releases, &tag)?.reference
-        );
-    };
-    Ok(found.digest)
-}
-
 /// Read the qualification of `release_digest` on the image set digests
-/// `image_set` from the release repository of `releases`, with every check
-/// of [`find`]. Returns `None` when the tag is absent.
+/// `image_set` from the release repository of `releases`.
+/// Returns `None` when the tag is absent.
 ///
 /// # Errors
 ///

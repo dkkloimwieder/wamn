@@ -1,15 +1,11 @@
-//! Record full-schema digests and refuse a changed installation.
+//! Record and observe full-schema digests.
 
 pub(super) mod plan;
 use plan::compare_digest;
 
-use std::fmt;
-
 use anyhow::Context as _;
 use tokio_postgres::GenericClient;
 use wamn_control_provision::schema_baseline::{project_sha256, system_sha256};
-
-use crate::database::connect;
 
 /// Record the full system schema in the caller's current transaction or session.
 pub async fn record_system(client: &impl GenericClient) -> anyhow::Result<()> {
@@ -36,41 +32,25 @@ async fn record(client: &impl GenericClient, table: &str, sha256: &str) -> anyho
     Ok(())
 }
 
-/// Refuse a missing or changed system baseline before environment analysis.
-pub async fn compare_system(system_url: &str) -> anyhow::Result<()> {
-    compare(
-        &connect(system_url).await?,
-        "registry.schema_baseline",
-        &system_sha256(),
-    )
-    .await
+/// Observe the system baseline without authorizing schema writes.
+pub async fn observe_system(
+    client: &impl GenericClient,
+) -> anyhow::Result<Option<BaselineDifference>> {
+    compare(client, "registry.schema_baseline", &system_sha256()).await
 }
 
-/// Refuse a missing or changed project baseline before package application.
-pub async fn compare_project(project_url: &str) -> anyhow::Result<()> {
-    compare(
-        &connect(project_url).await?,
-        "platform.schema_baseline",
-        &project_sha256(),
-    )
-    .await
+/// Observe the project baseline without authorizing schema writes.
+pub async fn observe_project(
+    client: &impl GenericClient,
+) -> anyhow::Result<Option<BaselineDifference>> {
+    compare(client, "platform.schema_baseline", &project_sha256()).await
 }
 
-/// Compare an installed project baseline before reconciliation and skip a fresh database.
-pub async fn compare_project_if_installed(project_url: &str) -> anyhow::Result<()> {
-    let installed: bool = connect(project_url)
-        .await?
-        .query_one("SELECT to_regclass('platform.\"user\"') IS NOT NULL", &[])
-        .await
-        .context("look for the installed project schema")?
-        .get(0);
-    if installed {
-        compare_project(project_url).await?;
-    }
-    Ok(())
-}
-
-async fn compare(client: &impl GenericClient, table: &str, candidate: &str) -> anyhow::Result<()> {
+async fn compare(
+    client: &impl GenericClient,
+    table: &str,
+    candidate: &str,
+) -> anyhow::Result<Option<BaselineDifference>> {
     let exists: bool = client
         .query_one("SELECT to_regclass($1) IS NOT NULL", &[&table])
         .await
@@ -85,44 +65,28 @@ async fn compare(client: &impl GenericClient, table: &str, candidate: &str) -> a
     } else {
         None
     };
-    compare_digest(installed.as_deref(), candidate)?;
-    Ok(())
+    Ok(compare_digest(installed.as_deref(), candidate))
 }
 
-#[derive(Debug)]
-struct BaselineMismatch {
-    installed: Option<String>,
-    candidate: String,
+/// Recorded and selected schema identities. Absence is an observation, not permission to initialize.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BaselineDifference {
+    pub installed: Option<String>,
+    pub candidate: String,
 }
-
-impl fmt::Display for BaselineMismatch {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            formatter,
-            "schema changed, reset the environment database (installed: {:?}, candidate: {})",
-            self.installed, self.candidate
-        )
-    }
-}
-
-impl std::error::Error for BaselineMismatch {}
 
 #[cfg(test)]
 mod tests {
     use super::compare_digest;
 
     #[test]
-    fn changed_or_absent_baseline_refuses_apply() {
-        let candidate = format!("sha256:{}", "a".repeat(64));
-        let changed = format!("sha256:{}", "b".repeat(64));
-        for installed in [Some(changed.as_str()), None] {
-            let error = compare_digest(installed, &candidate).unwrap_err();
-            assert!(
-                error
-                    .to_string()
-                    .contains("schema changed, reset the environment database")
-            );
+    fn changed_or_absent_baselines_are_observations() {
+        let candidate = "sha256:selected";
+        for installed in [Some("sha256:installed"), None] {
+            let difference = compare_digest(installed, candidate).unwrap();
+            assert_eq!(difference.installed.as_deref(), installed);
+            assert_eq!(difference.candidate, candidate);
         }
-        assert!(compare_digest(Some(&candidate), &candidate).is_ok());
+        assert!(compare_digest(Some(candidate), candidate).is_none());
     }
 }

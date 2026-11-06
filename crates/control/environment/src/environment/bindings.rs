@@ -64,13 +64,25 @@ pub async fn analyse(
     packages: &[PackageManifest],
 ) -> Result<Vec<Binding>, BindingError> {
     let mut selected = BTreeMap::new();
-    // An apply without a release binds nothing, so its integrations need no
-    // connection yet: the first apply comes before the connections exist.
-    for (name, version) in document
-        .integrations
+    // Only referenced integrations of the selected package closure need connections.
+    let applications: Vec<_> = document
+        .applications
         .iter()
-        .filter(|_| *document.legacy_release() != super::document::DeclaredRelease::None)
-    {
+        .filter(|(_, definition)| {
+            definition.current != super::document::DeclaredRelease::None
+                && packages
+                    .iter()
+                    .any(|package| definition.packages.contains(&package.package.id))
+        })
+        .collect();
+    for (name, version) in document.integrations.iter().filter(|(name, _)| {
+        applications.iter().any(|(_, definition)| {
+            definition
+                .connections
+                .values()
+                .any(|integration| integration == *name)
+        })
+    }) {
         let row = system
             .query_opt(
                 "SELECT * FROM registry.resolve_environment_connection($1,$2,$3,$4,$5,$6)",
@@ -106,7 +118,7 @@ pub async fn analyse(
         selected.insert(name, row);
     }
     let mut bindings = Vec::new();
-    for (application, definition) in &document.applications {
+    for (application, definition) in applications {
         let mut declarations: BTreeMap<String, ConnectionDeclaration> = BTreeMap::new();
         for package in packages
             .iter()
@@ -122,9 +134,6 @@ pub async fn analyse(
                     ));
                 }
             }
-        }
-        if *document.legacy_release() == super::document::DeclaredRelease::None {
-            continue;
         }
         for name in definition.connections.keys() {
             if !declarations.contains_key(name) {

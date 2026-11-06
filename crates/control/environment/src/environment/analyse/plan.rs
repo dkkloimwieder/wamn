@@ -1,5 +1,5 @@
 use super::{
-    Authorities, BTreeSet, EnvironmentDocument, EnvironmentRow, Installed, Platform, ProjectState,
+    Authorities, BTreeSet, EnvironmentDocument, EnvironmentRow, Notice, Observation, Platform,
     Revision, Value,
 };
 use anyhow::Context as _;
@@ -55,32 +55,10 @@ pub(crate) fn newest_successful(history: &[Value]) -> Option<&Value> {
         .max_by_key(|entry| entry["revision"].as_u64())
 }
 
-/// A release uses the installed package baseline until the application resets.
-pub fn package_compatible(installed: &Installed, version: &str) -> Result<(), String> {
-    if version == installed.current {
-        Ok(())
-    } else {
-        Err(format!(
-            "differs from installed version {}; reset the application database",
-            installed.current
-        ))
-    }
-}
-
 /// Every reason the document is refused against the authorities (§10.1 step 3).
 pub fn refusals(document: &EnvironmentDocument, authorities: &Authorities) -> Vec<String> {
     let mut refusals = Vec::new();
-    let empty = ProjectState::default();
-    let project = authorities.project.as_ref().unwrap_or(&empty);
     if let Some(release) = &authorities.release {
-        for package in &release.manifest.release.packages {
-            let (id, version) = (package.package_id(), package.package_version());
-            if let Some(installed) = project.installed.get(id)
-                && let Err(reason) = package_compatible(installed, version)
-            {
-                refusals.push(format!("package {id}@{version} {reason}"));
-            }
-        }
         for component in &release.manifest.components {
             for requirement in &component.descriptor.connections {
                 if let Some(connection) = authorities.connections.get(&super::super::bindings::key(
@@ -176,23 +154,6 @@ pub fn application_refusals<'a>(
 /// The differences from each authority (§10.1 step 3, the plan).
 pub(super) fn plan(document: &EnvironmentDocument, authorities: &Authorities) -> Vec<String> {
     let mut plan = Vec::new();
-    match &authorities.row {
-        None => {
-            plan.push("create the environment row, database, credentials and run plane".to_owned());
-        }
-        Some(row) if row.route_host.as_deref() != Some(document.legacy_hostname()) => {
-            plan.push(format!(
-                "set the route host to {}",
-                document.legacy_hostname()
-            ));
-        }
-        Some(_) => {}
-    }
-    if let Some(row) = &authorities.row
-        && row.policy_name != document.policy
-    {
-        plan.push(format!("set the policy to {}", document.policy));
-    }
     for (application, definition) in &document.applications {
         for (name, integration) in &definition.connections {
             plan.push(format!(
@@ -206,14 +167,9 @@ pub(super) fn plan(document: &EnvironmentDocument, authorities: &Authorities) ->
         .and_then(Revision::manifest_digest);
     match (&authorities.release, current) {
         (Some(release), Some(current)) if release.digest == current => {
-            plan.push(format!(
-                "release {current} is installed; Helm writes only if the values differ"
-            ));
+            plan.push(format!("reapply release {current} with Helm"));
         }
-        (Some(release), _) => plan.push(format!(
-            "stage and roll out release {} (qualification {})",
-            release.digest, release.qualification
-        )),
+        (Some(release), _) => plan.push(format!("stage and roll out release {}", release.digest)),
         (None, Some(current)) => plan.push(format!("uninstall release {current} and drain")),
         (None, None) => {}
     }
@@ -221,4 +177,83 @@ pub(super) fn plan(document: &EnvironmentDocument, authorities: &Authorities) ->
         plan.push("nothing differs".to_owned());
     }
     plan
+}
+
+/// Compare physical SQL identities and optional evidence, never package versions.
+pub(crate) fn notices(
+    document: &EnvironmentDocument,
+    application: &str,
+    authorities: &Authorities,
+    fingerprints: &std::collections::BTreeMap<String, String>,
+) -> Vec<Notice> {
+    let mut notices = Vec::new();
+    for (package, selected) in fingerprints {
+        let installed = authorities
+            .project
+            .as_ref()
+            .and_then(|project| project.installed.get(package));
+        if installed.map(|installed| &installed.physical_schema_fingerprint) != Some(selected) {
+            notices.push(Notice {
+                application: application.to_owned(),
+                identity: format!(
+                    "{}/{}/{}/catalog.packages/{package}",
+                    document.org, document.project, document.env
+                ),
+                observed: Observation::SchemaDifference {
+                    installed: installed
+                        .map(|installed| installed.physical_schema_fingerprint.clone()),
+                    selected: selected.clone(),
+                },
+                next_action: format!("wamn schema diff {application} --env {}", document.env),
+            });
+        }
+    }
+    if let Some(difference) = authorities
+        .project
+        .as_ref()
+        .and_then(|project| project.schema_difference.as_ref())
+    {
+        notices.push(Notice {
+            application: application.to_owned(),
+            identity: format!(
+                "{}/{}/{}/platform.schema_baseline",
+                document.org, document.project, document.env
+            ),
+            observed: Observation::SchemaDifference {
+                installed: difference.installed.clone(),
+                selected: difference.candidate.clone(),
+            },
+            next_action: format!(
+                "Inspect the project SQL baseline for {}/{}/{}",
+                document.org, document.project, document.env
+            ),
+        });
+    }
+    if let Some(release) = &authorities.release {
+        let cause = match &release.qualification {
+            Ok(Some(_)) => return notices,
+            Ok(None) => None,
+            Err(cause) => Some(cause.clone()),
+        };
+        notices.push(Notice {
+            application: application.to_owned(),
+            identity: release.digest.clone(),
+            observed: Observation::NotChecked {
+                cause,
+                image_set: std::collections::BTreeMap::from([
+                    ("host".into(), release.image_set.host.clone()),
+                    ("http".into(), release.image_set.http.clone()),
+                    (
+                        "materializer".into(),
+                        release.image_set.materializer.clone(),
+                    ),
+                ]),
+            },
+            next_action: format!(
+                "Run optional qualification for release {} on the selected image set",
+                release.digest
+            ),
+        });
+    }
+    notices
 }

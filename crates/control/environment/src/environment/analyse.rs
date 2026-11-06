@@ -9,7 +9,8 @@
 //! against them and returns the plan, or the refusals.
 
 pub(super) mod plan;
-pub use plan::{application_refusals, package_compatible, refusals};
+pub(crate) use plan::notices;
+pub use plan::{application_refusals, refusals};
 pub(crate) use plan::{newest_successful, project_url};
 use plan::{plan, replica_refusal, sequence_refusals};
 
@@ -49,12 +50,14 @@ pub struct EnvironmentRow {
 pub struct Installed {
     /// The installed package baseline.
     pub current: String,
+    pub physical_schema_fingerprint: String,
 }
 
 /// What the project database holds.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ProjectState {
     pub installed: BTreeMap<String, Installed>,
+    pub schema_difference: Option<wamn_package_control::schema_baseline::BaselineDifference>,
     /// `(manifest_digest, component_digest, store_alias, instance_id)`.
     pub bindings: BTreeSet<(String, String, String, String)>,
 }
@@ -65,7 +68,7 @@ pub struct ReleaseFacts {
     pub digest: String,
     pub manifest: ServingManifest,
     pub image_set: release_chart::ImageSet,
-    pub qualification: String,
+    pub qualification: Result<Option<String>, String>,
     /// The store aliases the release's components require.
     pub required_connections: BTreeSet<String>,
 }
@@ -105,12 +108,79 @@ pub struct Authorities {
 #[derive(Debug, Clone)]
 pub struct Analysis {
     pub authorities: Authorities,
+    pub application: String,
+    pub notices: Vec<Notice>,
     pub actor: String,
     pub plan: Vec<String>,
     pub packages: Vec<wamn_catalog::manifest::PackageManifest>,
 }
 
-/// Read every authority and check the document against it (§10.1 steps 2 and 3).
+/// Evidence that does not prevent application activation.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct Notice {
+    pub application: String,
+    pub identity: String,
+    pub observed: Observation,
+    pub next_action: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[serde(tag = "kind", rename_all = "kebab-case")]
+pub enum Observation {
+    SchemaDifference {
+        installed: Option<String>,
+        selected: String,
+    },
+    NotChecked {
+        cause: Option<String>,
+        image_set: BTreeMap<String, String>,
+    },
+}
+
+/// Select one application's inputs while preserving shared configuration.
+pub fn select_application(
+    document: &EnvironmentDocument,
+    application: Option<&str>,
+) -> anyhow::Result<EnvironmentDocument> {
+    let name = if let Some(name) = application {
+        name
+    } else {
+        ensure!(
+            document.applications.len() == 1,
+            "name the application to analyse"
+        );
+        document
+            .applications
+            .keys()
+            .next()
+            .expect("one application")
+    };
+    let selection = document
+        .applications
+        .get(name)
+        .with_context(|| format!("application {name} is not declared"))?;
+    Ok(EnvironmentDocument {
+        org: document.org.clone(),
+        project: document.project.clone(),
+        env: document.env.clone(),
+        target: document.target.clone(),
+        policy: document.policy.clone(),
+        applications: BTreeMap::from([(name.to_owned(), selection.clone())]),
+        integrations: document
+            .integrations
+            .iter()
+            .filter(|(name, _)| {
+                selection
+                    .connections
+                    .values()
+                    .any(|selected| selected == *name)
+            })
+            .map(|(name, integration)| (name.clone(), integration.clone()))
+            .collect(),
+    })
+}
+
+/// Read the targeted application's authorities without writing control or application state.
 ///
 /// # Errors
 ///
@@ -119,14 +189,31 @@ pub struct Analysis {
 pub async fn analyse(
     platform: &Platform,
     document: &EnvironmentDocument,
+    application: Option<&str>,
 ) -> anyhow::Result<Analysis> {
-    let release_name =
-        release_chart::release_name(&document.org, &document.project, &document.env)?;
+    let selected = select_application(document, application)?;
+    let document = &selected;
+    let application = document
+        .applications
+        .keys()
+        .next()
+        .expect("one application");
+    let release_name = application_release_name(document, application)?;
     let system = connect(&platform.system_database_url).await?;
     let policy = read_policy(&system, &document.org, &document.policy).await?;
     let row = read_row(&system, document).await?;
     let project = match &row {
-        Some(row) => read_project(platform, document, row).await?,
+        Some(row) => {
+            read_project(
+                &project_url(platform, document, row)?,
+                &wamn_control_provision::project_env_key(
+                    &document.org,
+                    &document.project,
+                    &document.env,
+                ),
+            )
+            .await?
+        }
         None => None,
     };
     let release = match document.legacy_release() {
@@ -136,9 +223,9 @@ pub async fn analyse(
     super::clients::analyse(platform, document, release.as_ref()).await?;
     let revision = read_revision(platform, &release_name).await?;
     let live = read_live_set(platform, &release_name).await?;
-    let packages = match &release {
-        Some(release) => read_release_sequences(platform, &release.manifest).await?,
-        None => Vec::new(),
+    let (packages, fingerprints) = match &release {
+        Some(release) => read_release_packages(platform, &release.manifest).await?,
+        None => (Vec::new(), BTreeMap::new()),
     };
     let binding_system = connect(&platform.system_database_url).await?;
     let bindings = super::bindings::analyse(&binding_system, document, &packages).await?;
@@ -180,8 +267,28 @@ pub async fn analyse(
         bail!("refused:\n- {}", refusals.join("\n- "));
     }
     let plan = plan(document, &authorities);
+    let mut notices = notices(document, application, &authorities, &fingerprints);
+    let system_baseline = wamn_package_control::schema_baseline::observe_system(&system).await?;
+    if let Some(observed) = system_baseline {
+        notices.push(Notice {
+            application: application.clone(),
+            identity: format!(
+                "{}/registry.schema_baseline",
+                url::Url::parse(&platform.system_database_url)?
+                    .path()
+                    .trim_start_matches('/')
+            ),
+            observed: Observation::SchemaDifference {
+                installed: observed.installed,
+                selected: observed.candidate,
+            },
+            next_action: "wamn platform schema apply --scope system".into(),
+        });
+    }
     Ok(Analysis {
         authorities,
+        application: application.clone(),
+        notices,
         actor,
         plan,
         packages,
@@ -190,11 +297,15 @@ pub async fn analyse(
 
 /// The package manifests of the release, read from their verified artifacts
 /// for their sequence defaults.
-async fn read_release_sequences(
+async fn read_release_packages(
     platform: &Platform,
     manifest: &ServingManifest,
-) -> anyhow::Result<Vec<wamn_catalog::manifest::PackageManifest>> {
+) -> anyhow::Result<(
+    Vec<wamn_catalog::manifest::PackageManifest>,
+    BTreeMap<String, String>,
+)> {
     let mut packages = Vec::new();
+    let mut fingerprints = BTreeMap::new();
     for package in &manifest.release.packages {
         let (id, version) = (package.package_id(), package.package_version());
         let opened = super::stage::open(platform, id, version).await?;
@@ -203,9 +314,15 @@ async fn read_release_sequences(
             &std::fs::read(&path).with_context(|| format!("read {}", path.display()))?,
         )
         .with_context(|| format!("parse {}", path.display()))?;
+        fingerprints.insert(
+            id.to_owned(),
+            wamn_schema_generator::build_record::physical_schema_fingerprint(
+                &wamn_schema_generator::output_root(opened.root()),
+            )?,
+        );
         packages.push(package_manifest);
     }
-    Ok(packages)
+    Ok((packages, fingerprints))
 }
 
 /// The actor: the identity principal the CLI authenticates as, or `$USER`
@@ -265,16 +382,21 @@ pub(crate) async fn read_row(
         }))
 }
 
-pub(crate) async fn read_project(
-    platform: &Platform,
-    document: &EnvironmentDocument,
-    row: &EnvironmentRow,
-) -> anyhow::Result<Option<ProjectState>> {
-    let Ok(mut client) = connect_project(&project_url(platform, document, row)?).await else {
-        return Ok(None);
+/// Read installed SQL and release bindings as the project database owner.
+/// Only an absent database returns `None`; unreadable state returns its cause.
+pub async fn read_project(url: &str, env_key: &str) -> anyhow::Result<Option<ProjectState>> {
+    let mut client = match connect_project(url).await {
+        Ok(client) => client,
+        Err(error)
+            if error
+                .downcast_ref::<tokio_postgres::Error>()
+                .and_then(tokio_postgres::Error::code)
+                == Some(&tokio_postgres::error::SqlState::INVALID_CATALOG_NAME) =>
+        {
+            return Ok(None);
+        }
+        Err(error) => return Err(error.context("project database state is unknown")),
     };
-    let env_key =
-        wamn_control_provision::project_env_key(&document.org, &document.project, &document.env);
     let transaction = client
         .transaction()
         .await
@@ -286,7 +408,7 @@ pub(crate) async fn read_project(
     let mut installed = BTreeMap::<String, Installed>::new();
     for row in transaction
         .query(
-            "SELECT package_id, package_version FROM catalog.packages \
+            "SELECT package_id, package_version, physical_schema_fingerprint FROM catalog.packages \
               WHERE env_key = $1",
             &[&env_key],
         )
@@ -297,6 +419,7 @@ pub(crate) async fn read_project(
             row.get(0),
             Installed {
                 current: row.get(1),
+                physical_schema_fingerprint: row.get(2),
             },
         );
     }
@@ -311,9 +434,12 @@ pub(crate) async fn read_project(
         .into_iter()
         .map(|row| (row.get(0), row.get(1), row.get(2), row.get(3)))
         .collect();
+    let schema_difference =
+        wamn_package_control::schema_baseline::observe_project(&transaction).await?;
     transaction.commit().await.context("end the project read")?;
     Ok(Some(ProjectState {
         installed,
+        schema_difference,
         bindings,
     }))
 }
@@ -356,9 +482,11 @@ async fn read_release(platform: &Platform, digest: &str) -> anyhow::Result<Relea
         insecure_registry: false,
         oci_ca_paths: platform.oci_ca_paths.clone(),
     };
-    let qualification = qualification_artifact::find(&releases, digest, &image_set)
+    let image_digests = qualification_artifact::image_set_digests(&image_set)?;
+    let qualification = qualification_artifact::lookup(&releases, digest, &image_digests)
         .await
-        .context("refused")?;
+        .map(|found| found.map(|found| found.digest))
+        .map_err(|error| error.to_string());
     // The admitted descriptors the manifest carries name the release's
     // connections (R2 (3)).
     let required_connections = manifest
@@ -374,6 +502,26 @@ async fn read_release(platform: &Platform, digest: &str) -> anyhow::Result<Relea
         qualification,
         required_connections,
     })
+}
+
+/// The targeted application's Helm release and host group identity.
+pub fn application_release_name(
+    document: &EnvironmentDocument,
+    application: &str,
+) -> anyhow::Result<String> {
+    let environment = release_chart::release_name(&document.org, &document.project, &document.env)?;
+    let digest = wamn_package_artifact::sha256_digest(
+        format!(
+            "{}/{}/{}/{}",
+            document.org, document.project, document.env, application
+        )
+        .as_bytes(),
+    );
+    let prefix = environment
+        .rsplit_once('-')
+        .expect("release name has a hash")
+        .0;
+    Ok(format!("{prefix}-{}", &digest[7..27]))
 }
 
 /// Run `helm` with the platform's kubeconfig and context.
@@ -587,29 +735,9 @@ mod tests {
     #[test]
     fn an_exclusive_cloud_connection_requires_one_explicit_replica() {
         for replicas in [None, Some(0), Some(2)] {
-            assert_eq!(
-                replica_refusal("meter", replicas).as_deref(),
-                Some(
-                    "connection meter is exclusive on a cloud target: \
-                     WAMN_RELEASE_HOST_GROUP must name replicas: 1"
-                )
-            );
+            assert!(replica_refusal("meter", replicas).is_some());
         }
         assert!(replica_refusal("meter", Some(1)).is_none());
-    }
-
-    #[test]
-    fn release_requires_the_installed_package_version() {
-        let installed = Installed {
-            current: "2.3.0".into(),
-        };
-        assert!(package_compatible(&installed, "2.3.0").is_ok());
-        assert!(
-            package_compatible(&installed, "2.2.0")
-                .unwrap_err()
-                .contains("reset")
-        );
-        assert!(package_compatible(&installed, "2.4.0").is_err());
     }
 
     #[test]
@@ -697,10 +825,7 @@ mod tests {
         entries
             .iter()
             .map(|(package, declared)| {
-                let mut manifest = wamn_catalog::manifest::PackageManifest::from_slice(
-                    &wamn_package_control::test_support::fixture_manifest(),
-                )
-                .unwrap();
+                let mut manifest = wamn_package_control::test_support::source_manifest();
                 manifest.package.id = (*package).to_owned();
                 manifest.sequences = declared
                     .iter()

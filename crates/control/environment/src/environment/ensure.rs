@@ -215,7 +215,7 @@ pub async fn ensure(
 ///
 /// # Errors
 ///
-/// Returns an error if a schema baseline differs or a database operation fails.
+/// Returns an error if a database operation fails.
 pub async fn ensure_project_database(
     platform: &Platform,
     document: &EnvironmentDocument,
@@ -223,11 +223,7 @@ pub async fn ensure_project_database(
     admin: &tokio_postgres::Client,
     admin_url: &str,
 ) -> anyhow::Result<String> {
-    // apply_locked keeps its pre-analysis guard. This public entry also checks
-    // the system baseline for callers that run the database phase directly.
-    wamn_package_control::schema_baseline::compare_system(&platform.system_database_url).await?;
     let project_url = project_url(platform, &document.triple()).await?;
-    wamn_package_control::schema_baseline::compare_project_if_installed(&project_url).await?;
     let mut project_admin = url::Url::parse(admin_url)?;
     project_admin.set_path(url::Url::parse(&project_url)?.path());
     let project_admin = project_admin.to_string();

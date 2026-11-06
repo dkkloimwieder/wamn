@@ -223,9 +223,13 @@ fn current_context(kubeconfig: &Path) -> anyhow::Result<String> {
 /// # Errors
 ///
 /// When the document is refused, or an authority cannot be read.
-pub async fn dry_run(platform: &Platform, file: &Path) -> anyhow::Result<Analysis> {
+pub async fn dry_run(
+    platform: &Platform,
+    file: &Path,
+    application: Option<&str>,
+) -> anyhow::Result<Analysis> {
     let document = EnvironmentDocument::compile(file)?;
-    analyse::analyse(platform, &document).await
+    analyse::analyse(platform, &document, application).await
 }
 
 /// `env apply <file>`: take the lifecycle lock and run the steps of §10.1.
@@ -234,8 +238,13 @@ pub async fn dry_run(platform: &Platform, file: &Path) -> anyhow::Result<Analysi
 ///
 /// When the lock is held, the document is refused, or a step fails. The error
 /// names the step.
-pub async fn apply(platform: &Platform, file: &Path, admin_url: &str) -> anyhow::Result<Analysis> {
-    let document = EnvironmentDocument::compile(file)?;
+pub async fn apply(
+    platform: &Platform,
+    file: &Path,
+    admin_url: &str,
+    application: Option<&str>,
+) -> anyhow::Result<Analysis> {
+    let document = analyse::select_application(&EnvironmentDocument::compile(file)?, application)?;
     LifecycleLock::hold(
         &platform.system_database_url,
         &document.triple(),
@@ -262,8 +271,7 @@ pub(crate) async fn apply_locked(
     reason: Option<&str>,
     admin_url: &str,
 ) -> anyhow::Result<Analysis> {
-    wamn_package_control::schema_baseline::compare_system(&platform.system_database_url).await?;
-    let mut analysis = analyse::analyse(platform, document).await?;
+    let mut analysis = analyse::analyse(platform, document, None).await?;
     ensure::ensure(platform, document, &analysis, admin_url)
         .await
         .context("step 4, ensure the substrate")?;
