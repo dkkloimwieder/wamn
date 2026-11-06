@@ -257,11 +257,43 @@ pub async fn prepare(
             )),
     )
     .await?;
+    // Identity owns the memory buckets, as on platform apply: it gets its own
+    // NATS client certificate in its namespace and the one NATS of the case.
+    let nats_certificate = cluster.work.join("session-identity-nats.json");
+    fs::write(
+        &nats_certificate,
+        serde_json::to_vec(&json!({
+            "apiVersion": "cert-manager.io/v1", "kind": "Certificate",
+            "metadata": {"name": "wamn-identity-nats", "namespace": cluster.namespace},
+            "spec": {
+                "secretName": "wamn-identity-nats", "commonName": "wamn-identity",
+                "dnsNames": ["wamn-identity"],
+                "usages": ["client auth", "digital signature", "key encipherment"],
+                "issuerRef": {"kind": "ClusterIssuer", "name": "wasmcloud-ca", "group": "cert-manager.io"}
+            }
+        }))?,
+    )?;
+    apply(cluster, &nats_certificate).await?;
+    checked(kubectl(cluster).args([
+        "-n",
+        cluster.namespace,
+        "wait",
+        "--for=condition=Ready",
+        "certificate/wamn-identity-nats",
+        "--timeout=120s",
+    ]))
+    .await?;
     install_mode(
         cluster,
         wamn_environment_control::platform::identity::Mode::Session {
             targets: vec![target_name],
-            nats: None,
+            nats: Some((
+                format!(
+                    "nats://wamn-nats.{}.svc.cluster.local:4222",
+                    crate::case_release::NAMESPACE
+                ),
+                "wamn-identity-nats".to_owned(),
+            )),
         },
     )
     .await?;

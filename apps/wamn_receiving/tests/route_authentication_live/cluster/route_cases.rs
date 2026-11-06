@@ -117,7 +117,7 @@ async fn auth_nats(cluster: &ReceivingCluster) -> anyhow::Result<Value> {
         let path = resources.work.join(format!("auth-nats-{key}"));
         let encoded = secret["data"][key]
             .as_str()
-            .with_context(|| format!("the runtime TLS Secret has {key}"))?;
+            .with_context(|| format!("the provisioning TLS Secret has {key}"))?;
         write_private(
             &path,
             &base64::engine::general_purpose::STANDARD.decode(encoded)?,
@@ -134,7 +134,7 @@ async fn auth_nats_tls(cluster: &ReceivingCluster) -> anyhow::Result<Value> {
             AUTH_NATS_NAMESPACE,
             "get",
             "secret",
-            "wasmcloud-runtime-tls",
+            "wamn-provisioning-nats",
             "-o",
             "json",
         ]))
