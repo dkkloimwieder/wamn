@@ -386,58 +386,64 @@ async fn forward_target(
         .flatten()
         .find(|entry| entry["port"] == port)
         .and_then(|entry| entry["name"].as_str())
-        .unwrap_or_default()
-        .to_owned();
-    let slices = Command::new("kubectl")
-        .arg("--kubeconfig")
-        .arg(&target.kubeconfig)
-        .args(["--context", &target.context, "-n", namespace, "get", "endpointslices"])
-        .arg(format!("--selector=kubernetes.io/service-name={name}"))
-        .args(["-o", "json"])
-        .stdin(Stdio::null())
-        .kill_on_drop(true)
-        .output()
-        .await
-        .context("start kubectl get endpointslices")?;
-    ensure!(slices.status.success(), "read the EndpointSlices of Service {namespace}/{name}");
-    let slices: Value = serde_json::from_slice(&slices.stdout)?;
-    for slice in slices["items"].as_array().into_iter().flatten() {
-        let Some(remote) = slice["ports"]
-            .as_array()
-            .into_iter()
-            .flatten()
-            .find(|entry| entry["name"].as_str().unwrap_or_default() == port_name)
-            .and_then(|entry| entry["port"].as_u64())
-        else {
-            continue;
-        };
-        for endpoint in slice["endpoints"].as_array().into_iter().flatten() {
-            if endpoint["conditions"]["ready"] == false {
-                continue;
-            }
-            let Some(address) = endpoint["addresses"][0].as_str() else {
+        .unwrap_or_default();
+    loop {
+        let slices: Value = serde_json::from_str(
+            &kubectl::kubectl(
+                &target.kubeconfig,
+                &target.context,
+                namespace,
+                &[
+                    "get",
+                    "endpointslices",
+                    &format!("--selector=kubernetes.io/service-name={name}"),
+                    "-o",
+                    "json",
+                ],
+                None,
+            )
+            .await?,
+        )?;
+        for slice in slices["items"].as_array().into_iter().flatten() {
+            let Some(remote) = slice["ports"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .find(|entry| entry["name"].as_str().unwrap_or_default() == port_name)
+                .and_then(|entry| entry["port"].as_u64())
+            else {
                 continue;
             };
-            let pods: Value = serde_json::from_slice(
-                &Command::new("kubectl")
-                    .arg("--kubeconfig")
-                    .arg(&target.kubeconfig)
-                    .args(["--context", &target.context, "-n", namespace, "get", "pods"])
-                    .arg(format!("--field-selector=status.podIP={address}"))
-                    .args(["-o", "json"])
-                    .stdin(Stdio::null())
-                    .kill_on_drop(true)
-                    .output()
-                    .await
-                    .context("start kubectl get pods")?
-                    .stdout,
-            )?;
-            if let Some(pod) = pods["items"][0]["metadata"]["name"].as_str() {
-                return Ok((format!("pod/{pod}"), u16::try_from(remote)?));
+            for endpoint in slice["endpoints"].as_array().into_iter().flatten() {
+                if endpoint["conditions"]["ready"] == false {
+                    continue;
+                }
+                let Some(address) = endpoint["addresses"][0].as_str() else {
+                    continue;
+                };
+                let pods: Value = serde_json::from_str(
+                    &kubectl::kubectl(
+                        &target.kubeconfig,
+                        &target.context,
+                        namespace,
+                        &[
+                            "get",
+                            "pods",
+                            &format!("--field-selector=status.podIP={address}"),
+                            "-o",
+                            "json",
+                        ],
+                        None,
+                    )
+                    .await?,
+                )?;
+                if let Some(pod) = pods["items"][0]["metadata"]["name"].as_str() {
+                    return Ok((format!("pod/{pod}"), u16::try_from(remote)?));
+                }
             }
         }
+        tokio::time::sleep(Duration::from_secs(2)).await;
     }
-    anyhow::bail!("Service {namespace}/{name} has no ready endpoint Pod")
 }
 
 pub async fn port_forward(
@@ -447,7 +453,12 @@ pub async fn port_forward(
     remote_port: u16,
 ) -> anyhow::Result<PortForward> {
     use tokio::io::AsyncBufReadExt as _;
-    let (resource, remote_port) = forward_target(target, namespace, resource, remote_port).await?;
+    let (resource, remote_port) = tokio::time::timeout(
+        Duration::from_secs(600),
+        forward_target(target, namespace, resource, remote_port),
+    )
+    .await
+    .with_context(|| format!("{resource} in {namespace} has no ready endpoint Pod after 600s"))??;
     let resource = resource.as_str();
     let mut child = Command::new("kubectl")
         .arg("--kubeconfig")

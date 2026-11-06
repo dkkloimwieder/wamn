@@ -259,8 +259,11 @@ pub async fn release(
     )
     .await?
     .context("missing Secret identity/identity-tls")?;
-    super::resources::apply_object(target, &identity_ca(&super::bootstrap::secret_text(&tls, "ca.crt")?))
-        .await?;
+    super::resources::apply_object(
+        target,
+        &identity_ca(&super::bootstrap::secret_text(&tls, "ca.crt")?),
+    )
+    .await?;
     let values = directory.join("values-control.yaml");
     std::fs::write(&values, serde_yaml::to_string(&desired)?)?;
     let name = format!("c-{}", document.org);
@@ -289,30 +292,6 @@ pub async fn release(
     )? {
         super::resources::apply_object(target, &object).await?;
     }
-    kubectl::kubectl(
-        &target.kubeconfig,
-        &target.context,
-        "hosts",
-        &[
-            "rollout",
-            "status",
-            &format!("deployment/hostgroup-{name}"),
-            "--timeout=600s",
-        ],
-        None,
-    )
-    .await?;
-    // The operator publishes the workload's endpoints once it reports Ready.
-    kubectl::wait(
-        &target.kubeconfig,
-        &target.context,
-        "hosts",
-        "workloaddeployment",
-        &format!("{name}-http"),
-        "condition=Ready",
-        "600s",
-    )
-    .await?;
     Ok(())
 }
 
