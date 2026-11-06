@@ -50,6 +50,11 @@ const OPERATOR: &[Permission] = &[
 const CONTRACTS: &[Contract] = &[
     Contract {
         program: "wamn-ctl",
+        verb: "invite",
+        ..EMPTY
+    },
+    Contract {
+        program: "wamn-ctl",
         verb: "provision-system",
         ..EMPTY
     },

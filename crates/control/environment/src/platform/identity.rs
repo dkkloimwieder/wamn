@@ -11,9 +11,16 @@ use wamn_release_control::release_chart::{self, Target};
 use super::artifact_plan::SelectedChart;
 use super::bootstrap::{DATABASE_HOST, SecretData, secret_text};
 use super::document::{ClusterDocument, Provider};
-use super::job::{self, JobRequest, JobSecret};
+use super::job::{self, JobRequest, JobSecret, SecretMount};
 
 pub(super) const ISSUER: &str = "https://identity.identity.svc.cluster.local";
+const LOCAL_MAIL: &str = "/var/run/wamn-identity/mail/outbox";
+const OWNER_STATE: &str = "SELECT EXISTS (
+    SELECT FROM identity.principals p WHERE p.type = 'user' AND p.email = lower(btrim(:'owner'))
+    AND (EXISTS (SELECT FROM identity.password_credentials c WHERE c.principal_id = p.id)
+      OR EXISTS (SELECT FROM identity.password_tokens t WHERE t.principal_id = p.id
+        AND t.purpose = 'invitation' AND t.consumed_at IS NULL AND t.expires_at > clock_timestamp()))
+);";
 const RESEND_COMMAND: &str = "kubectl -n identity create secret generic identity-resend --from-literal=api-key=\"$(tr -d '[:space:]' < <file>)\"";
 const RESEND_SECRET_MANAGER: &str = "gcloud secrets versions access latest --secret identity-resend --project <project> must print a nonempty key with no whitespace; see gcp.md section 1";
 const CURL_IMAGE: &str =
@@ -112,7 +119,7 @@ pub async fn apply(
     // from it, so a teardown loses nothing the owner made (wamn-ie1j2).
     if document.provider == Provider::Kind {
         tracing::warn!(
-            "optional identity mail is disabled for kind. Invitations are not delivered"
+            "email delivery is disabled for kind. Identity writes invitations to its local mail file"
         );
     } else {
         if let Some(key) = document.provider.resend_key(document).await? {
@@ -179,7 +186,151 @@ pub async fn apply(
             .any(|key| key["kid"] == active["kid"] && key["x"] == active["x"])),
         "identity does not serve its active session key"
     );
+    invite_owner(target, document, chart, directory, &superuser, &ca).await?;
+    if document.provider == Provider::Kind {
+        println!(
+            "Local invitation file (no email delivery): kubectl --kubeconfig '{}' --context '{}' -n identity exec deployment/identity -c identity -- cat {LOCAL_MAIL}",
+            target
+                .kubeconfig
+                .display()
+                .to_string()
+                .replace('\'', "'\\''"),
+            target.context.replace('\'', "'\\''"),
+        );
+    }
     Ok(())
+}
+
+async fn invite_owner(
+    target: &Target,
+    document: &ClusterDocument,
+    chart: &SelectedChart,
+    directory: &Path,
+    superuser: &SecretData,
+    ca: &SecretData,
+) -> anyhow::Result<()> {
+    let platform = Target {
+        namespace: "platform".into(),
+        ..target.clone()
+    };
+    let cluster: Value = kubectl::get(
+        &target.kubeconfig,
+        &target.context,
+        "platform",
+        "cluster.postgresql.cnpg.io",
+        "wamn-pg",
+    )
+    .await?
+    .context("missing Cluster platform/wamn-pg")?;
+    let probe = owner_state_request(
+        document,
+        cluster["spec"]["imageName"]
+            .as_str()
+            .context("PostgreSQL Cluster has no image")?,
+    );
+    let password = JobSecret {
+        name: "platform-owner-probe".into(),
+        key: "password".into(),
+        value: secret_text(superuser, "password")?,
+        environment: "PGPASSWORD".into(),
+    };
+    let result = job::run(&platform, directory, &probe, &[password]).await?;
+    match result.stdout.trim() {
+        "t" => return Ok(()),
+        "f" => {}
+        _ => anyhow::bail!("owner invitation state is not a boolean"),
+    }
+    let operator: SecretData = kubectl::get(
+        &target.kubeconfig,
+        &target.context,
+        "identity",
+        "secret",
+        &format!("operator-{}", document.org),
+    )
+    .await?
+    .context("missing identity operator Secret")?;
+    let request = JobRequest {
+        name: format!("platform-invite-{}", document.org),
+        image: chart.image("ctl")?.into(),
+        arguments: [
+            "invite",
+            "--org",
+            &document.org,
+            "--email",
+            &document.owner_email,
+            "--display-name",
+            &document.owner_email,
+            "--org-admin",
+            "--pat-issuer",
+            ISSUER,
+            "--pat-client-cert",
+            "/inputs/tls.crt",
+            "--pat-client-key",
+            "/inputs/tls.key",
+            "--pat-server-ca",
+            "/inputs/ca.crt",
+        ]
+        .map(str::to_owned)
+        .into(),
+        files: [
+            ("tls.crt".into(), secret_text(&operator, "tls.crt")?),
+            ("tls.key".into(), secret_text(&operator, "tls.key")?),
+            ("ca.crt".into(), secret_text(ca, "ca.crt")?),
+        ]
+        .into(),
+        environment: [
+            (
+                "WAMN_NATS_URL".into(),
+                "nats://wamn-nats.platform.svc.cluster.local:4222".into(),
+            ),
+            ("WAMN_NATS_TLS_CA".into(), "/etc/wamn/nats/ca.crt".into()),
+            ("WAMN_NATS_TLS_CERT".into(), "/etc/wamn/nats/tls.crt".into()),
+            ("WAMN_NATS_TLS_KEY".into(), "/etc/wamn/nats/tls.key".into()),
+        ]
+        .into(),
+        secret_mounts: vec![SecretMount {
+            name: "wamn-ctl-nats".into(),
+            path: "/etc/wamn/nats".into(),
+            keys: ["ca.crt", "tls.crt", "tls.key"].map(str::to_owned).into(),
+        }],
+        ..JobRequest::default()
+    };
+    job::run(
+        &platform,
+        directory,
+        &request,
+        &[super::bootstrap::administrator(superuser)?],
+    )
+    .await?;
+    Ok(())
+}
+
+fn owner_state_request(document: &ClusterDocument, image: &str) -> JobRequest {
+    JobRequest {
+        name: format!("platform-owner-state-{}", document.org),
+        image: image.into(),
+        command: vec!["psql".into()],
+        arguments: vec![
+            "--no-psqlrc".into(),
+            "--tuples-only".into(),
+            "--no-align".into(),
+            "--set".into(),
+            "ON_ERROR_STOP=1".into(),
+            "--set".into(),
+            format!("owner={}", document.owner_email),
+            "--file".into(),
+            "/inputs/state.sql".into(),
+        ],
+        environment: [
+            ("PGHOST".into(), DATABASE_HOST.into()),
+            ("PGUSER".into(), "postgres".into()),
+            ("PGDATABASE".into(), "wamn_system".into()),
+        ]
+        .into(),
+        files: [("state.sql".into(), OWNER_STATE.into())].into(),
+        run_as_user: Some(0),
+        ..JobRequest::default()
+    }
 }
 
 pub(super) fn key_probe(image: &str, superuser: &SecretData) -> anyhow::Result<job::JobInputs> {
@@ -212,7 +363,7 @@ fn platform_chart_input(
     image: &str,
 ) -> anyhow::Result<Value> {
     let mail = document.provider != Provider::Kind;
-    chart_input(&ChartInput {
+    let mut entry = chart_input(&ChartInput {
         chart,
         name: "identity",
         namespace: "identity",
@@ -236,7 +387,9 @@ fn platform_chart_input(
                 "wamn-identity-nats".into(),
             )),
         },
-    })
+    })?;
+    entry["values"]["localMail"] = if mail { "" } else { LOCAL_MAIL }.into();
+    Ok(entry)
 }
 
 async fn install(target: &Target, directory: &Path, entry: &Value) -> anyhow::Result<()> {
@@ -441,6 +594,26 @@ mod tests {
             let pod = &deployment["spec"]["template"]["spec"];
             let container = &pod["containers"][0];
             assert_eq!(container["image"], image);
+            assert_eq!(values["localMail"], LOCAL_MAIL);
+            assert!(
+                container["args"]
+                    .as_array()
+                    .unwrap()
+                    .windows(2)
+                    .any(|args| { args[0] == "--local-mail" && args[1] == LOCAL_MAIL })
+            );
+            let mount = container["volumeMounts"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|mount| {
+                    Path::new(LOCAL_MAIL).parent().unwrap()
+                        == Path::new(mount["mountPath"].as_str().unwrap())
+                })
+                .unwrap();
+            assert!(pod["volumes"].as_array().unwrap().iter().any(|volume| {
+                volume["name"] == mount["name"] && volume["emptyDir"] == json!({})
+            }));
             assert!(
                 !container["args"]
                     .as_array()
@@ -502,6 +675,74 @@ mod tests {
                 "wamn-identity-db"
             );
         }
+
+        let mut cloud = document;
+        cloud.provider = Provider::Gcp;
+        let entry = platform_chart_input(&chart, &cloud, "registry/identity:build").unwrap();
+        assert_eq!(entry["values"]["localMail"], "");
+        let objects = super::super::resources::helm_template(&entry).unwrap();
+        let deployment = objects
+            .iter()
+            .find(|object| object["kind"] == "Deployment")
+            .unwrap();
+        let pod = &deployment["spec"]["template"]["spec"];
+        let container = &pod["containers"][0];
+        assert!(
+            !container["args"]
+                .as_array()
+                .unwrap()
+                .contains(&json!("--local-mail"))
+        );
+        assert!(
+            !pod["volumes"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|volume| volume.get("emptyDir").is_some())
+        );
+        assert!(container["env"].as_array().unwrap().iter().any(|variable| {
+            variable["name"] == "RESEND_API_KEY"
+                && variable["valueFrom"]["secretKeyRef"]["name"] == "identity-resend"
+        }));
+    }
+
+    #[test]
+    fn owner_state_uses_a_bound_psql_value_and_a_read_only_query() {
+        let document = serde_json::from_value(json!({
+            "provider": "kind", "project_id": "", "zone": "",
+            "cluster_name": "identity-test", "org": "test",
+            "owner_email": "o'brien@example.invalid", "registry": "localhost:5001",
+            "buckets": {"web": "", "otel": "", "state": ""},
+            "route_hosts": {"control": "control.example.invalid"}, "resend_from": ""
+        }))
+        .unwrap();
+        let request = owner_state_request(&document, "postgres:18");
+        let contract = super::super::job_contract::request(&request).unwrap();
+        assert_eq!(contract.program, "psql");
+        assert!(contract.access.is_empty());
+        assert!(
+            request
+                .arguments
+                .windows(2)
+                .any(|args| args == ["--set", "ON_ERROR_STOP=1"])
+        );
+        assert!(
+            request
+                .arguments
+                .windows(2)
+                .any(|args| args == ["--set", "owner=o'brien@example.invalid"])
+        );
+        let file = request
+            .arguments
+            .windows(2)
+            .find(|args| args[0] == "--file")
+            .unwrap();
+        let sql = &request.files[Path::new(&file[1]).file_name().unwrap().to_str().unwrap()];
+        assert!(!sql.contains(&document.owner_email));
+        let parsed = pg_query::parse(&sql.replace(":'owner'", "$1")).unwrap();
+        assert_eq!(parsed.statement_types(), vec!["SelectStmt"]);
+        assert_eq!(request.environment["PGDATABASE"], "wamn_system");
+        assert!(!request.environment.contains_key("PGPASSWORD"));
     }
 
     #[test]

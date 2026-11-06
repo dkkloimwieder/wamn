@@ -283,6 +283,44 @@ pub async fn release(
     Ok(())
 }
 
+/// Require the control route to refuse a request without credentials.
+///
+/// # Errors
+/// Returns a forwarding, HTTP, or authorization-boundary failure.
+pub async fn probe(target: &Target, document: &ClusterDocument) -> anyhow::Result<()> {
+    let service = format!("service/c-{}-http", document.org);
+    let forward = super::resources::port_forward(target, "hosts", &service, 80).await?;
+    let response = reqwest::Client::builder()
+        .no_proxy()
+        .redirect(reqwest::redirect::Policy::none())
+        .timeout(std::time::Duration::from_secs(5))
+        .build()?
+        .get(format!(
+            "http://127.0.0.1:{}/wamn_control/control/mine",
+            forward.port
+        ))
+        .header(reqwest::header::HOST, &document.route_hosts.control)
+        .send()
+        .await
+        .context("probe the unauthenticated control route")?;
+    anyhow::ensure!(
+        response.status() == reqwest::StatusCode::UNAUTHORIZED,
+        "the unauthenticated control route returned {}; expected 401",
+        response.status()
+    );
+    println!(
+        "Local control access: kubectl --kubeconfig '{}' --context '{}' -n hosts port-forward --address=127.0.0.1 {service} 8080:80\nHost: {}",
+        target
+            .kubeconfig
+            .display()
+            .to_string()
+            .replace('\'', "'\\''"),
+        target.context.replace('\'', "'\\''"),
+        document.route_hosts.control,
+    );
+    Ok(())
+}
+
 pub(super) fn operator_request(
     document: &ClusterDocument,
     image: &str,

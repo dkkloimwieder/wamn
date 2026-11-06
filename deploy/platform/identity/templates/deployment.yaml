@@ -34,6 +34,10 @@ spec:
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           args:
             - serve
+            {{- if .Values.localMail }}
+            - --local-mail
+            - {{ .Values.localMail | quote }}
+            {{- end }}
             {{- range $index, $secret := .Values.sessionTargetSecrets }}
             - --session-target
             - {{ printf "/var/run/wamn-identity/targets/%d/target.json" $index | quote }}
@@ -90,6 +94,10 @@ spec:
               path: /healthz
               port: https
           volumeMounts:
+            {{- if .Values.localMail }}
+            - name: local-mail
+              mountPath: {{ dir .Values.localMail | quote }}
+            {{- end }}
             - name: serving-tls
               mountPath: /var/run/wamn-identity/tls
               readOnly: true
@@ -111,6 +119,10 @@ spec:
           resources:
 {{ toYaml .Values.resources | indent 12 }}
       volumes:
+        {{- if .Values.localMail }}
+        - name: local-mail
+          emptyDir: {}
+        {{- end }}
         - name: serving-tls
           secret:
             secretName: {{ $tlsSecret | quote }}
