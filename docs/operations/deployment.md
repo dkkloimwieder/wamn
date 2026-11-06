@@ -69,10 +69,11 @@ Use that command to read the invitation privately.
 The local outbox is temporary pod storage. Keep invitation codes and passwords out of logs.
 
 Deployment also prints the port-forward command and required HTTP `Host` value.
-A port-forward connects a local port to a Kubernetes service.
-Forward `service/c-<org>-http` in namespace `hosts`.
+A port-forward connects a local port to a pod.
+The control Service has no selector, because the wasmCloud operator manages its endpoints.
+Forward `deployment/hostgroup-c-<org>` in namespace `hosts`.
 Use `route_hosts.control` as the HTTP host.
-For the committed document, the service is `c-local-http` and the host is `control.localhost`.
+For the committed document, the Deployment is `hostgroup-c-local` and the host is `control.localhost`.
 Export the cluster access file to a private directory:
 
 ```bash
@@ -80,7 +81,7 @@ umask 077
 mkdir -p /tmp/wamn-local-access
 kind export kubeconfig --name wamn-local --kubeconfig /tmp/wamn-local-access/kubeconfig
 kubectl --kubeconfig /tmp/wamn-local-access/kubeconfig -n hosts \
-  port-forward service/c-local-http 8080:80
+  port-forward deployment/hostgroup-c-local 8080:80
 ```
 
 Keep that command running while you use the service.

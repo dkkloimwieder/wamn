@@ -99,7 +99,6 @@ pub async fn read(document: &ClusterDocument, target: &Target) -> anyhow::Result
             target,
             &[
                 "list",
-                "--all",
                 "-n",
                 namespace,
                 "--filter",

@@ -353,6 +353,93 @@ impl Drop for PortForward {
 ///
 /// # Errors
 /// Returns a process failure or a readiness timeout after thirty seconds.
+/// kubectl forwards a Service only through its selector. The wasmCloud
+/// operator publishes workload Services without one and owns their
+/// EndpointSlices, so such a Service forwards to its ready endpoint Pod.
+async fn forward_target(
+    target: &Target,
+    namespace: &str,
+    resource: &str,
+    port: u16,
+) -> anyhow::Result<(String, u16)> {
+    let Some(name) = resource.strip_prefix("service/") else {
+        return Ok((resource.to_owned(), port));
+    };
+    let service: Value = crate::kubectl::get(
+        &target.kubeconfig,
+        &target.context,
+        namespace,
+        "service",
+        name,
+    )
+    .await?
+    .with_context(|| format!("missing Service {namespace}/{name}"))?;
+    if service["spec"]["selector"]
+        .as_object()
+        .is_some_and(|selector| !selector.is_empty())
+    {
+        return Ok((resource.to_owned(), port));
+    }
+    let port_name = service["spec"]["ports"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .find(|entry| entry["port"] == port)
+        .and_then(|entry| entry["name"].as_str())
+        .unwrap_or_default()
+        .to_owned();
+    let slices = Command::new("kubectl")
+        .arg("--kubeconfig")
+        .arg(&target.kubeconfig)
+        .args(["--context", &target.context, "-n", namespace, "get", "endpointslices"])
+        .arg(format!("--selector=kubernetes.io/service-name={name}"))
+        .args(["-o", "json"])
+        .stdin(Stdio::null())
+        .kill_on_drop(true)
+        .output()
+        .await
+        .context("start kubectl get endpointslices")?;
+    ensure!(slices.status.success(), "read the EndpointSlices of Service {namespace}/{name}");
+    let slices: Value = serde_json::from_slice(&slices.stdout)?;
+    for slice in slices["items"].as_array().into_iter().flatten() {
+        let Some(remote) = slice["ports"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .find(|entry| entry["name"].as_str().unwrap_or_default() == port_name)
+            .and_then(|entry| entry["port"].as_u64())
+        else {
+            continue;
+        };
+        for endpoint in slice["endpoints"].as_array().into_iter().flatten() {
+            if endpoint["conditions"]["ready"] == false {
+                continue;
+            }
+            let Some(address) = endpoint["addresses"][0].as_str() else {
+                continue;
+            };
+            let pods: Value = serde_json::from_slice(
+                &Command::new("kubectl")
+                    .arg("--kubeconfig")
+                    .arg(&target.kubeconfig)
+                    .args(["--context", &target.context, "-n", namespace, "get", "pods"])
+                    .arg(format!("--field-selector=status.podIP={address}"))
+                    .args(["-o", "json"])
+                    .stdin(Stdio::null())
+                    .kill_on_drop(true)
+                    .output()
+                    .await
+                    .context("start kubectl get pods")?
+                    .stdout,
+            )?;
+            if let Some(pod) = pods["items"][0]["metadata"]["name"].as_str() {
+                return Ok((format!("pod/{pod}"), u16::try_from(remote)?));
+            }
+        }
+    }
+    anyhow::bail!("Service {namespace}/{name} has no ready endpoint Pod")
+}
+
 pub async fn port_forward(
     target: &Target,
     namespace: &str,
@@ -360,6 +447,8 @@ pub async fn port_forward(
     remote_port: u16,
 ) -> anyhow::Result<PortForward> {
     use tokio::io::AsyncBufReadExt as _;
+    let (resource, remote_port) = forward_target(target, namespace, resource, remote_port).await?;
+    let resource = resource.as_str();
     let mut child = Command::new("kubectl")
         .arg("--kubeconfig")
         .arg(&target.kubeconfig)

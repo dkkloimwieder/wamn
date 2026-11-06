@@ -189,12 +189,8 @@ pub async fn apply(
     invite_owner(target, document, chart, directory, &superuser, &ca).await?;
     if document.provider == Provider::Kind {
         println!(
-            "Local invitation file (no email delivery): kubectl --kubeconfig '{}' --context '{}' -n identity exec deployment/identity -c identity -- cat {LOCAL_MAIL}",
-            target
-                .kubeconfig
-                .display()
-                .to_string()
-                .replace('\'', "'\\''"),
+            "Local access: run kind export kubeconfig --name {} first.\nLocal invitation file (no email delivery): kubectl --context '{}' -n identity exec deployment/identity -c identity -- cat {LOCAL_MAIL}",
+            document.cluster_name,
             target.context.replace('\'', "'\\''"),
         );
     }

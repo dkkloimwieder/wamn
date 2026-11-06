@@ -220,6 +220,15 @@ fn release_values(
     Ok(desired)
 }
 
+fn identity_ca(ca: &str) -> Value {
+    json!({
+        "apiVersion": "v1",
+        "kind": "ConfigMap",
+        "metadata": {"name": "identity-ca", "namespace": "hosts"},
+        "data": {"ca.crt": ca},
+    })
+}
+
 pub async fn release(
     target: &Target,
     document: &ClusterDocument,
@@ -239,6 +248,19 @@ pub async fn release(
     };
     let desired = release_values(document, chart.values(), platform_ui)?;
     super::oauth::ensure_key(target, document).await?;
+    // The host verifies identity's JWKS and PAT endpoint with the serving CA,
+    // which cert-manager keeps in identity/identity-tls.
+    let tls: super::bootstrap::SecretData = kubectl::get(
+        &target.kubeconfig,
+        &target.context,
+        "identity",
+        "secret",
+        "identity-tls",
+    )
+    .await?
+    .context("missing Secret identity/identity-tls")?;
+    super::resources::apply_object(target, &identity_ca(&super::bootstrap::secret_text(&tls, "ca.crt")?))
+        .await?;
     let values = directory.join("values-control.yaml");
     std::fs::write(&values, serde_yaml::to_string(&desired)?)?;
     let name = format!("c-{}", document.org);
@@ -308,14 +330,12 @@ pub async fn probe(target: &Target, document: &ClusterDocument) -> anyhow::Resul
         "the unauthenticated control route returned {}; expected 401",
         response.status()
     );
+    // The deploy kubeconfig is private and temporary, and the workload Service
+    // has no selector, so the hint names the exported context and the host Deployment.
     println!(
-        "Local control access: kubectl --kubeconfig '{}' --context '{}' -n hosts port-forward --address=127.0.0.1 {service} 8080:80\nHost: {}",
-        target
-            .kubeconfig
-            .display()
-            .to_string()
-            .replace('\'', "'\\''"),
+        "Local control access: kubectl --context '{}' -n hosts port-forward --address=127.0.0.1 deployment/hostgroup-c-{} 8080:80\nHost: {}",
         target.context.replace('\'', "'\\''"),
+        document.org,
         document.route_hosts.control,
     );
     Ok(())
