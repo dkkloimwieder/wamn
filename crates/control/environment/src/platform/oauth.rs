@@ -121,23 +121,50 @@ pub(super) async fn ensure_key(
         SECRET,
     )
     .await?;
-    if existing.is_some() {
+    if let Some(existing) = existing {
+        validate_key(&existing)?;
         return Ok(false);
     }
     let key = new_key()?;
-    // Create refuses a concurrent winner rather than replacing the target key.
+    // A concurrent create keeps the winner's key.
     for object in key_objects(&key, "hosts") {
-        crate::kubectl::kubectl(
+        if let Err(error) = crate::kubectl::kubectl(
             &target.kubeconfig,
             &target.context,
             "hosts",
             &["create", "-f", "-"],
             Some(&serde_json::to_vec(&object)?),
         )
-        .await?;
+        .await
+        {
+            let winner: Option<Value> = crate::kubectl::get(
+                &target.kubeconfig,
+                &target.context,
+                "hosts",
+                "secret",
+                SECRET,
+            )
+            .await?;
+            if let Some(winner) = winner {
+                validate_key(&winner)?;
+                return Ok(false);
+            }
+            return Err(error).context("create the OAuth key Secret");
+        }
     }
 
     Ok(true)
+}
+
+fn validate_key(secret: &Value) -> anyhow::Result<()> {
+    let key = secret["data"]["key"]
+        .as_str()
+        .and_then(|key| base64::engine::general_purpose::STANDARD.decode(key).ok());
+    anyhow::ensure!(
+        key.is_some_and(|key| key.len() == 32),
+        "hosts/wamn-oauth must contain a 32-byte key"
+    );
+    Ok(())
 }
 
 /// The Secret that the hosts of a local OAuth provider mount (host_group).
@@ -152,6 +179,21 @@ pub(super) fn key_objects(key: &[u8; 32], namespace: &str) -> Vec<Value> {
 mod tests {
     use super::*;
     use std::os::unix::fs::PermissionsExt as _;
+
+    #[test]
+    fn secret_key_validation_never_exposes_key_material() {
+        let key = new_key().unwrap();
+        assert!(validate_key(&key_objects(&key, "hosts")[0]).is_ok());
+        for private in [
+            "private-invalid-base64".to_owned(),
+            base64::engine::general_purpose::STANDARD.encode(b"private-short-key"),
+        ] {
+            let secret = json!({"data":{"key":private}});
+            let error = validate_key(&secret).unwrap_err();
+            assert!(!format!("{error:#}").contains(&private));
+            assert!(!format!("{error:?}").contains("private-short-key"));
+        }
+    }
 
     #[test]
     fn local_key_is_private_and_survives_a_second_host() {

@@ -203,18 +203,6 @@ fn validate_platform_images(value: &Value) -> anyhow::Result<()> {
     Ok(())
 }
 
-pub(super) fn runner_image(directory: &Path) -> anyhow::Result<String> {
-    let path = directory.join("release-chart/values.yaml");
-    let values: Value = serde_yaml::from_slice(
-        &std::fs::read(&path).with_context(|| format!("read {}", path.display()))?,
-    )?;
-    values["platform"]["runner"]["image"]
-        .as_str()
-        .filter(|image| image.contains("@sha256:"))
-        .map(str::to_owned)
-        .context("the stamped release chart has no pinned runner image")
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

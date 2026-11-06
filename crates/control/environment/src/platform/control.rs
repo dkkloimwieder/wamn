@@ -1,4 +1,4 @@
-//! Install the org control host and its first-install credentials.
+//! Deploy the org control host from selected artifacts and bootstrap credentials.
 
 use std::path::Path;
 
@@ -9,32 +9,17 @@ use serde_json::{Value, json};
 use crate::kubectl;
 use wamn_release_control::release_chart::Target;
 
-use super::document::ClusterDocument;
-use super::job::{self, JobRequest, SecretMount};
+use super::artifact_plan::SelectedChart;
+use super::document::{ClusterDocument, Provider};
+use super::job::{self, JobRequest};
 
-// Credential JSON stays in private files. Commands retain their diagnostics.
-pub(super) const PROVISION: &str = r#"prepare() {
-  umask 077
-  scratch=$(mktemp -d)
-  trap 'rm -rf "$scratch"' EXIT
-  database=$(cat /etc/wamn/postgres/uri)
-  export WAMN_SYSTEM_ADMIN_URL="${database%/*}/wamn_system"
-  existing=$(kubectl -n hosts get secret "wamn-control-$ORG" --ignore-not-found -o name) || return 1
-  if [ -z "$existing" ]; then
-    /usr/local/bin/wamn-ctl provision-org --org "$ORG" --template trials --pool wamn-pg \
-      --admin "$OWNER_EMAIL" --prepare-control-generation a --namespace hosts \
-      --db-host "$DATABASE_HOST" --emit-control-secret "$scratch/control.json" || return 1
-    kubectl apply --server-side -f "$scratch/control.json" || return 1
-  fi
-  existing=$(kubectl -n hosts get secret "wamn-control-administration-$ORG" --ignore-not-found -o name) || return 1
-  if [ -z "$existing" ]; then
-    /usr/local/bin/wamn-ctl provision-org --org "$ORG" --template trials --pool wamn-pg \
-      --admin "$OWNER_EMAIL" --namespace hosts \
-      --emit-control-administration-secret "$scratch/administration.json" || return 1
-    kubectl create -f "$scratch/administration.json" || return 1
-  fi
+// Bootstrap owns credential provisioning. Inspect its state without printing it.
+pub(super) const PROVISION: &str = r#"credentials() {
+  credential=$(kubectl -n hosts get secret "wamn-control-$ORG" -o jsonpath='{.data.url}') || return 1
+  [ -n "$credential" ] || return 1
+  kubectl -n hosts get secret "wamn-control-administration-$ORG" -o name >/dev/null || return 1
 }
-prepare || { echo 'prepare control credentials failed' >&2; exit 1; }
+credentials || { echo 'bootstrap control credentials are missing' >&2; exit 1; }
 "#;
 
 pub(super) const COPY_OPERATOR: &str = r#"copy_operator() {
@@ -43,8 +28,8 @@ pub(super) const COPY_OPERATOR: &str = r#"copy_operator() {
   trap 'rm -rf "$scratch"' EXIT
   kubectl -n identity get secret "$OPERATOR" -o json > "$scratch/source.json" || return 1
   kubectl patch --local --type=json -f "$scratch/source.json" \
-    --patch-file /inputs/metadata.json -o json > "$scratch/hosts.json" || return 1
-  kubectl apply --server-side -f "$scratch/hosts.json" || return 1
+    --patch-file /inputs/metadata.json -o json > "$scratch/hosts.json" 2>/dev/null || return 1
+  kubectl apply --server-side -f "$scratch/hosts.json" 2>/dev/null || return 1
 }
 copy_operator || { echo 'copy operator Secret failed' >&2; exit 1; }
 "#;
@@ -69,21 +54,7 @@ pub(super) fn provision_request(document: &ClusterDocument, image: &str) -> JobR
         command: vec!["/bin/sh".into(), "-ec".into()],
         arguments: vec![PROVISION.into()],
         calls_kubernetes: true,
-        environment: [
-            ("ORG".into(), document.org.clone()),
-            ("OWNER_EMAIL".into(), document.owner_email.clone()),
-            (
-                "DATABASE_HOST".into(),
-                super::bootstrap::DATABASE_HOST.into(),
-            ),
-        ]
-        .into(),
-        files: [("kubeconfig".into(), kubeconfig().to_string())].into(),
-        secret_mounts: vec![SecretMount {
-            name: "wamn-pg-superuser".into(),
-            path: "/etc/wamn/postgres".into(),
-            keys: vec!["uri".into()],
-        }],
+        environment: [("ORG".into(), document.org.clone())].into(),
         ..JobRequest::default()
     }
 }
@@ -91,16 +62,17 @@ pub(super) fn provision_request(document: &ClusterDocument, image: &str) -> JobR
 pub async fn credentials(
     target: &Target,
     document: &ClusterDocument,
+    chart: &SelectedChart,
     directory: &Path,
-) -> anyhow::Result<bool> {
-    let image = super::artifact_plan::runner_image(directory)?;
-    let request = provision_request(document, &image);
+) -> anyhow::Result<()> {
+    let image = chart.image("ctl")?;
+    let request = provision_request(document, image);
     job::run(target, directory, &request, &[]).await?;
-    let request = operator_request(document, &image)?;
+    let request = operator_request(document, image)?;
     job::run(target, directory, &request, &[])
         .await
         .context("copy the control operator Secret")?;
-    Ok(true)
+    Ok(())
 }
 
 /// Render the org host values shared by the cluster and local control host.
@@ -159,15 +131,12 @@ pub fn host_values(org: &str) -> Value {
 }
 
 pub(super) fn service_objects(
-    repository: &Path,
+    payload: &Path,
     document: &ClusterDocument,
-    chart: &Value,
+    image: &str,
 ) -> anyhow::Result<Vec<Value>> {
-    let image = chart["platform"]["roles"]["http"]["image"]
-        .as_str()
-        .filter(|image| image.contains("@sha256:"))
-        .context("the chart has no pinned HTTP image")?;
-    let source = std::fs::read_to_string(repository.join("deploy/platform/control-service.yaml"))?;
+    let image = component_image(document, image)?;
+    let source = std::fs::read_to_string(payload.join("control-service.yaml"))?;
     let mut objects = serde_yaml::Deserializer::from_str(&source)
         .map(Value::deserialize)
         .collect::<Result<Vec<_>, _>>()?;
@@ -180,66 +149,110 @@ pub(super) fn service_objects(
             spec["kubernetes"]["service"]["name"] = format!("{name}-http").into();
             spec["hostInterfaces"][0]["config"]["host"] =
                 document.route_hosts.control.clone().into();
-            spec["components"][0]["image"] = image.into();
+            spec["components"][0]["image"] = image.as_ref().into();
         }
     }
     Ok(objects)
 }
 
-pub(super) fn release_values(document: &ClusterDocument) -> anyhow::Result<Value> {
-    let mut desired = host_values(&document.org);
-    super::oauth::host_group(
-        &mut desired["runtime-operator"]["runtime"]["hostGroups"][0],
-        &super::oauth::configuration(document),
-    )?;
-    desired["runtime-operator"]["runtime"]["hostGroups"][0]["env"].as_array_mut().expect("host environment").push(
-        json!({"name":"WAMN_CONTROL_PUBLIC_ORIGIN","value":format!("https://{}", document.route_hosts.control)}));
-    desired["routeHost"] = document.route_hosts.control.clone().into();
-    desired["platformUi"] = true.into();
-    Ok(desired)
+fn component_image<'a>(
+    document: &ClusterDocument,
+    image: &'a str,
+) -> anyhow::Result<std::borrow::Cow<'a, str>> {
+    if document.provider == Provider::Kind {
+        let (_, path) = image
+            .split_once('/')
+            .context("HTTP image has no OCI authority")?;
+        Ok(format!("{}/{path}", super::resources::POD_REGISTRY).into())
+    } else {
+        Ok(image.into())
+    }
 }
 
-pub(super) fn chart_objects(
+fn release_values(
     document: &ClusterDocument,
-    chart: &Path,
-    values: &Value,
-) -> anyhow::Result<Vec<Value>> {
-    Ok(vec![
-        json!({"chart":chart,"version":wamn_release_control::release_chart::read_platform_version(&chart.join("Chart.yaml"))?,"name":format!("c-{}",document.org),"namespace":"hosts","values":values}),
-    ])
+    chart: &Value,
+    platform_ui: bool,
+) -> anyhow::Result<Value> {
+    let mut desired = host_values(&document.org);
+    desired["runtime-operator"]["runtime"]["image"] =
+        chart["runtime-operator"]["runtime"]["image"].clone();
+    let group = &mut desired["runtime-operator"]["runtime"]["hostGroups"][0];
+    super::oauth::host_group(group, &super::oauth::configuration(document))?;
+    if document.provider == Provider::Kind {
+        group["env"]
+            .as_array_mut()
+            .expect("host environment")
+            .retain(|value| {
+                !matches!(
+                    value["name"].as_str(),
+                    Some("DOCKER_CONFIG" | "WAMN_REGISTRY_TOKEN_METADATA")
+                )
+            });
+        for field in ["volumes", "volumeMounts"] {
+            group[field]
+                .as_array_mut()
+                .expect("host volumes")
+                .retain(|value| value["name"] != "registry-pull");
+        }
+        // This host loads only the control HTTP component from the local Service.
+        group["extraArgs"]
+            .as_array_mut()
+            .expect("host arguments")
+            .push("--allow-insecure-registries".into());
+    }
+    let scheme = if document.provider == Provider::Kind {
+        "http"
+    } else {
+        "https"
+    };
+    group["env"].as_array_mut().expect("host environment").push(
+        json!({"name":"WAMN_CONTROL_PUBLIC_ORIGIN","value":format!("{scheme}://{}", document.route_hosts.control)}));
+    desired["platformUi"] = platform_ui.into();
+    desired["routeHost"] = if platform_ui {
+        document.route_hosts.control.as_str()
+    } else {
+        ""
+    }
+    .into();
+    // Direct apply owns the control Service and WorkloadDeployment.
+    desired["roles"] = json!([]);
+    Ok(desired)
 }
 
 pub async fn release(
     target: &Target,
     document: &ClusterDocument,
-    repository: &Path,
+    chart: &SelectedChart,
     directory: &Path,
-    registry: &wamn_package_artifact::PackageRegistry,
-) -> anyhow::Result<bool> {
-    let chart = directory.join("release-chart");
-    let values = directory.join("values-control.yaml");
-    let mut desired = release_values(document)?;
+) -> anyhow::Result<()> {
+    let build_record = chart
+        .directory()
+        .join(crate::platform_build::BUILD_RECORD_FILE);
+    let platform_ui = match std::fs::read(&build_record) {
+        Ok(bytes) => serde_json::from_slice::<crate::platform_build::PlatformBuildRecord>(&bytes)
+            .context("decode the selected platform build record")?
+            .platform_ui
+            .is_some(),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => false,
+        Err(error) => return Err(error).context("read the selected platform build record"),
+    };
+    let desired = release_values(document, chart.values(), platform_ui)?;
     super::oauth::ensure_key(target, document).await?;
-    registry_ca(target, &document.org, registry, &mut desired).await?;
-    let entry = chart_objects(document, &chart, &desired)?;
-    std::fs::write(&values, serde_yaml::to_string(&entry[0]["values"])?)?;
-    let name = entry[0]["name"].as_str().context("control release name")?;
-    let chart = Path::new(
-        entry[0]["chart"]
-            .as_str()
-            .context("control chart reference")?,
-    );
+    let values = directory.join("values-control.yaml");
+    std::fs::write(&values, serde_yaml::to_string(&desired)?)?;
+    let name = format!("c-{}", document.org);
     let hosts = Target {
         namespace: "hosts".into(),
         ..target.clone()
     };
-    wamn_release_control::release_chart::recover_pending(&hosts, name).await?;
+    wamn_release_control::release_chart::recover_pending(&hosts, &name).await?;
     // As environment apply does, a failed upgrade carries the host pods.
-    let poller = crate::environment::host_report::Poller::start(&hosts, name);
+    let poller = crate::environment::host_report::Poller::start(&hosts, &name);
     let upgraded = wamn_release_control::release_chart::upgrade(
         &hosts,
-        chart,
-        name,
+        chart.directory(),
+        &name,
         &values,
         std::time::Duration::from_secs(600),
         "platform control host",
@@ -247,8 +260,11 @@ pub async fn release(
     .await;
     let report = poller.finish();
     upgraded.map_err(|error| crate::environment::host_report::attach(&error, &report))?;
-    let stamped: Value = serde_yaml::from_slice(&std::fs::read(chart.join("values.yaml"))?)?;
-    for object in service_objects(repository, document, &stamped)? {
+    for object in service_objects(
+        &chart.directory().join("platform/resources"),
+        document,
+        chart.image("http")?,
+    )? {
         super::resources::apply_object(target, &object).await?;
     }
     kubectl::kubectl(
@@ -264,51 +280,7 @@ pub async fn release(
         None,
     )
     .await?;
-    Ok(true)
-}
-
-async fn registry_ca(
-    target: &Target,
-    org: &str,
-    registry: &wamn_package_artifact::PackageRegistry,
-    values: &mut Value,
-) -> anyhow::Result<()> {
-    for object in registry_ca_objects(org, registry, values)? {
-        super::resources::apply_object(target, &object).await?;
-    }
     Ok(())
-}
-
-pub(super) fn registry_ca_objects(
-    org: &str,
-    registry: &wamn_package_artifact::PackageRegistry,
-    values: &mut Value,
-) -> anyhow::Result<Vec<Value>> {
-    if registry.oci_ca_paths.is_empty() {
-        return Ok(Vec::new());
-    }
-    let name = format!("control-oci-ca-{org}");
-    let mut data = serde_json::Map::new();
-    let mut paths = Vec::new();
-    for (index, path) in registry.oci_ca_paths.iter().enumerate() {
-        let key = format!("ca-{index}.crt");
-        data.insert(key.clone(), std::fs::read_to_string(path)?.into());
-        paths.push(format!("/etc/wamn/oci-ca/{key}"));
-    }
-    let group = &mut values["runtime-operator"]["runtime"]["hostGroups"][0];
-    group["ociCaPaths"] = json!(paths);
-    group["volumes"]
-        .as_array_mut()
-        .context("control volumes")?
-        .push(json!({"name": "oci-ca", "configMap": {"name": name}}));
-    group["volumeMounts"]
-        .as_array_mut()
-        .context("control mounts")?
-        .push(json!({"name": "oci-ca", "mountPath": "/etc/wamn/oci-ca", "readOnly": true}));
-    Ok(vec![json!({
-        "apiVersion": "v1", "kind": "ConfigMap",
-        "metadata": {"name": name, "namespace": "hosts"}, "data": data
-    })])
 }
 
 pub(super) fn operator_request(
@@ -336,21 +308,6 @@ pub(super) fn operator_request(
         )]
         .into(),
         ..JobRequest::default()
-    })
-}
-
-fn kubeconfig() -> serde_json::Value {
-    json!({
-        "apiVersion": "v1", "kind": "Config",
-        "clusters": [{"name": "install", "cluster": {
-            "server": "https://kubernetes.default.svc",
-            "certificate-authority": "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"
-        }}],
-        "users": [{"name": "install", "user": {
-            "tokenFile": "/var/run/secrets/kubernetes.io/serviceaccount/token"
-        }}],
-        "contexts": [{"name": "install", "context": {"cluster": "install", "user": "install"}}],
-        "current-context": "install"
     })
 }
 
@@ -431,18 +388,23 @@ mod tests {
                 .iter()
                 .any(|value| value["name"] == "oauth-key")
         );
-        let chart = json!({"platform": {"roles": {"http": {"image": "registry/http@sha256:abc"}}}});
         let objects = service_objects(
-            Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../../..")),
+            Path::new(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../../../deploy/platform"
+            )),
             &document,
-            &chart,
+            "localhost:5000/components/http:build@sha256:abc",
         )
         .unwrap();
         let workload = &objects[1];
         assert_eq!(objects[0]["metadata"]["name"], "c-acme-http");
         assert_eq!(
             workload["spec"]["template"]["spec"]["components"][0]["image"],
-            "registry/http@sha256:abc"
+            format!(
+                "{}/components/http:build@sha256:abc",
+                super::super::resources::POD_REGISTRY
+            )
         );
         assert_eq!(
             workload["spec"]["template"]["spec"]["hostInterfaces"][0]["config"]["host"],
@@ -451,15 +413,109 @@ mod tests {
     }
 
     #[test]
-    fn control_preparation_mounts_credentials_and_never_exports_them() {
-        let request = provision_request(&document(), "registry/runner@sha256:abc");
+    fn control_preparation_consumes_bootstrap_state_without_database_credentials() {
+        let request = provision_request(&document(), "registry/ctl@sha256:abc");
         assert!(!request.emits_secret);
-        assert_eq!(request.secret_mounts[0].name, "wamn-pg-superuser");
-        assert_eq!(request.secret_mounts[0].keys, ["uri"]);
+        assert!(request.secret_mounts.is_empty());
+        assert_eq!(request.image, "registry/ctl@sha256:abc");
         assert_eq!(
             super::super::job_contract::access(&request).unwrap()[0].namespace,
             "hosts"
         );
         assert!(!request.environment.contains_key("WAMN_SYSTEM_ADMIN_URL"));
+    }
+
+    #[test]
+    fn kind_host_keeps_selected_image_and_tls_without_cloud_credentials_or_application_routes() {
+        let document = document();
+        let image = json!({"registry":"", "repository":"localhost:5000/platform/host",
+            "tag":format!("build@sha256:{}", "a".repeat(64)), "pull_policy":"IfNotPresent"});
+        let chart = json!({"runtime-operator":{"runtime":{"image":image}}});
+        let values = release_values(&document, &chart, false).unwrap();
+        assert_eq!(values["runtime-operator"]["runtime"]["image"], image);
+        assert_eq!(values["platformUi"], false);
+        assert_eq!(values["routeHost"], "");
+        assert_eq!(values["roles"], json!([]));
+        let groups = values["runtime-operator"]["runtime"]["hostGroups"]
+            .as_array()
+            .unwrap();
+        assert_eq!(groups.len(), 1);
+        let group = &groups[0];
+        assert_eq!(group["name"], format!("c-{}", document.org));
+        assert!(
+            group["extraArgs"]
+                .as_array()
+                .unwrap()
+                .contains(&json!("--allow-insecure-registries"))
+        );
+        let variables = group["env"].as_array().unwrap();
+        assert!(!variables.iter().any(|value| matches!(
+            value["name"].as_str(),
+            Some("DOCKER_CONFIG" | "WAMN_REGISTRY_TOKEN_METADATA")
+        )));
+        assert!(
+            variables
+                .iter()
+                .any(|value| value["name"] == "WAMN_CONTROL_URL"
+                    && value["valueFrom"]["secretKeyRef"]
+                        == json!({"name":"wamn-control-acme", "key":"url"})
+                    && value.get("value").is_none())
+        );
+        let mounts = group["volumeMounts"].as_array().unwrap();
+        for path in variables
+            .iter()
+            .filter_map(|variable| variable["value"].as_str())
+            .filter(|path| path.starts_with("/etc/identity-"))
+            .map(Path::new)
+        {
+            let mount = mounts
+                .iter()
+                .find(|mount| path.starts_with(mount["mountPath"].as_str().unwrap()))
+                .unwrap();
+            assert_eq!(mount["readOnly"], true);
+            assert!(
+                group["volumes"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|volume| volume["name"] == mount["name"]
+                        && (volume["configMap"]["name"] == "identity-ca"
+                            || volume["secret"]["secretName"] == "operator-acme"))
+            );
+        }
+        assert!(!mounts.iter().any(|mount| mount["name"] == "registry-pull"));
+
+        let mut cloud = document;
+        cloud.provider = Provider::Gcp;
+        cloud.project_id = "project-one".into();
+        cloud.zone = "us-east1-b".into();
+        let values = release_values(&cloud, &chart, true).unwrap();
+        assert_eq!(values["platformUi"], true);
+        assert_eq!(values["routeHost"], cloud.route_hosts.control);
+        assert!(
+            !values["runtime-operator"]["runtime"]["hostGroups"][0]["extraArgs"]
+                .as_array()
+                .unwrap()
+                .contains(&json!("--allow-insecure-registries"))
+        );
+        let component = format!(
+            "registry.example/components/http:build@sha256:{}",
+            "b".repeat(64)
+        );
+        assert_eq!(component_image(&cloud, &component).unwrap(), component);
+    }
+
+    #[test]
+    fn operator_copy_uses_the_selected_ctl_and_only_org_scoped_references() {
+        let image = "registry.example/platform/ctl@sha256:abc";
+        let request = operator_request(&document(), image).unwrap();
+        assert_eq!(request.image, image);
+        assert!(!request.emits_secret);
+        assert_eq!(request.environment["OPERATOR"], "operator-acme");
+        let patch: Value = serde_json::from_str(&request.files["metadata.json"]).unwrap();
+        assert_eq!(
+            patch,
+            json!([{"op":"replace", "path":"/metadata", "value":{"name":"operator-acme", "namespace":"hosts"}}])
+        );
     }
 }
