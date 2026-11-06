@@ -108,6 +108,7 @@ PURE_REFUSED = {
 PURE_CRATES = {}
 
 PURE_MODULES = {
+    "wamn-schema-control": ["physical_schema"],
     "wamn-package-control": [
         "apply_package::error",
         "component_admission::declared_sql",
@@ -115,7 +116,6 @@ PURE_MODULES = {
         "apply_package::definition_ownership::plan",
         "apply_package::local_target::plan",
         "apply_package::plan",
-        "apply_package::record_history::plan",
         "apply_package::roles::plan",
         "component_admission::plan",
         "component_declaration::plan",

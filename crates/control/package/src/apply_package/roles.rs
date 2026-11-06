@@ -46,22 +46,9 @@ pub(super) async fn execute_migration(
     manifest: &wamn_catalog::manifest::PackageManifest,
     statement: &wamn_schema_control::SqlStatement,
 ) -> anyhow::Result<()> {
-    use pg_query::NodeEnum;
     let parsed = pg_query::parse(&statement.sql).context("parse admitted package migration")?;
     for raw in &parsed.protobuf.stmts {
-        let relation = match raw.stmt.as_ref().and_then(|stmt| stmt.node.as_ref()) {
-            Some(NodeEnum::CreateStmt(stmt)) => stmt.relation.as_ref(),
-            Some(NodeEnum::AlterTableStmt(stmt)) => stmt.relation.as_ref(),
-            Some(NodeEnum::IndexStmt(stmt)) => stmt.relation.as_ref(),
-            _ => None,
-        };
-        let owner = relation
-            .and_then(|relation| {
-                manifest.models.values().find(|model| {
-                    model.schema == relation.schemaname && model.table == relation.relname
-                })
-            })
-            .map_or(manifest.package.id.as_str(), |model| model.owner.as_str());
+        let owner = wamn_schema_control::physical_schema::migration_owner(manifest, raw);
         // REFERENCES is needed only while an admitted foreign key is created.
         // Keep existing grants and remove each temporary grant before commit.
         let mut references = std::collections::BTreeSet::new();

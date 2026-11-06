@@ -10,6 +10,7 @@ mod environment;
 pub mod exposure;
 mod model;
 mod package_migrations;
+pub mod physical_schema;
 mod replica_identity;
 mod run_plane;
 pub mod sql;

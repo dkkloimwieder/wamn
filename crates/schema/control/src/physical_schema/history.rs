@@ -1,4 +1,4 @@
-use super::{NAME_BYTE_LIMIT, RelationColumn, ensure};
+use super::{NAME_BYTE_LIMIT, PhysicalSchemaError, RelationColumn};
 use std::fmt::Write as _;
 
 /// The `CREATE OR REPLACE FUNCTION` text of the stamp function of one relation.
@@ -8,7 +8,7 @@ use std::fmt::Write as _;
 /// the updated pair. A true no-op keeps every old stamp. The change test casts
 /// each other column to text, so a change of numeric scale alone is a change,
 /// and a type without `=` compares too.
-pub(super) fn stamp_function_sql(name: &str, stamped: &[&str], others: &[&str]) -> String {
+pub fn stamp_function_sql(name: &str, stamped: &[&str], others: &[&str]) -> String {
     let assign = |source: fn(&str) -> String| {
         stamped.iter().fold(String::new(), |mut text, column| {
             writeln!(
@@ -67,7 +67,7 @@ REVOKE ALL ON FUNCTION wamn_history.{name}() FROM PUBLIC;"
 /// `to_jsonb` spelling, and the readers canonicalize it. A key column of type
 /// `timestamptz` keeps the canonical spelling, so every entry of a row carries
 /// one key text.
-pub(super) fn log_function_sql(name: &str, history: &str, columns: &[RelationColumn]) -> String {
+pub fn log_function_sql(name: &str, history: &str, columns: &[RelationColumn]) -> String {
     let all = columns
         .iter()
         .map(|column| column.name.as_str())
@@ -174,7 +174,7 @@ REVOKE ALL ON FUNCTION wamn_history.{name}() FROM PUBLIC;"
 }
 
 /// Whether any of `columns` differs between `OLD` and `NEW`, as SQL text.
-pub(super) fn changed_test(columns: &[&str]) -> String {
+pub fn changed_test(columns: &[&str]) -> String {
     if columns.is_empty() {
         return "false".to_owned();
     }
@@ -190,7 +190,7 @@ pub(super) fn changed_test(columns: &[&str]) -> String {
 
 /// The body that PostgreSQL stores for a generated function: the text between
 /// its two dollar-quote tags.
-pub(super) fn function_body<'a>(statement: &'a str, tag: &str) -> &'a str {
+pub fn function_body<'a>(statement: &'a str, tag: &str) -> &'a str {
     let start = statement.find(tag).map_or(0, |start| start + tag.len());
     let end = statement[start..]
         .find(tag)
@@ -199,17 +199,18 @@ pub(super) fn function_body<'a>(statement: &'a str, tag: &str) -> &'a str {
 }
 
 /// The name of the generated function of one relation, refused at 64 bytes or more.
-pub(super) fn generated_function_name(
+pub fn generated_function_name(
     schema: &str,
     relation: &str,
     suffix: &str,
-) -> anyhow::Result<String> {
+) -> Result<String, PhysicalSchemaError> {
     let name = format!("{schema}__{relation}_{suffix}");
-    ensure!(
-        name.len() < NAME_BYTE_LIMIT,
-        "record-history-function-name-too-long: wamn_history.{name} has {} bytes, and PostgreSQL \
-         truncates a name of {NAME_BYTE_LIMIT} bytes or more",
-        name.len()
-    );
+    if name.len() >= NAME_BYTE_LIMIT {
+        return Err(PhysicalSchemaError::invalid(format!(
+            "record-history-function-name-too-long: wamn_history.{name} has {} bytes; limit is {}",
+            name.len(),
+            NAME_BYTE_LIMIT - 1
+        )));
+    }
     Ok(name)
 }

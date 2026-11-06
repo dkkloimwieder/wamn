@@ -95,6 +95,7 @@ pub const PACKAGE_TAR_LAYERS: [(&str, &[&str]); 3] = [
             "generated/platform-policy/data-access.json",
             "generated/contracts",
             wamn_schema_generator::REQUIRED_SCHEMA_CONTRACT_PATH,
+            wamn_schema_generator::PHYSICAL_SCHEMA_PATH,
             "generated/sql",
             "generated/publication",
             "generated/routes",
@@ -156,6 +157,7 @@ struct DescriptorFile {
 /// artifact packs to the digest it was pushed under.
 pub fn pack_package(root: &Path) -> anyhow::Result<PackedPackage> {
     wamn_schema_generator::build_record::check_current(root)?;
+    crate::component_admission::physical_schema(root)?;
     let descriptors = descriptor_files(root)?
         .into_iter()
         .map(|(descriptor, bytes)| DescriptorFile {
@@ -715,6 +717,7 @@ fn verify_package(root: &Path) -> anyhow::Result<VerifiedPackage> {
         manifest.package.version,
         contract.id
     );
+    crate::component_admission::physical_schema(root)?;
     let directory = crate::apply_package::read_package_directory(root)?;
     wamn_schema_control::plan_package_migrations(&directory, None)
         .context("plan the package migrations")?;
@@ -1199,6 +1202,46 @@ mod tests {
     fn write_build_record(root: &Path) {
         use wamn_schema_generator::build_record;
         let output = wamn_schema_generator::output_root(root);
+        if let Ok(manifest) = PackageManifest::from_slice(
+            &std::fs::read(wamn_schema_generator::package_manifest_path(root)).unwrap(),
+        ) {
+            use wamn_schema_control::physical_schema::{PhysicalSchema, render};
+            let columns = manifest
+                .models
+                .iter()
+                .filter(|(_, model)| model.owner == manifest.package.id)
+                .map(|(id, _)| (id.clone(), Vec::new()))
+                .collect();
+            let migrations = root.join("migrations");
+            let migrations = if migrations.is_dir() {
+                std::fs::read_dir(migrations)
+                    .unwrap()
+                    .map(|entry| {
+                        let path = entry.unwrap().path();
+                        wamn_schema_control::MigrationSource {
+                            relative_path: path
+                                .strip_prefix(root)
+                                .unwrap()
+                                .to_string_lossy()
+                                .into_owned(),
+                            bytes: std::fs::read(path).unwrap(),
+                        }
+                    })
+                    .collect()
+            } else {
+                Vec::new()
+            };
+            let statements = render(&manifest, &migrations, &columns).unwrap();
+            write(
+                &output,
+                "physical-schema.json",
+                &serde_json::to_vec(&PhysicalSchema {
+                    columns,
+                    statements,
+                })
+                .unwrap(),
+            );
+        }
         let components = ["blob-put", "receiving"]
             .map(|name| {
                 let path = format!("components/{name}.wasm");
@@ -1370,6 +1413,114 @@ mod tests {
         assert!(refusal("p-1.0.0 sha256:a", "p-1.0.0", "sha256:a").is_some());
     }
 
+    #[tokio::test]
+    async fn physical_fingerprint_survives_publication_and_nonphysical_edits() {
+        use wamn_schema_generator::build::{BuildRequest, build_package, default_output_root};
+        let _guard = wamn_test_postgres::lock();
+        let database = wamn_test_postgres::database();
+        let scratch = wamn_test_infrastructure::scratch::ScratchRoot::create().unwrap();
+        let root = scratch.path().join("fingerprint_fixture");
+        let source = r#"import manifest
+manifest.Package {
+    package = {id = "fingerprint_fixture", version = "0.1.0"}
+    required_platform_policy_contract = {id = "fingerprint_fixture_access", state = "satisfied"}
+    connections = {}
+    components = {fixture = {connections = ["postgres"]}}
+    custom_operations = {"item.list" = manifest.Projection("item.list") {
+        lists = {model = "item", key_field = "id"}
+        input = {fields = []}
+        result = {class = "bounded_list", fields = [{path = "id", type = "uuid"}]}
+        errors = ["invalid_input", "permission_denied", "internal_error"]
+        statements = {items = manifest.Statement("query", "items") {
+            fetch = "bounded_list"
+            parameters = []
+            row = [manifest.uuid("id")]
+        }}
+    }}
+    models = {item = manifest.Model("item", "fingerprint_fixture") {
+        table = "item"
+        owner = "fingerprint_fixture"
+        audit_log = {columns = ["created_at"], retention = "unlimited"}
+        operations: {get: {result = "one"}}
+    }}
+}
+"#;
+        write(&root, "wamn.k", source.as_bytes());
+        write(&root, "query/items.sql", b"SELECT id FROM item WHERE true;");
+        let baseline = "CREATE TABLE fingerprint_fixture.item (id uuid CONSTRAINT item_id_pkey PRIMARY KEY, created_at timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP);";
+        write(&root, "migrations/0001_initial.sql", baseline.as_bytes());
+        let request = BuildRequest::new(&root, &default_output_root(&root), database.url());
+        build_package(&request).await.unwrap();
+        let first = crate::component_admission::physical_schema(&root)
+            .unwrap()
+            .fingerprint();
+        let packed = pack_package(&root).unwrap();
+        let opened = unpack_artifact(&packed.tag(), &packed.digest, &packed.layers).unwrap();
+        assert_eq!(
+            first,
+            crate::component_admission::physical_schema(opened.root())
+                .unwrap()
+                .fingerprint()
+        );
+
+        for (path, bytes) in [
+            ("component/src/lib.rs", "// changed executable source"),
+            ("query/items.sql", "SELECT id FROM item WHERE false;"),
+            ("web/src/main.ts", "export const changed = true;"),
+        ] {
+            write(&root, path, bytes.as_bytes());
+            build_package(&request).await.unwrap();
+            assert_eq!(
+                first,
+                crate::component_admission::physical_schema(&root)
+                    .unwrap()
+                    .fingerprint()
+            );
+        }
+        write(&root, "wamn.k", source.replace("0.1.0", "0.2.0").as_bytes());
+        build_package(&request).await.unwrap();
+        assert_eq!(
+            first,
+            crate::component_admission::physical_schema(&root)
+                .unwrap()
+                .fingerprint()
+        );
+
+        write(
+            &root,
+            "wamn.k",
+            source.replace("unlimited", "P7D").as_bytes(),
+        );
+        build_package(&request).await.unwrap();
+        assert_ne!(
+            first,
+            crate::component_admission::physical_schema(&root)
+                .unwrap()
+                .fingerprint()
+        );
+        write(&root, "wamn.k", source.as_bytes());
+        write(
+            &root,
+            "migrations/0001_initial.sql",
+            baseline.replace("id uuid", "note text, id uuid").as_bytes(),
+        );
+        build_package(&request).await.unwrap();
+        assert_ne!(
+            first,
+            crate::component_admission::physical_schema(&root)
+                .unwrap()
+                .fingerprint()
+        );
+
+        // An immutable artifact cannot admit generated SQL that its inputs do not derive.
+        let output = wamn_schema_generator::output_root(&root).join("physical-schema.json");
+        let mut physical: wamn_schema_control::physical_schema::PhysicalSchema =
+            serde_json::from_slice(&std::fs::read(&output).unwrap()).unwrap();
+        physical.statements.pop();
+        std::fs::write(output, serde_json::to_vec(&physical).unwrap()).unwrap();
+        assert!(crate::component_admission::physical_schema(&root).is_err());
+    }
+
     #[test]
     fn two_packs_of_the_same_tree_give_one_digest() {
         let root = package_tree("same");
@@ -1411,24 +1562,13 @@ mod tests {
                 })
                 .collect::<Vec<_>>()
         };
-        assert_eq!(paths(1), ["migrations/0001_initial.sql"]);
-        assert_eq!(
-            paths(2),
-            [
-                "publication/attachments.json",
-                "publication/wirings/store.json"
-            ]
-        );
-        assert_eq!(
-            paths(3),
-            [
-                "generated/contracts/receipt.json",
-                "generated/platform-policy/data-access.json",
-                "generated/required-schema-contract.json",
-                "generated/sql/receipt.sql",
-                "wamn.k",
-            ]
-        );
+        for (index, (_, roots)) in PACKAGE_TAR_LAYERS.iter().enumerate() {
+            let mut files = BTreeMap::new();
+            for relative in *roots {
+                collect_files(&root, relative, &mut files).unwrap();
+            }
+            assert_eq!(paths(index + 1), files.into_keys().collect::<Vec<_>>());
+        }
 
         let manifest: serde_json::Value = serde_json::from_slice(&first.manifest).unwrap();
         assert_eq!(manifest["schemaVersion"], 2);
@@ -1469,7 +1609,7 @@ mod tests {
         write(
             &root,
             "generated/wamn.json",
-            br#"{"package":{"id":"wamn_receiving","version":"2.1.0"}}"#,
+            br#"{"package":{"id":"wamn_receiving","version":"2.1.0"},"required_platform_policy_contract":{"id":"access","state":"satisfied"},"models":{},"connections":{},"components":{}}"#,
         );
         write(&root, "generated/web/index.html", b"old output\n");
         write(&root, "web/src/main.ts", b"old source\n");

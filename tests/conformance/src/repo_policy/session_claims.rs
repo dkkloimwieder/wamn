@@ -344,12 +344,12 @@ const PLATFORM_TRIGGER_CLAIMS: [&str; 2] = ["app.user_id", "app.operation"];
 /// is the level-2 log function that owner ruling 29 admits.
 /// apply-package generates the stamp and
 /// log function of each package relation from the two templates in
-/// `apply_package/record_history/plan.rs`, whose header names the function
+/// `physical_schema/history.rs`, whose header names the function
 /// `wamn_history.{name}` (wamn-c8a5v.2).
 const PLATFORM_TRIGGER_READERS: [(&str, &str); 3] = [
     ("deploy/sql/record-history.sql", "wamn_history.stamp_row"),
     (
-        "crates/control/package/src/apply_package/record_history/plan.rs",
+        "crates/schema/control/src/physical_schema/history.rs",
         "wamn_history.{name}",
     ),
     (

@@ -64,8 +64,8 @@ pub use data_access::{
     render_effective_data_access_sql, validate_data_access_contribution,
 };
 pub use generate::{
-    AuthoredSql, GeneratedFile, GeneratedPackage, GenerationInput, REQUIRED_SCHEMA_CONTRACT_PATH,
-    StatementTransactionality, derive_manifest, generate,
+    AuthoredSql, GeneratedFile, GeneratedPackage, GenerationInput, PHYSICAL_SCHEMA_PATH,
+    REQUIRED_SCHEMA_CONTRACT_PATH, StatementTransactionality, derive_manifest, generate,
 };
 pub use materialize::{
     classify_statements_with_existing_grants_in_transaction, introspect_package,

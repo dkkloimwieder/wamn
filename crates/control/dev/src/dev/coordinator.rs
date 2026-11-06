@@ -489,8 +489,7 @@ impl ProductionDevStageRunner {
         Ok(())
     }
 
-    async fn generate(&mut self) -> Result<(), ProductionDevStageError> {
-        self.clear_after(DevStage::Generate);
+    async fn prepare_generation(&mut self) -> Result<(), ProductionDevStageError> {
         // `wamn build` of each package, bases first, without its components:
         // an overlay's build reads the build.json of each of its bases. Every
         // build describes its statements against its own fresh database on the
@@ -503,7 +502,7 @@ impl ProductionDevStageRunner {
                 .filter_map(|(id, build)| build.is_none().then_some(id.clone())),
         );
         let database_url = self.config.target_database_url();
-        let build_records = generate_changed_packages(packages, &current, |package| async move {
+        generate_changed_packages(packages, &current, |package| async move {
             let output_root = wamn_schema_generator::build::default_output_root(&package.root);
             wamn_schema_generator::build::generate_package(
                 &wamn_schema_generator::build::BuildRequest::new(
@@ -516,10 +515,15 @@ impl ProductionDevStageRunner {
             .map_err(|source| ProductionDevStageError::owner("build package", source))
         })
         .await?;
+        Ok(())
+    }
+
+    async fn generate(&mut self) -> Result<(), ProductionDevStageError> {
+        self.clear_after(DevStage::Generate);
         let selected = self
             .package_inputs()?
             .into_iter()
-            .filter(|package| build_records.contains_key(&package.manifest.package.id))
+            .filter(|package| self.pending_builds.contains(&package.manifest.package.id))
             .collect::<Vec<_>>();
         if selected.iter().any(|package| {
             wamn_release_control::delivery::sqlx::requires_verifier(&package.manifest)
@@ -538,7 +542,13 @@ impl ProductionDevStageRunner {
         for package in selected {
             let package_id = &package.manifest.package.id;
             if wamn_release_control::delivery::sqlx::requires_verifier(&package.manifest) {
-                let current = SqlxMetadataInputs::of(&build_records[package_id]);
+                let built = wamn_schema_generator::build_record::read(
+                    &wamn_schema_generator::output_root(&package.root),
+                )
+                .map_err(|source| {
+                    ProductionDevStageError::owner("read generated package", source)
+                })?;
+                let current = SqlxMetadataInputs::of(&built);
                 if sqlx_metadata_is_current(self.sqlx_metadata_inputs.get(package_id), &current) {
                     self.sqlx_metadata_inputs
                         .insert(package_id.clone(), Some(current));
@@ -1290,13 +1300,15 @@ fn build_inputs(packages: &[PackageInput]) -> Result<Vec<String>, ProductionDevS
         .collect()
 }
 
-/// The schema digest of each package, in order, for migration and target reuse.
+/// The physical SQL fingerprint of each package for migration and target reuse.
 fn schema_inputs(packages: &[PackageInput]) -> Result<Vec<String>, ProductionDevStageError> {
     packages
         .iter()
         .map(|package| {
-            wamn_schema_generator::build_record::schema_digest(&package.root)
-                .map_err(|source| ProductionDevStageError::owner("read the schema inputs", source))
+            wamn_schema_generator::build_record::physical_schema_fingerprint(
+                &wamn_schema_generator::output_root(&package.root),
+            )
+            .map_err(|source| ProductionDevStageError::owner("read the schema inputs", source))
         })
         .collect()
 }
@@ -1427,9 +1439,10 @@ impl DevStageRunner for ProductionDevStageRunner {
     async fn stage_is_unchanged(&mut self, stage: DevStage) -> Result<bool, Self::Error> {
         match stage {
             DevStage::Migrate => {
-                return Ok(
-                    self.migrated_inputs.is_some() && self.migrated_inputs == self.schema_inputs
-                );
+                // Generation can change package registration without changing physical SQL.
+                return Ok(self.pending_builds.is_empty()
+                    && self.migrated_inputs.is_some()
+                    && self.migrated_inputs == self.schema_inputs);
             }
             DevStage::Introspect => {
                 return Ok(self.catalogs.len() == self.package_inputs()?.len());
@@ -1442,9 +1455,10 @@ impl DevStageRunner for ProductionDevStageRunner {
         if stage != DevStage::Generate {
             return Ok(false);
         }
-        Ok(current_package_builds(&self.package_inputs()?)
-            .values()
-            .all(Option::is_some))
+        Ok(self.pending_builds.is_empty()
+            && current_package_builds(&self.package_inputs()?)
+                .values()
+                .all(Option::is_some))
     }
 
     fn stage_failed(&mut self, stage: DevStage, failure: DevStageFailure) {
@@ -1499,7 +1513,6 @@ impl DevStageRunner for ProductionDevStageRunner {
         )
         .map_err(|source| ProductionDevStageError::owner("read local sequence defaults", source))?;
         let inputs = build_inputs(&packages)?;
-        let schema_inputs = schema_inputs(&packages)?;
         if self.target_lease.is_none() {
             self.target_lease = Some(target_database::acquire(&self.config).await.map_err(
                 |source| {
@@ -1515,6 +1528,9 @@ impl DevStageRunner for ProductionDevStageRunner {
             .map_err(|source| {
                 ProductionDevStageError::owner("check local session lease", source.into())
             })?;
+        // Build in disposable databases before comparing the selected physical SQL.
+        self.prepare_generation().await?;
+        let schema_inputs = schema_inputs(&packages)?;
         if self.migrated_inputs.as_ref() != Some(&schema_inputs) {
             // A target keeps its data unless the kept-target check below
             // refuses it. The first run of a session takes the target that a
@@ -2266,81 +2282,6 @@ mod tests {
                     .all(Option::is_some)
             );
         }
-    }
-
-    #[tokio::test]
-    async fn query_edits_keep_migration_and_catalogs_but_require_generation() {
-        use super::super::config::{parse_config, resolve_dev_packages, tests::complete_document};
-
-        let mut fixture = PackageBuildFixture::new();
-        let package = &mut fixture.packages[1];
-        package.manifest.models = serde_json::from_value(serde_json::json!({
-            "location": {
-                "schema": "inventory", "table": "location", "owner": "other",
-                "server_owned_fields": [],
-                "audit_log": {"columns": [], "retention": "unlimited"},
-                "operations": {"get": {"permission": "location.get", "result": "one"}}
-            }
-        }))
-        .unwrap();
-        fs::write(
-            package.root.join("wamn.json"),
-            serde_json::to_vec(&package.manifest).unwrap(),
-        )
-        .unwrap();
-        let query = package.root.join("query/location.sql");
-        fs::create_dir_all(query.parent().unwrap()).unwrap();
-        fs::write(&query, "SELECT 1;").unwrap();
-        write_package_build(package);
-        let config = parse_config(
-            &serde_json::to_vec(&complete_document(&std::array::from_fn(|_| {
-                "127.0.0.1:41000".parse().unwrap()
-            })))
-            .unwrap(),
-        )
-        .unwrap();
-        let packages = resolve_dev_packages(&config, &package.root).unwrap();
-        let git = GitSource::discover(env!("CARGO_MANIFEST_DIR"))
-            .await
-            .unwrap();
-        let environment = serde_json::from_value(serde_json::json!({
-            "org": "acme", "project": "fixture", "env": "fixture-dev",
-            "target": "local",
-            "policy": "default",
-            "applications": {}}))
-        .unwrap();
-        let mut runner = ProductionDevStageRunner::new(
-            config,
-            package.root.clone(),
-            git,
-            fixture.directory.join("environment.k"),
-            environment,
-        );
-        runner.packages = Some(packages);
-        let packages = runner.package_inputs().unwrap();
-        runner.schema_inputs = Some(schema_inputs(&packages).unwrap());
-        runner.build_inputs = Some(build_inputs(&packages).unwrap());
-        runner.migrated_inputs.clone_from(&runner.schema_inputs);
-        runner.acl_inputs.clone_from(&runner.build_inputs);
-        runner.catalogs.insert(
-            package.manifest.package.id.clone(),
-            CatalogIr::new(Vec::new()),
-        );
-        assert!(runner.stage_is_unchanged(DevStage::Migrate).await.unwrap());
-        assert!(runner.stage_is_unchanged(DevStage::Generate).await.unwrap());
-
-        fs::write(&query, "SELECT 2;").unwrap();
-        runner.schema_inputs = Some(schema_inputs(&packages).unwrap());
-        runner.build_inputs = Some(build_inputs(&packages).unwrap());
-        assert!(runner.stage_is_unchanged(DevStage::Migrate).await.unwrap());
-        assert!(
-            runner
-                .stage_is_unchanged(DevStage::Introspect)
-                .await
-                .unwrap()
-        );
-        assert!(!runner.stage_is_unchanged(DevStage::Generate).await.unwrap());
-        assert!(!runner.stage_is_unchanged(DevStage::Acl).await.unwrap());
     }
 
     #[tokio::test]

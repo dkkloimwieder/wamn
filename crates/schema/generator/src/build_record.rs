@@ -252,6 +252,7 @@ pub fn generation_digest(package_root: &Path) -> Result<String> {
 }
 
 /// The generation input digest without package-local query files.
+/// This identifies build inputs, never installed database SQL.
 ///
 /// # Errors
 ///
@@ -260,6 +261,16 @@ pub fn schema_digest(package_root: &Path) -> Result<String> {
     let mut files = generation_files(&inputs(package_root)?.files);
     files.retain(|path, _| !Path::new(path).starts_with("query"));
     Ok(digest_inputs(&files, &generator(), GENERATOR_FINGERPRINT))
+}
+
+/// Read the installed-SQL identity from a package's generated description.
+/// Callers select current generation before reading source build output.
+pub fn physical_schema_fingerprint(package_output: &Path) -> Result<String> {
+    let path = package_output.join("physical-schema.json");
+    let bytes = fs::read(&path).with_context(|| format!("read {}", path.display()))?;
+    let physical: wamn_schema_control::physical_schema::PhysicalSchema =
+        serde_json::from_slice(&bytes).context("parse the physical schema description")?;
+    Ok(physical.fingerprint())
 }
 
 /// Read generated output whose generation inputs still match its source.

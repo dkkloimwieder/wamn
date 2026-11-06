@@ -353,7 +353,70 @@ async fn pass_one_and_two(
         files.insert(relative.to_owned(), file.bytes().to_vec());
     }
     record_view_columns(&mut files, &described)?;
+    let physical = physical_schema(database_url, package_root, &manifest).await?;
+    files.insert(
+        PathBuf::from("physical-schema.json"),
+        canonical_json_bytes(&serde_json::to_value(physical)?),
+    );
     Ok((canonical, files))
+}
+
+async fn physical_schema(
+    database_url: &str,
+    package_root: &Path,
+    manifest: &PackageManifest,
+) -> Result<wamn_schema_control::physical_schema::PhysicalSchema> {
+    use wamn_schema_control::physical_schema::{
+        PhysicalSchema, RelationColumn, SELECT_RELATION_COLUMNS_SQL, render,
+    };
+    let mut migrations = Vec::new();
+    let directory = package_root.join("migrations");
+    if directory.exists() {
+        for entry in fs::read_dir(directory)? {
+            let path = entry?.path();
+            if path.extension().is_some_and(|extension| extension == "sql") {
+                migrations.push(wamn_schema_control::MigrationSource {
+                    relative_path: path
+                        .strip_prefix(package_root)?
+                        .to_string_lossy()
+                        .into_owned(),
+                    bytes: fs::read(path)?,
+                });
+            }
+        }
+    }
+    let (client, connection) = tokio_postgres::connect(database_url, NoTls).await?;
+    let task = tokio::spawn(connection);
+    let result = async {
+        let mut columns = BTreeMap::new();
+        for (id, model) in &manifest.models {
+            if model.owner != manifest.package.id {
+                continue;
+            }
+            let rows = client
+                .query(SELECT_RELATION_COLUMNS_SQL, &[&model.schema, &model.table])
+                .await?;
+            columns.insert(
+                id.clone(),
+                rows.iter()
+                    .map(|row| RelationColumn {
+                        name: row.get(0),
+                        primary_key: row.get(1),
+                        timestamptz: row.get(2),
+                    })
+                    .collect(),
+            );
+        }
+        let statements = render(manifest, &migrations, &columns)?;
+        Ok(PhysicalSchema {
+            columns,
+            statements,
+        })
+    }
+    .await;
+    drop(client);
+    task.await??;
+    result
 }
 
 fn record_view_columns(
@@ -834,10 +897,9 @@ async fn create_history_tables(
         .context("apply record-history-app-grants.sql")?;
     for model in logged {
         client
-            .execute(
-                "SELECT wamn_history.create_history_table($1, $2, false)",
-                &[&model.schema, &model.table],
-            )
+            .batch_execute(&wamn_schema_control::physical_schema::history_table_sql(
+                model,
+            ))
             .await
             .with_context(|| format!("create history table of {}.{}", model.schema, model.table))?;
     }

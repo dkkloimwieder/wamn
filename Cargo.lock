@@ -6706,6 +6706,7 @@ dependencies = [
 name = "wamn-schema-control"
 version = "0.1.0"
 dependencies = [
+ "pg_query",
  "serde",
  "serde_json",
  "sha2 0.11.0",
@@ -6738,6 +6739,7 @@ dependencies = [
  "wamn-fixture-package",
  "wamn-number-pattern",
  "wamn-record-history",
+ "wamn-schema-control",
  "wamn-schema-introspection",
  "wamn-test-postgres",
  "wat",

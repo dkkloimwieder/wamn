@@ -6,6 +6,8 @@ use sha2::{Digest as _, Sha256};
 
 const INPUTS: &[&str] = &[
     "src",
+    "../control/src",
+    "../control/Cargo.toml",
     "kcl",
     "../../catalog/model/src",
     "../../catalog/model/Cargo.toml",
@@ -21,6 +23,8 @@ fn main() -> io::Result<()> {
     // platform_build::inputs::declared_reads needs literal directives.
     // Keep these paths equal to INPUTS. Cargo watches directories recursively.
     println!("cargo:rerun-if-changed=src");
+    println!("cargo:rerun-if-changed=../control/src");
+    println!("cargo:rerun-if-changed=../control/Cargo.toml");
     println!("cargo:rerun-if-changed=kcl");
     println!("cargo:rerun-if-changed=../../catalog/model/src");
     println!("cargo:rerun-if-changed=../../catalog/model/Cargo.toml");

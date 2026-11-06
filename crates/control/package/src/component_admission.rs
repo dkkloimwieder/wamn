@@ -240,8 +240,27 @@ impl ComponentAdmission {
     }
 }
 
+/// Read and admit the physical SQL carried by source and published packages.
+pub fn physical_schema(
+    package_root: &Path,
+) -> anyhow::Result<wamn_schema_control::physical_schema::PhysicalSchema> {
+    use wamn_schema_control::physical_schema::{PhysicalSchema, render};
+    let directory = crate::apply_package::read_package_directory(package_root)?;
+    let manifest = wamn_catalog::manifest::PackageManifest::from_slice(&directory.manifest_bytes)?;
+    let path = wamn_schema_generator::output_root(package_root).join("physical-schema.json");
+    let bytes = std::fs::read(&path).with_context(|| format!("read {}", path.display()))?;
+    let schema: PhysicalSchema =
+        serde_json::from_slice(&bytes).context("read physical schema description")?;
+    anyhow::ensure!(
+        schema.statements == render(&manifest, &directory.migrations, &schema.columns)?,
+        "physical schema differs from packaged migrations or generated definitions"
+    );
+    Ok(schema)
+}
+
 /// Validate saved component and package bytes without publication side effects.
 pub fn admit_component(args: AdmitComponentRequest) -> anyhow::Result<ComponentAdmission> {
+    physical_schema(&args.package)?;
     let directory = crate::apply_package::read_package_directory(&args.package)?;
     let package = plan_package_migrations(&directory, None)
         .context("validate strict package directory before component publication")?;

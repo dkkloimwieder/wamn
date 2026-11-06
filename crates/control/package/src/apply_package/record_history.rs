@@ -1,16 +1,18 @@
-pub(super) mod plan;
-use plan::{function_body, generated_function_name, log_function_sql, stamp_function_sql};
+use wamn_schema_control::physical_schema::history::function_body;
+use wamn_schema_control::physical_schema::{
+    RelationColumn, SELECT_RELATION_COLUMNS_SQL, history_table_sql, history_triggers,
+};
 
 use std::collections::{BTreeMap, BTreeSet};
 
 use anyhow::{Context as _, ensure};
 use tokio_postgres::Transaction;
-use wamn_catalog::manifest::{PackageManifest, RecordHistoryColumn};
+use wamn_catalog::manifest::PackageManifest;
 use wamn_control_provision::AUDIT_RETENTION_ROLE;
 use wamn_control_provision::audit_retention::{
     AUDIT_RETENTION_LOCK_SQL, reconcile_audit_retention_grants_sql,
 };
-use wamn_record_history::{LOG_TRIGGER, STAMP_TRIGGER, history_table_name};
+use wamn_record_history::history_table_name;
 
 use super::definition_ownership::SELECT_RELATION_PRESENT_SQL;
 use super::roles::{reset_host_role, set_package_owner_role};
@@ -29,37 +31,12 @@ SELECT owned.schema_name, owned.relation_name, owned.quoted, \
   LEFT JOIN pg_catalog.pg_trigger AS installed \
     ON installed.tgrelid = pg_catalog.to_regclass(owned.quoted) AND NOT installed.tgisinternal";
 
-/// Each column of one relation in attribute order: its name, whether the
-/// primary key holds it, and whether its type is `timestamptz`.
-const SELECT_RELATION_COLUMNS_SQL: &str = "\
-SELECT a.attname::text, \
-       COALESCE(a.attnum = ANY (i.indkey), false), \
-       a.atttypid = 'pg_catalog.timestamptz'::pg_catalog.regtype \
-  FROM pg_catalog.pg_attribute AS a \
-  LEFT JOIN pg_catalog.pg_index AS i ON i.indrelid = a.attrelid AND i.indisprimary \
- WHERE a.attrelid = pg_catalog.to_regclass(pg_catalog.format('%I.%I', $1::text, $2::text)) \
-   AND a.attnum > 0 AND NOT a.attisdropped \
- ORDER BY a.attnum";
-
 /// The source text of each named function in `wamn_history`.
 const SELECT_HISTORY_FUNCTIONS_SQL: &str = "\
 SELECT routine.proname::text, routine.prosrc \
   FROM pg_catalog.pg_proc AS routine \
   JOIN pg_catalog.pg_namespace AS namespace ON namespace.oid = routine.pronamespace \
  WHERE namespace.nspname = 'wamn_history' AND routine.proname = ANY ($1::text[])";
-
-/// The name of a generated function and its identifier as PostgreSQL renders it.
-const QUOTE_IDENT_SQL: &str = "SELECT pg_catalog.format('%I', $1::text)";
-
-/// PostgreSQL truncates an object name of 64 bytes or more.
-const NAME_BYTE_LIMIT: usize = 64;
-
-/// One column of a logged or stamped relation, read at apply time.
-struct RelationColumn {
-    name: String,
-    primary_key: bool,
-    timestamptz: bool,
-}
 
 /// Create the history table of each owned relation whose declaration keeps a log.
 ///
@@ -91,12 +68,9 @@ pub(super) async fn create_history_tables(
             .get::<_, bool>(0);
         // The package-owner role owns the relation, so it owns its history table.
         set_package_owner_role(tx, &manifest.package.id).await?;
-        tx.execute(
-            "SELECT wamn_history.create_history_table($1, $2, false)",
-            &[&model.schema, &model.table],
-        )
-        .await
-        .with_context(|| format!("create history table {}.{history}", model.schema))?;
+        tx.batch_execute(&history_table_sql(model))
+            .await
+            .with_context(|| format!("create history table {}.{history}", model.schema))?;
         reset_host_role(tx).await?;
         changed |= !present;
     }
@@ -147,66 +121,20 @@ pub(super) async fn reconcile_record_history_triggers(
     let mut statements = Vec::new();
     let mut dropped_functions = Vec::new();
     let mut expected = BTreeSet::new();
-    for ((model_id, model), relation) in owned.into_iter().zip(&relations) {
-        let audit_log = model
-            .audit_log
-            .as_ref()
-            .with_context(|| format!("{model_id} owns its relation and must declare audit_log"))?;
-        let stamped = RecordHistoryColumn::ALL
-            .into_iter()
-            .filter(|column| audit_log.columns.contains(column))
-            .map(RecordHistoryColumn::as_str)
-            .collect::<Vec<_>>();
-        let retention = model.log_retention();
+    for ((_, model), relation) in owned.into_iter().zip(&relations) {
         let (quoted, definitions) = &installed[relation];
-        let stamp_name = generated_function_name(&model.schema, &model.table, "stamp")?;
-        let log_name = generated_function_name(&model.schema, &model.table, "log")?;
-        let (stamp_ident, log_ident) = (
-            quote_function_name(tx, &stamp_name).await?,
-            quote_function_name(tx, &log_name).await?,
-        );
-        let columns = if stamped.is_empty() && retention.is_none() {
-            Vec::new()
-        } else {
-            read_relation_columns(tx, &model.schema, &model.table).await?
-        };
-        let stamp = (!stamped.is_empty()).then(|| {
-            let others = columns
-                .iter()
-                .map(|column| column.name.as_str())
-                .filter(|column| !stamped.contains(column))
-                .collect::<Vec<_>>();
-            (
-                stamp_function_sql(&stamp_ident, &stamped, &others),
-                "$stamp$",
-                format!(
-                    "TRIGGER {STAMP_TRIGGER} BEFORE INSERT OR UPDATE ON {quoted} FOR EACH ROW \
-                     EXECUTE FUNCTION wamn_history.{stamp_ident}()"
-                ),
-            )
-        });
-        let log = retention.map(|retention| {
-            let history = format!(
-                "{}.{}",
-                wamn_pg_core::quote_ident(&model.schema),
-                wamn_pg_core::quote_ident(&history_table_name(&model.table))
-            );
-            (
-                log_function_sql(&log_ident, &history, &columns),
-                "$log$",
-                // The function ignores its argument. The retention run reads it.
-                format!(
-                    "TRIGGER {LOG_TRIGGER} AFTER INSERT OR DELETE OR UPDATE ON {quoted} FOR EACH \
-                     ROW EXECUTE FUNCTION wamn_history.{log_ident}('{}')",
-                    retention.replace('\'', "''")
-                ),
-            )
-        });
-        let sources = read_history_functions(tx, &[stamp_name.as_str(), log_name.as_str()]).await?;
-        for (name, function_name, function_ident, generated) in [
-            (STAMP_TRIGGER, &stamp_name, &stamp_ident, stamp),
-            (LOG_TRIGGER, &log_name, &log_ident, log),
-        ] {
+        let columns = read_relation_columns(tx, &model.schema, &model.table).await?;
+        let generated = history_triggers(model, &columns)?;
+        let names = generated
+            .iter()
+            .map(|trigger| trigger.function_name.as_str())
+            .collect::<Vec<_>>();
+        let sources = read_history_functions(tx, &names).await?;
+        for trigger in generated {
+            let name = trigger.name;
+            let function_name = &trigger.function_name;
+            let function_ident = &trigger.function_ident;
+            let generated = trigger.definition;
             let installed = definitions.get(name);
             let Some((function, tag, definition)) = generated else {
                 if installed.is_some() {
@@ -295,15 +223,6 @@ async fn read_history_functions(
     Ok(rows.iter().map(|row| (row.get(0), row.get(1))).collect())
 }
 
-/// The function name as `pg_get_triggerdef` renders it, quoted only when needed.
-async fn quote_function_name(tx: &Transaction<'_>, name: &str) -> anyhow::Result<String> {
-    Ok(tx
-        .query_one(QUOTE_IDENT_SQL, &[&name])
-        .await
-        .with_context(|| format!("quote the function name {name}"))?
-        .get(0))
-}
-
 /// Read the non-internal triggers of each relation as `pg_get_triggerdef` renders them.
 ///
 /// The result maps each relation to its name as PostgreSQL quotes it and to
@@ -365,105 +284,4 @@ async fn reconcile_audit_retention_grants(tx: &Transaction<'_>) -> anyhow::Resul
         .context("reconcile the audit retention grants")?;
     reset_host_role(tx).await?;
     Ok(read_grants().await? != before)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::plan::changed_test;
-    use super::{
-        RelationColumn, function_body, generated_function_name, log_function_sql,
-        stamp_function_sql,
-    };
-
-    fn column(name: &str, primary_key: bool, timestamptz: bool) -> RelationColumn {
-        RelationColumn {
-            name: name.to_owned(),
-            primary_key,
-            timestamptz,
-        }
-    }
-
-    #[test]
-    fn a_generated_name_of_64_bytes_is_refused() {
-        let relation = "r".repeat(63 - "s__".len() - "_stamp".len());
-        assert!(generated_function_name("s", &relation, "stamp").is_ok());
-        let error = generated_function_name("s", &format!("{relation}r"), "stamp")
-            .expect_err("a 64-byte name is refused");
-        assert!(
-            error
-                .to_string()
-                .starts_with("record-history-function-name-too-long")
-        );
-    }
-
-    #[test]
-    fn the_stored_body_is_the_text_between_the_tags() {
-        let statement = stamp_function_sql("s__r_stamp", &["updated_at"], &["id"]);
-        let body = function_body(&statement, "$stamp$");
-        assert!(body.starts_with("\nDECLARE\n"));
-        assert!(body.ends_with("\nEND\n"));
-        assert!(
-            statement.ends_with("REVOKE ALL ON FUNCTION wamn_history.s__r_stamp() FROM PUBLIC;")
-        );
-    }
-
-    #[test]
-    fn the_change_test_compares_each_column_as_text() {
-        assert_eq!(changed_test(&[]), "false");
-        assert_eq!(
-            changed_test(&["a", "b\"c"]),
-            "(NEW.\"a\"::text IS DISTINCT FROM OLD.\"a\"::text\n            \
-             OR NEW.\"b\"\"c\"::text IS DISTINCT FROM OLD.\"b\"\"c\"::text)"
-        );
-    }
-
-    #[test]
-    fn the_stamp_function_assigns_only_the_selected_columns() {
-        let statement = stamp_function_sql("s__r_stamp", &["created_at", "updated_by"], &["id"]);
-        let body = function_body(&statement, "$stamp$");
-        assert!(body.contains(
-            "    IF TG_OP = 'INSERT' THEN\n        NEW.\"created_at\" := transaction_timestamp();\n        NEW.\"updated_by\" := actor;\n"
-        ));
-        assert!(body.contains(
-            "    ELSIF (NEW.\"id\"::text IS DISTINCT FROM OLD.\"id\"::text) THEN\n        NEW.\"created_at\" := OLD.\"created_at\";\n        NEW.\"updated_by\" := actor;\n"
-        ));
-        assert!(body.contains(
-            "    ELSE\n        NEW.\"created_at\" := OLD.\"created_at\";\n        NEW.\"updated_by\" := OLD.\"updated_by\";\n    END IF;"
-        ));
-        assert!(!body.contains("jsonb"));
-        assert!(!body.contains("updated_at"));
-    }
-
-    #[test]
-    fn the_log_function_keys_by_the_primary_key_and_names_its_history_table() {
-        let columns = [
-            column("id", true, false),
-            column("at", true, true),
-            column("note", false, false),
-        ];
-        let statement = log_function_sql("s__r_log", "\"s\".\"r_history\"", &columns);
-        let body = function_body(&statement, "$log$");
-        assert!(body.contains(
-            "jsonb_build_object('id', NEW.\"id\", 'at', wamn_history.timestamptz_image(NEW.\"at\"))"
-        ));
-        assert!(body.contains(
-            "IF to_jsonb(OLD.\"id\") = to_jsonb(NEW.\"id\") AND to_jsonb(OLD.\"at\") = to_jsonb(NEW.\"at\") THEN"
-        ));
-        assert!(body.contains("INSERT INTO \"s\".\"r_history\" (row_key, type"));
-        assert!(!body.contains("history-key-required"));
-        assert!(!body.contains("EXECUTE"));
-        assert!(!body.contains("pg_attribute"));
-    }
-
-    #[test]
-    fn a_log_function_without_a_primary_key_raises_history_key_required() {
-        let statement = log_function_sql(
-            "s__r_log",
-            "\"s\".\"r_history\"",
-            &[column("note", false, false)],
-        );
-        let body = function_body(&statement, "$log$");
-        assert!(body.contains("MESSAGE = 'history-key-required';\n    IF TG_OP = 'UPDATE' THEN"));
-        assert!(body.contains("        IF true THEN\n"));
-    }
 }
