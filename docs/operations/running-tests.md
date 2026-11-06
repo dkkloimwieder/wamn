@@ -668,190 +668,69 @@ These cases test connection reuse and authority isolation without measuring thro
 
 ### Platform and environment apply on kind
 
-Both cases record failures from independent checks and continue.
-If a later check needs a failed setup step, the case stops.
-The final error names every recorded failure, including any setup error.
-Both cases remove their cluster and registry containers after either outcome.
+The platform journey exercises `wamn platform deploy` and `wamn platform status` with zero applications.
+It uses prepared artifacts from [local platform production](building.md#local-platform-artifacts).
+It requires Docker, kind, Helm, kubectl, OpenSSL, the pinned KCL compiler, and the selected `wamn` and `wamn-ctl` binaries.
+It needs no application package build, local UI bundle, GCP credentials, bucket, or public DNS.
+Public infrastructure images and the pinned platform artifacts must be reachable.
 
-The platform test needs Docker with buildx manifest reads, kind, Helm, kubectl, pnpm, OpenSSL, and the gcloud credential helper on PATH.
-It needs network access to the GCP registry and public registries.
-It also needs the [package build tools and workspace dependencies](building.md#wamn-build), but no image build tools.
-It reads the debug binaries `wamn` and `wamn-ctl` from `$CARGO_TARGET_DIR/debug`.
-The local platform UI bundle must exist before the registry stamp.
-It needs no existing database, bucket or DNS.
-It writes files under `/var/tmp` and deletes only its own cluster and registry containers after success or failure.
-The image registry uses HTTP on the kind network.
-A second registry serves package and release artifacts over TLS with a fixture certificate.
-The test passes that registry and its CA file directly to the installer.
-It uses Receiving and WMS as package fixtures through step 4.14.
-Receiving publishes a release without a wiring.
-WMS publishes `inventory_move_and_label` through one Job pod with a native gate sidecar.
-The main container mints its PAT in memory, gates the wiring, authors it, and publishes its release.
-The test requires both release lines, the gate startup log, and deletion of the Job-owned database login Secrets.
-The unchanged rerun must return the same WMS digest and leave its saved Job log unchanged.
-The gate does not execute the WMS blobstore effect, so this test needs no external bucket.
-The fixture copies `deploy/gcp/host-group-receiving.yaml` into its own cluster directory.
-The test records both printed digests in its own environment files.
-WMS stays unqualified and runs first in the refusal assertions.
-The unchanged rerun must skip every step through 4.14 and refuse that same WMS release.
-The test then runs `wamn-ctl qualify-release` on the host for Receiving, which declares one required case.
-It supplies the fixture release registry, its credential file, its CA path, and the stamped chart.
-It prints one line with the qualification wall time and result.
-Qualification starts its own case cluster through the host Docker socket.
+The test owns an isolated cluster name, registry, and prepared chart.
+It invokes the product command for installation and reads the resulting resources and endpoints.
+It does not install a second copy of the platform through test helpers.
+The acceptance boundary covers these behaviors:
 
-The fixture then copies the exact role manifests and blobs to its TLS registry and stamps the same image digests at reachable addresses.
-It retains the original chart in `qualification-chart` and requires an unchanged qualification key.
-Containerd uses the existing HTTP mirror for native images, while workload processes read roles over TLS.
-The Receiving host group mounts the fixture registry credential and CA Secret.
-These changes affect only temporary fixture files.
+- Fresh deployment creates no application environments or releases.
+- A repeat preserves system data and uses the same resource owners.
+- The owner accepts a local invitation and signs in through identity's password endpoints.
+- An authorized control query succeeds and an unauthorized query returns HTTP 401.
+- An interrupted deployment reports its actual state, and a retry completes.
+- Deployment uses no GCP commands or generic installation-completion ConfigMaps.
 
-A separate environment directory selects qualified Receiving for the remaining install and its unchanged rerun.
-Step 4.17 must serve that release.
-Step 4.18 provisions capture from the schemas of the environment's application packages.
-Capture does not depend on an event workflow.
-
-`environment_apply_kind` reuses `rest_connector`, `rest_consumer_fixture`, and `wamn_integration`.
-It requires one publication and one logical replication slot for the environment.
-The publication and `registry.event_readers` must name both `rest_consumer_fixture` and `wamn_integration` schemas.
-Every captured entity table must use full replica identity (`relreplident = 'f'`).
-
-The test authors and enables an event workflow for `item` and another for `setting`.
-The native CDC reader captures one row update in each schema.
-Each delivery ID must identify exactly one run of its own trigger in `wamn_run.runs`.
-Neither trigger can receive a run from the other schema's change.
-The test waits at most 150 seconds for completed runs and broker acknowledgments.
-
-Step 4.19 must report `skipped: no bucket` for the upload and its check, with no web Job or completion record.
-Step 4.19.1 must roll out the control host and report `skipped: no bucket` for the platform UI upload and its check.
-The fixture selects identity's private local mail file in a memory volume, so the invite sends no external email.
-The owner invite Job must run once with `--org-admin`.
-The test requires one invitation and no invitation link or secret in the logs.
-The rerun must skip the invite and leave its saved Job log and mail file unchanged.
-It must preserve the control Secrets and remove the temporary Job-owned Secrets.
-The final rerun must skip every implemented step through 4.21 and report 4.15 and 4.16 as owner steps.
-Step 4.20 must install `edge/wamn-edge-web` with the stamped image and wait for its Deployment to become available.
-Its service account can get only the named release ConfigMaps in `hosts`.
-The empty bucket must start no bucket Job.
-The nginx Service must expose HTTPS without a GCP NEG annotation on kind.
-Its Deployment must mount `wamn-edge-tls` and the identity CA.
-
-Step 4.21 uses the existing pinned curl image in Jobs that reach nginx through its cluster Service.
-These Jobs add a public image pull to the fixture requirements.
-They preserve the route hostname and trust the public certificate from the self-signed Secret.
-The stored result must contain one API status of 401 and a matching certificate serial for each host.
-It must record skips for the public load balancer and absent web bucket.
-The test reads these objects after the phase and makes no new assertion on progress or log text.
-The unchanged rerun must preserve the proxy Deployment and HTTPS completion record, including their resource versions.
-It must leave no HTTPS Job running.
-Both phases retain the PAT, database credential, and unchanged Secret assertions.
-The GCP greenfield covers uploads to a real bucket.
-
-Use the [local revision build](building.md#local-revision-builds) to prepare the images and stamped chart.
-Keep its `WAMN_RELEASE_CHART` and empty `DOCKER_CONFIG` exports for both cases.
-No GCP credentials, `gcloud`, or GCP cluster document is needed on this path.
-The chart version and all seven images must match this checkout.
-The build also prepares the UI bundle that the fixture reads.
-
-Build the debug test binaries before the cases:
-
-```bash
-cargo build --locked -p wamn-ctl --bins -p wamn-cdc-reader -p wamn-component-virtualizer
-```
-
-Both cases run `wamn` and `wamn-ctl` from `PATH`. Put the debug directory first:
+From a shell with `WAMN_RELEASE_CHART` set to the prepared chart, select the debug binaries and run the case:
 
 ```bash
 export PATH="$CARGO_TARGET_DIR/debug:$PATH"
+cargo test --locked -p wamn-dev-control --test platform_apply_kind -- --ignored --nocapture
 ```
 
-When the owner requests kind tests, run both cases together from the prepared shell:
+A failed platform run retains its cluster for inspection and prints its cleanup command.
+Use that command for the resources owned by the run.
+The platform journey has no numbered steps, saved completion state, or step-resume command.
+To retry deployment, invoke `wamn platform deploy` with the same cluster document and prepared chart.
+
+### Retained application-test adapters
+
+The application journeys did not migrate to the platform journey in this epic.
+Their shared adapters remain because current application callers still use them:
+
+- `crates/control/environment/src/platform/journey.rs` supplies cluster inputs to `test-support/harness/src/delivery.rs`.
+- The same module supplies releases to `test-support/harness/src/case_release.rs` and identity inputs to `test-support/harness/src/session_issuer.rs`.
+- `crates/control/environment/examples/identity-chart-input.rs` also calls its identity adapter.
+- `test-support/infrastructure/cluster.rs` calls `test-support/infrastructure/platform.rs` for shared application infrastructure.
+- `crates/control/dev/tests/environment_apply_kind.rs` retains PostgreSQL resource helpers and `crates/control/environment/tests/support/platform_images.rs`.
+- `crates/control/environment/tests/support/environment_checks.rs` uses `kind_checks.rs` for the retained environment case's cleanup policy.
+
+The next application epic must replace this setup with product operations for databases, application SQL, release activation, and rollback.
+Remove each adapter when its application callers use those operations.
+These retained paths do not prove that application journeys use `wamn platform deploy`.
+
+The separate `environment_apply_kind` case still needs its application fixtures and qualification images.
+A minimal local platform chart does not supply those images.
+Its [source](../../crates/control/dev/tests/environment_apply_kind.rs) owns the required artifacts and fixture inputs.
+The case uses `rest_connector`, `rest_consumer_fixture`, and `wamn_integration` to exercise capture and event delivery.
+It requires one publication and one logical replication slot for the environment.
+The publication covers both application schemas, and every captured entity table uses full replica identity.
+Each trigger must receive only the change from its own schema.
+
+With the application fixtures and chart prepared, run that case separately:
 
 ```bash
-cargo test --locked -p wamn-dev-control --test platform_apply_kind -- --ignored --nocapture &
-platform_pid=$!
-cargo test --locked -p wamn-dev-control --test environment_apply_kind -- --ignored --nocapture &
-environment_pid=$!
-platform_status=0
-wait "$platform_pid" || platform_status=$?
-environment_status=0
-wait "$environment_pid" || environment_status=$?
-test "$platform_status" -eq 0 && test "$environment_status" -eq 0
+WAMN_RELEASE_CHART=<application-test-chart> cargo test -p wamn-dev-control --test environment_apply_kind -- --ignored --nocapture
 ```
 
-The environment case also needs the package fixtures described below and in its test source.
-Each case creates its own cluster.
-Without `WAMN_RELEASE_CHART`, the older fallback reads `deploy/gcp/cluster.k` and requires the agent GCP credentials.
-Always supply the chart for local revision tests.
+### Add a check to an application kind case
 
-The platform fixture starts a `registry:2` container named `<cluster_name>-registry` on the `kind` Docker network.
-Docker selects a free loopback port, and `cluster.k` names the registry as `localhost:<port>`.
-The fixture copies five images and two role components from the build host registry, then stamps their local digests.
-The environment JSON gets its gates image from this local stamp.
-Step 4.6 builds the Receiving package with a temporary PostgreSQL 18 container and stamps the local registry images.
-The test never builds platform images.
-
-The fixture creates `identity/identity-resend` with a stand-in key before the install.
-The test runs `platform apply` through section 4.14.
-The runner image must contain the pinned KCL compiler for the first environment apply.
-It requires ready PostgreSQL and NATS.
-An anonymous CONNECT must return `Authorization Violation` without `PONG`.
-It also requires both `identity-ca` ConfigMaps, identity database and session target Secrets, and the completion ConfigMaps for the environment and identity Jobs.
-The identity Job requests public keys over TLS and requires the active key in the response.
-The test refuses credentials in progress or Job logs.
-After the qualification refusal, an unchanged apply must skip every step through 4.14.
-The broker and session target Secrets must keep their resource versions.
-
-A failed `platform_apply_kind` run keeps its cluster, both registries, secrets, and work directory under `/var/tmp/platform-apply-<random suffix>`.
-A passing full run deletes them.
-Unset or empty `WAMN_KIND_KEEP` keeps them on failure.
-Set `WAMN_KIND_KEEP=never` to delete them after either outcome.
-The case rejects other values.
-A full run refuses an existing cluster or registry and names the cleanup command.
-
-The fixture writes private `kept.json` with resource names, registry ports, paths, and completed steps.
-It also records the failed step and failed checks.
-It saves release digests, chart and credential paths, progress lines, and comparison values for later steps.
-To delete the named resources and the fixture directory, use the cleanup command from that file:
-
-```bash
-tools/kind-kept-delete /absolute/path/to/kept.json
-```
-
-To resume at a named platform step, set both variables:
-
-```bash
-WAMN_KIND_REUSE=/absolute/path/to/kept.json \
-WAMN_KIND_FROM='4.17 Apply with the release' \
-WAMN_RELEASE_CHART=/absolute/path/to/chart \
-cargo test --locked -p wamn-dev-control --test platform_apply_kind -- --ignored --exact platform_apply_kind --nocapture
-```
-
-The rerun skips earlier steps and runs the selected step and every later step whose dependencies completed.
-It uses saved inputs and does not rebuild earlier steps.
-It copies the images of this checkout into the kept registry again and stamps the fixture chart and the install chart `work/release-chart` from them, so a merged fix runs.
-The install chart names the runner image of the provisioning Jobs, and the install keeps it while the registry and version match.
-If an image digest in either chart differs from `WAMN_RELEASE_CHART`, the rerun fails and names the chart and the image.
-If the platform version differs from the kept fixture, the rerun fails.
-The install remains one step because its Jobs already skip completed work by input digest.
-Step names and dependencies live in `STEPS` in `crates/control/environment/tests/support/platform_checks.rs`.
-An unknown name fails and lists the known names.
-A missing completed dependency fails and names that dependency.
-Setting only one variable fails.
-A rerun always keeps the cluster, even with `WAMN_KIND_KEEP=never`, and writes a new `kept.json` under the original fixture directory.
-Independent checks record errors and continue.
-A failed required step blocks its dependents and reports them as not run.
-
-The separate environment test needs Docker, kind, Helm 4, kubectl, OpenSSL, and the release chart that `build-platform` stamps.
-The `edge` preparation step supplies the device component.
-Its [test source](../../crates/control/dev/tests/environment_apply_kind.rs) describes the required images and fixtures.
-
-```bash
-WAMN_RELEASE_CHART=<chart> cargo test -p wamn-dev-control --test environment_apply_kind -- --ignored --nocapture
-```
-
-### Add a check to a kind case
-
-Each kind case is one test, and a full run takes about 30 minutes.
+Each retained application kind case is one test, and a full run takes about 30 minutes.
 A check that fails on a cluster fact costs a full run for each fix.
 Before you run a case with a new check, do these steps:
 
@@ -861,7 +740,8 @@ Before you run a case with a new check, do these steps:
    For native file transfers, forward to port 8082. The workload HTTP port is 80.
 4. Try each new `kubectl` command by hand on the cluster of a running case before the case reaches the new check.
 
-The `<release>-http` Service has no selector, so `kubectl port-forward svc/<release>-http` fails.
+These retained application fixtures use a `<release>-http` Service without a selector, so they forward directly to a pod.
+For platform control access, use the service port-forward in [deployment](deployment.md#local-access-and-owner-invitation).
 The case found no EndpointSlice for that Service either.
 The `environment_apply_kind` case uses `wamn-apply-<k>` as its cluster name.
 Here, `<k>` contains the first eight hexadecimal characters of the SHA256 hash of the canonical worktree path.
@@ -1353,7 +1233,9 @@ pnpm --dir apps/wamn_receiving/web check
 The app and RC runners clean up their own named resources on success, failure, or handled interruption.
 The RC runner removes its PostgreSQL container with `docker rm --force --volumes`.
 The cluster journeys and the RC case run the one NATS inside their kind cluster, so the cluster delete removes it.
-The package-build PostgreSQL fixture, both registries of `platform_apply_kind`, and the local package registry use `docker rm -f -v`.
+The package-build PostgreSQL fixture and the local package registry use `docker rm -f -v`.
+For a retained platform cluster, use the cleanup command printed by its test.
+Manual platform cleanup keeps the shared build registry, as [deployment](deployment.md#cleanup) describes.
 These commands also remove anonymous volumes, which Docker creates for image-declared data directories.
 Container restarts retain their data until cleanup removes the container.
 Inspect their recorded cleanup result and remaining resource names before reporting completion.

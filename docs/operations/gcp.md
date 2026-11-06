@@ -131,7 +131,7 @@ The owner supplies these external cloud inputs.
     ```
 
     For another project, replace `wamn-dev` with `project_id` and the bucket with `buckets.web`.
-    The installer creates the Kubernetes account and its annotation, but the owner supplies these IAM grants.
+    The owner supplies these IAM grants. Deployment integration for the Kubernetes account and its annotation remains unfinished.
 
 14. The edge NEG zone in `deploy/gcp/project.k`, currently `us-central1-a`, must match the zone of the deployed network endpoint group (NEG).
     The fixed NEG name is `wamn-edge`.
@@ -146,11 +146,11 @@ The owner supplies these external cloud inputs.
       --member "principalSet://iam.googleapis.com/projects/$NUMBER/locations/global/workloadIdentityPools/wamn-dev.svc.id.goog/namespace/hosts" --role roles/storage.objectCreator
     ```
 
-`build-platform` and the install use these owner inputs and never create their grants or budget. If an input is missing, the cloud operation fails.
+Cloud artifact production uses these owner inputs and never creates their grants or budget. If an input is missing, the cloud operation fails.
 
 ## 2. Project resources
 
-The teardown keeps these resources, and the install expects them. The owner makes them once, with the commands below:
+The teardown keeps these resources for later cloud integration. The owner makes them once, with the commands below:
 
 - The APIs, the quotas and the daily guard that sets every pool to 0 nodes at 03:00 New York time (07:00 UTC).
 - The project custom role `wamnAgentIam`, bound to `wamn-agent@wamn-dev` with a condition. The condition admits the project resource, for `iam.serviceAccounts.create` alone, and the two `wamn-edge` resources: `projects/-/serviceAccounts/101495263876384747666` and `projects/_/buckets/wamn-dev-web`. The agent holds IAM only on the `wamn-edge` resources, never on itself.
@@ -333,7 +333,7 @@ Delete each one by name, one command for each disk:
 gcloud compute disks delete <pvc disk name> --project wamn-dev --zone us-central1-a --quiet
 ```
 
-The network endpoint group `wamn-edge` stays after the delete, because the backend service `wamn-edge` names it. Platform apply refuses a missing new NEG status. The agent detaches and deletes the old group as `wamn-agent` with the approval of the teardown:
+The network endpoint group `wamn-edge` stays after the delete, because the backend service `wamn-edge` names it. The agent detaches and deletes the old group as `wamn-agent` with the approval of the teardown:
 
 ```bash
 gcloud compute backend-services remove-backend wamn-edge --global \
@@ -349,16 +349,15 @@ GCP deployment support is unfinished. The old numbered installer and `wamn-ctl p
 The current implementation targets local kind clusters.
 [The deployment plan](../plan/deploy.md) defines platform and application ownership and the later GCP work.
 
-Produce the platform artifacts separately from deployment:
+[Local platform deployment](deployment.md#local-platform) covers registry preparation, artifact production, explicit chart deployment, status, access, and cleanup.
+It consumes prepared artifacts and works outside the source checkout.
+A ready local platform includes system initialization, identity, and control, with zero applications.
+The cloud prerequisites above do not establish GCP deployment support.
 
-```bash
-wamn-ctl build-platform --registry localhost:5001 --out /tmp/wamn-platform-chart
-wamn platform deploy deploy/kind/cluster.k --chart /tmp/wamn-platform-chart
-```
-
-The deploy command consumes the prepared chart. It does not build or deploy applications.
-It reports an incomplete result until system bootstrap and platform services are available.
-The cloud prerequisites above remain external inputs. They do not establish GCP deployment support.
+GCP integration, public ingress, web uploads, optional telemetry, and production policies remain outside the local milestone.
+Application release selection, project databases, application SQL, activation, pin updates, and rollback belong to the next application epic.
+SQL migration modes and compatibility warnings also remain unfinished.
+The existing cloud and application operations below are separate from the local platform journey.
 
 ## 5. Operations
 
@@ -386,7 +385,8 @@ The verb prints one line for each pool, and then the names of the pools that it 
 
 ### Application operations
 
-Platform deployment does not invite users or deploy applications.
+Local kind deployment invites the initial owner through identity's local mail file. It sends no external email and deploys no applications.
+GCP invitation delivery remains part of unfinished cloud integration.
 [Deployment](deployment.md) describes separate application and invitation commands.
 The removed installer no longer creates a local `platform.sh` credential file.
 

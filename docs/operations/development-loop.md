@@ -100,7 +100,7 @@ Keep that file across host restarts so that stored OAuth tokens stay readable.
 
 The command starts identity, the org control host, and a local web server, then writes private `dev.json` and exits.
 The control host uses `wamn-host host --control` and the same org credential operation as `provision-org --prepare-control-generation`.
-It loads the local flow-http bytes with the interfaces from `deploy/gcp/control-service.yaml`.
+It loads the local flow-http bytes with the interfaces from `deploy/platform/control-service.yaml`.
 The administration directory holds the patch from the normal administration credential operation.
 No application release runs in the control host.
 

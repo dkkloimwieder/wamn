@@ -1,30 +1,137 @@
 # Deployment
 
-Deployment has one path: `wamn-ctl env apply` of one environment document.
-The document names the environment and its release.
-The verb creates the environment and installs the release chart of the release.
-[Google Cloud install](gcp.md#4-install) is the runbook of a full install.
-The [repository delivery commands](delivery.md) qualify, publish, select, and deploy exact releases without a CI-provider API.
-[Components](../architecture/components.md) defines the artifact boundary.
+`wamn platform deploy` installs the platform in a local kind cluster from a prepared chart.
+A chart is a Helm package of Kubernetes resources.
+Deployment consumes pinned artifacts, whose digests identify exact bytes.
+It does not compile source, build JavaScript, publish packages, or select application releases.
+A fresh platform contains zero application environments and zero application releases.
 
-## Prerequisites
+[Building](building.md#local-platform-artifacts) owns artifact production.
+[The deployment plan](../plan/deploy.md) owns the next application and GCP work.
+[Google Cloud prerequisites](gcp.md#cloud-credentials-and-prerequisites) remain external inputs. GCP deployment integration is unfinished.
 
-Run commands from the repository root.
-Use an explicitly selected cluster, namespace, and environment.
-Apply repository-wide resource restrictions from [AGENTS.md](../../AGENTS.md).
-[Building](building.md) gives native and guest build commands.
-[Cluster tests](cluster-tests.md) gives the existing deployed application cases.
+## Local platform
 
-The [deploy tree](../../deploy/README.md) contains infrastructure, platform manifests, test Jobs, and SQL.
-Use the direct upstream revision pinned in `Cargo.toml`.
-Use the runtime-operator chart version in the install command in `deploy/infra/values-wamn.yaml`.
-The retained runtime-operator installation uses chart `2.11.0`.
-Install its CRDs before the operator release.
-Helm does not update existing CRDs during a chart upgrade.
-
+Use Docker, kind, Helm, kubectl, OpenSSL, and the pinned KCL compiler on the deployment host.
+Use the `wamn` and `wamn-ctl` binaries from the selected build.
 Keep registry, database, and broker credentials outside committed files.
-Supply real values for example Secrets and release placeholders before applying them.
 Certificate subjects must match the endpoint names that their clients verify.
+
+From the source checkout, prepare the registry and artifacts as [building](building.md#local-platform-artifacts) describes.
+The example uses `localhost:5001`, as `deploy/kind/cluster.k` does.
+The prepared directory must include its `platform/` resources and operator chart archive.
+Deploy that directory explicitly:
+
+```bash
+wamn platform deploy deploy/kind/cluster.k --chart /tmp/wamn-platform-chart
+wamn platform status deploy/kind/cluster.k
+```
+
+Deployment creates or reuses `wamn-local` and connects its registry to the kind network.
+It applies namespaces, certificates, NATS, the wasmCloud operator, and CloudNativePG PostgreSQL.
+It initializes `wamn_system` and the initial organization, then starts identity and control.
+The command returns success only when every required component is ready.
+An error preserves a nonzero exit and prints the status that remains observable.
+
+Deployment also works outside the source checkout.
+Copy the cluster document and the entire prepared chart to the deployment host.
+If the checkout is absent, set the existing `WAMN_KCL` variable to the pinned compiler path.
+[Building](building.md#package-manifests) describes that compiler.
+Supply their paths to the same command, with the required tools available.
+The deployment host must reach the selected registry and its pinned artifacts.
+A loopback registry refers to that host, so its artifacts must exist there before deployment.
+
+Keep the prepared chart at its deployed path for later status queries.
+Status reads the selected chart path from Helm and reports selected artifacts separately from running images.
+It reads Helm, Kubernetes, certificate, service, and system database state.
+Its categories are `ready`, `incomplete`, `failed`, and `unknown`.
+A failed query reports `unknown`. Status never creates a missing cluster.
+Unselected UI, external mail, or telemetry does not prevent platform readiness.
+
+After an interruption, repeat the deployment command with the same document and chart:
+
+```bash
+wamn platform deploy deploy/kind/cluster.k --chart /tmp/wamn-platform-chart
+```
+
+Kubernetes and its operators own running resources. Helm owns release revisions.
+WAMN stores no generic installation-completion ConfigMaps and has no numbered resume steps.
+The database determines whether system initialization completed.
+A repeat preserves initialized system data. Incomplete initialization reports a repair action and does not reset the database.
+
+### Local access and owner invitation
+
+Kind uses identity's local mail mode. It writes invitations inside the identity pod and sends no external email.
+Deployment invites the document's owner as administrator of the initial organization.
+It sends no new invitation when that owner has a password or an unexpired pending invitation.
+Deployment prints the exact `kubectl exec` command that reads the local invitation file. It never prints the invitation code.
+Use that command to read the invitation privately.
+The local outbox is temporary pod storage. Keep invitation codes and passwords out of logs.
+
+Deployment also prints the port-forward command and required HTTP `Host` value.
+A port-forward connects a local port to a Kubernetes service.
+Forward `service/c-<org>-http` in namespace `hosts`.
+Use `route_hosts.control` as the HTTP host.
+For the committed document, the service is `c-local-http` and the host is `control.localhost`.
+Export the cluster access file to a private directory:
+
+```bash
+umask 077
+mkdir -p /tmp/wamn-local-access
+kind export kubeconfig --name wamn-local --kubeconfig /tmp/wamn-local-access/kubeconfig
+kubectl --kubeconfig /tmp/wamn-local-access/kubeconfig -n hosts \
+  port-forward service/c-local-http 8080:80
+```
+
+Keep that command running while you use the service.
+Send control requests to `http://127.0.0.1:8080` with `Host: control.localhost`.
+From another terminal, read the unauthenticated control response:
+
+```bash
+curl -i -H 'Host: control.localhost' http://127.0.0.1:8080/wamn_control/control/mine
+```
+
+This request must return HTTP 401.
+A permitted control query requires a password-login session for the control audience.
+The local platform does not provide a public ingress or hosted UI.
+
+### Cleanup
+
+Stop the port-forward with Ctrl-C.
+Delete the local cluster when its databases are no longer needed. This deletes its platform data.
+Keep the shared registry container and its volume for later builds.
+
+```bash
+kind delete cluster --name wamn-local
+```
+
+Remove only the private access files and deployment work directory that this run created.
+The deployment output names its work directory. Keep it while the cluster exists because kind can mount files from it.
+
+## Application deployment boundary
+
+Application deployment remains separate from the local platform journey.
+The existing application commands below do not establish completion of the next deployment epic.
+That epic must provide these operations:
+
+- Select a release from source or an already published environment release.
+- Create project-environment databases through CloudNativePG `Database` resources.
+- Run application SQL independently from code activation.
+- Activate the selected release against the prepared database.
+- Write the release pin to `environment.k` before activation, without a Git commit.
+- Roll back by selecting the prior release and updating its pin, without reversing SQL.
+
+The local milestone omits GCP integration, public ingress, web uploads, and optional telemetry.
+It also omits SQL migration modes, application compatibility warnings, and production operations policies.
+The plan defines later `reset` and `migrate` modes, system schema upgrades, and PostgreSQL engine upgrades.
+These are unfinished work, not behavior of `wamn platform deploy`.
+[Retained application-test adapters](running-tests.md#retained-application-test-adapters) remain outside this platform journey.
+
+## Existing application operations
+
+Use an explicitly selected cluster, namespace, and environment for the commands below.
+[Repository delivery commands](delivery.md) describe the existing qualification, publication, and release-selection interfaces.
+[Components](../architecture/components.md) defines their artifact boundary.
 
 ### Project integrations and environment connections
 
@@ -166,26 +273,15 @@ Build and exercise the exact selected source and artifacts before publication.
 Compilation and a successful upload do not establish deployed behavior.
 Select the relevant tests from [running tests](running-tests.md) and interpret them through [test results](../testing/evidence.md).
 
-Provision the target before publishing its release.
-First install the control store into the empty system database, once per deployment.
-The database and its owner role `wamn_system` must exist, for example from the CloudNativePG `initdb` bootstrap:
+Deploy the platform before using the separate application commands.
+Platform deployment owns system initialization, the initial organization, and the identity issuer.
+Do not repeat the removed numbered installer or its initial application pass.
 
-```bash
-wamn-ctl provision-system --system-url "$SYSTEM_ADMIN_URL" --platform-domain "$PLATFORM_DOMAIN"
-```
-
-The verb installs the record history, the system schema and the portable store as `wamn_system`, and closes the PUBLIC `CONNECT` and `TEMPORARY` floors.
-It refuses a database that already has the schema `registry`.
-Then run these steps in this order:
-
-1. `provision-org --org <org> --template trials|standard|dedicated --system-database-url "$SYSTEM_ADMIN_URL" --admin EMAIL`.
-2. `provision-identity-issuer --issuer <issuer URL>`.
-3. Write one environment document. Run `wamn-ctl env apply` of it.
-
-`provision-org --admin EMAIL` makes that user the org's admin. When the identity store has no user, it creates the user in the same transaction as the org, so a new install needs no other verb for its first user. When users exist, the email must name one of them, or the verb refuses and writes nothing.
-
+The existing application path still requires an environment before release publication.
+This dependency remains part of the next application epic.
 `env apply` creates the environment row, its `Database`, its roles, its run plane, and its credential Secrets.
-The first apply names `release = "none"`, because `publish-release` needs the environment's database.
+In this existing application path, the first apply names `release = "none"` because publication needs the environment database.
+Platform deployment never performs this application pass.
 A later apply names the release digest and installs the release chart.
 
 The optional `client` field pins an application web artifact: `client = {package = "wamn_receiving", web = "<full web digest>"}`.
@@ -196,7 +292,7 @@ It refuses a web artifact whose package id differs from `client.package` or whos
 The revision values keep the host-to-package map in `webClients` and the host-to-web-digest map in `webDigests`.
 
 The same immutable web artifact can serve more than one environment.
-The verb reads its platform inputs from environment variables ([Google Cloud platform file](gcp.md#410-platform-file)):
+The verb reads its platform inputs from environment variables (see the selected command's `--help` for its required inputs):
 
 ```bash
 wamn-ctl env apply <document> --dry-run
@@ -242,7 +338,6 @@ Each `--package ID@VERSION` is the artifact under the tag `ID-VERSION` in `--art
 A package with no artifact in the registry refuses, and the publish writes nothing.
 The release takes each package's `wamn.json`, attachments and component descriptors from its artifact.
 For an overlay, repeat `--package` for the exact selected package set.
-Platform release Jobs mount the selected authored document at `/inputs/environment.k`.
 `publish-release` reads the file argument, compiles it, and takes its `applications` map.
 The document supplies the organization, project, and environment.
 A map with one application needs no `--application` selector.
@@ -298,7 +393,7 @@ It writes `clients/<package>/<web digest hex>/` and skips all writes when the in
 That page owns the command, required inputs, destination paths, output, and errors.
 The shell reads `/config.json` before sign-in. The local dev server answers it from `dev.json`.
 The bucket must allow reads without credentials.
-Platform apply renders each application host and API Service in the edge chart.
+Edge deployment remains outside the local platform milestone.
 
 Release hosts expose workload HTTP on port 80, probes on port 8081, and native file transfers on port 8082.
 The `<release>-files` Service selects the host group pods and maps port 80 to the named `files` port.
@@ -331,7 +426,7 @@ The control root is `https://control.wamn.dev`.
 Its host group runs `wamn-host host --control --org=dkk` in namespace `hosts`.
 Its platform HTTP role contains the pinned route guest and an empty dispatcher, with `poolSize: 0` and no release record.
 The HTTP transport workload selects that host group and supplies endpoints for the fixed Service `c-dkk-http`.
-[Google Cloud section 4](gcp.md#4191-control-host-and-platform-ui) owns its installation and credentials.
+Local platform deployment installs control without a UI upload. GCP integration for public control access remains unfinished.
 
 The edge values can contain a separate `control` entry with `host` and `api`.
 The control host serves no native file routes, so its entry has no `files`.
@@ -345,7 +440,7 @@ On Google Cloud, a global HTTPS load balancer with Cloud CDN sends all traffic t
 The load balancer presents a Google-managed certificate and re-encrypts to nginx, which keeps its own TLS as in kind.
 The CDN caches only what the origin marks as cacheable.
 Set `neg: true` in the edge values. The edge Service then carries the annotation that makes GKE create the network endpoint group.
-The chart renders no Google Cloud resource and no other difference from kind. [Google Cloud section 4.20](gcp.md#420-edge-and-load-balancer) creates the load balancer.
+The chart renders no Google Cloud resource and no other difference from kind. [Google Cloud prerequisites](gcp.md#cloud-credentials-and-prerequisites) describe the external inputs. Deployment integration remains unfinished.
 The edge keeps `/api` for native file requests and removes it for other API requests.
 It checks the identity certificate, as it does in kind.
 
@@ -360,7 +455,7 @@ No home-directory path is required.
 
 For local email configuration, copy `.env.example` to `.env` before adding the key and verified sender.
 Keep the existing issuer, database, TLS, operator CA, and session target configuration.
-Both Resend values are required to enable the password routes.
+External delivery requires both Resend values. Kind deployment instead selects local mail as described in [local access](#local-access-and-owner-invitation).
 The CLI also accepts `--resend-api-key` and `--resend-from`. Prefer environment input for the secret.
 
 For Kubernetes, create a Secret with the `api-key` entry in the identity namespace.
@@ -417,7 +512,7 @@ Grant or revoke system project-admin or org-admin to change application administ
 The target needs an existing application user or service row.
 The HTTP owner refuses unknown users. A grant also refuses a missing role.
 The operator service of an environment, `wamn-operator-<org>--<project>--<env>`, has the email `<subject>@<platform domain>`.
-`env apply` writes its PAT Secret when it can reach identity. When it cannot, mint the PAT with the Job of [Google Cloud releases](gcp.md#414-releases).
+`env apply` writes its PAT Secret when it can reach identity. GCP deployment integration for a missing operator PAT remains unfinished.
 
 ### Authored roles
 
@@ -547,9 +642,9 @@ Restart the host to change trust or pool configuration. The replacement process 
 
 ### Environment apply credentials
 
-For initial installation, set `WAMN_SYSTEM_ADMIN_URL` to the system administrator URL.
+For separate application setup, set `WAMN_SYSTEM_ADMIN_URL` to the system administrator URL.
 Run `wamn-ctl provision-system --platform-domain DOMAIN --emit-apply-secret PATH --db-host HOST` to write the restricted apply Secret.
-The platform install Job supplies these arguments.
+Platform deployment does not emit this application credential Secret.
 Set `WAMN_APPLY_DATABASE_URL` from the Secret URL before `wamn-ctl env apply`.
 Set `WAMN_SYSTEM_ADMIN_URL` for its ensure phase.
 The other apply phases use the restricted credential.

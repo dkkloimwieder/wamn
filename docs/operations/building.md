@@ -130,45 +130,73 @@ The router owns `wamn:node`. The runtime owns PostgreSQL, connection, JetStream,
 The execution host owns router delivery. The materializer owns the shared WASI CLI and clock packages.
 Application contracts lie under `wit/` in each package's build output, `apps/target/wamn/<package>/wit`, which `wamn build` writes. Do not copy platform WIT into application directories.
 
-## Platform UI
+## Local platform artifacts
 
-`wamn-ctl build-platform` builds `apps/platform_ui/dist` with `pnpm --filter @wamn/platform-ui build` before it builds and pushes the platform images.
-The command writes one line to stderr when each stage starts and ends.
-The stages cover the UI build, the input hashes and their lookups, each image build, roles export, each push or copy, each role comparison on the cloud path, and the chart stamp.
-Each line includes a UTC timestamp in RFC 3339 format. End lines also include elapsed seconds:
+Artifact production runs separately from platform deployment and needs the source checkout.
+The producer builds `host`, `ctl`, and `identity` images plus the `http` and `materializer` role components.
+It needs no application package output, qualification image, or platform UI bundle.
+Deployment consumes these prepared artifacts and does not run a build.
 
-```text
-build-platform <stage> start <RFC 3339 UTC>
-build-platform <stage> end <RFC 3339 UTC> elapsed <seconds>s
+From the repository root, start or reuse the shared registry:
+
+```bash
+tools/local-registry
 ```
 
-`--stamp-only` prints these lines around registry reads and the chart stamp.
-Step 4.6 forwards these lines as they arrive and times its package builds, UI build, and stamp-only command.
-An end line marks the stage exit, including failure. The command exit status reports success or failure.
-`platform-build.json` records elapsed milliseconds by stage in `stage_durations_ms`.
-Copy stages and image build stages use separate entries, so the record distinguishes reuse from compilation.
+The helper uses `wamn-local-registry` with its persistent volume and publishes port 5001 on loopback.
+Make sure that its reported port matches `deploy/kind/cluster.k`, which selects `localhost:5001`.
+Keep the registry for later builds and deployments.
+Then produce the artifacts and a prepared chart at a path that does not exist:
 
-The platform UI is a platform asset and has no `wamn.k` or package artifact.
-Install the workspace dependencies with `pnpm install --offline` before the build.
+```bash
+wamn-ctl build-platform --registry localhost:5001 --out /tmp/wamn-platform-chart
+```
+
+The command reuses unchanged published images when their inputs match.
+If the registry contains every selected artifact for the chart version, stamp a new chart:
+
+```bash
+wamn-ctl build-platform --stamp-only --registry localhost:5001 --out /tmp/wamn-platform-chart-restamped
+```
+
+Both commands require the source checkout for the chart and deployment resources.
+Stamping refuses a missing selected artifact.
+The output includes pinned image references, the operator archive, the identity chart, and authored deployment resources under `platform/`.
+Copy the whole output directory when transferring it to another deployment host.
+[Local deployment](deployment.md#local-platform) uses this directory through an explicit `--chart` path and needs no source checkout.
+
+The command writes stage start and end lines to stderr, with UTC timestamps and elapsed seconds.
+`platform-build.json` records elapsed milliseconds in `stage_durations_ms`.
+An end line marks stage exit, including failure. The command exit status reports success or failure.
+
+## Platform UI
+
+The local platform build does not select the UI.
+An explicit `--cluster` document with a nonempty `buckets.web` selects it.
+For that separate path, install workspace dependencies with `pnpm install --offline` before the build.
+The producer then runs `pnpm --filter @wamn/platform-ui build`.
+The platform UI has no `wamn.k` or application package artifact.
 
 The stamped chart contains `platform-build.json`.
-Its `PlatformBuildRecord.platform_ui` field records a SHA-256 digest of a canonical JSON map from relative file paths to file digests.
-The map covers `index.html` and every asset in the dist directory.
-The chart version identifies the platform asset version.
+Its `platform_ui` field is null when the UI is unselected.
+When selected, the field records a digest of the relative file paths and file digests in `apps/platform_ui/dist`.
+The digest covers `index.html` and every asset.
 
-`build-platform --stamp-only` hashes the local dist without building or publishing it.
-If the dist is absent, it refuses and names `pnpm --filter @wamn/platform-ui build`.
-It creates no OCI artifact for the static bundle.
-Keep the local dist with the stamped chart until [upload](deployment.md#platform-ui-files).
+With UI selection, `--stamp-only` requires the existing bundle and hashes it without building or publishing it.
+Without UI selection, stamping needs no bundle.
+The producer creates no OCI artifact for the static bundle.
+Keep a selected bundle with its matching chart for [standalone upload](deployment.md#platform-ui-files), which retains its artifact requirements.
 
 ## Unchanged platform images
 
 `build-platform` builds only the platform images whose inputs changed since an earlier push.
-The five images are `host`, `runner`, `gates`, `identity`, and `edge-web`.
+The local platform images are `host`, `ctl`, and `identity`.
+An explicit GCP cluster document selects the retained `host`, `runner`, `gates`, `identity`, and `edge-web` set.
+That application-test artifact path does not establish GCP deployment support.
 The command always builds the `roles` target, which holds the `http` and `materializer` role components.
 It then compares each role by its wasm layer. See [Unchanged role components](#unchanged-role-components).
 
-After the UI build, the command calculates an input hash for each image.
+The command calculates an input hash for each selected image.
 The input hash is a SHA-256 digest of the target name, the Docker build arguments, and a list of input files.
 The list records the path, the SHA-256 digest, and the mode of each file, or the target of a symbolic link.
 
@@ -190,6 +218,7 @@ A build script without such lines gets the same treatment as a procedural macro.
 | Image | Packages | Other inputs |
 | --- | --- | --- |
 | `host` | `wamn-host`, `wamn-runtime`, `wamn-cdc-reader` | none |
+| `ctl` | `wamn-ctl`, `wamn-scenario-worker`, and the five guests | `tools/guest-rustflags` |
 | `identity` | `wamn-identity` | none |
 | `edge-web` | `wamn-edge` | none |
 | `gates` | `wamn-host`, `wamn-runtime`, `wamn-gates`, `wamn-ctl`, `wamn-cdc-reader`, and the five guests of the component builder | `tools/guest-rustflags` |
@@ -208,7 +237,7 @@ build-platform <image> input-<hash> copy
 
 Each built image gets a second tag, `input-<hash>`, and the label `wamn.dev/input-hash=<hash>`.
 Before it builds, the command looks for the `input-<hash>` tag of each image in the destination registry.
-The five lookups run at the same time.
+The lookups for selected images run at the same time.
 If the tag is not found, the command builds the image as before.
 If the lookup fails for another reason, such as a network timeout, the command tries it once more.
 If the second lookup also fails, the command prints `build-platform <image> input-<hash> lookup failed: <error>` and builds the image.
@@ -251,7 +280,8 @@ For other registries, it reads the credential from the Docker configuration or i
 Local revision builds store their images in a registry on the build host.
 The build needs no GCP access or cluster document.
 Input-hash lookups and role copies read this same registry.
-Both kind cases copy from the registry named in the stamped chart.
+The platform journey uses the local platform artifact set.
+The retained application journeys require additional qualification images and fixtures from their separate build path.
 The build still pulls public base images unless Docker already holds them.
 
 Prepare the checkout with `tools/lane-start` as described above.
@@ -272,15 +302,15 @@ The empty Docker configuration prevents Docker and wash from calling credential 
 `tools/local-registry` starts or reuses only its labeled `wamn-local-registry` container.
 It prints `127.0.0.1:<port>` after the registry responds over HTTP.
 The container uses `registry:2` and keeps images in the `wamn-local-registry-data` volume.
-It stays outside the kind network because the tests copy images through the host.
+Platform deployment connects a reused registry to the kind network when needed.
 Keep it between revision runs so that unchanged images remain available.
 
 A loopback build stays local even when another builder runs.
 Do not pass `--cloud` for a loopback registry.
 Cloud Build cannot reach it, so the command refuses that combination.
-Run the [kind cases](running-tests.md) with the exported chart and Docker configuration.
-Remove the temporary Docker configuration after both cases finish.
-A push to Artifact Registry is a separate deploy step that requires an explicit owner request.
+Run the [platform kind case](running-tests.md#platform-and-environment-apply-on-kind) with the exported chart and Docker configuration.
+Remove the temporary Docker configuration after the case finishes.
+A push to Artifact Registry is a separate artifact-production operation that requires an explicit owner request.
 
 ## Cloud platform builds
 
@@ -290,7 +320,8 @@ It ignores its own process and processes with `--stamp-only`.
 When no other build runs, it uses the local Docker build path.
 With `--cloud`, it uses Google Cloud Build even when no other build runs, under the same daily cap.
 A `--cloud` build runs no Docker build on this machine, so other builds do not count it as busy.
-For an authorized deploy to a remote registry, use `--cloud` to avoid waiting for another local build.
+For authorized artifact production in a remote registry, use `--cloud` to avoid waiting for another local build.
+GCP deployment integration remains unfinished.
 
 The cloud path requires `--cluster <cluster.k>`.
 It reads the project, `buckets.state` and `build_cloud_cap_usd` from that document.
@@ -298,7 +329,7 @@ The cap defaults to USD 3 per UTC day.
 All existing flags keep their meaning, including the destination `--registry`.
 
 ```bash
-# Only for an explicitly requested GCP deploy.
+# Only for explicitly requested cloud artifact production.
 wamn-ctl build-platform --cloud --cluster deploy/gcp/cluster.k --registry us-central1-docker.pkg.dev/wamn-dev/wamn --out /var/tmp/wamn-release-chart
 ```
 
@@ -315,11 +346,12 @@ After Cloud Build succeeds, the command copies the other images from this machin
 Then it compares the layer of each pushed role with the previous chart version.
 If the layers are equal, it copies the previous manifest under the chart version tag.
 The command waits for Cloud Build, then reads the pushed digests and stamps the chart.
-The local UI build and its recorded digest follow the local path.
+If the cluster document selects UI storage, the UI build and recorded digest follow the local path.
 The `cloud-submit` stage prints start and end lines, including elapsed time.
 
 The root `.gcloudignore` excludes the `.dockerignore` paths and every target directory.
-The command copies only `apps/target/wamn` into a temporary source directory for the runner input, then removes that directory after submission.
+Only the retained qualification-image path supplies `apps/target/wamn` as a runner input.
+The local platform build does not read this application output.
 It does not upload Cargo target caches.
 
 Before submission, the command reads `gs://<buckets.state>/build/<YYYY-MM-DD>.json` for the UTC submission day.

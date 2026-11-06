@@ -19,8 +19,8 @@ The script does not pull images.
 The script starts its own PostgreSQL, one NATS with TLS, and collector containers on free loopback ports.
 It runs `wamn build` for Receiving before it renders the broker permissions.
 
-At run time, it reads the NATS configuration and memory limit from `deploy/gcp/nats-jetstream.yaml`.
-It reads `max_slot_wal_keep_size`, `pg_stat_statements.max`, and `pg_stat_statements.track` from `deploy/gcp/cnpg-cluster.yaml`.
+At run time, it reads the NATS configuration and memory limit from `deploy/infra/nats-jetstream.yaml`.
+It reads `max_slot_wal_keep_size`, `pg_stat_statements.max`, and `pg_stat_statements.track` from `deploy/infra/cnpg-cluster.yaml`.
 
 The deployed `event_broker_files` generator supplies separate credentials and subject permissions for the development identity.
 
