@@ -82,6 +82,7 @@ pub(super) async fn assert_materializer_causation(
     let deadline = std::time::Instant::now() + Duration::from_secs(120);
     let (receipt_sequence, receipt_causation, inspection_causation, receipt_txid, history_events) = loop {
         let info = stream.info().await.context("read event-stream state")?;
+        let messages = info.state.messages;
         let mut receipt = None;
         let mut inspection = None;
         let mut receipt_txid = None;
@@ -126,16 +127,34 @@ pub(super) async fn assert_materializer_causation(
                 }
             }
         }
+        let seen = (receipt.is_some(), inspection.is_some(), messages);
         if let (Some((sequence, receipt)), Some(inspection), Some(txid)) =
             (receipt, inspection, receipt_txid)
         {
             break (sequence, receipt, inspection, txid, history_events);
         }
-        anyhow::ensure!(
-            std::time::Instant::now() < deadline,
-            "causal receipt and inspection events did not both reach {}",
-            materializer_stream()
-        );
+        if std::time::Instant::now() >= deadline {
+            // The runs name the step that kept an event from the stream.
+            let runs = project
+                .query(
+                    "SELECT jsonb_build_object('run', run_id, 'flow', flow_id, 'status', status, \
+                     'fail_type', fail_type, 'reason', terminal_reason, 'result', result_json)::text \
+                     FROM wamn_run.runs WHERE env_key = $1 ORDER BY created_at",
+                    &[&identity().env_key().as_str()],
+                )
+                .await
+                .context("read the runs after the event deadline")?
+                .iter()
+                .map(|row| row.get::<_, String>(0))
+                .collect::<Vec<_>>();
+            anyhow::bail!(
+                "causal receipt and inspection events did not both reach {} (receipt: {}, inspection: {}, messages: {}); runs: {runs:?}",
+                materializer_stream(),
+                seen.0,
+                seen.1,
+                seen.2
+            );
+        }
         tokio::time::sleep(Duration::from_millis(200)).await;
     };
     anyhow::ensure!(
