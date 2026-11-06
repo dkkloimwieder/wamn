@@ -1,6 +1,6 @@
 use super::{
-    BuildPlatformRequest, CLOUD_AUTH_SCRIPT, CLOUD_DOCKER_IMAGE, CLOUD_SDK_IMAGE, CloudBuild,
-    IMAGES, Path, PathBuf, Plan, ROLES,
+    BuildPlatformRequest, CLOUD_AUTH_SCRIPT, CLOUD_DOCKER_IMAGE, CLOUD_SDK_IMAGE, CloudBuild, Path,
+    PathBuf, Plan, ROLES, selected_images,
 };
 use anyhow::Context as _;
 
@@ -117,7 +117,7 @@ pub(super) fn cloud_configuration(
 ) -> anyhow::Result<serde_json::Value> {
     use serde_json::json;
     let mut steps = Vec::new();
-    let base = docker_arguments(key, "Dockerfile", &format!("{supplement}/apps"));
+    let apps = PathBuf::from(supplement).join("apps");
     // The token is captured in memory, then written privately to the shared
     // credential volume. Neither the token nor its encoded form is logged.
     // A token lasts an hour, so each push step gets a fresh one.
@@ -137,13 +137,17 @@ pub(super) fn cloud_configuration(
     }));
     let registry = &request.registry;
     let version = &request.version;
-    for target in IMAGES.into_iter().chain(["roles"]) {
+    for target in selected_images(request).iter().copied().chain(["roles"]) {
         // An image whose input tag exists is copied after the build.
         if plan.images.contains_key(target) {
             continue;
         }
         let mut args: Vec<String> = vec!["buildx".into(), "--builder".into(), "wamn".into()];
-        args.extend(base.iter().cloned());
+        args.extend(docker_arguments(
+            key,
+            "Dockerfile",
+            (target == "runner").then_some(apps.as_path()),
+        ));
         args.extend(["--target".into(), target.into()]);
         if target == "roles" {
             args.extend(["--output".into(), "type=local,dest=/workspace/roles".into()]);
@@ -183,16 +187,20 @@ pub(super) fn cloud_configuration(
     )
 }
 
-pub(super) fn docker_arguments(key: &str, file: &str, apps: &str) -> Vec<String> {
-    vec![
+pub(super) fn docker_arguments(key: &str, file: &str, apps: Option<&Path>) -> Vec<String> {
+    let mut args = vec![
         "build".into(),
         "--platform=linux/amd64".into(),
         "--provenance=false".into(),
         "--build-arg".into(),
         format!("WAMN_CHECKOUT_KEY={key}"),
-        "--build-context".into(),
-        format!("apps-target={apps}"),
-        "--file".into(),
-        file.into(),
-    ]
+    ];
+    if let Some(apps) = apps {
+        args.extend([
+            "--build-context".into(),
+            format!("apps-target={}", apps.display()),
+        ]);
+    }
+    args.extend(["--file".into(), file.into()]);
+    args
 }

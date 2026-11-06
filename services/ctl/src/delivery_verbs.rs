@@ -38,7 +38,7 @@ pub struct QualifyReleaseArgs {
     pub release_chart: PathBuf,
 }
 
-/// Build every platform image, then push them, and stamp their digests into a
+/// Build selected platform images, then push them, and stamp their digests into a
 /// copy of the release chart's defaults; a failed build pushes nothing
 /// (docs/architecture/overview.md#environment-lifecycle).
 #[derive(Debug, Args)]
@@ -57,7 +57,8 @@ pub struct BuildPlatformArgs {
     /// version's images, and refuse when any is missing (R15).
     #[arg(long, default_value_t = false)]
     pub stamp_only: bool,
-    /// Cluster document with the cloud build project and daily spend cap.
+    /// Select platform artifacts and optional UI from this cluster document.
+    /// GCP also selects qualification images and supplies Cloud Build inputs.
     #[arg(long)]
     pub cluster: Option<PathBuf>,
     /// Build with Cloud Build even when no other build runs. Requires

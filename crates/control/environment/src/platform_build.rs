@@ -1,8 +1,8 @@
 //! The platform build step
 //! (docs/architecture/overview.md#environment-lifecycle).
 //!
-//! It builds the host, runner, gates, identity and edge images and the two role
-//! components from the root `Dockerfile`. Only when every build succeeded
+//! It builds selected platform images and the two role components from the
+//! root `Dockerfile`. Only when every build succeeded
 //! does it push them to one registry. It then stamps their digests into a
 //! copy of the release chart's defaults. That chart is the one source of an
 //! image set.
@@ -10,7 +10,7 @@
 //! A reinstall at an unchanged platform version builds nothing: the stamp-only
 //! step reads the digests of the chart version's tags from the registry and
 //! stamps those (owner ruling R15, 2026-10-14). Both modes record the digest
-//! of the local platform UI in `platform-build.json` beside the chart defaults.
+//! of selected local platform UI files in `platform-build.json` beside the chart defaults.
 
 pub(super) mod plan;
 pub use plan::platform_ui_dist;
@@ -31,12 +31,49 @@ use tokio::process::Command;
 use wamn_execution_contract::{bytes_sha256, canonical_json_bytes};
 use wamn_package_artifact::registry_pull;
 
-use wamn_release_control::release_chart::{ImageSet, QualificationImages, stamp};
+use wamn_release_control::release_chart::{ImageSet, stamp};
 
 mod inputs;
 
 /// The Dockerfile targets that build-platform pushes as images.
-const IMAGES: [&str; 5] = ["host", "runner", "gates", "identity", "edge-web"];
+fn selected_images(request: &BuildPlatformRequest) -> &'static [&'static str] {
+    if request
+        .cluster
+        .as_ref()
+        .is_some_and(|cluster| cluster.provider == crate::platform::document::Provider::Gcp)
+    {
+        &["host", "runner", "gates", "identity", "edge-web"]
+    } else {
+        &["host", "ctl", "identity"]
+    }
+}
+
+fn selects_ui(request: &BuildPlatformRequest) -> bool {
+    request
+        .cluster
+        .as_ref()
+        .is_some_and(|cluster| !cluster.buckets.web.is_empty())
+}
+
+type Pinned = (BTreeMap<&'static str, String>, (String, String));
+
+/// Authored resources carried beside the stamped release chart.
+const RESOURCES: &[&str] = &[
+    "deploy/infra/cert-manager.yaml",
+    "deploy/infra/cnpg-operator.yaml",
+    "deploy/infra/nats-certificates.yaml",
+    "deploy/gcp/cnpg-cluster.yaml",
+    "deploy/gcp/nats-jetstream.yaml",
+    "deploy/gcp/values-operator.yaml",
+    "deploy/infra/values-wamn.yaml",
+    "deploy/gcp/identity-operator-ca.yaml",
+    "deploy/gcp/identity-certificate.yaml",
+    "deploy/platform/wamn-host-serviceaccount.yaml",
+    "deploy/gcp/registry-helper.yaml",
+    "deploy/platform/runtime-operator-events-rbac.example.yaml",
+    "deploy/platform/control-status-rbac.yaml",
+    "deploy/gcp/control-service.yaml",
+];
 
 /// The files of the roles target, each with the role it is pushed as.
 const ROLES: [(&str, &str); 2] = [
@@ -96,8 +133,8 @@ impl Drop for Stage<'_> {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PlatformBuildRecord {
-    /// SHA-256 of the canonical map of relative file paths to file digests.
-    pub platform_ui: String,
+    /// SHA-256 of relative UI file paths and digests, or None when unselected.
+    pub platform_ui: Option<String>,
     /// Elapsed milliseconds by executed stage, with copies separate from builds.
     pub stage_durations_ms: BTreeMap<String, u64>,
 }
@@ -105,15 +142,20 @@ pub struct PlatformBuildRecord {
 /// The platform build record beside the stamped chart's defaults.
 pub const BUILD_RECORD_FILE: &str = "platform-build.json";
 
-fn ui_build_record(repository: &Path) -> anyhow::Result<PlatformBuildRecord> {
-    let dist = platform_ui_dist(repository);
-    ensure!(
-        dist.is_dir(),
-        "the platform UI build {} is absent; run `pnpm --filter @wamn/platform-ui build`",
-        dist.display()
-    );
+fn ui_build_record(request: &BuildPlatformRequest) -> anyhow::Result<PlatformBuildRecord> {
+    let platform_ui = if selects_ui(request) {
+        let dist = platform_ui_dist(&request.repository);
+        ensure!(
+            dist.is_dir(),
+            "the platform UI build {} is absent; run `pnpm --filter @wamn/platform-ui build`",
+            dist.display()
+        );
+        Some(platform_ui_digest(&dist)?)
+    } else {
+        None
+    };
     Ok(PlatformBuildRecord {
-        platform_ui: platform_ui_digest(&dist)?,
+        platform_ui,
         stage_durations_ms: BTreeMap::new(),
     })
 }
@@ -165,7 +207,7 @@ pub struct BuildPlatformRequest {
     pub registry: String,
     /// The directory the stamped chart is written to. It must not exist.
     pub out: PathBuf,
-    /// Optional cluster inputs for cloud builds.
+    /// Optional cluster inputs selecting qualification images, UI and cloud builds.
     pub cluster: Option<crate::platform::document::ClusterDocument>,
     /// Use Cloud Build even when no other build runs, under the same daily cap.
     pub cloud: bool,
@@ -222,7 +264,7 @@ fn check_package_outputs(repository: &Path) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Build every platform image and role component, then push them, then stamp
+/// Build selected platform images and role components, then push them, then stamp
 /// them into a copy of the release chart at `request.out`. A failed build
 /// pushes nothing. Every image is tagged with the chart version and pinned by
 /// its pushed digest.
@@ -237,13 +279,9 @@ pub async fn build_platform(request: &BuildPlatformRequest) -> anyhow::Result<Pa
         "the chart output {} exists",
         request.out.display()
     );
-    let apps_target = request.repository.join("apps/target/wamn");
-    ensure!(
-        apps_target.is_dir(),
-        "{} does not exist; run `wamn build` on the apps first",
-        apps_target.display()
-    );
-    check_package_outputs(&request.repository)?;
+    if selected_images(request).contains(&"runner") {
+        check_package_outputs(&request.repository)?;
+    }
     let processes = process_list()?;
     if build_location(
         &processes,
@@ -263,17 +301,12 @@ pub async fn build_platform(request: &BuildPlatformRequest) -> anyhow::Result<Pa
     let pushed = build_then_push(request, &roles, output, &mut components, &durations).await;
     let _ = std::fs::remove_dir_all(&roles);
     let pushed = pushed?;
-    stamp_chart(
-        request,
-        pushed,
-        &ui_build_record(&request.repository)?,
-        &durations,
-    )
+    stamp_chart(request, pushed, &ui_build_record(request)?, &durations)
 }
 
 /// Stamp the registry's images and role components of `request.version` into
 /// a copy of the release chart at `request.out`. It builds and pushes
-/// nothing; when any of the seven is missing, it refuses and names them.
+/// nothing; when a selected artifact is missing, it refuses and names it.
 pub async fn stamp_only(request: &BuildPlatformRequest) -> anyhow::Result<PathBuf> {
     stamp_only_with_durations(request, &StageDurations::default()).await
 }
@@ -282,7 +315,7 @@ async fn stamp_only_with_durations(
     request: &BuildPlatformRequest,
     durations: &StageDurations,
 ) -> anyhow::Result<PathBuf> {
-    let build_record = ui_build_record(&request.repository)?;
+    let build_record = ui_build_record(request)?;
     let insecure = loopback(&request.registry);
     stamp_from_registry(
         request,
@@ -314,7 +347,7 @@ async fn stamp_only_with_durations(
     .await
 }
 
-/// Resolve the six tags of `request.version`: the images through `run`'s
+/// Resolve selected tags of `request.version`: the images through `run`'s
 /// `docker buildx imagetools inspect`, the role components through `pull`,
 /// which returns the manifest digest. Then stamp them.
 async fn stamp_from_registry(
@@ -332,9 +365,9 @@ async fn stamp_from_registry(
     let stage = recorded_stage(durations, "registry-reads");
     let registry = &request.registry;
     let version = &request.version;
-    let mut pinned = Vec::new();
+    let mut pinned = BTreeMap::new();
     let mut missing = Vec::new();
-    for target in ["host", "runner", "gates", "identity", "edge-web"] {
+    for &target in selected_images(request) {
         let reference = format!("{registry}/wamn-{target}:{version}");
         let digest = run(Command::new("docker").args([
             "buildx",
@@ -347,15 +380,18 @@ async fn stamp_from_registry(
         .await
         .and_then(|json| manifest_digest(&json));
         match digest {
-            Ok(digest) => pinned.push(format!("{reference}@{digest}")),
+            Ok(digest) => {
+                pinned.insert(target, format!("{reference}@{digest}"));
+            }
             Err(error) => missing.push(format!("{reference} ({error:#})")),
         }
     }
-    for role in ["http", "materializer"] {
+    let mut roles = BTreeMap::new();
+    for (_, role) in ROLES {
         let reference = format!("{registry}/wamn/{role}:{version}");
         match pull(&reference).await {
             Ok(digest) if digest.starts_with("sha256:") => {
-                pinned.push(format!("{registry}/wamn/{role}@{digest}"));
+                roles.insert(role, format!("{registry}/wamn/{role}@{digest}"));
             }
             Ok(digest) => missing.push(format!("{reference} (digest {digest})")),
             Err(error) => missing.push(format!("{reference} ({error:#})")),
@@ -367,22 +403,25 @@ async fn stamp_from_registry(
         missing.len(),
         missing.join("; ")
     );
-    let [host, runner, gates, identity, edge, http, materializer] = <[String; 7]>::try_from(pinned)
-        .map_err(|_| anyhow::anyhow!("seven images were resolved"))?;
     drop(stage);
     stamp_chart(
         request,
-        ([host, runner, gates, identity, edge], (http, materializer)),
+        (
+            pinned,
+            (
+                roles.remove("http").context("http pin")?,
+                roles.remove("materializer").context("materializer pin")?,
+            ),
+        ),
         build_record,
         durations,
     )
 }
 
-/// Stamp the host, runner, gates, identity and edge images and the http and
-/// materializer components into a copy of the checkout's release chart.
+/// Stamp selected images and role components, then package deployment resources.
 fn stamp_chart(
     request: &BuildPlatformRequest,
-    ([host, runner, gates, identity, edge], (http, materializer)): ([String; 5], (String, String)),
+    (mut images, (http, materializer)): Pinned,
     build_record: &PlatformBuildRecord,
     durations: &StageDurations,
 ) -> anyhow::Result<PathBuf> {
@@ -390,25 +429,41 @@ fn stamp_chart(
     let chart = stamp(
         &request.repository.join("deploy/platform/release"),
         &ImageSet {
-            host,
+            host: images.remove("host").context("host pin")?,
             http,
             materializer,
         },
-        Some(&QualificationImages {
-            runner,
-            gates,
-            identity,
-        }),
+        None,
         &request.out,
     )?;
     let path = chart.join("values.yaml");
     let mut defaults: serde_yaml::Value = serde_yaml::from_slice(&std::fs::read(&path)?)?;
-    ensure!(
-        edge.contains("@sha256:"),
-        "the edge image is not pinned by digest"
-    );
-    defaults["platform"]["edge"]["image"] = edge.into();
+    for target in ["ctl", "identity", "runner", "gates", "edge-web"] {
+        let image = images.remove(target).unwrap_or_default();
+        ensure!(
+            image.is_empty() || image.contains("@sha256:"),
+            "the {target} image is not pinned by digest"
+        );
+        let field = if target == "edge-web" { "edge" } else { target };
+        defaults["platform"][field]["image"] = image.into();
+    }
     std::fs::write(path, serde_yaml::to_string(&defaults)?)?;
+    let platform = chart.join("platform");
+    std::fs::create_dir_all(platform.join("resources"))?;
+    copy_package_output(
+        &request.repository.join("deploy/platform/identity"),
+        &platform.join("identity"),
+    )?;
+    for source in RESOURCES {
+        let source = request.repository.join(source);
+        std::fs::copy(
+            &source,
+            platform
+                .join("resources")
+                .join(source.file_name().context("resource basename")?),
+        )
+        .with_context(|| format!("package {}", source.display()))?;
+    }
     drop(stage);
     let mut build_record = build_record.clone();
     build_record
@@ -671,17 +726,19 @@ async fn plan(
                 &serde_json::from_str(&metadata).context("parse cargo metadata")?,
             )?);
         }
-        for target in IMAGES {
+        for &target in selected_images(request) {
             let files = inputs::input_files(&request.repository, target, &graphs[0], &graphs[1])?;
             hashes.insert(target, inputs::input_hash(target, &files));
         }
     }
     let _stage = recorded_stage(durations, "input-lookups");
     let registry = &request.registry;
-    let lookups = IMAGES.map(|target| lookup(run, registry, target, &hashes[target]));
+    let lookups = selected_images(request)
+        .iter()
+        .map(|&target| lookup(run, registry, target, &hashes[target]));
     let digests = futures_util::future::join_all(lookups).await;
     let mut images = BTreeMap::new();
-    for (target, digest) in IMAGES.into_iter().zip(digests) {
+    for (&target, digest) in selected_images(request).iter().zip(digests) {
         if let Some(digest) = digest {
             images.insert(target, digest);
         }
@@ -725,7 +782,7 @@ async fn copy_image(
     Ok(format!("{reference}@{digest}"))
 }
 
-/// Build the host, runner, gates, identity and edge images, each through `run`
+/// Build selected images, each through `run`
 /// unless its input tag exists, and export the role components to `roles`.
 /// Only when every build succeeded, push the built images under the chart
 /// version and input tags, copy the others, push the role components, and
@@ -736,8 +793,8 @@ async fn build_then_push(
     mut run: impl AsyncFn(&mut Command) -> anyhow::Result<String>,
     components: &mut impl Components,
     durations: &StageDurations,
-) -> anyhow::Result<([String; 5], (String, String))> {
-    {
+) -> anyhow::Result<Pinned> {
+    if selects_ui(request) {
         let _stage = recorded_stage(durations, "ui-build");
         run(Command::new("pnpm").current_dir(&request.repository).args([
             "--filter",
@@ -756,12 +813,12 @@ async fn build_then_push(
     let registry = &request.registry;
     let version = &request.version;
     let mut references = Vec::new();
-    for target in IMAGES {
+    for &target in selected_images(request) {
         let reference = format!("{registry}/wamn-{target}:{version}");
         let hash = &hashes[target];
         if !images.contains_key(target) {
             let _stage = recorded_stage(durations, format!("image-build-{target}"));
-            run(docker(&request.repository)?
+            run(docker(&request.repository, target == "runner")?
                 .args(["--target", target, "--tag", &reference, "--tag"])
                 .arg(input_tag(registry, target, hash))
                 .arg(format!("--label=wamn.dev/source-head={}", head.trim()))
@@ -774,7 +831,7 @@ async fn build_then_push(
     }
     {
         let _stage = recorded_stage(durations, "roles-export");
-        run(docker(&request.repository)?
+        run(docker(&request.repository, false)?
             .args(["--target", "roles", "--output"])
             .arg(format!("type=local,dest={}", roles.display()))
             .arg(&request.repository))
@@ -785,23 +842,25 @@ async fn build_then_push(
         let bytes = std::fs::read(roles.join(file)).with_context(|| format!("read {file}"))?;
         role_components.push((role, bytes));
     }
-    let mut pushed = Vec::new();
+    let mut pushed = BTreeMap::new();
     for (target, reference) in &references {
         let hash = &hashes[target];
         if let Some(digest) = images.get(target) {
-            pushed.push(
+            pushed.insert(
+                *target,
                 copy_image(&mut run, registry, version, target, hash, digest, durations).await?,
             );
             continue;
         }
         let _stage = recorded_stage(durations, format!("push-{target}"));
-        pushed.push(push_image(&mut run, registry, target, reference).await?);
+        pushed.insert(
+            *target,
+            push_image(&mut run, registry, target, reference).await?,
+        );
         run(Command::new("docker").args(["push", &input_tag(registry, target, hash)])).await?;
     }
-    let images = <[String; 5]>::try_from(pushed)
-        .map_err(|_| anyhow::anyhow!("five platform images were pushed"))?;
     Ok((
-        images,
+        pushed,
         push_roles(registry, version, role_components, components, durations).await?,
     ))
 }
@@ -809,12 +868,14 @@ async fn build_then_push(
 /// `docker build` of one target of the root `Dockerfile`, for amd64. The
 /// runner's cases compile against the package outputs of `wamn build`, the
 /// named context `apps-target`.
-fn docker(repository: &Path) -> anyhow::Result<Command> {
+fn docker(repository: &Path, needs_apps: bool) -> anyhow::Result<Command> {
     let mut command = Command::new("docker");
     command.args(docker_arguments(
         &checkout_key(repository)?,
         &repository.join("Dockerfile").to_string_lossy(),
-        &repository.join("apps/target/wamn").to_string_lossy(),
+        needs_apps
+            .then_some(repository.join("apps/target/wamn"))
+            .as_deref(),
     ));
     Ok(command)
 }
@@ -1141,7 +1202,7 @@ async fn cloud_build(
         cluster.provider == crate::platform::document::Provider::Gcp,
         "Cloud Build requires a GCP --cluster document"
     );
-    {
+    if selects_ui(request) {
         let _stage = recorded_stage(durations, "ui-build");
         output(Command::new("pnpm").current_dir(&request.repository).args([
             "--filter",
@@ -1513,6 +1574,17 @@ mod tests {
         (stores, opened)
     }
 
+    fn production_cluster() -> crate::platform::document::ClusterDocument {
+        serde_json::from_value(serde_json::json!({
+            "provider": "gcp", "project_id": "test-project", "zone": "us-central1-a",
+            "cluster_name": "test", "org": "test", "owner_email": "owner@example.com",
+            "registry": "registry.example.com", "resend_from": "sender@example.com",
+            "buckets": {"web": "test-web", "otel": "test-otel", "state": "test-state"},
+            "route_hosts": {"control": "control.example.com"}
+        }))
+        .unwrap()
+    }
+
     #[test]
     fn cloud_builds_use_buildx_and_cloud_logging() {
         let request = BuildPlatformRequest {
@@ -1520,11 +1592,12 @@ mod tests {
             registry: "us-central1-docker.pkg.dev/test/wamn".into(),
             version: VERSION.into(),
             out: PathBuf::from("/nonexistent"),
-            cluster: None,
+            cluster: Some(production_cluster()),
             cloud: true,
         };
-        let hashes: BTreeMap<_, _> = IMAGES
-            .into_iter()
+        let hashes: BTreeMap<_, _> = selected_images(&request)
+            .iter()
+            .copied()
             .chain(["roles"])
             .map(|target| (target, format!("{target}-hash")))
             .collect();
@@ -1540,7 +1613,7 @@ mod tests {
             .iter()
             .filter(|step| step["name"] == CLOUD_DOCKER_IMAGE && step["args"][3] == "build")
             .collect();
-        assert_eq!(builds.len(), 6);
+        assert_eq!(builds.len(), selected_images(&request).len() + 1);
         let pushes = |step: &serde_json::Value| {
             step["args"]
                 .as_array()
@@ -1550,7 +1623,7 @@ mod tests {
         };
         assert_eq!(
             builds.iter().filter(|step| pushes(step)).count(),
-            5,
+            selected_images(&request).len(),
             "every image target pushes, and roles exports locally"
         );
         // Each image build follows its own token step.
@@ -1573,7 +1646,7 @@ mod tests {
                 .any(|arg| arg.as_str() == Some(text))
         };
         assert!(builds.iter().filter(|step| pushes(step)).all(|step| {
-            IMAGES.iter().any(|target| {
+            selected_images(&request).iter().any(|target| {
                 has(
                     step,
                     &format!(
@@ -1601,7 +1674,7 @@ mod tests {
             .iter()
             .filter(|step| step["name"] == CLOUD_DOCKER_IMAGE && step["args"][3] == "build")
             .collect();
-        assert_eq!(builds.len(), 5);
+        assert_eq!(builds.len(), selected_images(&request).len());
         assert!(!builds.iter().any(|step| has(step, "host")));
         assert!(builds.iter().any(|step| has(step, "roles")));
         assert_eq!(wash(steps), 2);
@@ -1765,13 +1838,13 @@ mod tests {
             stage.start -= Duration::from_millis(42);
         }
         let build_record = PlatformBuildRecord {
-            platform_ui: platform_ui_digest(&dist).unwrap(),
+            platform_ui: Some(platform_ui_digest(&dist).unwrap()),
             stage_durations_ms: durations.into_inner().unwrap(),
         };
         assert!(build_record.stage_durations_ms["ui-build"] >= 42);
         assert_eq!(
-            build_record.platform_ui,
-            "sha256:5a8575268118ba787b9258f2e2277418d1139a5cc0ba08f3c7bf5e6b0fd04e45"
+            build_record.platform_ui.as_deref(),
+            Some("sha256:5a8575268118ba787b9258f2e2277418d1139a5cc0ba08f3c7bf5e6b0fd04e45")
         );
         let bytes = serde_json::to_vec(&build_record).unwrap();
         assert_eq!(
@@ -1779,10 +1852,16 @@ mod tests {
             build_record
         );
         std::fs::rename(dist.join("assets/app.js"), dist.join("assets/new.js")).unwrap();
-        assert_ne!(platform_ui_digest(&dist).unwrap(), build_record.platform_ui);
+        assert_ne!(
+            Some(platform_ui_digest(&dist).unwrap()),
+            build_record.platform_ui
+        );
         std::fs::rename(dist.join("assets/new.js"), dist.join("assets/app.js")).unwrap();
         std::fs::write(dist.join("assets/app.js"), b"changed").unwrap();
-        assert_ne!(platform_ui_digest(&dist).unwrap(), build_record.platform_ui);
+        assert_ne!(
+            Some(platform_ui_digest(&dist).unwrap()),
+            build_record.platform_ui
+        );
         std::fs::remove_file(dist.join("index.html")).unwrap();
         assert!(platform_ui_digest(&dist).is_err());
         std::fs::remove_dir_all(dist).unwrap();
@@ -1796,30 +1875,79 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_checkout_without_package_outputs_is_refused_before_any_build() {
-        let repository = std::env::temp_dir().join(format!(
-            "wamn-build-platform-no-apps-target-{}",
-            std::process::id()
-        ));
-        let error = build_platform(&BuildPlatformRequest {
-            cluster: None,
-            cloud: false,
-            out: repository.join("chart"),
-            repository,
-            registry: "localhost:5000".to_owned(),
-            version: VERSION.into(),
-        })
-        .await
-        .expect_err("a checkout without apps/target/wamn is refused");
-        assert!(error.to_string().contains("run `wamn build`"), "{error}");
+    async fn a_local_build_needs_no_package_outputs_or_ui() {
+        for kind in [false, true] {
+            let checkout = inputs::tests::fake_checkout(if kind {
+                "kind-no-apps"
+            } else {
+                "local-no-apps"
+            });
+            std::fs::remove_dir_all(checkout.0.join("apps/target")).unwrap();
+            let roles = exported_roles(if kind {
+                "kind-no-apps"
+            } else {
+                "local-no-apps"
+            });
+            let cluster = kind.then(|| {
+                let mut cluster = production_cluster();
+                cluster.provider = crate::platform::document::Provider::Kind;
+                cluster.buckets.web.clear();
+                cluster
+            });
+            let request = BuildPlatformRequest {
+                cluster,
+                cloud: false,
+                repository: checkout.0.clone(),
+                registry: "localhost:5000".into(),
+                version: VERSION.into(),
+                out: checkout.0.join("chart"),
+            };
+            let (result, calls) = record_in(
+                &request,
+                &checkout,
+                &roles,
+                "\0",
+                &BTreeSet::new(),
+                &mut FakeComponents::default(),
+            )
+            .await;
+            let pinned = result.unwrap();
+            let images = &pinned.0;
+            assert_eq!(
+                images.keys().copied().collect::<BTreeSet<_>>(),
+                selected_images(&request).iter().copied().collect()
+            );
+            assert!(
+                calls
+                    .iter()
+                    .all(|call| !call.starts_with("pnpm ") && !call.contains("apps-target="))
+            );
+            let record = ui_build_record(&request).unwrap();
+            assert_eq!(record.platform_ui, None);
+            copy_platform_sources(&checkout.0);
+            stamp_chart(&request, pinned, &record, &StageDurations::default()).unwrap();
+            assert!(request.out.join("platform/identity/Chart.yaml").is_file());
+            std::fs::remove_dir_all(checkout.0).unwrap();
+            std::fs::remove_dir_all(roles).unwrap();
+        }
     }
 
     #[tokio::test]
-    async fn stamp_only_requires_the_local_ui_before_reading_the_registry() {
+    async fn qualification_build_requires_package_outputs_before_building() {
+        let repository =
+            std::env::temp_dir().join(format!("wamn-qualification-no-apps-{}", std::process::id()));
+        let error = build_platform(&production_request(&repository))
+            .await
+            .unwrap_err();
+        assert!(format!("{error:#}").contains("apps/target/wamn"));
+    }
+
+    #[tokio::test]
+    async fn stamp_only_requires_selected_ui_before_reading_the_registry() {
         let repository =
             std::env::temp_dir().join(format!("wamn-stamp-no-ui-{}", std::process::id()));
         let error = stamp_only(&BuildPlatformRequest {
-            cluster: None,
+            cluster: Some(production_cluster()),
             cloud: false,
             out: repository.join("chart"),
             repository: repository.clone(),
@@ -1897,30 +2025,22 @@ mod tests {
         }
     }
 
-    type Pinned = ([String; 5], (String, String));
-
     /// Run `build_then_push` on `checkout` against a fake registry that holds
     /// the image tags `images`, and return its result with `program args…` of
     /// each command. `fail` fails the command that contains it.
     async fn record_in(
+        request: &BuildPlatformRequest,
         checkout: &(PathBuf, String, String),
         roles: &Path,
         fail: &str,
         images: &BTreeSet<String>,
         components: &mut FakeComponents,
     ) -> (anyhow::Result<Pinned>, Vec<String>) {
-        let (repository, root, apps) = checkout;
+        let (_, root, apps) = checkout;
         let calls = std::cell::RefCell::new(Vec::new());
         let durations = StageDurations::default();
         let result = build_then_push(
-            &BuildPlatformRequest {
-                cluster: None,
-                cloud: false,
-                repository: repository.clone(),
-                registry: "localhost:5000".to_owned(),
-                version: VERSION.into(),
-                out: PathBuf::from("/chart"),
-            },
+            request,
             roles,
             async |command: &mut Command| {
                 let std = command.as_std();
@@ -1957,7 +2077,7 @@ mod tests {
         .await;
         if result.is_ok() {
             let durations = durations.into_inner().unwrap();
-            for target in IMAGES {
+            for &target in selected_images(request) {
                 let built = calls
                     .borrow()
                     .iter()
@@ -1968,8 +2088,8 @@ mod tests {
                 );
                 assert_eq!(durations.contains_key(&format!("copy-{target}")), !built);
             }
+            assert_eq!(durations.contains_key("ui-build"), selects_ui(request));
             for stage in [
-                "ui-build",
                 "input-hashes",
                 "input-lookups",
                 "roles-export",
@@ -2052,11 +2172,23 @@ mod tests {
         assert!(!plan.images.contains_key("host"));
     }
 
+    fn production_request(repository: &Path) -> BuildPlatformRequest {
+        BuildPlatformRequest {
+            cluster: Some(production_cluster()),
+            cloud: false,
+            repository: repository.to_owned(),
+            registry: "localhost:5000".into(),
+            version: VERSION.into(),
+            out: repository.join("chart"),
+        }
+    }
+
     /// Run `build_then_push` on a fresh fake checkout with an empty registry;
     /// the run must fail.
     async fn record(roles: &Path, fail: &str) -> (anyhow::Error, Vec<String>) {
         let checkout = inputs::tests::fake_checkout(&format!("record-{}", fail.len()));
         let (result, calls) = record_in(
+            &production_request(&checkout.0),
             &checkout,
             roles,
             fail,
@@ -2085,8 +2217,15 @@ mod tests {
         let roles = exported_roles("copy-or-build");
         let mut components = FakeComponents::default();
         // No input tag exists, so every target builds as before.
-        let (first, calls) =
-            record_in(&checkout, &roles, "\0", &BTreeSet::new(), &mut components).await;
+        let (first, calls) = record_in(
+            &production_request(&checkout.0),
+            &checkout,
+            &roles,
+            "\0",
+            &BTreeSet::new(),
+            &mut components,
+        )
+        .await;
         first.expect("the first build succeeds");
         let builds = |calls: &[String]| {
             calls
@@ -2095,7 +2234,11 @@ mod tests {
                 .cloned()
                 .collect::<Vec<_>>()
         };
-        assert_eq!(builds(&calls).len(), 6, "{calls:?}");
+        assert_eq!(
+            builds(&calls).len(),
+            selected_images(&production_request(&checkout.0)).len() + 1,
+            "{calls:?}"
+        );
         assert!(
             !calls.iter().any(|call| call.contains("imagetools create")),
             "{calls:?}"
@@ -2106,7 +2249,11 @@ mod tests {
             .filter(|reference| reference.contains(":input-"))
             .map(str::to_owned)
             .collect();
-        assert_eq!(tags.len(), 5, "{calls:?}");
+        assert_eq!(
+            tags.len(),
+            selected_images(&production_request(&checkout.0)).len(),
+            "{calls:?}"
+        );
         assert!(
             builds(&calls)
                 .iter()
@@ -2124,10 +2271,20 @@ mod tests {
         )
         .unwrap();
         components.pushed.clear();
-        let (second, calls) = record_in(&checkout, &roles, "\0", &tags, &mut components).await;
+        let (second, calls) = record_in(
+            &production_request(&checkout.0),
+            &checkout,
+            &roles,
+            "\0",
+            &tags,
+            &mut components,
+        )
+        .await;
         let _ = std::fs::remove_dir_all(&checkout.0);
         let _ = std::fs::remove_dir_all(&roles);
-        let ([host, runner, ..], _) = second.expect("the second build succeeds");
+        let (images, _) = second.expect("the second build succeeds");
+        let host = &images["host"];
+        let runner = &images["runner"];
         // The roles always build; their manifests are compared by wasm layer.
         let built = builds(&calls);
         assert_eq!(built.len(), 2, "{calls:?}");
@@ -2137,21 +2294,25 @@ mod tests {
             .iter()
             .filter(|call| call.starts_with("docker buildx imagetools create --prefer-index=false"))
             .collect();
-        assert_eq!(copies.len(), 4, "{calls:?}");
+        assert_eq!(
+            copies.len(),
+            selected_images(&production_request(&checkout.0)).len() - 1,
+            "{calls:?}"
+        );
         assert!(
             copies.iter().all(|call| !call.contains("wamn-runner")),
             "{copies:?}"
         );
         assert_eq!(
             host,
-            format!(
+            &format!(
                 "localhost:5000/wamn-host:{VERSION}@sha256:{}",
                 "c".repeat(64)
             )
         );
         assert_eq!(
             runner,
-            format!(
+            &format!(
                 "localhost:5000/wamn-runner:{VERSION}@sha256:{}",
                 "a".repeat(64)
             )
@@ -2175,8 +2336,15 @@ mod tests {
             .await
             .unwrap();
         components.pushed.clear();
-        let (result, _) =
-            record_in(&checkout, &roles, "\0", &BTreeSet::new(), &mut components).await;
+        let (result, _) = record_in(
+            &production_request(&checkout.0),
+            &checkout,
+            &roles,
+            "\0",
+            &BTreeSet::new(),
+            &mut components,
+        )
+        .await;
         let _ = std::fs::remove_dir_all(&checkout.0);
         let _ = std::fs::remove_dir_all(&roles);
         let (_, (http_pinned, materializer_pinned)) = result.expect("the build succeeds");
@@ -2247,24 +2415,51 @@ mod tests {
         assert_eq!(previous_version(&tags, "0.1.9"), None);
     }
 
+    fn copy_platform_sources(repository: &Path) {
+        let source = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
+        for chart in ["release", "identity"] {
+            let relative = format!("deploy/platform/{chart}");
+            let destination = repository.join(&relative);
+            if destination.exists() {
+                std::fs::remove_dir_all(&destination).unwrap();
+            }
+            std::fs::create_dir_all(destination.parent().unwrap()).unwrap();
+            copy_package_output(&source.join(&relative), &destination).unwrap();
+        }
+        for relative in RESOURCES {
+            let destination = repository.join(relative);
+            std::fs::create_dir_all(destination.parent().unwrap()).unwrap();
+            std::fs::copy(source.join(relative), destination).unwrap();
+        }
+    }
+
     /// Stamp from a fake registry whose tags all resolve except those that
     /// contain `absent`, and return the result with every command run.
-    async fn stamp_recorded(absent: &str, out: &Path) -> (anyhow::Result<PathBuf>, Vec<String>) {
+    async fn stamp_recorded(
+        absent: &str,
+        out: &Path,
+        production: bool,
+    ) -> (anyhow::Result<PathBuf>, Vec<String>) {
         let digest = format!("sha256:{}", "a".repeat(64));
         let mut calls = Vec::new();
+        let repository = out.with_extension("source");
+        copy_platform_sources(&repository);
+        let request = BuildPlatformRequest {
+            cluster: production.then(production_cluster),
+            cloud: false,
+            repository: repository.clone(),
+            registry: "localhost:5000".to_owned(),
+            version: VERSION.into(),
+            out: out.to_owned(),
+        };
+        if selects_ui(&request) {
+            let dist = platform_ui_dist(&repository);
+            std::fs::create_dir_all(&dist).unwrap();
+            std::fs::write(dist.join("index.html"), "selected UI").unwrap();
+        }
         let stamped = stamp_from_registry(
-            &BuildPlatformRequest {
-                cluster: None,
-                cloud: false,
-                repository: Path::new(env!("CARGO_MANIFEST_DIR")).join("../../.."),
-                registry: "localhost:5000".to_owned(),
-                version: VERSION.into(),
-                out: out.to_owned(),
-            },
-            &PlatformBuildRecord {
-                platform_ui: digest.clone(),
-                stage_durations_ms: BTreeMap::new(),
-            },
+            &request,
+            &ui_build_record(&request).unwrap(),
             &StageDurations::default(),
             async |command: &mut Command| {
                 let std = command.as_std();
@@ -2283,71 +2478,109 @@ mod tests {
             },
         )
         .await;
+        std::fs::remove_dir_all(repository).unwrap();
         (stamped, calls)
     }
 
     #[tokio::test]
-    async fn stamp_only_stamps_the_seven_registry_digests_and_builds_nothing() {
-        let out = std::env::temp_dir().join(format!("wamn-stamp-only-{}", std::process::id()));
-        let (stamped, calls) = stamp_recorded("\0", &out).await;
-        let build_record: PlatformBuildRecord =
-            serde_json::from_slice(&std::fs::read(out.join(BUILD_RECORD_FILE)).unwrap()).unwrap();
-        assert_eq!(
-            build_record.platform_ui,
-            format!("sha256:{}", "a".repeat(64))
-        );
-        assert!(
-            build_record
-                .stage_durations_ms
-                .contains_key("registry-reads")
-        );
-        assert!(build_record.stage_durations_ms.contains_key("stamp"));
-        assert!(
-            !build_record
-                .stage_durations_ms
-                .contains_key("image-build-host")
-        );
-        let values = stamped
-            .and_then(|chart| Ok(std::fs::read_to_string(chart.join("values.yaml"))?))
-            .map(|text| serde_yaml::from_str::<serde_yaml::Value>(&text));
-        let _ = std::fs::remove_dir_all(&out);
-        let values = values
-            .expect("the chart is stamped")
-            .expect("parse the values");
-        let digest = format!("sha256:{}", "a".repeat(64));
-        let image = &values["runtime-operator"]["runtime"]["image"];
-        assert_eq!(
-            image["repository"].as_str(),
-            Some("localhost:5000/wamn-host")
-        );
-        assert_eq!(image["tag"].as_str(), Some(&*format!("{VERSION}@{digest}")));
-        let platform = &values["platform"];
-        assert_eq!(
-            platform["roles"]["http"]["image"].as_str(),
-            Some(&*format!("localhost:5000/wamn/http@{digest}"))
-        );
-        assert_eq!(
-            platform["gates"]["image"].as_str(),
-            Some(&*format!("localhost:5000/wamn-gates:{VERSION}@{digest}"))
-        );
-        assert_eq!(
-            platform["edge"]["image"].as_str(),
-            Some(&*format!("localhost:5000/wamn-edge-web:{VERSION}@{digest}"))
-        );
-        assert_eq!(calls.len(), 5, "{calls:?}");
-        assert!(
-            calls
-                .iter()
-                .all(|call| call.starts_with("docker buildx imagetools inspect")),
-            "{calls:?}"
-        );
+    async fn stamp_only_stamps_selected_digests_and_packages_portable_resources() {
+        for production in [false, true] {
+            let out = std::env::temp_dir().join(format!(
+                "wamn-stamp-only-{production}-{}",
+                std::process::id()
+            ));
+            let (stamped, calls) = stamp_recorded("\0", &out, production).await;
+            let build_record: PlatformBuildRecord =
+                serde_json::from_slice(&std::fs::read(out.join(BUILD_RECORD_FILE)).unwrap())
+                    .unwrap();
+            assert_eq!(build_record.platform_ui.is_some(), production);
+            let repository = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
+            for resource in RESOURCES {
+                let source = repository.join(resource);
+                assert_eq!(
+                    std::fs::read(&source).unwrap(),
+                    std::fs::read(
+                        out.join("platform/resources")
+                            .join(source.file_name().unwrap())
+                    )
+                    .unwrap()
+                );
+            }
+            let mut identity_files = Vec::new();
+            let identity = repository.join("deploy/platform/identity");
+            wamn_package_control::web_artifact::collect(&identity, &mut identity_files).unwrap();
+            for source in identity_files {
+                assert_eq!(
+                    std::fs::read(&source).unwrap(),
+                    std::fs::read(
+                        out.join("platform/identity")
+                            .join(source.strip_prefix(&identity).unwrap())
+                    )
+                    .unwrap()
+                );
+            }
+            assert!(
+                build_record
+                    .stage_durations_ms
+                    .contains_key("registry-reads")
+            );
+            assert!(build_record.stage_durations_ms.contains_key("stamp"));
+            assert!(
+                !build_record
+                    .stage_durations_ms
+                    .contains_key("image-build-host")
+            );
+            let values = stamped
+                .and_then(|chart| Ok(std::fs::read_to_string(chart.join("values.yaml"))?))
+                .map(|text| serde_yaml::from_str::<serde_yaml::Value>(&text));
+            let _ = std::fs::remove_dir_all(&out);
+            let values = values
+                .expect("the chart is stamped")
+                .expect("parse the values");
+            let digest = format!("sha256:{}", "a".repeat(64));
+            let image = &values["runtime-operator"]["runtime"]["image"];
+            assert_eq!(
+                image["repository"].as_str(),
+                Some("localhost:5000/wamn-host")
+            );
+            assert_eq!(image["tag"].as_str(), Some(&*format!("{VERSION}@{digest}")));
+            let platform = &values["platform"];
+            for (_, role) in ROLES {
+                assert_eq!(
+                    platform["roles"][role]["image"].as_str(),
+                    Some(&*format!("localhost:5000/wamn/{role}@{digest}"))
+                );
+            }
+            let mut request = production_request(&repository);
+            request.cluster = production.then(production_cluster);
+            for (field, value) in platform.as_mapping().unwrap() {
+                let field = field.as_str().unwrap();
+                if field == "roles" {
+                    continue;
+                }
+                let target = if field == "edge" { "edge-web" } else { field };
+                let expected = if selected_images(&request).contains(&target) {
+                    format!("localhost:5000/wamn-{target}:{VERSION}@{digest}")
+                } else {
+                    String::new()
+                };
+                assert_eq!(value["image"].as_str(), Some(expected.as_str()), "{target}");
+            }
+            assert_eq!(calls.len(), selected_images(&request).len(), "{calls:?}");
+            assert!(
+                calls
+                    .iter()
+                    .all(|call| call.starts_with("docker buildx imagetools inspect")),
+                "{calls:?}"
+            );
+        }
     }
 
     #[tokio::test]
     async fn stamp_only_refuses_and_names_a_missing_image() {
         let out =
             std::env::temp_dir().join(format!("wamn-stamp-only-missing-{}", std::process::id()));
-        let (stamped, calls) = stamp_recorded("wamn/materializer", &out).await;
+        let (stamped, calls) = stamp_recorded("wamn/materializer", &out, false).await;
         let error = stamped.expect_err("a missing role component is refused");
         assert!(!out.exists());
         let message = error.to_string();
@@ -2384,6 +2617,7 @@ mod tests {
         let roles = exported_roles("order");
         let checkout = inputs::tests::fake_checkout("order");
         let (result, calls) = record_in(
+            &production_request(&checkout.0),
             &checkout,
             &roles,
             "\0",
@@ -2403,8 +2637,20 @@ mod tests {
             .filter(|(_, call)| call.starts_with("docker build "))
             .map(|(index, _)| index)
             .collect::<Vec<_>>();
-        assert_eq!(builds.len(), 6, "{calls:?}");
+        assert_eq!(
+            builds.len(),
+            selected_images(&production_request(&checkout.0)).len() + 1,
+            "{calls:?}"
+        );
         assert!(builds.iter().all(|index| *index < first_push), "{calls:?}");
+        for index in &builds {
+            assert_eq!(
+                calls[*index].contains("--build-context apps-target="),
+                calls[*index].contains("--target runner "),
+                "{}",
+                calls[*index],
+            );
+        }
         let key = checkout_key(&checkout.0).unwrap();
         let _ = std::fs::remove_dir_all(&checkout.0);
         assert!(

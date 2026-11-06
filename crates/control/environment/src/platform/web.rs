@@ -292,6 +292,9 @@ pub(crate) fn platform_ui_source(
                 build_record_path.display()
             )
         })?)?;
+    let expected = build_record
+        .platform_ui
+        .context("the platform build record does not select the platform UI")?;
     let version = wamn_release_control::release_chart::chart_version(chart)?;
     let platform = wamn_release_control::release_chart::chart_version(
         &repository.join("deploy/platform/release"),
@@ -302,7 +305,7 @@ pub(crate) fn platform_ui_source(
     );
     let dist = platform_ui_dist(repository);
     ensure!(
-        platform_ui_digest(&dist)? == build_record.platform_ui,
+        platform_ui_digest(&dist)? == expected,
         "the platform UI build {} differs from the platform build record {}",
         dist.display(),
         build_record_path.display()
@@ -337,7 +340,7 @@ mod tests {
         std::fs::write(
             chart.join(BUILD_RECORD_FILE),
             serde_json::to_vec(&PlatformBuildRecord {
-                platform_ui: platform_ui_digest(&dist).unwrap(),
+                platform_ui: Some(platform_ui_digest(&dist).unwrap()),
                 stage_durations_ms: std::collections::BTreeMap::new(),
             })
             .unwrap(),

@@ -22,7 +22,7 @@ async fn platform_ui_upload_uses_the_build_record_and_a_version_prefix_with_org_
     std::fs::write(
         chart.join(BUILD_RECORD_FILE),
         serde_json::to_vec(&PlatformBuildRecord {
-            platform_ui: platform_ui_digest(&dist).unwrap(),
+            platform_ui: Some(platform_ui_digest(&dist).unwrap()),
             stage_durations_ms: std::collections::BTreeMap::new(),
         })
         .unwrap(),
@@ -54,6 +54,17 @@ async fn platform_ui_upload_uses_the_build_record_and_a_version_prefix_with_org_
             .to_string()
             .contains("differs from the platform build record")
     );
+    std::fs::write(dist.join("assets/ui.js"), b"platform script").unwrap();
+    std::fs::write(
+        chart.join(BUILD_RECORD_FILE),
+        serde_json::to_vec(&PlatformBuildRecord {
+            platform_ui: None,
+            stage_durations_ms: std::collections::BTreeMap::new(),
+        })
+        .unwrap(),
+    )
+    .unwrap();
+    assert!(platform_ui_source(&repository, &chart).is_err());
     std::fs::remove_file(chart.join(BUILD_RECORD_FILE)).unwrap();
     assert!(
         platform_ui_source(&repository, &chart)

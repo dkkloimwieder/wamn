@@ -264,7 +264,7 @@ pub(in super::super) fn input_hash(target: &str, files: &BTreeMap<String, String
         "format": "wamn-input-hash/1",
         "target": target,
         // The checkout key names cache mounts only, so it is left out.
-        "arguments": super::super::docker_arguments("", "Dockerfile", "apps-target"),
+        "arguments": super::super::docker_arguments("", "Dockerfile", (target == "runner").then_some(Path::new("apps-target"))),
         "labels": ["wamn.dev/build-profile=release"],
         "files": files,
     });

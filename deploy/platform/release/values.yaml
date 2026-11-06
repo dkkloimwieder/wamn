@@ -89,6 +89,8 @@ platform:
   # Outside the image set and the qualification key (R12): the images
   # `qualify-release` reads. The runner is a stage FROM `wamn-ctl` that carries
   # the case binaries. `<repository>[:<tag>]@sha256:<hex>`.
+  ctl:
+    image: ""
   runner:
     image: ""
   gates:

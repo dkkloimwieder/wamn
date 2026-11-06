@@ -81,6 +81,14 @@ fn declared(target: &str) -> anyhow::Result<Declared> {
             dropped: none,
             apps_target: false,
         },
+        "ctl" => Declared {
+            native: &["wamn-ctl", "wamn-scenario-worker"],
+            cases: none,
+            components: COMPONENTS,
+            paths: &["tools/guest-rustflags"],
+            dropped: none,
+            apps_target: false,
+        },
         "identity" => Declared {
             native: &["wamn-identity"],
             cases: none,
@@ -608,7 +616,7 @@ pub(super) mod tests {
     fn hashes(repository: &Path, root: &str, apps: &str) -> BTreeMap<&'static str, String> {
         let root = parse_metadata(&serde_json::from_str(root).unwrap()).unwrap();
         let apps = parse_metadata(&serde_json::from_str(apps).unwrap()).unwrap();
-        ["host", "runner", "gates", "identity", "edge-web"]
+        ["host", "ctl", "runner", "gates", "identity", "edge-web"]
             .into_iter()
             .map(|target| {
                 let files = input_files(repository, target, &root, &apps).unwrap();
@@ -637,15 +645,15 @@ pub(super) mod tests {
                 .map(|(target, _)| target)
                 .collect::<Vec<_>>()
         };
-        let all = ["edge-web", "gates", "host", "identity", "runner"];
+        let all: Vec<_> = hashes(&repository, &root, &apps).into_keys().collect();
         // The chart values reach the images whose binaries embed them.
         assert_eq!(
             change("deploy/platform/release/values.yaml", "host: {a: 1}\n"),
-            ["gates", "runner"]
+            ["ctl", "gates", "runner"]
         );
         assert_eq!(
             change("crates/control/src/lib.rs", "// 0.1.2"),
-            ["gates", "runner"]
+            ["ctl", "gates", "runner"]
         );
         // A dev dependency of the cases reaches the runner only.
         assert_eq!(
@@ -670,11 +678,11 @@ pub(super) mod tests {
         );
         assert_eq!(
             change("apps/platform/http-route/src/lib.rs", "// new"),
-            ["gates", "runner"]
+            ["ctl", "gates", "runner"]
         );
         assert_eq!(
             change("tools/guest-rustflags", "#!/bin/sh\necho\n"),
-            ["gates", "runner"]
+            ["ctl", "gates", "runner"]
         );
         assert_eq!(change("deploy/gcp/cluster.k", "new"), ["runner"]);
         assert_eq!(change("vendor/example/src/lib.rs", "// changed"), all);
@@ -742,7 +750,7 @@ pub(super) mod tests {
     /// changed one telemetry check of the qualification cases, which reaches
     /// the gates and runner inputs only.
     #[test]
-    fn a_version_bump_of_this_checkout_leaves_every_image_unchanged() {
+    fn a_version_bump_of_this_checkout_leaves_selected_images_unchanged() {
         let repository =
             std::fs::canonicalize(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..")).unwrap();
         let graph = |manifest: &str| {
@@ -769,7 +777,15 @@ pub(super) mod tests {
         };
         let (root, apps) = (graph("Cargo.toml"), graph("apps/Cargo.toml"));
         let bump = "deploy/platform/release/Chart.yaml";
-        for target in ["host", "identity", "edge-web", "gates", "runner"] {
+        let request = crate::platform_build::BuildPlatformRequest {
+            repository: repository.clone(),
+            version: "0.1.1".into(),
+            registry: "localhost:5000".into(),
+            out: repository.join("unused"),
+            cluster: None,
+            cloud: false,
+        };
+        for target in crate::platform_build::selected_images(&request) {
             let files = input_files(&repository, target, &root, &apps).unwrap();
             assert!(!files.contains_key(bump), "{target} hashes {bump}");
             assert!(files.contains_key("Dockerfile"), "{target}");
