@@ -221,7 +221,13 @@ async fn membership_job(
     if let Err(error) = waited {
         // The job's own output names the step that kept it from completing.
         let logs = kubectl(resources)
-            .args(["-n", &resources.name, "logs", "job/membership-test", "--all-containers"])
+            .args([
+                "-n",
+                &resources.name,
+                "logs",
+                "job/membership-test",
+                "--all-containers",
+            ])
             .output()
             .await
             .map(|output| String::from_utf8_lossy(&output.stdout).into_owned())

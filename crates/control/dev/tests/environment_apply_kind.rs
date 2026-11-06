@@ -1179,7 +1179,7 @@ async fn scenario(run: &mut Run, repository: &Path, source: &Path) -> anyhow::Re
     run.kept.release_digest.clone_from(&digest);
     run.kept.image_set = Some(set.clone());
     let platform = check_platform(run, &system_url, chart, events);
-    let observer = observer_url(run, &platform).await?;
+    let read_url = observer_url(run, &platform).await?;
     let mut context = CheckContext {
         repository: repository.to_owned(),
         platform: platform.clone(),
@@ -1207,7 +1207,7 @@ async fn scenario(run: &mut Run, repository: &Path, source: &Path) -> anyhow::Re
             .get(PACKAGE)
             .and_then(|app| app.connections.get("labels"))
         {
-            let (system, driver) = connect(&observer).await?;
+            let (system, driver) = connect(&read_url).await?;
             let exists = system
                 .query_opt(
                     "SELECT 1 FROM registry.connection c JOIN registry.integration i ON i.id=c.integration_id WHERE c.org=$1 AND i.name=$2 AND c.env=$3",
@@ -1517,7 +1517,7 @@ async fn scenario(run: &mut Run, repository: &Path, source: &Path) -> anyhow::Re
             run,
             &http_project,
             &integration::WorkflowEnvironment {
-                system_url: &observer,
+                system_url: &read_url,
                 project_url: &http_project_url,
                 scope: &http.triple(),
                 env_key: &http_env_key,
@@ -1596,7 +1596,7 @@ async fn scenario(run: &mut Run, repository: &Path, source: &Path) -> anyhow::Re
     let (auth, _auth_forward) = integration::auth_changes(run).await?;
     integration::enable_trigger(
         &integration::WorkflowEnvironment {
-            system_url: &observer,
+            system_url: &read_url,
             project_url: &http_project_url,
             scope: &http.triple(),
             env_key: &env_key,
@@ -2610,9 +2610,9 @@ async fn host_report_check(run: &mut Run, context: &CheckContext) -> anyhow::Res
     let actor = wamn_control_provision::PlatformComponent::Provisioning
         .principal_id()
         .to_string();
-    let observer = observer_url(run, &platform).await?;
+    let read_url = observer_url(run, &platform).await?;
     let set_budget = async |budget: i32| -> anyhow::Result<i32> {
-        let (system, task) = connect(&observer).await?;
+        let (system, task) = connect(&read_url).await?;
         system.batch_execute("SET ROLE wamn_system").await?;
         let before: i32 = system
             .query_one(
@@ -2984,7 +2984,7 @@ async fn connection_generation(
 async fn show_check(run: &mut Run, context: &CheckContext) -> anyhow::Result<EnvironmentDocument> {
     let platform = &context.platform;
     let name = release_name(ORG, PROJECT, "dev")?;
-    let (system, task) = connect(&observer_url(run, &platform).await?).await?;
+    let (system, task) = connect(&observer_url(run, platform).await?).await?;
     system.batch_execute("SET ROLE wamn_system").await?;
     let before = if let Some(expected) = context.show_expected {
         expected

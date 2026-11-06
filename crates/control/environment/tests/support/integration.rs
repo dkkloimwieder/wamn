@@ -344,8 +344,8 @@ pub async fn exercise(
 
     http_connection::configure(run, &crate::ensure_admin_url(&platform), ENVIRONMENT).await?;
 
-    let observer = crate::observer_url(run, &platform).await?;
-    let (system, system_task) = connect(&observer).await?;
+    let read_url = crate::observer_url(run, &platform).await?;
+    let (system, system_task) = connect(&read_url).await?;
     let suffix: String = system.query_one(
         "SELECT instance_suffix FROM registry.project_envs WHERE org=$1 AND project=$2 AND env=$3",
         &[&ORG, &PROJECT, &ENVIRONMENT],
@@ -498,7 +498,7 @@ pub async fn exercise(
     // (docs/architecture/execution.md#workflows).
     let (auth, _auth_forward) = auth_changes(run).await?;
     let workflows = WorkflowEnvironment {
-        system_url: &observer,
+        system_url: &read_url,
         project_url: project_url.as_str(),
         scope: &scope,
         env_key: &env_key,
