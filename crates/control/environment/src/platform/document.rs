@@ -278,6 +278,23 @@ mod tests {
     }
 
     #[test]
+    fn the_committed_kind_cluster_compiles_without_gcp_inputs() {
+        let file = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../deploy/kind/cluster.k");
+        let compiled =
+            ClusterDocument::compile(&file).expect("the committed kind document compiles");
+        assert_eq!(compiled.provider, Provider::Kind);
+        assert_eq!(compiled.cluster_name, "wamn-local");
+        assert_eq!(compiled.org, "local");
+        assert_eq!(compiled.registry, "localhost:5001");
+        assert_eq!(compiled.route_hosts.control, "control.localhost");
+        assert!(compiled.project_id.is_empty());
+        assert!(compiled.zone.is_empty());
+        assert!(compiled.buckets.web.is_empty());
+        assert!(compiled.buckets.otel.is_empty());
+        assert!(compiled.buckets.state.is_empty());
+    }
+
+    #[test]
     fn kcl_and_json_refuse_fields_the_schema_lacks() {
         for pointer in ["", "/buckets", "/route_hosts"] {
             let mut unknown = document();
