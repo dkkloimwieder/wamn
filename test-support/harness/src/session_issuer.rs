@@ -257,22 +257,24 @@ pub async fn prepare(
             )),
     )
     .await?;
-    // Identity owns the memory buckets, as on platform apply: it gets its own
-    // NATS client certificate in its namespace and the one NATS of the case.
-    let nats_certificate = cluster.work.join("session-identity-nats.json");
-    fs::write(
-        &nats_certificate,
-        serde_json::to_vec(&json!({
-            "apiVersion": "cert-manager.io/v1", "kind": "Certificate",
-            "metadata": {"name": "wamn-identity-nats", "namespace": cluster.namespace},
-            "spec": {
-                "secretName": "wamn-identity-nats", "commonName": "wamn-identity",
-                "dnsNames": ["wamn-identity"],
-                "usages": ["client auth", "digital signature", "key encipherment"],
-                "issuerRef": {"kind": "ClusterIssuer", "name": "wasmcloud-ca", "group": "cert-manager.io"}
-            }
-        }))?,
+    // Identity owns the memory buckets, as on platform apply: it gets the
+    // product's NATS client certificate in its namespace and the one NATS.
+    let manifest = fs::read_to_string(
+        cluster
+            .repository
+            .join("deploy/infra/nats-certificates.yaml"),
     )?;
+    let mut certificate = serde_yaml::Deserializer::from_str(&manifest)
+        .map(Value::deserialize)
+        .collect::<Result<Vec<_>, _>>()?
+        .into_iter()
+        .find(|object| {
+            object["kind"] == "Certificate" && object["metadata"]["name"] == "wamn-identity-nats"
+        })
+        .context("deploy/infra/nats-certificates.yaml has the identity NATS certificate")?;
+    certificate["metadata"]["namespace"] = json!(cluster.namespace);
+    let nats_certificate = cluster.work.join("session-identity-nats.json");
+    fs::write(&nats_certificate, serde_json::to_vec(&certificate)?)?;
     apply(cluster, &nats_certificate).await?;
     checked(kubectl(cluster).args([
         "-n",
