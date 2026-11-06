@@ -83,9 +83,6 @@ pub fn host_values(
             "WAMN_EVT_DUP_WINDOW_SECS",
             input.dup_window_secs.to_string(),
         ),
-        ("WAMN_PG_GUEST_POOL_MAX", "14".into()),
-        ("WAMN_PG_PLATFORM_POOL_MAX", "2".into()),
-        ("WAMN_HTTP_ROUTE_IN_FLIGHT_LIMIT", "64".into()),
         ("WAMN_WASMTIME_CACHE_DIR", "/tmp/wamn-wasmtime-cache".into()),
         ("OTEL_BSP_SCHEDULE_DELAY", "1".into()),
         ("OTEL_BSP_MAX_EXPORT_BATCH_SIZE", "1".into()),
@@ -209,6 +206,18 @@ pub fn assert_complete(documents: &[Value], secrets: &[Value]) -> anyhow::Result
                 .as_array()
                 .context("deployment containers")?
             {
+                // The chart appends a group's env to the shared defaults
+                // without merging by name; the API server refuses a repeat.
+                let mut names = std::collections::BTreeSet::new();
+                for variable in container["env"].as_array().into_iter().flatten() {
+                    let name = variable["name"].as_str().context("env name")?;
+                    ensure!(
+                        names.insert(name),
+                        "{} container {} sets {name} twice",
+                        document["metadata"]["name"],
+                        container["name"]
+                    );
+                }
                 for variable in container["env"].as_array().into_iter().flatten() {
                     let Some(path) = variable["value"].as_str() else {
                         continue;
