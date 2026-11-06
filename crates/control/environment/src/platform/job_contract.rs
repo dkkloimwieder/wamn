@@ -179,3 +179,48 @@ pub fn access(job: &JobRequest) -> anyhow::Result<Vec<Access>> {
         })
         .collect())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_retained_operator_copy_only_reads_identity_and_writes_hosts_secrets() {
+        let document = serde_json::from_value(serde_json::json!({
+            "provider":"kind", "project_id":"", "zone":"", "cluster_name":"test",
+            "org":"acme", "owner_email":"owner@example.com", "registry":"localhost:5001",
+            "buckets":{"web":"", "otel":"", "state":""},
+            "route_hosts":{"control":"control.example.com"}, "resend_from":""
+        }))
+        .unwrap();
+        let job = super::super::control::operator_request(&document, "ctl-image").unwrap();
+        assert!(job.calls_kubernetes);
+        let permissions = access(&job).unwrap();
+        let actual: BTreeMap<_, _> = permissions
+            .into_iter()
+            .map(|access| {
+                (
+                    access.namespace,
+                    serde_json::to_value(access.rules).unwrap(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            actual,
+            BTreeMap::from([
+                (
+                    "identity".into(),
+                    serde_json::json!([{
+                        "apiGroups":[""], "resources":["secrets"], "verbs":["get"]
+                    }])
+                ),
+                (
+                    "hosts".into(),
+                    serde_json::json!([{
+                        "apiGroups":[""], "resources":["secrets"], "verbs":["get", "create", "patch"]
+                    }])
+                ),
+            ])
+        );
+    }
+}

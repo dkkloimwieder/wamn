@@ -10,13 +10,13 @@ use wamn_release_control::release_chart::Target;
 
 use super::artifact_plan::SelectedChart;
 use super::document::{ClusterDocument, Provider};
-use super::{broker, manifests, provider, resources};
+use super::{bootstrap, broker, manifests, provider, resources};
 use crate::kubectl;
 
 /// Apply platform prerequisites through their Kubernetes and Helm owners.
 ///
 /// # Errors
-/// Returns resource failures, or an incomplete result until bootstrap and services exist.
+/// Returns resource or bootstrap failures, or an incomplete result until services exist.
 pub async fn deploy(
     document: &ClusterDocument,
     chart: &SelectedChart,
@@ -166,13 +166,17 @@ pub async fn deploy(
         "600s",
     )
     .await?;
+    let initialization = bootstrap::initialize(target, document, chart, directory).await;
+    let public_result = directory.join("jobs/platform-system.log");
+    if public_result.exists() {
+        writeln!(output, "{}", std::fs::read_to_string(public_result)?)?;
+    }
+    initialization?;
     writeln!(
         output,
-        "incomplete: platform resources are ready. System bootstrap and services are not implemented"
+        "incomplete: platform resources and system initialization are ready. Services are not implemented"
     )?;
-    anyhow::bail!(
-        "incomplete platform deployment: system bootstrap and services are not implemented"
-    )
+    anyhow::bail!("incomplete platform deployment: services are not implemented")
 }
 
 async fn apply(target: &Target, objects: &[Value]) -> anyhow::Result<()> {
