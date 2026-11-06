@@ -43,6 +43,10 @@ pub async fn initialize(
         .await
         .context("set the database privilege floor after CNPG")?;
     ensure::ensure_project_database(platform, &document, &packages, &admin, admin_url).await?;
+    let drops =
+        super::bindings::project_authority(&platform.system_database_url, &project_url, &document)
+            .await?;
+    platform.auth_changes().await?.publish(drops).await;
     let installed = stage::installed(platform, &document).await?;
     stage::initialize(platform, &document, &installed, &manifest, &project_url).await?;
     Ok(())

@@ -17,29 +17,6 @@ use wamn_package_control::package_artifact::{
     OpenedPackage, PackageRegistry, PackageSource, open_package_source,
 };
 
-/// Run the package stage of the release `digest`, whose manifest is
-/// `manifest`, on the installed packages `analysed` that analysis read.
-/// Returns the manifests of its packages.
-///
-/// # Errors
-///
-/// When an artifact cannot be opened, the installed versions changed since
-/// analysis, or a package application refuses.
-pub async fn stage(
-    platform: &Platform,
-    document: &EnvironmentDocument,
-    analysed: &BTreeMap<String, Installed>,
-    digest: &str,
-    manifest: &wamn_catalog::ServingManifest,
-    project_url: &str,
-) -> anyhow::Result<Vec<PackageManifest>> {
-    let packages = initialize(platform, document, analysed, manifest, project_url).await?;
-    let env_key =
-        wamn_control_provision::project_env_key(&document.org, &document.project, &document.env);
-    write_release(project_url, &env_key, digest, manifest).await?;
-    Ok(packages)
-}
-
 /// Initialize absent package baselines in dependency order, without selecting a release.
 /// Existing baselines keep their SQL records even when the selected version changes.
 pub async fn initialize(
@@ -200,10 +177,6 @@ pub async fn materialize_application_principals(
     if applications.is_empty() {
         return Ok(());
     }
-    let dependency_manifests = packages
-        .iter()
-        .map(|package| (package.package.id.as_str(), package))
-        .collect();
     let mut system = connect(system_url).await?;
     let domain: Option<String> = system
         .query_one("SELECT platform_domain FROM registry.meta", &[])
@@ -255,12 +228,76 @@ pub async fn materialize_application_principals(
         let role = format!("application-{}", package.package.id.replace('_', "-"));
         wamn_platform_identity::application::create_role(&transaction, env_key, &role, &mut drops)
             .await?;
+    }
+    write_runtime_grants(
+        &system,
+        &transaction,
+        env_key,
+        manifest,
+        packages,
+        &mut drops,
+    )
+    .await?;
+    transaction.commit().await?;
+    changes.publish(drops).await;
+    Ok(())
+}
+
+/// Add the selected application's permissions while retaining grants needed by running code.
+/// Principals and generated roles must already exist. Shared or authored roles refuse.
+pub async fn write_runtime_grants(
+    system: &tokio_postgres::Client,
+    transaction: &tokio_postgres::Transaction<'_>,
+    env_key: &str,
+    manifest: &wamn_catalog::ServingManifest,
+    packages: &[PackageManifest],
+    drops: &mut wamn_platform_identity::auth_changes::AuthDrops,
+) -> anyhow::Result<()> {
+    let dependency_manifests = packages
+        .iter()
+        .map(|package| (package.package.id.as_str(), package))
+        .collect();
+    for package in packages.iter().filter(|package| {
+        wamn_release_control::publish_release::composes_integration(package, &manifest.components)
+    }) {
+        let subject = wamn_platform_identity::application_subject(env_key, &package.package.id)?;
+        let principal = wamn_platform_identity::resolve_subject(
+            system,
+            wamn_platform_identity::PrincipalType::Service,
+            &subject,
+        )
+        .await?
+        .with_context(|| {
+            format!("application principal {subject} is missing; run env initialize")
+        })?;
+        ensure!(
+            principal.status() == wamn_platform_identity::PrincipalStatus::Active,
+            "application principal {subject} is disabled"
+        );
+        let active: bool = transaction.query_one(
+            "SELECT EXISTS (SELECT FROM platform.\"user\" WHERE id=$1::text::uuid AND type='service' AND status='active')",
+            &[&principal.id().as_str()],
+        ).await?.get(0);
+        ensure!(
+            active,
+            "application principal {subject} is absent or inactive in the project; run env initialize"
+        );
+        let role = format!("application-{}", package.package.id.replace('_', "-"));
+        let owned: bool = transaction.query_one(
+            "SELECT EXISTS (SELECT FROM platform.role WHERE name=$1 AND created_by=$3::text::uuid) \
+             AND NOT EXISTS (SELECT FROM platform.user_role WHERE role_name=$1 AND user_id<>$2::text::uuid)",
+            &[&role, &principal.id().as_str(), &wamn_project_state::PlatformComponent::Provisioning.principal_id().to_string()],
+        ).await?.get(0);
+        ensure!(
+            owned,
+            "application role {role} is missing, authored, or shared; run env initialize or resolve its ownership"
+        );
         for permission in wamn_release_control::publish_release::application_dependency_permissions(
             package,
             &dependency_manifests,
         )? {
             wamn_platform_identity::application::mutate_grant(
-                &transaction,
+                transaction,
                 env_key,
                 wamn_platform_identity::application::GrantAuthority::Provisioning,
                 wamn_platform_identity::application::GrantChange::Permission {
@@ -268,12 +305,12 @@ pub async fn materialize_application_principals(
                     reference: &permission,
                     grant: true,
                 },
-                &mut drops,
+                drops,
             )
             .await?;
         }
         wamn_platform_identity::application::mutate_grant(
-            &transaction,
+            transaction,
             env_key,
             wamn_platform_identity::application::GrantAuthority::Provisioning,
             wamn_platform_identity::application::GrantChange::UserRole {
@@ -281,12 +318,10 @@ pub async fn materialize_application_principals(
                 role: &role,
                 grant: true,
             },
-            &mut drops,
+            drops,
         )
         .await?;
     }
-    transaction.commit().await?;
-    changes.publish(drops).await;
     Ok(())
 }
 

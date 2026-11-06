@@ -210,29 +210,54 @@ pub async fn write(
         wamn_control_provision::PlatformComponent::Provisioning,
     ))
     .await?;
-    let mut names = Vec::new();
-    for (name, integration) in &document.integrations {
-        let row=tx.query_one("SELECT c.id::text,c.integration_type FROM platform.connection c JOIN platform.integration i ON i.id=c.integration_id WHERE i.name=$1 AND i.status='active' AND c.status='active'",&[name]).await?;
-        let id: String = row.get(0);
-        changed += tx.execute("INSERT INTO catalog.release_connection(env_key,manifest_digest,connection_id,version) VALUES ($1,$2,$3::text::uuid,$4) ON CONFLICT (env_key,manifest_digest,connection_id) DO UPDATE SET version=EXCLUDED.version WHERE catalog.release_connection.version IS DISTINCT FROM EXCLUDED.version", &[&env_key,&digest,&id,&integration.version]).await?;
+    for binding in bindings {
+        let active = tx.query_opt(
+            "SELECT 1 FROM platform.connection c JOIN platform.integration i ON i.id=c.integration_id \
+             WHERE c.id=$1::text::uuid AND c.status='active' AND i.status='active'",
+            &[&binding.connection_id],
+        ).await?.is_some();
+        anyhow::ensure!(
+            active,
+            "connection projection {} is absent or inactive; run env connections",
+            binding.connection_id
+        );
+        changed += tx.execute("INSERT INTO catalog.release_connection(env_key,manifest_digest,connection_id,version) VALUES ($1,$2,$3::text::uuid,$4) ON CONFLICT (env_key,manifest_digest,connection_id) DO UPDATE SET version=EXCLUDED.version WHERE catalog.release_connection.version IS DISTINCT FROM EXCLUDED.version", &[&env_key,&digest,&binding.connection_id,&binding.version]).await?;
     }
-    for row in tx.query("SELECT component_digest,package_id,name,interface,mode FROM catalog.connection_requirement WHERE env_key=$1", &[&env_key]).await? {
-        let package: String=row.get(1);
-        let Some(application)=document.application_for_package(&package) else {continue};
-        let name: String=row.get(2);
-        let Some(binding)=bindings.iter().find(|b| b.application==application && b.alias==name) else {continue};
-        let required: String=row.get(3);
-        anyhow::ensure!(exports_satisfy(&binding.exports,std::slice::from_ref(&required)),"integration_import_unsatisfied: {application}.{name}");
+    for row in tx
+        .query(
+            "SELECT q.component_digest,q.package_id,q.name,q.interface,q.mode \
+         FROM catalog.connection_requirement q WHERE q.env_key=$1 AND EXISTS (\
+         SELECT FROM catalog.releases r CROSS JOIN LATERAL \
+         jsonb_array_elements(convert_from(r.canonical_bytes,'UTF8')::jsonb->'components') c \
+         WHERE r.env_key=$1 AND r.manifest_digest=$2 AND c->>'package-id'=q.package_id \
+         AND c->'descriptor'->>'component-digest'=q.component_digest)",
+            &[&env_key, &digest],
+        )
+        .await?
+    {
+        let package: String = row.get(1);
+        let application = document.application_for_package(&package).ok_or_else(|| {
+            anyhow::anyhow!("release package {package} has no sole application owner")
+        })?;
+        let name: String = row.get(2);
+        let binding = bindings
+            .iter()
+            .find(|b| b.application == application && b.alias == name)
+            .ok_or_else(|| anyhow::anyhow!("connection_unbound: {application}.{name}"))?;
+        let required: String = row.get(3);
+        anyhow::ensure!(
+            exports_satisfy(&binding.exports, std::slice::from_ref(&required)),
+            "integration_import_unsatisfied: {application}.{name}"
+        );
         let mode: String = row.get(4);
-        anyhow::ensure!(mode != "read" || mode_satisfies(ConnectionMode::Read, &required, &binding.write_interfaces), "connection_read_imports_write_interface: {application}.{name}");
-        let component: String=row.get(0);
-        names.push(serde_json::json!({"component_digest":component,"package_id":package,"name":name}));
-        changed += tx.execute("INSERT INTO catalog.connection_binding(env_key,manifest_digest,component_digest,package_id,name,connection_id) SELECT $1,$2,$3,$4,$5,$6::text::uuid WHERE EXISTS(SELECT FROM catalog.releases r CROSS JOIN LATERAL jsonb_array_elements(convert_from(r.canonical_bytes,'UTF8')::jsonb->'components') c WHERE r.env_key=$1 AND r.manifest_digest=$2 AND c->>'package-id'=$4 AND c->'descriptor'->>'component-digest'=$3) ON CONFLICT (env_key,manifest_digest,component_digest,package_id,name) DO UPDATE SET connection_id=EXCLUDED.connection_id WHERE catalog.connection_binding.connection_id IS DISTINCT FROM EXCLUDED.connection_id", &[&env_key,&digest,&component,&package,&name,&binding.connection_id]).await?;
+        anyhow::ensure!(
+            mode != "read"
+                || mode_satisfies(ConnectionMode::Read, &required, &binding.write_interfaces),
+            "connection_read_imports_write_interface: {application}.{name}"
+        );
+        let component: String = row.get(0);
+        changed += tx.execute("INSERT INTO catalog.connection_binding(env_key,manifest_digest,component_digest,package_id,name,connection_id) VALUES ($1,$2,$3,$4,$5,$6::text::uuid) ON CONFLICT (env_key,manifest_digest,component_digest,package_id,name) DO UPDATE SET connection_id=EXCLUDED.connection_id WHERE catalog.connection_binding.connection_id IS DISTINCT FROM EXCLUDED.connection_id", &[&env_key,&digest,&component,&package,&name,&binding.connection_id]).await?;
     }
-    let names = serde_json::to_string(&names)?;
-    changed += tx.execute("DELETE FROM catalog.connection_binding b WHERE env_key=$1 AND manifest_digest=$2 AND NOT EXISTS(SELECT FROM jsonb_to_recordset($3::text::jsonb) AS desired(component_digest text,package_id text,name text) WHERE (desired.component_digest,desired.package_id,desired.name)=(b.component_digest,b.package_id,b.name))", &[&env_key,&digest,&names]).await?;
-    let integrations: Vec<&str> = document.integrations.keys().map(String::as_str).collect();
-    changed += tx.execute("DELETE FROM catalog.release_connection r WHERE env_key=$1 AND manifest_digest=$2 AND NOT EXISTS(SELECT FROM platform.connection c JOIN platform.integration i ON i.id=c.integration_id WHERE c.id=r.connection_id AND i.name=ANY($3::text[]))", &[&env_key,&digest,&integrations]).await?;
     if changed > 0 {
         drops.release(env_key, digest);
     }
@@ -269,7 +294,7 @@ pub async fn contract(
     Ok(())
 }
 
-/// Refresh the environment projection under the caller's lifecycle lock.
+/// Refresh shared connection projections during provisioning or explicit connection writes.
 pub async fn project_authority(
     system_url: &str,
     project_url: &str,

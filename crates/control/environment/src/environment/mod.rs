@@ -1,15 +1,4 @@
-//! `wamn-ctl env`: the environment lifecycle
-//! (docs/architecture/overview.md#environment-lifecycle, wamn-snz0).
-//!
-//! An environment is declared in one document, `environment.k`. `apply` moves
-//! the environment toward it, under one lifecycle lock: lock, analyse, ensure,
-//! expand, write, readiness, drain, contract (§10.1). `rollback` is `apply`
-//! of the previous intended release (§11.2), `delete` the one destructive
-//! verb (§12.3). `show` synthesizes the document from the authorities, and
-//! `status` reads the current state (§11.4).
-//!
-//! The platform inputs are environment variables of the verb, not flags and
-//! not document fields (epic decision D2).
+//! Independent environment provisioning, initialization, and targeted application activation.
 
 pub mod analyse;
 pub mod bindings;
@@ -39,7 +28,6 @@ use anyhow::{Context as _, bail};
 
 use analyse::Analysis;
 use document::EnvironmentDocument;
-use lock::LifecycleLock;
 use wamn_identity_client::PatIssuerConfig;
 use wamn_release_control::release_chart;
 
@@ -261,60 +249,42 @@ pub async fn dry_run(
     analyse::analyse(platform, &document, application).await
 }
 
-/// `env apply <file>`: take the lifecycle lock and run the steps of §10.1.
+/// Activate one application without provisioning or initializing its database.
 ///
 /// # Errors
 ///
-/// When the lock is held, the document is refused, or a step fails. The error
-/// names the step.
+/// When the document is refused or an operation fails. The error
+/// names the operation.
 pub async fn apply(
     platform: &Platform,
     file: &Path,
-    admin_url: &str,
     application: Option<&str>,
 ) -> anyhow::Result<Analysis> {
-    let document = analyse::select_application(&EnvironmentDocument::compile(file)?, application)?;
-    LifecycleLock::hold(
-        &platform.system_database_url,
-        &document.triple(),
-        async |_| apply_locked(platform, &document, None, admin_url).await,
-    )
-    .await
+    let document = EnvironmentDocument::compile(file)?;
+    apply_document(platform, &document, application, None).await
 }
 
-/// Steps 2 to 8 of §10.1 under a lifecycle lock the caller holds: analyse,
-/// ensure the substrate, expand (row, policy projection, connections,
-/// packages, the package stage), write the release chart and wait for
-/// readiness, or uninstall it for `release = none`, then drain.
-/// `reason` is a rollback's, kept in the Helm description (§11.2).
-///
-/// Every step is an ensure judged by observation, so a crash anywhere is
-/// repaired by applying again.
-///
-/// # Errors
-///
-/// When the document is refused, or a step fails. The error names the step.
-pub(crate) async fn apply_locked(
+/// Prepare application control records, apply its chart, and observe readiness and drain.
+pub(crate) async fn apply_document(
     platform: &Platform,
     document: &EnvironmentDocument,
+    application: Option<&str>,
     reason: Option<&str>,
-    admin_url: &str,
 ) -> anyhow::Result<Analysis> {
-    let mut analysis = analyse::analyse(platform, document, None).await?;
-    ensure::ensure(platform, document, &analysis, admin_url)
-        .await
-        .context("step 4, ensure the substrate")?;
+    let mut analysis = analyse::analyse(platform, document, application).await?;
     let clients = expand::expand(platform, document, &analysis)
         .await
-        .context("step 5, expand")?;
+        .context("prepare application control records")?;
+    let selected = analyse::select_application(document, Some(&analysis.application))?;
+    let document = &selected;
     let release_name = analysis.authorities.release_name.clone();
     if let Some(release) = &analysis.authorities.release {
         let written = write::write(platform, document, &analysis, release, reason, &clients)
             .await
-            .context("step 6, write the release chart")?;
+            .context("write the application release chart")?;
         readiness::wait(platform, &written)
             .await
-            .context("step 7, readiness")?;
+            .context("wait for application readiness")?;
         analysis
             .plan
             .push(format!("wrote a revision of {release_name}"));
@@ -323,12 +293,12 @@ pub(crate) async fn apply_locked(
         // starts the drain (§12.2).
         release_chart::uninstall(&platform.target, &release_name)
             .await
-            .context("step 6, uninstall the release chart")?;
+            .context("uninstall the application release chart")?;
         analysis.plan.push(format!("uninstalled {release_name}"));
     }
     drain::drain(platform, document, &analysis)
         .await
-        .context("step 8, drain")?;
+        .context("observe application drain")?;
     Ok(analysis)
 }
 

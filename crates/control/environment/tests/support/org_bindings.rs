@@ -3,7 +3,7 @@ use anyhow::Context as _;
 use serde_json::Value;
 use wamn_environment_control::environment::{
     self, Platform,
-    document::{DeclaredRelease, EnvironmentDocument},
+    document::EnvironmentDocument,
 };
 
 pub async fn bind(
@@ -27,27 +27,13 @@ pub async fn bind(
         .await?
         .is_none()
     {
-        let mut empty = document.clone();
-        empty.integrations.clear();
-        for app in empty.applications.values_mut() {
-            app.current = DeclaredRelease::None;
-            app.connections.clear();
-        }
-        let path = std::env::temp_dir().join(format!(
-            "wamn-org-binding-{}-{}.k",
-            std::process::id(),
-            document.env
-        ));
-        std::fs::write(&path, empty.to_kcl())?;
-        let result = Box::pin(environment::apply(
+        environment::ensure::provision_resources(
             platform,
-            &path,
+            document,
+            &[],
             &crate::ensure_admin_url(platform),
-            Some(application),
-        ))
-        .await;
-        std::fs::remove_file(path)?;
-        result?;
+        )
+        .await?;
     }
     // The hosts of a cloud target read the environment Secret, and only a
     // local target reads credential files.

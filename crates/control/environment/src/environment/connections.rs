@@ -91,6 +91,17 @@ pub async fn write(
     let changes = platform.auth_changes().await?;
     changes.publish(auth).await;
     ConnectionChanges::from(&changes).publish(drops).await;
+    let project_url = super::ensure::project_url(platform, &document.triple()).await?;
+    changes
+        .publish(
+            super::bindings::project_authority(
+                &platform.system_database_url,
+                &project_url,
+                document,
+            )
+            .await?,
+        )
+        .await;
     Ok(lines)
 }
 

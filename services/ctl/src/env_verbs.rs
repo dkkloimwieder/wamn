@@ -133,14 +133,7 @@ pub async fn run(command: EnvCommand) -> anyhow::Result<()> {
             let analysis = if args.dry_run {
                 environment::dry_run(&platform, &args.file, args.application.as_deref()).await?
             } else {
-                environment::apply(
-                    &platform,
-                    &args.file,
-                    &std::env::var("WAMN_SYSTEM_ADMIN_URL")
-                        .context("set WAMN_SYSTEM_ADMIN_URL for ensure")?,
-                    args.application.as_deref(),
-                )
-                .await?
+                environment::apply(&platform, &args.file, args.application.as_deref()).await?
             };
             for notice in &analysis.notices {
                 println!("{}", serde_json::to_string(notice)?);
@@ -162,14 +155,8 @@ pub async fn run(command: EnvCommand) -> anyhow::Result<()> {
         }
         EnvCommand::Rollback(args) => {
             let triple = parse_coordinate(&args.coordinate)?;
-            let analysis = environment::rollback::rollback(
-                &platform,
-                &triple,
-                &args.reason,
-                &std::env::var("WAMN_SYSTEM_ADMIN_URL")
-                    .context("set WAMN_SYSTEM_ADMIN_URL for ensure")?,
-            )
-            .await?;
+            let analysis =
+                environment::rollback::rollback(&platform, &triple, &args.reason).await?;
             for line in &analysis.plan {
                 println!("{line}");
             }

@@ -1,0 +1,652 @@
+//! Application preparation preserves SQL, other applications, and running release authority.
+
+use std::collections::{BTreeMap, BTreeSet};
+use std::fmt::Write as _;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+
+use anyhow::Context as _;
+use serde_json::json;
+use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+use wamn_catalog::manifest::PackageManifest;
+use wamn_catalog::{ComponentDescriptor, PackageCoordinate, ServingComponent, ServingManifest};
+use wamn_environment_control::environment::{Platform, document::EnvironmentDocument, expand, sql};
+use wamn_package_artifact::sha256_digest;
+use wamn_test_infrastructure::scratch::ScratchRoot;
+
+const ENV_KEY: &str = "acme--apps--dev";
+const STATE_DIGEST: &str =
+    "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+
+async fn connect(url: &str) -> anyhow::Result<tokio_postgres::Client> {
+    let (client, driver) = tokio_postgres::connect(url, tokio_postgres::NoTls).await?;
+    tokio::spawn(driver);
+    Ok(client)
+}
+
+// Artifact transport only. Initialization and activation use the product operations.
+struct Registry {
+    address: String,
+    ca: std::path::PathBuf,
+    auth: std::path::PathBuf,
+    task: tokio::task::JoinHandle<()>,
+}
+impl Registry {
+    async fn start(root: &Path, objects: BTreeMap<String, Vec<u8>>) -> anyhow::Result<Self> {
+        let certificate = rcgen::generate_simple_self_signed(vec!["localhost".into()])?;
+        let ca = root.join("registry.crt");
+        std::fs::write(&ca, certificate.cert.pem())?;
+        let config = tokio_rustls::rustls::ServerConfig::builder()
+            .with_no_client_auth()
+            .with_single_cert(
+                vec![certificate.cert.der().clone()],
+                tokio_rustls::rustls::pki_types::PrivatePkcs8KeyDer::from(
+                    certificate.signing_key.serialize_der(),
+                )
+                .into(),
+            )?;
+        let acceptor = tokio_rustls::TlsAcceptor::from(Arc::new(config));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+        let address = format!("localhost:{}", listener.local_addr()?.port());
+        let auth = root.join("registry.json");
+        std::fs::write(
+            &auth,
+            serde_json::to_vec(
+                &json!({"auths": {&address: {"username":"test", "password":"test"}}}),
+            )?,
+        )?;
+        let task = tokio::spawn(async move {
+            while let Ok((socket, _)) = listener.accept().await {
+                let Ok(mut socket) = acceptor.accept(socket).await else {
+                    continue;
+                };
+                let mut request = Vec::new();
+                while !request.ends_with(b"\r\n\r\n") {
+                    let mut byte = [0];
+                    if socket.read_exact(&mut byte).await.is_err() {
+                        break;
+                    }
+                    request.push(byte[0]);
+                }
+                let request = String::from_utf8_lossy(&request);
+                let path = request.split_whitespace().nth(1).unwrap_or("");
+                let body = objects
+                    .get(path)
+                    .map(Vec::as_slice)
+                    .or_else(|| (path == "/v2/").then_some(b"{}"));
+                let status = if body.is_some() { 200 } else { 404 };
+                let body = body.unwrap_or(b"");
+                let header = format!(
+                    "HTTP/1.1 {status} Fixture\r\nContent-Length: {}\r\nContent-Type: application/vnd.oci.image.manifest.v1+json\r\nDocker-Content-Digest: {}\r\nConnection: close\r\n\r\n",
+                    body.len(),
+                    sha256_digest(body)
+                );
+                if socket.write_all(header.as_bytes()).await.is_ok()
+                    && !request.starts_with("HEAD ")
+                {
+                    let _ = socket.write_all(body).await;
+                }
+            }
+        });
+        Ok(Self {
+            address,
+            ca,
+            auth,
+            task,
+        })
+    }
+}
+impl Drop for Registry {
+    fn drop(&mut self) {
+        self.task.abort();
+    }
+}
+
+fn artifact(
+    objects: &mut BTreeMap<String, Vec<u8>>,
+    repository: &str,
+    tag: &str,
+    manifest: Vec<u8>,
+    blobs: impl IntoIterator<Item = Vec<u8>>,
+) {
+    objects.insert(format!("/v2/{repository}/manifests/{tag}"), manifest);
+    for bytes in blobs {
+        objects.insert(
+            format!("/v2/{repository}/blobs/{}", sha256_digest(&bytes)),
+            bytes,
+        );
+    }
+}
+
+fn component(
+    objects: &mut BTreeMap<String, Vec<u8>>,
+    name: &str,
+    aliases: &[&str],
+) -> anyhow::Result<ServingComponent> {
+    let mut resolve = wit_parser::Resolve::new();
+    let mut imports = String::new();
+    for alias in aliases {
+        write!(imports, "import {alias}: http;")?;
+    }
+    let package = resolve.push_str("http.wit", &format!("package wamn:connection@0.1.0; interface http {{ get: func(); }} world {name} {{ {imports} export run: func(); }}"))?;
+    let world = resolve.select_world(&[package], Some(name))?;
+    let mut module =
+        wit_component::dummy_module(&resolve, world, wit_parser::ManglingAndAbi::Standard32);
+    wit_component::embed_component_metadata(
+        &mut module,
+        &resolve,
+        world,
+        wit_component::StringEncoding::UTF8,
+    )?;
+    let bytes = wit_component::ComponentEncoder::default()
+        .module(&module)?
+        .validate(true)
+        .encode()?;
+    let mut descriptor = ComponentDescriptor::named(name, "1.0.0", sha256_digest(&bytes));
+    descriptor
+        .statement_instances
+        .insert("state".into(), STATE_DIGEST.into());
+    descriptor.connections = aliases
+        .iter()
+        .map(|alias| wamn_catalog::ComponentConnection {
+            store_alias: (*alias).into(),
+            requirement_type: wamn_catalog::ComponentConnectionType::Http,
+        })
+        .collect();
+    let admitted = descriptor
+        .clone()
+        .into_admitted(wamn_catalog::ComponentPackageScope::new(
+            ENV_KEY, name, "1.0.0",
+        )?);
+    let config =
+        wamn_engine::component_artifact::component_artifact_config_bytes(&admitted.component);
+    let layer = oci_client::client::ImageLayer::new(
+        bytes.clone(),
+        wamn_engine::component_artifact::COMPONENT_LAYER_MEDIA_TYPE.into(),
+        None,
+    );
+    let config_layer = oci_client::client::Config::new(
+        config.clone(),
+        wamn_engine::component_artifact::COMPONENT_CONFIG_MEDIA_TYPE.into(),
+        None,
+    );
+    let image = oci_client::manifest::OciImageManifest::build(&[layer], &config_layer, None);
+    artifact(
+        objects,
+        "components",
+        &descriptor.component_digest[7..],
+        serde_json::to_vec(&image)?,
+        [bytes, config],
+    );
+    Ok(ServingComponent {
+        package_id: name.into(),
+        descriptor,
+        runtime_schema: None,
+        operations: BTreeMap::from([("run".into(), serde_json::from_value(json!({}))?)]),
+        statement_instances: BTreeMap::new(),
+    })
+}
+
+fn package(
+    root: &Path,
+    objects: &mut BTreeMap<String, Vec<u8>>,
+    name: &str,
+    component: Option<&ServingComponent>,
+) -> anyhow::Result<PackageManifest> {
+    let root = root.join(name);
+    std::fs::create_dir_all(root.join("migrations"))?;
+    std::fs::create_dir_all(root.join("generated/platform-policy"))?;
+    let mut value = json!({"package":{"id":name,"version":"1.0.0"},"required_platform_policy_contract":{"id":"fixture_access","state":"satisfied"},"models":{},"components":{},"connections":{}});
+    value["components"] = json!({name:{"connections":["postgres"]}});
+    value["models"] = json!({"data":{"schema":name,"table":"data","owner":name,"server_owned_fields":[],"audit_log":{"columns":[],"retention":"none"},"operations":{"get":{"permission":"data.get","result":"one"},"update":{"permission":"data.update","result":"one"}}}});
+    std::fs::write(
+        root.join("migrations/0001_data.sql"),
+        format!(
+            "CREATE TABLE {name}.data (id integer CONSTRAINT {name}_data_id_pkey PRIMARY KEY, value text);"
+        ),
+    )?;
+    if let Some(component) = component {
+        value["base_dependencies"] = json!({"state":{"package":"wamn_integration","version":"1.0.0","digest":STATE_DIGEST,"operations":["data.get"]}});
+        for connection in &component.descriptor.connections {
+            value["connections"][&connection.store_alias] =
+                json!({"interface":"wamn:connection/http@0.1.0","mode":"write"});
+        }
+        std::fs::create_dir_all(root.join("descriptors"))?;
+        std::fs::write(
+            root.join("descriptors").join(format!("{name}.json")),
+            wamn_execution_contract::canonical_json_bytes(&serde_json::to_value(
+                &component.descriptor,
+            )?),
+        )?;
+    }
+    let bytes = serde_json::to_vec(&value)?;
+    let manifest = PackageManifest::from_slice(&bytes)?;
+    let mut authored = String::new();
+    for (key, value) in value.as_object().unwrap() {
+        writeln!(authored, "{key} = {value}")?;
+    }
+    std::fs::write(root.join("wamn.k"), authored)?;
+    std::fs::write(root.join("generated/wamn.json"), &bytes)?;
+    let directory = wamn_package_control::apply_package::read_package_directory(&root)?;
+    let columns = BTreeMap::from([(
+        "data".into(),
+        vec![
+            wamn_schema_control::physical_schema::RelationColumn {
+                name: "id".into(),
+                primary_key: true,
+                timestamptz: false,
+            },
+            wamn_schema_control::physical_schema::RelationColumn {
+                name: "value".into(),
+                primary_key: false,
+                timestamptz: false,
+            },
+        ],
+    )]);
+    let physical = wamn_schema_control::physical_schema::PhysicalSchema {
+        statements: wamn_schema_control::physical_schema::render(
+            &manifest,
+            &directory.migrations,
+            &columns,
+        )?,
+        columns,
+    };
+    std::fs::write(
+        root.join("generated/physical-schema.json"),
+        serde_json::to_vec(&physical)?,
+    )?;
+    let overlay = wamn_schema_generator::derive_data_access_overlay_from_relation_fields(
+        &[wamn_schema_generator::DataAccessRelationFields::new(
+            name,
+            "data",
+            vec!["id".into(), "value".into()],
+        )],
+        &bytes,
+    )?;
+    std::fs::write(
+        root.join("generated/platform-policy/data-access.json"),
+        overlay.canonical_bytes(),
+    )?;
+    wamn_test_infrastructure::fixture_digest::write_build_record(&root);
+    let packed = wamn_package_control::package_artifact::pack_package(&root)?;
+    let tag = packed.tag();
+    artifact(
+        objects,
+        "packages",
+        &tag,
+        packed.manifest,
+        packed
+            .layers
+            .into_iter()
+            .map(|layer| layer.bytes)
+            .chain([b"{}".to_vec()]),
+    );
+    Ok(manifest)
+}
+
+fn release(
+    objects: &mut BTreeMap<String, Vec<u8>>,
+    component: ServingComponent,
+) -> anyhow::Result<ServingManifest> {
+    let manifest = ServingManifest {
+        format_version: wamn_catalog::SERVING_MANIFEST_FORMAT_VERSION,
+        release: wamn_catalog::ServingRelease {
+            packages: BTreeSet::from([
+                PackageCoordinate::new(&component.package_id, "1.0.0")?,
+                PackageCoordinate::new("wamn_integration", "1.0.0")?,
+            ]),
+        },
+        composed_entry: None,
+        components: BTreeSet::from([component]),
+        routes: BTreeSet::new(),
+        attachments: BTreeMap::new(),
+        host_routes: BTreeSet::new(),
+    };
+    let bytes = manifest.canonical_bytes();
+    let (layer, config, image) =
+        wamn_runtime::release_manifest_artifact::release_manifest_artifact_layout(&bytes);
+    artifact(
+        objects,
+        "releases",
+        &manifest.digest().as_str()[7..],
+        serde_json::to_vec(&image)?,
+        [layer.data.to_vec(), config.data.to_vec()],
+    );
+    Ok(manifest)
+}
+
+fn document(a: &ServingManifest, b: &ServingManifest) -> anyhow::Result<EnvironmentDocument> {
+    EnvironmentDocument::from_json(&serde_json::to_vec(
+        &json!({"org":"acme","project":"apps","env":"dev","target":"cloud","policy":"dev","integrations":{"erp":{"version":1}},"applications":{
+            "a":{"current":a.digest().as_str(),"hostname":"a.example","packages":["a","wamn_integration"],"connections":{"upstream":"erp"}},
+            "b":{"current":b.digest().as_str(),"hostname":"b.example","packages":["b","wamn_integration"],"connections":{"upstream":"erp"}}
+        }}),
+    )?)
+}
+
+async fn rows(client: &tokio_postgres::Client, query: &str) -> anyhow::Result<Vec<String>> {
+    Ok(client
+        .query(query, &[])
+        .await?
+        .into_iter()
+        .map(|row| row.get(0))
+        .collect())
+}
+
+#[tokio::test]
+async fn activation_preserves_sql_other_applications_and_running_release() -> anyhow::Result<()> {
+    let _lock = wamn_test_postgres::lock();
+    let _ = tokio_rustls::rustls::crypto::ring::default_provider().install_default();
+    let scratch = ScratchRoot::create()?;
+    let mut objects = BTreeMap::new();
+    let old_a = component(&mut objects, "a", &["upstream"])?;
+    let b = component(&mut objects, "b", &["upstream"])?;
+    let base_package = package(scratch.path(), &mut objects, "wamn_integration", None)?;
+    let old_package = package(scratch.path(), &mut objects, "a", Some(&old_a))?;
+    let b_package = package(scratch.path(), &mut objects, "b", Some(&b))?;
+    let old_a = release(&mut objects, old_a)?;
+    let b = release(&mut objects, b)?;
+    let new_component = component(&mut objects, "a", &["upstream", "extra"])?;
+    let new_a = release(&mut objects, new_component)?;
+    let failed_component = component(&mut objects, "a", &["upstream", "extra", "failed"])?;
+    let failed_release = release(&mut objects, failed_component)?;
+    let registry = Registry::start(scratch.path(), objects).await?;
+    let system = wamn_control_provision::test_database::system();
+    let mut admin = connect(system.url()).await?;
+    admin.batch_execute(&format!("BEGIN; SET LOCAL ROLE wamn_system; {} UPDATE registry.meta SET platform_domain='example.invalid'; INSERT INTO registry.target(name,type,status) VALUES('cloud','cloud','active') ON CONFLICT DO NOTHING; UPDATE registry.project_envs SET target_id=(SELECT id FROM registry.target WHERE name='cloud'); COMMIT;", wamn_control_provision::test_database::seed_org_project_env_sql("acme","apps","dev"))).await?;
+    admin
+        .batch_execute(wamn_control_provision::apply::ensure_apply_role_sql())
+        .await?;
+    admin
+        .batch_execute(wamn_control_provision::apply::APPLY_GRANTS_SQL)
+        .await?;
+    let admin_url = url::Url::parse(system.url())?;
+    let secret = scratch.path().join("apply.json");
+    wamn_environment_control::provision_system::emit_apply_credential(
+        system.url(),
+        admin_url.host_str().unwrap(),
+        admin_url.port().unwrap(),
+        &secret,
+    )
+    .await?;
+    let secret: serde_json::Value = serde_json::from_slice(&std::fs::read(secret)?)?;
+    let platform = Platform {
+        system_database_url: secret["stringData"]["url"].as_str().unwrap().into(),
+        target: wamn_release_control::release_chart::Target {
+            kubeconfig: PathBuf::new(),
+            context: String::new(),
+            namespace: "hosts".into(),
+        },
+        chart: PathBuf::new(),
+        release_artifact_base: format!("{}/releases", registry.address),
+        registry_auth_file: registry.auth.clone(),
+        oci_ca_paths: vec![registry.ca.clone()],
+        package_artifact_base: Some(format!("{}/packages", registry.address)),
+        component_artifact_base: Some(format!("{}/components", registry.address)),
+        database_namespace: "platform".into(),
+        database_host: None,
+        database_port: admin_url.port().unwrap(),
+        host_group: None,
+        pat_issuer: wamn_identity_client::PatIssuerConfig::default(),
+        events: None,
+        auth_nats: None,
+    };
+    let mut document = document(&old_a, &b)?;
+    let provisioned = wamn_environment_control::environment::ensure::provision(
+        &platform,
+        &document,
+        &document.policy,
+        system.url(),
+        &scratch.path().join("database.json"),
+        None,
+    )
+    .await?;
+    let database_name = provisioned.database;
+    // CNPG creates this database outside the SQL operation in deployed environments.
+    admin
+        .batch_execute(&format!(
+            "CREATE DATABASE {} OWNER wamn_db_owner",
+            wamn_pg_core::quote_ident(&database_name)
+        ))
+        .await?;
+
+    let store = wamn_test_infrastructure::credentials::LocalCredentials::create()?;
+    let tx = admin.transaction().await?;
+    tx.batch_execute("SET LOCAL ROLE wamn_control").await?;
+    tx.batch_execute(&wamn_control_provision::bind_platform_principal_sql(
+        wamn_control_provision::PlatformComponent::Provisioning,
+    ))
+    .await?;
+    wamn_test_infrastructure::credentials::define(&tx, "acme", &json!({"project":"apps","env":"dev","name":"erp","integration_type":"http","auth_type":"none","parameters":{"primary-authority":"https://erp.example/","tls-verification":"verify-authority"}}), &store).await?;
+    tx.commit().await?;
+    sql::initialize(&platform, &document, system.url(), Some("a"))
+        .await
+        .context("initialize a")?;
+    assert!(
+        expand::prepare(
+            &platform,
+            &document,
+            "b",
+            b.digest().as_str(),
+            &b,
+            &[b_package.clone(), base_package.clone()]
+        )
+        .await
+        .is_err()
+    );
+    sql::initialize(&platform, &document, system.url(), Some("b"))
+        .await
+        .context("initialize b")?;
+    let mut observer_url = admin_url;
+    observer_url.set_path(&database_name);
+    let observer = connect(observer_url.as_str()).await?;
+    let old_packages = [old_package.clone(), base_package.clone()];
+    expand::prepare(
+        &platform,
+        &document,
+        "a",
+        old_a.digest().as_str(),
+        &old_a,
+        &old_packages,
+    )
+    .await?;
+    expand::prepare(
+        &platform,
+        &document,
+        "b",
+        b.digest().as_str(),
+        &b,
+        &[b_package, base_package.clone()],
+    )
+    .await?;
+    observer
+        .batch_execute(
+            "INSERT INTO a.data VALUES (1,'authored'); INSERT INTO b.data VALUES (1,'other');",
+        )
+        .await?;
+    let stable_sql = "SELECT to_jsonb(t)::text FROM a.data t UNION ALL SELECT to_jsonb(t)::text FROM b.data t UNION ALL SELECT to_jsonb(t)::text FROM catalog.packages t UNION ALL SELECT to_jsonb(t)::text FROM catalog.package_migrations t ORDER BY 1";
+    let before_sql = rows(&observer, stable_sql).await?;
+    sql::initialize(&platform, &document, system.url(), Some("a"))
+        .await
+        .context("retry initialization")?;
+    assert_eq!(before_sql, rows(&observer, stable_sql).await?);
+    let schema_query = "SELECT row(c.oid,c.relname,c.relkind,c.relowner,c.relacl,a.attname,a.atttypid,a.attnotnull,a.attacl)::text FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace LEFT JOIN pg_attribute a ON a.attrelid=c.oid WHERE n.nspname IN ('a','b') ORDER BY 1";
+    let before_schema = rows(&observer, schema_query).await?;
+    let stable_b = "SELECT to_jsonb(t)::text FROM platform.permission t WHERE role_name='application-b' UNION ALL SELECT to_jsonb(t)::text FROM platform.user_role t WHERE role_name='application-b' UNION ALL SELECT to_jsonb(t)::text FROM catalog.connection_binding t WHERE package_id='b' ORDER BY 1";
+    let before_b = rows(&observer, stable_b).await?;
+    let principal = |name: &str| wamn_platform_identity::application_subject(ENV_KEY, name);
+    let a_user = wamn_platform_identity::resolve_subject(
+        &admin,
+        wamn_platform_identity::PrincipalType::Service,
+        &principal("a")?,
+    )
+    .await?
+    .unwrap();
+    let b_user = wamn_platform_identity::resolve_subject(
+        &admin,
+        wamn_platform_identity::PrincipalType::Service,
+        &principal("b")?,
+    )
+    .await?
+    .unwrap();
+    let b_permissions = wamn_runtime::plugins::route_authentication::queued_run_caller(
+        &observer,
+        b_user.id().as_str(),
+        None,
+    )
+    .await?;
+    document.applications.get_mut("a").unwrap().current =
+        wamn_environment_control::environment::document::DeclaredRelease::Digest(
+            new_a.digest().as_str().into(),
+        );
+    document
+        .applications
+        .get_mut("a")
+        .unwrap()
+        .connections
+        .insert("extra".into(), "erp".into());
+    let mut candidate = old_package;
+    candidate
+        .connections
+        .insert("extra".into(), candidate.connections["upstream"].clone());
+    candidate
+        .base_dependencies
+        .get_mut("state")
+        .unwrap()
+        .operations = vec!["data.update".into()];
+    let candidate_packages = [candidate, base_package];
+    expand::prepare(
+        &platform,
+        &document,
+        "a",
+        new_a.digest().as_str(),
+        &new_a,
+        &candidate_packages,
+    )
+    .await?;
+    let control_query = "SELECT xmin::text || ':' || to_jsonb(t)::text FROM catalog.connection_requirement t UNION ALL SELECT xmin::text || ':' || to_jsonb(t)::text FROM catalog.connection_binding t UNION ALL SELECT xmin::text || ':' || to_jsonb(t)::text FROM catalog.release_connection t UNION ALL SELECT xmin::text || ':' || to_jsonb(t)::text FROM platform.permission t UNION ALL SELECT xmin::text || ':' || to_jsonb(t)::text FROM platform.user_role t ORDER BY 1";
+    let before_retry = rows(&observer, control_query).await?;
+    expand::prepare(
+        &platform,
+        &document,
+        "a",
+        new_a.digest().as_str(),
+        &new_a,
+        &candidate_packages,
+    )
+    .await?;
+    assert_eq!(before_retry, rows(&observer, control_query).await?);
+    assert_eq!(before_sql, rows(&observer, stable_sql).await?);
+    assert_eq!(before_schema, rows(&observer, schema_query).await?);
+    assert_eq!(before_b, rows(&observer, stable_b).await?);
+    let b_after = wamn_runtime::plugins::route_authentication::queued_run_caller(
+        &observer,
+        b_user.id().as_str(),
+        None,
+    )
+    .await?;
+    for operation in candidate_packages[1]
+        .models
+        .values()
+        .flat_map(|model| model.operations.values())
+    {
+        let token = wamn_catalog::manifest::canonical_operation_identity(
+            &candidate_packages[1].package,
+            &operation.permission,
+        )?;
+        assert_eq!(b_permissions.permits(&token), b_after.permits(&token));
+    }
+    for release in [&old_a, &new_a] {
+        for component in &release.components {
+            for connection in &component.descriptor.connections {
+                assert!(observer.query_opt("SELECT 1 FROM catalog.connection_binding WHERE env_key=$1 AND manifest_digest=$2 AND component_digest=$3 AND package_id=$4 AND name=$5", &[&ENV_KEY, &release.digest().as_str(), &component.descriptor.component_digest, &component.package_id, &connection.store_alias]).await?.is_some());
+            }
+        }
+    }
+    document.applications.get_mut("a").unwrap().current =
+        wamn_environment_control::environment::document::DeclaredRelease::Digest(
+            failed_release.digest().as_str().into(),
+        );
+    document
+        .applications
+        .get_mut("a")
+        .unwrap()
+        .connections
+        .insert("failed".into(), "erp".into());
+    let mut failed_packages = candidate_packages;
+    let declaration = failed_packages[0].connections["upstream"].clone();
+    failed_packages[0]
+        .connections
+        .insert("failed".into(), declaration);
+    // A shared generated role refuses before changing another principal's authority.
+    let mut project = connect(observer_url.as_str()).await?;
+    let tx = project.transaction().await?;
+    tx.batch_execute(&wamn_control_provision::bind_platform_principal_sql(
+        wamn_control_provision::PlatformComponent::Provisioning,
+    ))
+    .await?;
+    wamn_platform_identity::application::mutate_grant(
+        &tx,
+        ENV_KEY,
+        wamn_platform_identity::application::GrantAuthority::Provisioning,
+        wamn_platform_identity::application::GrantChange::UserRole {
+            user_id: b_user.id().as_str(),
+            role: "application-a",
+            grant: true,
+        },
+        &mut wamn_platform_identity::auth_changes::AuthDrops::default(),
+    )
+    .await?;
+    tx.commit().await?;
+    assert!(
+        expand::prepare(
+            &platform,
+            &document,
+            "a",
+            failed_release.digest().as_str(),
+            &failed_release,
+            &failed_packages
+        )
+        .await
+        .is_err()
+    );
+    assert!(
+        observer
+            .query_opt(
+                "SELECT 1 FROM catalog.connection_requirement WHERE component_digest=$1",
+                &[&failed_release
+                    .components
+                    .first()
+                    .unwrap()
+                    .descriptor
+                    .component_digest]
+            )
+            .await?
+            .is_none()
+    );
+    let caller = wamn_runtime::plugins::route_authentication::queued_run_caller(
+        &observer,
+        a_user.id().as_str(),
+        None,
+    )
+    .await?;
+    wamn_engine::router_delivery::authorize_registered_operation(
+        Some(&caller),
+        Some("wamn-integration:data/get@1.0.0"),
+    )?;
+    wamn_engine::router_delivery::authorize_registered_operation(
+        Some(&caller),
+        Some("wamn-integration:data/update@1.0.0"),
+    )?;
+    let connection = &old_a.components.first().unwrap().descriptor;
+    assert!(observer.query_opt("SELECT 1 FROM catalog.connection_binding WHERE manifest_digest=$1 AND component_digest=$2 AND name='upstream'", &[&old_a.digest().as_str(), &connection.component_digest]).await?.is_some());
+    drop(project);
+    drop(observer);
+    admin
+        .batch_execute(&format!(
+            "DROP DATABASE {} WITH (FORCE)",
+            wamn_pg_core::quote_ident(&database_name)
+        ))
+        .await?;
+    Ok(())
+}

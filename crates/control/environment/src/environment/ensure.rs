@@ -1,19 +1,5 @@
-//! Step 4 of `apply`: ensure the substrate
-//! (docs/architecture/overview.md#environment-lifecycle).
-//!
-//! Each step is an ensure, judged by what it observes: the environment row
-//! with a fresh instance suffix only if there is none, the CNPG `Database` CR
-//! until it reports `status.applied`, the project database floor, the run
-//! plane, the credential Secrets (each written only when absent, the PAT
-//! reused when present), and the admin grants. CDC is ensured by
-//! [`ensure_cdc`] once the release's packages are installed, because the
-//! capture schema is a package fact. On an environment that has all of this,
-//! every ensure is a read.
-//!
-//! The verb writes the credential Secrets and owns them. A Secret reaches
-//! `kubectl apply -f -` on its standard input; a library function that writes
-//! a Secret only to a file writes it into a private mode 0700 directory, and
-//! the file is shredded after the apply.
+//! Explicit environment provisioning, shared credentials, and CDC resources.
+//! Application activation reads these resources without creating or reconciling them.
 
 pub(super) mod plan;
 pub use plan::credential_access;
@@ -34,7 +20,6 @@ use wamn_control_provision::{CredentialGeneration, WorkloadRoleFamily};
 use wamn_control_registry::Triple;
 
 use super::Platform;
-use super::analyse::Analysis;
 use super::document::EnvironmentDocument;
 use crate::provision_project_env::{
     ProvisionProjectEnvRequest, WorkloadActionRequest, WorkloadActionVerb,
@@ -49,26 +34,20 @@ pub(super) const RUN_SCHEMA: &str = "wamn_run";
 /// How long one CR may take to report `status.applied`.
 const APPLIED_TIMEOUT: &str = "--timeout=120s";
 
-/// Ensure the substrate of the document's environment.
+/// Provision shared resources for the document's environment.
 ///
 /// # Errors
 ///
 /// When an ensure fails. A rerun repairs a partial run.
-pub async fn ensure(
+pub async fn provision_resources(
     platform: &Platform,
     document: &EnvironmentDocument,
-    analysis: &Analysis,
+    packages: &[wamn_catalog::manifest::PackageManifest],
     admin_url: &str,
 ) -> anyhow::Result<()> {
     let admin = connect(admin_url).await?;
     let triple = document.triple();
-    // The row's policy until step 5 writes the declared one; a first apply
-    // creates the row with the declared policy.
-    let policy = analysis
-        .authorities
-        .row
-        .as_ref()
-        .map_or(document.policy.as_str(), |row| row.policy_name.as_str());
+    let policy = document.policy.as_str();
     let cluster = resolve_cluster(&platform.system_database_url, &document.org, policy).await?;
     let private = PrivateDirectory::create()?;
     let namespace = platform.target.namespace.as_str();
@@ -110,7 +89,7 @@ pub async fn ensure(
 
     // The run plane: the run schema the credentials are granted on.
     let project_admin =
-        ensure_project_database(platform, document, &analysis.packages, &admin, admin_url).await?;
+        ensure_project_database(platform, document, packages, &admin, admin_url).await?;
 
     // Generation a of each credential, only where its Secret is absent.
     for credential in HOST_CREDENTIALS {
@@ -176,14 +155,7 @@ pub async fn ensure(
         .await
         .context("commit the administrator rows")?;
     platform.auth_changes().await?.publish(drops).await;
-    prepare_cdc(
-        platform,
-        document,
-        &analysis.packages,
-        &admin,
-        &project_admin,
-    )
-    .await?;
+    prepare_cdc(platform, document, packages, &admin, &project_admin).await?;
     Ok(())
 }
 
@@ -427,7 +399,7 @@ async fn prepare_cdc(
 /// # Errors
 ///
 /// When the event broker is absent or a substrate write fails.
-pub(super) async fn ensure_cdc(
+pub async fn ensure_cdc(
     platform: &Platform,
     document: &EnvironmentDocument,
     manifests: &[wamn_catalog::manifest::PackageManifest],

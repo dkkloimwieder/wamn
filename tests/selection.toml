@@ -55,6 +55,7 @@ targets = [
   { workspace="root", package="wamn-environment-control", target="lib:wamn_environment_control", tier="live-nats" },
   { workspace="root", package="wamn-dev-control", target="lib:wamn_dev_control", tier="live-nats" },
   { workspace="root", package="wamn-environment-control", target="test:app_generation_isolation_live", tier="live-postgres" },
+  { workspace="root", package="wamn-environment-control", target="test:application_activation_live", tier="live-postgres" },
   { workspace="root", package="wamn-release-control", target="test:application_composition", tier="contract" },
   { workspace="root", package="wamn-environment-control", target="test:apply_package_live", tier="live-postgres" },
   { workspace="root", package="wamn-environment-control", target="test:capture_gap_live", tier="live-postgres" },

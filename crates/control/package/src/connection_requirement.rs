@@ -1,4 +1,4 @@
-//! Component imports recorded at package install.
+//! Immutable component requirements prepared independently of package SQL.
 
 pub(super) mod plan;
 pub(crate) use plan::exported_interfaces;
@@ -26,69 +26,131 @@ pub(crate) async fn install(
     ))
     .await?
     {
-        ensure!(
-            wamn_engine::component_admission::component_digest(&bytes) == digest,
-            "component differs from its admitted digest {digest}"
+        written += write(tx, env_key, manifest, &digest, &connections, &bytes).await?;
+    }
+    Ok(written)
+}
+
+/// Prepare requirements only for components in the selected release, without installing SQL.
+pub async fn prepare_release(
+    tx: &Transaction<'_>,
+    env_key: &str,
+    release: &wamn_catalog::ServingManifest,
+    packages: &[PackageManifest],
+    source: Option<wamn_runtime::component_artifact_source::ComponentArtifactSourceConfig>,
+) -> anyhow::Result<()> {
+    use wamn_engine::artifact_source::ArtifactSource as _;
+    let source = source
+        .map(wamn_runtime::component_artifact_source::ComponentArtifactSource::new)
+        .transpose()?;
+    for component in &release.components {
+        let package = packages
+            .iter()
+            .find(|package| package.package.id == component.package_id)
+            .context("release component has no package manifest")?;
+        let names = crate::package_artifact::component_connection_names(
+            package,
+            &component.descriptor.component,
+            &component.descriptor.connections,
         );
-        let wit_component::DecodedWasm::Component(resolve, world) = wit_component::decode(&bytes)?
+        if names.is_empty() {
+            continue;
+        }
+        let source = source
+            .as_ref()
+            .context("set WAMN_COMPONENT_ARTIFACT_BASE for activation")?;
+        let scope = wamn_catalog::ComponentPackageScope::new(
+            env_key,
+            &package.package.id,
+            &package.package.version,
+        )?;
+        let admitted = component.descriptor.clone().into_admitted(scope);
+        let bytes = source.pull_verified(&admitted.component).await?;
+        write(
+            tx,
+            env_key,
+            package,
+            &component.descriptor.component_digest,
+            &names,
+            &bytes,
+        )
+        .await?;
+    }
+    Ok(())
+}
+
+/// Insert or reuse exact requirements from digest-verified component bytes.
+pub async fn write(
+    tx: &Transaction<'_>,
+    env_key: &str,
+    manifest: &PackageManifest,
+    digest: &str,
+    connections: &[String],
+    bytes: &[u8],
+) -> anyhow::Result<u64> {
+    let mut written = 0;
+    ensure!(
+        wamn_engine::component_admission::component_digest(bytes) == digest,
+        "component differs from its admitted digest {digest}"
+    );
+    let wit_component::DecodedWasm::Component(resolve, world) = wit_component::decode(bytes)?
+    else {
+        anyhow::bail!("connection authority needs a component binary")
+    };
+    for (key, item) in &resolve.worlds[world].imports {
+        let (wit_parser::WorldKey::Name(label), wit_parser::WorldItem::Interface { id, .. }) =
+            (key, item)
         else {
-            anyhow::bail!("connection authority needs a component binary")
+            continue;
         };
-        for (key, item) in &resolve.worlds[world].imports {
-            let (wit_parser::WorldKey::Name(label), wit_parser::WorldItem::Interface { id, .. }) =
-                (key, item)
-            else {
-                continue;
-            };
-            let Some(interface) = resolve.id_of(*id) else {
-                continue;
-            };
-            if wamn_catalog::manifest::host_connection_interface(&interface)
-                || interface.starts_with("wamn:postgres/")
-            {
-                continue;
-            }
-            ensure!(
-                connections.contains(label)
-                    && manifest
-                        .connections
-                        .get(label)
-                        .is_some_and(|declared| declared.interface == interface),
-                "connection undeclared: {label} importing {interface}"
-            );
+        let Some(interface) = resolve.id_of(*id) else {
+            continue;
+        };
+        if wamn_catalog::manifest::host_connection_interface(&interface)
+            || interface.starts_with("wamn:postgres/")
+        {
+            continue;
         }
-        for name in &connections {
-            let declaration = manifest
-                .connections
-                .get(name)
-                .with_context(|| format!("package declares no connection {name}"))?;
-            let interface = require_imports(&bytes, name, &declaration.interface)?;
-            let mode = match declaration.mode {
-                wamn_catalog::manifest::ConnectionMode::Read => "read",
-                wamn_catalog::manifest::ConnectionMode::Write => "write",
-            };
-            let params: [&(dyn tokio_postgres::types::ToSql + Sync); 6] = [
-                &env_key,
-                &digest,
-                &manifest.package.id,
-                &name,
-                &interface,
-                &mode,
-            ];
-            written += tx.execute(
-                "INSERT INTO catalog.connection_requirement (env_key,component_digest,package_id,name,interface,mode) \
-                 VALUES ($1,$2,$3,$4,$5,$6) ON CONFLICT DO NOTHING", &params,
-            ).await?;
-            let exact: bool = tx.query_one(
-                "SELECT EXISTS (SELECT FROM catalog.connection_requirement WHERE env_key=$1 AND component_digest=$2 \
-                 AND package_id=$3 AND name=$4 AND interface=$5 AND mode=$6)", &params,
-            ).await?.get(0);
-            ensure!(
-                exact,
-                "package {} connection {name} differs from its installed requirement",
-                manifest.package.id
-            );
-        }
+        ensure!(
+            connections.iter().any(|name| name == label)
+                && manifest
+                    .connections
+                    .get(label)
+                    .is_some_and(|declared| declared.interface == interface),
+            "connection undeclared: {label} importing {interface}"
+        );
+    }
+    for name in connections {
+        let declaration = manifest
+            .connections
+            .get(name)
+            .with_context(|| format!("package declares no connection {name}"))?;
+        let interface = require_imports(bytes, name, &declaration.interface)?;
+        let mode = match declaration.mode {
+            wamn_catalog::manifest::ConnectionMode::Read => "read",
+            wamn_catalog::manifest::ConnectionMode::Write => "write",
+        };
+        let params: [&(dyn tokio_postgres::types::ToSql + Sync); 6] = [
+            &env_key,
+            &digest,
+            &manifest.package.id,
+            &name,
+            &interface,
+            &mode,
+        ];
+        written += tx.execute(
+            "INSERT INTO catalog.connection_requirement (env_key,component_digest,package_id,name,interface,mode) \
+             VALUES ($1,$2,$3,$4,$5,$6) ON CONFLICT DO NOTHING", &params,
+        ).await?;
+        let exact: bool = tx.query_one(
+            "SELECT EXISTS (SELECT FROM catalog.connection_requirement WHERE env_key=$1 AND component_digest=$2 \
+             AND package_id=$3 AND name=$4 AND interface=$5 AND mode=$6)", &params,
+        ).await?.get(0);
+        ensure!(
+            exact,
+            "package {} connection {name} differs from its installed requirement",
+            manifest.package.id
+        );
     }
     Ok(written)
 }
