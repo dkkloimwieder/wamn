@@ -86,7 +86,7 @@ pub async fn read(document: &ClusterDocument, target: &Target) -> anyhow::Result
         &["get", "values", "wamn", "-n", "platform", "-o", "json"],
     )
     .await;
-    let selected = selected_chart(values.as_ref().ok());
+    let mut selected = selected_chart(values.as_ref().ok());
     let mut observations = Vec::new();
     let mut warnings = Vec::new();
     let control = format!("c-{}", document.org);
@@ -110,6 +110,10 @@ pub async fn read(document: &ClusterDocument, target: &Target) -> anyhow::Result
         )
         .await;
         observations.push(helm_status(namespace, name, result.as_ref().ok()));
+    }
+    // A missing operator release is known, so its chart value is missing, not unknown.
+    if observations[0].category == Category::Incomplete {
+        selected.category = Category::Incomplete;
     }
     let control_host = format!("hostgroup-{control}");
     let control_http = format!("{control}-http");
@@ -722,6 +726,13 @@ async fn probe(
     } else {
         ("hosts", format!("c-{}-http", document.org), 80)
     };
+    if get(target, namespace, "service", &service).await?.is_none() {
+        return Ok(observation(
+            &format!("{namespace}/Service/{service}"),
+            Category::Incomplete,
+            "Rerun platform deploy to create this service",
+        ));
+    }
     let forward =
         resources::port_forward(target, namespace, &format!("service/{service}"), port).await?;
     let mut builder = reqwest::Client::builder()
