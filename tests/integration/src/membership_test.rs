@@ -111,6 +111,17 @@ pub async fn run(args: MembershipTestArgs) -> anyhow::Result<()> {
     let user = create_user(&system, &subject, &subject, "Disposable membership test")
         .await
         .context("create the test user")?;
+    // Route authentication and project roles require an active org
+    // membership. The invitation writes it and no environment membership,
+    // so the absent-membership case still holds.
+    wamn_platform_identity::org::invite_member(
+        &system,
+        user.id(),
+        &args.org,
+        &wamn_platform_identity::org::MemberGrants::default(),
+    )
+    .await
+    .context("invite the test user to the org")?;
     let role = format!("membership-test-{nonce}");
     if let Some(path) = &args.throughput_pat_file {
         let result = tokio::time::timeout(TEST_TIMEOUT, async {
