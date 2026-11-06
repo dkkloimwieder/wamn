@@ -1,15 +1,18 @@
 //! Wake and sleep the GCP node pools (docs/operations/gcp.md sections 5.1 and 5.2).
 
-use std::path::Path;
+use chrono::{SecondsFormat, Utc};
+use std::fs::{File, OpenOptions, TryLockError};
+use std::io::{Read as _, Write as _};
+use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
-use anyhow::{bail, ensure};
+use anyhow::{Context as _, bail, ensure};
 use serde_json::Value;
 use tokio::process::Command;
 
 use super::document::{ClusterDocument, Provider};
 use super::project::ProjectDocument;
-use super::{lock, provider};
+use super::provider;
 use crate::kubectl;
 
 /// The pool size a verb sets.
@@ -44,7 +47,7 @@ pub async fn resize(
     refuse_kind(document)?;
     let project = ProjectDocument::compile(project_file)?;
     let resizes = resize_arguments(document, &project, direction)?;
-    let _lock = lock::take(work_directory)?;
+    let _lock = take_resize_lock(work_directory, &document.cluster_name)?;
     for (pool, size, arguments) in &resizes {
         let started = Instant::now();
         provider::run(Command::new("gcloud").args(arguments)).await?;
@@ -176,9 +179,78 @@ fn resize_arguments(
         .collect())
 }
 
+/// The open file keeps the resize lock held until this guard is dropped.
+#[derive(Debug)]
+#[must_use = "keep the guard alive for the entire resize"]
+pub struct ResizeLock {
+    file: File,
+}
+
+impl Drop for ResizeLock {
+    fn drop(&mut self) {
+        // A concurrent process spawn can briefly inherit the open file before exec.
+        // Release the lock even while that child still holds its descriptor.
+        let _ = self.file.unlock();
+    }
+}
+
+/// Return `$HOME/.cache/wamn-resize` without creating it.
+///
+/// # Errors
+///
+/// Returns an error if HOME is unset.
+pub fn work_directory() -> anyhow::Result<PathBuf> {
+    let home = std::env::var_os("HOME").context("HOME is unset")?;
+    Ok(PathBuf::from(home).join(".cache/wamn-resize"))
+}
+
+/// Take the resize lock immediately, or refuse with the current holder.
+///
+/// # Errors
+///
+/// Returns an error if the lock is held or a filesystem operation fails.
+pub fn take_resize_lock(directory: &Path, cluster: &str) -> anyhow::Result<ResizeLock> {
+    std::fs::create_dir_all(directory)
+        .with_context(|| format!("create the resize directory {}", directory.display()))?;
+    let path = directory.join(format!("resize-{cluster}.lock"));
+    let mut file = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(&path)
+        .with_context(|| format!("open the resize lock {}", path.display()))?;
+    match file.try_lock() {
+        Ok(()) => {}
+        Err(TryLockError::WouldBlock) => {
+            let mut holder = String::new();
+            file.read_to_string(&mut holder)
+                .with_context(|| format!("read the resize lock holder {}", path.display()))?;
+            bail!(
+                "resize lock {} is held by {:?}",
+                path.display(),
+                holder.trim_end()
+            );
+        }
+        Err(TryLockError::Error(error)) => {
+            return Err(error).with_context(|| format!("lock {}", path.display()));
+        }
+    }
+    let holder = format!(
+        "pid={} started={}\n",
+        std::process::id(),
+        Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true)
+    );
+    file.set_len(0)
+        .with_context(|| format!("clear the resize lock holder {}", path.display()))?;
+    file.write_all(holder.as_bytes())
+        .with_context(|| format!("write the resize lock holder {}", path.display()))?;
+    Ok(ResizeLock { file })
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{Direction, resize_arguments};
+    use super::{Direction, resize_arguments, take_resize_lock};
     use crate::platform::document::{ClusterDocument, Provider};
     use crate::platform::project::ProjectDocument;
     use std::path::Path;
@@ -264,5 +336,22 @@ mod tests {
                 .to_string(),
             "project.k declares cluster other in wamn-dev/us-central1-a, and cluster.k names cluster wamn in wamn-dev/us-central1-a"
         );
+    }
+    #[test]
+    fn resize_lock_serializes_one_cluster_and_releases_on_drop() {
+        let directory = wamn_test_infrastructure::scratch::ScratchRoot::create().unwrap();
+        let first = take_resize_lock(directory.path(), "one").unwrap();
+        let path = directory.path().join("resize-one.lock");
+        let holder = std::fs::read_to_string(&path).unwrap();
+        let error = take_resize_lock(directory.path(), "one")
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains(holder.trim_end()));
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), holder);
+        let other = take_resize_lock(directory.path(), "two").unwrap();
+        let inherited = first.file.try_clone().unwrap();
+        drop(first);
+        let again = take_resize_lock(directory.path(), "one").unwrap();
+        drop((other, again, inherited));
     }
 }

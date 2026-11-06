@@ -73,14 +73,13 @@ pub(super) fn provision_request(document: &ClusterDocument, image: &str) -> JobR
         environment: [
             ("ORG".into(), document.org.clone()),
             ("OWNER_EMAIL".into(), document.owner_email.clone()),
-            ("DATABASE_HOST".into(), super::install::DATABASE_HOST.into()),
+            (
+                "DATABASE_HOST".into(),
+                super::bootstrap::DATABASE_HOST.into(),
+            ),
         ]
         .into(),
-        files: [(
-            "kubeconfig".into(),
-            super::environments::kubeconfig().to_string(),
-        )]
-        .into(),
+        files: [("kubeconfig".into(), kubeconfig().to_string())].into(),
         secret_mounts: vec![SecretMount {
             name: "wamn-pg-superuser".into(),
             path: "/etc/wamn/postgres".into(),
@@ -90,12 +89,12 @@ pub(super) fn provision_request(document: &ClusterDocument, image: &str) -> JobR
     }
 }
 
-pub(super) async fn credentials(
+pub async fn credentials(
     target: &Target,
     document: &ClusterDocument,
     directory: &Path,
 ) -> anyhow::Result<bool> {
-    let image = super::install::runner_image(directory)?;
+    let image = super::artifact_plan::runner_image(directory)?;
     let (request, secrets, inputs) = provision_inputs(document, &image);
     let mut changed = job::run(target, directory, &request, &inputs, &secrets).await?;
     let operator = format!("operator-{}", document.org);
@@ -231,7 +230,7 @@ pub(super) fn chart_objects(
     ])
 }
 
-pub(super) async fn release(
+pub async fn release(
     target: &Target,
     document: &ClusterDocument,
     repository: &Path,
@@ -404,6 +403,21 @@ pub(super) fn operator_inputs(
         Vec::new(),
         json!({"source_version":source_version}),
     ))
+}
+
+fn kubeconfig() -> serde_json::Value {
+    json!({
+        "apiVersion": "v1", "kind": "Config",
+        "clusters": [{"name": "install", "cluster": {
+            "server": "https://kubernetes.default.svc",
+            "certificate-authority": "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"
+        }}],
+        "users": [{"name": "install", "user": {
+            "tokenFile": "/var/run/secrets/kubernetes.io/serviceaccount/token"
+        }}],
+        "contexts": [{"name": "install", "context": {"cluster": "install", "user": "install"}}],
+        "current-context": "install"
+    })
 }
 
 #[cfg(test)]

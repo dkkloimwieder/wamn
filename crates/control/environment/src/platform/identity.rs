@@ -1,4 +1,4 @@
-//! Install identity and prepare session targets with the existing CLI commands.
+//! Identity service rendering and key setup.
 
 use std::path::Path;
 
@@ -8,9 +8,10 @@ use serde_json::{Value, json};
 use crate::kubectl;
 use wamn_release_control::release_chart::Target;
 
+use super::bootstrap::{DATABASE_HOST, SecretData, secret_text};
 use super::document::ClusterDocument;
-use super::install::{DATABASE_HOST, SecretData, administrator, helm, runner_image, secret_text};
 use super::job::{self, JobRequest, JobSecret};
+use super::resources::helm;
 
 pub(super) const ISSUER: &str = "https://identity.identity.svc.cluster.local";
 const RESEND_COMMAND: &str = "kubectl -n identity create secret generic identity-resend --from-literal=api-key=\"$(tr -d '[:space:]' < <file>)\"";
@@ -101,11 +102,10 @@ fn resend_secret(key: &str) -> anyhow::Result<Value> {
     }))
 }
 
-pub(super) async fn apply(
+pub async fn apply(
     target: &Target,
     document: &ClusterDocument,
     repository: &Path,
-    environments: &Path,
     directory: &Path,
 ) -> anyhow::Result<bool> {
     // Where the provider keeps the key, the verb writes the cluster Secret
@@ -142,43 +142,14 @@ pub(super) async fn apply(
     )
     .await?
     .context("missing Secret platform/wamn-pg-superuser")?;
-    let admin = administrator(&superuser)?;
-    let runner = runner_image(directory)?;
     let mut changed = false;
-    let mut targets = Vec::new();
-    for (_, environment) in super::broker::documents(environments)? {
-        let env_key = wamn_control_provision::project_env_key(
-            &environment.org,
-            &environment.project,
-            &environment.env,
-        );
-        let name = wamn_control_provision::workload_secret_name(
-            wamn_control_provision::WorkloadRoleFamily::App,
-            &environment.org,
-            &environment.project,
-            &environment.env,
-        );
-        let credential: SecretData = kubectl::get(
-            &target.kubeconfig,
-            &target.context,
-            "hosts",
-            "secret",
-            &name,
-        )
-        .await?
-        .context("missing environment application Secret")?;
-        let raw = secret_text(&credential, "url")?;
-        let (request, secrets, inputs) = session_inputs(&environment, &runner, &admin, &raw)?;
-        changed |= job::run(&identity, directory, &request, &inputs, &secrets).await?;
-        targets.push(format!("wamn-session-role-reader-{env_key}"));
-    }
     let chart: Value =
         serde_yaml::from_slice(&std::fs::read(directory.join("release-chart/values.yaml"))?)?;
     let image = chart["platform"]["identity"]["image"]
         .as_str()
         .filter(|image| image.contains("@sha256:"))
         .context("the chart has no pinned identity image")?;
-    let batch = chart_objects(repository, document, image, targets)?;
+    let batch = chart_objects(repository, document, image, Vec::new())?;
     let values = &batch[0]["values"];
     changed |= install(&identity, directory, &batch[0]).await?;
     let (keys_changed, kid) = keys(target, &identity, directory, &superuser, image).await?;
@@ -256,32 +227,6 @@ pub(super) fn check_inputs(
         check_request(&secret_text(ca, "ca.crt")?),
         Vec::new(),
         json!({"kid":kid,"values":values}),
-    ))
-}
-
-pub(super) fn session_inputs(
-    environment: &crate::environment::document::EnvironmentDocument,
-    image: &str,
-    admin: &JobSecret,
-    application_url: &str,
-) -> anyhow::Result<job::JobInputs> {
-    let credential = url::Url::parse(application_url)
-        .map_err(|_| anyhow::anyhow!("parse the application database URL"))?;
-    let mut database = url::Url::parse(&admin.value)
-        .map_err(|_| anyhow::anyhow!("parse the administrator database URL"))?;
-    database.set_path(credential.path());
-    Ok((
-        session_request(environment, image),
-        vec![
-            admin.clone(),
-            JobSecret {
-                name: "platform-session-admin".into(),
-                key: "url".into(),
-                value: database.into(),
-                environment: "WAMN_TARGET_ADMIN_DATABASE_URL".into(),
-            },
-        ],
-        json!({"environment":environment,"database":credential.path()}),
     ))
 }
 
@@ -426,43 +371,6 @@ async fn keys(
     let (activate, secrets, inputs) = key_activate_inputs(identity_image, &kid, &secrets);
     changed |= job::run(identity, directory, &activate, &inputs, &secrets).await?;
     Ok((changed, kid))
-}
-
-pub(super) fn session_request(
-    environment: &crate::environment::document::EnvironmentDocument,
-    runner: &str,
-) -> JobRequest {
-    let env_key = wamn_control_registry::project_env_key(
-        &environment.org,
-        &environment.project,
-        &environment.env,
-    );
-
-    JobRequest {
-        name: format!("platform-session-{env_key}"),
-        image: runner.into(),
-        arguments: [
-            "provision-project-env",
-            "--org",
-            &environment.org,
-            "--project",
-            &environment.project,
-            "--env",
-            &environment.env,
-            "--namespace",
-            "identity",
-            "--db-host",
-            DATABASE_HOST,
-            "--prepare-session-role-reader-generation",
-            "a",
-            "--emit-session-role-reader-secret",
-            "/out/secret.json",
-        ]
-        .map(str::to_owned)
-        .into(),
-        emits_secret: true,
-        ..JobRequest::default()
-    }
 }
 
 pub(super) fn check_request(ca: &str) -> JobRequest {

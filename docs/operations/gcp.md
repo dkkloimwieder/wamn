@@ -1,6 +1,7 @@
 # Google Cloud
 
-This page installs the platform and the environments `dkk/receiving/dev` and `dkk/wms/dev` on project `wamn-dev`. It starts at an empty project with no cluster and ends with two qualified releases that serve on `receiving.wamn.dev` and `wms.wamn.dev`. Run the sections in order.
+GCP deployment support is unfinished. This page preserves external cloud prerequisites and operations for project `wamn-dev`.
+See [the deployment boundary](#platform-deployment-boundary) before deployment.
 
 Every command on this page runs in a shell with these two variables and nothing else:
 
@@ -17,9 +18,9 @@ Never run `gcloud` or `kubectl` without `CLOUDSDK_CONFIG=~/.config/gcloud-wamn-a
 
 ## 1. Owner inputs
 
-The owner supplies these inputs. The install stops at the first step that reads a missing one.
+The owner supplies these external cloud inputs.
 
-1. The agent identity. `CLOUDSDK_CONFIG` holds the login of `wamn-agent@wamn-dev.iam.gserviceaccount.com` and application default credentials, which `wamn web upload` reads. `KUBECONFIG` names a file of the agent's own. The `get-credentials` command of section 4.2 writes the cluster into it.
+1. The agent identity. `CLOUDSDK_CONFIG` holds the login of `wamn-agent@wamn-dev.iam.gserviceaccount.com` and application default credentials, which `wamn web upload` reads. `KUBECONFIG` names a file of the agent's own. Cluster access must use that dedicated file.
 2. The SSD quota. The quota preference `wamn-ssd-us-central1` sets `SSD_TOTAL_GB` in `us-central1` to 200, not 0. The PostgreSQL volume is `premium-rwo` (pd-balanced), which counts against it. A teardown keeps the preference, because it is a project quota. If the preference is missing, the owner sets it again:
 
    ```bash
@@ -28,7 +29,7 @@ The owner supplies these inputs. The install stops at the first step that reads 
      --dimensions region=us-central1 --preferred-value 200
    ```
 
-3. Read access for the agent on the Secret Manager secret `identity-resend`, which holds the Resend key. The secret and the Secret Manager API are project resources, so a teardown keeps them, and step 4.12 writes the cluster Secret from the secret. The owner enables the API, makes the secret once and grants the agent read access on that one secret. Write the key to a mode 0600 file. Identity refuses whitespace in the key (`Resend configuration refused`), so the third command removes all whitespace:
+3. Read access for the agent on the Secret Manager secret `identity-resend`, which holds the Resend key. The secret and the Secret Manager API are project resources, so a teardown keeps them, but deployment integration that writes the cluster Secret remains unfinished. The owner enables the API, makes the secret once and grants the agent read access on that one secret. Write the key to a mode 0600 file. Identity refuses whitespace in the key (`Resend configuration refused`), so the third command removes all whitespace:
 
    ```bash
    gcloud services enable secretmanager.googleapis.com --project wamn-dev
@@ -132,14 +133,13 @@ The owner supplies these inputs. The install stops at the first step that reads 
     For another project, replace `wamn-dev` with `project_id` and the bucket with `buckets.web`.
     The installer creates the Kubernetes account and its annotation, but the owner supplies these IAM grants.
 
-14. The edge NEG zone in `deploy/gcp/project.k`, currently `us-central1-a`, must match the zone reported by step 4.20.
+14. The edge NEG zone in `deploy/gcp/project.k`, currently `us-central1-a`, must match the zone of the deployed network endpoint group (NEG).
     The fixed NEG name is `wamn-edge`.
     DNS for every route host must point to the global address that OpenTofu creates.
     The owner supplies a firewall rule for TCP port 8443 from `35.191.0.0/16` and `130.211.0.0/22` to the cluster nodes.
-    Before step 4.20 creates the NEG, target only the cluster and node pools in the section 4.2 plan and apply.
-    After the NEG exists, apply the full rendered project as described in section 4.20.
+    Cloud load balancer creation depends on a deployed NEG. That deployment integration remains unfinished.
 
-15. Write access to `buckets.web` for the web upload of step 4.19. The upload Job runs as `hosts/wamn-host` and takes the grants of the namespace `hosts` (item 4). A teardown keeps this grant, because it is IAM. If the grant is missing, the agent runs:
+15. Write access to `buckets.web` for web uploads. The `hosts/wamn-host` service account takes the grants of namespace `hosts` (item 4). A teardown keeps this grant, because it is IAM. If the grant is missing, the agent runs:
 
     ```bash
     gcloud storage buckets add-iam-policy-binding gs://wamn-dev-web \
@@ -155,14 +155,14 @@ The teardown keeps these resources, and the install expects them. The owner make
 - The APIs, the quotas and the daily guard that sets every pool to 0 nodes at 03:00 New York time (07:00 UTC).
 - The project custom role `wamnAgentIam`, bound to `wamn-agent@wamn-dev` with a condition. The condition admits the project resource, for `iam.serviceAccounts.create` alone, and the two `wamn-edge` resources: `projects/-/serviceAccounts/101495263876384747666` and `projects/_/buckets/wamn-dev-web`. The agent holds IAM only on the `wamn-edge` resources, never on itself.
 - The project custom role `wamnAgentTofuRead`, bound to `wamn-agent@wamn-dev` with no condition. It holds only `dns.managedZones.get` and `storage.buckets.getIamPolicy`, so that the agent's `tofu plan` can read the DNS zone and the IAM policy of the state bucket. It grants no write.
-- The Google service account `wamn-edge`, its `roles/storage.objectViewer` binding on `gs://wamn-dev-web`, and the Workload Identity binding of `edge/wamn-edge-web` (section 4.20).
+- The Google service account `wamn-edge`, its `roles/storage.objectViewer` binding on `gs://wamn-dev-web`, and the Workload Identity binding of `edge/wamn-edge-web`.
 - The cost guard `wamn-guard` acts once when a budget message crosses a threshold. At 50 percent it only logs, at 90 percent it sets every pool to 0 nodes, and at 100 percent it unlinks billing. It keeps the last threshold of the month in `gs://wamn-dev-tofu-state/guard/state.json`. The first message of a new month resets it.
-- The Artifact Registry repositories `wamn` and `wamn-kind`, with immutable tags. `wamn` holds the platform images, the packages, the components and the releases. `wamn-kind` deletes every tag that is older than 7 days. [project.k](../../deploy/gcp/project.k) declares `wamn-kind`, and OpenTofu imports it in section 4.2.
+- The Artifact Registry repositories `wamn` and `wamn-kind`, with immutable tags. `wamn` holds the platform images, the packages, the components and the releases. `wamn-kind` deletes every tag that is older than 7 days. [project.k](../../deploy/gcp/project.k) declares `wamn-kind`.
 - The buckets `wamn-dev-web`, `wamn-dev-backups` and `wamn-dev-labels`.
 - The VPC `wamn`, its subnet `wamn-us-central1` and the node service account `wamn-nodes`.
-- The Cloud DNS zone `wamn-dev`, its records, and the `roles/dns.admin` binding of the cert-manager principal on the zone. `project.k` declares the zone, and OpenTofu imports it in section 4.2. OpenTofu does not own the records or the binding.
+- The Cloud DNS zone `wamn-dev`, its records, and the `roles/dns.admin` binding of the cert-manager principal on the zone. `project.k` declares the zone. OpenTofu does not own the records or the binding.
 - The grants of the namespace `hosts` on `wamn`, `gs://wamn-dev-labels` and `gs://wamn-dev-web` (section 1, items 4 and 15).
-- The firewall rule that permits load balancer traffic to nginx on TCP port 8443. OpenTofu owns the load balancer objects in section 4.20.
+- The firewall rule that permits load balancer traffic to nginx on TCP port 8443. The project document declares the load balancer objects.
 
 Run every command as the project owner, with `--project wamn-dev`. The default project of the gcloud configuration can be another project, so a command without `--project` acts on the wrong one.
 
@@ -231,7 +231,7 @@ gcloud storage buckets create gs://wamn-dev-labels --project wamn-dev --location
 
 Grant the namespace `hosts` read access to `wamn` and `roles/storage.objectAdmin` on the labels bucket, with the commands of owner input 4 (section 1).
 
-Point each route host at the global address that OpenTofu creates in section 4.20.
+Point each route host at the global address of the cloud load balancer.
 Use `receiving.wamn.dev.`, `wms.wamn.dev.`, and `control.wamn.dev.`:
 
 ```bash
@@ -271,7 +271,7 @@ gcloud projects add-iam-policy-binding wamn-dev --member=serviceAccount:$SA \
   --role=roles/billing.projectManager --condition=None
 ```
 
-The guard reads and writes `guard/state.json` in the state bucket, so give `$SA` the role `roles/storage.objectUser` on `gs://wamn-dev-tofu-state`, with the condition `guard-state` that admits only objects under `guard/`. `project.k` declares this binding, and OpenTofu imports it in section 4.2. The state bucket stays out of OpenTofu, because it holds the state of OpenTofu. Deploy the function. The Pub/Sub trigger calls it as the same service account, which needs the invoker role on the function. The grant takes about a minute to apply, and until then the log shows `403` answers:
+The guard reads and writes `guard/state.json` in the state bucket, so give `$SA` the role `roles/storage.objectUser` on `gs://wamn-dev-tofu-state`, with the condition `guard-state` that admits only objects under `guard/`. `project.k` declares this binding. The state bucket stays out of OpenTofu, because it holds the state of OpenTofu. Deploy the function. The Pub/Sub trigger calls it as the same service account, which needs the invoker role on the function. The grant takes about a minute to apply, and until then the log shows `403` answers:
 
 ```bash
 gcloud functions deploy wamn-guard --gen2 --project wamn-dev --region us-central1 \
@@ -343,872 +343,22 @@ gcloud compute network-endpoint-groups delete wamn-edge --zone us-central1-a --p
 
 If the backend service names no group, `remove-backend` refuses, and the agent runs only the delete.
 
-The work directory of section 4.1 holds the files of the deleted cluster. These are the NATS client certificate of `wamn-ctl`, the gate logins, the release digests, the stamped chart and the platform file. Remove them so that section 4 makes them again. Stop the port-forwards of the old cluster and remove the work directory:
+## Platform deployment boundary
+
+GCP deployment support is unfinished. The old numbered installer and `wamn-ctl platform apply` are removed.
+The current implementation targets local kind clusters.
+[The deployment plan](../plan/deploy.md) defines platform and application ownership and the later GCP work.
+
+Produce the platform artifacts separately from deployment:
 
 ```bash
-pkill -f '^kubectl -n platform port-forward'
-rm -rf $HOME/.cache/wamn-install
+wamn-ctl build-platform --registry localhost:5001 --out /tmp/wamn-platform-chart
+wamn platform deploy deploy/kind/cluster.k --chart /tmp/wamn-platform-chart
 ```
 
-## 4. Install
-
-The [platform publication owner](../../crates/control/environment/src/platform/job.rs) creates the Jobs.
-
-### 4.1 Work directory and binaries
-
-The install keeps its files in the private work directory `$HOME/.cache/wamn-install`. `platform apply` creates it if it is missing and reuses it if it exists. Each step that uses it sets `W` to it, or reads the platform file of section 4.10, which sets `W`. Run every step from a checkout of `main`:
-
-```bash
-W=$HOME/.cache/wamn-install
-mkdir -p -m 700 $W
-eval "$(tools/lane-start "$PWD")"
-cargo build --locked -p wamn-ctl --bin wamn-ctl --bin wamn -p wamn-scenario-worker
-```
-
-`tools/lane-start` sets `CARGO_TARGET_DIR`, so the binaries are in `$CARGO_TARGET_DIR/debug`.
-
-### 4.2 Cluster
-
-The agent runs this procedure as `wamn-agent@wamn-dev` with the agent's `CLOUDSDK_CONFIG`. The agent posts the saved plan, and it applies that plan only after the owner approves it. The state bucket of section 1 and the project resources of section 2 must exist first.
-
-[deploy/gcp/project.k](../../deploy/gcp/project.k) declares the cluster and the pools `main`, `pg` and `bench`. The pool `main` holds two Spot nodes. A taint restricts which pods can use a node. The pool `pg` holds one node for PostgreSQL alone. Its taint keeps every other pod off, and the `Cluster` selects it (section 4.5).
-
-The pool `bench` holds one Spot node for the Receiving host alone. Its taint keeps every other pod off, and an admission policy places the host there (section 4.9). The 8-vCPU project quota sets its size.
-
-From the checkout used in section 4.1, render the document into a private directory:
-
-```bash
-W=$HOME/.cache/wamn-install
-mkdir -p -m 700 "$W/project"
-$CARGO_TARGET_DIR/debug/wamn-ctl project render deploy/gcp/project.k \
-  --state-bucket wamn-dev-tofu-state --state-prefix project "$W/project"
-```
-
-The renderer writes `main.tf.json`. It writes no import block for the cluster or pools, because an import of a missing cluster or pool refuses the plan. It writes import blocks for `wamn-kind`, the zone `wamn-dev` and the guard binding on the state bucket, because a teardown keeps them. After the first apply, these imports change nothing. OpenTofu refuses to destroy the three resources.
-
-Install OpenTofu from the checkout with `tools/install-tofu`. The installer prints the path to its binary:
-
-```bash
-TOFU=$(tools/install-tofu)
-```
-
-With the agent's credentials, initialize OpenTofu in the rendered directory:
-
-```bash
-(
-  cd "$W/project"
-  "$TOFU" init
-)
-```
-
-Save the plan for the cluster, the pools and the three imported resources, and post its text to the owner:
-
-```bash
-(
-  cd "$W/project"
-  "$TOFU" plan -out=cluster.plan -target=google_container_cluster.cluster \
-    -target=google_container_node_pool.main -target=google_container_node_pool.pg \
-    -target=google_container_node_pool.bench -target=google_artifact_registry_repository.kind \
-    -target=google_dns_managed_zone.zone -target=google_storage_bucket_iam_member.guard_state
-  "$TOFU" show -no-color cluster.plan > plan.txt
-)
-```
-
-If the plan refuses with "Error acquiring the state lock", read the lock. A lock is stale when its `Who` names no running `tofu` process and its `Created` time is older than the last state write. Post the lock ID and `Who` to the owner. After the owner approves, release the stale lock:
-
-```bash
-(
-  cd "$W/project"
-  "$TOFU" force-unlock -force <lock ID>
-)
-```
-
-After the owner approves the plan, apply the saved plan:
-
-```bash
-(
-  cd "$W/project"
-  "$TOFU" apply cluster.plan
-)
-```
-
-After the apply, make sure that the plan shows no changes:
-
-```bash
-(
-  cd "$W/project"
-  "$TOFU" plan -target=google_container_cluster.cluster -target=google_container_node_pool.main \
-    -target=google_container_node_pool.pg -target=google_container_node_pool.bench \
-    -target=google_artifact_registry_repository.kind -target=google_dns_managed_zone.zone \
-    -target=google_storage_bucket_iam_member.guard_state
-)
-```
-
-Write the cluster credentials to the agent's kubeconfig, the file that selects its cluster. Use the agent's `CLOUDSDK_CONFIG` and `KUBECONFIG` for this command:
-
-```bash
-CLOUDSDK_CONFIG=$HOME/.config/gcloud-wamn-agent \
-KUBECONFIG=$HOME/.kube/wamn-dev \
-gcloud container clusters get-credentials wamn --project wamn-dev --zone us-central1-a
-```
-
-The pools have a fixed size and no autoscaler, so a scale to 0 holds. If `kubectl get nodes` lists no node after 03:00 New York time, run section 5.1.
-
-### 4.3 cert-manager and the edge certificate
-
-Run sections 4.1 and 4.2 by hand first. Then set `WAMN_REGISTRY_AUTH_FILE` to the credentials file that `registry_token` writes (section 4.10).
-From the repository root, run `$CARGO_TARGET_DIR/debug/wamn-ctl platform apply <cluster.k>`.
-Before installation, prepare the published chart in `$HOME/.cache/wamn-install/release-chart` and commit a qualified release digest in each environment document.
-The verb requires these artifacts before it changes the cluster.
-It runs provisioning, installation, rollout, and readiness through the shared environment apply implementation.
-It holds one install lock in its work directory and writes its kubeconfig and Job logs there.
-Each done or skipped progress line includes elapsed seconds.
-On GCP, it requests the production certificate directly.
-It provisions in 4.7 and writes platform inputs in 4.9.
-Step 4.8 adds one certificate user for each `environments/*.k` beside `cluster.k`.
-The user is `wamn-env-<org>--<project>--<env>`, and its Certificate and Secret are `hosts/wamn-nats-<org>--<project>--<env>`.
-It also writes the control host user `wamn-control-<org>` and drops every password user of an older install.
-The config reloader of the NATS reads the new authorization file, so no NATS restart happens.
-An unchanged apply writes no authorization Secret.
-Before `platform apply`, build each new platform version once with `build-platform`, as section 4.6 describes.
-Step 4.11 runs `env apply` for each environment as a Job, with `release = "none"`.
-It skips an environment after 4.17 applied a release to it, because a first apply would uninstall that release.
-The Job mounts a private document copy, database credentials, and the NATS certificate of `wamn-ctl`.
-It uses the runner's pinned KCL compiler and its own Kubernetes account.
-An unchanged completed Job skips when its input digest matches.
-Step 4.12 reads the key from the Secret Manager secret `identity-resend` and writes the Secret `identity/identity-resend`. It refuses a missing, empty, or whitespace-bearing key with the section 1 item.
-It prepares session targets as Jobs, then installs the identity chart with values derived from the document and stamped images.
-Jobs read the active session key, publish and activate a key when none is active, and request the public keys over TLS.
-The public Job results stay with their completion digests so a retry can reuse a published key.
-The environment apply Job installs the packages from the published release artifacts.
-Build, publication, qualification, and release selection finish before `platform apply` starts.
-The verb then runs sections 4.16.1 through 4.21.
-The manual commands of each section follow the verb's description.
-
-After you delete the Secret, wait for cert-manager to create it again.
-The Certificate can still report its old `Ready` condition.
-The ctl image in [Dockerfile](../../Dockerfile#L177) pins kubectl `v1.36.1`, which supports [`--for=create`](https://github.com/kubernetes/kubectl/blob/v0.36.1/pkg/cmd/wait/wait.go#L70-L72).
-
-[deploy/gcp/letsencrypt.yaml](../../deploy/gcp/letsencrypt.yaml) holds the ClusterIssuer `letsencrypt` and the wildcard Certificate `wamn-edge-tls` in namespace `edge`. Issue from the staging server first, then from production:
-
-```bash
-kubectl apply -f deploy/infra/cert-manager.yaml
-kubectl -n cert-manager rollout status deploy/cert-manager deploy/cert-manager-webhook deploy/cert-manager-cainjector
-sed -e 's#acme-v02.api#acme-staging-v02.api#' -e 's#^      name: letsencrypt$#      name: letsencrypt-staging#' \
-  deploy/gcp/letsencrypt.yaml | kubectl apply -f -
-kubectl -n edge wait certificate/wamn-edge-tls --for=condition=Ready --timeout=600s
-kubectl apply -f deploy/gcp/letsencrypt.yaml
-kubectl wait clusterissuer/letsencrypt --for=condition=Ready --timeout=120s
-kubectl -n edge delete secret wamn-edge-tls
-kubectl -n edge wait secret/wamn-edge-tls --for=create --timeout=600s
-kubectl -n cert-manager delete secret letsencrypt-staging
-kubectl -n edge get secret wamn-edge-tls -o jsonpath='{.data.tls\.crt}' | base64 -d | openssl x509 -noout -issuer -enddate
-```
-
-The issuer must be Let's Encrypt production, not `(STAGING)`.
-
-### 4.4 Namespaces, runtime operator and internal CA
-
-| Namespace | Holds |
-| --- | --- |
-| `platform` | the runtime operator, the one NATS, PostgreSQL, the collector |
-| `identity` | identity |
-| `hosts` | the release namespace: the hosts of every environment and the CDC readers |
-| `edge` | the edge and the public certificate |
-
-The operator release runs in `platform`. [values-operator.yaml](../../deploy/gcp/values-operator.yaml) makes it watch `hosts` and names the one NATS for the scheduler and the data connections.
-cert-manager owns the CA: [nats-certificates.yaml](../../deploy/infra/nats-certificates.yaml) holds the self-signed root, the ClusterIssuer `wasmcloud-ca`, the four Secrets that the operator chart mounts, and the certificates of the platform clients.
-The one NATS, [nats-jetstream.yaml](../../deploy/gcp/nats-jetstream.yaml), requires TLS and maps each client certificate to a user.
-`platform apply` installs the CA first, then the NATS, then the operator release. The manual procedure is:
-
-```bash
-for n in platform identity hosts; do kubectl create namespace $n; done
-kubectl apply -f deploy/infra/nats-certificates.yaml
-kubectl wait --for=condition=Ready clusterissuer/wasmcloud-ca --timeout=120s
-kubectl -n platform wait --for=condition=Ready certificate --all --timeout=120s
-kubectl -n hosts wait --for=condition=Ready certificate --all --timeout=120s
-# platform apply writes the Secret platform/wamn-nats-authorization (crates/control/environment/src/platform/broker.rs).
-kubectl apply -f deploy/gcp/nats-jetstream.yaml
-kubectl -n platform rollout status statefulset/wamn-nats --timeout=300s
-helm upgrade --install --namespace platform wamn oci://ghcr.io/wasmcloud/charts/runtime-operator --version 2.11.0 \
-  -f deploy/infra/values-wamn.yaml -f deploy/gcp/values-operator.yaml --wait --timeout 5m
-sed -e 's/__ENVIRONMENT_NAMESPACE__/hosts/' -e 's/namespace: wamn-system/namespace: platform/' \
-  deploy/platform/runtime-operator-events-rbac.example.yaml | kubectl apply -f -
-```
-
-The namespace `identity` exists now. Step 4.12 writes its Secret `identity-resend` from Secret Manager.
-
-### 4.4.1 Collector
-
-[deploy/platform/otel-collector.yaml](../../deploy/platform/otel-collector.yaml) is the one OpenTelemetry Collector of the cluster. [deploy/gcp/otel-collector-values.yaml](../../deploy/gcp/otel-collector-values.yaml) gives it the bucket and the cluster name. It writes traces and logs to the bucket of section 1 as gzip OTLP JSON, below `traces/` and `logs/` with hour partitions. It drops metrics. Apply it, then let it act as `wamn-otel`:
-
-```bash
-kubectl -n platform apply -f deploy/platform/otel-collector.yaml -f deploy/gcp/otel-collector-values.yaml
-kubectl -n platform annotate serviceaccount otel-collector --overwrite \
-  iam.gke.io/gcp-service-account=wamn-otel@wamn-dev.iam.gserviceaccount.com
-kubectl -n platform rollout restart deploy/otel-collector
-kubectl -n platform rollout status deploy/otel-collector --timeout=300s
-```
-
-If the bucket or the binding of section 1 is missing, the collector exits at start and its log names the bucket.
-
-### 4.5 PostgreSQL
-
-[deploy/gcp/cnpg-cluster.yaml](../../deploy/gcp/cnpg-cluster.yaml) is one instance that holds the system database `wamn_system` and every environment database. Its volume uses the storage class `premium-rwo` (pd-balanced), which needs the SSD quota of section 1. CloudNativePG keeps the superuser login in the Secret `wamn-pg-superuser`:
-
-```bash
-kubectl apply --server-side -f deploy/infra/cnpg-operator.yaml
-kubectl -n cnpg-system rollout status deploy/cnpg-controller-manager --timeout=180s
-kubectl apply -f deploy/gcp/cnpg-cluster.yaml
-kubectl -n platform wait cluster/wamn-pg --for=condition=Ready --timeout=600s
-```
-
-Forward the database pod to this machine. Later steps use the forward. A forward to the Service closes long connections, so forward the pod:
-
-```bash
-W=$HOME/.cache/wamn-install
-setsid kubectl -n platform port-forward pod/wamn-pg-1 15432:5432 > $W/pf-pg.log 2>&1 < /dev/null &
-```
-
-If a step cannot connect to `127.0.0.1:15432`, start the forward again.
-
-The Cluster sets `pg_stat_statements.max` and `pg_stat_statements.track`. From these parameters, CloudNativePG preloads the library and creates the extension in every database. If no `pg_stat_statements.*` parameter is set, CloudNativePG drops the extension from every database.
-
-### 4.6 Packages and platform build
-
-`wamn build` needs a PostgreSQL server ([building](building.md#wamn-build)). Run a local one on a loopback port, and build every package that the runner image reads. The server takes some seconds to start. Wait for its answer on TCP:
-
-```bash
-docker run -d --name wamn-install-build-pg -e POSTGRES_HOST_AUTH_METHOD=trust -p 127.0.0.1:0:5432 postgres:18
-PORT=$(docker port wamn-install-build-pg 5432/tcp | head -1 | sed 's/.*://')
-until docker exec wamn-install-build-pg pg_isready -h 127.0.0.1 -U postgres >/dev/null 2>&1; do sleep 1; done
-DATABASE_URL=postgres://postgres@127.0.0.1:$PORT/postgres $CARGO_TARGET_DIR/debug/wamn build \
-  apps/wamn_receiving apps/client_acme_receiving apps/wamn_wms
-docker rm -f wamn-install-build-pg
-```
-
-`$CARGO_TARGET_DIR/debug/wamn-ctl build-platform` builds the host, runner, gates, identity and edge-web images and the `http` and `materializer` role components. When every build succeeded, it pushes them with the tag of the chart version and stamps their digests into the release chart ([delivery](delivery.md#release-qualification)). The output directory must not exist. The repository `wamn` has immutable tags, so a version that is already in the registry cannot be built again. A reinstall at an unchanged version uses the registry. With `--stamp-only`, the command builds nothing. It reads the registry digests of the five images and two role components of the version and stamps them into the release chart. It refuses if one of them is missing. Both modes record the local platform UI digest beside the stamped chart ([building](building.md#platform-ui)).
-
-If another `build-platform` runs on this machine, or if you pass `--cloud`, the command builds in Cloud Build. In that case, pass `--cluster deploy/gcp/cluster.k`, which names the project and the daily spend cap ([building](building.md#cloud-platform-builds)).
-
-`platform apply` requires a stamped chart that matches the version and registry.
-It never builds packages, compiles the UI, or invokes `build-platform`.
-It never builds platform images.
-If registry images are missing, it stops with the version and the explicit build command.
-
-Before applying a new platform version, build it once with the agent identity.
-Use the registry from `deploy/gcp/cluster.k`.
-Give Docker its own configuration with the gcloud credential helper, which refreshes tokens during long pushes.
-The file holds no credential.
-The package outputs from the preceding commands must exist.
-
-```bash
-export CLOUDSDK_CONFIG=$HOME/.config/gcloud-wamn-agent
-W=$HOME/.cache/wamn-install
-mkdir -p -m 700 "$W/docker"
-echo '{"credHelpers":{"us-central1-docker.pkg.dev":"gcloud"}}' > "$W/docker/config.json"
-DOCKER_CONFIG=$W/docker $CARGO_TARGET_DIR/debug/wamn-ctl build-platform \
-  --registry us-central1-docker.pkg.dev/wamn-dev/wamn --out "$W/release-chart"
-```
-
-For an existing version, build the local UI and stamp the registry images into a new output directory:
-
-```bash
-pnpm --filter @wamn/platform-ui build
-DOCKER_CONFIG=$W/docker $CARGO_TARGET_DIR/debug/wamn-ctl build-platform --stamp-only \
-  --registry us-central1-docker.pkg.dev/wamn-dev/wamn --out "$W/reinstall-chart"
-```
-
-### 4.7 System database, org and identity issuer
-
-`provision-system` installs the control store. `provision-org --admin` records the org `dkk` and creates its first admin user. `provision-identity-issuer` prepares the login of identity, which the whole platform shares:
-
-```bash
-W=$HOME/.cache/wamn-install
-PW=$(kubectl -n platform get secret wamn-pg-superuser -o jsonpath='{.data.password}' | base64 -d)
-export WAMN_SYSTEM_ADMIN_URL="postgresql://postgres:${PW}@127.0.0.1:15432/wamn_system"
-$CARGO_TARGET_DIR/debug/wamn-ctl provision-system --platform-domain wamn.dev
-$CARGO_TARGET_DIR/debug/wamn-ctl provision-org --org dkk --template trials --pool wamn-pg --admin dkkloimwieder@gmail.com
-(umask 077; $CARGO_TARGET_DIR/debug/wamn-ctl provision-identity-issuer --issuer https://identity.identity.svc.cluster.local \
-  --prepare-generation a --namespace identity --emit-secret $W/identity-db.json \
-  --db-host wamn-pg-rw.platform.svc.cluster.local)
-kubectl apply -f $W/identity-db.json
-rm $W/identity-db.json
-```
-
-Make the serving certificate and the operator CA of identity. Copy the CA of the serving certificate into `hosts` and `edge`:
-
-```bash
-W=$HOME/.cache/wamn-install
-kubectl apply -f deploy/gcp/identity-certificate.yaml -f deploy/gcp/identity-operator-ca.yaml
-kubectl -n identity wait certificate --all --for=condition=Ready --timeout=120s
-kubectl -n identity get secret identity-tls -o jsonpath='{.data.ca\.crt}' | base64 -d > $W/identity-ca.crt
-for ns in hosts edge; do kubectl -n $ns create configmap identity-ca --from-file=ca.crt=$W/identity-ca.crt; done
-```
-
-### 4.8 Environment NATS users
-
-`platform apply` runs this step.
-For each environment it writes the certificate user and the Certificate of section 4.4 into the Secret `platform/wamn-nats-authorization`.
-The user publishes the environment's events, reads its own stream and consumers, and reaches only its own keys of the memory buckets `wamn-auth` and `wamn-connection`.
-It holds no stream or consumer management. Only `wamn-ctl` and the provisioning Jobs hold it.
-
-Forward the one NATS to this machine. The server certificate names `127.0.0.1` for this:
-
-```bash
-W=$HOME/.cache/wamn-install
-setsid kubectl -n platform port-forward svc/wamn-nats 14222:4222 > $W/pf-nats.log 2>&1 < /dev/null &
-```
-
-### 4.9 Platform install inputs
-
-`env apply` makes none of these objects and touches no IAM. The registry helper names the `wamn` credential helper for the host pulls and holds no credential. Each host runs as the service account of its environment, and the platform Jobs run as `wamn-host`. Both take the grants of the namespace `hosts` (section 1). The Role `wamn-control-status` gives the control operation `environment.status` its reads. The policy [bench-host-placement.yaml](../../deploy/gcp/bench-host-placement.yaml) gives the Receiving host pod the selector and the toleration of pool `bench`, because the host chart has no field for them. The two platform manifests state no namespace, so apply them into the release namespace:
-
-```bash
-kubectl apply -f deploy/gcp/registry-helper.yaml
-kubectl apply -f deploy/gcp/bench-host-placement.yaml
-kubectl -n hosts apply -f deploy/platform/wamn-host-serviceaccount.yaml
-kubectl -n hosts apply -f deploy/platform/control-status-rbac.yaml
-```
-
-The owner made the grants of the namespace `hosts` (section 1). IAM is owner-only, so the install identity does not read them. The first apply with a release (4.17) is the proof. If a grant is missing, the host pull fails with 403.
-
-OAuth envelope encryption uses the regional key `wamn/oauth-token`.
-The owner supplies the key and grants before step 4.9.
-The grant to the namespace `hosts` covers the environment hosts and the control host, which runs as `hosts/default`.
-Run these commands with the owner account for `wamn-dev`:
-
-```bash
-NUMBER=$(gcloud projects describe wamn-dev --format 'value(projectNumber)')
-gcloud services enable cloudkms.googleapis.com --project wamn-dev
-gcloud kms keyrings create wamn --project wamn-dev --location us-central1
-gcloud kms keys create oauth-token --project wamn-dev --location us-central1 --keyring wamn --purpose encryption
-gcloud kms keys add-iam-policy-binding oauth-token --project wamn-dev --location us-central1 --keyring wamn \
-  --member "principalSet://iam.googleapis.com/projects/$NUMBER/locations/global/workloadIdentityPools/wamn-dev.svc.id.goog/namespace/hosts" \
-  --role roles/cloudkms.cryptoKeyEncrypterDecrypter
-```
-
-GKE application-layer secrets encryption uses the regional key `wamn/etcd`.
-The Kubernetes Secrets that hold connection credentials are then encrypted in etcd.
-The owner creates the key, grants it to the GKE service agent, and turns the encryption on in step 4.9:
-
-```bash
-gcloud kms keys create etcd --project wamn-dev --location us-central1 --keyring wamn --purpose encryption
-gcloud kms keys add-iam-policy-binding etcd --project wamn-dev --location us-central1 --keyring wamn \
-  --member "serviceAccount:service-$NUMBER@container-engine-robot.iam.gserviceaccount.com" \
-  --role roles/cloudkms.cryptoKeyEncrypterDecrypter
-gcloud container clusters update wamn --project wamn-dev --zone us-central1-a \
-  --database-encryption-key projects/wamn-dev/locations/us-central1/keyRings/wamn/cryptoKeys/etcd
-```
-
-Set `WAMN_OAUTH_ENCRYPTION` on application hosts and the control host through their deployment environment:
-
-```bash
-WAMN_OAUTH_ENCRYPTION='{"provider":"gcp","project":"wamn-dev","region":"us-central1"}'
-```
-
-The host uses its pod identity token for the Cloud KMS REST API.
-It records the key version from the encrypt response in each row.
-Platform control rendering and environment apply pass `WAMN_OAUTH_ENCRYPTION` to every host.
-The GCP value names the cluster project and the region from the cluster zone.
-The GCP environment overlays also carry that value for direct `env apply`.
-
-Local cluster targets share the `hosts/wamn-oauth` Secret across application and control hosts.
-Platform install creates its 32-byte key only when the Secret is absent.
-The hosts mount it with mode `0600` at `/etc/wamn/oauth/key` through `WAMN_OAUTH_KEY_FILE`.
-The kubelet adds group read for the pod `fsGroup`, so the file has mode `0640` in the pod.
-The host refuses any other access to the key file.
-The local development target uses `<dev-root>/oauth.key` with the same permissions.
-Keep these keys across restarts because a replacement key cannot decrypt existing rows.
-
-### 4.10 Platform file
-
-`wamn-ctl env` reads its platform inputs from the environment (`Platform::from_env` in `crates/control/environment/src/environment/mod.rs`). Write them into one file. Every later step starts with `. $HOME/.cache/wamn-install/platform.sh`:
-
-```bash
-W=$HOME/.cache/wamn-install
-cat > $W/platform.sh <<'EOF'
-export W=$HOME/.cache/wamn-install
-PW=$(kubectl -n platform get secret wamn-pg-superuser -o jsonpath='{.data.password}' | base64 -d)
-export WAMN_SYSTEM_ADMIN_URL="postgresql://postgres:${PW}@127.0.0.1:15432/wamn_system"
-export WAMN_CONTROL_DATABASE_URL="$WAMN_SYSTEM_ADMIN_URL"
-export WAMN_RELEASE_NAMESPACE=hosts
-export WAMN_DATABASE_NAMESPACE=platform
-export WAMN_DATABASE_HOST=wamn-pg-rw.platform.svc.cluster.local
-export WAMN_RELEASE_CHART=$W/release-chart
-export WAMN_RELEASE_ARTIFACT_BASE=us-central1-docker.pkg.dev/wamn-dev/wamn/releases
-export WAMN_PACKAGE_ARTIFACT_BASE=us-central1-docker.pkg.dev/wamn-dev/wamn/packages
-export WAMN_REGISTRY_AUTH_FILE=$W/registry/config.json
-# The one NATS through the port-forward of section 4.8, as the user wamn-ctl.
-export WAMN_NATS_URL=nats://127.0.0.1:14222
-export WAMN_NATS_TLS_CA=$W/nats/ca.crt
-export WAMN_NATS_TLS_CERT=$W/nats/tls.crt
-export WAMN_NATS_TLS_KEY=$W/nats/tls.key
-if [ ! -d $W/nats ]; then
-  (umask 077; mkdir $W/nats
-   for k in ca.crt tls.crt tls.key; do
-     kubectl -n platform get secret wamn-ctl-nats -o jsonpath="{.data.${k//./\\.}}" | base64 -d > $W/nats/$k
-   done)
-fi
-export DOCKER_CONFIG=$W/docker
-# The registry token lasts one hour. Write a new one before each step that reads it.
-registry_token() {
-  rm -rf $W/registry; mkdir -m 700 $W/registry
-  gcloud auth print-access-token | python3 -c '
-import json, os, sys
-token = sys.stdin.read().strip()
-fd = os.open(os.path.join(sys.argv[1], "config.json"), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-os.write(fd, json.dumps({"auths": {"us-central1-docker.pkg.dev": {"username": "oauth2accesstoken", "password": token}}}).encode())
-os.close(fd)' $W/registry
-}
-# The instance suffix and the superuser URL of one environment database.
-suffix() { kubectl -n platform get database -o name | sed -n "s#.*/wamn-db-dkk--$1--dev--##p"; }
-db_url() { echo "postgresql://postgres:${PW}@127.0.0.1:15432/wamn-db-dkk--$1--dev--$(suffix $1)"; }
-# The private directory of the authoring gate, and the URL of one emitted Secret file.
-G=$W/gate
-url() { python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["stringData"]["url"])' "$1"; }
-EOF
-chmod 600 $W/platform.sh
-```
-
-Leave `WAMN_IDENTITY_URL` unset. The identity certificate names only `identity.identity.svc.cluster.local`, so this machine cannot reach identity, and `apply` issues no PAT. The publication workflow mints its PAT before installation.
-
-### 4.11 First apply
-
-`platform apply` runs this step with private document copies.
-It does not edit the committed host group files.
-The following commands describe the manual procedure.
-
-`publish-release` needs the environment database and its installed packages, so the first apply names no release. The documents in [deploy/gcp/environments](../../deploy/gcp/environments) name a release, so apply a private copy with `release = "none"`. The apply records the environment with a new instance suffix, and makes the `Database`, the roles, the run plane and the credential Secrets:
-
-```bash
-. $HOME/.cache/wamn-install/platform.sh
-for project in receiving wms; do
-  sed 's/^    release = .*/    release = "none"/' deploy/gcp/environments/dkk--$project--dev.k > $W/dkk--$project--dev.k
-  $CARGO_TARGET_DIR/debug/wamn-ctl env apply $W/dkk--$project--dev.k --dry-run
-  $CARGO_TARGET_DIR/debug/wamn-ctl env apply $W/dkk--$project--dev.k
-  echo "$project $(suffix $project)"
-done
-```
-
-Each host group file holds the suffix of its environment's first apply. Write the new suffixes:
-
-```bash
-. $HOME/.cache/wamn-install/platform.sh
-for project in receiving wms; do
-  sed -i "/name: WAMN_SESSION_INSTANCE_SUFFIX/{n;s/value: .*/value: $(suffix $project)/}" deploy/gcp/host-group-$project.yaml
-done
-git diff deploy/gcp/host-group-*.yaml
-```
-
-### 4.12 Identity and session key
-
-`platform apply` runs this step. It writes the Resend Secret from the Secret Manager secret of section 1.
-The following commands describe the manual procedure.
-
-Prepare the session target of each environment in namespace `identity`.
-The [identity installer](../../crates/control/environment/src/platform/identity.rs) derives both Secret names:
-
-```bash
-. $HOME/.cache/wamn-install/platform.sh
-for project in receiving wms; do
-  (umask 077; $CARGO_TARGET_DIR/debug/wamn-ctl provision-project-env --org dkk --project $project --env dev \
-    --namespace identity --target-admin-database-url "$(db_url $project)" --db-host wamn-pg-rw.platform.svc.cluster.local \
-    --prepare-session-role-reader-generation a --emit-session-role-reader-secret $W/session-target-$project.json)
-  kubectl apply -f $W/session-target-$project.json
-  rm $W/session-target-$project.json
-done
-```
-
-The verb prints two PostgreSQL warnings that the `postgres` role did not grant a role membership. The generation still authenticates.
-
-Make sure that the Resend Secret exists, that it has the key `api-key`, and that the key holds no whitespace. The second and third commands print counts, never the key. The second count is the length of `api-key` and must be more than 0, because a missing or empty key also gives a whitespace count of 0. The third count must be 0. If the second count is 0, the owner adds a version to the Secret Manager secret as section 1 says:
-
-```bash
-. $HOME/.cache/wamn-install/platform.sh
-kubectl -n identity get secret identity-resend -o name
-kubectl -n identity get secret identity-resend -o jsonpath='{.data.api-key}' | base64 -d | wc -c
-kubectl -n identity get secret identity-resend -o jsonpath='{.data.api-key}' | base64 -d | tr -dc '[:space:]' | wc -c
-```
-
-After `platform apply` installs identity, publish a session key.
-Activate it with the `kid` that `publish` prints:
-
-```bash
-kubectl -n identity rollout status deploy/identity --timeout=300s
-kubectl -n identity exec deploy/identity -- wamn-identity publish
-kubectl -n identity exec deploy/identity -- wamn-identity activate --kid <kid>
-```
-
-Make sure that identity answers over TLS from a pod in `hosts`. The answer is the key set with the `kid`, and `HTTP 200`:
-
-```bash
-kubectl -n hosts run identity-check --restart=Never --rm -i --quiet \
-  --image=curlimages/curl@sha256:58adaa4e8dca9c988bae2aba4ab3434a0bb2da16bbe3f92dec39ec7785166777 \
-  --overrides='{"spec":{"volumes":[{"name":"ca","configMap":{"name":"identity-ca"}}],"containers":[{"name":"identity-check","image":"curlimages/curl@sha256:58adaa4e8dca9c988bae2aba4ab3434a0bb2da16bbe3f92dec39ec7785166777","command":["curl","-sS","-w","\\nHTTP %{http_code}\\n","--cacert","/ca/ca.crt","https://identity.identity.svc.cluster.local/.well-known/jwks.json"],"volumeMounts":[{"name":"ca","mountPath":"/ca"}]}]}}'
-```
-
-| Subject | Contract |
-| --- | --- |
-| Identity address | Service `identity` in namespace `identity`, port 443 to container port 8443. The serving certificate names only `identity.identity.svc.cluster.local` (`deploy/gcp/identity-certificate.yaml:12-13`). Its CA is `ca.crt` of the Secret `identity-tls`. |
-
-### 4.13 Packages
-
-Publish the packages before installation.
-The shared environment apply implementation installs them from the declared release artifacts.
-It reads registry credentials from `WAMN_REGISTRY_AUTH_FILE` and optional CA files from `WAMN_OCI_CA_PATHS`.
-Its package stage runs `apply-package` and `reconcile-package-data-access` for each package, and its ensure step repairs replica identity.
-It never pushes a package. The commands below push a missing package before installation.
-
-The packages are `wamn_receiving` 2.2.7 and `wamn_wms` 2.1.4. If a tag is missing from the registry, push that package. The tags are immutable, so a push of other bytes under a present tag fails:
-
-```bash
-. $HOME/.cache/wamn-install/platform.sh
-registry_token
-declare -A V=([receiving]=2.2.7 [wms]=2.1.4)
-for project in receiving wms; do
-  gcloud artifacts docker images describe $WAMN_PACKAGE_ARTIFACT_BASE:wamn_$project-${V[$project]} --format="value(image_summary.digest)" \
-  || $CARGO_TARGET_DIR/debug/wamn-ctl push-package --package apps/wamn_$project --artifact-base $WAMN_PACKAGE_ARTIFACT_BASE \
-       --component-artifact-base us-central1-docker.pkg.dev/wamn-dev/wamn/components --registry-auth-file $WAMN_REGISTRY_AUTH_FILE
-done
-```
-
-### 4.14 Releases
-
-Publish each release before installation.
-The installer consumes the resulting manifest and never publishes it.
-The publication below still reads the deployed project and control databases through the forward of section 4.5.
-It therefore works only against an installed platform. An isolated build catalog is open work (wamn-vdu38).
-The publication command takes the authored environment file as its positional argument.
-
-`publish-release` prints the digest of the release manifest. Publish Receiving, which has no wiring:
-
-```bash
-. $HOME/.cache/wamn-install/platform.sh
-registry_token
-RELEASE_receiving=$($CARGO_TARGET_DIR/debug/wamn-ctl publish-release --database-url "$(db_url receiving)" \
-  deploy/gcp/environments/dkk--receiving--dev.k \
-  --control-database-url "$WAMN_SYSTEM_ADMIN_URL"  \
-  --verified-publisher-principal wamn-management-author-dkk--receiving--dev \
-  --run-schema wamn_run --package wamn_receiving@2.2.7 \
-  --artifact-base $WAMN_PACKAGE_ARTIFACT_BASE --registry-auth-file $WAMN_REGISTRY_AUTH_FILE)
-echo "$RELEASE_receiving" > $W/release-receiving
-```
-
-The [release owner](../../crates/control/release/src/publish_release.rs) constructs the published release before installation.
-
-### 4.15 Qualification
-
-Qualification stays on the build machine, outside `platform apply`.
-The installer never starts a qualification Job.
-
-`qualify-release` runs the release's cases in kind clusters on this machine against the release chart. If every case passes, it pushes the qualification beside the release ([delivery](delivery.md#release-qualification)). It pulls the chart images with `docker pull`, so it reads `DOCKER_CONFIG` of the platform file. Each run takes longer than one hour, so each run gets a new registry token:
-
-```bash
-. $HOME/.cache/wamn-install/platform.sh
-for project in receiving wms; do
-  registry_token
-  $CARGO_TARGET_DIR/debug/wamn-ctl qualify-release --release-digest "$(cat $W/release-$project)" \
-    --release-chart $WAMN_RELEASE_CHART --artifact-base $WAMN_RELEASE_ARTIFACT_BASE \
-    --registry-auth-file $WAMN_REGISTRY_AUTH_FILE || break
-done
-```
-
-### 4.15.1 Benchmark
-
-Run the benchmark once after qualification, with the qualified release serving Receiving.
-For a first install, complete sections 4.17 through 4.21 before this step.
-Prepare the bench VM and its binary as described in section 5.8.
-Keep the PostgreSQL forward on local port 15432 open.
-
-The script reads the platform version, `version` in `deploy/platform/release/Chart.yaml`, and sources the platform file from section 4.10.
-That file supplies `db_url receiving` and `$G`. The script reads the operator token file `$G/operator-pat.json`. No step on this page writes that file. Mint it as section 4.14 mints the management-author PAT, with `--emit-operator-pat-secret` in place of `--emit-management-author-pat-secret`. Use the Receiving coordinates.
-The script uses `CLOUDSDK_CONFIG` and `KUBECONFIG` from this page's opening commands.
-It refuses an existing result for the current version.
-Commit the result from the repository root:
-
-```bash
-tools/bench/tier.sh
-version=$(sed -n 's/^version: //p' deploy/platform/release/Chart.yaml)
-git add "tests/bench/platform-$version.json"
-git commit -m "Record platform $version benchmark"
-```
-
-### 4.16 Record the releases
-
-Write each qualified release digest in its environment document before installation.
-`platform apply` refuses a document that still declares `release = "none"`.
-The verb never edits a committed file.
-
-The Rust edge reads each live release row. No edge values or URL map contains a copied release digest.
-
-Commit the release lines. If you ran the manual commands of sections 4.6 and 4.11, commit their changes to `deploy/gcp` in the same commit. Push the commit.
-
-### 4.16.1 Connections
-
-Step 4.16.1 writes the integrations that each environment file declares, before 4.17 binds them.
-The documents are in [deploy/gcp/connections](../../deploy/gcp/connections) beside the cluster document.
-Each integration `<name>` has `<name>.integration.json` and the connection `<name>.json`.
-An integration that names an external system also has `<system>.external-system.json`.
-The documents hold no credential.
-`platform apply` runs `wamn-ctl env connections` as a Job `platform-connections-<org>--<project>--<env>` in `hosts`.
-The Job writes each document through the same operations as the control routes, which start only at 4.19.1.
-It skips a document when the stored value is equal.
-A first connection write of an authenticated integration stores the credential `{}`.
-For an integration that needs a real credential, set it with `wamn-ctl connection set-credential` after 4.19.1, as [deployment](deployment.md#project-integrations-and-environment-connections) describes.
-The credential store writes to the Secret `hosts/wamn-credential-<org>-<project>-<env>`.
-An environment without integrations has no Job.
-
-### 4.17 Apply with the release
-
-`platform apply` runs `env apply` as a Job with the release declared in each environment file.
-The Job mounts the stamped chart, registry credentials, and private copies of the host group inputs.
-It reads `host-group-<project>.yaml` beside the cluster document and the `environments/` directory.
-It derives event Secret names and the database instance suffix from the current environment.
-The Job skips when its completed input digest matches.
-An unqualified release fails through `env apply` itself.
-The verb prints that refusal and the `qualify-release` command for the build machine.
-After host qualification succeeds, rerun `platform apply` with the same release digest.
-The Job applies that qualified release through the existing `env apply` path.
-
-The apply installs the release chart of each environment in `hosts`. `WAMN_RELEASE_HOST_GROUP` names the platform part of its host group: the event coordinates, the registry helper and the identity CA. The release chart adds the NATS URL, the environment certificate and the materializer's `plugins` entry:
-
-```bash
-. $HOME/.cache/wamn-install/platform.sh
-for project in receiving wms; do
-  export WAMN_RELEASE_HOST_GROUP=deploy/gcp/host-group-$project.yaml
-  $CARGO_TARGET_DIR/debug/wamn-ctl env apply deploy/gcp/environments/dkk--$project--dev.k --dry-run
-  $CARGO_TARGET_DIR/debug/wamn-ctl env apply deploy/gcp/environments/dkk--$project--dev.k
-done
-$CARGO_TARGET_DIR/debug/wamn-ctl env show dkk/receiving/dev
-$CARGO_TARGET_DIR/debug/wamn-ctl env show dkk/wms/dev
-```
-
-### 4.18 CDC readers
-
-`platform apply` renders one CDC reader Deployment in `hosts` for each environment that has a `wamn-cdc-<org>--<project>--<env>` Secret, and waits for its rollout.
-`env apply` writes that Secret only for a release with an event registration.
-For an environment without the Secret, the step prints `4.18 CDC reader <org>/<project>/<env>: skipped: no registration`.
-The reader uses the stamped host image, which contains `/usr/local/bin/wamn-cdc-reader`.
-The Deployment mounts the replication, registry-reader, and event publisher Secrets by name.
-The verb does not read their values.
-The reader loads its registration from the environment row with its registry-reader login.
-An unchanged apply skips the write when the rendered fields match the live objects.
-
-For each environment with a reader, read its logs:
-
-```bash
-kubectl -n hosts logs deploy/cdc-reader-dkk--receiving--dev --tail=20
-kubectl -n hosts logs deploy/cdc-reader-dkk--wms--dev --tail=20
-```
-
-Each log shows `registration loaded`, the three `preflight` lines and `walsender session open`.
-
-### 4.19 Web clients
-
-`platform apply` runs `wamn web upload --web <client.web> --org <org>` as a Job for each environment with a client.
-The Job runs in `hosts` as `wamn-host`, which takes the grants of the namespace `hosts` (section 1, item 15).
-It pulls the pinned web artifact from the package repository and makes sure that its manifest and layer match their digests.
-It writes the browser files below `gs://<buckets.web>/clients/<package>/<web digest hex>/`.
-The Job keeps the existing registry and credential mounts.
-The Job runner saves the log before it deletes the Job and its temporary Secrets.
-A completed Job with the same input digest skips the upload.
-An existing index at the destination also skips all writes, including when another environment uses the same web digest.
-
-If `buckets.web` is empty, the report prints `skipped: no bucket` for each environment's upload and its check.
-With a bucket and no `client`, the upload prints `skipped: no web client`.
-The verb starts no web Job in that case.
-The kind fixture has no web bucket.
-
-### 4.19.1 Control host and platform UI
-
-`platform apply` runs `provision-org` in a Job with the mounted database credential.
-The Job writes the control credential and the first-install administration Secret to `hosts`.
-It preserves an existing administration Secret and its environment credentials.
-A second Job copies the operator Secret with a typed metadata patch.
-Credential values stay inside the cluster and never enter Job logs.
-
-The verb renders the control host values from the document and the stamped chart.
-It sets the HTTP image and control route in [control-service.yaml](../../deploy/gcp/control-service.yaml) in memory.
-It compares the rendered objects with live objects and skips an unchanged release.
-It waits for `hosts/hostgroup-c-<org>` to roll out.
-
-Keep each environment's administration credential current through `provision-project-env --emit-control-administration-patch` before control writes.
-The runtime TLS Secrets and service account from section 4.9 must exist in `hosts`.
-
-The verb runs `wamn web upload --platform-ui --org <org> --bucket gs://<buckets.web>` in a Job.
-It mounts the local bundle and the stamped build record as Job-owned inputs.
-The upload refuses bytes that differ from the recorded digest.
-An unchanged input digest skips the Job.
-The destination is `gs://<buckets.web>/platform-ui/<platform version>/`, and `config.json` contains only the org.
-Without `--bucket`, the standalone command keeps `gs://wamn-dev-web` as its default.
-With an empty `buckets.web`, the upload and its check print `skipped: no bucket` and start no Job.
-
-The control release chart writes its route host and platform version into the `hosts/c-<org>` ConfigMap.
-Helm upgrade and rollback update that ConfigMap with the release.
-The Rust edge reads it for each request.
-The `control.wamn.dev` DNS record must point to the same load balancer as the application hosts.
-Ask the project owner to run the `control.wamn.dev.` A record command in [section 2](#2-project-resources).
-The existing wildcard certificate covers this host.
-Section 4.20 installs both routing owners.
-They send `/api/` to `c-dkk-http`, `/password/` to identity, and every shell page to the platform UI index.
-
-### 4.20 Edge and load balancer
-
-`platform apply` installs the Rust edge Deployment and Service as `edge/wamn-edge-web` and waits for rollout.
-It reads the image digest from `platform.edge.image` in the stamped release chart.
-`build-platform` builds the `edge-web` Docker target for `linux/amd64` and stamps that image.
-The `edge` target exports the aarch64 edge-box binary.
-The installer compares rendered objects with live objects and skips an unchanged installation.
-It grants the edge only `get` on the named release ConfigMaps in `hosts`, without Secret access.
-
-The edge reads `gs://wamn-dev-web` as the Google service account `wamn-edge` through Workload Identity on `edge/wamn-edge-web`.
-The service account and its two bindings outlive a teardown, because they are IAM.
-If they are missing, the agent runs these three commands as `wamn-agent@wamn-dev`.
-The agent posts each command and runs it only after the owner approves it, the same approval as a cluster resize:
-
-```bash
-gcloud iam service-accounts create wamn-edge --project wamn-dev
-gcloud storage buckets add-iam-policy-binding gs://wamn-dev-web --member serviceAccount:wamn-edge@wamn-dev.iam.gserviceaccount.com --role roles/storage.objectViewer
-gcloud iam service-accounts add-iam-policy-binding wamn-edge@wamn-dev.iam.gserviceaccount.com --project wamn-dev --role roles/iam.workloadIdentityUser --member 'serviceAccount:wamn-dev.svc.id.goog[edge/wamn-edge-web]'
-```
-
-Each environment can set `client = {package = "<package id>", web = "<full web digest>"}` for its `route_host`.
-Without `client`, the host serves no application web client.
-Apply requires the pinned web artifact's package coordinate to appear in the release.
-The revision values keep `webClients` and `webDigests` beside each other.
-
-The release chart owns the host-to-package map and the release digest in its ConfigMap.
-The edge reads that row and fetches files under `clients/<package>/<web digest hex>/` with `object_store`.
-For the control host, it reads files under `platform-ui/<platform version>/`.
-It caches files in memory by their full versioned object path.
-Digest paths carry `Cache-Control: public, max-age=31536000, immutable`.
-The edge fetches `config.json` again for every request and returns `Cache-Control: no-cache`.
-Unversioned page paths also return `no-cache`.
-
-The nginx chart proxies web paths to `http://wamn-edge-web.edge.svc.cluster.local` with the original Host header.
-It first sends `/api/<application>/files` and its child paths to the `<release>-files` Service with the full path.
-That Service selects release host pods and forwards to their native file listener on port 8082.
-It streams uploads without request buffering or a configured body size limit.
-Other `/api/` requests and `/password/` requests use their existing services.
-
-It reads no bucket and needs no static digest or `bucketPath`.
-Platform apply also installs the nginx chart below.
-
-The verb runs a Job that requires HTTP 200 for `/` and `/config.json` through the Rust Service.
-The Job checks only the hosts whose release serves a web client.
-A release serves a web client when it serves the platform UI, or when its client package artifact holds a web build.
-The web upload writes the same clients.
-For each other host, the step prints `4.20 Edge bucket check <host>: skipped: no web client`.
-With an empty `buckets.web`, this step prints `4.20 Edge bucket check: skipped: no bucket` and starts no Job.
-The Rust edge still installs and rolls out.
-
-
-Platform apply renders nginx values from the control host and environment documents.
-It installs the `wamn-edge` release in `edge` and waits for its Deployment.
-An unchanged release skips the Helm write.
-On GCP, the Service requests the fixed network endpoint group (NEG) `wamn-edge` for HTTPS port 443.
-The verb reads `cloud.google.com/neg-status` from that Service with `kubectl` and reports its name and zones.
-A missing status after rollout refuses the install and names the annotation.
-Kind prints `4.20 Edge NEG: skipped: kind`.
-
-The project document declares a global HTTPS load balancer with Cloud CDN that sends all traffic to this NEG.
-OpenTofu renders these objects, each named `wamn-edge`:
-
-- A Certificate Manager DNS authorization for `wamn.dev`, the DNS name of the zone without its trailing dot. Its type is `PER_PROJECT_RECORD`.
-- A Google-managed certificate for `wamn.dev` and `*.wamn.dev` through that authorization.
-- A certificate map with one `PRIMARY` entry for that certificate.
-- A backend service on the NEG with protocol HTTPS, Cloud CDN on, and cache mode `USE_ORIGIN_HEADERS`.
-- A URL map whose default service is that backend service, with no host or path rules.
-- A target HTTPS proxy that uses the certificate map, and the global address and forwarding rule on port 443.
-
-The TCP health check stays.
-OpenTofu reads the NEG by its fixed name and declared zone.
-It reads no environment files and renders no compute SSL certificate or backend bucket.
-The rate target is 1,000 requests per second per endpoint.
-
-The origin decides what the CDN caches.
-Digest paths carry `public, max-age=31536000, immutable`, so the CDN caches them.
-`config.json` and pages carry `no-cache`.
-Every `/api` response keeps the route's `cache-control` and `Vary: Authorization, Cookie`, so the CDN caches no API read.
-
-The DNS authorization needs one CNAME record in the zone `wamn-dev`, made once.
-OpenTofu outputs its name as `edge_dns_authorization_name` and its value as `edge_dns_authorization_data`.
-The name has the form `_acme-challenge_<id>.wamn.dev.`, where Google sets `<id>` for the project.
-The name is not `_acme-challenge.wamn.dev`, because cert-manager writes the Let's Encrypt DNS-01 TXT record of `deploy/gcp/letsencrypt.yaml` there.
-The agent posts this command with those values and runs it only after the owner approves it:
-
-```bash
-gcloud dns record-sets create <edge_dns_authorization_name> --zone wamn-dev --project wamn-dev \
-  --type CNAME --ttl 300 --rrdatas <edge_dns_authorization_data>
-```
-
-A new host under `wamn.dev` needs no certificate change, only its A record.
-
-The order is platform apply, OpenTofu apply, then platform apply again.
-The first run creates the NEG before the load balancer can use it.
-The agent renders `deploy/gcp/project.k` as in section 4.2 and runs `tofu plan` on that rendered directory as `wamn-agent@wamn-dev`.
-The agent posts the plan, and it runs `tofu apply` of the saved plan only after the owner approves it, the same approval as a cluster resize.
-The diagnostic `tofu apply deploy/gcp` names this step.
-The next platform apply skips unchanged resources and runs the final HTTPS checks.
-The verb never runs OpenTofu or `gcloud compute`.
-
-wamn-dev still runs the earlier load balancer that was made by hand on 2026-09-27, outside OpenTofu state.
-Its address, forwarding rule, health check, URL map and target HTTPS proxy already carry the name `wamn-edge`.
-Its URL map routes by host to the backend bucket `wamn-edge-files` and the backend service `wamn-edge-platform`, and its proxy holds a compute SSL certificate.
-It moves to the HTTPS load balancer once, with no gap on the route hosts.
-The agent runs each step as `wamn-agent@wamn-dev`:
-
-1. Post `gcloud services enable certificatemanager.googleapis.com --project wamn-dev` and stop. Enabling an API is an owner input. Continue when `gcloud services list --enabled --project wamn-dev` shows `certificatemanager.googleapis.com`.
-2. Run `platform apply`, so that step 4.20 installs the edge and creates the NEG. Until step 7, the 4.21 check fails on the route-host certificate. Note that failure and continue. Stop on any other failed step.
-3. Import the existing objects into the state of the rendered directory:
-
-    ```bash
-    "$TOFU" import google_compute_global_address.edge projects/wamn-dev/global/addresses/wamn-edge
-    "$TOFU" import google_compute_global_forwarding_rule.edge projects/wamn-dev/global/forwardingRules/wamn-edge
-    "$TOFU" import google_compute_health_check.edge projects/wamn-dev/global/healthChecks/wamn-edge
-    "$TOFU" import google_compute_url_map.edge projects/wamn-dev/global/urlMaps/wamn-edge
-    "$TOFU" import google_compute_target_https_proxy.edge projects/wamn-dev/global/targetHttpsProxies/wamn-edge
-    ```
-
-4. Run `tofu apply` with `-target` on the DNS authorization, certificate, certificate map, certificate map entry and backend service `edge_https`. The old URL map keeps serving.
-5. Post the CNAME command above. After the owner approves it, run it and wait until the record resolves.
-6. Wait until `gcloud certificate-manager certificates describe wamn-edge --project wamn-dev --format 'value(managed.state)'` prints `ACTIVE`.
-7. Run the full `tofu apply`. It updates the URL map and the HTTPS proxy in place, so the forwarding rule and the address do not change.
-8. List the backend service `wamn-edge-platform`, the backend bucket `wamn-edge-files` and the compute SSL certificate that the proxy held. Post the list, then delete exactly those objects by name.
-
-If `wamn-agent` lacks a Certificate Manager or compute permission, the agent stops and reports the exact permission.
-
-nginx terminates TLS with `edge/wamn-edge-tls`, in kind and on GCP.
-On GCP, the load balancer presents the Google-managed certificate and re-encrypts to nginx.
-On GCP, cert-manager issues the nginx Secret through `deploy/gcp/letsencrypt.yaml`.
-On kind, the existing `edge-self-signed` issuer supplies the same Secret.
-There is no certificate-copy CronJob.
-
-### 4.21 Check
-
-Platform apply runs this step last.
-If `buckets.web` is set, `/` and `/config.json` must answer 200 on each route host whose release serves a web client.
-For each other host, the step prints `4.21 Web / and /config.json on <host>: skipped: no web client`.
-A protected API route must answer 401 without credentials.
-On GCP, each response must present a certificate that is valid for the host name against public roots, with no serial match.
-On kind, each response must present the certificate serial in `edge/wamn-edge-tls`.
-The verb reads only the public certificate from the Secret.
-A failure names the host and the failing check.
-On GCP, HTTPS connection failures and unexpected status codes also name `tofu apply deploy/gcp` as a likely missing step.
-
-On kind, curl Jobs reach the edge Service through the cluster while retaining the route hostname for TLS and HTTP.
-They trust the public certificate from the Secret and compare the served serial.
-They use no port-forward.
-The public load balancer prints `skipped: kind`.
-An empty web bucket prints `skipped: no bucket` for `/` and `/config.json`.
-The protected API checks still run.
-
-A ConfigMap in `platform`, `wamn-install-platform-https-check`, records successful statuses, serials, skips, and the input digest.
-An unchanged rerun preserves that record and starts no HTTPS Job.
-Changes to the document, release rows, proxy, or certificate require the checks again.
-Install Jobs allow 900 seconds so Helm can report its 600-second timeout first.
-The verb retains Job logs under the work directory's `jobs` directory, including failures.
+The deploy command consumes the prepared chart. It does not build or deploy applications.
+It reports an incomplete result until system bootstrap and platform services are available.
+The cloud prerequisites above remain external inputs. They do not establish GCP deployment support.
 
 ## 5. Operations
 
@@ -1222,7 +372,7 @@ $CARGO_TARGET_DIR/debug/wamn-ctl platform wake deploy/gcp/cluster.k
 
 The verb resizes pool `pg` first, then the other pools. It prints one line for each pool. The `Cluster` keeps its old `Ready` condition while its pod is gone, so the verb then waits up to 900 seconds for the pod `wamn-pg-1` to exist and be Ready. Last, it waits up to 600 seconds for the statefulset `wamn-nats` to roll out.
 
-The port-forwards end with their pods, so start them again (sections 4.5 and 4.8).
+Pod replacement ends existing port-forwards. Restart them for the services that you need.
 
 ### 5.2 Pause
 
@@ -1234,60 +384,30 @@ $CARGO_TARGET_DIR/debug/wamn-ctl platform sleep deploy/gcp/cluster.k
 
 The verb prints one line for each pool, and then the names of the pools that it set to 0. Run section 5.1 to start the cluster again.
 
-### 5.3 Invite a user
+### Application operations
 
-`platform apply` invites the document's `owner_email` during step 4.19.1 with `--org-admin`.
-A PostgreSQL Job reads whether the owner has a password or an unexpired, unused invitation.
-Either state skips the invite Job.
-Otherwise, the invite Job uses the database credential and operator certificate inside the cluster.
-Identity sends the invitation by email.
-The Job prints only a fixed success message, never the invitation link or secret.
-The runner saves that log before it deletes the Job.
-An unchanged rerun reads the current state and skips the invitation.
+Platform deployment does not invite users or deploy applications.
+[Deployment](deployment.md) describes separate application and invitation commands.
+The removed installer no longer creates a local `platform.sh` credential file.
 
-Other users receive invitations through the platform UI.
+### Rotate the Resend key
 
-- The operator image carries `wamn-ctl` and `wamn-ctl-ops` and nothing else of the workspace. It is pinned by digest, as the host and identity images are.
-
-- The operator certificate reaches the Job only as a mounted Secret. It never passes through the owner's machine.
-
-- The Job reaches identity by its Service name on port 443, and it trusts only the CA of the serving certificate.
-
-- No credential goes to a Job log. A verb that writes a credential writes it to a mode 0600 file, as today.
-
-- A Job's log is saved to the scratchpad before the Job is deleted.
-
-3. The private copy of the manifest is in the scratchpad, at mode 0600, and is removed after the apply.
-
-4. The pod waits with a bound. The file comes out with `kubectl exec cat` into a 0600 file, as the journey tool does.
-
-7. `ttlSecondsAfterFinished` is 600 seconds for both Jobs.
-
-8. The `mint-pat` pod waits at most 300 seconds. The wait ends as soon as the file is read, so on the normal path the pod exits early.
-
-### 5.4 Rotate the Resend key
-
-The owner makes the new key in Resend, writes it to a new mode 0600 file, and adds it as a new version. The first command removes the line end of the file:
+Write the new Resend key to a private file with mode `0600`.
+Add it as a Secret Manager version:
 
 ```bash
 tr -d '[:space:]' < <file> | gcloud secrets versions add identity-resend --project wamn-dev --data-file=-
 ```
 
-The agent then runs `platform apply`, which writes the cluster Secret from the new version in step 4.12, and restarts identity:
-
-```bash
-kubectl -n identity rollout restart deploy/identity
-kubectl -n identity rollout status deploy/identity --timeout=300s
-```
-
-Send one recovery mail to an enrolled address to prove delivery. Then the owner revokes the old key in Resend and deletes the file.
+Secret Manager updates do not update the running identity service.
+GCP deployment integration for this step remains unfinished.
+Keep the old key active until the replacement serves a successful recovery request.
 
 ### 5.5 Delete an environment
 
 `wamn-ctl env delete <org/project/env> [--data]` deletes one environment, so that the next `env apply` of its document makes a new suffix. It uninstalls the release chart, revokes the PATs, deletes the credential Secrets, the streams, the slot, the `Database` and the registry rows. With `--data` it also drops the database and its roles, and asks for the coordinate again at a terminal. Every step is "if present", so run it again after a failure:
 
 ```bash
-. $HOME/.cache/wamn-install/platform.sh
 $CARGO_TARGET_DIR/debug/wamn-ctl env delete dkk/receiving/dev
 ```
 
@@ -1300,17 +420,15 @@ kubectl -n platform exec wamn-pg-1 -c postgres -- psql -U postgres -Atc \
   "select slot_name, active, wal_status, invalidation_reason from pg_replication_slots"
 ```
 
-`recover-capture-gap` drops the lost slot, makes it again under the same name and writes the open gap row. It connects as `wamn-ctl` with the `WAMN_NATS_*` inputs of the platform file:
+`recover-capture-gap` drops the lost slot, makes it again under the same name and writes the open gap row. It connects as `wamn-ctl` with explicit database credentials and the existing `WAMN_NATS_*` inputs:
 
 ```bash
-. $HOME/.cache/wamn-install/platform.sh
-WAMN_PG_ADMIN_URL="$(db_url wms)" $CARGO_TARGET_DIR/debug/wamn-ctl recover-capture-gap --org dkk --project wms --env dev
+$CARGO_TARGET_DIR/debug/wamn-ctl recover-capture-gap --org dkk --project wms --env dev --admin-database-url "$WAMN_PG_ADMIN_URL"
 ```
 
 After the resync, or on the owner's word while no resync exists, run `close-capture-gap`. The reader resumes within 30 seconds:
 
 ```bash
-. $HOME/.cache/wamn-install/platform.sh
 $CARGO_TARGET_DIR/debug/wamn-ctl close-capture-gap --org dkk --project wms --env dev
 ```
 
@@ -1390,21 +508,11 @@ The VM counts 1 CPU against the quota of 8. `tier.sh` copies the PAT file to `~/
 ```bash
 gcloud compute ssh wamn-bench-client --project wamn-dev --zone us-central1-a --command 'shred -u ~/pat/* && rmdir ~/pat'
 gcloud compute instances delete wamn-bench-client --project wamn-dev --zone us-central1-a --quiet
-shred -u $G/operator-pat.json
 ```
 
-Load the 1000-order Receiving seed as the superuser, inside the database pod, because a port-forward drops at times. The reset empties every Receiving table. The platform file from section 4.10 defines `suffix`:
-
-```bash
-. $HOME/.cache/wamn-install/platform.sh
-kubectl -n platform exec -i wamn-pg-1 -c postgres -- psql -U postgres -d "wamn-db-dkk--receiving--dev--$(suffix receiving)" \
-  -v ON_ERROR_STOP=1 -v reset=1 -v scale=1000 -q < apps/wamn_receiving/tests/fixtures/receiving-seed.sql
-```
-
-Use the platform file from section 4.10. Section 4.15.1 says how to make the operator PAT file.
-Install Python 3 on the repository machine.
-Keep the PostgreSQL forward on local port 15432 open for the VM's reverse SSH tunnel.
-Use section 4.15.1 to run and commit the benchmark.
+The removed installer no longer prepares the seed database or operator PAT file.
+GCP deployment integration for these inputs remains unfinished.
+Use the [benchmark page](benchmark.md) for the independent benchmark procedure.
 
 `tools/bench/tier.sh` runs get and update for 60 seconds each at c16, which means 16 concurrent requests.
 It writes one `tests/bench/platform-<version>.json` file per platform version.

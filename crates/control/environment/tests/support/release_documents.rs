@@ -273,15 +273,6 @@ pub fn environment_releases() -> anyhow::Result<[Vec<u8>; 4]> {
     Ok([a, b, h.canonical_bytes(), http.canonical_bytes()])
 }
 
-pub fn fixture_environment(
-    repository: &Path,
-    project: &str,
-) -> anyhow::Result<(std::path::PathBuf, EnvironmentDocument)> {
-    let source = repository.join(format!("deploy/gcp/environments/dkk--{project}--dev.k"));
-    let document = EnvironmentDocument::compile(&source)?;
-    Ok((source, document))
-}
-
 pub mod http {
     use super::{NAMESPACE, ORG, PACKAGE, PROJECT};
     use anyhow::{Context as _, ensure};

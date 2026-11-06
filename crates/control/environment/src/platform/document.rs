@@ -336,26 +336,6 @@ mod tests {
     }
 
     #[test]
-    fn install_steps_use_the_supplied_version_and_control_domain() {
-        let mut value = document();
-        value["route_hosts"]["control"] = json!("control.example.org");
-        let parsed = ClusterDocument::from_json(value.to_string().as_bytes()).unwrap();
-        let steps = super::super::steps::install_steps(&parsed, "2.3.4");
-        let certificate = steps.iter().find(|step| step.number == "4.3").unwrap();
-        assert!(
-            certificate
-                .inputs
-                .contains(&("certificate DNS name", "*.example.org".into(),))
-        );
-        let build = steps.iter().find(|step| step.number == "4.6").unwrap();
-        assert!(build.inputs.contains(&("platform_version", "2.3.4".into())));
-        assert!(build.inputs.contains(&(
-            "platform images",
-            "us-central1-docker.pkg.dev/wamn-dev/wamn/{wamn-host,wamn-runner,wamn-gates,wamn-identity,wamn-edge-web,wamn/http,wamn/materializer}:2.3.4".into(),
-        )));
-    }
-
-    #[test]
     fn canonical_bytes_do_not_depend_on_key_order() {
         fn reversed(value: &Value) -> String {
             match value {

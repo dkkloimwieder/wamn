@@ -139,32 +139,6 @@ pub fn host_account_objects(repository: &Path, namespace: &str) -> anyhow::Resul
     )
 }
 
-pub(super) fn platform_inputs(
-    repository: &Path,
-    document: &ClusterDocument,
-) -> anyhow::Result<Vec<Value>> {
-    let mut inputs = Vec::new();
-    inputs.extend(objects(
-        repository,
-        "deploy/platform/registry-helper.yaml",
-        document,
-    )?);
-    inputs.extend(host_account_objects(repository, "hosts")?);
-    inputs.extend(objects(
-        repository,
-        "deploy/platform/control-status-rbac.yaml",
-        document,
-    )?);
-    if document.provider == Provider::Gcp {
-        inputs.extend(objects(
-            repository,
-            "deploy/gcp/bench-host-placement.yaml",
-            document,
-        )?);
-    }
-    Ok(inputs)
-}
-
 /// Merge the two operator values files in the runbook's order.
 ///
 /// # Errors
@@ -555,7 +529,7 @@ mod tests {
     }
 
     #[test]
-    fn provisioning_certificates_and_platform_inputs_follow_each_provider() {
+    fn certificates_and_host_resources_follow_each_provider() {
         for provider in [Provider::Gcp, Provider::Kind] {
             let mut document = document(provider);
             document.registry = "registry.example.com/team".into();
@@ -587,7 +561,14 @@ mod tests {
                 object(&operator, "Issuer", "identity-operator")["spec"]["ca"]["secretName"],
                 "identity-operator-ca"
             );
-            let inputs = platform_inputs(repository(), &document).unwrap();
+            let inputs: Vec<_> = [
+                "deploy/platform/registry-helper.yaml",
+                "deploy/platform/wamn-host-serviceaccount.yaml",
+                "deploy/platform/control-status-rbac.yaml",
+            ]
+            .into_iter()
+            .flat_map(|path| objects(repository(), path, &document).unwrap())
+            .collect();
             let account = object(&inputs, "ServiceAccount", "wamn-host");
             assert_eq!(account["metadata"]["namespace"], "hosts");
             for kind in ["Role", "RoleBinding"] {
@@ -622,24 +603,13 @@ mod tests {
                     .unwrap(),
             )
             .unwrap();
-            let policies: Vec<_> = inputs
-                .iter()
-                .filter(|o| {
-                    o["kind"]
-                        .as_str()
-                        .unwrap()
-                        .starts_with("MutatingAdmissionPolicy")
-                })
-                .collect();
             if provider == Provider::Gcp {
                 assert_eq!(
                     helper,
                     json!({"credHelpers":{"registry.example.com":"wamn"}})
                 );
-                assert_eq!(policies.len(), 2);
             } else {
                 assert_eq!(helper, json!({}));
-                assert!(policies.is_empty());
             }
             assert!(account["metadata"].get("annotations").is_none());
         }

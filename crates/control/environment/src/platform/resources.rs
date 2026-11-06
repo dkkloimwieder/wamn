@@ -1,23 +1,14 @@
 //! Platform resource rendering, Helm execution, and bounded Kubernetes application.
 
 use super::document::{ClusterDocument, Provider};
-use super::manifests::{objects, operator_values};
 use crate::kubectl;
 use anyhow::{Context as _, ensure};
-use base64::{Engine as _, engine::general_purpose::STANDARD};
 use serde_json::{Value, json};
 use std::path::Path;
 use std::process::Stdio;
 use std::time::Duration;
 use tokio::process::Command;
 use wamn_release_control::release_chart::Target;
-
-pub(super) fn runtime_certificates(
-    repository: &Path,
-    document: &ClusterDocument,
-) -> anyhow::Result<Vec<Value>> {
-    objects(repository, "deploy/infra/nats-certificates.yaml", document)
-}
 
 /// Render operator event grants in the watched namespace.
 ///
@@ -54,19 +45,6 @@ pub fn postgres_operator_objects(
     super::manifests::prerequisite_objects(repository, "deploy/infra/cnpg-operator.yaml", provider)
 }
 
-pub(super) fn postgres_cluster_objects(
-    repository: &Path,
-    document: &ClusterDocument,
-) -> anyhow::Result<Vec<Value>> {
-    postgres_cluster_inputs(
-        repository,
-        "deploy/infra/cnpg-cluster.yaml",
-        document.provider,
-        "wamn-pg",
-        "platform",
-    )
-}
-
 /// Render a PostgreSQL Cluster at its owning name and namespace.
 ///
 /// # Errors
@@ -88,58 +66,10 @@ pub fn postgres_cluster_inputs(
     Ok(objects)
 }
 
-pub(super) fn identity_certificate_objects(
-    repository: &Path,
-    document: &ClusterDocument,
-) -> anyhow::Result<Vec<Value>> {
-    let mut rendered = Vec::new();
-    rendered.extend(objects(
-        repository,
-        "deploy/platform/identity-certificate.yaml",
-        document,
-    )?);
-    rendered.extend(objects(
-        repository,
-        "deploy/platform/identity-operator-ca.yaml",
-        document,
-    )?);
-    Ok(rendered)
-}
-
 pub(super) fn runtime_namespaces() -> Vec<Value> {
     ["platform", "identity", "hosts"]
         .map(namespace_object)
         .into()
-}
-
-pub(super) fn nats_objects(
-    repository: &Path,
-    document: &ClusterDocument,
-    authorization_exists: bool,
-) -> anyhow::Result<Vec<Value>> {
-    let mut rendered = Vec::new();
-    if !authorization_exists {
-        rendered.push(authorization_secret());
-    }
-    rendered.extend(objects(
-        repository,
-        "deploy/infra/nats-jetstream.yaml",
-        document,
-    )?);
-    Ok(rendered)
-}
-
-// The operator path uses Helm upgrade, not a local template. Keep its chart
-// and values together so the offline install records the same Helm input.
-pub(super) fn operator_objects(
-    repository: &Path,
-    document: &ClusterDocument,
-) -> anyhow::Result<Vec<Value>> {
-    Ok(vec![operator_entry(
-        &repository.join("deploy/platform/release"),
-        "platform",
-        &operator_values(repository, document)?,
-    )?])
 }
 
 /// Keep the pinned operator chart and its values in one install input.
@@ -327,14 +257,6 @@ pub(super) async fn helm(
 /// Build a namespace prerequisite.
 pub fn namespace_object(namespace: &str) -> Value {
     json!({"apiVersion": "v1", "kind": "Namespace", "metadata": {"name": namespace}})
-}
-
-pub(super) fn authorization_secret() -> Value {
-    json!({
-        "apiVersion": "v1", "kind": "Secret", "type": "Opaque",
-        "metadata": {"name": super::broker::AUTHORIZATION, "namespace": "platform"},
-        "data": {"authorization.conf": STANDARD.encode(super::broker::initial_authorization())}
-    })
 }
 
 /// Submit the desired object, retrying only transient webhook transport failures.

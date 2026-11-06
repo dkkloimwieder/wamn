@@ -4,17 +4,13 @@ use std::collections::BTreeMap;
 use std::path::Path;
 use std::time::Duration;
 
-use anyhow::{Context as _, ensure};
+use anyhow::Context as _;
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use wamn_control_provision::events::{advisory_stream_config, source_stream_config};
 
 use crate::environment::document::EnvironmentDocument;
-use crate::kubectl;
-use wamn_release_control::release_chart::Target;
-
-use super::resources::apply_object;
 
 /// The Secret that holds the authorization file of the one NATS.
 pub(super) const AUTHORIZATION: &str = "wamn-nats-authorization";
@@ -79,21 +75,6 @@ fn secret(namespace: &str, name: &str, data: BTreeMap<String, String>) -> Secret
             .map(|(key, value)| (key, STANDARD.encode(value)))
             .collect(),
     }
-}
-
-pub(super) fn documents(
-    directory: &Path,
-) -> anyhow::Result<Vec<(std::path::PathBuf, EnvironmentDocument)>> {
-    let mut paths = std::fs::read_dir(directory)
-        .with_context(|| format!("read environments {}", directory.display()))?
-        .map(|entry| entry.map(|entry| entry.path()))
-        .collect::<Result<Vec<_>, _>>()?;
-    paths.sort();
-    paths
-        .into_iter()
-        .filter(|path| path.extension().is_some_and(|extension| extension == "k"))
-        .map(|path| Ok((path.clone(), EnvironmentDocument::compile(&path)?)))
-        .collect()
 }
 
 /// The certificate users of the platform clients (docs/plan/alignment.md R4).
@@ -177,14 +158,6 @@ fn platform_users() -> Vec<Account> {
     ]
 }
 
-/// The first authorization file: the platform users and no environment.
-pub(super) fn initial_authorization() -> String {
-    let authorization = Authorization {
-        users: platform_users(),
-    };
-    format!("authorization: {}\n", json!(authorization))
-}
-
 /// Put each platform user in `authorization`, in place of its old entry, and
 /// drop every password user of an older install (docs/plan/alignment.md R4).
 fn keep_platform_users(authorization: &mut Authorization) {
@@ -192,36 +165,6 @@ fn keep_platform_users(authorization: &mut Authorization) {
     for user in platform_users() {
         keep_user(authorization, user);
     }
-}
-
-pub(super) async fn apply(target: &Target, environments: &Path, org: &str) -> anyhow::Result<bool> {
-    let live: Value = kubectl::get(
-        &target.kubeconfig,
-        &target.context,
-        "platform",
-        "secret",
-        AUTHORIZATION,
-    )
-    .await?
-    .context("missing Secret platform/wamn-nats-authorization")?;
-    let documents = documents(environments)?;
-    for (path, document) in &documents {
-        ensure!(
-            document.org == org,
-            "environment {} names another org",
-            path.display()
-        );
-    }
-    let documents = documents
-        .into_iter()
-        .map(|(_, document)| document)
-        .collect::<Vec<_>>();
-    let mut changed = false;
-    for object in objects(&live, org, &documents)? {
-        apply_object(target, &object).await?;
-        changed = true;
-    }
-    Ok(changed)
 }
 
 /// Ensure platform and initial-org users while preserving existing application users.
@@ -247,9 +190,7 @@ pub fn platform_objects(live: Option<&Value>, org: &str) -> anyhow::Result<Vec<V
         }
         None => Authorization { users: Vec::new() },
     };
-    for user in platform_users() {
-        keep_user(&mut authorization, user);
-    }
+    keep_platform_users(&mut authorization);
     let (control, certificate) = control_user(org);
     keep_user(&mut authorization, control);
     Ok(vec![
@@ -264,56 +205,6 @@ pub fn platform_objects(live: Option<&Value>, org: &str) -> anyhow::Result<Vec<V
             .into(),
         ))?,
     ])
-}
-
-pub(super) fn objects(
-    live: &Value,
-    org: &str,
-    environments: &[EnvironmentDocument],
-) -> anyhow::Result<Vec<Value>> {
-    let encoded = live["data"]["authorization.conf"]
-        .as_str()
-        .context("the broker Secret has no authorization.conf")?;
-    let bytes = STANDARD
-        .decode(encoded)
-        .map_err(|_| anyhow::anyhow!("decode the broker authorization"))?;
-    let text = std::str::from_utf8(&bytes)
-        .map_err(|_| anyhow::anyhow!("decode the broker authorization"))?;
-    let mut authorization: Authorization = serde_json::from_str(
-        text.strip_prefix("authorization: ")
-            .context("the broker authorization has no prefix")?,
-    )
-    .map_err(|_| anyhow::anyhow!("decode the broker authorization"))?;
-    keep_platform_users(&mut authorization);
-    let (control, certificate) = control_user(org);
-    keep_user(&mut authorization, control);
-    let mut objects = vec![certificate];
-    for document in environments {
-        objects.extend(render(&document.triple(), &mut authorization));
-    }
-    // Preserve the original bytes when the user set did not change. Formatting
-    // alone must not rewrite an existing broker Secret.
-    let desired = serde_json::to_value(&authorization)?;
-    let original: Value = text
-        .strip_prefix("authorization: ")
-        .context("the broker authorization does not start with `authorization: `")
-        .and_then(|body| {
-            serde_json::from_str(body)
-                .map_err(|_| anyhow::anyhow!("decode the broker authorization"))
-        })?;
-    if desired != original {
-        let object = secret(
-            "platform",
-            AUTHORIZATION,
-            [(
-                "authorization.conf".into(),
-                format!("authorization: {desired}\n"),
-            )]
-            .into(),
-        );
-        objects.push(serde_json::to_value(object)?);
-    }
-    Ok(objects)
 }
 
 /// The NATS objects of a cluster that runs the platform in one `namespace`, as
@@ -521,6 +412,21 @@ mod tests {
         .unwrap();
         document.project = project.into();
         document
+    }
+
+    #[test]
+    fn platform_certificate_users_keep_scheduler_permissions_scoped() {
+        let users = platform_users();
+        assert!(users.iter().all(|user| user.password.is_none()));
+        for name in ["wasmcloud-operator", "wasmcloud-runtime"] {
+            let user = users.iter().find(|user| user.user == name).unwrap();
+            for subjects in [&user.permissions.publish, &user.permissions.subscribe] {
+                assert_eq!(
+                    subjects.allow,
+                    ["runtime.host.>", "runtime.operator.>", "_INBOX.>"]
+                );
+            }
+        }
     }
 
     #[test]

@@ -114,7 +114,7 @@ pub async fn run(command: PlatformCommand, mut output: impl Write) -> anyhow::Re
                 .unwrap_or(Path::new("."))
                 .join("project.k"),
             direction,
-            &wamn_environment_control::platform::lock::work_directory()?,
+            &wamn_environment_control::platform::pools::work_directory()?,
             |line| {
                 writeln!(output, "{line}")?;
                 output.flush().context("write resize progress")

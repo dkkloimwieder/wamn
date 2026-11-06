@@ -95,36 +95,6 @@ pub struct JobRequest {
     pub refresh: bool,
 }
 
-/// Add the existing auth NATS inputs, copied under `/inputs`.
-pub(super) fn auth_nats_inputs(
-    request: &mut JobRequest,
-    secret: &super::install::SecretData,
-) -> anyhow::Result<()> {
-    for key in ["ca.crt", "tls.crt", "tls.key"] {
-        request
-            .files
-            .insert(key.into(), super::install::secret_text(secret, key)?);
-    }
-    request.environment.insert(
-        "WAMN_NATS_TLS_SERVER_NAME".into(),
-        "wamn-nats.platform.svc.cluster.local".into(),
-    );
-    request.environment.insert(
-        "WAMN_NATS_URL".into(),
-        "nats://wamn-nats.platform.svc.cluster.local:4222".into(),
-    );
-    for (variable, key) in [
-        ("WAMN_NATS_TLS_CA", "ca.crt"),
-        ("WAMN_NATS_TLS_CERT", "tls.crt"),
-        ("WAMN_NATS_TLS_KEY", "tls.key"),
-    ] {
-        request
-            .environment
-            .insert(variable.into(), format!("/inputs/{key}"));
-    }
-    Ok(())
-}
-
 /// A read-only projection of an existing Secret. Values stay in the cluster.
 #[derive(Debug, Clone, Serialize)]
 pub struct SecretMount {
@@ -851,17 +821,6 @@ pub(super) fn start_objects(
     ))?])
 }
 
-/// Resume the same pod only after its owned inputs and account exist.
-pub(super) fn resume_object(
-    request: &JobRequest,
-    namespace: &str,
-    secrets: &[JobSecret],
-) -> anyhow::Result<Value> {
-    let mut object = serde_json::to_value(render(request, namespace, secrets))?;
-    object["spec"]["suspend"] = false.into();
-    Ok(object)
-}
-
 pub(super) fn support_objects(
     request: &JobRequest,
     owner: &Value,
@@ -1093,96 +1052,6 @@ pub async fn output(target: &Target, request: &JobRequest) -> anyhow::Result<Str
         .cloned()
         .context("the Job has no public result")
 }
-/// Build install requests without contacting Kubernetes, databases, or brokers.
-#[cfg(feature = "test-util")]
-pub fn install_job_requests(
-    registry: &wamn_package_artifact::PackageRegistry,
-) -> anyhow::Result<Vec<(&'static str, JobRequest, Vec<JobSecret>)>> {
-    use super::{control, environments, identity, install, invite, web};
-    let document = serde_json::from_value(json!({
-        "provider": "kind", "project_id": "", "zone": "", "cluster_name": "test",
-        "org": "test", "owner_email": "owner@example.com", "registry": "registry",
-        "buckets": {"web": "test-web", "otel": "", "state": ""},
-        "route_hosts": {"control": "control.example.com"}, "resend_from": "sender@example.com"
-    }))?;
-    let environment = serde_json::from_value(json!({
-        "org": "test", "project": "receiving", "env": "dev", "target": "dev",
-        "release": format!("sha256:{}", "a".repeat(64)),
-        "client": {"package": "wamn_receiving", "web": format!("sha256:{}", "b".repeat(64))},
-        "route_host": "test.example.com", "policy": "dev", "applications": {}
-    }))?;
-    let auth = serde_json::from_value(json!({"data": {
-        "ca.crt": STANDARD.encode("test-ca"), "tls.crt": STANDARD.encode("test-cert"),
-        "tls.key": STANDARD.encode("test-key")
-    }}))?;
-    let image = "registry/runner@sha256:abc";
-    let mut requests = Vec::new();
-    for request in install::provisioning_jobs(&document, image) {
-        let verb = match request.name.as_str() {
-            "platform-system" => "provision-system",
-            "platform-org" => "provision-org",
-            _ => "provision-identity-issuer",
-        };
-        requests.push((verb, request, vec!["WAMN_SYSTEM_ADMIN_URL"]));
-    }
-    requests.extend([
-        (
-            "provision-org",
-            control::provision_request(&document, image),
-            vec![],
-        ),
-        ("invite", invite::request(&document, image, &auth)?, vec![]),
-        (
-            "provision-project-env",
-            identity::session_request(&environment, image),
-            vec!["WAMN_SYSTEM_ADMIN_URL", "WAMN_TARGET_ADMIN_DATABASE_URL"],
-        ),
-        (
-            "web upload",
-            web::request(&environment, "test-web", image, registry, &auth)?,
-            vec![],
-        ),
-        (
-            "web upload --platform-ui",
-            web::platform_ui_request(&document, image),
-            vec![],
-        ),
-    ]);
-    requests.push((
-        "env connections",
-        environments::connections_request(
-            &document,
-            &environment,
-            image,
-            &auth,
-            [("upstream.json".into(), "{}".into())].into(),
-        )?,
-        vec!["WAMN_CONTROL_DATABASE_URL"],
-    ));
-    for initial in [true, false] {
-        requests.push((
-            "env apply",
-            environments::request(&document, &environment, image, initial, &auth)?,
-            vec!["WAMN_APPLY_DATABASE_URL", "WAMN_SYSTEM_ADMIN_URL"],
-        ));
-    }
-    Ok(requests
-        .into_iter()
-        .map(|(verb, request, variables)| {
-            let secrets = variables
-                .into_iter()
-                .map(|variable| JobSecret {
-                    name: "test-credential".into(),
-                    key: "url".into(),
-                    value: "private".into(),
-                    environment: variable.into(),
-                })
-                .collect();
-            (verb, request, secrets)
-        })
-        .collect())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1379,13 +1248,12 @@ mod tests {
     #[test]
     fn mounted_credentials_never_enter_the_job_or_debug_output() {
         let mut request = request();
-        let auth = serde_json::from_value(json!({"data": {
-            "ca.crt": STANDARD.encode("private-mounted-ca"),
-            "tls.crt": STANDARD.encode("private-mounted-cert"),
-            "tls.key": STANDARD.encode("private-mounted-key")
-        }}))
-        .unwrap();
-        auth_nats_inputs(&mut request, &auth).unwrap();
+        request.files = [
+            ("ca.crt".into(), "private-mounted-ca".into()),
+            ("tls.crt".into(), "private-mounted-cert".into()),
+            ("tls.key".into(), "private-mounted-key".into()),
+        ]
+        .into();
         let job = serde_json::to_value(render(&request, "platform", &[])).unwrap();
         assert!(!job.to_string().contains("private-mounted-key"));
         assert!(!format!("{request:?}").contains("private-mounted-key"));
@@ -1393,10 +1261,6 @@ mod tests {
             job["spec"]["template"]["spec"]["volumes"][0]["secret"],
             json!({"secretName":"platform-system-files","defaultMode":256,
                 "items":[{"key":"file-0","path":"ca.crt"},{"key":"file-1","path":"tls.crt"},{"key":"file-2","path":"tls.key"}]})
-        );
-        assert_eq!(
-            job["spec"]["template"]["spec"]["containers"][0]["env"][2],
-            json!({"name":"WAMN_NATS_TLS_KEY","value":"/inputs/tls.key"})
         );
     }
 
