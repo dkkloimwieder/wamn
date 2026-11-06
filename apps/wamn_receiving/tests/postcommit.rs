@@ -546,7 +546,7 @@ pub(super) async fn assert_postcommit(
     let (project, project_task) = connect(&materializer.project_pg_url).await?;
     let (lock, lock_task) = connect(&materializer.project_pg_url).await?;
     let mut evidence = json!({"schema":"wamn-receiving-postcommit/v0.1",
-        "verdict":"fail", "invariants":["REC-EVENT-REPLAY","REC-POSTCOMMIT-PROGRESS"], "recovery_assumptions":"The owned database, broker, host, and materializer remain available. The poison lock lasts through retry exhaustion."});
+        "verdict":"fail", "invariants":["REC-EVENT-REPLAY","REC-POSTCOMMIT-PROGRESS"], "recovery_assumptions":"The owned database, broker, host, and materializer remain available. The poison lock holds until the independent receipt settles."});
     let result = assert_replay_and_progress(
         document,
         create_inspection,
@@ -568,7 +568,7 @@ pub(super) async fn assert_postcommit(
     std::fs::write(&phase.evidence_file, serde_json::to_vec_pretty(&evidence)?)?;
     result?;
     println!(
-        "RECEIVING_POSTCOMMIT_PASS replay_deliveries=2 blocked_handler_attempts=3 termination_advisories=1 independent_inspections=1"
+        "RECEIVING_POSTCOMMIT_PASS replay_deliveries=2 blocked_handler=1 independent_inspections=1"
     );
     Ok(())
 }
