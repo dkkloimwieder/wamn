@@ -62,6 +62,7 @@ targets = [
   { workspace="root", package="wamn-environment-control", target="test:create_user_live", tier="live-postgres" },
   { workspace="root", package="wamn-dev-control", target="test:edge_bundle", tier="contract" },
   { workspace="root", package="wamn-dev-control", target="test:environment_apply_kind", tier="kind" },
+  { workspace="root", package="wamn-dev-control", target="test:platform_apply_kind", tier="kind" },
   { workspace="root", package="wamn-environment-control", target="test:environment_bindings_live", tier="live-postgres" },
   { workspace="root", package="wamn-environment-control", target="test:environment_cdc_probe_live", tier="live-postgres" },
   { workspace="root", package="wamn-environment-control", target="test:environment_lock_live", tier="live-postgres" },
@@ -667,6 +668,24 @@ mode = "local"
 dockerfile = "Dockerfile"
 stage = "component-builder"
 resource_lock = "docker"
+timeout = 1800
+
+[[suites]]
+id = "platform-kind"
+tier = "kind"
+workspace = "root"
+package = "wamn-dev-control"
+target = ["test:platform_apply_kind"]
+tests = ["platform_apply_kind"]
+features = []
+prerequisites = ["docker", "kind", "helm", "kubectl", "openssl"]
+inputs = ["^deploy/", "^services/ctl/", "^services/identity/"]
+execution = "libtest"
+mode = "local"
+select_packages = ["wamn-release-control", "wamn-environment-control", "wamn-dev-control"]
+covered_by_package = true
+ignored = true
+resource_lock = ""
 timeout = 1800
 
 [[suites]]
