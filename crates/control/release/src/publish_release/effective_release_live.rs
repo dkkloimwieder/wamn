@@ -3,27 +3,20 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 
-use tokio_postgres::{Client, NoTls};
 use wamn_catalog::{ComponentDeclaration, OperationType, PackageCoordinate};
-use wamn_control_provision::CONTROL_BOOTSTRAP_SQL;
 use wamn_engine::component_admission::{ComponentAdmissionRequest, validate_component_admission};
 use wamn_execution_contract::bytes_sha256;
 
 use super::{
-    PublishManifestErrorType, PublishReleaseManifest, PublishedRelease, ReleaseComponents,
-    publish_release_with_package_manifests, read_package_attachments, read_package_manifests,
-    resolve_route_methods,
+    PublishReleaseManifest, ReleaseComponents, publish_release_with_package_manifests,
+    read_package_attachments, read_package_manifests, resolve_route_methods,
 };
-use wamn_package_control::apply_package::{self, ApplyPackageRequest};
 
 const ENV_KEY: &str = "effective-release-poc--fixture--dev";
 const ENVIRONMENT: &str = "dev";
 const PUBLISHER: &str = "effective-release-poc-publisher";
 const BASE_WASM_ENV: &str = "WAMN_EFFECTIVE_RELEASE_BASE_COMPONENT_WASM";
 const OVERLAY_WASM_ENV: &str = "WAMN_EFFECTIVE_RELEASE_OVERLAY_COMPONENT_WASM";
-const CATALOG_SCHEMA: &str = wamn_catalog::CATALOG_SCHEMA_SQL;
-const APP_SCHEMA: &str = include_str!("../../../../../deploy/sql/app-schema.sql");
-
 /// The fixture version, read from the compiled manifest that authors it. The
 /// base and the overlay move together, so the overlay carries the same one.
 fn package_version() -> &'static str {
@@ -91,102 +84,6 @@ fn packages() -> [PackageInput; 2] {
     ]
 }
 
-async fn connect(url: &str) -> (Client, tokio::task::JoinHandle<()>) {
-    let (client, connection) = tokio_postgres::connect(url, NoTls)
-        .await
-        .expect("connect to disposable PostgreSQL");
-    let task = tokio::spawn(async move {
-        let _ = connection.await;
-    });
-    (client, task)
-}
-
-async fn provision_project(project: &Client) {
-    project
-        .batch_execute(
-            // The database owner holds the platform floor. `apply_package`
-            // provisions separate package owners before running migrations.
-            "DROP SCHEMA IF EXISTS inventory CASCADE; \
-             DROP SCHEMA IF EXISTS platform CASCADE; \
-             DROP SCHEMA IF EXISTS catalog CASCADE; \
-             DO $$ DECLARE role_name text; BEGIN \
-               PERFORM pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtext('wamn_role_bootstrap')); \
-               FOREACH role_name IN ARRAY \
-                   ARRAY['wamn_app', 'wamn_scenario_author', 'wamn_db_owner'] LOOP \
-                 IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = role_name) THEN \
-                   EXECUTE format('CREATE ROLE %I NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE \
-                                   NOINHERIT NOREPLICATION NOBYPASSRLS', role_name); \
-                 END IF; \
-               END LOOP; \
-             END $$; \
-             DO $$ BEGIN \
-               EXECUTE format('ALTER DATABASE %I OWNER TO wamn_db_owner', \
-                              pg_catalog.current_database()); \
-             END $$;",
-        )
-        .await
-        .expect("reset the project schemas and prerequisite roles");
-    project
-        .batch_execute(&format!("{CATALOG_SCHEMA}\n{APP_SCHEMA}"))
-        .await
-        .expect("install the production project schemas");
-}
-
-async fn provision_control(control: &Client) {
-    control
-        .batch_execute(
-            "DROP SCHEMA IF EXISTS wamn_run CASCADE; \
-             DROP SCHEMA IF EXISTS wamn_authority CASCADE; \
-             DROP SCHEMA IF EXISTS catalog CASCADE; \
-             DROP SCHEMA IF EXISTS registry CASCADE; \
-             DROP SCHEMA IF EXISTS provisioning CASCADE; \
-             DROP SCHEMA IF EXISTS identity CASCADE; \
-             DO $$ DECLARE role_name text; BEGIN \
-               PERFORM pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtext('wamn_role_bootstrap')); \
-               FOREACH role_name IN ARRAY ARRAY['wamn_system', 'wamn_control_author', 'wamn_app'] LOOP \
-                 IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = role_name) THEN \
-                   EXECUTE format('CREATE ROLE %I NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE \
-                                   NOINHERIT NOREPLICATION NOBYPASSRLS', role_name); \
-                 END IF; \
-               END LOOP; \
-             END $$; \
-             DO $$ BEGIN \
-               EXECUTE format('REVOKE CONNECT ON DATABASE %I FROM PUBLIC', \
-                              pg_catalog.current_database()); \
-             END $$;",
-        )
-        .await
-        .expect("reset the control schemas and prerequisite roles");
-    for stage in CONTROL_BOOTSTRAP_SQL {
-        control
-            .batch_execute(stage)
-            .await
-            .expect("install the production control bootstrap");
-    }
-    control
-        .query_one("SELECT set_config('app.env_key', $1, false)", &[&ENV_KEY])
-        .await
-        .expect("scope the control test session");
-}
-
-async fn apply_packages(project_url: &str, inputs: &[PackageInput]) {
-    for input in inputs {
-        apply_package::apply_package(ApplyPackageRequest {
-            component_source: wamn_package_control::apply_package::component_source_from_env(None)
-                .unwrap(),
-            changes: wamn_platform_identity::auth_changes::AuthChanges::default(),
-            package: wamn_package_control::package_artifact::fixture_package_root(&input.root)
-                .expect("read the fixture package root"),
-            database_url: project_url.to_owned(),
-            org: "effective-release-poc".into(),
-            project: "fixture".into(),
-            environment: "dev".into(),
-        })
-        .await
-        .unwrap_or_else(|error| panic!("apply {}@{}: {error:#}", input.id, input.version));
-    }
-}
-
 fn admit_components(inputs: &[PackageInput]) -> (BTreeMap<String, String>, ReleaseComponents) {
     let engine = wamn_engine::build_engine(&[]).expect("build the production admission engine");
     let mut digests = BTreeMap::new();
@@ -249,37 +146,13 @@ fn admit_components(inputs: &[PackageInput]) -> (BTreeMap<String, String>, Relea
     (digests, release_components)
 }
 
-async fn publish(
-    project: &Client,
-    request: &PublishReleaseManifest<'_>,
-    components: &ReleaseComponents,
-    manifests: &BTreeMap<String, wamn_catalog::manifest::PackageManifest>,
-    hashes: &BTreeMap<String, String>,
-    kinds: &super::RouteContracts,
-) -> PublishedRelease {
-    publish_release_with_package_manifests(project, request, components, manifests, hashes, kinds)
-        .await
-        .expect("publish the exact fresh two-package release")
-}
-
-#[tokio::test]
+#[test]
 #[ignore = "requires: env:WAMN_EFFECTIVE_RELEASE_BASE_COMPONENT_WASM, env:WAMN_EFFECTIVE_RELEASE_OVERLAY_COMPONENT_WASM"]
-async fn fresh_base_and_overlay_publish_byte_identically_and_refuse_drift() {
+fn base_and_overlay_project_admitted_routes() {
     wamn_test_postgres::require_ignored_prerequisites(
         "requires: env:WAMN_EFFECTIVE_RELEASE_BASE_COMPONENT_WASM, env:WAMN_EFFECTIVE_RELEASE_OVERLAY_COMPONENT_WASM",
     );
     let inputs = packages();
-    let _lock = wamn_test_postgres::lock();
-    let project_database = wamn_test_postgres::database();
-    let control_database = wamn_test_postgres::database();
-    let project_url = project_database.url().to_owned();
-    let control_url = control_database.url().to_owned();
-
-    let (project, project_task) = connect(&project_url).await;
-    let (control, control_task) = connect(&control_url).await;
-    provision_project(&project).await;
-    provision_control(&control).await;
-    apply_packages(&project_url, &inputs).await;
     let (admitted_digests, components) = admit_components(&inputs);
 
     let manifest_paths = inputs
@@ -288,19 +161,6 @@ async fn fresh_base_and_overlay_publish_byte_identically_and_refuse_drift() {
         .collect::<Vec<_>>();
     let (manifests, kinds) = read_package_manifests(&manifest_paths)
         .expect("consume exact package manifests and package contracts");
-    // apply-package installed the stand-in artifact digest of each fixture tree.
-    let manifest_hashes = inputs
-        .iter()
-        .map(|input| {
-            (
-                input.id.to_owned(),
-                wamn_package_control::package_artifact::fixture_package_root(&input.root)
-                    .expect("read the fixture package root")
-                    .artifact_digest
-                    .expect("a fixture package root has a stand-in digest"),
-            )
-        })
-        .collect::<BTreeMap<_, _>>();
     let packages = inputs
         .iter()
         .map(|input| PackageCoordinate::new(input.id, input.version).unwrap())
@@ -328,29 +188,8 @@ async fn fresh_base_and_overlay_publish_byte_identically_and_refuse_drift() {
         environment_is_disposable: false,
     };
 
-    let first = publish(
-        &project,
-        &request,
-        &components,
-        &manifests,
-        &manifest_hashes,
-        &kinds,
-    )
-    .await;
-    let second = publish(
-        &project,
-        &request,
-        &components,
-        &manifests,
-        &manifest_hashes,
-        &kinds,
-    )
-    .await;
-    assert_eq!(first.canonical_bytes, second.canonical_bytes);
-    assert_eq!(first.digest, second.digest);
-    assert_eq!(first.manifest, second.manifest);
-    assert_eq!(first.manifest.release.packages, packages);
-    assert_eq!(first.manifest.components.len(), 2);
+    let first =
+        publish_release_with_package_manifests(&request, &components, &manifests, &kinds).unwrap();
     // Every attachment names a route. Released operation contracts can also
     // have route records without attachments, which open no HTTP endpoint.
     assert!(
@@ -430,64 +269,4 @@ async fn fresh_base_and_overlay_publish_byte_identically_and_refuse_drift() {
             admitted_digests[component.package_id.as_str()]
         );
     }
-    // Composition writes no release row; apply's stage writes it (R1 (3)).
-    let release_rows: i64 = project
-        .query_one(
-            "SELECT count(*) FROM catalog.releases WHERE env_key = $1",
-            &[&ENV_KEY],
-        )
-        .await
-        .expect("count release rows")
-        .get(0);
-    assert_eq!(release_rows, 0);
-
-    let mut drifted_hashes = manifest_hashes.clone();
-    drifted_hashes.insert(
-        wamn_fixture_package::OVERLAY_PACKAGE_ID.to_owned(),
-        format!("sha256:{}", "f".repeat(64)),
-    );
-    let refusal = publish_release_with_package_manifests(
-        &project,
-        &request,
-        &components,
-        &manifests,
-        &drifted_hashes,
-        &kinds,
-    )
-    .await
-    .expect_err("manifest bytes other than apply-package's exact input must refuse");
-    assert_eq!(
-        refusal.error_type(),
-        PublishManifestErrorType::PackageManifest
-    );
-    assert!(refusal.detail().contains(&format!(
-        "{}@{}",
-        wamn_fixture_package::OVERLAY_PACKAGE_ID,
-        package_version()
-    )));
-    assert!(refusal.detail().contains("apply the verified artifact"));
-
-    project
-        .batch_execute(
-            "DROP SCHEMA IF EXISTS inventory CASCADE; \
-             DROP SCHEMA IF EXISTS platform CASCADE; \
-             DROP SCHEMA IF EXISTS catalog CASCADE;",
-        )
-        .await
-        .expect("clean project test schemas");
-    control
-        .batch_execute(
-            "DROP SCHEMA IF EXISTS wamn_run CASCADE; \
-             DROP SCHEMA IF EXISTS wamn_authority CASCADE; \
-             DROP SCHEMA IF EXISTS catalog CASCADE; \
-             DROP SCHEMA IF EXISTS registry CASCADE; \
-             DROP SCHEMA IF EXISTS provisioning CASCADE; \
-             DROP SCHEMA IF EXISTS identity CASCADE;",
-        )
-        .await
-        .expect("clean control test schemas");
-    drop(project);
-    drop(control);
-    project_task.abort();
-    control_task.abort();
 }

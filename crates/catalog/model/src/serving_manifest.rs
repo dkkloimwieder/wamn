@@ -148,7 +148,7 @@ pub fn release_manifest_configmap_name(
     Ok(format!("{RELEASE_MANIFEST_CONFIGMAP_PREFIX}{hex}"))
 }
 
-/// The exact package membership of the release.
+/// The exact package dependency closure of one application release.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct ServingRelease {
@@ -856,7 +856,7 @@ pub struct ServingComposedEntry {
     pub members: BTreeSet<ServingEntryMember>,
 }
 
-/// The complete release document a serving process mounts.
+/// The complete release document for one application.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct ServingManifest {

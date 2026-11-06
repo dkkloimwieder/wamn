@@ -5842,6 +5842,7 @@ dependencies = [
  "wamn-test-postgres",
  "wamn-workflow",
  "wit-component 0.254.2",
+ "wit-parser 0.254.2",
 ]
 
 [[package]]

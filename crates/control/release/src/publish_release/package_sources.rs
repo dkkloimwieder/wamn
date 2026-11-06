@@ -4,6 +4,10 @@ pub(super) mod plan;
 
 use std::path::Path;
 
+use anyhow::{Context as _, ensure};
+use wamn_catalog::{ApplicationDefinition, PackageCoordinate};
+use wamn_package_control::package_artifact::{OpenedPackage, PackageRegistry, open_package};
+
 use wamn_record_history::{HISTORY_TABLE_SUFFIX, is_history_table_name};
 
 use super::{
@@ -17,6 +21,70 @@ pub(super) type PackageManifestSources = (
     BTreeMap<String, wamn_catalog::manifest::PackageManifest>,
     RouteContracts,
 );
+
+/// Open only the selected application's exact package dependency closure.
+pub(super) async fn open_application(
+    registry: &PackageRegistry,
+    application: &ApplicationDefinition,
+    available: &[PackageCoordinate],
+) -> anyhow::Result<(Vec<PackageCoordinate>, Vec<OpenedPackage>)> {
+    let mut pending = Vec::new();
+    for id in &application.packages {
+        let mut matches = available
+            .iter()
+            .filter(|package| package.package_id() == id);
+        let package = matches
+            .next()
+            .with_context(|| format!("application package {id:?} needs an exact coordinate"))?;
+        ensure!(
+            matches.next().is_none(),
+            "application package {id:?} has multiple coordinates"
+        );
+        pending.push(package.clone());
+    }
+    ensure!(!pending.is_empty(), "application has no packages");
+    let mut selected = BTreeMap::new();
+    let mut coordinates = Vec::new();
+    let mut opened = Vec::new();
+    while let Some(package) = pending.pop() {
+        if let Some(version) = selected.get(package.package_id()) {
+            ensure!(
+                version == package.package_version(),
+                "application requires conflicting versions of {}",
+                package.package_id()
+            );
+            continue;
+        }
+        let artifact = open_package(registry, package.package_id(), package.package_version())
+            .await
+            .with_context(|| {
+                format!(
+                    "open {}@{}",
+                    package.package_id(),
+                    package.package_version()
+                )
+            })?;
+        let manifest = wamn_catalog::manifest::PackageManifest::from_slice(&artifact.manifest()?)?;
+        ensure!(
+            manifest.package.id == package.package_id()
+                && manifest.package.version == package.package_version(),
+            "package artifact identity differs from its coordinate"
+        );
+        for dependency in manifest.base_dependencies.values() {
+            pending.push(PackageCoordinate::new(
+                &dependency.package,
+                &dependency.version,
+            )?);
+        }
+        selected.insert(
+            package.package_id().to_owned(),
+            package.package_version().to_owned(),
+        );
+        coordinates.push(package);
+        opened.push(artifact);
+    }
+    Ok((coordinates, opened))
+}
 
 pub(super) fn read_package_manifests(
     paths: &[PathBuf],

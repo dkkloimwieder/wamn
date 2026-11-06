@@ -20,18 +20,11 @@ pub struct PublishReleaseArgs {
     /// Application to publish; omitted when the map names one application.
     #[arg(long)]
     pub application: Option<String>,
-    #[arg(long)]
-    pub database_url: String,
-    /// Owner URL of the control database holding the environment policy.
-    #[arg(long)]
-    pub control_database_url: String,
     /// Principal already authenticated by the publication boundary.
     #[arg(long)]
     pub verified_publisher_principal: String,
-    #[arg(long)]
-    pub run_schema: String,
-    /// Exact package membership; repeat once per package. Each is read from
-    /// the registry under its tag.
+    /// Exact coordinates of declared application packages. Publication reads
+    /// the selected application and expands its dependencies from the registry.
 
     #[arg(long = "package", value_name = "ID@VERSION", value_parser = parse_package, required = true)]
     pub packages: Vec<PackageCoordinate>,
@@ -87,13 +80,10 @@ pub async fn publish(args: PublishReleaseArgs) -> anyhow::Result<()> {
                 .map(|(name, application)| (name, application.into()))
                 .collect(),
             application: args.application,
-            database_url: args.database_url,
-            control_database_url: args.control_database_url,
             org: environment.org,
             project: environment.project,
             environment: environment.env,
             verified_publisher_principal: args.verified_publisher_principal,
-            run_schema: args.run_schema,
             packages: args.packages,
         },
         &registry,
@@ -118,17 +108,11 @@ mod tests {
         args: PublishReleaseArgs,
     }
 
-    const PUBLISH: [&str; 15] = [
+    const PUBLISH: [&str; 9] = [
         "publish-release",
         "environment.k",
-        "--database-url",
-        "postgres://publish.invalid/env",
-        "--control-database-url",
-        "postgres://publish.invalid/control",
         "--verified-publisher-principal",
         "publisher",
-        "--run-schema",
-        "wamn_run",
         "--package",
         "orders@1.0.0",
         "--artifact-base",
@@ -159,7 +143,7 @@ mod tests {
             assert!(PublishProbe::try_parse_from(arguments).is_err());
         }
         assert!(
-            PublishProbe::try_parse_from(&PUBLISH[..12]).is_err(),
+            PublishProbe::try_parse_from(&PUBLISH[..6]).is_err(),
             "publish-release parsed with no package artifact base"
         );
         let mut selected = PUBLISH.to_vec();

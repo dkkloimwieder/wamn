@@ -212,13 +212,10 @@ async fn publish_through_publish_release(
             )]
             .into(),
             application: None,
-            database_url: project.to_owned(),
-            control_database_url: control.to_owned(),
             org: ORG.to_owned(),
             project: PROJECT.to_owned(),
             environment: environment.to_owned(),
             verified_publisher_principal: PUBLISHER.to_owned(),
-            run_schema: RUN_SCHEMA.to_owned(),
             packages: vec![
                 PackageCoordinate::new(&manifest.package.id, &manifest.package.version)
                     .expect("the package coordinate"),

@@ -61,9 +61,6 @@ pub use manifest_push::push_manifest_bytes;
 use attachments::merge_package_attachment_documents;
 
 const CLAIM_ENV_KEY_SQL: &str = "SELECT set_config('app.env_key', $1, false)";
-const SELECT_APPLIED_PACKAGE_DIGEST_SQL: &str = "\
-SELECT artifact_digest FROM catalog.packages \
- WHERE env_key = $1 AND package_id = $2 AND package_version = $3";
 const READ_RELEASE_SQL: &str = "\
 SELECT canonical_bytes FROM catalog.releases \
  WHERE env_key = $1 AND manifest_digest = $2";
@@ -77,11 +74,8 @@ pub struct PublishReleaseManifest<'a> {
     pub verified_publisher_principal: &'a str,
     pub packages: &'a BTreeSet<PackageCoordinate>,
     pub attachments: &'a BTreeMap<String, ServingAttachment>,
-    /// Whether provisioning marked this target's environment disposable.
-    ///
-    /// Read from the projection wamn-10yt.38 writes into the control store, so
-    /// the condition is the TARGET and never an operator's say-so. It selects
-    /// the dependency rule below and changes nothing else.
+    /// Local development can use rebuilt dependencies after target validation.
+    /// Published construction always requires the declared dependency digests.
     pub environment_is_disposable: bool,
 }
 
@@ -260,28 +254,21 @@ impl From<OperationType> for RouteContract {
     }
 }
 
-/// Inputs of one effective-release publication.
+/// Inputs of one application release publication.
 #[derive(Debug)]
 pub struct PublishReleaseRequest {
     /// Application membership from environment.k.
     pub applications: wamn_catalog::EnvironmentApplications,
     /// Selects one declared application; omitted for a one-application release.
     pub application: Option<String>,
-    /// Owner connection to the project-environment database the release is published in.
-    pub database_url: String,
-    /// Owner connection to the control database holding the environment
-    /// policy and the disposable marker.
-    pub control_database_url: String,
-    /// Registry organization owning the environment policy.
+    /// Organization in the declared environment coordinate.
     pub org: String,
     pub project: String,
     /// Environment the release is published for.
     pub environment: String,
     /// Principal already authenticated by the publication boundary.
     pub verified_publisher_principal: String,
-    /// Run-plane schema holding the tenant's environment policy.
-    pub run_schema: String,
-    /// Exact package membership.
+    /// Available exact coordinates for the declared application packages.
     pub packages: Vec<PackageCoordinate>,
 }
 
@@ -292,15 +279,12 @@ impl PublishReleaseRequest {
     }
 }
 
-impl PublishReleaseRequest {
-    fn scope(&self) -> ReleaseScope {
-        ReleaseScope::new(self.env_key().as_str(), self.environment.as_str())
-    }
-
-    fn verified_run_schema(&self) -> anyhow::Result<BareSchemaName> {
-        BareSchemaName::new(self.run_schema.clone())
-            .map_err(|error| anyhow::anyhow!("invalid --run-schema {:?}: {error}", self.run_schema))
-    }
+/// Provisioned target required only by local development.
+#[derive(Debug)]
+pub struct LocalReleaseTarget<'a> {
+    pub database_url: &'a str,
+    pub control_database_url: &'a str,
+    pub run_schema: &'a str,
 }
 
 /// Publish one effective release from the package artifacts in
@@ -327,6 +311,7 @@ pub async fn publish_release(
 /// in-process admissions: the dev loop pushes nothing and reads no registry.
 pub async fn publish_local(
     args: PublishReleaseRequest,
+    target: LocalReleaseTarget<'_>,
     package_roots: &[PathBuf],
     admissions: &[wamn_package_control::component_admission::ComponentAdmission],
 ) -> anyhow::Result<(
@@ -334,24 +319,24 @@ pub async fn publish_local(
     wamn_runtime::local_application::LocalApplicationFacts,
 )> {
     wamn_runtime::local_application::require_local_target(
-        &args.database_url,
+        target.database_url,
         &args.env_key(),
         &args.environment,
     )
     .await?;
     ensure!(
-        read_projected_environment_disposable(&args.control_database_url, &args.env_key()).await?,
+        read_projected_environment_disposable(target.control_database_url, &args.env_key()).await?,
         "local candidates require a provisioned disposable environment"
     );
-    let (client, connection) = tokio_postgres::connect(&args.database_url, NoTls).await?;
+    let (client, connection) = tokio_postgres::connect(target.database_url, NoTls).await?;
     let driver = tokio::spawn(connection);
     client
         .query_one(CLAIM_ENV_KEY_SQL, &[&args.env_key()])
         .await?;
     let assembled = assemble_local_release(&args, package_roots, admissions)?;
-    let run_schema = args.verified_run_schema()?;
+    let run_schema = BareSchemaName::new(target.run_schema.to_owned())?;
     let policy = crate::verification_policy::read_authoritative_environment_policy(
-        &args.control_database_url,
+        target.control_database_url,
         &args.org,
         &args.environment,
         false,
@@ -359,7 +344,12 @@ pub async fn publish_local(
     .await?;
     let projected =
         read_projected_environment_policy(&client, &run_schema, &args.env_key()).await?;
-    verify_projected_environment_policy(projected.as_ref(), &policy, &args.scope(), &run_schema)?;
+    verify_projected_environment_policy(
+        projected.as_ref(),
+        &policy,
+        &ReleaseScope::new(args.env_key(), &args.environment),
+        &run_schema,
+    )?;
     drop(client);
     driver.abort();
     Ok((assembled.published, assembled.facts))
@@ -507,68 +497,51 @@ pub fn compose_pinned_application(
     compose_verified_application(member, bytes, route_bytes, &pin)
 }
 
-/// Select the member that covers every route. Without a selector, the
-/// application is the one whose members cover the routes, because a release
-/// has one routed entry and every other application loads on its own.
+fn select_application<'a>(
+    applications: &'a wamn_catalog::EnvironmentApplications,
+    application: Option<&str>,
+) -> Result<(&'a str, &'a wamn_catalog::ApplicationDefinition), PublishManifestError> {
+    let selected = match application {
+        Some(name) => applications.get_key_value(name),
+        None if applications.len() == 1 => applications.first_key_value(),
+        None => None,
+    };
+    selected
+        .map(|(name, definition)| (name.as_str(), definition))
+        .ok_or_else(|| {
+            PublishManifestError::new(
+                PublishManifestErrorType::ApplicationSelection,
+                format!(
+                    "select one application from environment.k: {:?}; requested {application:?}",
+                    applications.keys().collect::<Vec<_>>()
+                ),
+            )
+        })
+}
+
+/// Select the declared application's unique member covering its routes.
 fn covering_application<'a>(
     published: &PublishedRelease,
     candidates: &[(&'a AdmittedComponent, &'a [u8])],
     applications: &wamn_catalog::EnvironmentApplications,
     application: Option<&str>,
 ) -> anyhow::Result<(&'a AdmittedComponent, &'a [u8])> {
-    let selection = |requested: Vec<&String>| {
-        PublishManifestError::new(
-            PublishManifestErrorType::ApplicationSelection,
-            format!(
-                "select one application from environment.k: {}; requested {:?}",
-                requested
-                    .into_iter()
-                    .cloned()
-                    .collect::<Vec<_>>()
-                    .join(", "),
-                application
-            ),
-        )
-    };
-    let named: Vec<_> = match application {
-        Some(name) => applications.get_key_value(name).into_iter().collect(),
-        None => applications.iter().collect(),
-    };
-    if named.is_empty() {
-        return Err(selection(applications.keys().collect()).into());
-    }
-    let mut covered = Vec::new();
-    for (name, definition) in &named {
-        let mut covering = Vec::new();
-        for (member, bytes) in candidates {
-            if definition
-                .packages
-                .contains(member.scope.package_id.as_str())
-                && published.manifest.components.iter().any(|released| {
-                    released.package_id == member.scope.package_id
-                        && released.descriptor.component == member.component
-                        && released.descriptor.component_digest == member.component_digest
-                })
-                && covers_routes(published, member, bytes)?
-            {
-                covering.push((*member, *bytes));
-            }
-        }
-        if named.len() == 1 || !covering.is_empty() {
-            covered.push((*name, covering));
+    let (name, definition) = select_application(applications, application)?;
+    let mut covering = Vec::new();
+    for (member, bytes) in candidates {
+        if definition
+            .packages
+            .contains(member.scope.package_id.as_str())
+            && published.manifest.components.iter().any(|released| {
+                released.package_id == member.scope.package_id
+                    && released.descriptor.component == member.component
+                    && released.descriptor.component_digest == member.component_digest
+            })
+            && covers_routes(published, member, bytes)?
+        {
+            covering.push((*member, *bytes));
         }
     }
-    let (name, covering) = match covered.as_slice() {
-        [one] => one,
-        [] => {
-            return Err(PublishManifestError::new(
-                PublishManifestErrorType::ApplicationCoverage,
-                "no application of environment.k has a released member covering every route",
-            )
-            .into());
-        }
-        many => return Err(selection(many.iter().map(|(name, _)| *name).collect()).into()),
-    };
     match covering.as_slice() {
         [member] => Ok(*member),
         [] => Err(PublishManifestError::new(
@@ -603,8 +576,7 @@ pub struct AssembledLocalRelease {
 /// Assemble the manifest and local facts of a local release from the package
 /// directories `package_roots` and admitted components, as [`publish_local`]
 /// does. Each component's descriptor comes from
-/// its admission. It reads no database, so the two database URLs of `args` go
-/// unused.
+/// its admission. It reads no database.
 pub fn assemble_local_release(
     args: &PublishReleaseRequest,
     package_roots: &[PathBuf],
@@ -728,27 +700,10 @@ async fn publish_candidate(
         !args.verified_publisher_principal.is_empty(),
         "verified-publisher-principal must not be empty"
     );
-    // Every package opens from its artifact before anything is written, so a
-    // package the registry does not hold refuses here.
-    let mut opened = Vec::new();
-    for package in &args.packages {
-        opened.push(
-            wamn_package_control::package_artifact::open_package(
-                registry,
-                package.package_id(),
-                package.package_version(),
-            )
-            .await
-            .with_context(|| {
-                format!(
-                    "open the package artifact of {}@{}",
-                    package.package_id(),
-                    package.package_version()
-                )
-            })?,
-        );
-    }
-    let release_components = descriptor_components(&args.env_key(), &args.packages, &opened)?;
+    let (_, application) = select_application(&args.applications, args.application.as_deref())?;
+    let (coordinates, opened) =
+        package_sources::open_application(registry, application, &args.packages).await?;
+    let release_components = descriptor_components(&args.env_key(), &coordinates, &opened)?;
     let roots = opened
         .iter()
         .map(|package| package.root().to_owned())
@@ -756,56 +711,8 @@ async fn publish_candidate(
     let (attachment_paths, manifest_paths) = package_files(&roots);
     let authored_attachments = read_package_attachments(&attachment_paths, &manifest_paths)?;
     let (package_manifests, route_contracts) = read_package_manifests(&manifest_paths)?;
-    // The installed check compares each package's artifact digest, as
-    // apply-package recorded it, with the digest the registry records.
-    let package_artifact_digests = args
-        .packages
-        .iter()
-        .zip(&opened)
-        .map(|(package, opened)| {
-            (
-                package.package_id().to_owned(),
-                opened
-                    .package_root()
-                    .artifact_digest
-                    .expect("a package artifact opens with its registry digest"),
-            )
-        })
-        .collect::<BTreeMap<_, _>>();
     let attachments = resolve_route_methods(&authored_attachments, &route_contracts)?;
-    let packages = args.packages.iter().cloned().collect::<BTreeSet<_>>();
-    ensure!(
-        packages.len() == args.packages.len(),
-        "effective release repeats a package coordinate"
-    );
-    let mut package_ids = BTreeSet::new();
-    ensure!(
-        packages
-            .iter()
-            .all(|package| package_ids.insert(package.package_id())),
-        "effective release names more than one version of a package"
-    );
-    for manifest in package_manifests.values() {
-        let coordinate = PackageCoordinate::new(&manifest.package.id, &manifest.package.version)
-            .context("package manifest carries an invalid coordinate")?;
-        ensure!(
-            packages.contains(&coordinate),
-            "package manifest {}@{} is outside the effective release membership",
-            manifest.package.id,
-            manifest.package.version,
-        );
-    }
-    ensure!(
-        package_manifests.len() == packages.len()
-            && packages
-                .iter()
-                .all(|package| package_manifests.contains_key(package.package_id())),
-        "publish-release requires one exact package manifest for every release package"
-    );
-    let environment_is_disposable =
-        read_projected_environment_disposable(&args.control_database_url, &args.env_key())
-            .await
-            .context("resolve the release target's disposable marker")?;
+    let packages = coordinates.into_iter().collect::<BTreeSet<_>>();
     let request = PublishReleaseManifest {
         org: &args.org,
         project: &args.project,
@@ -813,92 +720,17 @@ async fn publish_candidate(
         verified_publisher_principal: &args.verified_publisher_principal,
         packages: &packages,
         attachments: &attachments,
-        environment_is_disposable,
+        environment_is_disposable: false,
     };
-    let run_schema = args.verified_run_schema()?;
-    let source_policy = crate::verification_policy::read_authoritative_environment_policy(
-        &args.control_database_url,
-        &args.org,
-        &args.environment,
-        false,
-    )
-    .await
-    .context("read the authoritative environment policy before release publish")?;
-
-    let (client, connection) = tokio_postgres::connect(&args.database_url, NoTls)
-        .await
-        .context("connect to the release project environment")?;
-    let connection_task = tokio::spawn(connection);
-    let published = read_and_push(
-        &client,
+    let mut published = publish_release_with_package_manifests(
         &request,
         &release_components,
         &package_manifests,
-        &package_artifact_digests,
         &route_contracts,
-        &run_schema,
-        &source_policy,
-        registry,
-        release_artifact_base,
-        entry,
-        args,
-    )
-    .await;
-    match published {
-        Ok(published) => {
-            drop(client);
-            connection_task
-                .await
-                .context("join the release publish connection")?
-                .context("drive the release publish connection")?;
-            Ok(published)
-        }
-        Err(error) => {
-            connection_task.abort();
-            Err(error)
-        }
-    }
-}
-
-#[expect(
-    clippy::too_many_arguments,
-    reason = "each input is one independent fact of the release"
-)]
-async fn read_and_push(
-    client: &Client,
-    request: &PublishReleaseManifest<'_>,
-    components: &ReleaseComponents,
-    package_manifests: &BTreeMap<String, wamn_catalog::manifest::PackageManifest>,
-    package_artifact_digests: &BTreeMap<String, String>,
-    route_contracts: &RouteContracts,
-    run_schema: &BareSchemaName,
-    source_policy: &AuthoritativeEnvironmentPolicy,
-    registry: &PackageRegistry,
-    release_artifact_base: &str,
-    entry: Option<&EntryPublicationInputs<'_>>,
-    args: &PublishReleaseRequest,
-) -> anyhow::Result<PublishedRelease> {
-    let published = publish_release_with_package_manifests(
-        client,
-        request,
-        components,
-        package_manifests,
-        package_artifact_digests,
-        route_contracts,
-    )
-    .await?;
-    let projected =
-        read_projected_environment_policy(client, run_schema, &request.env_key()).await?;
-    verify_projected_environment_policy(
-        projected.as_ref(),
-        source_policy,
-        &ReleaseScope::new(request.env_key(), request.environment),
-        run_schema,
     )?;
-    let mut published = published;
     entry_publication::publish(
         &mut published,
-        components,
+        &release_components,
         registry,
         &args.applications,
         args.application.as_deref(),
@@ -994,45 +826,14 @@ where
     }
 }
 
-pub async fn publish_release_with_package_manifests(
-    client: &Client,
-    request: &PublishReleaseManifest<'_>,
-    components: &ReleaseComponents,
-    package_manifests: &BTreeMap<String, wamn_catalog::manifest::PackageManifest>,
-    package_artifact_digests: &BTreeMap<String, String>,
-    route_contracts: &RouteContracts,
-) -> Result<PublishedRelease, PublishManifestError> {
-    publish_release_from_sources(
-        client,
-        request,
-        components,
-        package_manifests,
-        package_artifact_digests,
-        route_contracts,
-    )
-    .await
-}
-
-async fn publish_release_from_sources(
-    client: &Client,
+pub fn publish_release_with_package_manifests(
     request: &PublishReleaseManifest<'_>,
     component_facts: &ReleaseComponents,
     package_manifests: &BTreeMap<String, wamn_catalog::manifest::PackageManifest>,
-    package_artifact_digests: &BTreeMap<String, String>,
     route_contracts: &RouteContracts,
 ) -> Result<PublishedRelease, PublishManifestError> {
-    client
-        .query_one(CLAIM_ENV_KEY_SQL, &[&request.env_key()])
-        .await
-        .map_err(|error| storage("claim the release tenant", error))?;
     validate_request(request)?;
-    validate_release_package_manifests(
-        client,
-        request,
-        package_manifests,
-        package_artifact_digests,
-    )
-    .await?;
+    validate_release_package_manifests(request, package_manifests)?;
 
     let mut components = project_components(component_facts)?;
     let routes = project_routes(
@@ -1208,9 +1009,6 @@ fn storage(context: &'static str, error: tokio_postgres::Error) -> PublishManife
     PublishManifestError::with_source(PublishManifestErrorType::Storage, context, error)
 }
 
-#[cfg(test)]
-mod effective_release_live;
-
 fn descriptor_components(
     env_key: &str,
     packages: &[PackageCoordinate],
@@ -1250,14 +1048,10 @@ fn descriptor_components(
     Ok(components)
 }
 
-/// Bind the release's behavior and ownership inputs to the exact package
-/// artifact already installed by `apply-package`: the artifact digest it
-/// recorded equals the digest the registry records.
-async fn validate_release_package_manifests(
-    client: &Client,
+/// Bind release behavior and ownership to its verified package manifests.
+fn validate_release_package_manifests(
     request: &PublishReleaseManifest<'_>,
     package_manifests: &BTreeMap<String, wamn_catalog::manifest::PackageManifest>,
-    package_artifact_digests: &BTreeMap<String, String>,
 ) -> Result<(), PublishManifestError> {
     let expected_package_ids = request
         .packages
@@ -1268,16 +1062,11 @@ async fn validate_release_package_manifests(
         .keys()
         .map(String::as_str)
         .collect::<BTreeSet<_>>();
-    let digested_package_ids = package_artifact_digests
-        .keys()
-        .map(String::as_str)
-        .collect::<BTreeSet<_>>();
-    if presented_package_ids != expected_package_ids || digested_package_ids != expected_package_ids
-    {
+    if presented_package_ids != expected_package_ids {
         return Err(PublishManifestError::new(
             PublishManifestErrorType::PackageManifest,
             format!(
-                "release package manifests must exactly match membership; expected={expected_package_ids:?}, presented={presented_package_ids:?}, digested={digested_package_ids:?}; supply one exact wamn.json per release package"
+                "release package manifests must exactly match membership; expected={expected_package_ids:?}, presented={presented_package_ids:?}; supply one exact wamn.json per release package"
             ),
         ));
     }
@@ -1289,7 +1078,7 @@ async fn validate_release_package_manifests(
                 PublishManifestError::new(
                     PublishManifestErrorType::PackageManifest,
                     format!(
-                        "package {coordinate} has no presented manifest; supply the exact wamn.json applied by apply-package"
+                        "package {coordinate} has no presented manifest; supply the exact wamn.json from the verified artifact"
                     ),
                 )
             })?;
@@ -1299,52 +1088,8 @@ async fn validate_release_package_manifests(
             return Err(PublishManifestError::new(
                 PublishManifestErrorType::PackageManifest,
                 format!(
-                    "package {coordinate} is paired with manifest {}@{}; supply the exact wamn.json applied by apply-package",
+                    "package {coordinate} is paired with manifest {}@{}; supply the exact wamn.json from the verified artifact",
                     manifest.package.id, manifest.package.version
-                ),
-            ));
-        }
-        let presented_digest = package_artifact_digests
-            .get(package.package_id())
-            .ok_or_else(|| {
-                PublishManifestError::new(
-                    PublishManifestErrorType::PackageManifest,
-                    format!("package {coordinate} has no package artifact digest"),
-                )
-            })?;
-        let Some(row) = client
-            .query_opt(
-                SELECT_APPLIED_PACKAGE_DIGEST_SQL,
-                &[
-                    &request.env_key(),
-                    &package.package_id(),
-                    &package.package_version(),
-                ],
-            )
-            .await
-            .map_err(|error| storage("read the applied package artifact digest", error))?
-        else {
-            return Err(PublishManifestError::new(
-                PublishManifestErrorType::PackageManifest,
-                format!(
-                    "package {coordinate} is not applied; run apply-package against the target project environment"
-                ),
-            ));
-        };
-        let Some(applied_digest) = row.get::<_, Option<String>>(0) else {
-            return Err(PublishManifestError::new(
-                PublishManifestErrorType::PackageManifest,
-                format!(
-                    "{}: package {coordinate} was applied by wamn dev from a working tree; apply the verified artifact to a release environment",
-                    wamn_schema_control::PACKAGE_COORDINATE_WITHOUT_ARTIFACT_REFUSAL
-                ),
-            ));
-        };
-        if applied_digest != *presented_digest {
-            return Err(PublishManifestError::new(
-                PublishManifestErrorType::PackageManifest,
-                format!(
-                    "package {coordinate} has registry artifact digest {presented_digest}, but apply-package installed {applied_digest}; apply the verified artifact"
                 ),
             ));
         }
@@ -1940,22 +1685,15 @@ mod tests {
             PublishManifestErrorType::ApplicationCoverage
         );
 
-        // Without a selector, the application whose members cover the
-        // routes is the entry, and another application leaves it alone.
         let mut two = applications.clone();
         two.insert(
             "rest".into(),
             wamn_catalog::ApplicationDefinition {
-                connections: std::collections::BTreeMap::new(),
+                connections: BTreeMap::new(),
                 packages: ["base".into()].into(),
             },
         );
-        assert_eq!(
-            covering_application(&published, &candidates(), &two, None)
-                .unwrap()
-                .0,
-            member
-        );
+        assert!(covering_application(&published, &candidates(), &two, None).is_err());
         let mut both = two.clone();
         both.get_mut("rest")
             .unwrap()
@@ -1988,8 +1726,6 @@ mod tests {
             error.error_type(),
             PublishManifestErrorType::AmbiguousApplicationMember
         );
-        assert!(error.detail().contains("overlay::entry"));
-        assert!(error.detail().contains("outer::entry"));
     }
 
     /// A package directory whose `descriptors/` holds the canonical descriptor
@@ -2920,3 +2656,6 @@ mod manifest_push {
         }
     }
 }
+
+#[cfg(test)]
+mod effective_release_live;

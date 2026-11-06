@@ -92,10 +92,8 @@ enum Command {
     IntegrationType(component_verbs::IntegrationTypeArgs),
     /// Build, publish, and administer project integrations.
     Integration(wamn_ctl::integration_verbs::IntegrationArgs),
-    /// Publish one immutable release from exact package-owned facts and push
-    /// its manifest to the release repository.
-    ///
-    /// PRECONDITION: run `env apply` for this environment FIRST; it reconciles the run plane `wamn_run`. This verb reads the tenant's `environment_policies` row before it commits and refuses when the row is absent (`environment-policy-not-converged`) as well as when it names another environment than the release carries (`environment-policy-environment-mismatch`), so publishing into a never-reconciled run plane fails rather than passing unchecked.
+    /// Publish one application's immutable release from verified registry artifacts.
+    /// No destination database or provisioned environment is required.
     PublishRelease(release_verbs::PublishReleaseArgs),
     /// Print the SQL that creates the platform principal rows of one tenant.
     PrintPlatformPrincipals(print_platform_principals::PrintPlatformPrincipalsArgs),

@@ -145,13 +145,10 @@ pub fn write_package(
         )]
         .into(),
         application: None,
-        database_url: String::new(),
-        control_database_url: String::new(),
         org: release.scope.org.to_owned(),
         project: release.scope.project.to_owned(),
         environment: release.scope.environment.to_owned(),
         verified_publisher_principal: release.publisher.to_owned(),
-        run_schema: String::new(),
         packages: vec![PackageCoordinate::new(
             admission.package_id(),
             admission.package_version(),

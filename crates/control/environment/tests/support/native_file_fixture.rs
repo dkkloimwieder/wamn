@@ -183,13 +183,10 @@ pub fn release_request()
             )]
             .into(),
             application: None,
-            database_url: String::new(),
-            control_database_url: String::new(),
             org: ORG.into(),
             project: PROJECT.into(),
             environment: "files".into(),
             verified_publisher_principal: "kind-fixture".into(),
-            run_schema: "wamn_run".into(),
             packages: vec![wamn_catalog::PackageCoordinate::new(
                 "file_fixture",
                 "0.1.0",

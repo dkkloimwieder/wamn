@@ -94,13 +94,10 @@ fn fixture() -> Fixture {
     let args = PublishReleaseRequest {
         applications: serde_json::from_value(serde_json::json!({"netsuite": {"packages": ["wamn_integration", "netsuite", "rest_consumer_fixture"]}})).unwrap(),
         application: None,
-        database_url: String::new(),
-        control_database_url: String::new(),
         org: "rest".into(),
         project: "publication".into(),
         environment: "test".into(),
         verified_publisher_principal: "publisher".into(),
-        run_schema: "catalog".into(),
         packages: ["wamn_integration", "netsuite", "rest_consumer_fixture"]
             .into_iter()
             .map(|name| PackageCoordinate::new(name, "0.1.1").unwrap())

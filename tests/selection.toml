@@ -7,6 +7,7 @@ version = 1
 exclusions = [
 ]
 targets = [
+  { workspace="root", package="wamn-ctl", target="test:application_publication", tier="contract" },
   { workspace="root", package="wamn-integration-tests", target="bin:http-fixture", tier="contract" },
   { workspace="root", package="wamn-authoring-model", target="lib:wamn_authoring_model", tier="contract" },
   { workspace="root", package="wamn-authoring-model", target="test:contract", tier="contract" },
@@ -424,7 +425,7 @@ aliases = {WAMN_DEV_ENV_FLOW_HTTP_COMPONENT = "WAMN_FLOW_HTTP_COMPONENT"}
 commands = [
   ["env", "RUSTFLAGS={guest-rustflags}", "cargo", "build", "--locked", "--offline", "--release", "--manifest-path", "apps/Cargo.toml", "--target-dir", "{target}", "--target", "wasm32-wasip2", "-p", "http-route"],
 ]
-packages = ["wamn-package-control", "wamn-release-control", "wamn-environment-control", "wamn-dev-control", "wamn-integration-tests", "wamn-receiving-tests", "wamn-wms-tests"]
+packages = ["wamn-ctl", "wamn-package-control", "wamn-release-control", "wamn-environment-control", "wamn-dev-control", "wamn-integration-tests", "wamn-receiving-tests", "wamn-wms-tests"]
 
 [[preparation]]
 id = "materializer"

@@ -841,22 +841,25 @@ impl ProductionDevStageRunner {
         let request = PublishReleaseRequest {
             applications: self.environment.membership(),
             application: None,
-            database_url: self.config.target_database_url().to_owned(),
-            control_database_url: self.config.system_database_url().to_owned(),
             org: identity.org.clone(),
             project: identity.project.clone(),
             environment: identity.environment.clone(),
             verified_publisher_principal: principal,
-            run_schema: RUN_SCHEMA.to_owned(),
             packages: package_coordinates,
         };
         let local = self.config.local_artifacts();
-        let (mut published, mut local_facts) =
-            publish_release::publish_local(request, &package_roots, &self.admissions)
-                .await
-                .map_err(|source| {
-                    ProductionDevStageError::owner("assemble local application", source)
-                })?;
+        let (mut published, mut local_facts) = publish_release::publish_local(
+            request,
+            publish_release::LocalReleaseTarget {
+                database_url: self.config.target_database_url(),
+                control_database_url: self.config.system_database_url(),
+                run_schema: RUN_SCHEMA,
+            },
+            &package_roots,
+            &self.admissions,
+        )
+        .await
+        .map_err(|source| ProductionDevStageError::owner("assemble local application", source))?;
         fs::create_dir_all(&local.directory).map_err(|source| {
             ProductionDevStageError::owner("create local artifact directory", source.into())
         })?;

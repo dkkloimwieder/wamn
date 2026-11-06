@@ -87,6 +87,7 @@ wamn-workflow = { workspace = true }
 tokio-postgres = { workspace = true }
 
 [dev-dependencies]
+wit-parser = { workspace = true }
 async-nats = { workspace = true, features = ["jetstream"] }
 wamn-fixture-package = { workspace = true }
 tokio-postgres = { workspace = true, features = ["with-chrono-0_4"] }

@@ -1,5 +1,4 @@
 use std::collections::{BTreeMap, BTreeSet};
-use tokio_postgres::NoTls;
 use wamn_catalog::PackageCoordinate;
 use wamn_package_control::test_support::{DIGEST, closure_component, source_manifest};
 use wamn_release_control::publish_release::{
@@ -7,26 +6,12 @@ use wamn_release_control::publish_release::{
     publish_release_with_package_manifests,
 };
 
-#[tokio::test]
-async fn two_applications_with_different_model_schemas_publish_and_pass_apply_analysis() {
+#[test]
+fn application_packages_with_different_model_schemas_publish_and_pass_apply_analysis() {
     use crate::environment::analyse::{Authorities, Policy, ProjectState, ReleaseFacts};
-    let _lock = wamn_test_postgres::lock();
-    let database = wamn_catalog::test_database::tenant();
-    let (client, connection) = tokio_postgres::connect(database.url(), NoTls)
-        .await
-        .unwrap();
-    tokio::spawn(connection);
-    client
-        .batch_execute(&format!(
-            "SELECT set_config('app.user_id', '{}', false)",
-            wamn_control_provision::PlatformComponent::Provisioning.principal_id()
-        ))
-        .await
-        .unwrap();
     let mut manifests = BTreeMap::new();
     let mut components = ReleaseComponents::default();
     let mut packages = BTreeSet::new();
-    let mut digests = BTreeMap::new();
     for (package, schema, digest_byte) in [
         ("consumer", "consumer", 'a'),
         ("integration", "integration", 'b'),
@@ -54,8 +39,6 @@ async fn two_applications_with_different_model_schemas_publish_and_pass_apply_an
             });
         }
         component.operations.insert(operation.clone(), export);
-        client.execute("INSERT INTO catalog.packages (env_key,package_id,package_version,artifact_digest) VALUES ('tenant-a--fixture--dev',$1,'1.0.0',$2)", &[&package, &component.component_digest]).await.unwrap();
-        digests.insert(package.to_owned(), component.component_digest.clone());
         components
             .insert(component, Vec::new(), BTreeMap::new())
             .unwrap();
@@ -63,7 +46,6 @@ async fn two_applications_with_different_model_schemas_publish_and_pass_apply_an
         manifests.insert(package.to_owned(), manifest);
     }
     let published = publish_release_with_package_manifests(
-        &client,
         &PublishReleaseManifest {
             org: "tenant-a",
             project: "fixture",
@@ -75,10 +57,8 @@ async fn two_applications_with_different_model_schemas_publish_and_pass_apply_an
         },
         &components,
         &manifests,
-        &digests,
         &RouteContracts::new(),
     )
-    .await
     .unwrap();
     assert_eq!(published.manifest.components.len(), 2);
     let document = crate::environment::document::EnvironmentDocument::from_json(
