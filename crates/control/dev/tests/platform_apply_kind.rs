@@ -314,8 +314,7 @@ async fn database_state(run: &Run) -> anyhow::Result<Value> {
         'baseline', (SELECT row_to_json(b) FROM registry.schema_baseline b),
         'orgs', (SELECT json_agg(json_build_array(id, created_at) ORDER BY id) FROM registry.orgs),
         'passwords', (SELECT json_agg(json_build_array(principal_id, created_at) ORDER BY principal_id) FROM identity.password_credentials),
-        'environments', (SELECT count(*) FROM registry.project_envs),
-        'releases', (SELECT count(*) FROM catalog.releases))";
+        'environments', (SELECT count(*) FROM registry.project_envs))";
     let output = success(kubectl(run).args([
         "-n",
         "platform",
@@ -343,8 +342,27 @@ async fn database_state(run: &Run) -> anyhow::Result<Value> {
         "owner password data is missing"
     );
     ensure!(
-        state["environments"] == 0 && state["releases"] == 0,
-        "platform created application environments or releases"
+        state["environments"] == 0,
+        "platform created application environments"
+    );
+    // Application releases are Helm releases in hosts; only the control host may exist.
+    let releases = success(Command::new("helm").args([
+        "--kubeconfig",
+        &run.target.kubeconfig.to_string_lossy(),
+        "--kube-context",
+        &run.target.context,
+        "list",
+        "-n",
+        "hosts",
+        "-q",
+    ]))
+    .await?;
+    ensure!(
+        String::from_utf8(releases.stdout)?
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            == [format!("c-{}", run.document.org)],
+        "platform created application releases"
     );
     Ok(state)
 }
