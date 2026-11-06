@@ -370,6 +370,7 @@ async fn run_created(
     let platform_inputs = wamn_environment_control::platform::journey::cluster(
         repository,
         &wamn_environment_control::platform::journey::ClusterInput {
+            release_chart: &wamn_gate_harness::case_release::release_chart()?,
             operator_namespace: NAMESPACE,
             host_namespace: NAMESPACE,
             org: scope.org.as_str(),

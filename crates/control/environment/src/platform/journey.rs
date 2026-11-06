@@ -13,6 +13,9 @@ use wamn_release_control::release_chart::{self, ValuesInput};
 /// The explicit scope of a cluster's operator and NATS users.
 #[derive(Debug)]
 pub struct ClusterInput<'a> {
+    /// The release chart directory that carries the pinned operator archive:
+    /// a qualification case runs where only the stamped chart exists.
+    pub release_chart: &'a Path,
     pub operator_namespace: &'a str,
     pub host_namespace: &'a str,
     pub org: &'a str,
@@ -77,7 +80,7 @@ pub fn cluster(repository: &Path, input: &ClusterInput<'_>) -> anyhow::Result<Cl
             input.org,
             input.environments,
         )?,
-        operator: install::operator_entry(repository, input.operator_namespace, &values)?,
+        operator: install::operator_entry(input.release_chart, input.operator_namespace, &values)?,
     })
 }
 

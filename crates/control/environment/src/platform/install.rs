@@ -521,7 +521,7 @@ pub(super) fn operator_objects(
     document: &ClusterDocument,
 ) -> anyhow::Result<Vec<Value>> {
     Ok(vec![operator_entry(
-        repository,
+        &repository.join("deploy/platform/release"),
         "platform",
         &operator_values(repository, document)?,
     )?])
@@ -531,9 +531,13 @@ pub(super) fn operator_objects(
 ///
 /// # Errors
 /// Returns an error when the dependency or its local archive is missing.
-pub fn operator_entry(repository: &Path, namespace: &str, values: &Value) -> anyhow::Result<Value> {
-    let chart = repository.join("deploy/platform/release");
-    let metadata: Value = serde_yaml::from_slice(&std::fs::read(chart.join("Chart.yaml"))?)?;
+pub fn operator_entry(chart: &Path, namespace: &str, values: &Value) -> anyhow::Result<Value> {
+    let file = chart.join("Chart.yaml");
+    let metadata: Value = serde_yaml::from_slice(
+        &std::fs::read(&file)
+            .with_context(|| format!("read operator dependency metadata {}", file.display()))?,
+    )
+    .with_context(|| format!("decode operator dependency metadata {}", file.display()))?;
     let dependency = metadata["dependencies"]
         .as_array()
         .and_then(|dependencies| {
@@ -1226,7 +1230,12 @@ mod tests {
                 .contains("cannot fetch")
         );
         let repository = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
-        let operator = operator_entry(&repository, "platform", &json!({})).unwrap();
+        let operator = operator_entry(
+            &repository.join("deploy/platform/release"),
+            "platform",
+            &json!({}),
+        )
+        .unwrap();
         let chart = Path::new(operator["chart"].as_str().unwrap());
         let wrong = json!({"chart":chart, "version":"wrong", "name":"test", "namespace":"test", "values":{}});
         assert!(
@@ -1494,7 +1503,12 @@ mod tests {
     #[test]
     fn operator_skip_requires_the_named_release_version_and_equal_values() {
         let repository = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
-        let operator = operator_entry(&repository, "platform", &json!({})).unwrap();
+        let operator = operator_entry(
+            &repository.join("deploy/platform/release"),
+            "platform",
+            &json!({}),
+        )
+        .unwrap();
         let version = operator["version"].as_str().unwrap();
         let chart = format!("runtime-operator-{version}");
         let releases = json!([{"name": "wamn", "chart": chart}]);

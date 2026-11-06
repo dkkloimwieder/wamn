@@ -788,6 +788,7 @@ pub async fn kept_cluster(repository: &Path, triple: &Triple) -> anyhow::Result<
             let inputs = wamn_environment_control::platform::journey::delivery(
                 repository,
                 &wamn_environment_control::platform::journey::ClusterInput {
+                    release_chart: &release_chart()?,
                     operator_namespace: delivery_cluster::NAMESPACE,
                     host_namespace: delivery_cluster::NAMESPACE,
                     org: triple.org.as_str(),

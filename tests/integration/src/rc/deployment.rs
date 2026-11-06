@@ -47,6 +47,7 @@ pub(super) async fn install_platform(resources: &Resources) -> anyhow::Result<()
     let mut inputs = wamn_environment_control::platform::journey::cluster(
         &resources.repository,
         &wamn_environment_control::platform::journey::ClusterInput {
+            release_chart: &resources.repository.join("deploy/platform/release"),
             operator_namespace: "wamn-system",
             host_namespace: NAMESPACE,
             org: "rc",

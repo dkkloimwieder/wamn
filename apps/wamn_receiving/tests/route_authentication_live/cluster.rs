@@ -129,6 +129,7 @@ async fn start(evidence: &Path, gates_image: bool) -> anyhow::Result<ReceivingCl
     let platform = wamn_environment_control::platform::journey::cluster(
         &cluster.repository,
         &wamn_environment_control::platform::journey::ClusterInput {
+            release_chart: &wamn_gate_harness::case_release::release_chart()?,
             operator_namespace: NAMESPACE,
             host_namespace: NAMESPACE,
             org: scope.org.as_str(),

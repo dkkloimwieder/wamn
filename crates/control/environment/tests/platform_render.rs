@@ -179,6 +179,7 @@ fn journey_cluster_change(
     let bundle = entry(
         work.path(),
         &journey::ClusterInput {
+            release_chart: &work.path().join("deploy/platform/release"),
             operator_namespace: "wamn-system",
             host_namespace: "wamn-system",
             org: "test",
