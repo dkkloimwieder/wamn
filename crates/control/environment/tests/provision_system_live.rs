@@ -7,12 +7,13 @@ use std::os::unix::fs::PermissionsExt as _;
 use tokio_postgres::NoTls;
 
 use wamn_environment_control::provision_system::{
-    EmitProvisionerRequest, ProvisionSystemRequest, emit_provisioner_credential, provision_system,
+    EmitProvisionerRequest, ProvisionSystemRequest, SystemState, emit_provisioner_credential,
+    install_control_store, provision_system, system_state,
 };
 use wamn_test_infrastructure::locked_database;
 
 #[tokio::test]
-async fn provision_system_runs_once_and_records_the_platform_domain() {
+async fn provision_system_repeats_without_changing_the_platform_domain() {
     let url = locked_database::database(wamn_test_postgres::database);
     let (client, connection) = tokio_postgres::connect(&url, NoTls)
         .await
@@ -63,6 +64,17 @@ async fn provision_system_runs_once_and_records_the_platform_domain() {
         .expect("read the platform domain")
         .get(0);
     assert_eq!(domain.as_deref(), Some("wamn.example.test"));
+
+    let before = snapshot(&client).await;
+    provision_system(&request)
+        .await
+        .expect("repeat the same domain");
+    assert_eq!(system_state(&client).await.unwrap(), SystemState::Complete);
+    assert_eq!(
+        snapshot(&client).await,
+        before,
+        "repeat changes no catalog or data rows"
+    );
 
     // The provisioning worker's login holds exactly the measured grants.
     let role = client
@@ -277,14 +289,6 @@ async fn provision_system_runs_once_and_records_the_platform_domain() {
     driver.await.unwrap().unwrap();
     std::fs::remove_file(&apply_path).unwrap();
 
-    let refusal = provision_system(&request)
-        .await
-        .expect_err("the second run refuses");
-    assert!(
-        format!("{refusal:#}").contains("already has the schema registry"),
-        "{refusal:#}"
-    );
-
     // The emit run on the installed database writes the Secret and the role
     // statement. The statement sets the password the Secret carries.
     let directory =
@@ -344,4 +348,149 @@ async fn provision_system_runs_once_and_records_the_platform_domain() {
         .get(0);
     assert_eq!(user, "wamn_provisioner");
     std::fs::remove_dir_all(&directory).expect("remove the output directory");
+}
+
+async fn connect(url: &str) -> tokio_postgres::Client {
+    let (client, connection) = tokio_postgres::connect(url, NoTls).await.unwrap();
+    tokio::spawn(async move {
+        connection.await.unwrap();
+    });
+    client
+}
+
+// Enumerate the actual catalog and data rather than pinning a relation roster.
+async fn snapshot(client: &tokio_postgres::Client) -> serde_json::Value {
+    let catalog: serde_json::Value = client.query_one(r"
+        WITH schemas AS (SELECT * FROM pg_namespace WHERE nspname !~ '^pg_' AND nspname <> 'information_schema')
+        SELECT jsonb_build_object(
+          'schemas', (SELECT jsonb_agg(to_jsonb(n) ORDER BY oid) FROM schemas n),
+          'relations', (SELECT jsonb_agg(jsonb_build_array(to_jsonb(c), c.xmin::text) ORDER BY c.oid)
+                        FROM pg_class c JOIN schemas n ON n.oid = c.relnamespace),
+          'columns', (SELECT jsonb_agg(to_jsonb(a) ORDER BY a.attrelid, a.attnum)
+                      FROM pg_attribute a JOIN pg_class c ON c.oid = a.attrelid JOIN schemas n ON n.oid = c.relnamespace),
+          'functions', (SELECT jsonb_agg(to_jsonb(p) ORDER BY p.oid) FROM pg_proc p JOIN schemas n ON n.oid = p.pronamespace),
+          'roles', (SELECT jsonb_agg(to_jsonb(r) ORDER BY oid) FROM pg_roles r),
+          'memberships', (SELECT jsonb_agg(to_jsonb(m) ORDER BY roleid, member, grantor) FROM pg_auth_members m),
+          'databases', (SELECT jsonb_agg(jsonb_build_array(datname, datacl::text, xmin::text) ORDER BY datname) FROM pg_database))
+    ", &[]).await.unwrap().get(0);
+    let mut data = serde_json::Map::new();
+    for row in client
+        .query(
+            r"
+        SELECT format('%I.%I', n.nspname, c.relname)
+        FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+        WHERE c.relkind = 'r' AND n.nspname !~ '^pg_' AND n.nspname <> 'information_schema'
+        ORDER BY 1
+    ",
+            &[],
+        )
+        .await
+        .unwrap()
+    {
+        let relation: String = row.get(0);
+        let contents = client.query_one(&format!(r"
+            SELECT COALESCE(jsonb_agg(jsonb_build_array(to_jsonb(t), xmin::text) ORDER BY to_jsonb(t)::text), '[]')
+            FROM {relation} t
+        "), &[]).await.unwrap();
+        data.insert(relation, contents.get::<_, serde_json::Value>(0));
+    }
+    serde_json::json!({"catalog": catalog, "data": data})
+}
+
+#[tokio::test]
+async fn bootstrap_is_atomic_and_uses_database_facts() {
+    let url = locked_database::database(wamn_test_postgres::database);
+    let client = connect(&url).await;
+    client.batch_execute("DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'wamn_system') THEN CREATE ROLE wamn_system NOLOGIN; END IF; END $$;").await.unwrap();
+    assert_eq!(system_state(&client).await.unwrap(), SystemState::Absent);
+
+    // Development resets retain the shared history schema.
+    client
+        .batch_execute("CREATE SCHEMA wamn_history AUTHORIZATION wamn_system")
+        .await
+        .unwrap();
+    assert_eq!(system_state(&client).await.unwrap(), SystemState::Absent);
+
+    // Fail the final apply grant after both schema batches and baseline insertion.
+    // This is a server-side SQL failure, not a replacement bootstrap or checker.
+    client.batch_execute(r"
+        CREATE FUNCTION public.reject_final_grant() RETURNS event_trigger LANGUAGE plpgsql AS $$
+        DECLARE granted boolean;
+        BEGIN
+          IF to_regclass('registry.schema_baseline') IS NOT NULL
+             AND EXISTS (SELECT FROM pg_roles WHERE rolname = 'wamn_apply') THEN
+            EXECUTE 'SELECT has_column_privilege(''wamn_apply'', ''identity.org_memberships'', ''status'', ''UPDATE'')' INTO granted;
+            IF granted THEN PERFORM 1 / 0; END IF;
+          END IF;
+        END $$;
+        CREATE EVENT TRIGGER reject_final_grant ON ddl_command_end WHEN TAG IN ('GRANT')
+          EXECUTE FUNCTION public.reject_final_grant();
+    ").await.unwrap();
+    let before = snapshot(&client).await;
+    let failure = install_control_store(&client).await.unwrap_err();
+    assert_eq!(
+        failure
+            .downcast_ref::<tokio_postgres::Error>()
+            .unwrap()
+            .code(),
+        Some(&tokio_postgres::error::SqlState::DIVISION_BY_ZERO)
+    );
+    assert_eq!(
+        snapshot(&client).await,
+        before,
+        "late failure rolls back schema, roles, grants and data"
+    );
+    assert_eq!(system_state(&client).await.unwrap(), SystemState::Absent);
+    client
+        .batch_execute(
+            "DROP EVENT TRIGGER reject_final_grant; DROP FUNCTION public.reject_final_grant();",
+        )
+        .await
+        .unwrap();
+
+    install_control_store(&client).await.unwrap();
+    assert_eq!(system_state(&client).await.unwrap(), SystemState::Complete);
+    let concurrent_database = wamn_test_postgres::database();
+    let first = connect(concurrent_database.url()).await;
+    let second = connect(concurrent_database.url()).await;
+    let (left, right) = tokio::join!(
+        install_control_store(&first),
+        install_control_store(&second)
+    );
+    left.unwrap();
+    right.unwrap();
+    assert_eq!(system_state(&first).await.unwrap(), SystemState::Complete);
+    let concurrent = snapshot(&first).await;
+    install_control_store(&first).await.unwrap();
+    assert_eq!(snapshot(&first).await, concurrent);
+
+    let partial_database = wamn_test_postgres::database();
+    let partial = connect(partial_database.url()).await;
+    partial
+        .batch_execute("CREATE SCHEMA registry")
+        .await
+        .unwrap();
+    assert_eq!(
+        system_state(&partial).await.unwrap(),
+        SystemState::Incomplete
+    );
+    let before = snapshot(&partial).await;
+    assert!(install_control_store(&partial).await.is_err());
+    assert_eq!(snapshot(&partial).await, before);
+
+    client
+        .batch_execute("UPDATE registry.schema_baseline SET sha256 = 'sha256:' || repeat('0', 64)")
+        .await
+        .unwrap();
+    assert!(matches!(
+        system_state(&client).await.unwrap(),
+        SystemState::BaselineMismatch { .. }
+    ));
+    let before = snapshot(&client).await;
+    assert!(install_control_store(&client).await.is_err());
+    assert_eq!(
+        snapshot(&client).await,
+        before,
+        "mismatch does not replay or reset"
+    );
 }

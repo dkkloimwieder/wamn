@@ -6,8 +6,8 @@
 //! verb connects as the superuser, installs [`CONTROL_BOOTSTRAP_SQL`] as
 //! `wamn_system`, closes the PUBLIC floors, creates the login
 //! `wamn_provisioner` of the provisioning worker and `wamn_apply`, and writes
-//! `registry.meta.platform_domain`. It refuses a database that already has
-//! the schema `registry`, so a second run changes nothing.
+//! `registry.meta.platform_domain`. A complete installation needs no replay.
+//! Partial installations require explicit repair.
 //!
 //! With the emit flags, the verb installs nothing. It writes the Secret
 //! manifest of `wamn_provisioner` and the role statement that sets its
@@ -25,7 +25,7 @@ use base64::engine::general_purpose::STANDARD;
 use ring::rand::{SecureRandom as _, SystemRandom};
 use ring::{digest, hmac, pbkdf2};
 use serde_json::json;
-use tokio_postgres::{Client, NoTls};
+use tokio_postgres::{Client, GenericClient, NoTls};
 use url::Url;
 use wamn_control_provision::provisioner::{PROVISIONER_ROLE, provisioner_statement_sql};
 
@@ -65,83 +65,178 @@ pub async fn provision_system(request: &ProvisionSystemRequest) -> anyhow::Resul
 pub async fn set_platform_domain(client: &mut Client, domain: &str) -> anyhow::Result<()> {
     let transaction = crate::provision_project_env::provisioning_transaction(client).await?;
     transaction
-        .execute("UPDATE registry.meta SET platform_domain = $1", &[&domain])
+        .execute(
+            "UPDATE registry.meta SET platform_domain = $1 WHERE platform_domain IS DISTINCT FROM $1",
+            &[&domain],
+        )
         .await
         .context("record the platform domain")?;
     transaction.commit().await?;
     Ok(())
 }
 
-/// Install [`CONTROL_BOOTSTRAP_SQL`] as `wamn_system` into the database of
-/// `admin`, a superuser connection, and close the PUBLIC floors.
-///
-/// It refuses when the schema `registry` exists.
-pub async fn install_control_store(admin: &Client) -> anyhow::Result<()> {
-    let installed: bool = admin
+/// Database state recorded by the atomic system bootstrap.
+#[derive(Debug, PartialEq, Eq)]
+pub enum SystemState {
+    /// No control-store schema exists.
+    Absent,
+    /// The current baseline is recorded.
+    Complete,
+    /// A control-store schema exists without a baseline record.
+    Incomplete,
+    /// The recorded schema belongs to a different artifact.
+    BaselineMismatch { installed: String, expected: String },
+}
+
+impl fmt::Display for SystemState {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Absent => formatter.write_str("system initialization absent"),
+            Self::Complete => formatter.write_str("system initialization complete"),
+            Self::Incomplete => formatter.write_str(
+                "incomplete system initialization: no system baseline record. Restore a verified system database backup, then rerun provision-system. Do not replay bootstrap or reset the database",
+            ),
+            Self::BaselineMismatch { installed, expected } => write!(formatter,
+                "system schema baseline mismatch: installed {installed}, expected {expected}. Use the matching system schema artifact. Do not replay or reset the system database"),
+        }
+    }
+}
+
+/// Read the completion record without changing schemas, grants, or data.
+pub async fn system_state(client: &(impl GenericClient + Sync)) -> anyhow::Result<SystemState> {
+    // Development resets retain the shared history schema. It does not identify
+    // a control-store installation on its own.
+    let present: bool = client
         .query_one(
-            "SELECT EXISTS (SELECT FROM pg_catalog.pg_namespace WHERE nspname = 'registry')",
+            "SELECT EXISTS (SELECT FROM pg_namespace WHERE nspname IN \
+         ('registry', 'provisioning', 'identity', 'catalog', 'wamn_run', 'wamn_authority'))",
             &[],
         )
         .await
-        .context("look for the schema registry")?
+        .context("look for control-store schemas")?
         .get(0);
-    ensure!(
-        !installed,
-        "the system database already has the schema registry; provision-system runs once"
-    );
-    admin
-        .batch_execute(&sql::ensure_control_author_acl_role_sql())
-        .await
-        .context("ensure the portable store's control-author ACL role")?;
-    admin
-        .batch_execute(sql::ensure_db_owner_role_sql())
-        .await
-        .context("ensure the database-owner role that the record history grants name")?;
-    admin
-        .batch_execute(
-            "DO $$ BEGIN EXECUTE format('GRANT CREATE ON DATABASE %I TO wamn_system', \
-                                        current_database()); END $$;",
-        )
-        .await
-        .context("give wamn_system the system database")?;
-    admin
-        .batch_execute("SET ROLE wamn_system")
-        .await
-        .context("assume the control owner")?;
-    for stage in CONTROL_BOOTSTRAP_SQL {
-        admin
-            .batch_execute(stage)
-            .await
-            .context("install the control store")?;
+    if !present {
+        return Ok(SystemState::Absent);
     }
-    wamn_package_control::schema_baseline::record_system(admin)
-        .await
-        .context("record the system schema baseline")?;
-    admin
-        .batch_execute("RESET ROLE")
-        .await
-        .context("release the control owner before cluster ACL convergence")?;
-    admin
-        .batch_execute(sql::revoke_public_connect_floor_sql())
-        .await
-        .context("converge the cluster PUBLIC CONNECT floor")?;
-    admin
-        .batch_execute(
-            "DO $$ BEGIN EXECUTE format(\
-               'REVOKE TEMPORARY ON DATABASE %I FROM PUBLIC', current_database()); END $$;",
+    let baseline: bool = client
+        .query_one(
+            "SELECT to_regclass('registry.schema_baseline') IS NOT NULL",
+            &[],
         )
         .await
-        .context("converge the system database PUBLIC TEMPORARY floor")?;
-    admin
-        .batch_execute(&wamn_control_provision::provisioner::ensure_provisioner_role_sql())
+        .context("look for the system baseline table")?
+        .get(0);
+    if !baseline {
+        return Ok(SystemState::Incomplete);
+    }
+    let Some(row) = client
+        .query_opt("SELECT sha256 FROM registry.schema_baseline", &[])
         .await
-        .context("create the provisioning worker's login")?;
+        .context("read the system schema baseline")?
+    else {
+        return Ok(SystemState::Incomplete);
+    };
+    let installed: String = row.get(0);
+    let expected = wamn_control_provision::schema_baseline::system_sha256();
+    if installed == expected {
+        Ok(SystemState::Complete)
+    } else {
+        Ok(SystemState::BaselineMismatch {
+            installed,
+            expected,
+        })
+    }
+}
+
+/// Install the control store and baseline in one transaction, or recognize completion.
+pub async fn install_control_store(admin: &Client) -> anyhow::Result<()> {
     admin
-        .batch_execute(wamn_control_provision::apply::ensure_apply_role_sql())
-        .await?;
-    admin
-        .batch_execute(wamn_control_provision::apply::APPLY_GRANTS_SQL)
-        .await?;
+        .batch_execute("BEGIN")
+        .await
+        .context("begin system initialization")?;
+    let result = async {
+        admin
+            .batch_execute("SELECT pg_advisory_xact_lock(hashtext('wamn_role_bootstrap'))")
+            .await
+            .context("lock system initialization")?;
+        match system_state(admin).await? {
+            SystemState::Absent => {}
+            SystemState::Complete => {
+                admin
+                    .batch_execute("COMMIT")
+                    .await
+                    .context("finish system initialization read")?;
+                return Ok(());
+            }
+            state => anyhow::bail!("{state}"),
+        }
+        admin
+            .batch_execute(&sql::ensure_control_author_acl_role_sql())
+            .await
+            .context("ensure the portable store's control-author ACL role")?;
+        admin
+            .batch_execute(sql::ensure_db_owner_role_sql())
+            .await
+            .context("ensure the database-owner role that the record history grants name")?;
+        admin
+            .batch_execute(
+                "DO $$ BEGIN EXECUTE format('GRANT CREATE ON DATABASE %I TO wamn_system', \
+                                            current_database()); END $$;",
+            )
+            .await
+            .context("give wamn_system the system database")?;
+        admin
+            .batch_execute("SET LOCAL ROLE wamn_system")
+            .await
+            .context("assume the control owner")?;
+        for stage in CONTROL_BOOTSTRAP_SQL {
+            admin
+                .batch_execute(stage)
+                .await
+                .context("install the control store")?;
+        }
+        wamn_package_control::schema_baseline::record_system(admin)
+            .await
+            .context("record the system schema baseline")?;
+        admin
+            .batch_execute("RESET ROLE")
+            .await
+            .context("release the control owner before cluster ACL convergence")?;
+        admin
+            .batch_execute(sql::revoke_public_connect_floor_sql())
+            .await
+            .context("converge the cluster PUBLIC CONNECT floor")?;
+        admin
+            .batch_execute(
+                "DO $$ BEGIN EXECUTE format(\
+                   'REVOKE TEMPORARY ON DATABASE %I FROM PUBLIC', current_database()); END $$;",
+            )
+            .await
+            .context("converge the system database PUBLIC TEMPORARY floor")?;
+        admin
+            .batch_execute(&wamn_control_provision::provisioner::ensure_provisioner_role_sql())
+            .await
+            .context("create the provisioning worker's login")?;
+        admin
+            .batch_execute(wamn_control_provision::apply::ensure_apply_role_sql())
+            .await?;
+        admin
+            .batch_execute(wamn_control_provision::apply::APPLY_GRANTS_SQL)
+            .await?;
+        admin
+            .batch_execute("COMMIT")
+            .await
+            .context("commit system initialization")?;
+        Ok(())
+    }
+    .await;
+    if let Err(error) = result {
+        admin
+            .batch_execute("ROLLBACK")
+            .await
+            .with_context(|| format!("roll back system initialization after {error:#}"))?;
+        return Err(error);
+    }
     Ok(())
 }
 
