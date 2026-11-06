@@ -170,6 +170,8 @@ mod tests {
 #[cfg(all(test, target_os = "linux"))]
 mod platform_tests {
     use super::*;
+    use clap::CommandFactory as _;
+    use wamn_ctl::platform_verbs::ProductPlatformCommand;
 
     #[test]
     fn platform_deploy_requires_an_explicit_chart() {
@@ -191,5 +193,72 @@ mod platform_tests {
         assert_eq!(args.file, std::path::Path::new("cluster.k"));
         assert_eq!(args.chart, std::path::Path::new("/prepared/chart"));
         assert!(Cli::try_parse_from(["wamn", "platform", "apply", "cluster.k"]).is_err());
+    }
+
+    #[test]
+    fn platform_status_needs_only_the_document() {
+        let cli = Cli::try_parse_from(["wamn", "platform", "status", "cluster.k"]).unwrap();
+        let Command::Platform(ProductPlatformCommand::Status(args)) = cli.command else {
+            panic!("expected platform status");
+        };
+        assert_eq!(args.file, std::path::Path::new("cluster.k"));
+        assert!(Cli::try_parse_from(["wamn", "platform", "status"]).is_err());
+    }
+
+    #[test]
+    fn platform_help_lists_its_commands_and_required_chart() {
+        let mut cli = Cli::command();
+        let platform = cli.find_subcommand_mut("platform").unwrap();
+        let help = platform.render_long_help().to_string();
+        for command in platform.get_subcommands() {
+            assert!(help.contains(command.get_name()));
+        }
+        let deploy = platform.find_subcommand_mut("deploy").unwrap();
+        assert!(deploy.render_long_help().to_string().contains("--chart"));
+        assert!(
+            deploy
+                .get_arguments()
+                .any(|arg| { arg.get_long() == Some("chart") && arg.is_required_set() })
+        );
+    }
+
+    #[tokio::test]
+    async fn platform_missing_inputs_refuse_before_provider_setup() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let directory = std::env::temp_dir().join(format!(
+            "wamn-platform-missing-inputs-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir(&directory).unwrap();
+        let missing = directory.join("missing");
+        let document = root.join("deploy/kind/cluster.k");
+        let chart = root.join("deploy/platform/release");
+        for (document, chart) in [(&missing, &chart), (&document, &missing)] {
+            let cli = Cli::try_parse_from([
+                "wamn".as_ref(),
+                "platform".as_ref(),
+                "deploy".as_ref(),
+                document.as_os_str(),
+                "--chart".as_ref(),
+                chart.as_os_str(),
+            ])
+            .unwrap();
+            let Command::Platform(command) = cli.command else {
+                panic!("expected platform deploy");
+            };
+            let mut output = Vec::new();
+            let error = wamn_ctl::platform_verbs::run_product(command, &mut output)
+                .await
+                .unwrap_err();
+            assert_eq!(
+                error
+                    .downcast_ref::<std::io::Error>()
+                    .unwrap_or_else(|| panic!("unexpected input refusal: {error:#}"))
+                    .kind(),
+                std::io::ErrorKind::NotFound
+            );
+            assert!(output.is_empty());
+        }
+        std::fs::remove_dir(directory).unwrap();
     }
 }

@@ -10,13 +10,13 @@ use wamn_release_control::release_chart::Target;
 
 use super::artifact_plan::SelectedChart;
 use super::document::{ClusterDocument, Provider};
-use super::{bootstrap, broker, manifests, provider, resources};
+use super::{bootstrap, broker, control, identity, manifests, provider, resources};
 use crate::kubectl;
 
-/// Apply platform prerequisites through their Kubernetes and Helm owners.
+/// Apply platform resources, initialize the system, and start identity and control.
 ///
 /// # Errors
-/// Returns resource or bootstrap failures, or an incomplete result until services exist.
+/// Returns resource, bootstrap, service, or endpoint failures.
 pub async fn deploy(
     document: &ClusterDocument,
     chart: &SelectedChart,
@@ -168,15 +168,27 @@ pub async fn deploy(
     .await?;
     let initialization = bootstrap::initialize(target, document, chart, directory).await;
     let public_result = directory.join("jobs/platform-system.log");
-    if public_result.exists() {
-        writeln!(output, "{}", std::fs::read_to_string(public_result)?)?;
-    }
+    let printed = (|| -> anyhow::Result<()> {
+        if public_result.exists() {
+            writeln!(output, "{}", std::fs::read_to_string(public_result)?)?;
+        }
+        Ok(())
+    })();
     initialization?;
-    writeln!(
-        output,
-        "incomplete: platform resources and system initialization are ready. Services are not implemented"
-    )?;
-    anyhow::bail!("incomplete platform deployment: services are not implemented")
+    printed?;
+    identity::apply(target, document, chart, directory).await?;
+    control::credentials(target, document, chart, directory).await?;
+    control::release(target, document, chart, directory).await?;
+    probe_control(target, document)
+}
+
+#[expect(
+    clippy::unnecessary_wraps,
+    reason = "DEP-07c supplies the fallible probe at merge"
+)]
+fn probe_control(_target: &Target, _document: &ClusterDocument) -> anyhow::Result<()> {
+    // TODO(DEP-07c): replace this stub with control::probe at merge.
+    Ok(())
 }
 
 async fn apply(target: &Target, objects: &[Value]) -> anyhow::Result<()> {

@@ -7,7 +7,7 @@ use anyhow::Context as _;
 use clap::{Args, Subcommand};
 use wamn_environment_control::platform::document::ClusterDocument;
 use wamn_environment_control::platform::pools::Direction;
-use wamn_environment_control::platform::{artifact_plan, deploy};
+use wamn_environment_control::platform::{artifact_plan, deploy, provider, status};
 use wamn_release_control::release_chart::Target;
 
 /// Management verbs also available through the low-level control tool.
@@ -26,6 +26,8 @@ pub enum PlatformCommand {
 pub enum ProductPlatformCommand {
     /// Deploy platform resources from a prepared chart.
     Deploy(DeployArgs),
+    /// Read the current platform state without creating a cluster.
+    Status(ShowArgs),
     #[command(flatten)]
     Manage(PlatformCommand),
 }
@@ -55,12 +57,27 @@ pub async fn run_product(
     command: ProductPlatformCommand,
     mut output: impl Write,
 ) -> anyhow::Result<()> {
-    let ProductPlatformCommand::Deploy(args) = command else {
-        let ProductPlatformCommand::Manage(command) = command else {
-            unreachable!()
-        };
-        return run(command, output).await;
-    };
+    let mut signals = signals()?;
+    match command {
+        ProductPlatformCommand::Deploy(args) => deploy(&args, &mut signals, output).await,
+        ProductPlatformCommand::Status(args) => {
+            let document = ClusterDocument::compile(&args.file)?;
+            let directory = work_directory()?;
+            let result = report_status(&document, &directory, &mut signals, &mut output).await;
+            let cleanup = std::fs::remove_dir_all(directory).context("remove status directory");
+            result.and(cleanup)
+        }
+        ProductPlatformCommand::Manage(command) => {
+            interruptible(&mut signals, run(command, output)).await
+        }
+    }
+}
+
+async fn deploy(
+    args: &DeployArgs,
+    signals: &mut Signals,
+    mut output: impl Write,
+) -> anyhow::Result<()> {
     let file = args
         .file
         .canonicalize()
@@ -69,8 +86,117 @@ pub async fn run_product(
     let chart = artifact_plan::select(&args.chart)?;
     writeln!(output, "cluster: {}", file.display())?;
     writeln!(output, "chart: {}", chart.directory().display())?;
-    // The provider can mount files below this directory into kind nodes. Keep
-    // the invocation's directory for the lifetime of those nodes.
+    // Kind nodes can mount files from this directory. Retain it for their lifetime.
+    let directory = work_directory()?;
+    writeln!(output, "work directory: {}", directory.display())?;
+    output.flush()?;
+    let result = interruptible(signals, async {
+        let kubeconfig = directory.join("kubeconfig");
+        let context = document.provider.kubeconfig(&document, &kubeconfig).await?;
+        let target = Target {
+            kubeconfig,
+            context,
+            namespace: "platform".into(),
+        };
+        deploy::deploy(&document, &chart, &target, &directory, &mut output).await
+    })
+    .await;
+    let observed = report_status(&document, &directory, signals, &mut output).await;
+    // A failed observation or output write must not replace the deployment error.
+    result.and(observed)
+}
+
+async fn report_status(
+    document: &ClusterDocument,
+    directory: &Path,
+    signals: &mut Signals,
+    output: &mut impl Write,
+) -> anyhow::Result<()> {
+    let observed = interruptible(signals, async {
+        let kubeconfig = directory.join("status-kubeconfig");
+        let context = provider::existing_kubeconfig(document, &kubeconfig).await?;
+        let target = Target {
+            kubeconfig,
+            context,
+            namespace: "platform".into(),
+        };
+        status::read(document, &target).await
+    })
+    .await;
+    match observed {
+        Ok(observed) => {
+            status::write(&observed, output)?;
+            output.flush()?;
+            anyhow::ensure!(
+                observed.category == status::Category::Ready,
+                "platform is {}",
+                observed.category
+            );
+            Ok(())
+        }
+        Err(error) => {
+            // Keep diagnostics free of provider output, which can contain credentials.
+            let _ = writeln!(
+                output,
+                "platform: unknown\nnext: restore access to the existing cluster and retry platform status"
+            );
+            let _ = output.flush();
+            Err(error)
+        }
+    }
+}
+
+struct Signals {
+    #[cfg(unix)]
+    interrupt: tokio::signal::unix::Signal,
+    #[cfg(unix)]
+    terminate: tokio::signal::unix::Signal,
+}
+
+fn signals() -> anyhow::Result<Signals> {
+    // Register before synchronous KCL compilation, and retain signals between operations.
+    Ok(Signals {
+        #[cfg(unix)]
+        interrupt: tokio::signal::unix::signal(tokio::signal::unix::SignalKind::interrupt())
+            .context("listen for interruption")?,
+        #[cfg(unix)]
+        terminate: tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+            .context("listen for termination")?,
+    })
+}
+
+async fn interruptible<T>(
+    signals: &mut Signals,
+    operation: impl std::future::Future<Output = anyhow::Result<T>>,
+) -> anyhow::Result<T> {
+    let interrupted = async {
+        #[cfg(unix)]
+        signals.interrupt.recv().await;
+        #[cfg(not(unix))]
+        tokio::signal::ctrl_c()
+            .await
+            .context("listen for interruption")?;
+        Ok::<_, anyhow::Error>(())
+    };
+    let terminated = async {
+        #[cfg(unix)]
+        signals.terminate.recv().await;
+        #[cfg(not(unix))]
+        std::future::pending::<()>().await;
+    };
+    // Dropping the operation releases its kill-on-drop children and port-forwards.
+    tokio::select! {
+        biased;
+        result = interrupted => {
+            result?;
+            anyhow::bail!("platform command interrupted")
+        }
+        () = terminated => anyhow::bail!("platform command terminated"),
+        result = operation => result,
+    }
+}
+
+fn work_directory() -> anyhow::Result<PathBuf> {
     let directory = std::env::temp_dir().join(format!(
         "wamn-deploy-{}-{}",
         std::process::id(),
@@ -87,16 +213,7 @@ pub async fn run_product(
     builder
         .create(&directory)
         .context("create private deployment directory")?;
-    writeln!(output, "work directory: {}", directory.display())?;
-    output.flush()?;
-    let kubeconfig = directory.join("kubeconfig");
-    let context = document.provider.kubeconfig(&document, &kubeconfig).await?;
-    let target = Target {
-        kubeconfig,
-        context,
-        namespace: "platform".into(),
-    };
-    deploy::deploy(&document, &chart, &target, &directory, &mut output).await
+    Ok(directory)
 }
 
 pub async fn run(command: PlatformCommand, mut output: impl Write) -> anyhow::Result<()> {
@@ -150,13 +267,6 @@ mod tests {
     }
     use clap::Parser as _;
     use std::path::Path;
-
-    #[test]
-    fn control_tool_has_no_platform_apply_or_deploy() {
-        for verb in ["apply", "deploy"] {
-            assert!(Cli::try_parse_from(["wamn-ctl", "platform", verb, "cluster.k"]).is_err());
-        }
-    }
 
     #[tokio::test]
     async fn wake_and_sleep_refuse_a_kind_document_before_reading_project_k() {

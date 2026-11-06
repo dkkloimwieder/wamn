@@ -180,6 +180,16 @@ mod tests {
     use super::{Cli, Command};
 
     #[test]
+    fn platform_rejects_removed_apply_and_product_deploy() {
+        for verb in ["apply", "deploy"] {
+            let error = Cli::try_parse_from(["wamn-ctl", "platform", verb, "cluster.k"])
+                .err()
+                .expect("reject product deployment in the low-level tool");
+            assert_eq!(error.kind(), clap::error::ErrorKind::InvalidSubcommand);
+        }
+    }
+
+    #[test]
     fn connection_write_calls_a_host_with_a_separate_credential_file() {
         let args = [
             "wamn-ctl",
