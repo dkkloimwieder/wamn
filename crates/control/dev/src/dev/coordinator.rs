@@ -2412,52 +2412,6 @@ mod tests {
         );
     }
 
-    /// Owner ruling 5 of wamn-ri4b: an appended migration keeps the target,
-    /// and a changed applied migration recreates it.
-    #[test]
-    fn an_appended_migration_keeps_the_target_and_an_edited_one_recreates_it() {
-        use wamn_schema_control::{
-            AppliedPackage, MigrationSource, PackageDirectory, RecordedMigration,
-        };
-
-        let root =
-            Path::new(env!("CARGO_MANIFEST_DIR")).join("../environment/tests/support/dev_package");
-        let directory = apply_package::read_package_directory(&root).unwrap();
-        let plan = wamn_schema_control::plan_package_migrations(&directory, None).unwrap();
-        let applied = AppliedPackage {
-            coordinate: plan.coordinate,
-            predecessor_version: plan.predecessor_version,
-            artifact_digest: plan.artifact_digest,
-            migrations: plan
-                .pending
-                .into_iter()
-                .map(|migration| RecordedMigration {
-                    ordinal: migration.ordinal,
-                    relative_path: migration.relative_path,
-                    sha256: migration.sha256,
-                })
-                .collect(),
-        };
-        // The decision of prepare_run for a target that applied the shipped package.
-        let keeps = |migrations: &PackageDirectory| {
-            apply_package::applied_migration_drift(migrations, &applied)
-                .unwrap()
-                .is_none()
-        };
-
-        let mut appended = directory.clone();
-        appended.migrations.push(MigrationSource {
-            relative_path: "migrations/0002_location_description.sql".to_owned(),
-            bytes: b"ALTER TABLE platform_fixture.location ADD COLUMN description text NOT NULL DEFAULT 'not_required';".to_vec(),
-        });
-        assert!(keeps(&appended), "an appended migration keeps");
-        let mut edited = directory;
-        edited.migrations[0]
-            .bytes
-            .extend_from_slice(b"\n-- schema changed\n");
-        assert!(!keeps(&edited), "an edited migration recreates");
-    }
-
     #[test]
     fn sqlx_preparation_is_keyed_on_the_generation_digest() {
         let build_record = |inputs: &str, base: &str| {

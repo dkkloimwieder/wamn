@@ -46,6 +46,7 @@ pub struct AppliedPackage {
     /// The package artifact digest recorded in `catalog.packages`. `None` is a
     /// coordinate that `wamn dev` applied from a working tree.
     pub artifact_digest: Option<String>,
+    pub physical_schema_fingerprint: String,
     pub migrations: Vec<RecordedMigration>,
 }
 
@@ -117,7 +118,6 @@ pub enum PackageMigrationErrorType {
     CoordinateContentConflict,
     CoordinateWithoutArtifact,
     CoordinatePredecessorConflict,
-    BaselineChanged,
 }
 
 impl PackageMigrationErrorType {
@@ -131,7 +131,6 @@ impl PackageMigrationErrorType {
             Self::CoordinateContentConflict => "package-coordinate-content-conflict",
             Self::CoordinateWithoutArtifact => PACKAGE_COORDINATE_WITHOUT_ARTIFACT_REFUSAL,
             Self::CoordinatePredecessorConflict => "package-coordinate-predecessor-conflict",
-            Self::BaselineChanged => "package-baseline-changed",
         }
     }
 }
@@ -253,7 +252,7 @@ impl Error for PackageMigrationError {
 
 /// Decide registration from rows read under the tenant/package lineage transaction lock.
 ///
-/// An exact existing coordinate takes precedence over the current leaf. A fresh
+/// An exact existing coordinate retains its publication identity. A fresh
 /// database accepts a declared predecessor without requiring its older versions.
 /// The driver inserts only when this returns `true`, in the same transaction.
 pub fn plan_package_registration(
@@ -261,7 +260,7 @@ pub fn plan_package_registration(
     artifact_digest: Option<&str>,
     predecessor_version: Option<&str>,
     recorded: Option<(Option<&str>, Option<&str>)>,
-    current_version: Option<&str>,
+    installed_version: Option<&str>,
 ) -> Result<bool, PackageMigrationError> {
     if let Some((recorded_digest, recorded_predecessor)) = recorded {
         if recorded_digest != artifact_digest {
@@ -284,15 +283,7 @@ pub fn plan_package_registration(
         }
         return Ok(false);
     }
-    if let Some(current) = current_version {
-        return Err(PackageMigrationError::new(
-            PackageMigrationErrorType::BaselineChanged,
-            format!(
-                "package-baseline-changed: installed={current}; reset the application database"
-            ),
-        ));
-    }
-    Ok(true)
+    Ok(installed_version.is_none())
 }
 
 /// The refusal for a coordinate recorded with other bytes than presented: a
@@ -375,13 +366,13 @@ pub fn plan_package_migrations(
     let artifact_digest = directory.artifact_digest.clone();
 
     if let Some(existing) = applied {
-        if existing.coordinate != coordinate {
+        if existing.coordinate.package_id() != coordinate.package_id() {
             return Err(PackageMigrationError::new(
-                PackageMigrationErrorType::BaselineChanged,
-                "package-baseline-changed: reset the application database",
+                PackageMigrationErrorType::InvalidDirectory,
+                "installed baseline belongs to another package",
             ));
         }
-        if existing.artifact_digest != artifact_digest {
+        if existing.coordinate == coordinate && existing.artifact_digest != artifact_digest {
             return Err(digest_conflict(
                 &coordinate,
                 existing.artifact_digest.as_deref(),
@@ -397,7 +388,10 @@ pub fn plan_package_migrations(
         normalized_migrations(&directory.migrations)?
     };
     let recorded = applied.map_or(&[][..], |state| state.migrations.as_slice());
-    validate_recorded_prefix(&coordinate, recorded, &migrations)?;
+    let same_coordinate = applied.is_none_or(|state| state.coordinate == coordinate);
+    if same_coordinate {
+        validate_recorded_prefix(&coordinate, recorded, &migrations)?;
+    }
 
     let mut models = Vec::with_capacity(manifest.models.len());
     let mut history_exclusions = Vec::new();
@@ -441,7 +435,12 @@ pub fn plan_package_migrations(
         })
         .chain(history_exclusions)
         .collect();
-    let pending_sources = &migrations[recorded.len()..];
+    // A different executable never advances the installed SQL baseline.
+    let pending_sources = if same_coordinate {
+        &migrations[recorded.len()..]
+    } else {
+        &[]
+    };
     let pending = pending_sources
         .iter()
         .map(|migration| PendingMigration {
@@ -752,13 +751,13 @@ mod tests {
     }
 
     #[test]
-    fn registration_preserves_replays_and_requires_a_reset_for_another_version() {
+    fn registration_preserves_replays_and_the_installed_baseline() {
         let coordinate = PackageCoordinate::new("orders", "2.0.0").unwrap();
         let hash = Some("hash");
         assert!(plan_package_registration(&coordinate, hash, Some("1.0.0"), None, None).unwrap());
         assert!(
-            plan_package_registration(&coordinate, hash, Some("1.0.0"), None, Some("1.0.0"))
-                .is_err()
+            !plan_package_registration(&coordinate, hash, Some("1.0.0"), None, Some("1.0.0"))
+                .unwrap()
         );
         assert!(
             !plan_package_registration(
@@ -803,22 +802,6 @@ mod tests {
                 PackageMigrationErrorType::CoordinatePredecessorConflict,
                 "package-coordinate-predecessor-conflict",
             ),
-            (
-                Some("hash"),
-                None,
-                None,
-                Some("1.0.0"),
-                PackageMigrationErrorType::BaselineChanged,
-                "package-baseline-changed",
-            ),
-            (
-                Some("hash"),
-                Some("0.9.0"),
-                None,
-                Some("1.0.0"),
-                PackageMigrationErrorType::BaselineChanged,
-                "package-baseline-changed",
-            ),
         ] {
             let error =
                 plan_package_registration(&coordinate, hash, predecessor, recorded, current)
@@ -847,6 +830,7 @@ mod tests {
             coordinate: first.coordinate.clone(),
             predecessor_version: None,
             artifact_digest: first.artifact_digest.clone(),
+            physical_schema_fingerprint: "sha256:baseline".into(),
             migrations: first
                 .pending
                 .iter()
@@ -860,22 +844,21 @@ mod tests {
         let again = plan_package_migrations(&directory(), Some(&applied)).unwrap();
         assert!(again.is_noop());
         assert!(again.statements.is_empty());
-    }
-
-    #[test]
-    fn each_pending_migration_is_applied_before_its_record() {
-        let plan = plan_package_migrations(&directory(), None).unwrap();
-        assert_eq!(
-            plan.statements
-                .iter()
-                .map(|statement| statement.summary.as_str())
-                .collect::<Vec<_>>(),
-            [
-                "apply migrations/0001_initial.sql",
-                "record migrations/0001_initial.sql",
-                "apply migrations/0002_add_tag.sql",
-                "record migrations/0002_add_tag.sql",
-            ]
+        let mut executable = directory();
+        executable.manifest_bytes = manifest("2.0.0");
+        executable.artifact_digest = Some("sha256:another-artifact".into());
+        assert!(
+            plan_package_migrations(&executable, Some(&applied))
+                .unwrap()
+                .is_noop()
+        );
+        executable
+            .migrations
+            .push(source("migrations/0003_pending.sql", "SELECT 3;"));
+        assert!(
+            plan_package_migrations(&executable, Some(&applied))
+                .unwrap()
+                .is_noop()
         );
     }
 
@@ -921,6 +904,7 @@ mod tests {
             coordinate: first.coordinate,
             predecessor_version: None,
             artifact_digest: Some("sha256:recorded".into()),
+            physical_schema_fingerprint: "sha256:baseline".into(),
             migrations: Vec::new(),
         };
         let error = plan_package_migrations(&directory(), Some(&applied)).unwrap_err();
@@ -978,6 +962,7 @@ mod tests {
             coordinate: first.coordinate,
             predecessor_version: None,
             artifact_digest: first.artifact_digest,
+            physical_schema_fingerprint: "sha256:baseline".into(),
             migrations: vec![RecordedMigration {
                 ordinal: 1,
                 relative_path: "migrations/0001_initial.sql".into(),
@@ -1023,6 +1008,7 @@ mod tests {
                 coordinate: first.coordinate.clone(),
                 predecessor_version: None,
                 artifact_digest: first.artifact_digest.clone(),
+                physical_schema_fingerprint: "sha256:baseline".into(),
                 migrations,
             };
             assert_eq!(

@@ -66,7 +66,7 @@ async fn apply_creates_one_integration_principal_and_grants_declared_dependencie
         .await?;
     admin.execute("INSERT INTO wamn_run.environment_policies (env_key, expected_environment, durability_class) VALUES ($1, 'dev', 'standard')", &[&ENV_KEY]).await?;
     for package in ["consumer", "integration"] {
-        admin.execute("INSERT INTO catalog.packages (env_key,package_id,package_version,artifact_digest) VALUES ($1,$2,'1.0.0',$3)", &[&ENV_KEY, &package, &format!("sha256:{}", "a".repeat(64))]).await?;
+        admin.execute("INSERT INTO catalog.packages (physical_schema_fingerprint, env_key,package_id,package_version,artifact_digest) VALUES ('sha256:' || repeat('c', 64), $1,$2,'1.0.0',$3)", &[&ENV_KEY, &package, &format!("sha256:{}", "a".repeat(64))]).await?;
     }
     let mut manifest: ServingManifest = serde_json::from_value(json!({
         "format-version": wamn_catalog::SERVING_MANIFEST_FORMAT_VERSION,

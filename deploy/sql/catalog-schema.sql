@@ -9,13 +9,17 @@ CREATE TABLE catalog.packages (
     package_version    text        NOT NULL,
     predecessor_version text,
     registered_at      timestamptz NOT NULL DEFAULT now(),
-    -- NULL: wamn dev applied a working tree. Release verbs refuse that row.
+    -- Initialization provenance, independent of executable release selection.
+    -- NULL: wamn dev applied a working tree.
     artifact_digest    text,
+    physical_schema_fingerprint text NOT NULL
+        CHECK (physical_schema_fingerprint ~ '^sha256:[0-9a-f]{64}$'),
     created_at         timestamptz NOT NULL,
     created_by         uuid        NOT NULL,
     updated_at         timestamptz NOT NULL,
     updated_by         uuid        NOT NULL,
     CONSTRAINT packages_pkey PRIMARY KEY (env_key, package_id, package_version),
+    CONSTRAINT packages_baseline_key UNIQUE (env_key, package_id),
     CONSTRAINT packages_package_id_check
         CHECK (package_id ~ '^[a-z][a-z0-9]*(_[a-z0-9]+)*$'),
     CONSTRAINT packages_package_version_check CHECK (
@@ -60,6 +64,7 @@ CREATE TABLE catalog.package_migrations (
     CONSTRAINT package_migrations_package_fkey
         FOREIGN KEY (env_key, package_id, package_version)
         REFERENCES catalog.packages (env_key, package_id, package_version)
+        DEFERRABLE INITIALLY DEFERRED
 );
 
 CREATE TRIGGER wamn_record_history_stamp
@@ -103,7 +108,7 @@ CREATE TRIGGER wamn_record_history_stamp
     FOR EACH ROW
     EXECUTE FUNCTION wamn_history.stamp_row('created_at', 'created_by', 'updated_at', 'updated_by');
 
--- One installed release (docs/architecture/overview.md#release-identity). The manifest
+-- Cached application releases coexist without selecting executable code. The manifest
 -- digest is the release; this row is an immutable cache of the canonical
 -- manifest bytes, and the bytes must hash to the digest. env_key is the RLS
 -- scope of the row, not part of the release identity. Package membership and
@@ -127,7 +132,7 @@ CREATE TRIGGER wamn_record_history_stamp
     FOR EACH ROW
     EXECUTE FUNCTION wamn_history.stamp_row('created_at', 'created_by', 'updated_at', 'updated_by');
 
--- Immutable release membership is the sole package-coordinate seal. Both the
+-- Cache membership seals an installed coordinate but does not prove SQL ran. Both the
 -- release writer and the migration table serialize on the package rows, so
 -- whichever commits first determines whether one last migration precedes the
 -- seal or is refused after it. There is no second seal flag.
@@ -168,7 +173,7 @@ BEGIN
        AND package_version = NEW.package_version
      FOR UPDATE;
 
-    IF EXISTS (
+    IF FOUND AND EXISTS (
         SELECT 1
           FROM catalog.releases AS release
           CROSS JOIN LATERAL jsonb_array_elements(
@@ -188,10 +193,10 @@ BEGIN
             ERRCODE = '55000',
             MESSAGE = 'package-version-sealed',
             DETAIL = format(
-                'coordinate=%s@%s belongs to an effective release',
+                'coordinate=%s@%s belongs to a cached release',
                 NEW.package_id, NEW.package_version
             ),
-            HINT = 'create and apply a new package version for additional migrations';
+            HINT = 'additional SQL requires an explicit schema operation';
     END IF;
     RETURN NEW;
 END

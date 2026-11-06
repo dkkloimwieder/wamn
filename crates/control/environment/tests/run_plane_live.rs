@@ -437,8 +437,8 @@ async fn seed_run_admission_facts(
     .expect("seed the project-local environment policy");
     su.execute(
         "INSERT INTO catalog.packages \
-           (env_key,package_id,package_version,artifact_digest) \
-         VALUES ($1,$2,'1.0.0',$3)",
+           (physical_schema_fingerprint, env_key,package_id,package_version,artifact_digest) \
+         VALUES ('sha256:' || repeat('c', 64), $1,$2,'1.0.0',$3)",
         &[&env_key, &package_id, &EMPTY_EXECUTION_BUNDLE_HASH],
     )
     .await

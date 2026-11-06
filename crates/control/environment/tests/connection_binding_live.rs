@@ -458,8 +458,8 @@ async fn assert_nested_effect_snapshot(
         project
             .execute(
                 "INSERT INTO catalog.packages \
-                   (env_key, package_id, package_version, artifact_digest) \
-                 VALUES ($1, $2, $3, $4)",
+                   (physical_schema_fingerprint, env_key, package_id, package_version, artifact_digest) \
+                 VALUES ('sha256:' || repeat('c', 64), $1, $2, $3, $4)",
                 &[&ENV_KEY, &package_id, &PACKAGE_VERSION, &FACT_FINGERPRINT],
             )
             .await

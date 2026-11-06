@@ -136,7 +136,7 @@ async fn package_target_changes(
     let manifest = PackageManifest::from_slice(&directory.manifest_bytes)
         .context("parse strict package manifest for the local target check")?;
     let package = &manifest.package;
-    let applied = load_applied_package(tx, env_key, &package.id, &package.version).await?;
+    let applied = load_applied_package(tx, env_key, &package.id).await?;
     let mut changes = migration_changes(&directory, applied.as_ref())?;
     if changes.recreate_reason.is_some() {
         return Ok(changes);
@@ -193,6 +193,7 @@ mod tests {
             coordinate: plan.coordinate,
             predecessor_version: plan.predecessor_version,
             artifact_digest: plan.artifact_digest,
+            physical_schema_fingerprint: "sha256:baseline".into(),
             migrations: plan
                 .pending
                 .into_iter()

@@ -219,8 +219,8 @@ fn surviving_authority_matrix_live() {
              {executor_surface} \
              GRANT USAGE ON SCHEMA wamn_run TO wamn_control_author; \
              INSERT INTO catalog.packages \
-               (env_key,package_id,package_version,artifact_digest) \
-             VALUES ('t1','cat','1.0.0','sha256:{manifest_hash}'); \
+               (physical_schema_fingerprint, env_key,package_id,package_version,artifact_digest) \
+             VALUES ('sha256:' || repeat('c', 64), 't1','cat','1.0.0','sha256:{manifest_hash}'); \
              INSERT INTO catalog.releases (env_key,manifest_digest,canonical_bytes) \
              VALUES ('t1','sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a','{{}}'); \
              INSERT INTO wamn_run.environment_policies \
@@ -431,8 +431,8 @@ fn release_scoped_queue_claim_skips_another_releases_head_live() {
              END $$; \
              BEGIN; {catalog} {run_state} {run_queue} {app_schema} COMMIT; \
              INSERT INTO catalog.packages \
-               (env_key,package_id,package_version,artifact_digest) \
-             VALUES ('t1','cat','1.0.0','sha256:{manifest_hash}'); \
+               (physical_schema_fingerprint, env_key,package_id,package_version,artifact_digest) \
+             VALUES ('sha256:' || repeat('c', 64), 't1','cat','1.0.0','sha256:{manifest_hash}'); \
              INSERT INTO catalog.releases (env_key,manifest_digest,canonical_bytes) \
              VALUES ('t1','sha256:21621f6bd9bc2769154aa2938726e891ecbc7929cd7be941b60ec776703ed394','{{\"release\":1}}'), \
                     ('t1','sha256:89437c2ddcb5d585633413604661041fe6b5ee9d49ae96153fe24812f1a8c5c0','{{\"release\":2}}'); \

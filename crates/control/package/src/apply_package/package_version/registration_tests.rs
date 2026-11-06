@@ -1,4 +1,4 @@
-use super::register_package;
+use super::{installed_environment_fingerprint, register_package};
 use tokio_postgres::{Client, NoTls};
 use wamn_catalog::PackageCoordinate;
 use wamn_schema_control::{PackageMigrationError, PackageMigrationErrorType};
@@ -29,6 +29,7 @@ async fn register(
         &PackageCoordinate::new("inventory", version).unwrap(),
         Some(hash),
         predecessor,
+        &format!("sha256:{}", "c".repeat(64)),
     )
     .await?;
     tx.commit().await?;
@@ -42,7 +43,7 @@ fn refusal(error: &anyhow::Error, kind: PackageMigrationErrorType) {
 }
 
 #[tokio::test]
-async fn registration_preserves_replays_and_refuses_another_version() {
+async fn registration_preserves_replays_and_the_installed_baseline() {
     let _lock = wamn_test_postgres::lock();
     let hash = format!("sha256:{}", "a".repeat(64));
     let other_hash = format!("sha256:{}", "b".repeat(64));
@@ -50,10 +51,21 @@ async fn registration_preserves_replays_and_refuses_another_version() {
     // only copy.
     {
         let database = wamn_catalog::test_database::tenant();
+        database
+            .execute(&[include_str!(
+                "../../../../../../deploy/sql/app-schema-baseline.sql"
+            )])
+            .unwrap();
         let url = database.url();
         let mut first = connect(url).await;
         let mut second = connect(url).await;
+        crate::schema_baseline::record_project(&first)
+            .await
+            .unwrap();
         assert!(register(&mut first, "1.0.0", &hash, None).await.unwrap());
+        let environment_fingerprint = installed_environment_fingerprint(&first, ENV_KEY)
+            .await
+            .unwrap();
         let timestamp: String = first
             .query_one("SELECT registered_at::text FROM catalog.packages", &[])
             .await
@@ -81,12 +93,26 @@ async fn registration_preserves_replays_and_refuses_another_version() {
             PackageMigrationErrorType::CoordinatePredecessorConflict,
         );
 
-        refusal(
-            &register(&mut second, "2.0.0", &hash, Some("1.0.0"))
+        assert!(
+            !register(&mut second, "2.0.0", &other_hash, Some("1.0.0"))
                 .await
-                .unwrap_err(),
-            PackageMigrationErrorType::BaselineChanged,
+                .unwrap()
         );
-        assert!(first.query_one("SELECT to_regprocedure('catalog.register_package(text,text,text,text,text)')::text", &[]).await.unwrap().get::<_, Option<String>>(0).is_none());
+        assert_eq!(
+            installed_environment_fingerprint(&first, ENV_KEY)
+                .await
+                .unwrap(),
+            environment_fingerprint
+        );
+        let baseline = first.query_one(
+            "SELECT package_version, artifact_digest, registered_at::text, physical_schema_fingerprint FROM catalog.packages", &[]
+        ).await.unwrap();
+        assert_eq!(baseline.get::<_, String>(0), "1.0.0");
+        assert_eq!(baseline.get::<_, String>(1), hash);
+        assert_eq!(baseline.get::<_, String>(2), timestamp);
+        assert_eq!(
+            baseline.get::<_, String>(3),
+            format!("sha256:{}", "c".repeat(64))
+        );
     }
 }

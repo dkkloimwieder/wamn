@@ -251,8 +251,8 @@ async fn executor_platform_surface_live() -> anyhow::Result<()> {
     admin
         .batch_execute(&format!(
             "INSERT INTO catalog.packages \
-               (env_key,package_id,package_version,artifact_digest) \
-             VALUES ('{ENV_KEY}','{PACKAGE_ID}','{PACKAGE_VERSION}','{artifact_digest}'); \
+               (physical_schema_fingerprint, env_key,package_id,package_version,artifact_digest) \
+             VALUES ('sha256:' || repeat('c', 64), '{ENV_KEY}','{PACKAGE_ID}','{PACKAGE_VERSION}','{artifact_digest}'); \
              INSERT INTO catalog.releases \
                (env_key,manifest_digest,canonical_bytes) \
              SELECT '{ENV_KEY}', 'sha256:' || encode(sha256(bytes), 'hex'), bytes \

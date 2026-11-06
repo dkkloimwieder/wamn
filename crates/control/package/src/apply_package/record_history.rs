@@ -192,7 +192,7 @@ pub(super) async fn reconcile_record_history_triggers(
 }
 
 /// Each column of one relation, read in the transaction that ran its migrations.
-async fn read_relation_columns(
+pub(super) async fn read_relation_columns(
     tx: &Transaction<'_>,
     schema: &str,
     relation: &str,

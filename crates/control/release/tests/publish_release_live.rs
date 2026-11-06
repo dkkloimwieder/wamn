@@ -37,25 +37,10 @@ async fn seed_package(client: &Client) {
         .query_one("SELECT set_config('app.env_key', $1, false)", &[&ENV_KEY])
         .await
         .expect("claim the test tenant");
-    let insert_package = "INSERT INTO catalog.packages (env_key, package_id, package_version, artifact_digest, predecessor_version) VALUES ($1, $2, $3, $4, $5)";
-    for (package_id, package_version, predecessor_version) in [
-        ("inventory", "1.0.0", None),
-        ("inventory", "2.0.0", Some("1.0.0")),
-    ] {
-        client
-            .execute(
-                insert_package,
-                &[
-                    &ENV_KEY,
-                    &package_id,
-                    &package_version,
-                    &format!("sha256:{}", "a".repeat(64)),
-                    &predecessor_version,
-                ],
-            )
-            .await
-            .expect("register an immutable package coordinate");
-    }
+    client.execute(
+        "INSERT INTO catalog.packages (env_key, package_id, package_version, artifact_digest, physical_schema_fingerprint) VALUES ($1, 'inventory', '1.0.0', $2, $3)",
+        &[&ENV_KEY, &format!("sha256:{}", "a".repeat(64)), &format!("sha256:{}", "c".repeat(64))]
+    ).await.expect("record the installed baseline");
     client
         .execute(
             INSERT_MIGRATION_SQL,
@@ -166,37 +151,34 @@ async fn assert_package_seal(url: &str) {
         .expect("the package seal refusal comes from PostgreSQL");
     assert_eq!(refused.code().code(), "55000");
     assert_eq!(refused.message(), "package-version-sealed");
+    let baseline = installer
+        .query_one(
+            "SELECT row_to_json(p)::text FROM catalog.packages p WHERE env_key = $1",
+            &[&ENV_KEY],
+        )
+        .await
+        .unwrap()
+        .get::<_, String>(0);
+    let executable =
+        br#"{"release":{"packages":[{"package-id":"inventory","package-version":"2.0.0"}]}}"#;
+    installer
+        .execute(INSERT_PROJECT_MEMBERSHIP_SQL, &[&ENV_KEY, &&executable[..]])
+        .await
+        .expect("cache an executable that never installed SQL");
     assert_eq!(
-        refused.detail(),
-        Some("coordinate=inventory@1.0.0 belongs to an effective release")
+        installer
+            .query_one(
+                "SELECT row_to_json(p)::text FROM catalog.packages p WHERE env_key = $1",
+                &[&ENV_KEY]
+            )
+            .await
+            .unwrap()
+            .get::<_, String>(0),
+        baseline
     );
-    assert_eq!(
-        refused.hint(),
-        Some("create and apply a new package version for additional migrations")
-    );
-
-    for (ordinal, path, hash_byte) in [
-        (1_i32, "migrations/0001_initial.sql", "b"),
-        (2_i32, "migrations/0002_new_version.sql", "e"),
-    ] {
-        assert_eq!(
-            installer
-                .execute(
-                    INSERT_MIGRATION_SQL,
-                    &[
-                        &ENV_KEY,
-                        &"inventory",
-                        &"2.0.0",
-                        &ordinal,
-                        &path,
-                        &format!("sha256:{}", hash_byte.repeat(64)),
-                    ],
-                )
-                .await
-                .expect("a cumulative new package coordinate remains writable"),
-            1
-        );
-    }
+    assert!(installer.query_opt(
+        "SELECT 1 FROM catalog.package_migrations WHERE env_key = $1 AND package_version = '2.0.0'", &[&ENV_KEY]
+    ).await.unwrap().is_none());
 }
 
 #[tokio::test]

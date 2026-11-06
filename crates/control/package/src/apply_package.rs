@@ -20,7 +20,6 @@ use definition_ownership::{
 };
 use entity_maps::reconcile_entity_maps;
 use operation_grants::ensure_admin_role;
-use package_version::current_package_version;
 use record_history::{create_history_tables, reconcile_record_history_triggers};
 use roles::assert_host_role;
 
@@ -45,7 +44,7 @@ pub use error::{
 pub use local_target::{applied_migration_drift, local_target_recreate_reason};
 pub use local_target::{local_target_changes, manifest_digest, record_manifest};
 pub use package_version::{
-    LOCK_PACKAGE_SQL, PackageRoot, SELECT_CURRENT_PACKAGE_VERSION_SQL, load_applied_package,
+    LOCK_PACKAGE_SQL, PackageRoot, installed_environment_fingerprint, load_applied_package,
     read_package_directory, read_package_root, register_package,
 };
 
@@ -288,7 +287,7 @@ async fn apply_prepared(
                 .ok_or_else(|| ApplyPackageError::artifact_required(coordinate_text))?,
         )
     };
-    let applied = load_applied_package(tx, env_key, &package_id, &package_version).await?;
+    let applied = load_applied_package(tx, env_key, &package_id).await?;
     let plan = if let Some(applied) = applied.as_ref() {
         let compared = if local_comment.is_some() {
             // A local target takes a changed tree at the same coordinate.
@@ -306,17 +305,20 @@ async fn apply_prepared(
         };
         compared.context("compare package bytes with immutable records")?
     } else {
-        wamn_schema_control::plan_package_registration(
-            &presented.coordinate,
-            presented.artifact_digest.as_deref(),
-            presented.predecessor_version.as_deref(),
-            None,
-            current_package_version(tx, env_key, &package_id)
-                .await?
-                .as_deref(),
-        )?;
         presented
     };
+    if applied
+        .as_ref()
+        .is_some_and(|installed| installed.coordinate != plan.coordinate)
+    {
+        return Ok(ApplyOutcome {
+            package_id,
+            package_version,
+            migrations_applied: 0,
+            changed: false,
+            drops: wamn_platform_identity::auth_changes::AuthDrops::default(),
+        });
+    }
     let requirements_written = crate::connection_requirement::install(
         tx,
         env_key,
@@ -367,21 +369,6 @@ async fn apply_prepared(
     // Provision package authority before any authored DDL. The migration
     // runner selects the owning role after the policy refuses role changes.
     ensure_model_schemas(tx, &plan, manifest).await?;
-    // catalog.packages is immutable, so a local target keeps the row it first
-    // recorded there and records the current manifest in its comment.
-    let registered_artifact_digest = match &applied {
-        Some(applied) if local_comment.is_some() => applied.artifact_digest.as_deref(),
-        _ => artifact_digest.as_deref(),
-    };
-    let package_inserted = register_package(
-        tx,
-        env_key,
-        &plan.coordinate,
-        registered_artifact_digest,
-        plan.predecessor_version.as_deref(),
-    )
-    .await
-    .context("register package before applying migrations")?;
     for statement in &plan.statements {
         // The planner carries exact package bytes as its parameter-free batch
         // statements; every host-authored record statement has binds.
@@ -405,6 +392,29 @@ async fn apply_prepared(
     let history_changed = create_history_tables(tx, manifest).await?;
     reconcile_entity_maps(tx, &plan, manifest).await?;
     let triggers_changed = reconcile_record_history_triggers(tx, manifest).await?;
+    let initialized_fingerprint;
+    let physical_schema_fingerprint = if let Some(installed) = &applied {
+        installed.physical_schema_fingerprint.as_str()
+    } else {
+        initialized_fingerprint = installed_physical_fingerprint(tx, directory, manifest).await?;
+        &initialized_fingerprint
+    };
+    // catalog.packages is immutable, so a local target keeps the row it first
+    // recorded there and records the current manifest in its comment.
+    let registered_artifact_digest = match &applied {
+        Some(applied) if local_comment.is_some() => applied.artifact_digest.as_deref(),
+        _ => artifact_digest.as_deref(),
+    };
+    let package_inserted = register_package(
+        tx,
+        env_key,
+        &plan.coordinate,
+        registered_artifact_digest,
+        plan.predecessor_version.as_deref(),
+        physical_schema_fingerprint,
+    )
+    .await
+    .context("record the completed package baseline")?;
     let mut drops = wamn_platform_identity::auth_changes::AuthDrops::default();
     let admin_role_changed = ensure_admin_role(tx, env_key, &mut drops).await?;
     let comment_changed = match local_comment.as_mut() {
@@ -435,6 +445,29 @@ async fn apply_prepared(
     })
 }
 
+async fn installed_physical_fingerprint(
+    tx: &Transaction<'_>,
+    directory: &PackageDirectory,
+    manifest: &PackageManifest,
+) -> anyhow::Result<String> {
+    use wamn_schema_control::physical_schema::{PhysicalSchema, render};
+    let mut columns = std::collections::BTreeMap::new();
+    for (id, model) in &manifest.models {
+        if model.owner == manifest.package.id {
+            columns.insert(
+                id.clone(),
+                record_history::read_relation_columns(tx, &model.schema, &model.table).await?,
+            );
+        }
+    }
+    let statements = render(manifest, &directory.migrations, &columns)?;
+    Ok(PhysicalSchema {
+        columns,
+        statements,
+    }
+    .fingerprint())
+}
+
 /// Reconcile mutable local configuration only after confirming the installed schema.
 pub async fn reconcile_local_package_configuration(
     tx: &Transaction<'_>,
@@ -444,14 +477,9 @@ pub async fn reconcile_local_package_configuration(
 ) -> anyhow::Result<()> {
     bind_apply_package_principal(tx).await?;
     let plan = plan_package_migrations(directory, None)?;
-    let installed = load_applied_package(
-        tx,
-        env_key,
-        plan.coordinate.package_id(),
-        plan.coordinate.package_version(),
-    )
-    .await?
-    .context("local configuration requires an applied package schema")?;
+    let installed = load_applied_package(tx, env_key, plan.coordinate.package_id())
+        .await?
+        .context("local configuration requires an applied package schema")?;
     let expected = plan
         .pending
         .iter()
@@ -462,8 +490,7 @@ pub async fn reconcile_local_package_configuration(
         })
         .collect::<Vec<_>>();
     ensure!(
-        installed.predecessor_version == plan.predecessor_version
-            && installed.migrations == expected,
+        installed.migrations == expected,
         "local schema inputs changed; recreate the owned disposable target"
     );
     // The relation classification check of apply refuses a manifest that drops
@@ -555,7 +582,7 @@ async fn execute(
             definition_type: None,
             definition: None,
             owner_package: None,
-            detail: "already belongs to an effective release; create and apply a new package version for additional migrations".into(),
+            detail: "already belongs to a cached release; additional SQL requires an explicit schema operation".into(),
             source: Some(Box::new(source)),
         }
         .into()),

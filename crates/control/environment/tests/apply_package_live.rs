@@ -864,6 +864,11 @@ async fn exact_runner_commits_once_refuses_drift_and_rolls_back_a_failing_suffix
         "record_rack_command",
         "rack_command_record",
     );
+    let cached =
+        br#"{"release":{"packages":[{"package-id":"wamn_inventory","package-version":"1.0.0"}]}}"#;
+    client.execute(
+        "INSERT INTO catalog.releases (env_key, manifest_digest, canonical_bytes) SELECT $1, 'sha256:' || encode(sha256($2::bytea), 'hex'), $2", &[&ENV_KEY, &&cached[..]]
+    ).await.expect("cache membership does not establish installation");
     apply(&url, &distinct_identity)
         .await
         .expect("apply a relation whose manifest identity differs from its table");
@@ -1102,6 +1107,35 @@ async fn exact_runner_commits_once_refuses_drift_and_rolls_back_a_failing_suffix
         .await
         .expect("exact replay observes no pending work");
     assert_eq!(write_identity(&client).await, first_identity);
+
+    let baseline: String = client.query_one(
+        "SELECT row_to_json(p)::text FROM catalog.packages p WHERE env_key = $1 AND package_id = 'wamn_inventory'", &[&ENV_KEY]
+    ).await.unwrap().get(0);
+    client
+        .batch_execute("INSERT INTO inventory.dock (dock_code) VALUES ('preserved-on-code-change')")
+        .await
+        .unwrap();
+    set_package_identity(&package, "2.0.0", Some("1.0.0"));
+    let selected = apply(&url, &package)
+        .await
+        .expect("new code retains the installed SQL baseline");
+    assert!(!selected.changed);
+    assert_eq!(selected.migrations_applied, 0);
+    assert_eq!(write_identity(&client).await, first_identity);
+    assert_eq!(client.query_one(
+        "SELECT row_to_json(p)::text FROM catalog.packages p WHERE env_key = $1 AND package_id = 'wamn_inventory'", &[&ENV_KEY]
+    ).await.unwrap().get::<_, String>(0), baseline);
+    assert!(
+        client
+            .query_opt(
+                "SELECT 1 FROM inventory.dock WHERE dock_code = 'preserved-on-code-change'",
+                &[]
+            )
+            .await
+            .unwrap()
+            .is_some()
+    );
+    set_package_identity(&package, "1.0.0", None);
 
     let alter_base =
         fixture_root().with_file_name(format!("apply-package-alter-base-{}", std::process::id()));
@@ -1583,11 +1617,6 @@ async fn exact_runner_commits_once_refuses_drift_and_rolls_back_a_failing_suffix
     );
     assert_eq!(sealed.coordinate(), "wamn_inventory@1.0.0");
     assert!(
-        sealed
-            .to_string()
-            .contains("create and apply a new package version")
-    );
-    assert!(
         !client
             .query_one(
                 "SELECT EXISTS ( \
@@ -1624,14 +1653,11 @@ async fn exact_runner_commits_once_refuses_drift_and_rolls_back_a_failing_suffix
     .expect("replace the refused suffix with the new version's declared model");
     write_build_record(&package);
     let before = write_identity(&client).await;
-    let refused = apply(&url, &package)
+    let unchanged = apply(&url, &package)
         .await
-        .expect_err("a changed package requires a reset");
-    assert!(
-        refused
-            .to_string()
-            .contains("reset the application database")
-    );
+        .expect("selected SQL remains pending");
+    assert!(!unchanged.changed);
+    assert_eq!(unchanged.migrations_applied, 0);
     assert_eq!(write_identity(&client).await, before);
 
     install(&client).await;

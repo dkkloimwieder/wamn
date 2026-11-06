@@ -601,8 +601,8 @@ async fn seed_with_client(
     client
         .execute(
             "INSERT INTO catalog.packages \
-                    (env_key, package_id, package_version, artifact_digest) \
-             VALUES ($1, $2, $3, $4)",
+                    (physical_schema_fingerprint, env_key, package_id, package_version, artifact_digest) \
+             VALUES ('sha256:' || repeat('c', 64), $1, $2, $3, $4)",
             &[
                 &ENV_KEY,
                 &PACKAGE,
@@ -750,8 +750,8 @@ async fn seed_additional_wirings(
         let manifest = serde_json::json!({"package": {"id": package, "version": package_version},
             "models": {}, "custom_operations": {}, "queries": {}, "connections": {}, "components": {}});
         client.execute(
-            "INSERT INTO catalog.packages (env_key, package_id, package_version, artifact_digest) \
-             VALUES ($1, $2, $3, $4)",
+            "INSERT INTO catalog.packages (physical_schema_fingerprint, env_key, package_id, package_version, artifact_digest) \
+             VALUES ('sha256:' || repeat('c', 64), $1, $2, $3, $4)",
             &[&ENV_KEY, package, package_version,
               &wamn_execution_contract::canonical_json_sha256(&manifest)],
         ).await?;

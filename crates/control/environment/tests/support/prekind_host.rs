@@ -620,7 +620,7 @@ async fn prekind_http_host_runs_and_rejects_respond_without_caller() -> anyhow::
     )?;
     project.execute("INSERT INTO catalog.releases(env_key,manifest_digest,canonical_bytes) VALUES ($1,$2,$3)", &[&env_key,&digest,&published.canonical_bytes]).await?;
     for package in &published.manifest.release.packages {
-        project.execute("INSERT INTO catalog.packages(env_key,package_id,package_version,artifact_digest) VALUES ($1,$2,$3,$4)", &[&env_key,&package.package_id(),&package.package_version(),&format!("sha256:{}","a".repeat(64))]).await?;
+        project.execute("INSERT INTO catalog.packages(physical_schema_fingerprint, env_key,package_id,package_version,artifact_digest) VALUES ('sha256:' || repeat('c', 64), $1,$2,$3,$4)", &[&env_key,&package.package_id(),&package.package_version(),&format!("sha256:{}","a".repeat(64))]).await?;
     }
     let mut document = fixture_document("http", "http.orders.example", digest);
     document

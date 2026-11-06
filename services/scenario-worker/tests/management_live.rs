@@ -710,8 +710,8 @@ async fn seed_candidate(project: &Client) -> anyhow::Result<()> {
     project
         .batch_execute(&format!(
             "INSERT INTO catalog.packages \
-               (env_key, package_id, package_version, artifact_digest) \
-             VALUES ('{ENV_KEY}', '{CANDIDATE_PACKAGE}', '{CANDIDATE_PACKAGE_VERSION}', \
+               (physical_schema_fingerprint, env_key, package_id, package_version, artifact_digest) \
+             VALUES ('sha256:' || repeat('c', 64), '{ENV_KEY}', '{CANDIDATE_PACKAGE}', '{CANDIDATE_PACKAGE_VERSION}', \
                      '{CANDIDATE_MANIFEST_SHA256}'); \
              INSERT INTO catalog.releases (env_key, manifest_digest, canonical_bytes) \
              SELECT '{ENV_KEY}', 'sha256:' || encode(sha256(bytes), 'hex'), bytes \
@@ -751,8 +751,8 @@ async fn seed_effectful_unreleased_candidate(project: &Client) -> anyhow::Result
     project
         .execute(
             "INSERT INTO catalog.packages \
-               (env_key, package_id, package_version, artifact_digest) \
-             VALUES ($1, $2, $3, $4)",
+               (physical_schema_fingerprint, env_key, package_id, package_version, artifact_digest) \
+             VALUES ('sha256:' || repeat('c', 64), $1, $2, $3, $4)",
             &[
                 &ENV_KEY,
                 &EFFECTFUL_PACKAGE,

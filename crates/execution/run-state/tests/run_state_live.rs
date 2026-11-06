@@ -179,8 +179,8 @@ fn run_state_live() {
              DROP SCHEMA IF EXISTS catalog CASCADE; \
              {catalog} {run_state} {run_queue} {app_schema} \
              INSERT INTO catalog.packages \
-               (env_key,package_id,package_version,artifact_digest) \
-             VALUES ('t1','cat','1.0.0', \
+               (physical_schema_fingerprint, env_key,package_id,package_version,artifact_digest) \
+             VALUES ('sha256:' || repeat('c', 64), 't1','cat','1.0.0', \
                'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'); \
              INSERT INTO catalog.releases (env_key,manifest_digest,canonical_bytes) \
              VALUES ('t1','sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a','{{}}'); \
@@ -744,8 +744,8 @@ fn run_state_live() {
     success(
         &url,
         "INSERT INTO catalog.packages \
-           (env_key,package_id,package_version,artifact_digest) \
-         VALUES ('t2','cat','1.0.0', \
+           (physical_schema_fingerprint, env_key,package_id,package_version,artifact_digest) \
+         VALUES ('sha256:' || repeat('c', 64), 't2','cat','1.0.0', \
            'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'); \
          INSERT INTO catalog.releases (env_key,manifest_digest,canonical_bytes) \
          VALUES ('t2','sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a','{}'); \

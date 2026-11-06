@@ -272,10 +272,10 @@ fn the_event_materializer_role_holds_exactly_its_two_catalog_reads() {
         &admin,
         "seed materializer registration inputs",
         "INSERT INTO catalog.packages \
-           (env_key, package_id, package_version, artifact_digest) VALUES \
-           ('t1', 'widgets', '1.0.0', \
+           (physical_schema_fingerprint, env_key, package_id, package_version, artifact_digest) VALUES \
+           ('sha256:' || repeat('c', 64), 't1', 'widgets', '1.0.0', \
             'sha256:0000000000000000000000000000000000000000000000000000000000000000'), \
-           ('t2', 'foreign', '1.0.0', \
+           ('sha256:' || repeat('c', 64), 't2', 'foreign', '1.0.0', \
             'sha256:1111111111111111111111111111111111111111111111111111111111111111');",
     );
     let as_materializer = role_url(&admin, &login, GENERATION_PW);
@@ -658,8 +658,8 @@ fn the_executor_platform_role_holds_exactly_its_measured_claim_surface() {
         "seed one run the executor may claim",
         &format!(
             "INSERT INTO catalog.packages \
-               (env_key, package_id, package_version, artifact_digest) \
-             VALUES ('t1', 'widgets', '1.0.0', 'sha256:{package_hash}');\n\
+               (physical_schema_fingerprint, env_key, package_id, package_version, artifact_digest) \
+             VALUES ('sha256:' || repeat('c', 64), 't1', 'widgets', '1.0.0', 'sha256:{package_hash}');\n\
              INSERT INTO wamn_run.environment_policies \
                (env_key, expected_environment, durability_class) \
              VALUES ('t1', 'dev', 'standard');\n\
@@ -887,8 +887,8 @@ fn the_http_admitter_role_adds_exactly_the_fresh_permission_reads() {
             "BEGIN;\n\
              SELECT set_config('app.user_id', '00000000-0000-4000-8000-000000000001', true), \
                     set_config('app.operation', 'admin:seed-family-surface-fixture', true);\n\
-             INSERT INTO catalog.packages (env_key,package_id,package_version,artifact_digest) \
-             VALUES ('tenant-a','orders','1.0.0','{digest}');\n\
+             INSERT INTO catalog.packages (physical_schema_fingerprint, env_key,package_id,package_version,artifact_digest) \
+             VALUES ('sha256:' || repeat('c', 64), 'tenant-a','orders','1.0.0','{digest}');\n\
              INSERT INTO catalog.releases (env_key,manifest_digest,canonical_bytes) \
              VALUES ('tenant-a','sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a','{{}}');\n\
              INSERT INTO platform.integration (id,integration_type,name,status) \

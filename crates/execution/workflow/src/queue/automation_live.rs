@@ -240,7 +240,7 @@ async fn run_automation(mode: Mode) -> anyhow::Result<()> {
       INSERT INTO platform.user_role (user_id,role_name) VALUES ('{SERVICE}','automation');
       INSERT INTO platform.permission (role_name,permission) VALUES ('automation','{REFERENCE}'), ('automation','wamn-control:workflow/start');
       INSERT INTO wamn_run.environment_policies (env_key,expected_environment,durability_class) VALUES ('{ENV_KEY}','test','standard');
-      INSERT INTO catalog.packages (env_key,package_id,package_version,artifact_digest) VALUES ('{ENV_KEY}','automation','1.0.0','{HASH}');")).await?;
+      INSERT INTO catalog.packages (physical_schema_fingerprint, env_key,package_id,package_version,artifact_digest) VALUES ('sha256:' || repeat('c', 64), '{ENV_KEY}','automation','1.0.0','{HASH}');")).await?;
     let engine = Arc::new(build_engine(&[])?);
     let node = match &mode {
         Mode::Admission | Mode::MissingWorkflow | Mode::UnavailableCredential => {
