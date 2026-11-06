@@ -267,11 +267,16 @@ async fn get(
     kind: &str,
     name: &str,
 ) -> anyhow::Result<Option<Value>> {
-    tokio::time::timeout(
+    let result = tokio::time::timeout(
         Duration::from_secs(15),
         kubectl::get(&target.kubeconfig, &target.context, namespace, kind, name),
     )
-    .await?
+    .await?;
+    match result {
+        // An API the server does not serve yet holds no object: its CRD is not installed.
+        Err(error) if format!("{error:#}").contains("doesn't have a resource type") => Ok(None),
+        result => result,
+    }
 }
 
 async fn list(
