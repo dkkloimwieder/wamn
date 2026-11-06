@@ -6,7 +6,7 @@
 //! composed by one host-owned transaction: lock, clear abandoned state, then lease.
 
 use super::MAX_RETRY_BACKOFF_MS;
-use crate::{FailType, RunStatus, sql as run_sql};
+use crate::{FailType, RunStatus};
 
 /// Lock one eligible run in exact global FIFO order without granting a lease.
 ///
@@ -40,8 +40,7 @@ use crate::{FailType, RunStatus, sql as run_sql};
 /// only a host with no release selects it: candidate selection keeps its own
 /// path. [`grant_production_claim_sql`] rechecks the pin.
 pub fn select_production_claim_sql() -> String {
-    format!(
-        "WITH candidate AS MATERIALIZED ( \
+    "WITH candidate AS MATERIALIZED ( \
              SELECT q.env_key, q.run_id, \
                     q.lease_expires_at IS NOT NULL AS had_prior_lease \
                FROM run_queue AS q \
@@ -63,7 +62,7 @@ pub fn select_production_claim_sql() -> String {
               LIMIT 1 \
          ) \
          SELECT candidate.run_id, candidate.had_prior_lease, r.status, \
-                ({execution_input})::text AS input_json, \
+                r.input_json::text AS input_json, \
                 r.wiring_id, r.wiring_version, \
                 COALESCE( \
                     r.trigger_source IN ('http','internal','studio') \
@@ -79,9 +78,8 @@ pub fn select_production_claim_sql() -> String {
                 r.node_digests_json::text, r.event_root_run_id, r.event_depth \
            FROM candidate \
            JOIN runs AS r \
-             ON r.env_key = candidate.env_key AND r.run_id = candidate.run_id",
-        execution_input = run_sql::execution_input_sql("r"),
-    )
+             ON r.env_key = candidate.env_key AND r.run_id = candidate.run_id"
+        .to_owned()
 }
 
 /// Replace the abandoned attempt's run-level state. `$1` is the selected run id.

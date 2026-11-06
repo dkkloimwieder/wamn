@@ -513,11 +513,10 @@ fn release_scoped_queue_claim_skips_another_releases_head_live() {
                EXECUTE $claim${claim}$claim$ INTO STRICT selected USING ARRAY['cat'],'dev',{RELEASE_1}; \
                ASSERT selected.run_id='projection', 'the earliest eligible row wins'; \
                ASSERT selected.input_json::jsonb = \
-                 '{{\"value\":7,\"causation\":{{\"run\":\"projection\",\"root\":\"trusted-root\",\"depth\":2}}}}'::jsonb, \
-                 'trusted ancestry replaces author causation for execution'; \
-               ASSERT (SELECT input_json FROM runs WHERE run_id='projection') = \
-                 '{{\"value\":7,\"causation\":{{\"root\":\"forged\"}}}}'::jsonb, \
-                 'execution input is transient'; \
+                 (SELECT input_json FROM runs WHERE run_id='projection'), \
+                 'the selector hands execution the admitted input unchanged'; \
+               ASSERT selected.event_root_run_id='trusted-root' AND selected.event_depth=2, \
+                 'event ancestry travels in the trusted lineage columns'; \
                ASSERT selected.execution_principal_id='00000000-0000-0000-0000-000000000002' \
                  AND selected.execution_role='workflow' \
                  AND selected.node_digests_json::jsonb='{{\"node\":\"sha256:frozen\"}}'::jsonb, \

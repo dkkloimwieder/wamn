@@ -14,26 +14,6 @@
 
 use crate::status::RunStatus;
 
-/// Build the execution-only input projection for a run-row alias.
-///
-/// Event lineage is durable in trusted columns, never in author-visible
-/// `input_json`. At single-shot execution time the runner still needs the lineage object its
-/// frozen guest contract consumes, so the production-claim selector uses this
-/// exact expression. The right-hand `jsonb` object replaces any same-named author
-/// field; non-event rows retain their persisted input unchanged.
-pub(crate) fn execution_input_sql(run_alias: &str) -> String {
-    format!(
-        "CASE WHEN {run_alias}.event_root_run_id IS NOT NULL \
-                    AND {run_alias}.event_depth IS NOT NULL \
-              THEN {run_alias}.input_json || jsonb_build_object( \
-                     'causation', jsonb_build_object( \
-                         'run', {run_alias}.run_id, \
-                         'root', {run_alias}.event_root_run_id, \
-                         'depth', {run_alias}.event_depth)) \
-              ELSE {run_alias}.input_json END"
-    )
-}
-
 /// Prune terminal run history older than a retention window (9.6, wamn-srb): the
 /// `prune-run-history` verb's statement. DELETE `$1`'s `runs` rows in a TERMINAL
 /// state ([`RunStatus::is_terminal`] — completed / failed /
