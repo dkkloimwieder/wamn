@@ -448,9 +448,10 @@ async fn sign_in(run: &Run, password: &str, enroll: bool) -> anyhow::Result<()> 
         response.status()
     );
     let mine: Value = response.json().await.context("control query response")?;
+    // A host route answers one outcome per request element.
     ensure!(
-        mine["org_admin"] == true,
-        "control did not recognize the signed-in owner"
+        mine[0]["value"]["org_admin"] == true,
+        "control did not recognize the signed-in owner: {mine}"
     );
     Ok(())
 }
