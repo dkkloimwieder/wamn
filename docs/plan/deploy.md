@@ -29,7 +29,11 @@ Shared database infrastructure has a separate owner: the CNPG cluster, environme
 
 Environment provisioning also owns the shared event stream, CDC resources, and environment materializer. These resources serve the shared database and remain outside application Helm releases. Application updates do not duplicate or restart them.
 
-Deploy and rollback persist and apply only the targeted application's selection and Helm release. Code-only deployment runs no SQL, resets no data, reapplies no other application, and restarts no other application's workloads. Kubernetes, wasmCloud, and CNPG own the resources. WAMN adds no deployment controller. SQL is never reversed.
+Deploy and rollback persist and apply only the targeted application's selection and Helm release. Code-only deployment performs no schema changes, migrations, resets, seed execution or application-data mutations. Rollback follows the same rule. Kubernetes, wasmCloud, and CNPG own the resources. WAMN adds no deployment controller. SQL is never reversed.
+
+Reads and necessary WAMN control writes are allowed: release-cache entries, application release bindings and application-scoped runtime grants. Writes must be repeatable and scoped to the targeted application. Shared immutable cache entries can be added or reused. Do not change another application's records, effective permissions, release selection or workloads. Do not run environment-wide grant or binding reconciliation.
+
+Bindings and grants for the running release stay until the new release is ready and the old release drains. A failed deployment leaves the running code usable. Control records are not a second release-selection authority competing with `environment.k` and Helm.
 
 ```text
 Developer or deployment API
@@ -107,6 +111,10 @@ The following command forms describe the intended developer experience. They are
 
 Each application owns one Helm release and initially one host group. Their names derive from the environment coordinate and application identity. An application update cannot change another application's Helm revision, workload definitions, or pod identities. Shared database infrastructure and environment configuration remain separately owned.
 
+Code-only deployment and rollback perform no schema changes, migrations, resets, seed execution or application-data mutations. They can read control state and repeat targeted writes for release-cache entries, application release bindings and application-scoped runtime grants. Shared immutable cache entries can be added or reused. Other applications' records and effective permissions stay unchanged. Neither command runs environment-wide grant or binding reconciliation.
+
+Prepare the new release's bindings and grants alongside those of the running release. Remove old bindings and obsolete grants only after readiness and drain establish that no running code or pinned work needs them. Failed or uncertain replacement retains them and leaves the running code usable. Control records supply runtime facts, not release selection. `environment.k` selects releases, and Helm records application operations and observed state.
+
 Source of release selection: `environment.k` is the authored reference. Each application records `current` and `previous` release digests. On first installation, `previous` is absent. Deploy moves that application's current release to previous and writes the new release as current. Reapplying the same selection leaves both fields unchanged.
 
 Rollback selects that application's previous release. It swaps current and previous, then applies the selected published bytes. It publishes no replacement release. Helm history never chooses the target. Do not invoke `helm rollback` to select application code.
@@ -131,7 +139,7 @@ schema = { mode = "reset" }  # or "migrate"
 | Intended target | Disposable development/test database | Database retaining data |
 | Fresh install | Install current complete SQL | Install baseline and pending SQL |
 | Code-only deploy | Preserve existing data | Preserve existing data |
-| Physical schema change | Reset **the whole disposable project-environment database**, then install the complete selected schema | Execute explicitly selected migration files; no automatic SQL during code-only deploy |
+| Physical schema change | Reset **the whole disposable project-environment database**, then install the complete selected schema | Execute explicitly selected migration files. Code-only deployment performs no schema changes, migrations, resets, seed execution or application-data mutations. |
 | Editing initial SQL | Normal | Warn when already applied; do not silently replay |
 | Tracking | Record physical-schema hash for each package and the database instance | Record applied migration identifiers/checksums and the baseline for each package |
 | Default | For explicitly disposable environments | For environments retaining data |
@@ -248,13 +256,17 @@ wamn deploy --release sha256:<release-digest> --env dev
 2. For source deployment, build changed components and recompose the targeted application. Use a disposable build database when SQL introspection needs one.
 3. Publish immutable package and component artifacts, then construct that application's release from those facts. Publication requires no destination application database or installed candidate version.
 4. For a new environment, invoke its separate provisioning operation. CNPG owns the database, and provisioning owns shared roles, credentials, and environment configuration.
-5. Initialize an absent application's SQL through the independent SQL operation. For existing `migrate` state, report pending SQL without applying it. A schema change in a disposable `reset` environment follows section 4. Code-only deployment runs no SQL and performs no reset.
-6. Resolve the targeted application's connections, credentials, hostname, and permissions. Report absent optional configuration. Refuse unavailable required resources.
+5. Initialize an absent application's SQL through the independent SQL operation. For existing `migrate` state, report pending SQL without applying it. A schema change in a disposable `reset` environment follows section 4. Code-only deployment performs no schema changes, migrations, resets, seed execution or application-data mutations.
+6. Resolve the targeted application's connections, credentials, hostname, and permissions. Prepare its release-cache entries, application release bindings and application-scoped runtime grants. Report absent optional configuration. Refuse unavailable required resources.
 7. Persist only that application's current and previous selections as section 3 specifies. Apply its Helm release with its own host group, composed entry, HTTP workload, Service, and hostname. Report its observed running artifacts and readiness.
 
 Shared database ownership does not merge application deployment ownership. Adding an application initializes its absent baseline unless section 4 requires a whole-environment schema reset. That database operation lists every affected application before replacement. It cannot occur as a side effect of a code-only application deployment.
 
 Application rollout does not reinstall the platform or reapply another application's Helm release. Code-only operations preserve every other application's selection, workloads, and data. Shared resources change only through their separate owner when initialization needs them.
+
+Control reads and the targeted writes above are allowed. Writes must be repeatable. Shared immutable cache entries can be added or reused. Other applications' records and effective permissions stay unchanged. Do not run environment-wide grant or binding reconciliation. Control records do not select releases.
+
+Keep the running release's bindings and grants alongside the new release's requirements until readiness and drain permit removal under section 3. A failed deployment leaves the running code usable.
 
 If initial SQL succeeds but rollout fails, keep the SQL record. Retrying the selection uses published bytes and does not repeat committed initialization. The file retains the pending application release, and status reports what actually runs.
 
@@ -356,10 +368,10 @@ wamn schema apply sample_app --env dev
 |---|---|---|---|---|
 | 0 | Existing state | `display_name` | A0 | No changes |
 | 1 | Apply additive SQL | Both `display_name` and `public_name` | A0 | Record SQL; keep code |
-| 2 | Deploy transitional code A1 | Both columns | A0/A1 during rollout | Update app release; no SQL |
+| 2 | Deploy transitional code A1 | Both columns | A0/A1 during rollout | Update app release under the code-only rule in section 5.5 |
 | 3 | Explicit data backfill and synchronization | Both columns with consistent values | A1 | Execute only selected SQL/data task |
 | 4 | Apply SQL removing old column | `public_name` | A1 | Warn about older code; run selected SQL |
-| 5 | Deploy final code A2 if necessary | `public_name` | A2 | Update app release; no SQL |
+| 5 | Deploy final code A2 if necessary | `public_name` | A2 | Update app release under the code-only rule in section 5.5 |
 
 This is one example, not a required ordering. A change may need fewer operations or additional transitional code deployments. WAMN does not automatically synchronize old/new columns or determine when durable workflows no longer need an old column. Developers manage data semantics and the timing of removal. Existing WIT and integration parameter deprecation metadata can help produce warnings without creating mandatory retirement rules.
 
@@ -392,7 +404,7 @@ A physical schema change on an environment already recorded as disposable trigge
 
 ### 5.5 Application code upgrade, hotfix and rollback
 
-Intent: Change one application's release while preserving database rows and every other application's selection and workloads.
+Intent: Change one application's release while preserving application schemas and data and every other application's records, effective permissions, selection and workloads.
 
 ```bash
 wamn deploy sample_app --env dev
@@ -404,10 +416,14 @@ wamn deploy --release sha256:<release-digest> --env dev
 
 1. Build only changed inputs within the targeted application's dependency closure. Recompose its affected executable. Leave other applications and platform artifacts untouched.
 2. Publish the targeted application's immutable release. Publication uses verified package facts without installing the candidate into the destination database.
-3. Report differences between selected schema information and recorded installed state. Code-only deployment runs no SQL, resets no data, and changes no installed SQL record.
+3. Report differences between selected schema information and recorded installed state. Code-only deployment performs no schema changes, migrations, resets, seed execution or application-data mutations. Installed SQL records stay unchanged.
 4. Move the application's current selection to previous and persist the new current selection. Apply only its Helm release. Kubernetes and wasmCloud manage its host group and workloads.
 5. Report that application's selected and observed running releases separately. Report readiness from the actual workload, including after failure.
 6. For rollback, read previous from that application's selection in `environment.k`. Swap current and previous, then apply only that application's Helm release. Never use Helm history to choose code, republish an environment aggregate, or reverse SQL. Warn when the older code expects different SQL. Attempt rollback when the artifacts and target are valid.
+
+Rollback follows the same code-only rule. Reads and necessary control writes are allowed for release-cache entries, application release bindings and application-scoped runtime grants. Writes must be repeatable and targeted. Shared immutable cache entries can be added or reused. Do not run environment-wide grant or binding reconciliation or change another application's effective permissions or records.
+
+Prepare the selected release's bindings and grants before applying Helm. Preserve those needed by running code until the replacement is ready and the old release drains. Remove obsolete facts only under section 3's removal rule. A failed deployment leaves the running code usable. Control records never compete with `environment.k` and Helm as a release-selection authority.
 
 ```text
 Deploy sample_app -> org/project/dev
@@ -415,7 +431,7 @@ Deploy sample_app -> org/project/dev
   Host image                unchanged
   Installed schema          sha256:S1
   Build-time schema         sha256:S1
-  SQL operations            none
+  Application schema/data changes   none
   sample_app current        sha256:A1
   sample_app previous       sha256:A0
   sample_app running        sha256:A1 (ready)
@@ -456,6 +472,10 @@ A mode change never resets the system database or automatically changes the appl
 Every workflow reports each application's current and previous release, observed running artifacts, hostname, and readiness. Shared environment and database state appears separately. SQL status reports only completed SQL recorded by the database. Unreadable state is `unknown` with its cause.
 
 Helm history supports operation recovery and diagnostics within the targeted application's Helm release. It never chooses the application rollback target. Do not add a database that tracks deployment actions.
+
+Code-only deployment, retry and rollback perform no schema changes, migrations, resets, seed execution or application-data mutations. Reads and repeatable targeted writes can prepare release-cache entries, application release bindings and application-scoped runtime grants. Shared immutable cache entries can be added or reused. Other applications' records, effective permissions, selections and workloads stay unchanged. Recovery performs no environment-wide grant or binding reconciliation. Control records do not select releases.
+
+Keep old and new release bindings and grants together during replacement. Remove old bindings and obsolete grants only after readiness and drain satisfy section 3. A failed or interrupted deployment leaves the running code usable. If readiness, live releases or pinned work are unknown, retain the facts that running code can still need.
 
 ```text
 Target: org/project/dev
@@ -529,10 +549,14 @@ The existing kind tests provide reusable assertions, but not a finished develope
 1. **Platform:** Fresh kind installation succeeds with zero applications, a local OCI registry, wasmCloud, CloudNativePG, identity, and no GCP account.
 2. **Application:** Publish and select two application releases in one environment. Initialize through product commands. Give each application its own Helm release, host group, entry, HTTP workload, Service, and reachable hostname.
 3. **Development separation:** `wamn dev` remains a fast source edit loop; deployed kind behavior uses the real Helm/registry/operator path.
-4. **Hotfix:** Update each application independently, then roll back the first through product commands. After each operation, make sure that the other application's release, Helm revision, and pod UIDs remain unchanged. The final selections are A0 and B1. Both applications retain their data. Code-only operations run no SQL and perform no reset.
+4. **Hotfix:** Update each application independently, then roll back the first through product commands. After each operation, make sure that the targeted application serves the selected behavior. Make sure that the other application's release, Helm revision, and pod UIDs remain unchanged. The final selections are A0 and B1. Both applications retain unchanged schemas and data. Code-only deployment and rollback perform no schema changes, migrations, resets, seed execution or application-data mutations.
 5. **SQL:** Standalone migration, disposable reset, baseline adoption, and a multi-step SQL/application sequence work without rebuilding the platform.
 6. **Platform upgrade:** Host/control-only changes and platform SQL changes can run independently of application publication.
-7. **Recovery:** Interrupt and repeat deployment; verify actual Helm and Kubernetes state, accurate failures, and no dependency on generic completion markers.
+7. **Recovery:** Interrupt and repeat targeted deployment. Make sure that Helm and Kubernetes report actual state and failures without generic completion markers. A failed replacement leaves the running code usable with its bindings and grants intact. The second application remains unaffected.
+
+The hotfix and recovery tests allow control reads and repeatable targeted writes for release-cache entries, application release bindings and application-scoped runtime grants. They allow additions or reuse of shared immutable cache entries. Make sure that another application's records and effective permissions stay unchanged. Do not require zero database writes. Test unchanged application schemas and data, successful targeted deployment, and an unaffected second application.
+
+Focused database tests cover coexistence of old and new bindings and grants, safe removal after readiness and drain, and repeatable retry. They cover the absence of environment-wide grant and binding reconciliation. Control records never select a release independently of `environment.k` and Helm.
 
 **Begin GCP-specific implementation only after these local tests pass.** This requirement applies to completing the implementation milestone, **not to every later developer deploy, application update, or GCP release**. Do not make an automatic kind test run a prerequisite for ordinary `wamn deploy`.
 
