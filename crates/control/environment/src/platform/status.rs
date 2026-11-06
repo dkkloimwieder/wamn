@@ -1,0 +1,1061 @@
+//! Read platform state from Helm, Kubernetes, endpoints, and PostgreSQL without mutation.
+
+use std::collections::BTreeMap;
+use std::fmt;
+use std::io::Write;
+use std::path::Path;
+use std::time::Duration;
+
+use anyhow::Context as _;
+use base64::Engine as _;
+use serde_json::Value;
+use wamn_release_control::release_chart::Target;
+
+use super::document::{ClusterDocument, Provider};
+use super::{artifact_plan, resources};
+use crate::kubectl;
+
+/// A current observation, never a persisted deployment record.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Category {
+    Ready,
+    Incomplete,
+    Failed,
+    Unknown,
+}
+
+impl fmt::Display for Category {
+    fn fmt(&self, output: &mut fmt::Formatter<'_>) -> fmt::Result {
+        output.write_str(match self {
+            Self::Ready => "ready",
+            Self::Incomplete => "incomplete",
+            Self::Failed => "failed",
+            Self::Unknown => "unknown",
+        })
+    }
+}
+
+/// Safe, source-specific facts from one independent observation.
+#[derive(Debug)]
+pub struct Observation {
+    pub source: String,
+    pub category: Category,
+    pub facts: Vec<String>,
+    pub next: Option<String>,
+    /// Images requested by the resource, not proof of running bytes.
+    pub images: BTreeMap<String, String>,
+    /// Image IDs reported by running pod containers.
+    pub running_images: BTreeMap<String, String>,
+}
+
+/// The selected artifacts and current owners, kept separate even after failure.
+#[derive(Debug)]
+pub struct PlatformStatus {
+    pub category: Category,
+    pub selected: Observation,
+    pub observations: Vec<Observation>,
+    pub warnings: Vec<String>,
+}
+
+fn observation(source: &str, category: Category, next: &str) -> Observation {
+    Observation {
+        source: source.to_owned(),
+        category,
+        facts: Vec::new(),
+        next: (category != Category::Ready).then(|| next.to_owned()),
+        images: BTreeMap::new(),
+        running_images: BTreeMap::new(),
+    }
+}
+
+fn combined(categories: impl IntoIterator<Item = Category>) -> Category {
+    categories.into_iter().fold(Category::Ready, |left, right| {
+        [Category::Failed, Category::Unknown, Category::Incomplete]
+            .into_iter()
+            .find(|category| *category == left || *category == right)
+            .unwrap_or(Category::Ready)
+    })
+}
+
+/// Read independent owners even when another observation fails.
+///
+/// Query errors become `unknown` observations. This operation never provisions a resource or credential.
+pub async fn read(document: &ClusterDocument, target: &Target) -> anyhow::Result<PlatformStatus> {
+    let values = helm_json(
+        target,
+        &["get", "values", "wamn", "-n", "platform", "-o", "json"],
+    )
+    .await;
+    let selected = selected_chart(values.as_ref().ok());
+    let mut observations = Vec::new();
+    let mut warnings = Vec::new();
+    let control = format!("c-{}", document.org);
+    for (namespace, name) in [
+        ("platform", "wamn"),
+        ("identity", "identity"),
+        ("hosts", control.as_str()),
+    ] {
+        let result = helm_json(
+            target,
+            &[
+                "list",
+                "--all",
+                "-n",
+                namespace,
+                "--filter",
+                &format!("^{name}$"),
+                "-o",
+                "json",
+            ],
+        )
+        .await;
+        observations.push(helm_status(namespace, name, result.as_ref().ok()));
+    }
+    let control_host = format!("hostgroup-{control}");
+    let control_http = format!("{control}-http");
+    let control_certificate = format!("wamn-nats-control-{}", document.org);
+    let operator_certificate = format!("operator-{}", document.org);
+    for (namespace, kind, name) in [
+        ("cert-manager", "Deployment", "cert-manager"),
+        ("cert-manager", "Deployment", "cert-manager-cainjector"),
+        ("cert-manager", "Deployment", "cert-manager-webhook"),
+        ("cnpg-system", "Deployment", "cnpg-controller-manager"),
+        ("platform", "Deployment", "runtime-operator"),
+        ("platform", "StatefulSet", "wamn-nats"),
+        ("platform", "Cluster.postgresql.cnpg.io", "wamn-pg"),
+        ("identity", "Deployment", "identity"),
+        ("hosts", "Deployment", control_host.as_str()),
+        ("hosts", "WorkloadDeployment", control_http.as_str()),
+        ("cert-manager", "Certificate", "wasmcloud-ca"),
+        ("platform", "Certificate", "wasmcloud-nats-tls"),
+        ("platform", "Certificate", "wasmcloud-operator-tls"),
+        ("platform", "Certificate", "wamn-ctl-nats"),
+        ("platform", "Certificate", "wamn-provisioning-nats"),
+        ("hosts", "Certificate", "wasmcloud-runtime-tls"),
+        ("hosts", "Certificate", "wasmcloud-data-tls"),
+        ("hosts", "Certificate", control_certificate.as_str()),
+        ("identity", "Certificate", "identity"),
+        ("identity", "Certificate", "wamn-identity-nats"),
+        ("identity", "Certificate", "identity-operator-ca"),
+        ("identity", "Certificate", operator_certificate.as_str()),
+        ("identity", "Issuer", "identity-operator-selfsigned"),
+        ("identity", "Issuer", "identity-operator"),
+        ("platform", "ClusterIssuer", "wamn-selfsigned"),
+        ("platform", "ClusterIssuer", "wasmcloud-ca"),
+    ] {
+        let result = get(target, namespace, kind, name).await;
+        if namespace == "identity"
+            && kind == "Deployment"
+            && let Ok(Some(object)) = &result
+        {
+            let mail = object
+                .pointer("/spec/template/spec/containers")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .flat_map(|container| container["env"].as_array().into_iter().flatten())
+                .any(|entry| entry["name"] == "RESEND_API_KEY");
+            if !mail {
+                warnings.push("identity/Deployment/identity: mail is not configured; configure identity mail to deliver invitations".into());
+            }
+        }
+        let source = format!("{namespace}/{kind}/{name}");
+        observations.push(resource(
+            &source,
+            result.as_ref().map(Option::as_ref).map_err(|_| ()),
+        ));
+    }
+    for (namespace, selector) in [
+        ("platform", String::new()),
+        ("cert-manager", String::new()),
+        ("cnpg-system", String::new()),
+        ("identity", "app.kubernetes.io/name=wamn-identity".into()),
+        ("hosts", format!("wasmcloud.com/hostgroup={control}")),
+    ] {
+        let arguments = if selector.is_empty() {
+            vec![]
+        } else {
+            vec!["-l", selector.as_str()]
+        };
+        let result = list(target, namespace, "pods", &arguments).await;
+        append_resources(
+            &mut observations,
+            &format!("{namespace}/pods"),
+            result.as_ref().ok(),
+        );
+    }
+    for (namespace, service) in [
+        ("platform", "wamn-pg-rw"),
+        ("identity", "identity"),
+        ("hosts", control_http.as_str()),
+    ] {
+        let result = list(
+            target,
+            namespace,
+            "endpointslices.discovery.k8s.io",
+            &["-l", &format!("kubernetes.io/service-name={service}")],
+        )
+        .await;
+        observations.push(endpoints(
+            &format!("{namespace}/Service/{service}"),
+            result.as_ref().ok(),
+        ));
+    }
+    let database = tokio::time::timeout(Duration::from_secs(40), database(target)).await;
+    observations.push(database.ok().and_then(Result::ok).unwrap_or_else(|| observation(
+        "PostgreSQL/wamn_system", Category::Unknown,
+        "Read platform/wamn-pg-rw and wamn-pg-superuser; restore database access and retry status",
+    )));
+    for identity in [true, false] {
+        let result =
+            tokio::time::timeout(Duration::from_secs(40), probe(target, document, identity)).await;
+        observations.push(result.ok().and_then(Result::ok).unwrap_or_else(|| observation(
+            if identity { "identity/HTTPS/healthz" } else { "control/HTTP/control/mine" },
+            Category::Unknown, "Inspect this service's endpoints, serving certificate, and process logs; retry status",
+        )));
+    }
+    if document.provider == Provider::Kind {
+        let result = async {
+            reqwest::Client::builder()
+                .no_proxy()
+                .timeout(Duration::from_secs(5))
+                .build()?
+                .get(format!(
+                    "http://{}/v2/",
+                    document.registry.split('/').next().unwrap_or_default()
+                ))
+                .send()
+                .await
+        }
+        .await;
+        observations.push(observation("local registry", match result {
+            Ok(response) if response.status().is_success() => Category::Ready,
+            Ok(_) => Category::Failed,
+            Err(_) => Category::Unknown,
+        }, "Inspect the local registry container and published port; rerun platform deploy if it is missing"));
+    }
+    if document.buckets.web.is_empty() {
+        warnings.push("cluster.buckets.web: platform UI storage is not selected; select storage and upload UI when needed".into());
+    }
+    if document.buckets.otel.is_empty() {
+        warnings.push("cluster.buckets.otel: telemetry storage is not selected; configure telemetry when needed".into());
+    }
+    let category = combined(
+        std::iter::once(selected.category).chain(observations.iter().map(|item| item.category)),
+    );
+    Ok(PlatformStatus {
+        category,
+        selected,
+        observations,
+        warnings,
+    })
+}
+
+async fn helm_json(target: &Target, arguments: &[&str]) -> anyhow::Result<Value> {
+    let arguments: Vec<_> = arguments.iter().map(std::ffi::OsStr::new).collect();
+    let bytes = tokio::time::timeout(Duration::from_secs(15), resources::helm(target, &arguments))
+        .await??;
+    Ok(serde_json::from_slice(&bytes)?)
+}
+
+async fn get(
+    target: &Target,
+    namespace: &str,
+    kind: &str,
+    name: &str,
+) -> anyhow::Result<Option<Value>> {
+    tokio::time::timeout(
+        Duration::from_secs(15),
+        kubectl::get(&target.kubeconfig, &target.context, namespace, kind, name),
+    )
+    .await?
+}
+
+async fn list(
+    target: &Target,
+    namespace: &str,
+    kind: &str,
+    extra: &[&str],
+) -> anyhow::Result<Value> {
+    let mut arguments = vec!["get", kind, "-o", "json"];
+    arguments.extend_from_slice(extra);
+    let body = tokio::time::timeout(
+        Duration::from_secs(15),
+        kubectl::kubectl(
+            &target.kubeconfig,
+            &target.context,
+            namespace,
+            &arguments,
+            None,
+        ),
+    )
+    .await??;
+    Ok(serde_json::from_str(&body)?)
+}
+
+fn selected_chart(values: Option<&Value>) -> Observation {
+    let mut result = observation(
+        "Helm/platform/wamn/platform.chart",
+        Category::Unknown,
+        "Restore access to the exact chart path recorded in Helm, or deploy an explicitly selected prepared chart",
+    );
+    let Some(path) = values
+        .and_then(|value| value.pointer("/platform/chart"))
+        .and_then(Value::as_str)
+    else {
+        return result;
+    };
+    result.facts.push(format!("chart={path}"));
+    let Ok(chart) = artifact_plan::select(Path::new(path)) else {
+        return result;
+    };
+    result.category = Category::Ready;
+    result.next = None;
+    result.facts.push(format!("version={}", chart.version));
+    if let Ok(host) = chart.image("host") {
+        result.images.insert("host".into(), host.into());
+    }
+    image_references(&chart.values()["platform"], "platform", &mut result.images);
+    result
+}
+
+fn helm_status(namespace: &str, name: &str, response: Option<&Value>) -> Observation {
+    let releases = response.and_then(Value::as_array);
+    let release = releases.and_then(|entries| entries.iter().find(|entry| entry["name"] == name));
+    let state = release.and_then(|entry| entry["status"].as_str());
+    let category = match state {
+        Some("deployed") => Category::Ready,
+        Some("failed") => Category::Failed,
+        Some(
+            "pending-install" | "pending-upgrade" | "pending-rollback" | "uninstalling"
+            | "uninstalled" | "superseded",
+        ) => Category::Incomplete,
+        None if releases.is_some() && release.is_none() => Category::Incomplete,
+        _ => Category::Unknown,
+    };
+    let mut result = observation(
+        &format!("Helm/{namespace}/{name}"),
+        category,
+        &format!(
+            "Read helm status {name} -n {namespace} and repair the reported release failure; rerun platform deploy"
+        ),
+    );
+    if let Some(state) = state {
+        result.facts.push(format!("status={state}"));
+    }
+    result
+}
+
+fn image_references(value: &Value, path: &str, images: &mut BTreeMap<String, String>) {
+    match value {
+        Value::Object(fields) => {
+            for (key, value) in fields {
+                if key == "image" {
+                    if let Some(image) = value.as_str().filter(|image| !image.is_empty()) {
+                        images.insert(path.into(), image.into());
+                    }
+                } else {
+                    image_references(value, &format!("{path}/{key}"), images);
+                }
+            }
+        }
+        Value::Array(entries) => {
+            for (index, entry) in entries.iter().enumerate() {
+                image_references(entry, &format!("{path}/{index}"), images);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn resource(source: &str, response: Result<Option<&Value>, ()>) -> Observation {
+    let category = match response {
+        Ok(Some(object)) => classify(object),
+        Ok(None) => Category::Incomplete,
+        Err(()) => Category::Unknown,
+    };
+    let mut result = observation(
+        source,
+        category,
+        &format!(
+            "Inspect {source} conditions and events; repair the owning resource and rerun platform deploy"
+        ),
+    );
+    if let Ok(Some(object)) = response {
+        image_references(&object["spec"], "spec", &mut result.images);
+        for field in ["generation", "observedGeneration"] {
+            let value = if field == "generation" {
+                &object["metadata"][field]
+            } else {
+                &object["status"][field]
+            };
+            if let Some(value) = value.as_u64() {
+                result.facts.push(format!("{field}={value}"));
+            }
+        }
+        for condition in object["status"]["conditions"]
+            .as_array()
+            .into_iter()
+            .flatten()
+        {
+            // Messages can contain credentials from controllers. Keep only condition identifiers.
+            result.facts.push(format!(
+                "{}={} reason={} observedGeneration={}",
+                condition["type"].as_str().unwrap_or("unknown"),
+                condition["status"].as_str().unwrap_or("Unknown"),
+                condition["reason"].as_str().unwrap_or("unknown"),
+                condition["observedGeneration"]
+            ));
+        }
+        for field in ["phase", "currentPrimary"] {
+            if let Some(value) = object["status"][field].as_str() {
+                result.facts.push(format!("{field}={value}"));
+            }
+        }
+        for field in ["containerStatuses", "initContainerStatuses"] {
+            for container in object["status"][field].as_array().into_iter().flatten() {
+                if container.pointer("/state/running").is_some()
+                    && let (Some(name), Some(id)) =
+                        (container["name"].as_str(), container["imageID"].as_str())
+                {
+                    result.running_images.insert(name.into(), id.into());
+                }
+                if let Some(reason) = container
+                    .pointer("/state/waiting/reason")
+                    .and_then(Value::as_str)
+                {
+                    result
+                        .facts
+                        .push(format!("container={} reason={reason}", container["name"]));
+                    if matches!(
+                        reason,
+                        "ErrImagePull" | "ImagePullBackOff" | "InvalidImageName"
+                    ) {
+                        result.next = Some(format!(
+                            "Inspect {source} image references and registry access; publish the missing image or deploy a corrected chart"
+                        ));
+                    }
+                }
+            }
+        }
+    }
+    result
+}
+
+fn classify(object: &Value) -> Category {
+    let status = &object["status"];
+    let kind = object["kind"].as_str().unwrap_or_default();
+    if object["metadata"]
+        .get("deletionTimestamp")
+        .is_some_and(|value| !value.is_null())
+    {
+        return Category::Incomplete;
+    }
+    let generation = object["metadata"]["generation"].as_u64();
+    let observed = status["observedGeneration"].as_u64();
+    if generation
+        .zip(observed)
+        .is_some_and(|(current, observed)| observed < current)
+    {
+        return Category::Incomplete;
+    }
+    let conditions: Vec<_> = status["conditions"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|condition| {
+            generation
+                .zip(condition["observedGeneration"].as_u64().or(observed))
+                .is_none_or(|(current, observed)| observed >= current)
+        })
+        .collect();
+    if conditions.iter().any(|condition| {
+        (matches!(
+            condition["type"].as_str(),
+            Some("Failed" | "Stalled" | "Denied")
+        ) && condition["status"] == "True")
+            || (condition["type"] == "Progressing"
+                && condition["status"] == "False"
+                && condition["reason"] == "ProgressDeadlineExceeded")
+            || (condition["status"] == "False"
+                && matches!(
+                    condition["reason"].as_str(),
+                    Some("Failed" | "InvalidSpec" | "InvalidRequest")
+                ))
+    }) {
+        return Category::Failed;
+    }
+    if kind == "Pod" {
+        if status["phase"] == "Failed" {
+            return Category::Failed;
+        }
+        if status["phase"] == "Unknown" {
+            return Category::Unknown;
+        }
+        return if status["phase"] == "Succeeded"
+            || (status["phase"] == "Running"
+                && conditions
+                    .iter()
+                    .any(|condition| condition["type"] == "Ready" && condition["status"] == "True"))
+        {
+            Category::Ready
+        } else {
+            Category::Incomplete
+        };
+    }
+    if conditions
+        .iter()
+        .any(|condition| condition["status"] == "Unknown")
+    {
+        return Category::Unknown;
+    }
+    match kind {
+        "Deployment" | "StatefulSet" => {
+            let desired = object["spec"]["replicas"].as_u64().unwrap_or(1);
+            let current = observed
+                .zip(generation)
+                .is_some_and(|(observed, generation)| observed >= generation);
+            let ready = desired > 0
+                && status["readyReplicas"].as_u64().unwrap_or(0) >= desired
+                && status["updatedReplicas"].as_u64().unwrap_or(0) >= desired;
+            if current
+                && ready
+                && (kind == "StatefulSet"
+                    || status["availableReplicas"].as_u64().unwrap_or(0) >= desired)
+            {
+                Category::Ready
+            } else {
+                Category::Incomplete
+            }
+        }
+        "WorkloadDeployment" => {
+            let desired = object["spec"]["replicas"].as_u64().unwrap_or(1);
+            let ready = status["replicas"]["ready"].as_u64().unwrap_or(0) >= desired && desired > 0;
+            if ready
+                && conditions.iter().any(|condition| {
+                    matches!(condition["type"].as_str(), Some("Ready" | "Available"))
+                        && condition["status"] == "True"
+                })
+            {
+                Category::Ready
+            } else {
+                Category::Incomplete
+            }
+        }
+        "Certificate" | "Issuer" | "ClusterIssuer" | "Cluster" => {
+            let ready = conditions
+                .iter()
+                .any(|condition| condition["type"] == "Ready" && condition["status"] == "True");
+            if ready
+                && (kind != "Cluster"
+                    || (status["currentPrimary"]
+                        .as_str()
+                        .is_some_and(|name| !name.is_empty())
+                        && status["readyInstances"].as_u64().unwrap_or(0) > 0))
+            {
+                Category::Ready
+            } else {
+                Category::Incomplete
+            }
+        }
+        _ => Category::Unknown,
+    }
+}
+
+fn append_resources(observations: &mut Vec<Observation>, source: &str, response: Option<&Value>) {
+    match response.and_then(|response| response["items"].as_array()) {
+        Some(items) if !items.is_empty() => {
+            for object in items {
+                // Completed Jobs describe past attempts, not current service readiness.
+                if object["kind"] == "Pod"
+                    && object["metadata"]["ownerReferences"]
+                        .as_array()
+                        .into_iter()
+                        .flatten()
+                        .any(|owner| owner["kind"] == "Job")
+                {
+                    continue;
+                }
+                let name = object["metadata"]["name"].as_str().unwrap_or("unknown");
+                observations.push(resource(&format!("{source}/{name}"), Ok(Some(object))));
+            }
+        }
+        Some(_) => observations.push(resource(source, Ok(None))),
+        None => observations.push(resource(source, Err(()))),
+    }
+}
+
+fn endpoints(source: &str, response: Option<&Value>) -> Observation {
+    let items = response.and_then(|value| value["items"].as_array());
+    let mut result = observation(
+        source,
+        if items.is_some() {
+            Category::Incomplete
+        } else {
+            Category::Unknown
+        },
+        &format!("Inspect {source} selectors and endpoint readiness; restore the backing workload"),
+    );
+    for slice in items.into_iter().flatten() {
+        for endpoint in slice["endpoints"].as_array().into_iter().flatten() {
+            if endpoint["conditions"]["ready"] == true
+                && endpoint["conditions"]["terminating"] != true
+            {
+                for address in endpoint["addresses"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter_map(Value::as_str)
+                {
+                    result
+                        .facts
+                        .push(format!("address={address} ports={}", slice["ports"]));
+                    result.category = Category::Ready;
+                    result.next = None;
+                }
+            }
+        }
+    }
+    result
+}
+
+fn secret_bytes(secret: &Value, key: &str) -> anyhow::Result<Vec<u8>> {
+    let value = secret["data"][key]
+        .as_str()
+        .context("required Secret key is absent")?;
+    base64::engine::general_purpose::STANDARD
+        .decode(value)
+        .context("invalid Secret encoding")
+}
+
+async fn database(target: &Target) -> anyhow::Result<Observation> {
+    let Some(credentials) = get(target, "platform", "secret", "wamn-pg-superuser").await? else {
+        return Ok(observation(
+            "platform/Secret/wamn-pg-superuser",
+            Category::Incomplete,
+            "Inspect the CNPG cluster and restore its superuser Secret before reading system initialization",
+        ));
+    };
+    let forward = resources::port_forward(target, "platform", "service/wamn-pg-rw", 5432).await?;
+    let mut configuration = tokio_postgres::Config::new();
+    configuration
+        .host("127.0.0.1")
+        .port(forward.port)
+        .dbname("wamn_system")
+        .user(std::str::from_utf8(&secret_bytes(
+            &credentials,
+            "username",
+        )?)?)
+        .password(secret_bytes(&credentials, "password")?)
+        .connect_timeout(Duration::from_secs(5))
+        .options("-c default_transaction_read_only=on -c statement_timeout=5000");
+    let (mut client, connection) = configuration.connect(tokio_postgres::NoTls).await?;
+    // The connection future stays scoped to this observation, including cancellation.
+    let read = async {
+        let transaction = client
+            .build_transaction()
+            .read_only(true)
+            .isolation_level(tokio_postgres::IsolationLevel::RepeatableRead)
+            .start()
+            .await?;
+        let state = crate::provision_system::system_state(&transaction).await?;
+        let baseline = match state {
+            crate::provision_system::SystemState::Complete
+            | crate::provision_system::SystemState::BaselineMismatch { .. } => Some(
+                transaction
+                    .query_one("SELECT sha256 FROM registry.schema_baseline", &[])
+                    .await?
+                    .get::<_, String>(0),
+            ),
+            _ => None,
+        };
+        let result = database_state(&state, baseline.as_deref());
+        transaction.rollback().await?;
+        Ok(result)
+    };
+    tokio::pin!(read);
+    tokio::pin!(connection);
+    tokio::select! {
+        result = &mut read => result,
+        _ = &mut connection => anyhow::bail!("database observation connection closed"),
+    }
+}
+
+fn database_state(
+    state: &crate::provision_system::SystemState,
+    baseline: Option<&str>,
+) -> Observation {
+    use crate::provision_system::SystemState;
+    // system_state compares with its executable. Status reports only recorded database facts.
+    let category = match state {
+        SystemState::Complete | SystemState::BaselineMismatch { .. } if baseline.is_some() => {
+            Category::Ready
+        }
+        SystemState::Absent | SystemState::Incomplete => Category::Incomplete,
+        _ => Category::Unknown,
+    };
+    let mut result = observation(
+        "PostgreSQL/wamn_system",
+        category,
+        match state {
+            SystemState::Absent => {
+                "Run platform deploy with the selected chart to initialize the absent system schema"
+            }
+            _ => {
+                "Inspect the system baseline and restore a verified database backup; do not reset or replay partial initialization"
+            }
+        },
+    );
+    if let Some(baseline) = baseline {
+        result.facts.push(format!("installed baseline={baseline}"));
+    }
+    result
+}
+
+async fn probe(
+    target: &Target,
+    document: &ClusterDocument,
+    identity: bool,
+) -> anyhow::Result<Observation> {
+    let (namespace, service, port) = if identity {
+        ("identity", "identity".to_owned(), 443)
+    } else {
+        ("hosts", format!("c-{}-http", document.org), 80)
+    };
+    let forward =
+        resources::port_forward(target, namespace, &format!("service/{service}"), port).await?;
+    let mut builder = reqwest::Client::builder()
+        .no_proxy()
+        .timeout(Duration::from_secs(5))
+        .redirect(reqwest::redirect::Policy::none());
+    let url = if identity {
+        let Some(tls) = get(target, "identity", "secret", "identity-tls").await? else {
+            return Ok(observation(
+                "identity/Secret/identity-tls",
+                Category::Incomplete,
+                "Inspect identity/Certificate/identity and restore its serving Secret",
+            ));
+        };
+        builder = builder
+            .add_root_certificate(reqwest::Certificate::from_pem(&secret_bytes(
+                &tls, "ca.crt",
+            )?)?)
+            .resolve(
+                "identity.identity.svc.cluster.local",
+                ([127, 0, 0, 1], forward.port).into(),
+            );
+        format!(
+            "https://identity.identity.svc.cluster.local:{}/healthz",
+            forward.port
+        )
+    } else {
+        format!(
+            "http://127.0.0.1:{}/wamn_control/control/mine",
+            forward.port
+        )
+    };
+    let response = builder
+        .build()?
+        .get(&url)
+        .header(
+            reqwest::header::HOST,
+            if identity {
+                "identity.identity.svc.cluster.local"
+            } else {
+                &document.route_hosts.control
+            },
+        )
+        .send()
+        .await?;
+    let expected = if identity {
+        reqwest::StatusCode::OK
+    } else {
+        reqwest::StatusCode::UNAUTHORIZED
+    };
+    let mut result = observation(
+        if identity {
+            "identity/HTTPS/healthz"
+        } else {
+            "control/HTTP/control/mine"
+        },
+        if response.status() == expected {
+            Category::Ready
+        } else {
+            Category::Failed
+        },
+        "Inspect the service logs and its database and authorization dependencies",
+    );
+    result.facts.push(format!(
+        "HTTP {} via {namespace}/Service/{service}",
+        response.status().as_u16()
+    ));
+    Ok(result)
+}
+
+/// Write safe facts and next actions without exposing Secrets or command diagnostics.
+pub fn write(status: &PlatformStatus, output: &mut impl Write) -> anyhow::Result<()> {
+    writeln!(output, "platform: {}", status.category)?;
+    for (selected, item) in std::iter::once((true, &status.selected))
+        .chain(status.observations.iter().map(|item| (false, item)))
+    {
+        writeln!(output, "{}: {}", item.source, item.category)?;
+        for fact in &item.facts {
+            writeln!(output, "  {fact}")?;
+        }
+        for (name, image) in &item.images {
+            writeln!(
+                output,
+                "  {} {name}: {image}",
+                if selected {
+                    "selected image"
+                } else {
+                    "resource image"
+                }
+            )?;
+        }
+        for (name, image) in &item.running_images {
+            writeln!(output, "  running image ID {name}: {image}")?;
+        }
+        if let Some(next) = &item.next {
+            writeln!(output, "  next: {next}")?;
+        }
+    }
+    for warning in &status.warnings {
+        writeln!(output, "warning: {warning}")?;
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn helm_distinguishes_missing_failed_pending_and_unreadable_releases() {
+        for (state, expected) in [
+            ("deployed", Category::Ready),
+            ("failed", Category::Failed),
+            ("pending-upgrade", Category::Incomplete),
+            ("unknown", Category::Unknown),
+        ] {
+            let response = json!([{"name":"wamn","namespace":"platform","revision":"2","status":state,"chart":"runtime-operator-2.11.0"}]);
+            assert_eq!(
+                helm_status("platform", "wamn", Some(&response)).category,
+                expected
+            );
+        }
+        assert_eq!(
+            helm_status("platform", "wamn", Some(&json!([]))).category,
+            Category::Incomplete
+        );
+        assert_eq!(
+            helm_status("platform", "wamn", None).category,
+            Category::Unknown
+        );
+    }
+
+    #[test]
+    fn deployment_requires_the_current_generation_and_complete_rollout() {
+        let mut deployment = json!({
+            "kind":"Deployment", "metadata":{"generation":4}, "spec":{"replicas":2},
+            "status":{"observedGeneration":4,"readyReplicas":2,"updatedReplicas":2,"availableReplicas":2,
+                "conditions":[{"type":"Available","status":"True"}]}
+        });
+        assert_eq!(classify(&deployment), Category::Ready);
+        deployment["status"]["observedGeneration"] = json!(3);
+        assert_eq!(classify(&deployment), Category::Incomplete);
+        deployment["status"]["observedGeneration"] = json!(4);
+        deployment["status"]["updatedReplicas"] = json!(1);
+        assert_eq!(classify(&deployment), Category::Incomplete);
+        deployment["status"]["conditions"] =
+            json!([{"type":"Progressing","status":"False","reason":"ProgressDeadlineExceeded"}]);
+        assert_eq!(classify(&deployment), Category::Failed);
+    }
+
+    #[test]
+    fn certificate_and_workload_conditions_do_not_reuse_stale_success_or_failure() {
+        for kind in ["Certificate", "WorkloadDeployment"] {
+            let mut object = json!({
+                "kind":kind,"metadata":{"generation":2},"spec":{"replicas":1},
+                "status":{"replicas":{"ready":1,"current":1,"expected":1},
+                    "conditions":[{"type":"Ready","status":"True","observedGeneration":2}]}
+            });
+            assert_eq!(classify(&object), Category::Ready);
+            object["status"]["conditions"][0]["observedGeneration"] = json!(1);
+            assert_eq!(classify(&object), Category::Incomplete);
+            object["status"]["conditions"][0] =
+                json!({"type":"Ready","status":"False","reason":"Failed","observedGeneration":1});
+            assert_eq!(classify(&object), Category::Incomplete);
+            object["status"]["conditions"][0]["observedGeneration"] = json!(2);
+            assert_eq!(classify(&object), Category::Failed);
+            object["status"]["conditions"][0] =
+                json!({"type":"Ready","status":"Unknown","observedGeneration":2});
+            assert_eq!(classify(&object), Category::Unknown);
+        }
+    }
+
+    #[test]
+    fn cnpg_requires_a_ready_primary() {
+        let mut cluster = json!({"kind":"Cluster","status":{
+            "conditions":[{"type":"Ready","status":"True"}],
+            "currentPrimary":"wamn-pg-1","readyInstances":1,"phase":"Cluster in healthy state"
+        }});
+        assert_eq!(classify(&cluster), Category::Ready);
+        cluster["status"]["currentPrimary"] = Value::Null;
+        assert_eq!(classify(&cluster), Category::Incomplete);
+    }
+
+    #[test]
+    fn resource_queries_distinguish_absence_from_failure_and_keep_independent_results() {
+        let source = "platform/Deployment/runtime-operator";
+        assert_eq!(resource(source, Ok(None)).category, Category::Incomplete);
+        assert_eq!(resource(source, Err(())).category, Category::Unknown);
+        let mut observations = vec![resource(source, Err(()))];
+        append_resources(
+            &mut observations,
+            "identity/certificates",
+            Some(&json!({"items":[{
+                "kind":"Certificate","metadata":{"name":"identity"},
+                "status":{"conditions":[{"type":"Ready","status":"True"}]}
+            }]})),
+        );
+        assert_eq!(observations.last().unwrap().category, Category::Ready);
+        assert_eq!(
+            combined(observations.iter().map(|item| item.category)),
+            Category::Unknown
+        );
+        assert_eq!(
+            combined([Category::Ready, Category::Failed, Category::Unknown]),
+            Category::Failed
+        );
+    }
+
+    #[test]
+    fn resource_images_and_running_container_ids_remain_distinct() {
+        let object = json!({
+            "kind":"Pod", "spec":{"containers":[{"name":"host","image":"registry/host:next@sha256:abc"}]},
+            "status":{"phase":"Running","conditions":[{"type":"Ready","status":"True"}],
+                "containerStatuses":[{"name":"host","image":"registry/host:old","imageID":"containerd://sha256:def","state":{"running":{"startedAt":"2026-11-06T00:00:00Z"}}}]}
+        });
+        let status = resource("hosts/pods/host", Ok(Some(&object)));
+        assert_eq!(status.category, Category::Ready);
+        assert_eq!(
+            status.images["spec/containers/0"],
+            object["spec"]["containers"][0]["image"]
+        );
+        assert_eq!(
+            status.running_images["host"],
+            object["status"]["containerStatuses"][0]["imageID"]
+        );
+        let mut failed = object;
+        failed["status"]["phase"] = json!("Failed");
+        assert_eq!(classify(&failed), Category::Failed);
+    }
+
+    #[test]
+    fn selected_images_are_enumerated_and_an_inaccessible_chart_stays_unknown() {
+        let values = json!({"host":{"image":"registry/host@sha256:abc"},
+            "roles":{"http":{"image":"registry/http@sha256:def"}},
+            "extra":[{"image":"registry/extra@sha256:fed"}]});
+        let mut images = BTreeMap::new();
+        image_references(&values, "platform", &mut images);
+        assert_eq!(images["platform/host"], values["host"]["image"]);
+        assert_eq!(
+            images["platform/roles/http"],
+            values["roles"]["http"]["image"]
+        );
+        assert_eq!(images["platform/extra/0"], values["extra"][0]["image"]);
+        for (path, image) in images {
+            assert_eq!(
+                values
+                    .pointer(&format!("{}/image", path.strip_prefix("platform").unwrap()))
+                    .unwrap(),
+                &image
+            );
+        }
+        let selected = selected_chart(Some(
+            &json!({"platform":{"chart":"/nonexistent/dep-08a-selected-chart"}}),
+        ));
+        assert_eq!(selected.category, Category::Unknown);
+        assert!(selected.images.is_empty());
+        assert_eq!(selected_chart(None).category, Category::Unknown);
+    }
+
+    #[test]
+    fn endpoint_slices_report_only_ready_nonterminating_addresses() {
+        let mut slices = json!({"items":[{"addressType":"IPv4","ports":[{"name":"http","port":80}],
+            "endpoints":[{"addresses":["10.0.0.7"],"conditions":{"ready":true,"terminating":false}}]}]});
+        assert_eq!(
+            endpoints("hosts/Service/control", Some(&slices)).category,
+            Category::Ready
+        );
+        slices["items"][0]["endpoints"][0]["conditions"]["terminating"] = json!(true);
+        assert_eq!(
+            endpoints("hosts/Service/control", Some(&slices)).category,
+            Category::Incomplete
+        );
+        assert_eq!(
+            endpoints("hosts/Service/control", None).category,
+            Category::Unknown
+        );
+    }
+
+    #[test]
+    fn installed_baseline_is_not_judged_against_the_status_executable() {
+        use crate::provision_system::SystemState;
+        let state = SystemState::BaselineMismatch {
+            installed: "installed-hash".into(),
+            expected: "local-executable-hash".into(),
+        };
+        let observed = database_state(&state, Some("installed-hash"));
+        assert_eq!(observed.category, Category::Ready);
+        assert_eq!(
+            database_state(&SystemState::Absent, None).category,
+            Category::Incomplete
+        );
+        assert_eq!(
+            database_state(&SystemState::Incomplete, None).category,
+            Category::Incomplete
+        );
+    }
+
+    #[test]
+    fn past_job_pods_do_not_override_current_service_readiness() {
+        let pods = json!({"items":[
+            {"kind":"Pod","metadata":{"name":"bootstrap-old","ownerReferences":[{"kind":"Job"}]},"status":{"phase":"Failed"}},
+            {"kind":"Pod","metadata":{"name":"identity-current","ownerReferences":[{"kind":"ReplicaSet"}]},
+                "status":{"phase":"Running","conditions":[{"type":"Ready","status":"True"}]}}
+        ]});
+        let mut observations = Vec::new();
+        append_resources(&mut observations, "identity/pods", Some(&pods));
+        assert_eq!(
+            combined(observations.iter().map(|item| item.category)),
+            Category::Ready
+        );
+        assert!(
+            observations
+                .iter()
+                .any(|item| item.source.ends_with("identity-current"))
+        );
+    }
+
+    #[test]
+    fn status_output_excludes_environment_values_and_controller_messages() {
+        let sensitive = "private-database-password";
+        let object = json!({"kind":"Deployment","metadata":{"generation":1},
+            "spec":{"replicas":1,"template":{"spec":{"containers":[{"name":"host","image":"registry/host@sha256:abc",
+                "env":[{"name":"DATABASE_URL","value":sensitive}]}]}}},
+            "status":{"observedGeneration":1,"conditions":[{"type":"Progressing","status":"False",
+                "reason":"ProgressDeadlineExceeded","message":sensitive}]}});
+        let status = PlatformStatus {
+            category: Category::Failed,
+            selected: selected_chart(None),
+            observations: vec![resource("hosts/Deployment/control", Ok(Some(&object)))],
+            warnings: vec![],
+        };
+        let mut output = Vec::new();
+        write(&status, &mut output).unwrap();
+        assert!(!String::from_utf8(output).unwrap().contains(sensitive));
+    }
+}

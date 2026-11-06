@@ -27,5 +27,6 @@ pub mod pools;
 pub mod project;
 pub mod provider;
 pub mod render;
+pub mod status;
 pub mod steps;
 pub mod web;
