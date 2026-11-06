@@ -15,14 +15,15 @@ data:
         timeout: 200ms
     exporters:
       # [9.8] RECEIVED OTLP app metrics (wamn.*) re-exposed as Prometheus text on
-      # :8889 for metricbench to scrape. add_metric_suffixes:false keeps the OTel
-      # names verbatim (dots→underscores only: wamn.run.executions →
-      # wamn_run_executions), so the gate greps stable names. This is distinct
+      # :8889 for metricbench to scrape. UnderscoreEscapingWithoutSuffixes keeps
+      # the OTel names verbatim (dots→underscores only: wamn.run.executions →
+      # wamn_run_executions), so the gate greps stable names. Collector 0.161
+      # ignores add_metric_suffixes and appends unit suffixes. This is distinct
       # from the collector's OWN telemetry on :8888 (otelcol_* under
       # service.telemetry.metrics).
       prometheus:
         endpoint: 0.0.0.0:8889
-        add_metric_suffixes: false
+        translation_strategy: UnderscoreEscapingWithoutSuffixes
     service:
       telemetry:
         metrics:
