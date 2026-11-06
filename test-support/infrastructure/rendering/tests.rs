@@ -86,7 +86,6 @@ const HOST_TEMPLATE: &str = r#"runtime:
             secretKeyRef:
               name: wamn-host-db
               key: url
-        - { name: WAMN_PG_GUEST_POOL_MAX, value: "14" }
         - { name: WAMN_WASMTIME_CACHE_DIR, value: /tmp/wamn-wasmtime-cache }
         - { name: DOCKER_CONFIG, value: /etc/wamn/registry }
         - name: WAMN_COMPONENT_ARTIFACT_BASE

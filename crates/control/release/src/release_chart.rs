@@ -633,13 +633,12 @@ mod tests {
         let mut input = input();
         input.manifest_digest = "e3b0".into();
         assert!(values(&input).is_err());
-        for variable in [
-            "WAMN_ORG",
-            "WASMCLOUD_HOST_ENVIRONMENT",
-            "WASMTIME_POOLING_LINEAR_MEMORY_KEEP_RESIDENT",
-            "WASMTIME_POOLING_TABLE_KEEP_RESIDENT",
-            "WASMTIME_POOLING_ASYNC_STACK_KEEP_RESIDENT",
-        ] {
+        let defaults = plan::runtime_default_variables().expect("runtime defaults");
+        assert!(!defaults.is_empty(), "the chart sets runtime defaults");
+        for variable in ["WAMN_ORG", "WASMCLOUD_HOST_ENVIRONMENT"]
+            .into_iter()
+            .chain(defaults.iter().map(String::as_str))
+        {
             let mut input = super::tests::input();
             input.host_group.insert(
                 "env".into(),

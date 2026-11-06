@@ -158,6 +158,18 @@ pub fn values(input: &ValuesInput) -> anyhow::Result<Value> {
         }),
         "the host group body sets a scope variable, which the release chart derives"
     );
+    // The chart appends the group's env to its runtime defaults without
+    // merging by name, and the API server refuses a repeated name.
+    let defaults = runtime_default_variables()?;
+    if let Some(name) = variables
+        .iter()
+        .filter_map(|variable| variable["name"].as_str())
+        .find(|name| defaults.iter().any(|default| default == name))
+    {
+        anyhow::bail!(
+            "the host group body sets {name}, which the release chart's runtime defaults set on every host"
+        );
+    }
     // The http Workload image is the entry path joined with the base the
     // hosts resolve members against.
     let component_base = variables
@@ -469,10 +481,25 @@ pub const TELEMETRY_VARIABLES: [(&str, &str); 4] = [
     ("OTEL_TRACES_SAMPLER_ARG", "0.1"),
 ];
 
+/// The env names that `runtime-operator.runtime.env` of the release chart's
+/// values sets on every host (the one host default, D1-5).
+pub(super) fn runtime_default_variables() -> anyhow::Result<Vec<String>> {
+    let chart: Value = serde_yaml::from_str(include_str!(
+        "../../../../../deploy/platform/release/values.yaml"
+    ))
+    .context("decode the release chart values")?;
+    Ok(chart["runtime-operator"]["runtime"]["env"]
+        .as_sequence()
+        .context("the release chart values have runtime env")?
+        .iter()
+        .filter_map(|variable| variable["name"].as_str().map(str::to_owned))
+        .collect())
+}
+
 /// The host variables a host group body must not set: the derived ones, the
-/// telemetry and allocator residency ones, and the chart's environment
-/// variable, which the release replaces by argument.
-pub(super) const REFUSED_VARIABLES: [&str; 12] = [
+/// telemetry ones, and the chart's environment variable, which the release
+/// replaces by argument. The runtime defaults are refused beside them.
+pub(super) const REFUSED_VARIABLES: [&str; 9] = [
     "WAMN_ORG",
     "WAMN_PROJECT",
     "WAMN_DRAIN_BOUND_SECONDS",
@@ -482,9 +509,6 @@ pub(super) const REFUSED_VARIABLES: [&str; 12] = [
     "OTEL_TRACES_SAMPLER",
     "OTEL_TRACES_SAMPLER_ARG",
     "WASMCLOUD_HOST_ENVIRONMENT",
-    "WASMTIME_POOLING_LINEAR_MEMORY_KEEP_RESIDENT",
-    "WASMTIME_POOLING_TABLE_KEEP_RESIDENT",
-    "WASMTIME_POOLING_ASYNC_STACK_KEEP_RESIDENT",
 ];
 
 /// The host group's raw-socket egress mode. Chart 2.11.0 defaults it to
