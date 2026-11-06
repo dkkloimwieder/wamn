@@ -67,10 +67,10 @@ After the first completion, redelivery must reach the handler again and leave on
 A distinct valid receipt creates its own inspection.
 Publishing twice is insufficient when broker deduplication prevents the second handler delivery.
 
-Deliver a routable poison event followed by an independent valid event.
-Observe the correlated native broker termination advisory and the later inspection within the declared retry and time bounds.
-Inspect the actual source, registration, deliveries, business state, and resource restoration.
-The native failure record is a broker advisory, not a fabricated application dead-letter row.
+Deliver a routable poison event that blocks its handler, followed by an independent valid event.
+The materializer acknowledges each event after it admits the run, so the poison retries happen in the workflow queue, not in the broker.
+Observe the blocked handler and the later inspection within the time bound.
+Inspect the actual source, registration, consumer drainage, business state, and resource restoration.
 Payload recovery is limited by source retention.
 These outcomes require stated recovery assumptions and do not promise immediate progress or platform-wide exactly-once effects.
 

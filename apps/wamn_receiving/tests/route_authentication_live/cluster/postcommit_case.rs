@@ -45,7 +45,7 @@ async fn run(evidence: &std::path::Path) -> anyhow::Result<()> {
             "failure":result.as_ref().err().map(|error| format!("{error:#}")),
             "teardown_leftovers":cluster.resources.teardown_leftovers,
             "passing_arms":if result.is_ok() { vec!["unchanged-overlay-routes", "schema-requirements-observed",
-                "duplicate-handler-delivery", "retry-exhaustion-advisory", "independent-event-progress"] } else { Vec::new() },
+                "duplicate-handler-delivery", "independent-event-progress"] } else { Vec::new() },
         }))?,
     )?;
     result?;
