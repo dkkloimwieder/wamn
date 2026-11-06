@@ -13,12 +13,14 @@
 //! Checks, each recorded with its command and output in `report.json`:
 //! 1. The first apply creates the environment: its row, its database and
 //!    one Helm revision.
-//! 2. A second apply of the same document writes no Helm revision.
-//! 3. A connection-only change writes no Helm revision and changes the
+//! 2. Reapply preserves data and the selected release, including after an
+//!    interrupted Helm upgrade. The existing chart gains a temporary pre-upgrade
+//!    Pod hook with an unavailable image so Helm waits until the test stops it.
+//! 3. A connection-only change preserves the selected release and changes the
 //!    release binding without changing a connection generation.
-//! 4. `env show` output applied again writes nothing.
+//! 4. `env show` output applied again preserves the selected release and data.
 //!    A separate HTTP environment binds HTTP requirements, reproduces its
-//!    document through show, and preserves its rows and Helm revision on reapply.
+//!    document through show, and preserves its rows and release on reapply.
 //!    One POST through transform -> http-request reaches its recording server.
 //!    The server sees one bearer header and the guest returns status 200.
 //!    A signed inbound POST delivers inline like the unsigned route and sends once.
@@ -36,7 +38,8 @@
 //! Checks of `wamn-snz0.4` (§10.1 steps 8 and 9, §11.2, §12.2, §12.3, R8,
 //! R20, R22):
 //! 6. apply B, then rollback: the live set is A, the route host and the
-//!    connections are unchanged, and no revision is a `helm rollback`.
+//!    connections are unchanged, and this operation uses apply rather than
+//!    `helm rollback`.
 //! 7. rollback with one retained revision refuses "no retained prior
 //!    release" and the history is unchanged.
 //! 8. `host_exits_before_its_grace_period`: a deleted host pod with a pinned
@@ -220,7 +223,6 @@ struct CheckContext {
     registry: PackageRegistry,
     admin_url: String,
     digest: String,
-    show_expected: Option<(usize, Option<i64>)>,
     _forward: Child,
     _nats_forward: Child,
 }
@@ -1180,14 +1182,13 @@ async fn scenario(run: &mut Run, repository: &Path, source: &Path) -> anyhow::Re
     run.kept.image_set = Some(set.clone());
     let platform = check_platform(run, &system_url, chart, events);
     let read_url = observer_url(run, &platform).await?;
-    let mut context = CheckContext {
+    let context = CheckContext {
         repository: repository.to_owned(),
         platform: platform.clone(),
         images: set.clone(),
         registry: package_registry.clone(),
         admin_url: admin_url.clone(),
         digest: digest.clone(),
-        show_expected: None,
         _forward: forward,
         _nats_forward: nats_forward,
     };
@@ -1367,22 +1368,51 @@ async fn scenario(run: &mut Run, repository: &Path, source: &Path) -> anyhow::Re
     run.collect("F2 failed host report", result);
 
     let result = async {
-        // 2. The same document again writes no revision.
-        apply(&dev, "dev-again").await?;
-        let again = run.revisions(&name).await?;
-        run.pass(
-            "second apply writes no Helm revision",
-            &format!("helm -n {NAMESPACE} history {name}"),
-            json!({"before": first, "after": again}),
-            again == first,
-        );
+        // 2. Reapply and recovery preserve the data written in check 17.
+        let suffix = row
+            .as_ref()
+            .and_then(|row| row["instance_suffix"].as_str())
+            .context("the dev row")?;
+        let database =
+            wamn_control_provision::project_env_database_name(ORG, PROJECT, "dev", suffix);
+        let dev_url = format!("postgresql://postgres:{password}@127.0.0.1:{port}/{database}");
+        let (project, task) = connect(&dev_url).await?;
+        let before = platform_configuration::read_back(project.as_ref()).await?;
+        ensure!(!before.is_empty(), "the reapply fixture contains data");
+        for recovery in [false, true] {
+            if recovery {
+                interrupt_upgrade(run, &platform, &name).await?;
+            }
+            apply(&dev, "dev-again").await?;
+            let after = platform_configuration::read_back(project.as_ref()).await?;
+            let selected = environment::show::show(&platform, &dev.triple()).await?;
+            let live = run.live_digests(&name).await?;
+            let status = run
+                .json("helm", &["-n", NAMESPACE, "status", &name, "-o", "json"])
+                .await?;
+            run.pass(
+                if recovery {
+                    "reapply recovers a pending Helm upgrade and preserves data and release"
+                } else {
+                    "reapply preserves data and release with healthy resources"
+                },
+                "env apply; SELECT platform configuration; env show; helm status; kubectl get pods",
+                json!({"before": before, "after": after, "selected": selected.release,
+                    "live": live, "status": status["info"]["status"]}),
+                before == after
+                    && selected.release == dev.release
+                    && live == [digest.as_str()]
+                    && status["info"]["status"] == "deployed",
+            );
+        }
+        task.abort();
 
         Ok(())
     }
     .await;
     run.collect("2 unchanged apply", result);
 
-    // 3. A binding change writes no revision or system generation.
+    // 3. A binding change preserves the release and system generation.
     let generation = async |system: &tokio_postgres::Client| -> anyhow::Result<Option<i64>> {
         connection_generation(system, &admin_url).await
     };
@@ -1400,19 +1430,21 @@ async fn scenario(run: &mut Run, repository: &Path, source: &Path) -> anyhow::Re
         .insert("labels".into(), "labels-dev".into());
     apply(&connected, "dev-connection-changed").await?;
     let generation_two = generation(system.as_ref()).await?;
-    let after_connection = run.revisions(&name).await?;
+    let selected = environment::show::show(&platform, &connected.triple()).await?;
+    let live = run.live_digests(&name).await?;
     run.pass(
-        "connection-only change writes no Helm revision",
-        &format!(
-            "helm -n {NAMESPACE} history {name}; SELECT active_generation FROM registry.connection"
-        ),
-        json!({"revisions": after_connection, "generations": [generation_one, generation_two],
+        "connection-only change preserves the release and connection generation",
+        "env show; kubectl get pods; SELECT active_generation FROM registry.connection",
+        json!({"selected": selected.release, "live": live,
+            "generations": [generation_one, generation_two],
             "binding": "the labels requirement changes its release binding"}),
-        after_connection == first && generation_one.is_some() && generation_one == generation_two,
+        selected.release == connected.release
+            && live == [digest.as_str()]
+            && generation_one.is_some()
+            && generation_one == generation_two,
     );
 
-    // 4. The output of env show, applied, writes nothing.
-    context.show_expected = Some((first, generation_two));
+    // 4. Reapply the document returned by env show.
     let shown = show_check(run, &context).await?;
 
     // HTTP follows the same bind and show paths in its own environment.
@@ -1457,7 +1489,6 @@ async fn scenario(run: &mut Run, repository: &Path, source: &Path) -> anyhow::Re
     http_connection::configure(run, &ensure_admin_url(&platform), "http").await?;
     apply(&http, "http-first").await?;
     let http_name = release_name(ORG, PROJECT, "http")?;
-    let http_revisions = run.revisions(&http_name).await?;
     let suffix: String = system
         .query_one(
             "SELECT instance_suffix FROM registry.project_envs \
@@ -1496,22 +1527,20 @@ async fn scenario(run: &mut Run, repository: &Path, source: &Path) -> anyhow::Re
         );
         apply(&http, "http-again").await?;
         let http_second = http_rows().await?;
-        let http_second_revisions = run.revisions(&http_name).await?;
         apply(&http_shown, "http-shown").await?;
         let http_after_show = http_rows().await?;
-        let http_shown_revisions = run.revisions(&http_name).await?;
+        let selected = environment::show::show(&platform, &http.triple()).await?;
+        let live = run.live_digests(&http_name).await?;
         run.pass(
-        "HTTP second apply and show output applied write no rows or Helm revision",
-        &format!(
-            "wamn-ctl env apply; helm -n {NAMESPACE} history {http_name}; SELECT connection rows"
-        ),
-        json!({"before": http_before, "second": http_second, "shown": http_after_show,
-            "revisions": [http_revisions, http_second_revisions, http_shown_revisions]}),
-        http_before == http_second
-            && http_before == http_after_show
-            && http_revisions == http_second_revisions
-            && http_revisions == http_shown_revisions,
-    );
+            "HTTP reapply and show output preserve rows and the selected release",
+            "env apply; env show; kubectl get pods; SELECT connection rows",
+            json!({"before": http_before, "second": http_second, "shown": http_after_show,
+                "selected": selected.release, "live": live}),
+            http_before == http_second
+                && http_before == http_after_show
+                && selected.release == http.release
+                && live == [http_digest.as_str()],
+        );
         let (auth, _auth_forward) = integration::auth_changes(run).await?;
         http_connection::assert_triggers(
             run,
@@ -1995,7 +2024,8 @@ async fn scenario(run: &mut Run, repository: &Path, source: &Path) -> anyhow::Re
     let result = async {
     // 6. R8: apply B, then rollback. The live set is A again, the route host
     // and the connections are unchanged, and no `helm rollback` ran: every
-    // revision is an apply's.
+    // revision in this operation is an apply's.
+    let before_rollback = run.revisions(&name).await?;
     let mut dev_b = shown.clone();
     dev_b.release = DeclaredRelease::Digest(digest_b.clone());
     apply(&dev_b, "dev-b").await?;
@@ -2025,6 +2055,7 @@ async fn scenario(run: &mut Run, repository: &Path, source: &Path) -> anyhow::Re
         .collect();
     let no_helm_rollback = descriptions
         .iter()
+        .skip(before_rollback)
         .all(|description| !description.starts_with("Rollback to"));
     run.pass(
         "rollback is an apply of the previous intended release",
@@ -2981,29 +3012,101 @@ async fn connection_generation(
     Ok(active)
 }
 
+async fn interrupt_upgrade(run: &Run, platform: &Platform, name: &str) -> anyhow::Result<()> {
+    // A pre-upgrade hook leaves the serving resources and values unchanged.
+    // Stop Helm only after it creates the hook and records the pending upgrade.
+    let hook_name = format!("{name}-interrupt");
+    let hook = platform.chart.join("templates/interrupt.yaml");
+    std::fs::write(
+        &hook,
+        format!(
+            "apiVersion: v1\nkind: Pod\nmetadata:\n  name: {hook_name}\n  annotations:\n    helm.sh/hook: pre-upgrade\nspec:\n  restartPolicy: Never\n  containers:\n    - name: wait\n      image: {UNPULLED}\n"
+        ),
+    )?;
+    let log = std::fs::File::create(run.work.join("interrupted-upgrade.log"))?;
+    let mut upgrade = Command::new("helm")
+        .args(["upgrade", name])
+        .arg(&platform.chart)
+        .args([
+            "-n",
+            NAMESPACE,
+            "--reuse-values",
+            "--wait",
+            "--timeout",
+            "5m",
+        ])
+        .env("KUBECONFIG", &platform.target.kubeconfig)
+        .args(["--kube-context", &platform.target.context])
+        .stdout(log.try_clone()?)
+        .stderr(log)
+        .kill_on_drop(true)
+        .spawn()
+        .context("start the Helm upgrade to interrupt")?;
+    let pending = async {
+        let deadline = Instant::now() + Duration::from_secs(60);
+        loop {
+            let status = run
+                .json("helm", &["-n", NAMESPACE, "status", name, "-o", "json"])
+                .await?;
+            let pod = run
+                .run(
+                    "kubectl",
+                    &[
+                        "-n",
+                        NAMESPACE,
+                        "get",
+                        "pod",
+                        &hook_name,
+                        "--ignore-not-found",
+                        "-o",
+                        "name",
+                    ],
+                )
+                .await?;
+            if status["info"]["status"] == "pending-upgrade" && !pod.trim().is_empty() {
+                break Ok(());
+            }
+            ensure!(
+                upgrade.try_wait()?.is_none(),
+                "Helm exited before interruption"
+            );
+            ensure!(
+                Instant::now() < deadline,
+                "Helm did not reach its pre-upgrade hook"
+            );
+            tokio::time::sleep(Duration::from_millis(200)).await;
+        }
+    }
+    .await;
+    let stopped = upgrade.kill().await;
+    std::fs::remove_file(hook)?;
+    pending?;
+    stopped?;
+    run.run("kubectl", &["-n", NAMESPACE, "delete", "pod", &hook_name])
+        .await?;
+    Ok(())
+}
+
 async fn show_check(run: &mut Run, context: &CheckContext) -> anyhow::Result<EnvironmentDocument> {
     let platform = &context.platform;
     let name = release_name(ORG, PROJECT, "dev")?;
     let (system, task) = connect(&observer_url(run, platform).await?).await?;
     system.batch_execute("SET ROLE wamn_system").await?;
-    let before = if let Some(expected) = context.show_expected {
-        expected
-    } else {
-        (
-            run.revisions(&name).await?,
-            connection_generation(system.as_ref(), &context.admin_url).await?,
-        )
-    };
+    let before = connection_generation(system.as_ref(), &context.admin_url).await?;
     let shown = environment::show::show(platform, &Triple::new(ORG, PROJECT, "dev")).await?;
     apply_check_document(run, context, &shown, "dev-shown").await?;
-    let after_show = run.revisions(&name).await?;
+    let selected = environment::show::show(platform, &shown.triple()).await?;
+    let live = run.live_digests(&name).await?;
     let generation_three = connection_generation(system.as_ref(), &context.admin_url).await?;
     task.abort();
     run.pass(
-        "env show output applied writes nothing",
-        &format!("wamn-ctl env show {ORG}/{PROJECT}/dev | env apply; helm -n {NAMESPACE} history {name}"),
-        json!({"document": shown.to_kcl(), "revisions": after_show, "generation": generation_three}),
-        after_show == before.0 && generation_three == before.1,
+        "env show output applied preserves the release and connection generation",
+        "env show | env apply; env show; kubectl get pods; SELECT active_generation FROM registry.connection",
+        json!({"document": shown.to_kcl(), "selected": selected.release, "live": live,
+            "generation": generation_three}),
+        selected.release == shown.release
+            && live == [context.digest.as_str()]
+            && generation_three == before,
     );
     Ok(shown)
 }
@@ -3164,7 +3267,6 @@ async fn rerun(
         registry,
         admin_url,
         digest: run.kept.release_digest.clone(),
-        show_expected: None,
         _forward: forward,
         _nats_forward: nats_forward,
     };

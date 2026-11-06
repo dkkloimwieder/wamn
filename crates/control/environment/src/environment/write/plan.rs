@@ -4,14 +4,6 @@ use super::{
 };
 use anyhow::Context as _;
 
-/// The values with `audit` removed: who applied is no reason to write.
-pub(super) fn without_audit(mut values: serde_json::Value) -> serde_json::Value {
-    if let Some(values) = values.as_object_mut() {
-        values.remove("audit");
-    }
-    values
-}
-
 pub(super) fn host_group(
     mut group: Mapping,
     org: &str,

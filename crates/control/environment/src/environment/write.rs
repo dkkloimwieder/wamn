@@ -1,18 +1,12 @@
 //! Step 6 of `apply`: the one rollout write
 //! (docs/architecture/overview.md#environment-lifecycle).
 //!
-//! The verb renders the `release` values. When the chart version and the
-//! values, `audit` excluded, equal the newest successful revision's, there is
-//! nothing for Kubernetes to converge on and the Helm call alone is skipped;
-//! readiness still runs. Otherwise it runs `helm upgrade --install` at the
-//! chart's own version with `--wait`, the policy's readiness
+//! The verb renders the `release` values, recovers any pending Helm operation,
+//! and runs `helm upgrade --install` with `--wait`, the policy's readiness
 //! budget as `--timeout`, `--rollback-on-failure`, `--history-max 50` and the
 //! description `apply by <actor>`, or `rollback by <actor>: <reason>` (§11.2).
-//! A connection-only apply writes no revision,
-//! because no connection fact is in the values.
 
 pub(super) mod plan;
-use plan::without_audit;
 
 use std::path::Path;
 use std::time::{Duration, Instant};
@@ -36,15 +30,13 @@ pub struct Written {
     pub roles: Vec<RoleName>,
     /// The end of the readiness budget, set when the write started (§10.3).
     pub deadline: Instant,
-    /// Whether Helm wrote a revision.
-    pub helm_written: bool,
 }
 
-/// Render the values and write the release chart when they differ.
+/// Render the values, recover pending operations, and write the release chart.
 ///
 /// # Errors
 ///
-/// When the chart has no version, the values do not render, or Helm fails.
+/// When the values do not render or Helm fails.
 /// A Helm failure leaves the previous release serving:
 /// `--rollback-on-failure` restores it.
 pub async fn write(
@@ -58,11 +50,6 @@ pub async fn write(
     let policy = &analysis.authorities.policy;
     let budget = Duration::from_secs(u64::try_from(policy.readiness_budget_seconds)?);
     let deadline = Instant::now() + budget;
-    let shown: Value = serde_yaml::from_str(&helm_show_chart(&platform.chart).await?)
-        .context("parse the chart's Chart.yaml")?;
-    let version = shown["version"]
-        .as_str()
-        .with_context(|| format!("the chart {} has no version", platform.chart.display()))?;
     let (rendered, names) = release_values(
         document,
         &release.manifest,
@@ -74,24 +61,6 @@ pub async fn write(
         clients,
     )?;
     let release_name = analysis.authorities.release_name.clone();
-    let unchanged = analysis
-        .authorities
-        .revision
-        .as_ref()
-        .is_some_and(|revision| {
-            revision.chart == format!("release-{version}")
-                && serde_json::to_value(&rendered).is_ok_and(|rendered| {
-                    without_audit(rendered) == without_audit(revision.values.clone())
-                })
-        });
-    if unchanged {
-        return Ok(Written {
-            release_name,
-            roles: names,
-            deadline,
-            helm_written: false,
-        });
-    }
     let private = PrivateDirectory::create()?;
     let values = private.path("values.yaml");
     std::fs::write(&values, serde_yaml::to_string(&rendered)?)
@@ -116,7 +85,6 @@ pub async fn write(
         release_name,
         roles: names,
         deadline,
-        helm_written: true,
     })
 }
 
@@ -125,25 +93,6 @@ pub fn render(input: &ValuesInput, path: Option<&Path>) -> anyhow::Result<Value>
     let mut input = input.clone();
     input.host_group = host_group(path, &input.org, &input.project, &input.env)?;
     release_chart::values(&input)
-}
-
-async fn helm_show_chart(chart: &std::path::Path) -> anyhow::Result<String> {
-    let output = tokio::process::Command::new("helm")
-        .args(["show", "chart"])
-        .arg(chart)
-        .stdin(std::process::Stdio::null())
-        .kill_on_drop(true)
-        .output()
-        .await
-        .context("start helm")?;
-    ensure!(
-        output.status.success(),
-        "helm show chart {} exited {}: {}",
-        chart.display(),
-        output.status,
-        String::from_utf8_lossy(&output.stderr)
-    );
-    String::from_utf8(output.stdout).context("helm wrote text")
 }
 
 /// Build release values from the document, artifact, policy, and host overlay.
@@ -248,14 +197,5 @@ mod tests {
                 assert!(values["webDigests"].as_mapping().unwrap().is_empty());
             }
         }
-    }
-
-    #[test]
-    fn audit_is_no_difference() {
-        let written = json!({"release": {"manifestDigest": "sha256:a"}, "audit": {"actor": "a"}});
-        let rendered = json!({"release": {"manifestDigest": "sha256:a"}, "audit": {"actor": "b"}});
-        assert_eq!(without_audit(written.clone()), without_audit(rendered));
-        let other = json!({"release": {"manifestDigest": "sha256:b"}, "audit": {"actor": "a"}});
-        assert_ne!(without_audit(written), without_audit(other));
     }
 }

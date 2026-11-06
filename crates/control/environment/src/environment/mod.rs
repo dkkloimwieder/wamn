@@ -278,11 +278,9 @@ pub(crate) async fn apply_locked(
         readiness::wait(platform, &written)
             .await
             .context("step 7, readiness")?;
-        analysis.plan.push(if written.helm_written {
-            format!("wrote a revision of {release_name}")
-        } else {
-            format!("the values of {release_name} are unchanged; Helm wrote nothing")
-        });
+        analysis
+            .plan
+            .push(format!("wrote a revision of {release_name}"));
     } else if analyse::release_present(platform, &release_name).await? {
         // Release none: no qualification, stage or readiness. The uninstall
         // starts the drain (§12.2).
