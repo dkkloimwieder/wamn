@@ -299,7 +299,6 @@ The case resolves rendered Secrets through the production credential provisioner
 It starts the debug host with rendered arguments and local component files.
 It also sends an upload to the separate file listener and requires the answer of the native file handler.
 This release serves no application host routes, so the handler answers `route-capacity-exhausted`.
-The kind case covers authenticated transfers.
 It requires readiness, running HTTP and materializer workloads, and a completed manual HTTP workflow with the expected response.
 Its old `respond` terminal must fail with `respond-without-caller` after the successful workflow.
 That failure proves that rendering alone cannot establish workflow success.
@@ -710,144 +709,18 @@ These adapters remain for their application and environment callers:
 - `crates/control/environment/src/platform/journey.rs` supplies those cluster inputs and application releases through `test-support/harness/src/case_release.rs`.
 - `test-support/harness/src/session_issuer.rs` installs identity for Receiving, WMS, and `tests/integration/src/identity_session_test/journey.rs`.
   It uses the identity adapter in `platform/journey.rs`, as does `crates/control/environment/examples/identity-chart-input.rs`.
-- `crates/control/dev/tests/environment_apply_kind.rs` installs cert-manager, CNPG, PostgreSQL, and the runtime operator.
-  Its `support/integration.rs::install_one_nats` and `support/session_issuer.rs::deploy` install NATS and identity for the same environment suite.
-  Both support modules live under `crates/control/environment/tests/`.
-- `crates/control/environment/tests/support/platform_images.rs` resolves the prepared chart for both kind cases and transfers role components for the environment case.
-  It does not install infrastructure.
-- `crates/control/environment/tests/support/environment_checks.rs` uses `kind_checks.rs` for the retained environment case's cleanup policy.
 
 The next application epic must replace this setup with product operations for databases, application SQL, release activation, and rollback.
 Remove each adapter when its application callers use those operations.
 These retained paths do not prove that application journeys use `wamn platform deploy`.
 The database tests in `install_sequence_live.rs` also remain: they exercise restricted SQL roles, package grants, and invitation refusal without a Kubernetes installer.
 
-The separate `environment_apply_kind` case does not gate Deploy Epic 1.
-Its application fixtures and qualification images remain outside the platform artifact set.
-Do not add runner images or a GCP chart build solely to make this historical case pass.
-Its [source](../../crates/control/dev/tests/environment_apply_kind.rs) owns the required artifacts and fixture inputs.
-The case uses `rest_connector`, `rest_consumer_fixture`, and `wamn_integration` to exercise capture and event delivery.
-It requires one publication and one logical replication slot for the environment.
-The publication covers both application schemas, and every captured entity table uses full replica identity.
-Each trigger must receive only the change from its own schema.
+### Environment deployment coverage
 
-With the application fixtures and chart prepared, run that case separately:
-
-```bash
-WAMN_RELEASE_CHART=<prepared-chart> cargo test -p wamn-dev-control --test environment_apply_kind -- --ignored --nocapture
-```
-
-### Environment coverage outside Epic 1
-
-The following map describes test ownership, not a passing execution result.
-The platform journey does not establish application behavior.
-DEP-05a's focused `support/environment_reapply.rs` check covers unchanged Helm application, the selected digest, and pending-upgrade recovery.
-Application-data preservation across env apply is untested outside `environment_apply_kind`.
-The focused check does not cover check 4's HTTP reapply assertion or interruption during Secret transfer.
-
-| Environment check | Other coverage and remaining gap |
-| --- | --- |
-| 1: first environment apply | `install_sequence_live.rs` covers database setup under restricted roles. The combined environment row, CNPG database, and first Helm revision remain environment-case-only. |
-| 2: unchanged apply and interruption | DEP-05a covers unchanged Helm application, the selected digest, and pending-upgrade recovery through `support/environment_reapply.rs`. `platform_apply_kind` also covers system data across platform reapply and retry. Application-data preservation across env apply remains environment-case-only. |
-| 3: connection-only change | `environment_bindings_live.rs::two_packages_can_bind_distinct_names_to_one_connection_without_authority_writes` covers binding authority. Preserving the running release and generation across env apply remains environment-case-only. |
-| 4: show, HTTP, schedules, connectors | `native_host` covers the real HTTP guest and bearer request. `workflow_schedule_live.rs` covers scheduled admission, actor, and ticks. The full show/apply round trip, deployed signed requests, API key and SigV4 requests, REST retries, and NetSuite pull remain environment-case-only. |
-| 5 / A12: environment isolation | Receiving and WMS delivery cases call `test-support/harness/src/delivery.rs::check`, then `release_chart.rs::environments_isolated`. This covers live objects and Secret references when the kept cluster contains at least two environments. A single-environment run reports this assertion as unexecuted. |
-| 6: rollback | `environment_render.rs::prekind_environment_renders` renders the prior release. Live rollback with unchanged route and connections remains environment-case-only. |
-| 7: rollback refusal | No equivalent deployed test identified. The retained-revision refusal and unchanged Helm history remain environment-case-only. |
-| 8: host drain | `services/host/tests/native_lifecycle_live.rs` covers signal shutdown. `services/host/src/host/lease_tests.rs` covers lease handoff. Kubernetes grace-period exit with the pinned backlog remains environment-case-only. |
-| 9: release none | No equivalent deployed test identified. Host removal with the instance enabled and no binding remains environment-case-only. |
-| 10: stranded-run deletion refusal | No equivalent deployed test identified. This refusal remains environment-case-only. |
-| 11: delete with data | No equivalent deployed test identified. Database and registry-row removal remain environment-case-only. |
-| 12: delete without data | No equivalent deployed test identified. Database retention with registry-row removal remains environment-case-only. |
-| 13 / A7: route isolation | Render tests cover route values. Routing one shared release through only each environment's own host remains environment-case-only. |
-| 14 / A1: heartbeat labels | Receiving and WMS cluster and delivery cases call `test-support/infrastructure/release_chart.rs::hosts_ready`. It reads live Host objects and asserts both `hostgroup` and `wamn.release`. |
-| 15: wrong-release placement | Receiving and WMS delivery cases call `test-support/infrastructure/release_chart.rs::a1_probe` for HTTP releases. It submits a mismatched WorkloadDeployment and asserts that the operator places no workload. |
-| 16: operator unchanged | No equivalent application test identified. Stable operator revision and resourceVersion across environment operations remain environment-case-only. |
-| 17: administration configuration | `run_plane_live.rs` runs `run_plane_live/platform_configuration.rs::platform_configuration_leg` for writes, history, and guest reads. The credential delivered through the Kubernetes Secret remains environment-case-only. |
-| F2: failed host report | `environment_render.rs::host_report_release_requires_component_preload` covers the fixture manifest. The report from an actual failed rollout remains environment-case-only. |
-| Native files on kind MinIO | `files_live.rs` covers file grants, active generations, and MinIO mutations. The deployed file listener with identity sessions remains environment-case-only. |
-| REST and NetSuite capture | Render and schedule tests cover parts of these flows. Deployed CDC across both application schemas and trigger isolation remain environment-case-only. |
-
-All environment-case-only behavior above remains untested when this case is omitted.
-The platform journey retains its assertion that deployment creates no generic completion ConfigMaps because that absence is an Epic 1 contract.
-The retired numbered installer and its positive completion assertions supply no coverage.
-
-### Add a check to an application kind case
-
-Each retained application kind case is one test, and a full run takes about 30 minutes.
-A check that fails on a cluster fact costs a full run for each fix.
-Before you run a case with a new check, do these steps:
-
-1. Make sure that the kind nodes can pull every image that the check deploys. If they cannot, load a local copy with `kind load docker-image` and set `imagePullPolicy: Never`.
-2. Reach a release host through an in-cluster probe pod, as `route_probe_request` does for check A7.
-3. If the check needs a port forward, select a running pod with the label `wasmcloud.com/hostgroup=<release>`.
-   For native file transfers, forward to port 8082. The workload HTTP port is 80.
-4. Try each new `kubectl` command by hand on the cluster of a running case before the case reaches the new check.
-
-These retained application fixtures use a `<release>-http` Service without a selector, so they forward directly to a pod.
-For platform control access, use the service port-forward in [deployment](deployment.md#local-access-and-owner-invitation).
-The case found no EndpointSlice for that Service either.
-The `environment_apply_kind` case uses `wamn-apply-<k>` as its cluster name.
-Here, `<k>` contains the first eight hexadecimal characters of the SHA256 hash of the canonical worktree path.
-The registry name is `<cluster>-registry`.
-Each run writes results to `$TMPDIR/wamn-apply-<pid>`.
-The kubeconfig and secrets stay in the original work directory.
-
-A failed full run keeps its cluster, registry, event containers, images, releases, databases, and secrets.
-A passing full run deletes them.
-Set `WAMN_KIND_KEEP=never` to delete them after either outcome.
-Unset or empty `WAMN_KIND_KEEP` keeps them on failure.
-The case rejects other values.
-
-A kept run writes `kept.json` beside `report.json`.
-This file records names, secret paths, failed checks, reached phases, image digests, and data for another run.
-The case prints the cluster name, kubeconfig path, failed names, and cleanup command on one line.
-A full run refuses an existing cluster or registry and names the cleanup command.
-It never deletes a kept cluster automatically.
-To delete the kept resources and secrets, run the command from `kept.json`:
-
-```bash
-tools/kind-kept-delete /absolute/path/to/kept.json
-```
-
-To rerun named checks, set both variables:
-
-```bash
-WAMN_KIND_REUSE=/absolute/path/to/kept.json \
-WAMN_KIND_CHECKS='14 / A1 heartbeat labels,4 show reapply' \
-WAMN_RELEASE_CHART=/absolute/path/to/chart \
-cargo test --locked --offline -p wamn-dev-control --test environment_apply_kind -- --ignored --exact environment_apply_kind --nocapture
-```
-
-A rerun runs only the named checks and always keeps the cluster.
-It writes a new result directory and a new `kept.json` with the original kubeconfig and secret paths.
-It refreshes only images whose digests change and records each transfer in `report.json`.
-It uses prepared packages and does not rebuild them.
-Setting only one variable fails.
-An empty selection or an unknown name fails and lists the known names.
-
-Each rerunnable check declares its required phase, a point that setup reaches.
-The `environment` phase includes the operators, registry, provisioned organization, packages, releases, system database, and NATS.
-The `release` phase adds the applied dev environment.
-The `bindings` phase adds the dev connection apply.
-Deleting the dev environment removes the `release` and `bindings` phases.
-A rerun refuses a check when its phase is missing.
-
-The rerun table contains these checks:
-
-| Name | Phase |
-| --- | --- |
-| `4 rest_connector` | `environment` |
-| `4 netsuite` | `environment` |
-| `native files on kind MinIO` | `environment` |
-| `14 / A1 heartbeat labels` | `release` |
-| `15 wrong release placement` | `release` |
-| `F2 failed host report` | `release` |
-| `4 show reapply` | `bindings` |
-
-When you add a rerunnable check, add its name, phase, and function to `CHECKS` in `environment_apply_kind.rs`.
-Call that same function at the existing point in the full run.
-The `WAMN_KIND_CHECKS` selection applies only to `environment_apply_kind`.
+The environment checks have no replacement until DEP2-13.
+DEP2-13 owns fresh application installation, reapply, rollback, and data preservation through product commands.
+The old connector, file, drain, deletion, and schedule combinations have no replacement in this epic.
+Product rendering tests and the retained native host, file fixture, and database tests remain at their existing tiers.
 
 ### Files on PostgreSQL and MinIO
 
@@ -913,33 +786,13 @@ The [pinned MinIO request parser](https://github.com/minio/minio/blob/76c06ff1d2
 The test installs a one-day lifecycle rule for staging only, then requires that live bytes and unlinked metadata stay.
 No clock change or external aged snapshot is required.
 
-The `environment_apply_kind` scenario also runs the native file assertions in its existing cluster.
-The check prepares the pinned MinIO server, its public policy, and staging lifecycle rules for the `files` environment.
-It publishes the file package, binds and rotates both S3 connections, and applies the file environment.
-It creates sessions with and without file grants and uses scoped database readers.
-Uploads and reads use port 8082. Metadata operations such as `file.expose` use the HTTP role on port 80.
-The assertions cover hashes, access refusals, public origin behavior, and read binding refusals.
-
-The fixture pulls the pinned `chainguard/minio` and `chainguard/minio-client` images from Docker Hub.
-The server contains MinIO `RELEASE.2026-10-23T20-06-51Z`.
-Both images run as user 65532. Client commands run directly through `/usr/bin/mc`, without a shell.
-Docker fixtures store data under `/tmp/data`. The kind volume uses group 65532 for write access.
-The scenario uses the `blob-put` preparation step from the selection file.
-The debug component virtualizer removes ambient WASI CLI imports before publication.
-
-Before a kind run, make sure that the fixture release has an http role.
-This test builds and assembles the fixture package on a disposable PostgreSQL, without kind:
+The retained `file_fixture_live` test assembles the file package on disposable PostgreSQL without kind.
+It requires the `blob-put` component and component virtualizer named in its prerequisite declaration.
+It asserts that the release has an HTTP role and an authored HTTP route.
 
 ```bash
 cargo test --locked --offline -p wamn-environment-control --test file_fixture_live \
   native_files::file_fixture_assembles_an_http_role_without_kind -- --ignored --exact
-```
-
-Set the other [kind prerequisites](#platform-and-environment-apply-on-kind), then run the scenario once:
-
-```bash
-cargo test --locked --offline -p wamn-dev-control --test environment_apply_kind \
-  environment_apply_kind -- --ignored --exact --nocapture
 ```
 
 ### Registry image archive in kind
