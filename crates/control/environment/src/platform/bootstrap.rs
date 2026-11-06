@@ -111,7 +111,6 @@ pub fn provisioning_jobs(document: &ClusterDocument, image: &str) -> [JobRequest
         arguments: arguments.into_iter().map(str::to_owned).collect(),
         calls_kubernetes: false,
         emits_secret,
-        once: true,
         ..JobRequest::default()
     })
 }

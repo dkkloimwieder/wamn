@@ -1,20 +1,18 @@
-//! Run install Jobs with temporary owned Secrets and a digest of their inputs.
+//! Run short bootstrap Jobs with temporary owned credentials and public results.
 
 use std::collections::BTreeMap;
 use std::path::Path;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context as _, ensure};
-use base64::{Engine as _, engine::general_purpose::STANDARD};
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
+use serde_json::Value;
 
 use crate::kubectl;
 use wamn_release_control::release_chart::Target;
 
 const OUTPUT_FILE: &str = "/out/secret.json";
-// env apply passes the policy's 600 s readiness budget to Helm. Allow 900 s
-// here so Helm can report its own timeout and finish its cleanup first.
+// Bound bootstrap execution even if the calling process exits.
 const INSTALL_DEADLINE: Duration = Duration::from_mins(15);
 pub(super) const HANDOFF: &str = r#"umask 077
 /usr/local/bin/wamn-ctl "$@"
@@ -25,13 +23,8 @@ while [ -e /out/secret.json ] && [ "$waited" -lt 300 ]; do
 done
 test ! -e /out/secret.json
 "#;
-const READ_OUTPUT: &str = r#"waited=0
-while [ ! -f /out/secret.json ] && [ "$waited" -lt 300 ]; do
-  sleep 1
-  waited=$((waited + 1))
-done
-cat /out/secret.json && rm /out/secret.json
-"#;
+const READ_OUTPUT: &str = "if [ -f /out/secret.json ]; then cat /out/secret.json; fi";
+const ACK_OUTPUT: &str = "rm -f /out/secret.json";
 
 /// A failure reported by an install Job's status.
 #[derive(Debug)]
@@ -57,42 +50,23 @@ pub(super) enum JobErrorKind {
 
 /// Inputs to one install Job. Arguments contain no credentials.
 #[derive(Default)]
-#[expect(
-    clippy::struct_excessive_bools,
-    reason = "each flag is an independent property of one Job"
-)]
 pub struct JobRequest {
     pub name: String,
     pub image: String,
     pub arguments: Vec<String>,
     pub calls_kubernetes: bool,
-    /// An existing account, for example the platform's Workload Identity binding.
-    pub service_account: Option<String>,
     /// The command writes its Secret to `/out/secret.json`.
     pub emits_secret: bool,
     /// Public environment inputs. Credentials use `JobSecret`.
     pub environment: BTreeMap<String, String>,
     /// Private mounted inputs, keyed by filename under `/inputs`.
     pub files: BTreeMap<String, String>,
-    /// Binary mounted inputs, such as the chart's packaged dependency.
-    pub binary_files: BTreeMap<String, Vec<u8>>,
     /// Override the executable for an existing tool, such as identity or psql.
     pub command: Vec<String>,
-    /// Retain public command output with the completion digest.
-    pub capture_output: bool,
     /// UID for tools whose image user cannot read the private input volume.
     pub run_as_user: Option<u32>,
     /// Existing Secrets mounted read-only in this Job's namespace.
     pub secret_mounts: Vec<SecretMount>,
-    /// Credential preparation before the native sidecar starts.
-    pub setup: Option<JobContainer>,
-    /// One native sidecar from the same runner image.
-    pub sidecar: Option<JobContainer>,
-    /// The command refuses a second run, so a completed Job never reruns for
-    /// a new image (wamn-xjna8).
-    pub once: bool,
-    /// Read changing live state, or perform an action guarded by that state.
-    pub refresh: bool,
 }
 
 /// A read-only projection of an existing Secret. Values stay in the cluster.
@@ -101,16 +75,6 @@ pub struct SecretMount {
     pub name: String,
     pub path: String,
     pub keys: Vec<String>,
-}
-
-/// Another container in the Job pod, using the main container's image.
-#[derive(Debug, Default, Serialize)]
-pub struct JobContainer {
-    pub command: Vec<String>,
-    pub arguments: Vec<String>,
-    pub environment: BTreeMap<String, String>,
-    /// Environment name to Secret name and key, without any credential value.
-    pub secret_environment: BTreeMap<String, (String, String)>,
 }
 
 impl std::fmt::Debug for JobRequest {
@@ -214,6 +178,7 @@ struct Job {
 struct JobSpec {
     suspend: bool,
     backoff_limit: u32,
+    active_deadline_seconds: u64,
     template: PodTemplate,
 }
 
@@ -233,8 +198,6 @@ struct PodSpec {
     security_context: Option<SecurityContext>,
     containers: Vec<Container>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
-    init_containers: Vec<Container>,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
     volumes: Vec<Volume>,
 }
 
@@ -249,8 +212,6 @@ struct SecurityContext {
 struct Container {
     name: String,
     image: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    restart_policy: Option<&'static str>,
     command: Vec<String>,
     args: Vec<String>,
     env: Vec<Environment>,
@@ -328,8 +289,14 @@ struct ServiceAccount {
     metadata: Metadata,
 }
 
-/// A Job request, its temporary credentials, and its completion inputs.
-pub(super) type JobInputs = (JobRequest, Vec<JobSecret>, Value);
+/// A Job request and its temporary credentials.
+pub(super) type JobInputs = (JobRequest, Vec<JobSecret>);
+
+/// Public command output. Emitted Secret data never enters this result.
+#[derive(Debug)]
+pub struct JobResult {
+    pub stdout: String,
+}
 
 /// One temporary Secret key exposed as an environment variable to the Job.
 #[derive(Clone)]
@@ -361,33 +328,6 @@ struct Secret {
     data: BTreeMap<String, String>,
     #[serde(rename = "type", default)]
     content_type: String,
-}
-
-/// A completed step's input digest, stored in the platform namespace.
-#[derive(Debug, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Completion {
-    api_version: String,
-    kind: String,
-    metadata: Metadata,
-    #[serde(default)]
-    data: BTreeMap<String, String>,
-}
-
-/// SHA-256 over canonical JSON, independent of object key order.
-pub fn input_digest(inputs: &Value) -> String {
-    hex::encode(
-        ring::digest::digest(
-            &ring::digest::SHA256,
-            &wamn_execution_contract::canonical_json_bytes(inputs),
-        )
-        .as_ref(),
-    )
-}
-
-/// Skip only a step with the same completed input digest.
-pub fn skip(completion: Option<&Completion>, digest: &str) -> bool {
-    completion.is_some_and(|value| value.data.get("digest").is_some_and(|old| old == digest))
 }
 
 fn metadata(name: &str, namespace: &str) -> Metadata {
@@ -436,7 +376,7 @@ fn render(request: &JobRequest, namespace: &str, secrets: &[JobSecret]) -> Job {
             read_only: None,
         });
     }
-    if !request.files.is_empty() || !request.binary_files.is_empty() {
+    if !request.files.is_empty() {
         volumes.push(Volume {
             name: "inputs".into(),
             empty_dir: None,
@@ -446,7 +386,6 @@ fn render(request: &JobRequest, namespace: &str, secrets: &[JobSecret]) -> Job {
                 items: request
                     .files
                     .keys()
-                    .chain(request.binary_files.keys())
                     .enumerate()
                     .map(|(index, path)| SecretItem {
                         key: format!("file-{index}"),
@@ -461,8 +400,6 @@ fn render(request: &JobRequest, namespace: &str, secrets: &[JobSecret]) -> Job {
             read_only: None,
         });
     }
-    // Companions receive the file inputs, never the operator certificate.
-    let companion_mounts = volume_mounts.clone();
     for (index, mount) in request.secret_mounts.iter().enumerate() {
         let name = format!("existing-{index}");
         volumes.push(Volume {
@@ -487,47 +424,6 @@ fn render(request: &JobRequest, namespace: &str, secrets: &[JobSecret]) -> Job {
             read_only: Some(true),
         });
     }
-    let mut init_containers = Vec::new();
-    for (name, companion, restart_policy) in [
-        ("prepare", request.setup.as_ref(), None),
-        ("gate", request.sidecar.as_ref(), Some("Always")),
-    ] {
-        if let Some(companion) = companion {
-            let mut env: Vec<_> = companion
-                .environment
-                .iter()
-                .map(|(name, value)| Environment {
-                    name: name.clone(),
-                    value: Some(value.clone()),
-                    value_from: None,
-                })
-                .collect();
-            env.extend(
-                companion
-                    .secret_environment
-                    .iter()
-                    .map(|(name, (secret, key))| Environment {
-                        name: name.clone(),
-                        value: None,
-                        value_from: Some(SecretSource {
-                            secret_key_ref: SecretKey {
-                                name: secret.clone(),
-                                key: key.clone(),
-                            },
-                        }),
-                    }),
-            );
-            init_containers.push(Container {
-                name: name.into(),
-                image: request.image.clone(),
-                restart_policy,
-                command: companion.command.clone(),
-                args: companion.arguments.clone(),
-                env,
-                volume_mounts: companion_mounts.clone(),
-            });
-        }
-    }
     Job {
         api_version: "batch/v1",
         kind: "Job",
@@ -535,20 +431,16 @@ fn render(request: &JobRequest, namespace: &str, secrets: &[JobSecret]) -> Job {
         spec: JobSpec {
             suspend: true,
             backoff_limit: 0,
+            active_deadline_seconds: INSTALL_DEADLINE.as_secs(),
             template: PodTemplate {
                 spec: PodSpec {
                     restart_policy: "Never",
                     automount_service_account_token: request.calls_kubernetes,
-                    service_account_name: request
-                        .service_account
-                        .clone()
-                        .or_else(|| request.calls_kubernetes.then(|| request.name.clone())),
+                    service_account_name: request.calls_kubernetes.then(|| request.name.clone()),
                     security_context: request
                         .run_as_user
                         .map(|run_as_user| SecurityContext { run_as_user }),
-                    init_containers,
                     containers: vec![Container {
-                        restart_policy: None,
                         name: request.name.clone(),
                         image: request.image.clone(),
                         command,
@@ -581,7 +473,8 @@ fn render(request: &JobRequest, namespace: &str, secrets: &[JobSecret]) -> Job {
 }
 
 fn account(request: &JobRequest, owner: &Metadata) -> anyhow::Result<Option<ServiceAccount>> {
-    (request.calls_kubernetes && request.service_account.is_none())
+    request
+        .calls_kubernetes
         .then(|| {
             Ok(ServiceAccount {
                 api_version: "v1",
@@ -603,59 +496,21 @@ fn owned_secret(secret: &JobSecret, owner: &Metadata) -> anyhow::Result<Secret> 
     })
 }
 
-/// The completion digest of a Job. A `once` Job leaves its image out, so a new
-/// image does not rerun it.
-pub(super) fn completion_digest(request: &JobRequest, inputs: &Value) -> anyhow::Result<String> {
-    let image = if request.once {
-        ""
-    } else {
-        request.image.as_str()
-    };
-    let mut digest_inputs = json!({
-        "inputs": inputs, "image": image, "arguments": request.arguments,
-        "environment": request.environment, "files": request.files,
-        "binary_files": request.binary_files,
-        "permissions": super::job_contract::access(request)?, "command": request.command,
-        "capture_output": request.capture_output, "run_as_user": request.run_as_user
-    });
-    if !request.secret_mounts.is_empty() {
-        digest_inputs["secret_mounts"] = serde_json::to_value(&request.secret_mounts)?;
-    }
-    if request.setup.is_some() || request.sidecar.is_some() {
-        digest_inputs["setup"] = serde_json::to_value(&request.setup)?;
-        digest_inputs["sidecar"] = serde_json::to_value(&request.sidecar)?;
-    }
-    if let Some(account) = &request.service_account {
-        digest_inputs["service_account"] = account.clone().into();
-    }
-    Ok(input_digest(&digest_inputs))
-}
-
-/// Run a Job, retain its log, remove its temporary objects, and record completion.
+/// Run a Job and return its public output after cleanup.
+///
+/// Existing Jobs are collected before a new request runs. Interrupted handoffs
+/// remain available for recovery until their Kubernetes deadline expires.
 ///
 /// # Errors
-///
-/// Returns the first execution error. Cleanup errors also refuse completion.
+/// Returns execution, handoff, log, or cleanup failures.
 pub async fn run(
     target: &Target,
-    work_directory: &Path,
+    directory: &Path,
     request: &JobRequest,
-    inputs: &Value,
     secrets: &[JobSecret],
-) -> anyhow::Result<bool> {
-    let digest = completion_digest(request, inputs)?;
-    let marker = format!("wamn-install-{}", request.name);
-    let completed = kubectl::get(
-        &target.kubeconfig,
-        &target.context,
-        "platform",
-        "configmap",
-        &marker,
-    )
-    .await?;
-    if !request.refresh && skip(completed.as_ref(), &digest) {
-        return Ok(false);
-    }
+) -> anyhow::Result<JobResult> {
+    super::job_contract::request(request)?;
+    let rendered = render(request, &target.namespace, secrets);
     let existing: Option<Value> = kubectl::get(
         &target.kubeconfig,
         &target.context,
@@ -664,11 +519,23 @@ pub async fn run(
         &request.name,
     )
     .await?;
-    if existing.is_some() {
-        finish(target, work_directory, request).await?;
+    if let Some(existing) = existing {
+        let container = &existing["spec"]["template"]["spec"]["containers"][0];
+        let previous = JobRequest {
+            name: request.name.clone(),
+            command: serde_json::from_value(container["command"].clone())?,
+            arguments: serde_json::from_value(container["args"].clone())?,
+            emits_secret: container["args"][0] == HANDOFF,
+            ..JobRequest::default()
+        };
+        // A suspended Job never started. Its support objects can be incomplete.
+        if existing["spec"]["suspend"] == true {
+            cleanup(target, &previous).await?;
+        } else {
+            collect(target, directory, &previous).await?;
+        }
     }
-    let rendered = start_objects(request, &target.namespace, secrets)?;
-    let input = serde_json::to_vec(&rendered[0])?;
+    let input = serde_json::to_vec(&rendered)?;
     let created = kubectl::kubectl(
         &target.kubeconfig,
         &target.context,
@@ -678,157 +545,166 @@ pub async fn run(
     )
     .await?;
     let created: Created = serde_json::from_str(&created).context("decode the created Job")?;
-    let result = async {
-        let owner = serde_json::to_value(&created.metadata)?;
-        for object in support_objects(request, &owner, secrets)? {
+    let prepared = async {
+        for object in support_objects(request, &created.metadata, secrets)? {
             let namespace = object["metadata"]["namespace"]
                 .as_str()
                 .context("Job support namespace")?;
             kubectl::apply(&target.kubeconfig, &target.context, namespace, &object).await?;
         }
-        kubectl::kubectl(
+        anyhow::Ok(())
+    }
+    .await;
+    if let Err(error) = prepared {
+        return match cleanup(target, request).await {
+            Ok(()) => Err(error),
+            Err(cleanup) => Err(error.context(format!("Job cleanup failed: {cleanup:#}"))),
+        };
+    }
+    kubectl::kubectl(
+        &target.kubeconfig,
+        &target.context,
+        &target.namespace,
+        &[
+            "patch",
+            "job",
+            &request.name,
+            "--type=merge",
+            "--patch",
+            r#"{"spec":{"suspend":false}}"#,
+        ],
+        None,
+    )
+    .await?;
+    collect(target, directory, request).await
+}
+
+fn completed(status: &Value, name: &str) -> Result<bool, JobError> {
+    let Some(conditions) = status["status"]["conditions"].as_array() else {
+        return Ok(false);
+    };
+    if conditions
+        .iter()
+        .any(|condition| condition["type"] == "Failed" && condition["status"] == "True")
+    {
+        return Err(JobError {
+            kind: JobErrorKind::JobFailed,
+            name: name.into(),
+        });
+    }
+    Ok(conditions
+        .iter()
+        .any(|condition| condition["type"] == "Complete" && condition["status"] == "True"))
+}
+
+async fn wait(target: &Target, request: &JobRequest) -> anyhow::Result<()> {
+    let deadline = Instant::now() + INSTALL_DEADLINE;
+    let mut handed_off = false;
+    loop {
+        let status: Value = match kubectl::get(
             &target.kubeconfig,
             &target.context,
             &target.namespace,
-            &[
-                "patch",
-                "job",
-                &request.name,
-                "--type=merge",
-                "--patch",
-                r#"{"spec":{"suspend":false}}"#,
-            ],
-            None,
+            "job",
+            &request.name,
         )
-        .await?;
-        if request.emits_secret {
-            kubectl::wait(
-                &target.kubeconfig,
-                &target.context,
-                &target.namespace,
-                "job",
-                &request.name,
-                "jsonpath={.status.active}=1",
-                "300s",
-            )
-            .await?;
-            kubectl::kubectl(
-                &target.kubeconfig,
-                &target.context,
-                &target.namespace,
-                &[
-                    "wait",
-                    "pod",
-                    "-l",
-                    &format!("job-name={}", request.name),
-                    "--for=condition=Ready",
-                    "--timeout=300s",
-                ],
-                None,
-            )
-            .await?;
-            let output = kubectl::kubectl(
-                &target.kubeconfig,
-                &target.context,
-                &target.namespace,
-                &[
-                    "exec",
-                    &format!("job/{}", request.name),
-                    "--",
-                    "/bin/sh",
-                    "-ec",
-                    READ_OUTPUT,
-                ],
-                Some(&[]),
-            )
-            .await?;
-            for object in emitted_objects(&output)? {
-                let namespace = object["metadata"]["namespace"]
-                    .as_str()
-                    .context("emitted Secret namespace")?;
-                kubectl::apply(&target.kubeconfig, &target.context, namespace, &object).await?;
+        .await
+        {
+            Err(error) if error.is::<kubectl::Unreachable>() && Instant::now() < deadline => {
+                tokio::time::sleep(Duration::from_secs(1)).await;
+                continue;
             }
+            status => status?.context("bootstrap Job disappeared")?,
+        };
+        if completed(&status, &request.name)? {
+            return Ok(());
         }
-        let deadline = Instant::now() + INSTALL_DEADLINE;
-        loop {
-            // A dropped connection says nothing about the Job, which keeps
-            // running, so the poll retries it until the deadline.
-            let status: Value = match kubectl::get(
-                &target.kubeconfig,
-                &target.context,
-                &target.namespace,
-                "job",
-                &request.name,
-            )
-            .await
-            {
-                Err(error) if error.is::<kubectl::Unreachable>() && Instant::now() < deadline => {
-                    tokio::time::sleep(Duration::from_secs(1)).await;
-                    continue;
-                }
-                status => status?.context("install Job disappeared")?,
-            };
-            if let Some(conditions) = status["status"]["conditions"].as_array() {
-                if conditions
-                    .iter()
-                    .any(|condition| condition["type"] == "Failed" && condition["status"] == "True")
-                {
-                    return Err(JobError {
-                        kind: JobErrorKind::JobFailed,
-                        name: request.name.clone(),
-                    }
-                    .into());
-                }
-                if conditions.iter().any(|condition| {
-                    condition["type"] == "Complete" && condition["status"] == "True"
-                }) {
-                    break Ok(());
-                }
-            }
-            ensure!(
-                Instant::now() < deadline,
-                "install Job {} did not complete in {}s",
-                request.name,
-                INSTALL_DEADLINE.as_secs()
-            );
-            tokio::time::sleep(Duration::from_secs(1)).await;
+        if request.emits_secret
+            && !handed_off
+            && status["status"]["ready"].as_u64().unwrap_or(0) > 0
+        {
+            handed_off = handoff(target, request).await?;
         }
+        ensure!(
+            Instant::now() < deadline,
+            "bootstrap Job {} did not complete in {}s",
+            request.name,
+            INSTALL_DEADLINE.as_secs()
+        );
+        tokio::time::sleep(Duration::from_secs(1)).await;
     }
-    .await;
-    let cleanup = finish(target, work_directory, request).await;
-    let output = cleanup?;
-    result.with_context(|| {
-        let path = work_directory
-            .join("jobs")
-            .join(format!("{}.log", request.name));
-        let log = std::fs::read_to_string(&path).unwrap_or_default();
-        format!("install Job log saved at {}:\n{log}", path.display())
-    })?;
-    for object in completion_objects(request, &digest, &output)? {
-        kubectl::apply(&target.kubeconfig, &target.context, "platform", &object).await?;
+}
+
+async fn handoff(target: &Target, request: &JobRequest) -> anyhow::Result<bool> {
+    let job = format!("job/{}", request.name);
+    let output = kubectl::kubectl(
+        &target.kubeconfig,
+        &target.context,
+        &target.namespace,
+        &["exec", &job, "--", "/bin/sh", "-ec", READ_OUTPUT],
+        Some(&[]),
+    )
+    .await?;
+    if output.is_empty() {
+        return Ok(false);
     }
+    let secret = emitted_secret(&output)?;
+    kubectl::apply(
+        &target.kubeconfig,
+        &target.context,
+        &secret.metadata.namespace,
+        &secret,
+    )
+    .await?;
+    kubectl::kubectl(
+        &target.kubeconfig,
+        &target.context,
+        &target.namespace,
+        &["exec", &job, "--", "/bin/sh", "-ec", ACK_OUTPUT],
+        Some(&[]),
+    )
+    .await?;
     Ok(true)
 }
 
-pub(super) fn start_objects(
+async fn collect(
+    target: &Target,
+    directory: &Path,
     request: &JobRequest,
-    namespace: &str,
-    secrets: &[JobSecret],
-) -> anyhow::Result<Vec<Value>> {
-    super::job_contract::request(request)?;
-    Ok(vec![serde_json::to_value(render(
-        request, namespace, secrets,
-    ))?])
+) -> anyhow::Result<JobResult> {
+    let result = wait(target, request).await;
+    let output = logs(target, directory, request).await;
+    // An API or handoff failure says nothing about execution. Preserve the Job
+    // and its owned credentials so the next invocation can recover its result.
+    let cleanup = if result.is_ok() || result.as_ref().is_err_and(anyhow::Error::is::<JobError>) {
+        cleanup(target, request).await
+    } else {
+        Ok(())
+    };
+    result.with_context(|| {
+        let path = directory.join("jobs").join(format!("{}.log", request.name));
+        let log = std::fs::read_to_string(&path).unwrap_or_default();
+        let cleanup_error = cleanup
+            .as_ref()
+            .err()
+            .map(|error| format!("\nJob cleanup failed: {error:#}"))
+            .unwrap_or_default();
+        format!(
+            "bootstrap Job log saved at {}:\n{log}{cleanup_error}",
+            path.display()
+        )
+    })?;
+    cleanup?;
+    Ok(JobResult { stdout: output? })
 }
 
-pub(super) fn support_objects(
+fn support_objects(
     request: &JobRequest,
-    owner: &Value,
+    owner: &Metadata,
     secrets: &[JobSecret],
 ) -> anyhow::Result<Vec<Value>> {
-    let owner: Metadata = serde_json::from_value(owner.clone())?;
     let mut objects = Vec::new();
-    if let Some(account) = account(request, &owner)? {
+    if let Some(account) = account(request, owner)? {
         objects.push(serde_json::to_value(account)?);
     }
     for access in &super::job_contract::access(request)? {
@@ -840,15 +716,15 @@ pub(super) fn support_objects(
         ))?);
     }
     for secret in secrets {
-        objects.push(serde_json::to_value(owned_secret(secret, &owner)?)?);
+        objects.push(serde_json::to_value(owned_secret(secret, owner)?)?);
     }
-    if !request.files.is_empty() || !request.binary_files.is_empty() {
-        objects.push(serde_json::to_value(files_secret(request, &owner)?)?);
+    if !request.files.is_empty() {
+        objects.push(serde_json::to_value(files_secret(request, owner)?)?);
     }
     Ok(objects)
 }
 
-pub(super) fn emitted_objects(output: &str) -> anyhow::Result<Vec<Value>> {
+fn emitted_secret(output: &str) -> anyhow::Result<Secret> {
     // Parser diagnostics can quote a credential. Keep them out of errors.
     let secret: Secret = serde_json::from_str(output)
         .map_err(|_| anyhow::anyhow!("decode the emitted Secret from {OUTPUT_FILE}"))?;
@@ -856,19 +732,7 @@ pub(super) fn emitted_objects(output: &str) -> anyhow::Result<Vec<Value>> {
         secret.api_version == "v1" && secret.kind == "Secret",
         "the Job output is not a v1 Secret"
     );
-    Ok(vec![serde_json::to_value(secret)?])
-}
-
-pub(super) fn completion_objects(
-    request: &JobRequest,
-    digest: &str,
-    output: &str,
-) -> anyhow::Result<Vec<Value>> {
-    Ok(vec![serde_json::to_value(completion(
-        request,
-        digest,
-        output.into(),
-    ))?])
+    Ok(secret)
 }
 
 fn role(request: &JobRequest, access: &Access) -> Role {
@@ -900,11 +764,7 @@ fn role_binding(request: &JobRequest, access: &Access, namespace: &str) -> RoleB
         },
         subjects: vec![Subject {
             kind: "ServiceAccount",
-            name: request
-                .service_account
-                .as_ref()
-                .unwrap_or(&request.name)
-                .clone(),
+            name: request.name.clone(),
             namespace: namespace.into(),
         }],
     }
@@ -921,35 +781,12 @@ fn files_secret(request: &JobRequest, owner: &Metadata) -> anyhow::Result<Secret
             .enumerate()
             .map(|(index, value)| (format!("file-{index}"), value.clone()))
             .collect(),
-        data: request
-            .binary_files
-            .values()
-            .enumerate()
-            .map(|(index, bytes)| {
-                (
-                    format!("file-{}", request.files.len() + index),
-                    STANDARD.encode(bytes),
-                )
-            })
-            .collect(),
+        data: BTreeMap::new(),
         content_type: "Opaque".into(),
     })
 }
 
-fn completion(request: &JobRequest, digest: &str, output: String) -> Completion {
-    let mut data: BTreeMap<_, _> = [("digest".into(), digest.into())].into();
-    if request.capture_output {
-        data.insert("output".into(), output);
-    }
-    Completion {
-        api_version: "v1".into(),
-        kind: "ConfigMap".into(),
-        metadata: metadata(&format!("wamn-install-{}", request.name), "platform"),
-        data,
-    }
-}
-
-async fn finish(target: &Target, directory: &Path, request: &JobRequest) -> anyhow::Result<String> {
+async fn logs(target: &Target, directory: &Path, request: &JobRequest) -> anyhow::Result<String> {
     let name = &request.name;
     let log = kubectl::kubectl(
         &target.kubeconfig,
@@ -964,37 +801,23 @@ async fn finish(target: &Target, directory: &Path, request: &JobRequest) -> anyh
         None,
     )
     .await;
-    let output = if request.capture_output && request.sidecar.is_some() {
-        Some(
-            kubectl::kubectl(
-                &target.kubeconfig,
-                &target.context,
-                &target.namespace,
-                &[
-                    "logs",
-                    &format!("job/{name}"),
-                    "--container",
-                    name,
-                    "--pod-running-timeout=10s",
-                ],
-                None,
-            )
-            .await,
-        )
-    } else {
-        None
-    };
     let directory = directory.join("jobs");
     std::fs::create_dir_all(&directory).context("create the Job log directory")?;
     let saved = std::fs::write(
         directory.join(format!("{name}.log")),
         match &log {
-            Ok(log) => log.clone(),
-            Err(error) => format!("Job log unavailable: {error:#}\n"),
-        },
+            Ok(log) => std::borrow::Cow::Borrowed(log.as_str()),
+            Err(error) => std::borrow::Cow::Owned(format!("Job log unavailable: {error:#}\n")),
+        }
+        .as_bytes(),
     )
     .context("save the Job log");
     saved?;
+    log.context("read the public Job result")
+}
+
+async fn cleanup(target: &Target, request: &JobRequest) -> anyhow::Result<()> {
+    let name = &request.name;
     // After its log is saved, even a failed Job must release its credentials.
     let deleted = kubectl::kubectl(
         &target.kubeconfig,
@@ -1023,38 +846,13 @@ async fn finish(target: &Target, directory: &Path, request: &JobRequest) -> anyh
         )
         .await?;
     }
-    if request.capture_output {
-        output.unwrap_or(log).context("read the public Job result")
-    } else {
-        Ok(String::new())
-    }
+    Ok(())
 }
 
-/// Read the public result retained by a completed Job.
-///
-/// # Errors
-///
-/// Returns an error when the completion or its result is absent.
-pub async fn output(target: &Target, request: &JobRequest) -> anyhow::Result<String> {
-    let marker = format!("wamn-install-{}", request.name);
-    let completion: Completion = kubectl::get(
-        &target.kubeconfig,
-        &target.context,
-        "platform",
-        "configmap",
-        &marker,
-    )
-    .await?
-    .context("the Job has no completion")?;
-    completion
-        .data
-        .get("output")
-        .cloned()
-        .context("the Job has no public result")
-}
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
 
     fn request() -> JobRequest {
         JobRequest {
@@ -1083,6 +881,11 @@ mod tests {
         let job = serde_json::to_value(render(&request, "platform", &[secret])).unwrap();
         assert_eq!(job["apiVersion"], "batch/v1");
         assert_eq!(job["spec"]["backoffLimit"], 0);
+        assert_eq!(job["spec"]["suspend"], true);
+        assert_eq!(
+            job["spec"]["activeDeadlineSeconds"],
+            INSTALL_DEADLINE.as_secs()
+        );
         let pod = &job["spec"]["template"]["spec"];
         assert_eq!(pod["restartPolicy"], "Never");
         assert_eq!(pod["automountServiceAccountToken"], false);
@@ -1098,77 +901,6 @@ mod tests {
             json!({"name":"wamn-system-admin","key":"url"})
         );
         assert!(!job.to_string().contains("private"));
-    }
-
-    #[test]
-    fn a_once_job_keeps_its_completion_across_a_new_image() {
-        let mut first = request();
-        let mut second = request();
-        second.image = "other/runner@sha256:def".into();
-        let inputs = json!({});
-        assert_ne!(
-            completion_digest(&first, &inputs).unwrap(),
-            completion_digest(&second, &inputs).unwrap()
-        );
-        first.once = true;
-        second.once = true;
-        assert_eq!(
-            completion_digest(&first, &inputs).unwrap(),
-            completion_digest(&second, &inputs).unwrap()
-        );
-        second.arguments.push("--other".into());
-        assert_ne!(
-            completion_digest(&first, &inputs).unwrap(),
-            completion_digest(&second, &inputs).unwrap()
-        );
-    }
-
-    #[test]
-    fn native_sidecar_and_setup_use_the_same_image_and_scoped_secrets() {
-        let mut request = request();
-        request.secret_mounts.push(SecretMount {
-            name: "operator-test".into(),
-            path: "/etc/wamn/operator".into(),
-            keys: vec!["tls.crt".into(), "tls.key".into()],
-        });
-        request.setup = Some(JobContainer {
-            command: vec!["/bin/sh".into()],
-            arguments: vec!["-ec".into(), "prepare".into()],
-            ..JobContainer::default()
-        });
-        request.sidecar = Some(JobContainer {
-            command: vec!["/usr/local/bin/wamn-scenario-worker".into()],
-            arguments: vec!["serve".into()],
-            environment: [("WAMN_MANAGEMENT_ORG".into(), "test".into())].into(),
-            secret_environment: [(
-                "WAMN_SYSTEM_URL".into(),
-                ("gate-reader".into(), "url".into()),
-            )]
-            .into(),
-        });
-        let job = serde_json::to_value(render(&request, "identity", &[])).unwrap();
-        let pod = &job["spec"]["template"]["spec"];
-        assert_eq!(job["metadata"]["namespace"], "identity");
-        assert_eq!(pod["initContainers"].as_array().unwrap().len(), 2);
-        assert!(pod["initContainers"][0].get("restartPolicy").is_none());
-        assert_eq!(pod["initContainers"][1]["restartPolicy"], "Always");
-        assert_eq!(pod["initContainers"][1]["image"], request.image);
-        assert_eq!(pod["initContainers"][1]["args"], json!(["serve"]));
-        assert_eq!(
-            pod["initContainers"][1]["env"][1]["valueFrom"]["secretKeyRef"],
-            json!({"name":"gate-reader","key":"url"})
-        );
-        assert!(pod["initContainers"][1].get("volumeMounts").is_none());
-        assert_eq!(pod["containers"][0]["volumeMounts"][0]["readOnly"], true);
-        assert_eq!(pod["volumes"][0]["secret"]["secretName"], "operator-test");
-        assert!(pod["containers"][0].get("restartPolicy").is_none());
-        let ordinary =
-            serde_json::to_value(render(&super::tests::request(), "platform", &[])).unwrap();
-        assert!(
-            ordinary["spec"]["template"]["spec"]
-                .get("initContainers")
-                .is_none()
-        );
     }
 
     #[test]
@@ -1218,16 +950,27 @@ mod tests {
     }
 
     #[test]
-    fn existing_account_is_used_without_creating_or_owning_it() {
+    fn job_account_and_permissions_stay_scoped_to_their_namespaces() {
         let mut request = request();
         request.calls_kubernetes = true;
-        request.service_account = Some("wamn-host".into());
-        let owner = metadata(&request.name, "hosts");
-        assert!(account(&request, &owner).unwrap().is_none());
-        let job = serde_json::to_value(render(&request, "hosts", &[])).unwrap();
-        let pod = &job["spec"]["template"]["spec"];
-        assert_eq!(pod["serviceAccountName"], "wamn-host");
-        assert_eq!(pod["automountServiceAccountToken"], true);
+        request.command = vec!["/bin/sh".into(), "-ec".into()];
+        request.arguments = vec![super::super::control::PROVISION.into()];
+        let mut owner = metadata(&request.name, "platform");
+        owner.uid = Some("live-uid".into());
+        let account = account(&request, &owner).unwrap().unwrap();
+        assert_eq!(account.metadata.namespace, owner.namespace);
+        assert_eq!(account.metadata.owner_references[0].uid, "live-uid");
+        for access in super::super::job_contract::access(&request).unwrap() {
+            let role = role(&request, &access);
+            let binding = role_binding(&request, &access, &owner.namespace);
+            assert_eq!(role.kind, "Role");
+            assert_eq!(role.metadata.namespace, access.namespace);
+            assert_eq!(binding.metadata.namespace, access.namespace);
+            assert_eq!(binding.role_ref.kind, role.kind);
+            assert_eq!(binding.role_ref.name, role.metadata.name);
+            assert_eq!(binding.subjects[0].namespace, account.metadata.namespace);
+            assert_eq!(binding.subjects[0].name, account.metadata.name);
+        }
     }
 
     #[test]
@@ -1265,28 +1008,6 @@ mod tests {
     }
 
     #[test]
-    fn nested_chart_and_package_paths_project_from_valid_secret_keys() {
-        let mut request = request();
-        request.files.insert(
-            "package/migrations/0001_initial.sql".into(),
-            "private-sql".into(),
-        );
-        request
-            .binary_files
-            .insert("charts/runtime-operator.tgz".into(), vec![0, 255]);
-        let job = serde_json::to_value(render(&request, "platform", &[])).unwrap();
-        assert_eq!(
-            job["spec"]["template"]["spec"]["volumes"][0]["secret"]["items"],
-            json!([
-                {"key":"file-0","path":"package/migrations/0001_initial.sql"},
-                {"key":"file-1","path":"charts/runtime-operator.tgz"}
-            ])
-        );
-        assert!(!job.to_string().contains("private-sql"));
-        assert!(!format!("{request:?}").contains("private-sql"));
-    }
-
-    #[test]
     fn emitted_identity_secret_keeps_its_labels_and_credential() {
         let output = json!({
             "apiVersion":"v1", "kind":"Secret", "type":"Opaque",
@@ -1299,49 +1020,26 @@ mod tests {
     }
 
     #[test]
-    fn digest_is_canonical_and_skip_requires_the_same_inputs() {
-        assert_eq!(
-            input_digest(&json!({})),
-            "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
-        );
-        let a: Value =
-            serde_json::from_str(r#"{"version":"1","document":{"b":2,"a":1},"image":"one"}"#)
-                .unwrap();
-        let b: Value =
-            serde_json::from_str(r#"{"image":"one","document":{"a":1,"b":2},"version":"1"}"#)
-                .unwrap();
-        let digest = input_digest(&a);
-        assert_eq!(digest, input_digest(&b));
-        let mut completion = Completion {
-            api_version: "v1".into(),
-            kind: "ConfigMap".into(),
-            metadata: metadata("step", "platform"),
-            data: [("digest".into(), digest.clone())].into(),
-        };
-        assert!(skip(Some(&completion), &digest));
-        assert!(!skip(None, &digest));
-        for field in ["document", "version", "image"] {
-            let mut changed = a.clone();
-            changed[field] = json!("changed");
-            assert!(!skip(Some(&completion), &input_digest(&changed)));
+    fn emitted_secret_errors_do_not_expose_private_data() {
+        for output in [
+            r#"{"private-credential": invalid}"#,
+            r#"{"apiVersion":"v1","kind":"ConfigMap","metadata":{"name":"private-credential","namespace":"identity"}}"#,
+        ] {
+            let error = emitted_secret(output).err().unwrap();
+            assert!(!format!("{error:#}").contains("private-credential"));
         }
-        completion.data.clear();
-        assert!(!skip(Some(&completion), &digest));
     }
 
     #[test]
-    fn install_deadline_outlasts_the_default_readiness_budget_and_helm_cleanup() {
-        let schema = include_str!("../../../../../deploy/sql/system-schema.sql");
-        let budget: u64 = schema
-            .lines()
-            .find_map(|line| {
-                line.trim()
-                    .strip_prefix("readiness_budget_seconds int NOT NULL DEFAULT ")
-            })
-            .expect("system-schema.sql declares the readiness budget default")
-            .trim()
-            .parse()
-            .unwrap();
-        assert!(INSTALL_DEADLINE > Duration::from_secs(budget + 120));
+    fn job_conditions_report_failure_and_require_completed_execution() {
+        let failed = json!({"status":{"conditions":[{"type":"Failed","status":"True"}]}});
+        let error = completed(&failed, "platform-system").unwrap_err();
+        assert_eq!(error.kind, JobErrorKind::JobFailed);
+        assert_eq!(error.name, "platform-system");
+        assert!(!completed(&json!({"status":{"active":1}}), "platform-system").unwrap());
+        let mut status = json!({"status":{"conditions":[{"type":"Complete","status":"False"}]}});
+        assert!(!completed(&status, "platform-system").unwrap());
+        status["status"]["conditions"][0]["status"] = "True".into();
+        assert!(completed(&status, "platform-system").unwrap());
     }
 }

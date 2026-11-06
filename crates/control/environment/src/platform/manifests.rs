@@ -322,21 +322,6 @@ fn kind_placement(value: &mut Value) {
     }
 }
 
-/// Whether all desired fields match, ignoring object fields added by the server.
-pub fn already_applied(desired: &Value, live: &Value) -> bool {
-    match (desired, live) {
-        (Value::Object(desired), Value::Object(live)) => desired.iter().all(|(key, value)| {
-            live.get(key)
-                .is_some_and(|live| already_applied(value, live))
-        }),
-        (Value::Array(desired), Value::Array(live)) => {
-            desired.len() == live.len()
-                && desired.iter().zip(live).all(|(a, b)| already_applied(a, b))
-        }
-        _ => desired == live,
-    }
-}
-
 /// Retain the namespace supplied by apply for a namespaced object.
 pub(super) fn apply_namespace(mut object: Value, namespace: &str) -> Value {
     if object["metadata"]["namespace"].is_null()
@@ -638,17 +623,6 @@ mod tests {
                 "annotations": {"other": "keep"}
             })
         );
-    }
-
-    #[test]
-    fn comparison_ignores_server_fields_but_requires_each_desired_value() {
-        let desired = json!({"metadata": {"name": "test"}, "spec": {"containers": [{"name": "test", "image": "v1"}]}});
-        let mut live = json!({"metadata": {"name": "test", "uid": "server"}, "spec": {"containers": [{"name": "test", "image": "v1", "imagePullPolicy": "Always"}]}, "status": {"ready": true}});
-        assert!(already_applied(&desired, &live));
-        live["spec"]["containers"][0]["image"] = "v2".into();
-        assert!(!already_applied(&desired, &live));
-        assert!(!already_applied(&json!({"missing": null}), &json!({})));
-        assert!(!already_applied(&json!([]), &json!([1])));
     }
 
     #[test]

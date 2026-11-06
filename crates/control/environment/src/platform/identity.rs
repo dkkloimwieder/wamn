@@ -6,12 +6,11 @@ use anyhow::{Context as _, ensure};
 use serde_json::{Value, json};
 
 use crate::kubectl;
-use wamn_release_control::release_chart::Target;
+use wamn_release_control::release_chart::{self, Target};
 
 use super::bootstrap::{DATABASE_HOST, SecretData, secret_text};
 use super::document::ClusterDocument;
 use super::job::{self, JobRequest, JobSecret};
-use super::resources::helm;
 
 pub(super) const ISSUER: &str = "https://identity.identity.svc.cluster.local";
 const RESEND_COMMAND: &str = "kubectl -n identity create secret generic identity-resend --from-literal=api-key=\"$(tr -d '[:space:]' < <file>)\"";
@@ -142,7 +141,6 @@ pub async fn apply(
     )
     .await?
     .context("missing Secret platform/wamn-pg-superuser")?;
-    let mut changed = false;
     let chart: Value =
         serde_yaml::from_slice(&std::fs::read(directory.join("release-chart/values.yaml"))?)?;
     let image = chart["platform"]["identity"]["image"]
@@ -150,10 +148,8 @@ pub async fn apply(
         .filter(|image| image.contains("@sha256:"))
         .context("the chart has no pinned identity image")?;
     let batch = chart_objects(repository, document, image, Vec::new())?;
-    let values = &batch[0]["values"];
-    changed |= install(&identity, directory, &batch[0]).await?;
-    let (keys_changed, kid) = keys(target, &identity, directory, &superuser, image).await?;
-    changed |= keys_changed;
+    install(&identity, directory, &batch[0]).await?;
+    let kid = keys(target, &identity, directory, &superuser, image).await?;
     let ca: SecretData = kubectl::get(
         &target.kubeconfig,
         &target.context,
@@ -163,28 +159,24 @@ pub async fn apply(
     )
     .await?
     .context("missing Secret identity/identity-tls")?;
-    let (check, check_secrets, inputs) = check_inputs(&ca, &kid, values)?;
+    let check = check_request(&secret_text(&ca, "ca.crt")?);
     let hosts = Target {
         namespace: "hosts".into(),
         ..identity
     };
-    changed |= job::run(&hosts, directory, &check, &inputs, &check_secrets).await?;
-    let jwks: Value = serde_json::from_str(&job::output(&hosts, &check).await?)
-        .context("decode identity public keys")?;
+    let result = job::run(&hosts, directory, &check, &[]).await?;
+    let jwks: Value =
+        serde_json::from_str(&result.stdout).context("decode identity public keys")?;
     ensure!(
         jwks["keys"]
             .as_array()
             .is_some_and(|keys| keys.iter().any(|key| key["kid"] == kid)),
         "identity does not serve its active session key"
     );
-    Ok(changed)
+    Ok(true)
 }
 
-pub(super) fn key_probe(
-    image: &str,
-    superuser: &SecretData,
-    identity_image: &str,
-) -> anyhow::Result<job::JobInputs> {
+pub(super) fn key_probe(image: &str, superuser: &SecretData) -> anyhow::Result<job::JobInputs> {
     Ok((
         key_state_request(image),
         vec![JobSecret {
@@ -193,7 +185,6 @@ pub(super) fn key_probe(
             value: secret_text(superuser, "password")?,
             environment: "PGPASSWORD".into(),
         }],
-        json!({"issuer":ISSUER,"identity_image":identity_image}),
     ))
 }
 
@@ -206,27 +197,6 @@ pub(super) fn key_publish(image: &str, credential: &SecretData) -> anyhow::Resul
             value: secret_text(credential, "url")?,
             environment: "WAMN_IDENTITY_DATABASE_URL".into(),
         }],
-        json!({"issuer":ISSUER}),
-    ))
-}
-
-pub(super) fn key_activate_inputs(image: &str, kid: &str, secrets: &[JobSecret]) -> job::JobInputs {
-    (
-        key_activate_request(image, kid),
-        secrets.to_vec(),
-        json!({"issuer":ISSUER,"kid":kid}),
-    )
-}
-
-pub(super) fn check_inputs(
-    ca: &SecretData,
-    kid: &str,
-    values: &Value,
-) -> anyhow::Result<job::JobInputs> {
-    Ok((
-        check_request(&secret_text(ca, "ca.crt")?),
-        Vec::new(),
-        json!({"kid":kid,"values":values}),
     ))
 }
 
@@ -259,70 +229,21 @@ pub(super) fn chart_objects(
     })?])
 }
 
-async fn install(target: &Target, directory: &Path, entry: &Value) -> anyhow::Result<bool> {
+async fn install(target: &Target, directory: &Path, entry: &Value) -> anyhow::Result<()> {
     let chart = Path::new(entry["chart"].as_str().context("identity chart input")?);
-    let version = entry["version"]
-        .as_str()
-        .context("identity chart version")?;
     let values = &entry["values"];
-    let releases: Vec<Value> = serde_json::from_slice(
-        &helm(
-            target,
-            &[
-                "list".as_ref(),
-                "-n".as_ref(),
-                "identity".as_ref(),
-                "-o".as_ref(),
-                "json".as_ref(),
-            ],
-        )
-        .await?,
-    )?;
-    let desired = serde_json::to_value(values)?;
-    if releases.iter().any(|release| {
-        release["name"] == "identity"
-            && release["chart"] == format!("wamn-identity-{version}")
-            && release["status"] == "deployed"
-    }) {
-        let current: Value = serde_json::from_slice(
-            &helm(
-                target,
-                &[
-                    "get".as_ref(),
-                    "values".as_ref(),
-                    "identity".as_ref(),
-                    "-n".as_ref(),
-                    "identity".as_ref(),
-                    "-o".as_ref(),
-                    "json".as_ref(),
-                ],
-            )
-            .await?,
-        )?;
-        if current == desired {
-            return Ok(false);
-        }
-    }
+    release_chart::recover_pending(target, "identity").await?;
     let path = directory.join("values-identity.yaml");
     std::fs::write(&path, serde_yaml::to_string(values)?)?;
-    helm(
+    release_chart::upgrade(
         target,
-        &[
-            "upgrade".as_ref(),
-            "--install".as_ref(),
-            "identity".as_ref(),
-            chart.as_os_str(),
-            "-n".as_ref(),
-            "identity".as_ref(),
-            "-f".as_ref(),
-            path.as_os_str(),
-            "--wait".as_ref(),
-            "--timeout".as_ref(),
-            "5m".as_ref(),
-        ],
+        chart,
+        "identity",
+        &path,
+        std::time::Duration::from_secs(300),
+        "platform identity service",
     )
-    .await?;
-    Ok(true)
+    .await
 }
 
 async fn keys(
@@ -331,7 +252,7 @@ async fn keys(
     directory: &Path,
     superuser: &SecretData,
     identity_image: &str,
-) -> anyhow::Result<(bool, String)> {
+) -> anyhow::Result<String> {
     let cluster: Value = kubectl::get(
         &target.kubeconfig,
         &target.context,
@@ -344,12 +265,12 @@ async fn keys(
     let image = cluster["spec"]["imageName"]
         .as_str()
         .context("the PostgreSQL Cluster has no image")?;
-    let (probe, probe_secrets, inputs) = key_probe(image, superuser, identity_image)?;
-    let mut changed = job::run(target, directory, &probe, &inputs, &probe_secrets).await?;
-    let state: Value = serde_json::from_str(&job::output(target, &probe).await?)
-        .context("decode the public session key state")?;
+    let (probe, probe_secrets) = key_probe(image, superuser)?;
+    let result = job::run(target, directory, &probe, &probe_secrets).await?;
+    let state: Value =
+        serde_json::from_str(&result.stdout).context("decode the public session key state")?;
     if let Some(kid) = state["kid"].as_str() {
-        return Ok((changed, kid.into()));
+        return Ok(kid.into());
     }
     let credential: SecretData = kubectl::get(
         &identity.kubeconfig,
@@ -360,17 +281,17 @@ async fn keys(
     )
     .await?
     .context("missing Secret identity/wamn-identity-db")?;
-    let (publish, secrets, inputs) = key_publish(identity_image, &credential)?;
-    changed |= job::run(identity, directory, &publish, &inputs, &secrets).await?;
-    let public: Value = serde_json::from_str(&job::output(identity, &publish).await?)
-        .context("decode the published session key")?;
+    let (publish, secrets) = key_publish(identity_image, &credential)?;
+    let result = job::run(identity, directory, &publish, &secrets).await?;
+    let public: Value =
+        serde_json::from_str(&result.stdout).context("decode the published session key")?;
     let kid = public["kid"]
         .as_str()
         .context("the published session key has no kid")?
         .to_owned();
-    let (activate, secrets, inputs) = key_activate_inputs(identity_image, &kid, &secrets);
-    changed |= job::run(identity, directory, &activate, &inputs, &secrets).await?;
-    Ok((changed, kid))
+    let activate = key_activate_request(identity_image, &kid);
+    job::run(identity, directory, &activate, &secrets).await?;
+    Ok(kid)
 }
 
 pub(super) fn check_request(ca: &str) -> JobRequest {
@@ -389,7 +310,6 @@ pub(super) fn check_request(ca: &str) -> JobRequest {
         .map(str::to_owned)
         .into(),
         files: [("ca.crt".into(), ca.into())].into(),
-        capture_output: true,
         run_as_user: Some(0),
         ..JobRequest::default()
     }
@@ -403,7 +323,6 @@ pub(super) fn key_state_request(image: &str) -> JobRequest {
             "SELECT json_build_object('kid', (SELECT active_kid::text FROM identity.session_signing_state WHERE issuer = 'https://identity.identity.svc.cluster.local'))"].map(str::to_owned).into(),
         environment: [("PGHOST".into(), DATABASE_HOST.into()), ("PGUSER".into(), "postgres".into()),
             ("PGDATABASE".into(), "wamn_system".into())].into(),
-        capture_output: true,
         ..JobRequest::default()
     }
 }
@@ -415,7 +334,6 @@ pub(super) fn key_publish_request(identity_image: &str) -> JobRequest {
         command: vec!["/usr/local/bin/wamn-identity".into()],
         arguments: vec!["publish".into()],
         environment: [("WAMN_IDENTITY_ISSUER".into(), ISSUER.into())].into(),
-        capture_output: true,
         ..JobRequest::default()
     }
 }

@@ -69,7 +69,6 @@ pub(super) fn provision_request(document: &ClusterDocument, image: &str) -> JobR
         command: vec!["/bin/sh".into(), "-ec".into()],
         arguments: vec![PROVISION.into()],
         calls_kubernetes: true,
-        once: true,
         environment: [
             ("ORG".into(), document.org.clone()),
             ("OWNER_EMAIL".into(), document.owner_email.clone()),
@@ -95,33 +94,13 @@ pub async fn credentials(
     directory: &Path,
 ) -> anyhow::Result<bool> {
     let image = super::artifact_plan::runner_image(directory)?;
-    let (request, secrets, inputs) = provision_inputs(document, &image);
-    let mut changed = job::run(target, directory, &request, &inputs, &secrets).await?;
-    let operator = format!("operator-{}", document.org);
-    // Read only metadata on the verb's machine. The Job copies the private data.
-    let version = kubectl::kubectl(
-        &target.kubeconfig,
-        &target.context,
-        "identity",
-        &[
-            "get",
-            "secret",
-            &operator,
-            "-o",
-            "jsonpath={.metadata.resourceVersion}",
-        ],
-        None,
-    )
-    .await?;
-    anyhow::ensure!(
-        !version.is_empty(),
-        "operator Secret has no resource version"
-    );
-    let (request, secrets, inputs) = operator_inputs(document, &image, &version)?;
-    changed |= job::run(target, directory, &request, &inputs, &secrets)
+    let request = provision_request(document, &image);
+    job::run(target, directory, &request, &[]).await?;
+    let request = operator_request(document, &image)?;
+    job::run(target, directory, &request, &[])
         .await
         .context("copy the control operator Secret")?;
-    Ok(changed)
+    Ok(true)
 }
 
 /// Render the org host values shared by the cluster and local control host.
@@ -240,9 +219,8 @@ pub async fn release(
     let chart = directory.join("release-chart");
     let values = directory.join("values-control.yaml");
     let mut desired = release_values(document)?;
-    let key_created = super::oauth::ensure_key(target, document).await?;
-    let mut changed =
-        key_created | registry_ca(target, &document.org, registry, &mut desired).await?;
+    super::oauth::ensure_key(target, document).await?;
+    registry_ca(target, &document.org, registry, &mut desired).await?;
     let entry = chart_objects(document, &chart, &desired)?;
     std::fs::write(&values, serde_yaml::to_string(&entry[0]["values"])?)?;
     let name = entry[0]["name"].as_str().context("control release name")?;
@@ -251,49 +229,27 @@ pub async fn release(
             .as_str()
             .context("control chart reference")?,
     );
-    let objects = super::resources::helm_template(&entry[0])?;
-    let mut release_changed = false;
-    for object in objects.iter().filter(|object| !object.is_null()) {
-        let kind = object["kind"].as_str().context("control manifest kind")?;
-        let object_name = object["metadata"]["name"]
-            .as_str()
-            .context("control manifest name")?;
-        let live: Option<Value> = kubectl::get(
-            &target.kubeconfig,
-            &target.context,
-            "hosts",
-            kind,
-            object_name,
-        )
-        .await?;
-        release_changed |= live
-            .as_ref()
-            .is_none_or(|live| !super::manifests::already_applied(object, live));
-    }
-    if release_changed {
-        let hosts = Target {
-            namespace: "hosts".into(),
-            ..target.clone()
-        };
-        // As environment apply does, a failed upgrade carries the host pods.
-        let poller = crate::environment::host_report::Poller::start(&hosts, name);
-        let upgraded = wamn_release_control::release_chart::upgrade(
-            &hosts,
-            chart,
-            name,
-            &values,
-            std::time::Duration::from_secs(600),
-            "platform control host",
-        )
-        .await;
-        let report = poller.finish();
-        upgraded.map_err(|error| crate::environment::host_report::attach(&error, &report))?;
-    }
-    changed |= release_changed;
+    let hosts = Target {
+        namespace: "hosts".into(),
+        ..target.clone()
+    };
+    wamn_release_control::release_chart::recover_pending(&hosts, name).await?;
+    // As environment apply does, a failed upgrade carries the host pods.
+    let poller = crate::environment::host_report::Poller::start(&hosts, name);
+    let upgraded = wamn_release_control::release_chart::upgrade(
+        &hosts,
+        chart,
+        name,
+        &values,
+        std::time::Duration::from_secs(600),
+        "platform control host",
+    )
+    .await;
+    let report = poller.finish();
+    upgraded.map_err(|error| crate::environment::host_report::attach(&error, &report))?;
     let stamped: Value = serde_yaml::from_slice(&std::fs::read(chart.join("values.yaml"))?)?;
     for object in service_objects(repository, document, &stamped)? {
         super::resources::apply_object(target, &object).await?;
-        changed = true;
     }
     kubectl::kubectl(
         &target.kubeconfig,
@@ -308,7 +264,7 @@ pub async fn release(
         None,
     )
     .await?;
-    Ok(changed)
+    Ok(true)
 }
 
 async fn registry_ca(
@@ -316,13 +272,11 @@ async fn registry_ca(
     org: &str,
     registry: &wamn_package_artifact::PackageRegistry,
     values: &mut Value,
-) -> anyhow::Result<bool> {
-    let mut changed = false;
+) -> anyhow::Result<()> {
     for object in registry_ca_objects(org, registry, values)? {
         super::resources::apply_object(target, &object).await?;
-        changed = true;
     }
-    Ok(changed)
+    Ok(())
 }
 
 pub(super) fn registry_ca_objects(
@@ -383,26 +337,6 @@ pub(super) fn operator_request(
         .into(),
         ..JobRequest::default()
     })
-}
-
-pub(super) fn provision_inputs(document: &ClusterDocument, image: &str) -> job::JobInputs {
-    (
-        provision_request(document, image),
-        Vec::new(),
-        json!({"org":document.org}),
-    )
-}
-
-pub(super) fn operator_inputs(
-    document: &ClusterDocument,
-    image: &str,
-    source_version: &str,
-) -> anyhow::Result<job::JobInputs> {
-    Ok((
-        operator_request(document, image)?,
-        Vec::new(),
-        json!({"source_version":source_version}),
-    ))
 }
 
 fn kubeconfig() -> serde_json::Value {
@@ -514,19 +448,12 @@ mod tests {
             workload["spec"]["template"]["spec"]["hostInterfaces"][0]["config"]["host"],
             "control.example.com"
         );
-        let mut live = workload.clone();
-        live["metadata"]["resourceVersion"] = "12".into();
-        assert!(super::super::manifests::already_applied(workload, &live));
-        live["spec"]["template"]["spec"]["components"][0]["image"] = "old".into();
-        assert!(!super::super::manifests::already_applied(workload, &live));
     }
 
     #[test]
     fn control_preparation_mounts_credentials_and_never_exports_them() {
         let request = provision_request(&document(), "registry/runner@sha256:abc");
-        assert!(request.once);
         assert!(!request.emits_secret);
-        assert!(!request.capture_output);
         assert_eq!(request.secret_mounts[0].name, "wamn-pg-superuser");
         assert_eq!(request.secret_mounts[0].keys, ["uri"]);
         assert_eq!(
