@@ -730,9 +730,14 @@ async fn legacy_unsegmented_file_still_reads_signs_exposes_and_deletes() -> anyh
     let key = format!("_wamn_files/live/{id}");
     fixture
         .minio
-        .mc(&format!(
-            "printf 'legacy bytes' | mc pipe file/files-a/generation-one/{key}"
-        ))
+        .mc(
+            &[
+                "cp",
+                "/input",
+                &format!("file/files-a/generation-one/{key}"),
+            ],
+            b"legacy bytes",
+        )
         .await?;
     fixture.writer.execute(
         "INSERT INTO platform.file(id,application,connection_id,name,media_type,size,sha256,blob_key) \
@@ -810,7 +815,10 @@ async fn legacy_unsegmented_file_still_reads_signs_exposes_and_deletes() -> anyh
     assert!(
         fixture
             .minio
-            .mc(&format!("mc stat file/files-a/generation-one/{key}"))
+            .mc(
+                &["stat", &format!("file/files-a/generation-one/{key}")],
+                b""
+            )
             .await
             .is_err()
     );
@@ -934,17 +942,25 @@ async fn committed_staging_bytes_repair_a_missing_live_object_on_native_get() ->
     assert!(
         fixture
             .minio
-            .mc(&format!(
-                "mc stat file/files-a/generation-one/dev/_wamn_files/live/{id}"
-            ))
+            .mc(
+                &[
+                    "stat",
+                    &format!("file/files-a/generation-one/dev/_wamn_files/live/{id}")
+                ],
+                b""
+            )
             .await
             .is_err()
     );
     fixture
         .minio
-        .mc(&format!(
-            "mc stat file/files-a/generation-one/dev/_wamn_files/staging/{id}"
-        ))
+        .mc(
+            &[
+                "stat",
+                &format!("file/files-a/generation-one/dev/_wamn_files/staging/{id}"),
+            ],
+            b"",
+        )
         .await?;
     let response = fixture
         .read("files", id, Some(&fixture.token(false)))
@@ -953,16 +969,24 @@ async fn committed_staging_bytes_repair_a_missing_live_object_on_native_get() ->
     assert_eq!(response.2, b"committed staging");
     fixture
         .minio
-        .mc(&format!(
-            "mc stat file/files-a/generation-one/dev/_wamn_files/live/{id}"
-        ))
+        .mc(
+            &[
+                "stat",
+                &format!("file/files-a/generation-one/dev/_wamn_files/live/{id}"),
+            ],
+            b"",
+        )
         .await?;
     assert!(
         fixture
             .minio
-            .mc(&format!(
-                "mc stat file/files-a/generation-one/dev/_wamn_files/staging/{id}"
-            ))
+            .mc(
+                &[
+                    "stat",
+                    &format!("file/files-a/generation-one/dev/_wamn_files/staging/{id}")
+                ],
+                b""
+            )
             .await
             .is_err()
     );

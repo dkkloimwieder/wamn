@@ -304,7 +304,7 @@ async fn raw_blobstore_mutations_refuse_file_namespaces_on_minio() -> anyhow::Re
 }
 
 /// MinIO's preserved source time supplies aged objects without changing the clock.
-/// Source: https://github.com/minio/minio/blob/RELEASE.2025-09-07T16-13-09Z/cmd/object-api-options.go
+/// Source: https://github.com/minio/minio/blob/76c06ff1d2cc844050fdeb1d54bf8fa70db72278/cmd/object-api-options.go
 #[tokio::test]
 async fn aged_staging_expires_while_unlinked_metadata_and_aged_live_bytes_stay()
 -> anyhow::Result<()> {
@@ -395,7 +395,21 @@ async fn aged_staging_expires_while_unlinked_metadata_and_aged_live_bytes_stay()
     let cutoff = chrono::Utc::now() - chrono::Duration::days(2);
     assert!(store.head(&staging).await?.last_modified < cutoff);
     assert!(store.head(&live).await?.last_modified < cutoff);
-    minio.mc("mc ilm rule add --expire-days 1 --prefix generation-one/dev/_wamn_files/staging/ file/files-a").await?;
+    minio
+        .mc(
+            &[
+                "ilm",
+                "rule",
+                "add",
+                "--expire-days",
+                "1",
+                "--prefix",
+                "generation-one/dev/_wamn_files/staging/",
+                "file/files-a",
+            ],
+            b"",
+        )
+        .await?;
     let mut removed = false;
     for _ in 0..180 {
         match store.head(&staging).await {

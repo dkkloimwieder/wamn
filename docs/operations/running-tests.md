@@ -864,8 +864,8 @@ Raw blobstore mutations refuse the reserved private and public keys.
 
 The age test imports a month-old metadata fixture through a non-superuser table owner.
 It restores the stamp trigger in the same transaction before the test actions.
-It seeds aged objects through MinIO's preserved modification time header and reads their actual timestamps.
-The [pinned MinIO request parser](https://github.com/minio/minio/blob/RELEASE.2025-09-07T16-13-09Z/cmd/object-api-options.go) defines that header.
+It seeds aged objects through the `x-minio-source-mtime` header and reads their actual timestamps.
+The [pinned MinIO request parser](https://github.com/minio/minio/blob/76c06ff1d2cc844050fdeb1d54bf8fa70db72278/cmd/object-api-options.go) defines that header.
 The test installs a one-day lifecycle rule for staging only, then requires that live bytes and unlinked metadata stay.
 No clock change or external aged snapshot is required.
 
@@ -876,8 +876,10 @@ It creates sessions with and without file grants and uses scoped database reader
 Uploads and reads use port 8082. Metadata operations such as `file.expose` use the HTTP role on port 80.
 The assertions cover hashes, access refusals, public origin behavior, and read binding refusals.
 
-Docker Hub no longer serves the pinned `minio/minio` and `minio/mc` images.
-The check loads the local copies into kind after it makes sure that their digests match the pins.
+The fixture pulls the pinned `chainguard/minio` and `chainguard/minio-client` images from Docker Hub.
+The server contains MinIO `RELEASE.2026-10-23T20-06-51Z`.
+Both images run as user 65532. Client commands run directly through `/usr/bin/mc`, without a shell.
+Docker fixtures store data under `/tmp/data`. The kind volume uses group 65532 for write access.
 The scenario uses the `blob-put` preparation step from the selection file.
 The debug component virtualizer removes ambient WASI CLI imports before publication.
 

@@ -68,21 +68,21 @@ services:
   receiving-dev-minio:
     profiles:
       - receiving-route
-    image: minio/minio:RELEASE.2025-09-07T16-13-09Z
+    image: chainguard/minio@sha256:aea6c163749e1caca37f907976dcf337177ddf5f558808f2aa591618fd3a6eef
     command:
       - server
-      - /data
+      - /tmp/data
     environment:
       MINIO_ROOT_USER: ${WAMN_RECEIVING_DEV_MINIO_USER:-wamn-labels-store}
       MINIO_ROOT_PASSWORD: ${WAMN_RECEIVING_DEV_MINIO_PASSWORD:-probe-labels-store}
     ports:
       - "127.0.0.1:${WAMN_RECEIVING_DEV_MINIO_PORT:-9004}:9000"
-    healthcheck:
-      test:
-        - CMD-SHELL
-        - curl -fsS http://127.0.0.1:9000/minio/health/ready
-      interval: 1s
-      timeout: 2s
-      retries: 60
+  receiving-dev-minio-client:
+    profiles:
+      - receiving-route
+    image: chainguard/minio-client@sha256:8dc1dceb7371c9091b17b450e4da67a492f6de3a22d716af14888a7d8597457e
+    entrypoint: [/usr/bin/mc, --config-dir, /tmp/mc]
+    environment:
+      MC_HOST_store: http://${WAMN_RECEIVING_DEV_MINIO_USER:-wamn-labels-store}:${WAMN_RECEIVING_DEV_MINIO_PASSWORD:-probe-labels-store}@receiving-dev-minio:9000
   # tools/dev-collector renders the collector service and its deployed image.
   # Add <dev-root>/local-artifacts/otel/compose.json when starting local telemetry.

@@ -381,21 +381,22 @@ async fn main() -> anyhow::Result<()> {
     let mut variables = variables;
     if wms {
         let minio = compose.port("receiving-dev-minio", "9000").await?;
-        checked(compose.command().args([
-            "exec",
-            "-T",
-            "-e",
-            &format!(
-                "MC_HOST_store=http://{MINIO_USER}:{}@127.0.0.1:9000",
-                compose.minio_password
-            ),
-            "receiving-dev-minio",
-            "mc",
-            "mb",
-            &format!("store/{LABELS_BUCKET}"),
-        ]))
-        .await
-        .context("create the labels bucket")?;
+        for args in [
+            ["ready", "store"],
+            ["mb", &format!("store/{LABELS_BUCKET}")],
+        ] {
+            tokio::time::timeout(
+                Duration::from_secs(90),
+                checked(
+                    compose
+                        .command()
+                        .args(["run", "--rm", "--no-deps", "receiving-dev-minio-client"])
+                        .args(args),
+                ),
+            )
+            .await
+            .context("labels store readiness")??;
+        }
         // The host reads `{projects, orgs}`, as the cluster host
         // reads its mounted Secret. `wamn dev up` copies it into its root.
         let credentials = directory.join("credentials.json");

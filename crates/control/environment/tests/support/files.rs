@@ -169,9 +169,8 @@ pub async fn metadata(writer: &Client) -> anyhow::Result<()> {
 pub const STORE_NAME: &str = "file-store";
 pub const STORE_PASSWORD: &str = "file-fixture-only";
 pub const MINIO_IMAGE: &str =
-    "minio/minio@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e";
-pub const MC_IMAGE: &str =
-    "minio/mc@sha256:a7fe349ef4bd8521fb8497f55c6042871b2ae640607cf99d9bede5e9bdf11727";
+    "chainguard/minio@sha256:aea6c163749e1caca37f907976dcf337177ddf5f558808f2aa591618fd3a6eef";
+pub const MC_IMAGE: &str = "chainguard/minio-client@sha256:8dc1dceb7371c9091b17b450e4da67a492f6de3a22d716af14888a7d8597457e";
 
 /// A system database whose real reader login supplies file and secret authority.
 pub struct Registry {
@@ -436,7 +435,7 @@ impl Minio {
                 "MINIO_SCANNER_SPEED=fastest",
                 MINIO_IMAGE,
                 "server",
-                "/data",
+                "/tmp/data",
             ],
         )
         .await?;
@@ -464,7 +463,9 @@ impl Minio {
             tokio::time::sleep(std::time::Duration::from_millis(100)).await;
         }
         anyhow::ensure!(ready, "owned MinIO did not become ready");
-        fixture.mc("mc mb file/files-a file/files-b").await?;
+        fixture
+            .mc(&["mb", "file/files-a", "file/files-b"], b"")
+            .await?;
         for (file_bucket, file_prefix) in
             [("files-a", "generation-one"), ("files-b", "generation-two")]
         {
@@ -478,7 +479,17 @@ impl Minio {
                     "Resource":[format!("arn:aws:s3:::{file_bucket}/{file_prefix}/public/*"),
                         format!("arn:aws:s3:::{file_bucket}/{file_prefix}/dev/public/*")]}
             ]});
-            fixture.mc(&format!("printf '%s' '{policy}' > /tmp/file-public-policy.json; mc anonymous set-json /tmp/file-public-policy.json file/{file_bucket}")).await?;
+            fixture
+                .mc(
+                    &[
+                        "anonymous",
+                        "set-json",
+                        "/input",
+                        &format!("file/{file_bucket}"),
+                    ],
+                    policy.to_string().as_bytes(),
+                )
+                .await?;
         }
         Ok(fixture)
     }
@@ -498,25 +509,29 @@ impl Minio {
             .build()?)
     }
 
-    pub async fn mc(&self, script: &str) -> anyhow::Result<String> {
-        let script = format!(
-            "mc alias set file http://127.0.0.1:9000 file-fixture file-fixture-only >/dev/null; {script}"
-        );
-        command(
-            "docker",
-            &[
-                "run",
-                "--rm",
-                "--network",
-                &format!("container:{}", self.container),
-                "--entrypoint",
-                "/bin/sh",
-                MC_IMAGE,
-                "-ec",
-                &script,
-            ],
-        )
-        .await
+    pub async fn mc(&self, args: &[&str], input: &[u8]) -> anyhow::Result<String> {
+        use std::os::unix::fs::PermissionsExt as _;
+        let work = wamn_test_infrastructure::scratch::ScratchRoot::create()?;
+        let path = work.path().join("input");
+        std::fs::write(&path, input)?;
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644))?;
+        let mount = format!("type=bind,source={},target=/input,readonly", path.display());
+        let network = format!("container:{}", self.container);
+        let mut command_args = vec![
+            "run",
+            "--rm",
+            "--network",
+            &network,
+            "--mount",
+            &mount,
+            "--env",
+            "MC_HOST_file=http://file-fixture:file-fixture-only@127.0.0.1:9000",
+            MC_IMAGE,
+            "--config-dir",
+            "/tmp/mc",
+        ];
+        command_args.extend_from_slice(args);
+        command("docker", &command_args).await
     }
 }
 

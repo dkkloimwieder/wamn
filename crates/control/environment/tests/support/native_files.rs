@@ -14,19 +14,6 @@ use wamn_package_control::package_artifact::{PackageRegistry, PushPackageRequest
 pub use super::native_file_fixture::COMPONENT_INPUT;
 use super::native_file_fixture::{build_fixture, release_request};
 
-/// Docker Hub no longer serves the pinned MinIO images. The scenario loads the
-/// local copies into kind after their repository digests match these pins.
-const IMAGES: [(&str, &str); 2] = [
-    (
-        "minio/minio:RELEASE.2025-09-07T16-13-09Z",
-        "minio/minio@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e",
-    ),
-    (
-        "minio/mc:latest",
-        "minio/mc@sha256:a7fe349ef4bd8521fb8497f55c6042871b2ae640607cf99d9bede5e9bdf11727",
-    ),
-];
-
 struct Fixture {
     base_url: String,
     api_url: String,
@@ -41,31 +28,13 @@ struct Fixture {
     minio_address: std::net::SocketAddr,
 }
 
-async fn assertions(run: &Run, fixture: &Fixture) -> anyhow::Result<()> {
+async fn assertions(fixture: &Fixture) -> anyhow::Result<()> {
     for token in [&fixture.session, &fixture.denied_session] {
         ensure!(
             token.starts_with("Bearer ") && !token.contains("REPLACE"),
             "supply a real fixture session"
         );
     }
-    let deployment = run
-        .json(
-            "kubectl",
-            &[
-                "-n",
-                NAMESPACE,
-                "get",
-                "deployment",
-                "c4-files-minio",
-                "-o",
-                "json",
-            ],
-        )
-        .await?;
-    ensure!(
-        deployment["spec"]["template"]["spec"]["containers"][0]["image"] == IMAGES[0].0,
-        "the kind fixture uses the pinned MinIO image"
-    );
     let (reader, reader_driver) =
         tokio_postgres::connect(&fixture.project_reader_url, tokio_postgres::NoTls).await?;
     let reader_driver = tokio::spawn(reader_driver);
@@ -232,7 +201,6 @@ pub async fn exercise(
     admin_url: &str,
 ) -> anyhow::Result<()> {
     let source = repository.join("crates/control/environment/tests/support/file_package/deploy");
-    prepare_images(run).await?;
     run.run(
         "kubectl",
         &[
@@ -426,22 +394,19 @@ pub async fn exercise(
     let pod = pod.lines().next().context("the files host pod")?;
     let (host_address, _host_forward) = forward(run, pod, 8082).await?;
     let (api_address, _api_forward) = forward(run, pod, 80).await?;
-    assertions(
-        run,
-        &Fixture {
-            base_url: format!("http://{host_address}"),
-            api_url: format!("http://{api_address}"),
-            route_host: document.route_host,
-            session: sessions[0].clone(),
-            denied_session: sessions[1].clone(),
-            project_reader_url,
-            connection_reader_url,
-            org: ORG.into(),
-            project: PROJECT.into(),
-            environment: "files".into(),
-            minio_address,
-        },
-    )
+    assertions(&Fixture {
+        base_url: format!("http://{host_address}"),
+        api_url: format!("http://{api_address}"),
+        route_host: document.route_host,
+        session: sessions[0].clone(),
+        denied_session: sessions[1].clone(),
+        project_reader_url,
+        connection_reader_url,
+        org: ORG.into(),
+        project: PROJECT.into(),
+        environment: "files".into(),
+        minio_address,
+    })
     .await
 }
 
@@ -612,26 +577,6 @@ async fn sessions(
     tokens
         .try_into()
         .map_err(|_| anyhow::anyhow!("two file fixture sessions"))
-}
-
-pub async fn prepare_images(run: &mut Run) -> anyhow::Result<()> {
-    for (image, pin) in IMAGES {
-        let digests = run
-            .run(
-                "docker",
-                &[
-                    "image",
-                    "inspect",
-                    "--format",
-                    "{{json .RepoDigests}}",
-                    image,
-                ],
-            )
-            .await?;
-        ensure!(digests.contains(pin), "{image} is not the pinned {pin}");
-        run.load_image(image).await?;
-    }
-    Ok(())
 }
 
 pub async fn prepare_release(

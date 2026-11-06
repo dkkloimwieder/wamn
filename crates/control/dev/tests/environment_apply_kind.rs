@@ -3253,17 +3253,6 @@ async fn rerun(
     if run.kept.identity_ready {
         session_issuer::prepare_image(run, source).await?;
     }
-    if run
-        .kept
-        .images
-        .keys()
-        .any(|name| name.starts_with("minio/"))
-        || checks
-            .iter()
-            .any(|check| check.name == "native files on kind MinIO")
-    {
-        native_files::prepare_images(run).await?;
-    }
     run.kept.image_set = Some(images.clone());
     let chart = stamp(source, &images, None, &run.work.join("chart"))?;
     let platform = check_platform(run, &system_url, chart, events);

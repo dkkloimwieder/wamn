@@ -159,9 +159,9 @@ async fn run_case(case: Case) -> anyhow::Result<()> {
                 [
                     "--env-file",
                     &work.path().join("minio.env").to_string_lossy(),
-                    "minio/minio:RELEASE.2025-09-07T16-13-09Z",
+                    "chainguard/minio@sha256:aea6c163749e1caca37f907976dcf337177ddf5f558808f2aa591618fd3a6eef",
                     "server",
-                    "/data",
+                    "/tmp/data",
                 ],
             )
             .await?;

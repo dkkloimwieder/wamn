@@ -446,7 +446,8 @@ pub(super) async fn labels(cluster: &str, work: &Path, install: bool) -> anyhow:
             "--env-file",
         ])
         .arg(work.join("minio.env"))
-        .arg("minio/mc");
+        .arg("chainguard/minio-client@sha256:8dc1dceb7371c9091b17b450e4da67a492f6de3a22d716af14888a7d8597457e")
+        .args(["--config-dir", "/tmp/mc"]);
     if install {
         command.args(["mb", "--ignore-existing", "labels/labels"]);
     } else {
