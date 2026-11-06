@@ -3,76 +3,66 @@
 use std::path::Path;
 
 use anyhow::Context as _;
-use serde::{Deserialize as _, Serialize};
+use serde::Deserialize as _;
 use serde_json::{Value, json};
 
 use crate::kubectl;
 use wamn_release_control::release_chart::Target;
 
 use super::artifact_plan::SelectedChart;
+use super::bootstrap::{SecretData, secret_text};
 use super::document::{ClusterDocument, Provider};
-use super::job::{self, JobRequest};
 
-// Bootstrap owns credential provisioning. Inspect its state without printing it.
-pub(super) const PROVISION: &str = r#"credentials() {
-  credential=$(kubectl -n hosts get secret "wamn-control-$ORG" -o jsonpath='{.data.url}') || return 1
-  [ -n "$credential" ] || return 1
-  kubectl -n hosts get secret "wamn-control-administration-$ORG" -o name >/dev/null || return 1
+/// Read bootstrap credentials and copy the operator Secret through the deploy client.
+pub async fn credentials(target: &Target, document: &ClusterDocument) -> anyhow::Result<()> {
+    let credential: SecretData = kubectl::get(
+        &target.kubeconfig,
+        &target.context,
+        "hosts",
+        "secret",
+        &format!("wamn-control-{}", document.org),
+    )
+    .await?
+    .context("bootstrap control credential is missing")?;
+    anyhow::ensure!(
+        !secret_text(&credential, "url")?.is_empty(),
+        "bootstrap control credential is empty"
+    );
+    let administration: Option<Value> = kubectl::get(
+        &target.kubeconfig,
+        &target.context,
+        "hosts",
+        "secret",
+        &format!("wamn-control-administration-{}", document.org),
+    )
+    .await?;
+    anyhow::ensure!(
+        administration.is_some(),
+        "bootstrap control administration Secret is missing"
+    );
+    let operator = format!("operator-{}", document.org);
+    let secret: Value = kubectl::get(
+        &target.kubeconfig,
+        &target.context,
+        "identity",
+        "secret",
+        &operator,
+    )
+    .await?
+    .context("missing identity operator Secret")?;
+    kubectl::apply(
+        &target.kubeconfig,
+        &target.context,
+        "hosts",
+        &operator_secret(secret, &operator),
+    )
+    .await
+    .context("copy the control operator Secret")
 }
-credentials || { echo 'bootstrap control credentials are missing' >&2; exit 1; }
-"#;
 
-pub(super) const COPY_OPERATOR: &str = r#"copy_operator() {
-  umask 077
-  scratch=$(mktemp -d)
-  trap 'rm -rf "$scratch"' EXIT
-  kubectl -n identity get secret "$OPERATOR" -o json > "$scratch/source.json" || return 1
-  kubectl patch --local --type=json -f "$scratch/source.json" \
-    --patch-file /inputs/metadata.json -o json > "$scratch/hosts.json" 2>/dev/null || return 1
-  kubectl apply --server-side -f "$scratch/hosts.json" 2>/dev/null || return 1
-}
-copy_operator || { echo 'copy operator Secret failed' >&2; exit 1; }
-"#;
-
-#[derive(Serialize)]
-struct SecretMetadata<'a> {
-    name: &'a str,
-    namespace: &'a str,
-}
-
-#[derive(Serialize)]
-struct MetadataPatch<'a> {
-    op: &'static str,
-    path: &'static str,
-    value: SecretMetadata<'a>,
-}
-
-pub(super) fn provision_request(document: &ClusterDocument, image: &str) -> JobRequest {
-    JobRequest {
-        name: format!("platform-control-credentials-{}", document.org),
-        image: image.into(),
-        command: vec!["/bin/sh".into(), "-ec".into()],
-        arguments: vec![PROVISION.into()],
-        calls_kubernetes: true,
-        environment: [("ORG".into(), document.org.clone())].into(),
-        ..JobRequest::default()
-    }
-}
-
-pub async fn credentials(
-    target: &Target,
-    document: &ClusterDocument,
-    chart: &SelectedChart,
-    directory: &Path,
-) -> anyhow::Result<()> {
-    let image = chart.image("ctl")?;
-    let request = provision_request(document, image);
-    job::run(target, directory, &request, &[]).await?;
-    let request = operator_request(document, image)?;
-    job::run(target, directory, &request, &[])
-        .await
-        .context("copy the control operator Secret")?;
-    Ok(())
+fn operator_secret(mut secret: Value, name: &str) -> Value {
+    secret["metadata"] = json!({"name":name, "namespace":"hosts"});
+    secret
 }
 
 /// Render the org host values shared by the cluster and local control host.
@@ -331,34 +321,6 @@ pub async fn probe(target: &Target, document: &ClusterDocument) -> anyhow::Resul
     Ok(())
 }
 
-pub(super) fn operator_request(
-    document: &ClusterDocument,
-    image: &str,
-) -> anyhow::Result<JobRequest> {
-    let operator = format!("operator-{}", document.org);
-    Ok(JobRequest {
-        name: format!("platform-control-operator-{}", document.org),
-        image: image.into(),
-        command: vec!["/bin/sh".into(), "-ec".into()],
-        arguments: vec![COPY_OPERATOR.into()],
-        calls_kubernetes: true,
-        environment: [("OPERATOR".into(), operator.clone())].into(),
-        files: [(
-            "metadata.json".into(),
-            serde_json::to_string(&[MetadataPatch {
-                op: "replace",
-                path: "/metadata",
-                value: SecretMetadata {
-                    name: &operator,
-                    namespace: "hosts",
-                },
-            }])?,
-        )]
-        .into(),
-        ..JobRequest::default()
-    })
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -461,19 +423,6 @@ mod tests {
     }
 
     #[test]
-    fn control_preparation_consumes_bootstrap_state_without_database_credentials() {
-        let request = provision_request(&document(), "registry/ctl@sha256:abc");
-        assert!(!request.emits_secret);
-        assert!(request.secret_mounts.is_empty());
-        assert_eq!(request.image, "registry/ctl@sha256:abc");
-        assert_eq!(
-            super::super::job_contract::access(&request).unwrap()[0].namespace,
-            "hosts"
-        );
-        assert!(!request.environment.contains_key("WAMN_SYSTEM_ADMIN_URL"));
-    }
-
-    #[test]
     fn kind_host_keeps_selected_image_and_tls_without_cloud_credentials_or_application_routes() {
         let document = document();
         let image = json!({"registry":"", "repository":"localhost:5000/platform/host",
@@ -554,16 +503,20 @@ mod tests {
     }
 
     #[test]
-    fn operator_copy_uses_the_selected_ctl_and_only_org_scoped_references() {
-        let image = "registry.example/platform/ctl@sha256:abc";
-        let request = operator_request(&document(), image).unwrap();
-        assert_eq!(request.image, image);
-        assert!(!request.emits_secret);
-        assert_eq!(request.environment["OPERATOR"], "operator-acme");
-        let patch: Value = serde_json::from_str(&request.files["metadata.json"]).unwrap();
+    fn operator_copy_keeps_credentials_and_replaces_identity_namespace_ownership() {
+        let source = json!({"apiVersion":"v1", "kind":"Secret", "type":"kubernetes.io/tls",
+            "metadata":{"name":"operator-acme", "namespace":"identity", "uid":"source-uid",
+                "ownerReferences":[{"name":"identity-certificate"}], "resourceVersion":"123"},
+            "data":{"tls.crt":"certificate", "tls.key":"private-key"}});
+        let copied = operator_secret(source, "operator-acme");
         assert_eq!(
-            patch,
-            json!([{"op":"replace", "path":"/metadata", "value":{"name":"operator-acme", "namespace":"hosts"}}])
+            copied["metadata"],
+            json!({"name":"operator-acme", "namespace":"hosts"})
+        );
+        assert_eq!(copied["type"], "kubernetes.io/tls");
+        assert_eq!(
+            copied["data"],
+            json!({"tls.crt":"certificate", "tls.key":"private-key"})
         );
     }
 }

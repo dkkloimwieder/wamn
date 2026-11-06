@@ -177,7 +177,7 @@ pub async fn deploy(
     initialization?;
     printed?;
     identity::apply(target, document, chart, directory).await?;
-    control::credentials(target, document, chart, directory).await?;
+    control::credentials(target, document).await?;
     control::release(target, document, chart, directory).await?;
     control::probe(target, document).await
 }

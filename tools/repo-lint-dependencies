@@ -142,7 +142,6 @@ PURE_MODULES = {
     "wamn-environment-control": [
         "ident",
         "org_connection",
-        "platform::job_contract",
         "environment::admin_sql_tests",
         "author_workflow::plan",
         "capture_gap::plan",

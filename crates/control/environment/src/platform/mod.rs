@@ -8,8 +8,7 @@ pub mod control;
 pub mod deploy;
 pub mod document;
 pub mod identity;
-pub mod job;
-pub mod job_contract;
+mod job;
 #[cfg(feature = "test-util")]
 pub mod journey;
 pub mod manifests;

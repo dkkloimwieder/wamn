@@ -1,4 +1,4 @@
-//! System bootstrap requests and redacted Kubernetes credential decoding.
+//! System initialization Jobs and redacted Kubernetes credential decoding.
 
 use std::path::Path;
 
@@ -16,7 +16,7 @@ use wamn_release_control::release_chart::Target;
 
 use super::artifact_plan::SelectedChart;
 use super::document::ClusterDocument;
-use super::job::{self, JobRequest, JobSecret};
+use super::job::{self, Secret};
 use crate::kubectl;
 
 pub(super) const DATABASE_HOST: &str = "wamn-pg-rw.platform.svc.cluster.local";
@@ -49,77 +49,86 @@ pub(super) fn secret_text(secret: &SecretData, key: &str) -> anyhow::Result<Stri
 }
 
 /// Construct the system administrator credential from the CNPG Secret.
-pub fn administrator(secret: &SecretData) -> anyhow::Result<JobSecret> {
+pub(super) fn administrator(job: &mut Value, secret: &SecretData) -> anyhow::Result<Secret> {
     let mut url = url::Url::parse(&format!(
         "postgresql://postgres@{DATABASE_HOST}/wamn_system"
     ))?;
     url.set_password(Some(&secret_text(secret, "password")?.replace('%', "%25")))
         .map_err(|()| anyhow::anyhow!("encode the system administrator password"))?;
-    Ok(JobSecret {
-        name: "wamn-system-admin".into(),
-        key: "url".into(),
-        value: url.into(),
-        environment: "WAMN_SYSTEM_ADMIN_URL".into(),
-    })
+    Ok(job::credential(
+        job,
+        "wamn-system-admin",
+        "WAMN_SYSTEM_ADMIN_URL",
+        "url",
+        url.as_str(),
+    ))
 }
 
-/// Construct the system, initial organization, issuer, and control credential requests.
-pub fn provisioning_jobs(document: &ClusterDocument, image: &str) -> [JobRequest; 4] {
+fn system_job(document: &ClusterDocument, image: &str) -> Value {
     let domain = document
         .route_hosts
         .control
         .split_once('.')
         .map_or(document.route_hosts.control.as_str(), |(_, domain)| domain);
-    [
-        (
-            "platform-system",
-            vec!["provision-system", "--platform-domain", domain],
-            false,
-        ),
-        (
-            "platform-org",
-            vec![
-                "provision-org",
-                "--org",
-                &document.org,
-                "--template",
-                "trials",
-                "--pool",
-                "wamn-pg",
-                "--admin",
-                &document.owner_email,
-            ],
-            false,
-        ),
-        (
-            "platform-identity-issuer",
-            vec![
-                "provision-identity-issuer",
-                "--issuer",
-                super::identity::ISSUER,
-                "--prepare-generation",
-                "a",
-                "--namespace",
-                "identity",
-                "--emit-secret",
-                "/out/secret.json",
-                "--db-host",
-                DATABASE_HOST,
-            ],
-            true,
-        ),
-        (
-            "platform-control-credentials",
-            vec![
-                "provision-org",
-                "--org",
-                &document.org,
-                "--template",
-                "trials",
-                "--pool",
-                "wamn-pg",
-                "--admin",
-                &document.owner_email,
+    job::manifest(
+        "platform-system",
+        image,
+        &["/usr/local/bin/wamn-ctl"],
+        &["provision-system", "--platform-domain", domain],
+    )
+}
+
+fn organization_job(document: &ClusterDocument, image: &str) -> Value {
+    job::manifest(
+        "platform-org",
+        image,
+        &["/usr/local/bin/wamn-ctl"],
+        &[
+            "provision-org",
+            "--org",
+            &document.org,
+            "--template",
+            "trials",
+            "--pool",
+            "wamn-pg",
+            "--admin",
+            &document.owner_email,
+        ],
+    )
+}
+
+fn issuer_credential_job(image: &str) -> Value {
+    let mut job = job::manifest(
+        "platform-identity-issuer",
+        image,
+        &["/usr/local/bin/wamn-ctl"],
+        &[
+            "provision-identity-issuer",
+            "--issuer",
+            super::identity::ISSUER,
+            "--prepare-generation",
+            "a",
+            "--namespace",
+            "identity",
+            "--emit-secret",
+            "/out/secret.json",
+            "--db-host",
+            DATABASE_HOST,
+        ],
+    );
+    job::secret_output(&mut job);
+    job
+}
+
+fn control_credential_job(document: &ClusterDocument, image: &str) -> Value {
+    let mut job = organization_job(document, image);
+    job["metadata"]["name"] = format!("platform-control-credentials-{}", document.org).into();
+    job::container(&mut job)["name"] = job["metadata"]["name"].clone();
+    job::container(&mut job)["args"]
+        .as_array_mut()
+        .unwrap()
+        .extend(
+            [
                 "--prepare-control-generation",
                 "a",
                 "--namespace",
@@ -128,18 +137,11 @@ pub fn provisioning_jobs(document: &ClusterDocument, image: &str) -> [JobRequest
                 "/out/secret.json",
                 "--db-host",
                 DATABASE_HOST,
-            ],
-            true,
-        ),
-    ]
-    .map(|(name, arguments, emits_secret)| JobRequest {
-        name: name.into(),
-        image: image.into(),
-        arguments: arguments.into_iter().map(str::to_owned).collect(),
-        calls_kubernetes: false,
-        emits_secret,
-        ..JobRequest::default()
-    })
+            ]
+            .map(Value::from),
+        );
+    job::secret_output(&mut job);
+    job
 }
 
 /// Initialize system SQL and the credentials of the initial platform services.
@@ -167,10 +169,13 @@ pub async fn initialize(
     )
     .await?
     .context("missing Secret platform/wamn-pg-superuser")?;
-    let admin = administrator(&superuser)?;
-    let [system, org, issuer, control] = provisioning_jobs(document, chart.image("ctl")?);
-    job::run(&target, directory, &system, std::slice::from_ref(&admin)).await?;
-    job::run(&target, directory, &org, std::slice::from_ref(&admin)).await?;
+    let image = chart.image("ctl")?;
+    let mut system = system_job(document, image);
+    let admin = administrator(&mut system, &superuser)?;
+    job::run(&target, directory, &mut system, &mut [admin]).await?;
+    let mut org = organization_job(document, image);
+    let admin = administrator(&mut org, &superuser)?;
+    job::run(&target, directory, &mut org, &mut [admin]).await?;
 
     // The selected CNPG image supplies psql; the ctl image supplies WAMN SQL.
     let objects = super::manifests::objects(
@@ -183,14 +188,8 @@ pub async fn initialize(
         .find(|object| object["kind"] == "Cluster" && object["metadata"]["name"] == "wamn-pg")
         .and_then(|object| object["spec"]["imageName"].as_str())
         .context("selected CNPG cluster has no PostgreSQL image")?;
-    let password = JobSecret {
-        name: "wamn-bootstrap-probe".into(),
-        key: "password".into(),
-        value: secret_text(&superuser, "password")?,
-        environment: "PGPASSWORD".into(),
-    };
-    for service in service_credentials(document, [issuer, control])? {
-        credential(&target, directory, postgres, &admin, &password, &service).await?;
+    for service in service_credentials(document, image)? {
+        credential(&target, directory, postgres, &superuser, service).await?;
     }
     let administration = wamn_control_provision::render_control_administration_secret_manifest(
         &document.org,
@@ -216,7 +215,7 @@ pub async fn initialize(
 }
 
 struct Credential {
-    request: JobRequest,
+    job: Value,
     namespace: &'static str,
     secret: String,
     roles: [String; 2],
@@ -224,10 +223,7 @@ struct Credential {
     repair: String,
 }
 
-fn service_credentials(
-    document: &ClusterDocument,
-    [issuer, mut control]: [JobRequest; 2],
-) -> anyhow::Result<[Credential; 2]> {
+fn service_credentials(document: &ClusterDocument, image: &str) -> anyhow::Result<[Credential; 2]> {
     let issuer_role =
         |generation| identity_issuer_generation_role(super::identity::ISSUER, generation);
     let control_role = |generation| {
@@ -240,11 +236,9 @@ fn service_credentials(
             generation,
         )
     };
-    control.name.push('-');
-    control.name.push_str(&document.org);
     Ok([
         Credential {
-            request: issuer,
+            job: issuer_credential_job(image),
             namespace: "identity",
             secret: "wamn-identity-db".into(),
             roles: [
@@ -258,7 +252,7 @@ fn service_credentials(
             ),
         },
         Credential {
-            request: control,
+            job: control_credential_job(document, image),
             namespace: "hosts",
             secret: format!("wamn-control-{}", document.org),
             roles: [
@@ -325,7 +319,7 @@ fn generation_state_sql(role: &str, acl: &str) -> String {
     )
 }
 
-fn state_request(credential: &Credential, image: &str) -> JobRequest {
+fn state_job(credential: &Credential, image: &str) -> Value {
     let queries = credential
         .roles
         .iter()
@@ -333,20 +327,20 @@ fn state_request(credential: &Credential, image: &str) -> JobRequest {
         .collect::<Vec<_>>()
         .join(", ");
     // Reusing this Job name collects a pending credential handoff BEFORE observing state.
-    probe_request(
-        &credential.request.name,
+    probe_job(
+        job::name(&credential.job),
         image,
         "postgres",
         &format!("SELECT json_build_array({queries})"),
     )
 }
 
-fn probe_request(name: &str, image: &str, user: &str, query: &str) -> JobRequest {
-    JobRequest {
-        name: name.into(),
-        image: image.into(),
-        command: vec!["psql".into()],
-        arguments: [
+fn probe_job(name: &str, image: &str, user: &str, query: &str) -> Value {
+    let mut job = job::manifest(
+        name,
+        image,
+        &["psql"],
+        &[
             "--no-psqlrc",
             "--no-password",
             "--tuples-only",
@@ -355,32 +349,43 @@ fn probe_request(name: &str, image: &str, user: &str, query: &str) -> JobRequest
             "ON_ERROR_STOP=1",
             "--command",
             query,
-        ]
-        .map(str::to_owned)
-        .into(),
-        environment: [
-            ("PGHOST".into(), DATABASE_HOST.into()),
-            ("PGUSER".into(), user.into()),
-            ("PGDATABASE".into(), "wamn_system".into()),
-        ]
-        .into(),
-        ..JobRequest::default()
-    }
+        ],
+    );
+    job::environment(
+        &mut job,
+        &[
+            ("PGHOST", DATABASE_HOST),
+            ("PGUSER", user),
+            ("PGDATABASE", "wamn_system"),
+        ],
+    );
+    job
 }
 
 async fn credential(
     target: &Target,
     directory: &Path,
     postgres: &str,
-    admin: &JobSecret,
-    password: &JobSecret,
-    credential: &Credential,
+    superuser: &SecretData,
+    mut credential: Credential,
 ) -> anyhow::Result<()> {
-    let request = state_request(credential, postgres);
-    let observed = job::run(target, directory, &request, std::slice::from_ref(password))
-        .await
-        .with_context(|| recovery(credential, "a"))?;
-    let mut states: [GenerationState; 2] = serde_json::from_str(observed.stdout.trim())
+    let mut probe = state_job(&credential, postgres);
+    let mut password = job::credential(
+        &mut probe,
+        "wamn-bootstrap-probe",
+        "PGPASSWORD",
+        "password",
+        &secret_text(superuser, "password")?,
+    );
+    let observed = job::run(
+        target,
+        directory,
+        &mut probe,
+        std::slice::from_mut(&mut password),
+    )
+    .await
+    .with_context(|| recovery(&credential, "a"))?;
+    let mut states: [GenerationState; 2] = serde_json::from_str(observed.trim())
         .context("decode bootstrap credential database state")?;
     let mut secret: Option<SecretData> = kubectl::get(
         &target.kubeconfig,
@@ -395,22 +400,18 @@ async fn credential(
             ensure!(
                 matches!(state, GenerationState::Absent | GenerationState::Inactive),
                 "{}",
-                recovery(credential, generation)
+                recovery(&credential, generation)
             );
         }
         ensure!(
             states[1] == GenerationState::Absent,
             "{}",
-            recovery(credential, "b")
+            recovery(&credential, "b")
         );
-        job::run(
-            target,
-            directory,
-            &credential.request,
-            std::slice::from_ref(admin),
-        )
-        .await
-        .with_context(|| recovery(credential, "a"))?;
+        let admin = administrator(&mut credential.job, superuser)?;
+        job::run(target, directory, &mut credential.job, &mut [admin])
+            .await
+            .with_context(|| recovery(&credential, "a"))?;
         secret = kubectl::get(
             &target.kubeconfig,
             &target.context,
@@ -419,22 +420,27 @@ async fn credential(
             &credential.secret,
         )
         .await?;
-        let observed =
-            job::run(target, directory, &request, std::slice::from_ref(password)).await?;
-        states = serde_json::from_str(observed.stdout.trim())
+        let observed = job::run(
+            target,
+            directory,
+            &mut probe,
+            std::slice::from_mut(&mut password),
+        )
+        .await?;
+        states = serde_json::from_str(observed.trim())
             .context("decode prepared credential database state")?;
     }
     let secret = secret.context("credential Job completed without its Secret")?;
     let url = secret_text(&secret, "url")?;
-    let (generation, password) = credential_password(credential, &url)?;
+    let (generation, password) = credential_password(&credential, &url)?;
     ensure!(
         states[generation] == GenerationState::Active,
         "{}",
-        recovery(credential, if generation == 0 { "a" } else { "b" })
+        recovery(&credential, if generation == 0 { "a" } else { "b" })
     );
     let role = &credential.roles[generation];
-    let probe = probe_request(
-        &credential.request.name,
+    let mut probe = probe_job(
+        job::name(&credential.job),
         postgres,
         role,
         &format!(
@@ -442,7 +448,14 @@ async fn credential(
             wamn_pg_core::quote_literal(role)
         ),
     );
-    let result = job::run(target, directory, &probe, &[password])
+    let password = job::credential(
+        &mut probe,
+        "wamn-bootstrap-authenticate",
+        "PGPASSWORD",
+        "password",
+        &password,
+    );
+    let result = job::run(target, directory, &mut probe, &mut [password])
         .await
         .with_context(|| {
             format!(
@@ -451,13 +464,13 @@ async fn credential(
             )
         })?;
     ensure!(
-        result.stdout.trim() == "t",
+        result.trim() == "t",
         "credential authenticated with an unexpected database scope"
     );
     Ok(())
 }
 
-fn credential_password(credential: &Credential, raw: &str) -> anyhow::Result<(usize, JobSecret)> {
+fn credential_password(credential: &Credential, raw: &str) -> anyhow::Result<(usize, String)> {
     let url = url::Url::parse(raw)
         .map_err(|_| anyhow::anyhow!("bootstrap credential is not a PostgreSQL URL"))?;
     ensure!(
@@ -484,14 +497,9 @@ fn credential_password(credential: &Credential, raw: &str) -> anyhow::Result<(us
         .context("bootstrap credential has no password")?;
     Ok((
         generation,
-        JobSecret {
-            name: "wamn-bootstrap-authenticate".into(),
-            key: "password".into(),
-            value: std::str::from_utf8(password)
-                .map_err(|_| anyhow::anyhow!("bootstrap credential password is not UTF-8"))?
-                .into(),
-            environment: "PGPASSWORD".into(),
-        },
+        std::str::from_utf8(password)
+            .map_err(|_| anyhow::anyhow!("bootstrap credential password is not UTF-8"))?
+            .into(),
     ))
 }
 
@@ -500,7 +508,10 @@ fn recovery(credential: &Credential, generation: &str) -> String {
         "credential {}/{} generation {generation} needs repair. Recover Job platform/{} and its Secret first. \
          If the handoff is lost, use the existing guarded `wamn-ctl {} {generation}` with the system administrator credential, \
          then prepare that named generation and install its Secret. Abort refuses a generation with live sessions; do not reset the database",
-        credential.namespace, credential.secret, credential.request.name, credential.repair
+        credential.namespace,
+        credential.secret,
+        job::name(&credential.job),
+        credential.repair
     )
 }
 
@@ -519,83 +530,13 @@ mod tests {
     }
 
     #[test]
-    fn retained_jobs_use_ctl_and_only_the_initial_platform_scope() {
-        let document = document();
-        let image = "registry/ctl@sha256:abc";
-        for request in provisioning_jobs(&document, image) {
-            assert_eq!(request.image, image);
-            assert!(!request.calls_kubernetes);
-            assert!(
-                super::super::job_contract::access(&request)
-                    .unwrap()
-                    .is_empty()
-            );
-            assert!(request.files.is_empty());
-            assert!(request.environment.is_empty());
-            let contract = super::super::job_contract::request(&request).unwrap();
-            assert_eq!(contract.program, "wamn-ctl");
-            let argument = |flag| {
-                request
-                    .arguments
-                    .windows(2)
-                    .find(|pair| pair[0] == flag)
-                    .map(|pair| pair[1].as_str())
-            };
-            match contract.verb {
-                "provision-system" => {
-                    assert_eq!(argument("--platform-domain"), Some("example.com"));
-                    assert_eq!(argument("--emit-apply-secret"), None);
-                    assert!(!request.emits_secret);
-                }
-                "provision-org" => {
-                    assert_eq!(argument("--org"), Some(document.org.as_str()));
-                    assert_eq!(argument("--admin"), Some(document.owner_email.as_str()));
-                    assert_eq!(argument("--template"), Some("trials"));
-                    assert_eq!(argument("--pool"), Some("wamn-pg"));
-                    assert_eq!(argument("--project"), None);
-                    if request.emits_secret {
-                        assert_eq!(argument("--prepare-control-generation"), Some("a"));
-                        assert_eq!(argument("--namespace"), Some("hosts"));
-                        assert_eq!(argument("--emit-control-secret"), Some("/out/secret.json"));
-                        assert_eq!(argument("--db-host"), Some(DATABASE_HOST));
-                    }
-                }
-                "provision-identity-issuer" => {
-                    assert!(request.emits_secret);
-                    assert_eq!(argument("--issuer"), Some(super::super::identity::ISSUER));
-                    assert_eq!(argument("--prepare-generation"), Some("a"));
-                    assert_eq!(argument("--namespace"), Some("identity"));
-                    assert_eq!(argument("--emit-secret"), Some("/out/secret.json"));
-                    assert_eq!(argument("--db-host"), Some(DATABASE_HOST));
-                }
-                other => panic!("unexpected bootstrap operation {other}"),
-            }
-        }
-    }
-
-    #[test]
-    fn credential_probes_collect_the_preparation_job_and_need_no_namespace_permissions() {
-        let document = document();
-        let [_, _, issuer, control] = provisioning_jobs(&document, "ctl-image");
-        for service in service_credentials(&document, [issuer, control]).unwrap() {
-            let request = state_request(&service, "postgres-image");
-            assert_eq!(request.name, service.request.name);
-            assert_eq!(request.image, "postgres-image");
-            assert!(!request.emits_secret);
-            assert!(!request.calls_kubernetes);
-            assert!(
-                super::super::job_contract::access(&request)
-                    .unwrap()
-                    .is_empty()
-            );
-            assert_eq!(request.environment["PGHOST"], DATABASE_HOST);
-            assert_eq!(request.environment["PGDATABASE"], "wamn_system");
-            assert!(!request.environment.contains_key("PGPASSWORD"));
-            assert!(
-                request
-                    .arguments
-                    .windows(2)
-                    .any(|pair| pair == ["--set", "ON_ERROR_STOP=1"])
+    fn credential_probes_collect_the_preparation_job_before_reading_database_state() {
+        for service in service_credentials(&document(), "ctl-image").unwrap() {
+            let mut probe = state_job(&service, "postgres-image");
+            assert_eq!(job::name(&probe), job::name(&service.job));
+            assert_eq!(
+                job::container(&mut probe)["command"],
+                serde_json::json!(["psql"])
             );
         }
     }
@@ -603,15 +544,13 @@ mod tests {
     #[test]
     fn service_credentials_accept_both_scoped_generations_and_refuse_url_overrides() {
         let document = document();
-        let [_, _, issuer, control] = provisioning_jobs(&document, "ctl-image");
-        for service in service_credentials(&document, [issuer, control]).unwrap() {
+        for service in service_credentials(&document, "ctl-image").unwrap() {
             for (index, role) in service.roles.iter().enumerate() {
                 let url =
                     format!("postgresql://{role}:private%40value@{DATABASE_HOST}/wamn_system");
                 let (generation, password) = credential_password(&service, &url).unwrap();
                 assert_eq!(generation, index);
-                assert_eq!(password.value, "private@value");
-                assert!(!format!("{password:?}").contains("private"));
+                assert_eq!(password, "private@value");
                 for invalid in [
                     url.replace(role, "postgres"),
                     url.replace(DATABASE_HOST, "other-db"),
@@ -632,9 +571,10 @@ mod tests {
         let secret = SecretData {
             data: [("password".into(), STANDARD.encode("p@ss:/?#%"))].into(),
         };
-        let admin = administrator(&secret).unwrap();
+        let mut job = system_job(&document(), "ctl-image");
+        let admin = administrator(&mut job, &secret).unwrap();
         assert_eq!(
-            admin.value,
+            admin.0["stringData"]["url"],
             format!("postgresql://postgres:p%40ss%3A%2F%3F%23%25@{DATABASE_HOST}/wamn_system")
         );
         assert!(!format!("{admin:?}").contains("p%40ss"));

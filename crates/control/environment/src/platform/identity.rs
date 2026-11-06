@@ -11,7 +11,7 @@ use wamn_release_control::release_chart::{self, Target};
 use super::artifact_plan::SelectedChart;
 use super::bootstrap::{DATABASE_HOST, SecretData, secret_text};
 use super::document::{ClusterDocument, Provider};
-use super::job::{self, JobRequest, JobSecret, SecretMount};
+use super::job::{self, Secret};
 
 pub(super) const ISSUER: &str = "https://identity.identity.svc.cluster.local";
 const LOCAL_MAIL: &str = "/var/run/wamn-identity/mail/outbox";
@@ -172,14 +172,13 @@ pub async fn apply(
     )
     .await?
     .context("missing Secret identity/identity-tls")?;
-    let check = check_request(&secret_text(&ca, "ca.crt")?);
+    let (mut check, files) = endpoint_job(&secret_text(&ca, "ca.crt")?);
     let hosts = Target {
         namespace: "hosts".into(),
         ..identity
     };
-    let result = job::run(&hosts, directory, &check, &[]).await?;
-    let jwks: Value =
-        serde_json::from_str(&result.stdout).context("decode identity public keys")?;
+    let result = job::run(&hosts, directory, &mut check, &mut [files]).await?;
+    let jwks: Value = serde_json::from_str(&result).context("decode identity public keys")?;
     ensure!(
         jwks["keys"].as_array().is_some_and(|keys| keys
             .iter()
@@ -218,20 +217,21 @@ async fn invite_owner(
     )
     .await?
     .context("missing Cluster platform/wamn-pg")?;
-    let probe = owner_state_request(
+    let (mut probe, files) = owner_state_job(
         document,
         cluster["spec"]["imageName"]
             .as_str()
             .context("PostgreSQL Cluster has no image")?,
     );
-    let password = JobSecret {
-        name: "platform-owner-probe".into(),
-        key: "password".into(),
-        value: secret_text(superuser, "password")?,
-        environment: "PGPASSWORD".into(),
-    };
-    let result = job::run(&platform, directory, &probe, &[password]).await?;
-    match result.stdout.trim() {
+    let password = job::credential(
+        &mut probe,
+        "platform-owner-probe",
+        "PGPASSWORD",
+        "password",
+        &secret_text(superuser, "password")?,
+    );
+    let result = job::run(&platform, directory, &mut probe, &mut [password, files]).await?;
+    match result.trim() {
         "t" => return Ok(()),
         "f" => {}
         _ => anyhow::bail!("owner invitation state is not a boolean"),
@@ -245,10 +245,23 @@ async fn invite_owner(
     )
     .await?
     .context("missing identity operator Secret")?;
-    let request = JobRequest {
-        name: format!("platform-invite-{}", document.org),
-        image: chart.image("ctl")?.into(),
-        arguments: [
+    let (mut invitation, files) = invitation_job(document, chart.image("ctl")?, &operator, ca)?;
+    let admin = super::bootstrap::administrator(&mut invitation, superuser)?;
+    job::run(&platform, directory, &mut invitation, &mut [admin, files]).await?;
+    Ok(())
+}
+
+fn invitation_job(
+    document: &ClusterDocument,
+    image: &str,
+    operator: &SecretData,
+    ca: &SecretData,
+) -> anyhow::Result<(Value, Secret)> {
+    let mut job = job::manifest(
+        &format!("platform-invite-{}", document.org),
+        image,
+        &["/usr/local/bin/wamn-ctl"],
+        &[
             "invite",
             "--org",
             &document.org,
@@ -265,92 +278,67 @@ async fn invite_owner(
             "/inputs/tls.key",
             "--pat-server-ca",
             "/inputs/ca.crt",
-        ]
-        .map(str::to_owned)
-        .into(),
-        files: [
-            ("tls.crt".into(), secret_text(&operator, "tls.crt")?),
-            ("tls.key".into(), secret_text(&operator, "tls.key")?),
+        ],
+    );
+    let files = job::files(
+        &mut job,
+        [
+            ("tls.crt".into(), secret_text(operator, "tls.crt")?),
+            ("tls.key".into(), secret_text(operator, "tls.key")?),
             ("ca.crt".into(), secret_text(ca, "ca.crt")?),
         ]
         .into(),
-        environment: [
+    );
+    job::environment(
+        &mut job,
+        &[
             (
-                "WAMN_NATS_URL".into(),
-                "nats://wamn-nats.platform.svc.cluster.local:4222".into(),
+                "WAMN_NATS_URL",
+                "nats://wamn-nats.platform.svc.cluster.local:4222",
             ),
-            ("WAMN_NATS_TLS_CA".into(), "/etc/wamn/nats/ca.crt".into()),
-            ("WAMN_NATS_TLS_CERT".into(), "/etc/wamn/nats/tls.crt".into()),
-            ("WAMN_NATS_TLS_KEY".into(), "/etc/wamn/nats/tls.key".into()),
-        ]
-        .into(),
-        secret_mounts: vec![SecretMount {
-            name: "wamn-ctl-nats".into(),
-            path: "/etc/wamn/nats".into(),
-            keys: ["ca.crt", "tls.crt", "tls.key"].map(str::to_owned).into(),
-        }],
-        ..JobRequest::default()
-    };
-    job::run(
-        &platform,
-        directory,
-        &request,
-        &[super::bootstrap::administrator(superuser)?],
-    )
-    .await?;
-    Ok(())
-}
-
-fn owner_state_request(document: &ClusterDocument, image: &str) -> JobRequest {
-    JobRequest {
-        name: format!("platform-owner-state-{}", document.org),
-        image: image.into(),
-        command: vec!["psql".into()],
-        arguments: vec![
-            "--no-psqlrc".into(),
-            "--tuples-only".into(),
-            "--no-align".into(),
-            "--set".into(),
-            "ON_ERROR_STOP=1".into(),
-            "--set".into(),
-            format!("owner={}", document.owner_email),
-            "--file".into(),
-            "/inputs/state.sql".into(),
+            ("WAMN_NATS_TLS_CA", "/etc/wamn/nats/ca.crt"),
+            ("WAMN_NATS_TLS_CERT", "/etc/wamn/nats/tls.crt"),
+            ("WAMN_NATS_TLS_KEY", "/etc/wamn/nats/tls.key"),
         ],
-        environment: [
-            ("PGHOST".into(), DATABASE_HOST.into()),
-            ("PGUSER".into(), "postgres".into()),
-            ("PGDATABASE".into(), "wamn_system".into()),
-        ]
-        .into(),
-        files: [("state.sql".into(), OWNER_STATE.into())].into(),
-        run_as_user: Some(0),
-        ..JobRequest::default()
-    }
+    );
+    job::mount(
+        &mut job,
+        "nats",
+        "wamn-ctl-nats",
+        "/etc/wamn/nats",
+        &["ca.crt", "tls.crt", "tls.key"],
+    );
+    Ok((job, files))
 }
 
-pub(super) fn key_probe(image: &str, superuser: &SecretData) -> anyhow::Result<job::JobInputs> {
-    Ok((
-        key_state_request(image),
-        vec![JobSecret {
-            name: "platform-key-probe".into(),
-            key: "password".into(),
-            value: secret_text(superuser, "password")?,
-            environment: "PGPASSWORD".into(),
-        }],
-    ))
-}
-
-pub(super) fn key_publish(image: &str, credential: &SecretData) -> anyhow::Result<job::JobInputs> {
-    Ok((
-        key_publish_request(image),
-        vec![JobSecret {
-            name: "platform-key-identity".into(),
-            key: "url".into(),
-            value: secret_text(credential, "url")?,
-            environment: "WAMN_IDENTITY_DATABASE_URL".into(),
-        }],
-    ))
+fn owner_state_job(document: &ClusterDocument, image: &str) -> (Value, Secret) {
+    let mut job = job::manifest(
+        &format!("platform-owner-state-{}", document.org),
+        image,
+        &["psql"],
+        &[
+            "--no-psqlrc",
+            "--tuples-only",
+            "--no-align",
+            "--set",
+            "ON_ERROR_STOP=1",
+            "--set",
+            &format!("owner={}", document.owner_email),
+            "--file",
+            "/inputs/state.sql",
+        ],
+    );
+    job::environment(
+        &mut job,
+        &[
+            ("PGHOST", DATABASE_HOST),
+            ("PGUSER", "postgres"),
+            ("PGDATABASE", "wamn_system"),
+        ],
+    );
+    let files = job::files(&mut job, [("state.sql".into(), OWNER_STATE.into())].into());
+    job["spec"]["template"]["spec"]["securityContext"] = json!({"runAsUser":0});
+    (job, files)
 }
 
 fn platform_chart_input(
@@ -424,10 +412,23 @@ async fn keys(
     let image = cluster["spec"]["imageName"]
         .as_str()
         .context("the PostgreSQL Cluster has no image")?;
-    let (probe, probe_secrets) = key_probe(image, superuser)?;
-    let result = job::run(target, directory, &probe, &probe_secrets).await?;
+    let mut probe = key_state_job(image);
+    let mut password = job::credential(
+        &mut probe,
+        "platform-key-probe",
+        "PGPASSWORD",
+        "password",
+        &secret_text(superuser, "password")?,
+    );
+    let result = job::run(
+        target,
+        directory,
+        &mut probe,
+        std::slice::from_mut(&mut password),
+    )
+    .await?;
     let mut state: Value =
-        serde_json::from_str(&result.stdout).context("decode the public session key state")?;
+        serde_json::from_str(&result).context("decode the public session key state")?;
     if state["active"].is_object() {
         return Ok(state["active"].take());
     }
@@ -440,23 +441,44 @@ async fn keys(
     )
     .await?
     .context("missing Secret identity/wamn-identity-db")?;
-    let (publish, secrets) = key_publish(identity_image, &credential)?;
+
     let kid = if let Some(kid) = state["published"].as_str() {
         kid.to_owned()
     } else {
-        let result = job::run(identity, directory, &publish, &secrets).await?;
+        let mut publish = key_publish_job(identity_image);
+        let secret = job::credential(
+            &mut publish,
+            "platform-key-identity",
+            "WAMN_IDENTITY_DATABASE_URL",
+            "url",
+            &secret_text(&credential, "url")?,
+        );
+        let result = job::run(identity, directory, &mut publish, &mut [secret]).await?;
         let public: Value =
-            serde_json::from_str(&result.stdout).context("decode the published session key")?;
+            serde_json::from_str(&result).context("decode the published session key")?;
         public["kid"]
             .as_str()
             .context("the published session key has no kid")?
             .to_owned()
     };
-    let activate = key_activate_request(identity_image, &kid);
-    job::run(identity, directory, &activate, &secrets).await?;
-    let result = job::run(target, directory, &probe, &probe_secrets).await?;
+    let mut activate = key_activate_job(identity_image, &kid);
+    let secret = job::credential(
+        &mut activate,
+        "platform-key-identity",
+        "WAMN_IDENTITY_DATABASE_URL",
+        "url",
+        &secret_text(&credential, "url")?,
+    );
+    job::run(identity, directory, &mut activate, &mut [secret]).await?;
+    let result = job::run(
+        target,
+        directory,
+        &mut probe,
+        std::slice::from_mut(&mut password),
+    )
+    .await?;
     let mut state: Value =
-        serde_json::from_str(&result.stdout).context("decode the active session key state")?;
+        serde_json::from_str(&result).context("decode the active session key state")?;
     ensure!(
         state["active"]["kid"] == kid,
         "identity session key activation did not select the published key"
@@ -464,12 +486,12 @@ async fn keys(
     Ok(state["active"].take())
 }
 
-pub(super) fn check_request(ca: &str) -> JobRequest {
-    JobRequest {
-        name: "platform-identity-check".into(),
-        image: CURL_IMAGE.into(),
-        command: vec!["curl".into()],
-        arguments: [
+fn endpoint_job(ca: &str) -> (Value, Secret) {
+    let mut job = job::manifest(
+        "platform-identity-check",
+        CURL_IMAGE,
+        &["curl"],
+        &[
             "--fail",
             "--fail-early",
             "--silent",
@@ -486,21 +508,19 @@ pub(super) fn check_request(ca: &str) -> JobRequest {
             "--cacert",
             "/inputs/ca.crt",
             "https://identity.identity.svc.cluster.local/.well-known/jwks.json",
-        ]
-        .map(str::to_owned)
-        .into(),
-        files: [("ca.crt".into(), ca.into())].into(),
-        run_as_user: Some(0),
-        ..JobRequest::default()
-    }
+        ],
+    );
+    let files = job::files(&mut job, [("ca.crt".into(), ca.into())].into());
+    job["spec"]["template"]["spec"]["securityContext"] = json!({"runAsUser":0});
+    (job, files)
 }
 
-pub(super) fn key_state_request(image: &str) -> JobRequest {
-    JobRequest {
-        name: "platform-session-key-state".into(),
-        image: image.into(),
-        command: vec!["psql".into()],
-        arguments: [
+fn key_state_job(image: &str) -> Value {
+    let mut job = job::manifest(
+        "platform-session-key-state",
+        image,
+        &["psql"],
+        &[
             "--no-psqlrc",
             "--tuples-only",
             "--no-align",
@@ -516,39 +536,39 @@ pub(super) fn key_state_request(image: &str) -> JobRequest {
                     WHERE issuer = 'https://identity.identity.svc.cluster.local' \
                     AND signing_cutoff IS NULL AND private_pkcs8 IS NOT NULL \
                     ORDER BY published_at, kid LIMIT 1))",
-        ]
-        .map(str::to_owned)
-        .into(),
-        environment: [
-            ("PGHOST".into(), DATABASE_HOST.into()),
-            ("PGUSER".into(), "postgres".into()),
-            ("PGDATABASE".into(), "wamn_system".into()),
-        ]
-        .into(),
-        ..JobRequest::default()
-    }
+        ],
+    );
+    job::environment(
+        &mut job,
+        &[
+            ("PGHOST", DATABASE_HOST),
+            ("PGUSER", "postgres"),
+            ("PGDATABASE", "wamn_system"),
+        ],
+    );
+    job
 }
 
-pub(super) fn key_publish_request(identity_image: &str) -> JobRequest {
-    JobRequest {
-        name: "platform-session-key-publish".into(),
-        image: identity_image.into(),
-        command: vec!["/usr/local/bin/wamn-identity".into()],
-        arguments: vec!["publish".into()],
-        environment: [("WAMN_IDENTITY_ISSUER".into(), ISSUER.into())].into(),
-        ..JobRequest::default()
-    }
+fn key_publish_job(image: &str) -> Value {
+    let mut job = job::manifest(
+        "platform-session-key-publish",
+        image,
+        &["/usr/local/bin/wamn-identity"],
+        &["publish"],
+    );
+    job::environment(&mut job, &[("WAMN_IDENTITY_ISSUER", ISSUER)]);
+    job
 }
 
-pub(super) fn key_activate_request(identity_image: &str, kid: &str) -> JobRequest {
-    JobRequest {
-        name: "platform-session-key-activate".into(),
-        image: identity_image.into(),
-        command: vec!["/usr/local/bin/wamn-identity".into()],
-        arguments: vec!["activate".into(), "--kid".into(), kid.into()],
-        environment: [("WAMN_IDENTITY_ISSUER".into(), ISSUER.into())].into(),
-        ..JobRequest::default()
-    }
+fn key_activate_job(image: &str, kid: &str) -> Value {
+    let mut job = job::manifest(
+        "platform-session-key-activate",
+        image,
+        &["/usr/local/bin/wamn-identity"],
+        &["activate", "--kid", kid],
+    );
+    job::environment(&mut job, &[("WAMN_IDENTITY_ISSUER", ISSUER)]);
+    job
 }
 
 #[cfg(test)]
@@ -566,33 +586,43 @@ mod tests {
             "route_hosts": {"control": "control.example.invalid"}, "resend_from": ""
         }))
         .unwrap();
-        let request = owner_state_request(&document, "postgres:18");
-        let contract = super::super::job_contract::request(&request).unwrap();
-        assert_eq!(contract.program, "psql");
-        assert!(contract.access.is_empty());
+        let (mut job, files) = owner_state_job(&document, "postgres:18");
+        let container = job::container(&mut job);
+        let arguments: Vec<String> = serde_json::from_value(container["args"].clone()).unwrap();
         assert!(
-            request
-                .arguments
+            arguments
                 .windows(2)
                 .any(|args| args == ["--set", "ON_ERROR_STOP=1"])
         );
         assert!(
-            request
-                .arguments
+            arguments
                 .windows(2)
                 .any(|args| args == ["--set", "owner=o'brien@example.invalid"])
         );
-        let file = request
-            .arguments
+        let file = arguments
             .windows(2)
             .find(|args| args[0] == "--file")
             .unwrap();
-        let sql = &request.files[Path::new(&file[1]).file_name().unwrap().to_str().unwrap()];
+        let sql = files.0["stringData"][Path::new(&file[1]).file_name().unwrap().to_str().unwrap()]
+            .as_str()
+            .unwrap();
         assert!(!sql.contains(&document.owner_email));
         let parsed = pg_query::parse(&sql.replace(":'owner'", "$1")).unwrap();
         assert_eq!(parsed.statement_types(), vec!["SelectStmt"]);
-        assert_eq!(request.environment["PGDATABASE"], "wamn_system");
-        assert!(!request.environment.contains_key("PGPASSWORD"));
+        assert!(
+            container["env"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|env| env == &json!({"name":"PGDATABASE", "value":"wamn_system"}))
+        );
+        assert!(
+            !container["env"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|env| env["name"] == "PGPASSWORD")
+        );
     }
 
     #[test]
