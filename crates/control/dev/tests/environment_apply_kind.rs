@@ -102,9 +102,12 @@
 //! events, the descriptions, the container logs and, for a failed rollout,
 //! the same taken before Helm's rollback removed its pods.
 //!
-//! The chart supplies the host, HTTP and materializer images. Set
-//! `WAMN_RELEASE_CHART` to the release chart that the local revision build stamps and use an empty `DOCKER_CONFIG`.
-//! Without a chart, the legacy GCP source requires agent credentials.
+//! The application-test chart supplies the host, HTTP, materializer, runner,
+//! gates and identity images. Build it with
+//! `wamn-ctl build-platform --registry localhost:5001 --cluster deploy/gcp/cluster.k --out /var/tmp/wamn-application-test-chart`.
+//! This selects qualification artifacts and does not deploy to GCP.
+//! Set `WAMN_RELEASE_CHART` to that directory and use an empty `DOCKER_CONFIG`.
+//! The minimal `deploy/kind/cluster.k` platform chart omits qualification images.
 //! The fixture copies the two roles into its TLS registry and loads the host
 //! into its private node. The platform images must match this checkout.
 //! The suite builds its HTTP fixture image and reuses the existing Cargo target.
@@ -580,10 +583,18 @@ async fn environment_apply_kind() -> anyhow::Result<()> {
         run.registry.clone_from(&previous.registry);
         run.kept = previous;
         run.reuse = true;
-    } else {
-        refuse_existing(&mut run, &repository).await?;
     }
     let chart = platform_images::source_chart(&repository, &run.work)?;
+    wamn_release_control::release_chart::qualification_images(&chart)
+        .await
+        .context(
+            "environment_apply_kind requires an application-test chart: set WAMN_RELEASE_CHART \
+             to the output of wamn-ctl build-platform --registry localhost:5001 \
+             --cluster deploy/gcp/cluster.k --out /var/tmp/wamn-application-test-chart",
+        )?;
+    if !run.reuse {
+        refuse_existing(&mut run, &repository).await?;
+    }
     let started = Instant::now();
     let result = if let Some((_, checks)) = selection {
         Box::pin(rerun(&mut run, &repository, &chart, &checks)).await
@@ -1368,7 +1379,9 @@ async fn scenario(run: &mut Run, repository: &Path, source: &Path) -> anyhow::Re
     run.collect("F2 failed host report", result);
 
     let result = async {
-        // 2. Reapply and recovery preserve the data written in check 17.
+        // 2. Reapply and recovery preserve the application-owned data from check 17.
+        // Connection copies belong to the system database: apply replaces them
+        // with its projection, so check 17's environment-only copies must go.
         let suffix = row
             .as_ref()
             .and_then(|row| row["instance_suffix"].as_str())
@@ -1377,14 +1390,19 @@ async fn scenario(run: &mut Run, repository: &Path, source: &Path) -> anyhow::Re
             wamn_control_provision::project_env_database_name(ORG, PROJECT, "dev", suffix);
         let dev_url = format!("postgresql://postgres:{password}@127.0.0.1:{port}/{database}");
         let (project, task) = connect(&dev_url).await?;
-        let before = platform_configuration::read_back(project.as_ref()).await?;
+        let application_rows = async || -> anyhow::Result<Vec<Value>> {
+            let mut rows = platform_configuration::read_back(project.as_ref()).await?;
+            rows.retain(|row| row["row"]["created_by"] == platform_configuration::CALLER);
+            Ok(rows)
+        };
+        let before = application_rows().await?;
         ensure!(!before.is_empty(), "the reapply fixture contains data");
         for recovery in [false, true] {
             if recovery {
                 interrupt_upgrade(run, &platform, &name).await?;
             }
             apply(&dev, "dev-again").await?;
-            let after = platform_configuration::read_back(project.as_ref()).await?;
+            let after = application_rows().await?;
             let selected = environment::show::show(&platform, &dev.triple()).await?;
             let live = run.live_digests(&name).await?;
             let status = run
