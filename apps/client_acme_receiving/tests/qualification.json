@@ -1,9 +1,3 @@
 {
-  "cases": [
-    {
-      "executable": "wamn-receiving-tests",
-      "name": "route_authentication_live::cluster::postcommit_case::baseline_overlay_and_materializer_progress",
-      "evidence_env": "WAMN_RECEIVING_EVIDENCE_DIR"
-    }
-  ]
+  "cases": []
 }

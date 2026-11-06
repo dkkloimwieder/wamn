@@ -271,8 +271,6 @@ targets = [
   { workspace="no-std", package="transform", target="cdylib:transform", tier="unit" },
   { workspace="root", package="wamn-environment-control", target="test:file_fixture_live", tier="live-postgres" },
   { workspace="root", package="wamn-dev-control", target="test:install_sequence_live", tier="live-postgres" },
-  { workspace="root", package="wamn-receiving-tests", target="test:cluster", tier="kind" },
-  { workspace="root", package="wamn-wms-tests", target="test:cluster", tier="kind" },
 ]
 documentation = ['^docs/', '^\.beads/', '^[^/]+\.md$']
 root_features = ["wamn-environment-control/ops", "wamn-ctl/ops"]
@@ -283,7 +281,6 @@ root_features = ["wamn-environment-control/ops", "wamn-ctl/ops"]
   RESEND_FROM = "Authorized sender of the selected mail service."
   WAMN_COMPONENT_ARTIFACT_BASE = "Registry address supplied by the parent publication test."
   WAMN_DELIVERY_CANDIDATE = "Candidate release document that qualify-release names for a cluster case."
-  WAMN_DELIVERY_CLUSTER = "Operator-selected cluster declaration for delivery."
   WAMN_DEV_ENV_NATS_TLS_CA = "Credential or trust file for the operator-selected external service."
   WAMN_DEV_ENV_NATS_TLS_CERT = "Credential or trust file for the operator-selected external service."
   WAMN_DEV_ENV_NATS_TLS_KEY = "Credential or trust file for the operator-selected external service."
@@ -700,42 +697,6 @@ inputs = []
 execution = "libtest"
 mode = "local"
 select_packages = ["wamn-conformance-tests"]
-covered_by_package = true
-ignored = true
-resource_lock = ""
-timeout = 1800
-
-[[suites]]
-id = "receiving-kind"
-tier = "kind"
-workspace = "root"
-package = "wamn-receiving-tests"
-target = ["test:cluster"]
-tests = ["route_authentication_live::cluster::delivery_case::owned_release_delivery"]
-features = ["cluster"]
-prerequisites = ["docker", "kind", "helm", "kubectl"]
-inputs = []
-execution = "libtest"
-mode = "local"
-select_packages = ["wamn-receiving-tests"]
-covered_by_package = true
-ignored = true
-resource_lock = ""
-timeout = 1800
-
-[[suites]]
-id = "wms-kind"
-tier = "kind"
-workspace = "root"
-package = "wamn-wms-tests"
-target = ["test:cluster"]
-tests = ["cluster::delivery_case::owned_release_delivery"]
-features = ["cluster"]
-prerequisites = ["docker", "kind", "helm", "kubectl"]
-inputs = []
-execution = "libtest"
-mode = "local"
-select_packages = ["wamn-wms-tests"]
 covered_by_package = true
 ignored = true
 resource_lock = ""

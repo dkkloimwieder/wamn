@@ -1,18 +1,46 @@
-//! Shared fixture and its local checks.
+//! Shared scope for native WMS business tests.
 
-include!("environment_fixture.rs");
-#[test]
-fn the_wms_declaration_takes_its_version_from_the_package() -> anyhow::Result<()> {
-    let output = std::env::temp_dir().join(format!("wms-declaration-{}.json", std::process::id()));
-    let rendered = wms_component_declaration(&package_root(), "wms", &output)
-        .and_then(|()| Ok(serde_json::from_slice::<Value>(&fs::read(&output)?)?));
-    let _ = fs::remove_file(&output);
-    let scope = &rendered?["scope"];
-    assert_eq!(scope["env_key"], "wms");
-    assert_eq!(scope["package-id"], "wamn_wms");
-    assert_eq!(
-        scope["package-version"].as_str(),
-        Some(package_coordinate()?.package_version())
-    );
-    Ok(())
+use std::collections::BTreeSet;
+use std::path::{Path, PathBuf};
+use std::sync::LazyLock;
+
+use anyhow::Context as _;
+use wamn_catalog::PackageCoordinate;
+use wamn_environment_control::provision_project_env::read_json;
+use wamn_release_control::delivery::ReleaseIdentity;
+
+pub(super) const SCHEMA: &str = "wms";
+
+pub(crate) fn identity() -> &'static ReleaseIdentity {
+    static IDENTITY: LazyLock<ReleaseIdentity> = LazyLock::new(|| ReleaseIdentity {
+        org: "acme".to_owned(),
+        project: "wms".to_owned(),
+        environment: "dev".to_owned(),
+        route_host: "wms.localhost".to_owned(),
+        packages: BTreeSet::from([package_coordinate().expect("read the WMS package coordinate")]),
+    });
+    &IDENTITY
+}
+
+fn package_root() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("WMS test crate has an app parent")
+        .to_path_buf()
+}
+
+pub(crate) fn package_coordinate() -> anyhow::Result<PackageCoordinate> {
+    wamn_schema_generator::build_record::check_current(&package_root())?;
+    let manifest = read_json(&wamn_schema_generator::package_manifest_path(
+        &package_root(),
+    ))?;
+    PackageCoordinate::new(
+        manifest["package"]["id"]
+            .as_str()
+            .context("WMS manifest names its package")?,
+        manifest["package"]["version"]
+            .as_str()
+            .context("WMS manifest names its version")?,
+    )
+    .map_err(Into::into)
 }

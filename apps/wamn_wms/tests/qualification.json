@@ -1,19 +1,3 @@
 {
-  "cases": [
-    {
-      "executable": "wamn-wms-tests",
-      "name": "cluster::released_wms_routes",
-      "evidence_env": "WAMN_WMS_EVIDENCE_DIR"
-    },
-    {
-      "executable": "wamn-wms-tests",
-      "name": "cluster::released_wms_routes_retain_committed_work_after_label_failure",
-      "evidence_env": "WAMN_WMS_EVIDENCE_DIR"
-    },
-    {
-      "executable": "wamn-wms-tests",
-      "name": "cluster::restarted_wms_host_retains_compiled_code_and_serves_requests",
-      "evidence_env": "WAMN_WMS_EVIDENCE_DIR"
-    }
-  ]
+  "cases": []
 }

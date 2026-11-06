@@ -247,13 +247,8 @@ fn pat_release(project: &str) -> anyhow::Result<()> {
         },
         project,
     )?;
-    let overlay = wamn_gate_harness::session_issuer::adjust_host(
-        &rendered.overlay,
-        "https://session",
-        "render",
-    )?;
     let roles = wamn_gate_harness::render_check::fixture_roles(&manifest, "acme", project, "dev");
-    let values = wamn_gate_harness::case_release::render(&ValuesInput {
+    let values = wamn_release_control::release_chart::values(&ValuesInput {
         org: "acme".into(),
         project: project.into(),
         env: "dev".into(),
@@ -276,7 +271,7 @@ fn pat_release(project: &str) -> anyhow::Result<()> {
         roles,
         drain_bound_seconds: 70,
         actor: "prekind".into(),
-        host_group: wamn_gate_harness::render_check::host_group(&overlay)?,
+        host_group: wamn_gate_harness::render_check::host_group(&rendered.overlay)?,
     })?;
     secrets.extend(operator_prerequisites(NAMESPACE));
     secrets.push(prerequisite("wamn-oauth", &["key"], NAMESPACE));
@@ -291,8 +286,11 @@ fn pat_release(project: &str) -> anyhow::Result<()> {
             NAMESPACE,
         ),
     ]);
-    assert_complete(&template(&values, NAMESPACE)?, &secrets)?;
-    println!("{project}: apply host values -> case_release::render -> release chart");
+    assert_complete(
+        &template(&serde_yaml::to_value(values)?, NAMESPACE)?,
+        &secrets,
+    )?;
+    println!("{project}: apply host values -> release_chart::values -> release chart");
     Ok(())
 }
 

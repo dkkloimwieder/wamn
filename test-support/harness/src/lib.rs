@@ -9,12 +9,9 @@
 //! provisioning uses the existing control library functions.
 
 pub mod case_release;
-pub mod delivery;
-pub mod environment;
 pub mod journey;
 pub mod render_check;
 pub mod run_check;
-pub mod session_issuer;
 
 use std::path::PathBuf;
 use std::time::Duration;

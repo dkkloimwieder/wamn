@@ -23,10 +23,6 @@ path = "tests/workload_generation_live.rs"
 name = "wamn_integration_live"
 path = "../../../apps/platform/wamn_integration/tests/operations_live.rs"
 
-[[example]]
-name = "identity-chart-input"
-required-features = ["test-util"]
-
 [[test]]
 name = "netsuite_publication"
 path = "../../../apps/netsuite/tests/publication.rs"

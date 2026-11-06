@@ -46,7 +46,7 @@ Their package and target must have a tier row that matches the selected tiers an
 An `env:NAME` prerequisite needs a nonempty variable after input preparation.
 A `bin:PROGRAM` prerequisite needs an executable file on `PATH` or at the named absolute path.
 The step runs each eligible case by its exact name in its own package and target.
-Other ignored cases stay ignored, and application cluster targets require the `cluster` feature.
+Other ignored cases stay ignored.
 An explicit `--tier` filters executable targets within each selected package.
 Without `--tier`, the tool selects unit, contract, live-postgres, and live-nats.
 Use `--tier T[,T]` to select one or more tiers.
@@ -172,7 +172,7 @@ The client compatibility test reads the current generated widget update schema a
 Its preparation step builds the platform fixture and supplies the schema path.
 
 `tools/test-changes --tier kind` selects the kind targets of affected packages.
-It enables their `cluster` feature and runs ignored cases one at a time.
+It runs ignored cases one at a time.
 The generated exclusion tests in `apps/Cargo.toml` need PostgreSQL diagnostics, so each runs through its own example.
 The `exclusion_diagnostics` example of `wamn-test-infrastructure` runs the platform fixture test, and the `exclusion_diagnostics` example of `wamn-receiving-tests` runs the Receiving test.
 [Ignored tests](#ignored-tests) gives the commands.
@@ -462,28 +462,16 @@ Record its exit status before running another command.
 Do not pipe the command through `tail` or another output filter.
 `--workspace` selects all root members, including members outside Cargo's defaults.
 `--features wamn-ctl/ops` builds the targets that require the `ops` feature.
-The command does not turn on the `cluster` feature of `wamn-receiving-tests` and `wamn-wms-tests`, so it compiles no kind cluster test and starts no cluster.
+The kind cases stay ignored, so this command starts no cluster.
 `--no-fail-fast` retains later binary results after a failure.
 
 The sweep runs no [ignored test](#ignored-tests), because each one needs inputs that a general test run does not have.
 The ignored tests run in [the live stage](#the-live-stage).
 `--nocapture` shows the output of each test.
 
-A cluster stage runs alone, and only when the epic changed a file under the cluster tests.
-Before a cluster stage starts, tell the other sessions on the machine.
-Two cluster runs at the same time overload the machine, and both fail.
-The cluster stage command is:
-
-```bash
-cargo test --locked --offline -p wamn-receiving-tests -p wamn-wms-tests \
-  --features wamn-receiving-tests/cluster,wamn-wms-tests/cluster --test cluster cluster:: \
-  -- --ignored --nocapture --test-threads=1 \
-  > "$WAMN_RESULTS/cluster.log" 2>&1
-```
-
-The `cluster` integration targets require the `cluster` feature and contain only ignored kind cases.
-The library targets keep the local business cases in live-nats.
-[Cluster tests](cluster-tests.md) describes the cases.
+Run selected kind tests separately with `tools/test-changes --tier kind run`.
+Tell other sessions before the run because concurrent clusters overload the machine.
+Receiving and WMS retain their native business cases in the live-nats tier.
 
 Record the start and end time of each run, and time its build apart from its tests.
 
@@ -697,23 +685,23 @@ Use that command for the resources owned by the run.
 The platform journey has no numbered steps, saved completion state, or step-resume command.
 To retry deployment, invoke `wamn platform deploy` with the same cluster document and prepared chart.
 
-### Retained application-test adapters
+### Removed application cluster coverage
 
-The application journeys remain outside Deploy Epic 1 (`wamn-moz3o`).
-The platform journey calls the product command and uses none of the installation adapters below.
-These adapters remain for their application and environment callers:
+DEP2-02 removes the Receiving and WMS cluster suites and their duplicate installers.
+It also removes the RC runner and the separate identity/session cluster journey.
+Their deleted qualification cases have no placeholders.
 
-- `test-support/infrastructure/platform.rs::install` applies certificates, NATS, the runtime operator, and platform manifests through `cluster.rs::Cluster::install`.
-  Its callers are `apps/wamn_receiving/tests/route_authentication_live/cluster.rs`, `apps/wamn_wms/tests/cluster.rs`, and `tests/integration/src/rc/deployment.rs`.
-  `test-support/infrastructure/delivery_cluster.rs` also calls it and creates PostgreSQL for the Receiving and WMS delivery cases through `test-support/harness/src/delivery.rs::kept_cluster`.
-- `crates/control/environment/src/platform/journey.rs` supplies those cluster inputs and application releases through `test-support/harness/src/case_release.rs`.
-- `test-support/harness/src/session_issuer.rs` installs identity for Receiving, WMS, and `tests/integration/src/identity_session_test/journey.rs`.
-  It uses the identity adapter in `platform/journey.rs`, as does `crates/control/environment/examples/identity-chart-input.rs`.
+The historical Receiving cluster combinations covered command histories, membership revocation, postcommit delivery, and materialization.
+The WMS combinations covered deployed routes, label failures after commit, delivery, and host restart with compiled code reuse.
+The combined identity journey covered key rotation, TLS, session targets, and membership changes.
+The RC runner combined bootstrap with socket and trace Jobs.
+These historical combinations receive no replacement in Epic 2.
+DEP2-13 supplies focused coverage through product deployment commands.
 
-The next application epic must replace this setup with product operations for databases, application SQL, release activation, and rollback.
-Remove each adapter when its application callers use those operations.
-These retained paths do not prove that application journeys use `wamn platform deploy`.
-The database tests in `install_sequence_live.rs` also remain: they exercise restricted SQL roles, package grants, and invitation refusal without a Kubernetes installer.
+Native application, identity, session, socket, and trace tests remain.
+Shared business fixtures, registry transport, and image archive tests remain.
+Surviving render cases call the product renderer.
+The database tests in `install_sequence_live.rs` retain restricted SQL roles, package grants, and invitation refusal coverage.
 
 ### Environment deployment coverage
 
@@ -1129,9 +1117,6 @@ pnpm --dir apps/wamn_receiving/web check
 
 ## Cleanup
 
-The app and RC runners clean up their own named resources on success, failure, or handled interruption.
-The RC runner removes its PostgreSQL container with `docker rm --force --volumes`.
-The cluster journeys and the RC case run the one NATS inside their kind cluster, so the cluster delete removes it.
 The package-build PostgreSQL fixture and the local package registry use `docker rm -f -v`.
 For a retained platform cluster, use the cleanup command printed by its test.
 Manual platform cleanup keeps the shared build registry, as [deployment](deployment.md#cleanup) describes.
@@ -1142,8 +1127,7 @@ For manual fixtures, remove only the exact container, cluster, image, volume, an
 
 A killed cluster test (SIGKILL) does not run its cleanup, so its cluster and containers stay.
 After a killed run, find the cluster that your run created with `kind get clusters`.
-Its name starts with `wamn-receiving-` or `wamn-wms-`.
-Remove it with the shared Rust fixture:
+For a historical Receiving or WMS cluster, use the shared Rust fixture:
 
 ```bash
 cargo run --locked --offline -p wamn-test-infrastructure --bin wamn-test-cluster -- <cluster>
@@ -1151,9 +1135,6 @@ cargo run --locked --offline -p wamn-test-infrastructure --bin wamn-test-cluster
 
 The fixture deletes the kind cluster and its owned containers, registry volume, and local image tags.
 Never remove a cluster that another session created.
-
-The cluster journeys import the pinned images from their candidate document.
-They use private image archives or a loopback registry and remove their owned local tags at teardown.
 
 Use explicit cluster names, kubeconfig paths, and contexts for Kubernetes and Helm commands.
 Never use `docker prune`, broad image removal, or name-substring cleanup.
@@ -1202,7 +1183,7 @@ cargo test --locked --offline -p wamn-workflow --lib queue::automation_live:: --
 ```
 
 For production authorization, component execution, and database behavior, run the [local application business tests](#local-application-business-tests).
-Use the application delivery journeys for deployed startup, readiness, authenticated requests, queue delivery, and cleanup.
+DEP2-13 owns product-command coverage for deployed application startup, readiness, authenticated requests, and cleanup.
 
 ### Workflow schedules
 

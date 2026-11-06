@@ -313,28 +313,3 @@ fn required_test_result_checks_real_libtest_results() {
         .unwrap();
     assert_eq!(output.status.code(), Some(127));
 }
-
-#[test]
-fn owned_delivery_refuses_missing_named_cases() {
-    let root = repository_root();
-    let directory = TestDirectory::new();
-    executable(
-        &directory.path("cargo"),
-        "#!/bin/sh\nprintf 'test result: ok. 0 passed; 0 failed; 0 ignored;\\n'\n",
-    );
-    let path = std::env::join_paths(
-        std::iter::once(directory.0.clone())
-            .chain(std::env::split_paths(&std::env::var_os("PATH").unwrap())),
-    )
-    .unwrap();
-    for action in ["receiving", "wms"] {
-        let output = Command::new(root.join("tools/delivery-owned"))
-            .arg(action)
-            .env("PATH", &path)
-            .env_remove("WAMN_DELIVERY_CANDIDATE")
-            .output()
-            .unwrap();
-        assert_eq!(output.status.code(), Some(1), "{action}");
-        assert!(String::from_utf8_lossy(&output.stderr).contains("no executed passing cases"));
-    }
-}

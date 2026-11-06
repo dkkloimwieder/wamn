@@ -15,12 +15,10 @@
 //
 // These cases return structured results to the application test caller.
 
-use std::path::Path;
-
 use anyhow::Context as _;
 use serde_json::{Value, json};
 
-use wamn_gate_harness::journey::{JourneyDocument, RuntimePhase};
+use wamn_gate_harness::journey::RuntimePhase;
 
 const REQUEST_ID_A: &str = "contention-a";
 const REQUEST_ID_B: &str = "contention-b";
@@ -34,27 +32,6 @@ pub(crate) struct Route {
 }
 
 impl Route {
-    pub(crate) fn from_document(
-        document: &JourneyDocument,
-        runtime: &RuntimePhase,
-    ) -> anyhow::Result<Self> {
-        let secret: Value = serde_json::from_slice(
-            &std::fs::read(&document.operator_secret_output)
-                .with_context(|| format!("read {}", document.operator_secret_output.display()))?,
-        )
-        .context("the operator Secret is JSON")?;
-        let bearer = secret["stringData"]["token"]
-            .as_str()
-            .filter(|token| !token.is_empty())
-            .context("the operator Secret carries stringData.token")?
-            .to_owned();
-        Ok(Self {
-            endpoint: runtime.route_endpoint.trim_end_matches('/').to_owned(),
-            host: document.route_host.clone(),
-            bearer,
-        })
-    }
-
     pub(crate) fn local(endpoint: String, host: String, bearer: String) -> Self {
         Self {
             endpoint,
@@ -263,43 +240,6 @@ pub(crate) async fn assert_contention_and_replay(
     );
 
     Ok(json!({"row_version": next_revision}))
-}
-
-/// Exercise the deployed composed move and require replay to return its exact result.
-pub(crate) async fn assert_label_delivery_and_replay(
-    route: &Route,
-    runtime: &RuntimePhase,
-) -> anyhow::Result<Value> {
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(60))
-        .build()
-        .context("build the route client")?;
-    let body = move_body("label-move", "label-move-key", runtime, 1);
-    let answer = route.post(&client, "/inventory/move", &body).await?;
-    let moved = value(&answer, "label-move")?;
-    anyhow::ensure!(
-        moved["packaging_id"] == runtime.packaging_id.as_str()
-            && moved["location_id"] == runtime.to_location_id.as_str()
-            && moved["row_version"] == 2,
-        "the composed route returns the committed move: {moved}"
-    );
-    let label_key = format!(
-        "{}/{}",
-        runtime.packaging_id,
-        revision(&moved["row_version"])?
-    );
-
-    let mut replay = body;
-    replay[0]["request_id"] = json!("label-replay");
-    let answer = route.post(&client, "/inventory/move", &replay).await?;
-    let replayed = value(&answer, "label-replay")?;
-    anyhow::ensure!(
-        replayed == moved,
-        "the composed route replay returns the original move {label_key}: {replayed}"
-    );
-    // The label workflow keys the label by the packaging and the revision the
-    // move gave it.
-    Ok(json!({"label_key": label_key}))
 }
 
 /// The `value` of the single request element answering `request_id`, or the refusal as
@@ -685,157 +625,4 @@ pub(crate) async fn assert_remaining_operations(
     );
 
     Ok(json!({"split_packaging_id": new_packaging_id}))
-}
-
-pub(crate) async fn assert_committed_move_after_label_failure(
-    document: &JourneyDocument,
-) -> anyhow::Result<(Value, Value)> {
-    let runtime = document
-        .runtime
-        .as_ref()
-        .context("the journey needs its runtime phase")?;
-    let route = Route::from_document(document, runtime)?;
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(60))
-        .build()
-        .context("build the route client")?;
-    let before = route
-        .get(
-            &client,
-            "/packaging/get",
-            &json!({"id":runtime.packaging_id}),
-        )
-        .await?;
-    let before = read_value(&before)?;
-    let revision = revision(&before["row_version"])?;
-    anyhow::ensure!(
-        before["location_id"] != runtime.to_location_id,
-        "the partial test must move to a different location"
-    );
-    let key = uuid::Uuid::new_v4().to_string();
-    let request_id = format!("partial-{key}");
-    let body = json!([{"request_id":request_id,"value":{
-        "idempotency_key":key,
-        "packaging_id":runtime.packaging_id,
-        "to_location_id":runtime.to_location_id,
-        "expected_row_version":revision,
-        "occurred_at":OCCURRED_AT
-    }}]);
-    // The move is a plain route. The label workflow runs off the request path,
-    // so a missing label store never reaches this response.
-    let (status, text) = route
-        .post_response(&client, "/inventory/move", &body)
-        .await?;
-    let http = json!({"status":status.as_u16(),"body":text});
-    anyhow::ensure!(
-        status == reqwest::StatusCode::OK,
-        "the move answers HTTP200 while the label store is missing, got {status}: {text}"
-    );
-    let answer: Value = serde_json::from_str(&text).context("the move response is JSON")?;
-    let committed = request_element(&answer, &request_id)?;
-    anyhow::ensure!(
-        committed
-            .as_object()
-            .is_some_and(|request_element| request_element.len() == 2
-                && request_element.contains_key("value")),
-        "the move envelope has only request_id and value: {committed}"
-    );
-    let expected = json!({
-        "packaging_id":runtime.packaging_id,
-        "location_id":runtime.to_location_id,
-        "row_version":revision+1
-    });
-    anyhow::ensure!(
-        committed["value"] == expected,
-        "the response is the committed move result: {committed}"
-    );
-    let after = route
-        .get(
-            &client,
-            "/packaging/get",
-            &json!({"id":runtime.packaging_id}),
-        )
-        .await?;
-    let after = read_value(&after)?;
-    anyhow::ensure!(
-        after["location_id"] == expected["location_id"]
-            && after["row_version"] == expected["row_version"]
-            && after["status"] == before["status"],
-        "the later read shows the move stayed committed: {after}"
-    );
-    Ok((
-        http,
-        json!({
-            "request_id":request_id,"idempotency_key":key,
-            "packaging_id":runtime.packaging_id,"location_id":runtime.to_location_id,
-            "row_version":revision+1,"packaging_status":before["status"],
-            "command_requests":1
-        }),
-    ))
-}
-
-/// Check the label objects returned by the store's existing client.
-pub(crate) fn assert_single_label(objects: &[Value], label_key: &str) -> anyhow::Result<()> {
-    let label_count = objects.len();
-    let found = objects
-        .first()
-        .and_then(|object| object["key"].as_str())
-        .unwrap_or("");
-    anyhow::ensure!(
-        label_count == 1 && found == label_key,
-        "expected exactly one label object named {label_key} under wms/, found {label_count}: {found}"
-    );
-    Ok(())
-}
-
-/// Check the committed rows after the label store refuses the write.
-pub(crate) async fn assert_committed_rows(
-    project: &tokio_postgres::Client,
-    expected: &Value,
-) -> anyhow::Result<Value> {
-    let command_key = expected["idempotency_key"]
-        .as_str()
-        .context("the result has a command key")?;
-    let packaging = expected["packaging_id"]
-        .as_str()
-        .context("the result has a packaging id")?;
-    let row = project
-        .query_one(
-            r"SELECT json_build_object(
-    'command_count', (SELECT count(*) FROM platform.write_log
-        WHERE operation = 'wamn-wms:inventory/move' AND idempotency_key = $1),
-    'quantity_count', (SELECT count(*) FROM wms.packaging_quantity WHERE packaging_id = $2::text::uuid),
-    'command', (SELECT result::json -> 'value' FROM platform.write_log
-        WHERE operation = 'wamn-wms:inventory/move' AND idempotency_key = $1),
-    'packaging', (SELECT row_to_json(packaging) FROM (
-        SELECT id, location_id, status, row_version FROM wms.packaging WHERE id = $2::text::uuid
-    ) AS packaging)
-);",
-            &[&command_key, &packaging],
-        )
-        .await
-        .context("read the committed WMS rows")?;
-    let observed: Value = row.get(0);
-    let expected_row_version = revision(&expected["row_version"])?;
-    anyhow::ensure!(
-        observed["command_count"] == 1
-            && observed["quantity_count"] == 1
-            && observed["command"]["packaging_id"] == expected["packaging_id"]
-            && observed["command"]["location_id"] == expected["location_id"]
-            && observed["command"]["row_version"].as_i64() == Some(expected_row_version)
-            && observed["packaging"]["id"] == expected["packaging_id"]
-            && observed["packaging"]["location_id"] == expected["location_id"]
-            && observed["packaging"]["status"] == expected["packaging_status"]
-            && observed["packaging"]["row_version"].as_i64() == Some(expected_row_version),
-        "the WMS committed rows disagree with the response: {observed}"
-    );
-    Ok(observed)
-}
-
-pub(crate) fn write_result(directory: &Path, name: &str, result: &Value) -> anyhow::Result<()> {
-    let path = directory.join(name);
-    let file = std::fs::File::create(&path)
-        .with_context(|| format!("create test result {}", path.display()))?;
-    serde_json::to_writer_pretty(file, result)
-        .with_context(|| format!("write test result {}", path.display()))
 }

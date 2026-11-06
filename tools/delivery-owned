@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# Existing app fixtures own the stores, release publish, assertions, and cleanup.
+# Native artifact builds and cleanup of historical kept clusters.
 set -euo pipefail
 umask 077
-action=${1:?build-native, receiving, wms, or remove-kept}
+action=${1:?build-native or remove-kept}
 repository=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
 if [[ $action == build-native ]]; then
   target=${2:?absolute native target directory}
@@ -22,22 +22,6 @@ if [[ $action == build-native ]]; then
     CXXFLAGS="-ffile-prefix-map=$target=/wamn-build" \
     cargo build --locked --offline --profile dev --bins --target-dir "$target" \
       -p wamn-host -p wamn-ctl -p wamn-identity -p wamn-cdc-reader -p wamn-scenario-worker
-fi
-# The delivery cases run on one kept cluster that WAMN_DELIVERY_CLUSTER names
-# (docs/operations/cluster-tests.md). Receiving first, then WMS, which checks
-# the two applications side by side.
-if [[ $action == receiving || $action == wms ]]; then
-  # An optional existing parent directory for the test result directory.
-  if [[ -n ${2:-} ]]; then parent=$(cd -- "$2" && pwd); export "WAMN_${action^^}_EVIDENCE_DIR=$parent"; fi
-  [[ -z ${WAMN_DELIVERY_CANDIDATE:-} ]] || { printf 'The owned setup mints its own candidate.\n' >&2; exit 64; }
-  cd "$repository"
-  if [[ $action == receiving ]]; then
-    exec "$repository/tools/require-test-result" cargo test --locked --offline -p wamn-receiving-tests --features cluster --test cluster \
-      route_authentication_live::cluster::delivery_case::owned_release_delivery \
-      -- --exact --ignored --nocapture
-  fi
-  exec "$repository/tools/require-test-result" cargo test --locked --offline -p wamn-wms-tests --features cluster --test cluster \
-    cluster::delivery_case::owned_release_delivery -- --exact --ignored --nocapture
 fi
 if [[ $action == remove-kept ]]; then
   cd "$repository"

@@ -17,7 +17,6 @@ pub mod local_application;
 pub mod measure;
 mod measurement_schema;
 pub mod membership_test;
-pub mod rc;
 pub mod readerbench;
 #[cfg(test)]
 mod route_authentication_live;

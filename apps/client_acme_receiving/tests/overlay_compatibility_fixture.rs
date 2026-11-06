@@ -1,8 +1,6 @@
 // The unchanged Acme overlay of a candidate release against a fresh
 // installation of its base.
 
-use std::fs::OpenOptions;
-use std::io::Write as _;
 use std::path::Path;
 
 use anyhow::{Context as _, ensure};
@@ -10,50 +8,9 @@ use serde_json::{Value, json};
 use wamn_catalog::schema::ForeignKeyColumn;
 use wamn_engine::component_admission::component_digest;
 use wamn_package_control::apply_package::{self, ApplyPackageRequest};
-use wamn_package_control::package_artifact::OpenedPackage;
 use wamn_schema_introspection::ir::{Constraint, ForeignKeyAction, postgres_type};
 
 use super::identity;
-
-/// Observe the schema that the candidate's overlay package requires in the
-/// project database of `project_url`, where the candidate is installed, and
-/// write the evidence to the new file `evidence_file`. The overlay is the
-/// candidate's package artifact and its component the digest the release
-/// manifest names (docs/operations/delivery.md#release-qualification).
-pub(super) async fn unchanged_overlay(
-    evidence_file: &Path,
-    project_url: &str,
-    overlay: &OpenedPackage,
-    overlay_component_digest: &str,
-) -> anyhow::Result<()> {
-    let required = required_schema_contract(overlay.root())?;
-    let (project, connection_task) = super::connect(project_url).await?;
-    let observation = observe_installed_contract(&project, &required).await;
-    drop(project);
-    connection_task
-        .await
-        .context("join installed schema observer")?;
-    let observed = observation?;
-    let requirements = required_contract_observation(&required, &observed)?;
-    let evidence = json!({
-        "case":"unchanged-overlay-compatibility", "invariant":"OVL-SCHEMA",
-        "stage":"installed-schema-observed",
-        "overlay_package_artifact":overlay.package_root().artifact_digest,
-        "overlay_component_sha256":overlay_component_digest,
-        "schema_observation":requirements,
-        "observed_schema_sha256":component_digest(&serde_json::to_vec(&observed)?),
-        "required_schema_contract":required,
-        "schema_admission_claim":false,
-    });
-    let mut file = OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(evidence_file)
-        .context("create compatibility evidence without replacing an earlier run")?;
-    serde_json::to_writer_pretty(&mut file, &evidence)?;
-    file.write_all(b"\n")?;
-    Ok(())
-}
 
 // This projection observes installed facts, including granted schemas. It does
 // not admit authoring input or construct a complete authoring catalog identity.

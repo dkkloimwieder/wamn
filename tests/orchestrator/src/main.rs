@@ -12,7 +12,7 @@
 use wamn_conformance_tests::socket_test;
 use wamn_integration_tests::{
     cdcbench, dashboard_test, host_session_test, identity_keys_test, identity_session_test,
-    membership_test, rc, readerbench, streambench, walbench,
+    membership_test, readerbench, streambench, walbench,
 };
 use wamn_system_tests::trace_test;
 
@@ -33,8 +33,6 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
-    /// Run the RC bootstrap and native socket and trace tests on an owned cluster.
-    Rc(rc::RcArgs),
     /// Test session acceptance and removed-key refusal on two deployed hosts.
     HostSessionTest(host_session_test::HostSessionTestArgs),
     /// Test public JWKS and cache evidence through deployed identity HTTPS.
@@ -78,7 +76,6 @@ async fn async_main() -> anyhow::Result<()> {
         wash_runtime::observability::initialize_observability(level, false, false)?;
 
     let result = match cli.command {
-        Command::Rc(args) => rc::run(args).await,
         Command::HostSessionTest(args) => host_session_test::run(args).await,
         Command::IdentityKeysTest(args) => identity_keys_test::run(args).await,
         Command::IdentitySessionTest(args) => identity_session_test::run(args).await,

@@ -6,7 +6,7 @@
 #   docker build --build-arg WAMN_CHECKOUT_KEY="$(printf '%s' "$(realpath .)" | sha256sum | cut -c1-16)" --target edge --output type=local,dest=target/edge .  # aarch64 edge box binary
 #   docker build --build-arg WAMN_CHECKOUT_KEY="$(printf '%s' "$(realpath .)" | sha256sum | cut -c1-16)" --target edge-web -t wamn-edge-web:dev .  # cluster web edge
 #   docker build --build-arg WAMN_CHECKOUT_KEY="$(printf '%s' "$(realpath .)" | sha256sum | cut -c1-16)" --target roles --output type=local,dest=DIR .  # http and materializer role components
-#   docker build --build-arg WAMN_CHECKOUT_KEY="$(printf '%s' "$(realpath .)" | sha256sum | cut -c1-16)" --build-context apps-target=apps/target/wamn --target runner -t wamn-runner:dev .  # qualification runner: FROM ctl + the case binaries
+#   docker build --build-arg WAMN_CHECKOUT_KEY="$(printf '%s' "$(realpath .)" | sha256sum | cut -c1-16)" --build-context apps-target=apps/target/wamn --target runner -t wamn-runner:dev .  # qualification tooling
 # `wamn-ctl build-platform` builds host, runner, gates, identity, edge-web and roles, and
 # stamps their digests into the release chart's defaults (R15).
 # Later invocations reuse shared BuildKit registry and Git caches with locks
@@ -219,32 +219,6 @@ FROM scratch AS roles
 COPY --from=control-entry /component-output/control_http.wasm /http_route.wasm
 COPY --from=component-builder /component-output/materializer.wasm /materializer.wasm
 
-# ---- qualification cases: the cluster case executables ----------------------
-# The cases compile against the package outputs of `wamn build`, which the
-# build takes as the named context apps-target:
-#   docker build --build-arg WAMN_CHECKOUT_KEY="$(printf '%s' "$(realpath .)" | sha256sum | cut -c1-16)" --build-context apps-target=apps/target/wamn --target runner .
-# Each executable is installed as /cases/<package>, and keeps reading the
-# repository files it names from /build, where the runner carries them.
-FROM root-source AS build-cases
-ARG WAMN_CHECKOUT_KEY
-COPY --from=apps-target . /build/apps/target/wamn
-RUN --mount=type=cache,id=wamn-root-cargo-registry,target=/usr/local/cargo/registry,sharing=locked \
-    --mount=type=cache,id=wamn-root-cargo-git,target=/usr/local/cargo/git,sharing=locked \
-    --mount=type=cache,id=wamn-root-target-cases-${WAMN_CHECKOUT_KEY},target=/build/target,sharing=locked \
-    test -n "$WAMN_CHECKOUT_KEY" \
- && cargo test --locked --no-run --message-format=json --features cluster --test cluster \
-      -p wamn-wms-tests -p wamn-receiving-tests > /tmp/cases.json \
- && install -d /cases \
- && for package in wamn-wms-tests wamn-receiving-tests; do \
-      target="$(printf '%s' "$package" | tr - _)"; \
-      executable="$(grep '"reason":"compiler-artifact"' /tmp/cases.json \
-        | grep "\"manifest_path\":\"/build/apps/${target%_tests}/tests/Cargo.toml\"" \
-        | grep '"name":"cluster"' \
-        | grep -o '"executable":"[^"]*"' | cut -d'"' -f4)"; \
-      test "$(printf '%s\n' "$executable" | grep -c .)" -eq 1 \
-        && install -m 0755 "$executable" "/cases/$package" || exit 1; \
-    done
-
 # The runner's deploy files without the release chart. The cases read the
 # stamped chart that WAMN_RELEASE_CHART names, so the runner does not change
 # with the platform version, the chart's `version` (wamn-6qo7v).
@@ -259,8 +233,8 @@ RUN mkdir /wit-output \
 
 # ---- runner image: the qualification runner FROM ctl -----------------------
 # ctl is unchanged; the runner adds what `qualify-release` runs the cases with
-# (docs/operations/delivery.md#release-qualification): the case executables, the
-# repository files they read, and the cluster tools, each pinned by version
+# (docs/operations/delivery.md#release-qualification): repository inputs
+# and cluster tools, each pinned by version
 # and its published sha256 (the Docker CLI by the sha256 of its archive).
 FROM ctl AS runner
 COPY --from=build-native /native-output/wamn /usr/local/bin/wamn
@@ -276,7 +250,6 @@ ENV WAMN_KCL=/usr/local/bin/kcl
 ADD --chmod=0755 --checksum=sha256:50030de23cf40a18505f20426f6a8506bedf13c6e509244bd1fa9463721b0f54 https://github.com/kubernetes-sigs/kind/releases/download/v0.32.0/kind-linux-amd64 /usr/local/bin/kind
 # The cases run kubectl v1.36.2; ctl's own pin stays as it is.
 ADD --chmod=0755 --checksum=sha256:1e9045ec32bea85da43de85f0065358529ea7c7a152eca78154fba5b58c27d82 https://dl.k8s.io/release/v1.36.2/bin/linux/amd64/kubectl /usr/local/bin/kubectl
-COPY --from=build-cases /cases /cases
 COPY --from=root-source /build/apps /build/apps
 COPY --from=runner-wit /wit-output/crates /build/crates
 COPY --from=root-source /build/wit /build/wit

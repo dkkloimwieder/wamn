@@ -268,28 +268,6 @@ impl Cluster {
         import_images(self.runner.as_ref(), &self.name, &self.work, images).await
     }
 
-    /// Install the platform objects rendered by the production owner.
-    pub async fn install(
-        &self,
-        repository: &Path,
-        namespace: &str,
-        prerequisites: &[serde_json::Value],
-        nats: &[serde_json::Value],
-        operator: &serde_json::Value,
-    ) -> anyhow::Result<()> {
-        refuse(&self.name)?;
-        crate::platform::install(
-            repository,
-            &self.name,
-            &self.work,
-            namespace,
-            prerequisites,
-            nats,
-            operator,
-        )
-        .await
-    }
-
     /// Capture resources, events and container logs without reading Secret objects.
     pub async fn inspect(&self, namespace: &str, evidence: &Path) {
         if let Ok(files) = fs::read_dir(&self.work) {

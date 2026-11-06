@@ -1,15 +1,4 @@
-//! One cluster case's environment of the candidate release
-//! (docs/architecture/overview.md#environment-lifecycle, wamn-ps2tj.1,
-//! wamn-ps2tj.4).
-//!
-//! A case installs the candidate's packages through the package stage of
-//! `apply`, from the package repository beside the release repository, and
-//! publishes nothing. It copies the release manifest, its components and the
-//! candidate's role images by digest into its own registry, which its hosts
-//! read, so the qualification key names the bytes the case ran. It deploys
-//! the host and the roles the way `env apply` does: a copy of the release
-//! chart stamped with the image set, and the values `release_chart::values`
-//! renders.
+//! Registry transport and image archives for test fixtures.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -24,14 +13,8 @@ use oci_client::manifest::{
 use oci_client::secrets::RegistryAuth;
 use oci_client::{Client, Reference, RegistryOperation};
 use serde_yaml::{Mapping, Value};
-use wamn_control_registry::Triple;
-use wamn_environment_control::environment::analyse::Installed;
-use wamn_environment_control::environment::document::{DeclaredRelease, EnvironmentDocument};
-use wamn_environment_control::environment::{Platform, stage};
 use wamn_package_artifact::registry_credentials::read_registry_credentials;
-use wamn_package_control::package_artifact::{OpenedPackage, PackageRegistry, open_package};
 use wamn_release_control::delivery::{Candidate, sibling_bases};
-use wamn_release_control::release_chart::{self, ImageSet, Target, ValuesInput};
 
 /// The operator release's namespace, where every environment release and
 /// its hosts live (R6).
@@ -55,8 +38,6 @@ const DERIVED_VARIABLES: [&str; 8] = [
     "OTEL_TRACES_SAMPLER_ARG",
     "WASMCLOUD_HOST_ENVIRONMENT",
 ];
-/// The collector of a kind cluster (`deploy/infra/otel-collector.yaml`).
-const KIND_OTLP_ENDPOINT: &str = "http://otel-collector.wamn-system.svc.cluster.local:4317";
 
 /// One registry a role image is read from or written to.
 #[derive(Debug, Clone)]
@@ -609,119 +590,6 @@ fn tagged(base: &str, digest: &str) -> anyhow::Result<Reference> {
     ))
 }
 
-/// The registry of the candidate's packages: the package repository beside
-/// the release repository.
-fn package_registry(candidate: &Candidate) -> anyhow::Result<PackageRegistry> {
-    let (packages, _) = sibling_bases(&candidate.releases.artifact_base)?;
-    Ok(PackageRegistry {
-        artifact_base: packages,
-        ..candidate.releases.clone()
-    })
-}
-
-/// Open each package of the candidate's release from its artifact.
-///
-/// # Errors
-///
-/// When an artifact cannot be read.
-pub async fn open_packages(candidate: &Candidate) -> anyhow::Result<Vec<OpenedPackage>> {
-    let registry = package_registry(candidate)?;
-    let (manifest, _) = candidate.manifest()?;
-    let mut opened = Vec::new();
-    for package in &manifest.release.packages {
-        opened.push(
-            open_package(&registry, package.package_id(), package.package_version())
-                .await
-                .with_context(|| {
-                    format!(
-                        "open package artifact {}@{}",
-                        package.package_id(),
-                        package.package_version()
-                    )
-                })?,
-        );
-    }
-    Ok(opened)
-}
-
-/// Install the candidate's packages in the project database of `triple` as
-/// a fresh install through the package stage of `apply` (§10.2, R17 (2)):
-/// each package from its artifact, then the release cache row, the release's
-/// connection requirements and the packages' data access. Every package of
-/// the release belongs to `application`, as in the case's chart values.
-///
-/// # Errors
-///
-/// When the stage refuses or fails.
-pub async fn install_candidate(
-    candidate: &Candidate,
-    system_database_url: &str,
-    project_database_url: &str,
-    triple: &Triple,
-    application: &str,
-) -> anyhow::Result<()> {
-    let (manifest, digest) = candidate.manifest()?;
-    let registry = package_registry(candidate)?;
-    // The stage reads the system database and the package registry only.
-    let platform = Platform {
-        auth_nats: None,
-        system_database_url: system_database_url.to_owned(),
-        target: Target {
-            kubeconfig: PathBuf::new(),
-            context: String::new(),
-            namespace: NAMESPACE.to_owned(),
-        },
-        chart: PathBuf::new(),
-        release_artifact_base: candidate.releases.artifact_base.clone(),
-        registry_auth_file: registry.registry_auth_file,
-        oci_ca_paths: registry.oci_ca_paths,
-        component_artifact_base: Some(sibling_bases(&candidate.releases.artifact_base)?.1),
-        package_artifact_base: Some(registry.artifact_base),
-        database_namespace: NAMESPACE.to_owned(),
-        database_host: None,
-        database_port: 5432,
-        host_group: None,
-        pat_issuer: wamn_identity_client::PatIssuerConfig::default(),
-        events: None,
-    };
-    let document = EnvironmentDocument {
-        integrations: std::collections::BTreeMap::new(),
-        target: "cloud".into(),
-        org: triple.org.clone(),
-        project: triple.project.clone(),
-        env: triple.env.as_str().to_owned(),
-        release: DeclaredRelease::Digest(digest.as_str().to_owned()),
-        route_host: String::new(),
-        client: None,
-        policy: String::new(),
-        // The package stage names each package's sequences by its application.
-        applications: [(
-            application.to_owned(),
-            wamn_catalog::ApplicationDefinition {
-                connections: std::collections::BTreeMap::new(),
-                packages: manifest
-                    .release
-                    .packages
-                    .iter()
-                    .map(|package| package.package_id().to_owned())
-                    .collect(),
-            },
-        )]
-        .into(),
-    };
-    stage::stage(
-        &platform,
-        &document,
-        &std::collections::BTreeMap::<String, Installed>::new(),
-        digest.as_str(),
-        &manifest,
-        project_database_url,
-    )
-    .await
-    .context("install the candidate's packages through the package stage")?;
-    Ok(())
-}
-
 /// Copy the candidate's http and materializer images by digest into
 /// `wamn/http` and `wamn/materializer` of `to`, and return the copies.
 ///
@@ -745,31 +613,6 @@ pub async fn copy_roles(candidate: &Candidate, to: &Registry) -> anyhow::Result<
             to,
         )
         .await?,
-    ))
-}
-
-/// The release chart that `WAMN_RELEASE_CHART` names, stamped by `wamn-ctl
-/// build-platform` (docs/architecture/overview.md#environment-lifecycle).
-///
-/// # Errors
-///
-/// When the variable is not set.
-pub fn release_chart() -> anyhow::Result<PathBuf> {
-    std::env::var_os("WAMN_RELEASE_CHART")
-        .map(PathBuf::from)
-        .context("WAMN_RELEASE_CHART names the release chart that build-platform stamped")
-}
-
-/// The chart name and version that `helm list` reports for a release of the
-/// chart that `WAMN_RELEASE_CHART` names: `release-<version>`.
-///
-/// # Errors
-///
-/// When the variable is not set or the chart has no version.
-pub fn release_chart_label() -> anyhow::Result<String> {
-    Ok(format!(
-        "release-{}",
-        release_chart::chart_version(&release_chart()?)?
     ))
 }
 
@@ -804,104 +647,11 @@ pub fn host_group(overlay: &str) -> anyhow::Result<Mapping> {
     Ok(group)
 }
 
-/// One cluster a case installs its environment release into.
-#[derive(Debug)]
-pub struct Install<'a> {
-    pub cluster: &'a str,
-    /// The directory that holds `kubeconfig`, and the stamped chart and values.
-    pub work: &'a Path,
-}
-
-/// Stamp the release chart that `WAMN_RELEASE_CHART` names with `images`,
-/// render the values of `input`, and install the release in the operator
-/// namespace, as `env apply` does (R6). Like `env apply`, it first creates
-/// the environment's host account and its grant on the credential Secret.
-/// Returns the release name, which is the host group, and the `wamn.release`
-/// label of the manifest digest, which the roles' `hostSelector` names.
-///
-/// # Errors
-///
-/// When `WAMN_RELEASE_CHART` is not set, the chart cannot be stamped, the
-/// values do not render, or Helm fails.
-pub async fn install(
-    at: &Install<'_>,
-    images: &ImageSet,
-    input: &ValuesInput,
-) -> anyhow::Result<(String, String)> {
-    let label = wamn_engine::release_manifest::release_label(&input.manifest_digest)
-        .map_err(|error| anyhow::anyhow!("{error}"))?;
-    let chart = release_chart::stamp(
-        &release_chart()?,
-        images,
-        None,
-        &at.work.join("release-chart"),
-    )?;
-    let bundle = wamn_environment_control::platform::journey::release(
-        &wamn_environment_control::platform::journey::ReleaseInput {
-            chart: &chart,
-            namespace: NAMESPACE,
-            values: input,
-            nats_url: wamn_test_infrastructure::platform::NATS_URL,
-            otlp_endpoint: KIND_OTLP_ENDPOINT,
-            insecure_registry: true,
-        },
-    )?;
-    let name = bundle.chart["name"]
-        .as_str()
-        .context("release name")?
-        .to_owned();
-    let path = at.work.join(format!("values-{name}.yaml"));
-    fs::write(&path, serde_yaml::to_string(&bundle.chart["values"])?)?;
-    let target = Target {
-        kubeconfig: at.work.join("kubeconfig"),
-        context: format!("kind-{}", at.cluster),
-        namespace: NAMESPACE.to_owned(),
-    };
-    for object in bundle.objects {
-        wamn_environment_control::kubectl::kubectl(
-            &target.kubeconfig,
-            &target.context,
-            &target.namespace,
-            &["apply", "-f", "-"],
-            Some(&serde_json::to_vec(&object)?),
-        )
-        .await?;
-    }
-    release_chart::upgrade(
-        &target,
-        &chart,
-        &name,
-        &path,
-        Duration::from_secs(300),
-        "cluster case",
-    )
-    .await?;
-    Ok((name, label))
-}
-
-/// Render values without a cluster, registry, or running host.
-///
-/// The values of `input` for the hosts of a case, which read the case's own
-/// plain HTTP registry: `release_chart::values`, and
-/// `--allow-insecure-registries` after the release arguments. The release
-/// chart reads a registry over TLS only; without the flag every host exits at
-/// start, when it cannot read the release manifest (wamn-k8127.6). The hosts
-/// export to the kind cluster's own collector and reach its one NATS in
-/// `wamn-system`, where the release chart's default names `platform`.
-pub fn render(input: &ValuesInput) -> anyhow::Result<Value> {
-    Ok(serde_yaml::to_value(
-        wamn_environment_control::platform::journey::release_values(
-            input,
-            wamn_test_infrastructure::platform::NATS_URL,
-            KIND_OTLP_ENDPOINT,
-            true,
-        )?,
-    )?)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use wamn_package_control::package_artifact::PackageRegistry;
+    use wamn_release_control::release_chart::ImageSet;
 
     #[tokio::test]
     async fn loopback_copy_uses_plain_http_without_credentials() {
@@ -1091,32 +841,6 @@ mod tests {
         assert_eq!(
             names(format!("registry.example/wamn/guest@{digest}")),
             [format!("registry.example/wamn/guest@{digest}")]
-        );
-    }
-
-    /// The case's hosts read its plain HTTP registry (wamn-k8127.6).
-    #[test]
-    fn the_case_hosts_read_a_plain_http_registry() {
-        let values = render(&ValuesInput {
-            org: "acme".to_owned(),
-            project: "wms".to_owned(),
-            env: "dev".to_owned(),
-            manifest_digest: format!("sha256:{}", "e".repeat(64)),
-            artifact_base: "172.18.0.5:5000/wamn/releases".to_owned(),
-            route_host: "wms.example".to_owned(),
-            applications: std::collections::BTreeMap::new(),
-            roles: Vec::new(),
-            drain_bound_seconds: 70,
-            actor: "case".to_owned(),
-            host_group: Mapping::new(),
-        })
-        .unwrap();
-        let arguments = values["runtime-operator"]["runtime"]["hostGroups"][0]["extraArgs"]
-            .as_sequence()
-            .unwrap();
-        assert_eq!(
-            arguments.last().and_then(Value::as_str),
-            Some("--allow-insecure-registries")
         );
     }
 }

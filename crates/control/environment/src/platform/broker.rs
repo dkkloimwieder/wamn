@@ -1,7 +1,6 @@
 //! Event broker users and credential Secrets for the declared environments.
 
 use std::collections::BTreeMap;
-use std::path::Path;
 use std::time::Duration;
 
 use anyhow::Context as _;
@@ -242,24 +241,6 @@ pub fn single_namespace_nats(
         .into_iter()
         .map(|object| super::manifests::in_namespace(object, namespace))
         .collect()
-}
-
-/// The one NATS, its certificates and its users for a cluster that runs the
-/// platform in one `namespace`: [`super::manifests::one_nats`] and
-/// [`single_namespace_nats`] together.
-///
-/// # Errors
-///
-/// Returns an error when a manifest is unreadable or an object does not render.
-pub fn kind_nats(
-    repository: &Path,
-    namespace: &str,
-    org: &str,
-    environments: &[wamn_control_registry::Triple],
-) -> anyhow::Result<Vec<Value>> {
-    let mut objects = super::manifests::one_nats(repository, namespace)?;
-    objects.extend(single_namespace_nats(namespace, org, environments)?);
-    Ok(objects)
 }
 
 /// Render the environment's NATS objects without a cluster or a live broker.
