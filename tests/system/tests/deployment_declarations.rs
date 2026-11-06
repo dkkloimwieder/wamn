@@ -51,7 +51,7 @@ const RETIRED_IMAGE_MARKERS: [&str; 4] = ["wamn-gates", "node-host", "serve-node
 /// Mounted names must be declared by a platform manifest or allowed here.
 /// A Certificate declares its `spec.secretName` output, which cert-manager writes.
 const EXTERNAL_PREREQUISITES: [(&str, &str); 9] = [
-    ("wamn-oauth", "platform apply; local OAuth encryption key"),
+    ("wamn-oauth", "wamn platform deploy: local OAuth key"),
     // The host Pod's runtime and data certificates, which cert-manager issues
     // from deploy/infra/nats-certificates.yaml (docs/plan/alignment.md R4).
     (

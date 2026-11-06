@@ -38,7 +38,7 @@ pub enum Mode {
     },
 }
 
-/// Identity chart inputs shared by platform apply and cluster journeys.
+/// Identity chart inputs.
 #[derive(Debug)]
 pub struct ChartInput<'a> {
     pub chart: &'a Path,
@@ -56,7 +56,7 @@ pub struct ChartInput<'a> {
     pub mode: Mode,
 }
 
-/// Build the chart entry used by platform apply and local rendering.
+/// Build the identity chart entry.
 ///
 /// # Errors
 /// Returns an error when the image lacks a tag or digest, or the chart lacks a version.

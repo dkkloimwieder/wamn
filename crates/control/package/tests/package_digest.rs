@@ -1,8 +1,6 @@
 //! Every package that a committed GKE environment names packs to the digest
-//! in its committed `package.digest` (wamn-vl6im). The GKE registry tags are
-//! immutable, so a package that changes under an unchanged version refuses
-//! at step 4.13. This test finds it first. Run `wamn build` on each package
-//! before it.
+//! in its committed `package.digest` (wamn-vl6im).
+//! Run `wamn build` on each package before this test.
 
 use std::path::{Path, PathBuf};
 

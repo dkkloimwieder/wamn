@@ -187,7 +187,7 @@ Provisioning writes the apply URL to the `platform/wamn-apply` Secret.
 1. Analyse: Read each authority once. Compare the document with them. Return the plan or the refusals.
 2. Ensure: Create the missing substrate: the environment row, the `Database` resource, the project database, the run plane, the credential Secrets, and the admin grants.
 3. Expand: Write the policy and route host. Run the package stage. Enable each declared connection and bind it to the components of the release.
-4. Write: Run `helm upgrade --install` with `--wait`, the readiness budget of the policy, and `--rollback-on-failure`. If the chart version and values equal those of the newest successful revision, skip Helm.
+4. Write: Recover any pending Helm operation. Always run `helm upgrade --install` with `--wait`, the readiness budget of the policy, and `--rollback-on-failure`.
 5. Readiness: Wait until each WorkloadDeployment of the release reports `Ready`.
 6. Drain: Wait until the live set is exactly the declared release. Name each stranded run and stop.
 7. Contract: Remove the bindings of releases outside the live set. Disable instances that the document no longer names. Apply a declared floor.

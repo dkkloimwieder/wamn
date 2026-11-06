@@ -8,7 +8,7 @@
 # it, for example CALLS="receipt-1 receipt-5 receipt-20".
 #
 # The caller exports CLOUDSDK_CONFIG and KUBECONFIG for wamn-dev, keeps the
-# PostgreSQL forward of gcp.md section 4.5 on 127.0.0.1:15432, and sets
+# PostgreSQL forward on 127.0.0.1:15432, and sets
 # CARGO_TARGET_DIR to the target that holds a debug build of
 # `cargo build -p wamn-dev-control --example pg_floor_database`. Run `wamn build
 # apps/wamn_receiving` first: the replay reads its operation contract.

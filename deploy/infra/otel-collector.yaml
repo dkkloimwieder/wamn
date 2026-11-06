@@ -1,5 +1,4 @@
-# Cluster test collector template. platform::install renders the deployed
-# receivers, processors, trace and log pipelines with file exporters at runtime.
+# Cluster test collector template.
 # The retained Prometheus pipeline below serves the metric assertions.
 apiVersion: v1
 kind: ConfigMap

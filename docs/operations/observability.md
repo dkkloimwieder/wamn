@@ -1,6 +1,6 @@
 # Observability
 
-The collector `platform/otel-collector` receives the spans and logs of every host over OTLP. It writes them to the bucket `gs://wamn-dev-otel` ([gcp.md](gcp.md) section 4.4.1). The objects are gzip OTLP JSON, one object per flush:
+The collector `platform/otel-collector` receives the spans and logs of every host over OTLP. It writes them to the bucket `gs://wamn-dev-otel`. The objects are gzip OTLP JSON, one object per flush:
 
 ```text
 gs://wamn-dev-otel/traces/year=YYYY/month=MM/day=DD/hour=HH/traces_<uuid>.gz

@@ -1,5 +1,5 @@
 //! Write the committed integration documents of one environment before its
-//! release apply binds them (platform install step 4.16.1).
+//! release apply binds them.
 //!
 //! `documents` holds, for each integration the environment declares,
 //! `<name>.integration.json`, `<name>.json` (the connection) and, when the

@@ -43,7 +43,7 @@ pub struct ConnectionsArgs {
     /// The environment.k document.
     pub file: PathBuf,
     /// The directory of the integration, external system and connection
-    /// documents (platform install step 4.16.1).
+    /// documents.
     #[arg(long)]
     pub documents: PathBuf,
 }

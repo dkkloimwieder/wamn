@@ -12,7 +12,7 @@
 # change of the library list restarts the pod. log_min_duration -1 keeps it
 # silent in every database. tools/bench/pg-floor/gcp.sh sets the local.sh
 # values on the floor database alone.
-# The instance runs alone on the node pool pg (gcp.md section 4.2): the node
+# The instance runs alone on the node pool pg: the node
 # selector puts it there, and the taint keeps every other pod off. A shared
 # 2-vCPU node made each SQL span about 4 times slower (wamn-48d4d). CNPG
 # applies the affinity only when it creates the pod, so a change needs a

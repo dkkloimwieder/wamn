@@ -257,8 +257,7 @@ pub async fn prepare(
             )),
     )
     .await?;
-    // Identity owns the memory buckets, as on platform apply: it gets the
-    // product's NATS client certificate in its namespace and the one NATS.
+    // Identity owns the memory buckets and uses the NATS client certificate in its namespace.
     let manifest = fs::read_to_string(
         cluster
             .repository

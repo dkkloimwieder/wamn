@@ -710,13 +710,8 @@ async fn scenario(run: &mut Run, repository: &Path, source: &Path) -> anyhow::Re
         )
         .await?;
     }
-    // The CA, the certificates and the one NATS, before the operator
-    // (docs/plan/alignment.md R1-R5). The users are the ones platform apply
-    // writes, for every environment the checks apply.
     integration::install_one_nats(run, repository, &KIND_ENVIRONMENTS).await?;
-    // The OAuth key that platform apply makes for a local provider
-    // (crates/control/environment/src/platform/oauth.rs ensure_key). The hosts of
-    // every release mount it.
+    // Every release's hosts mount this local OAuth key.
     let mut key = [0_u8; 32];
     ring::rand::SecureRandom::fill(&ring::rand::SystemRandom::new(), &mut key)
         .map_err(|_| anyhow::anyhow!("OAuth key entropy unavailable"))?;

@@ -1,4 +1,4 @@
-//! Repository manifests and provider edits for install steps 4.3 through 4.9.
+//! Repository manifests and provider edits.
 
 use std::path::Path;
 

@@ -50,9 +50,7 @@ pub async fn auth_changes(run: &Run) -> anyhow::Result<(AuthChanges, Child)> {
     Ok((AuthChanges::connect(&connection).await?, forward))
 }
 
-/// Install the CA, the certificates and the one NATS in the test namespace,
-/// with the users that platform apply writes for `environments` of
-/// ORG/PROJECT (docs/plan/alignment.md R1-R5).
+/// Install the CA, certificates, and NATS with users for the test environments.
 pub async fn install_one_nats(
     run: &Run,
     repository: &Path,
