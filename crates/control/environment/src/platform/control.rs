@@ -302,6 +302,17 @@ pub async fn release(
         None,
     )
     .await?;
+    // The operator publishes the workload's endpoints once it reports Ready.
+    kubectl::wait(
+        &target.kubeconfig,
+        &target.context,
+        "hosts",
+        "workloaddeployment",
+        &format!("{name}-http"),
+        "condition=Ready",
+        "600s",
+    )
+    .await?;
     Ok(())
 }
 
