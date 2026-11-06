@@ -3,7 +3,7 @@
 use std::time::{Duration, Instant};
 
 use anyhow::{Context as _, ensure};
-use async_nats::jetstream::{Context, message::StreamMessage, stream::Stream};
+use async_nats::jetstream::{message::StreamMessage, stream::Stream};
 use serde_json::{Value, json};
 use tokio::process::Command;
 use tokio_postgres::Client;
