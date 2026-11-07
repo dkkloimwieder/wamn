@@ -19,12 +19,16 @@ schema Integration:
     check:
         version > 0, "version must be positive"
 
+schema Schema:
+    mode?: "reset" | "migrate"
+
 schema Environment:
     org: str
     project: str
     env: str
     target: str
     policy: str
+    schema: Schema = {}
     applications: {str:Application}
     integrations: {str:Integration} = {}
 

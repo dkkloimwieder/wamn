@@ -12,11 +12,29 @@ pub struct EnvironmentDocument {
     pub target: String,
     /// A policy of `registry.env_policies`, by name.
     pub policy: String,
+    #[serde(default)]
+    pub schema: Schema,
     /// Application name to its selection and membership.
     #[serde(deserialize_with = "read_applications")]
     pub applications: BTreeMap<String, ApplicationSelection>,
     #[serde(default)]
     pub integrations: BTreeMap<String, Integration>,
+}
+
+/// Shared schema behavior. An omitted mode follows the recorded disposable designation.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Schema {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mode: Option<SchemaMode>,
+}
+
+/// The environment's schema lifecycle mode.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SchemaMode {
+    Reset,
+    Migrate,
 }
 
 /// An application's deployment selection and declared membership.
@@ -124,6 +142,16 @@ impl<'de> Deserialize<'de> for DeclaredRelease {
 }
 
 impl EnvironmentDocument {
+    /// Resolve an omitted mode from the stored designation, never from a name or version.
+    /// An absent environment record preserves data.
+    pub fn schema_mode(&self, disposable: Option<bool>) -> SchemaMode {
+        self.schema.mode.unwrap_or(if disposable == Some(true) {
+            SchemaMode::Reset
+        } else {
+            SchemaMode::Migrate
+        })
+    }
+
     /// Read a document from its JSON form and check every field.
     ///
     /// # Errors
@@ -255,6 +283,10 @@ impl EnvironmentDocument {
             ("policy", self.policy.as_str()),
         ] {
             lines.push(format!("    {key} = {}", quote(value)));
+        }
+        if let Some(mode) = self.schema.mode {
+            let mode = serde_json::to_string(&mode).expect("a schema mode encodes");
+            lines.push(format!("    schema = {{mode = {mode}}}"));
         }
         lines.push("    integrations = {".to_owned());
         for (name, integration) in &self.integrations {

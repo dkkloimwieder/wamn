@@ -20,7 +20,7 @@ pub struct DeployArgs {
     /// Principal already authenticated by the publication boundary.
     #[arg(long, requires = "package")]
     pub verified_publisher_principal: Option<String>,
-    /// The authored environment.k file.
+    /// The shared environment.k file, including schema.mode and application selections.
     #[arg(long)]
     pub env: PathBuf,
 }
@@ -28,7 +28,7 @@ pub struct DeployArgs {
 #[derive(Debug, Args)]
 pub struct RollbackArgs {
     pub application: String,
-    /// The authored environment.k file.
+    /// The shared environment.k file. Rollback preserves schema.mode and other applications.
     #[arg(long)]
     pub env: PathBuf,
 }

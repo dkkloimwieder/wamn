@@ -120,6 +120,7 @@ pub fn fixture_host_group(document: &EnvironmentDocument, local: &str) -> Value 
 
 pub fn fixture_document(env: &str, route_host: &str, digest: &str) -> EnvironmentDocument {
     EnvironmentDocument {
+        schema: environment::document::Schema::default(),
         integrations: [(
             format!("labels-{env}"),
             environment::document::Integration { version: 1 },
@@ -1019,6 +1020,7 @@ pub mod workflow {
 
     pub fn fixture_document(connector: &str) -> EnvironmentDocument {
         EnvironmentDocument {
+            schema: environment::document::Schema::default(),
             integrations: std::collections::BTreeMap::new(),
             target: "cloud".into(),
             org: ORG.into(),

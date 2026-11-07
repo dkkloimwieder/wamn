@@ -40,6 +40,7 @@ pub struct Policy {
 /// The environment row of the system database.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EnvironmentRow {
+    pub disposable: bool,
     pub instance_suffix: String,
     pub route_host: Option<String>,
     pub policy_name: String,
@@ -107,6 +108,7 @@ pub struct Authorities {
 /// The result of analysis: the authorities and the differences to apply.
 #[derive(Debug, Clone)]
 pub struct Analysis {
+    pub schema_mode: super::document::SchemaMode,
     pub authorities: Authorities,
     pub application: String,
     pub notices: Vec<Notice>,
@@ -165,6 +167,7 @@ pub fn select_application(
         env: document.env.clone(),
         target: document.target.clone(),
         policy: document.policy.clone(),
+        schema: document.schema,
         applications: BTreeMap::from([(name.to_owned(), selection.clone())]),
         integrations: document
             .integrations
@@ -291,6 +294,7 @@ pub async fn analyse(
         });
     }
     Ok(Analysis {
+        schema_mode: document.schema_mode(authorities.row.as_ref().map(|row| row.disposable)),
         authorities,
         application: application.clone(),
         notices,
@@ -374,7 +378,7 @@ pub(crate) async fn read_row(
 ) -> anyhow::Result<Option<EnvironmentRow>> {
     Ok(system
         .query_opt(
-            "SELECT instance_suffix, route_host, policy_name FROM registry.project_envs \
+            "SELECT instance_suffix, route_host, policy_name, disposable FROM registry.project_envs \
               WHERE org = $1 AND project = $2 AND env = $3",
             &[&document.org, &document.project, &document.env],
         )
@@ -384,6 +388,7 @@ pub(crate) async fn read_row(
             instance_suffix: row.get(0),
             route_host: row.get(1),
             policy_name: row.get(2),
+            disposable: row.get(3),
         }))
 }
 

@@ -23,6 +23,7 @@ pub use plan::Client;
 pub use plan::Integration;
 
 pub use plan::DeclaredRelease;
+pub use plan::{Schema, SchemaMode};
 
 impl EnvironmentDocument {
     /// Compile an `environment.k` file and read it.
@@ -97,6 +98,7 @@ pub(super) fn persist_selection(
             && latest.env == before.env
             && latest.target == before.target
             && latest.policy == before.policy
+            && latest.schema == before.schema
             && latest.integrations == before.integrations
             && latest.applications.get(application) == before.applications.get(application),
         "environment configuration or application {application} changed during preparation; retry"
@@ -141,6 +143,7 @@ mod tests {
         json!({
             "org": "acme", "project": "wms", "env": "prod",
             "policy": "prod", "target": "cloud",
+            "schema": {"mode": "reset"},
             "applications": {
                 "wms": {
                     "current": format!("sha256:{}", "a".repeat(64)),
@@ -168,6 +171,7 @@ mod tests {
             &serde_json::to_vec(&serde_json::json!({
                 "org": "acme", "project": "apps", "env": "dev",
                 "target": "cloud", "policy": "dev",
+                "schema": {"mode": "migrate"},
                 "applications": {
                     "a": {"current": a0, "hostname": "a.example", "packages": ["a"]},
                     "b": {"current": b0, "hostname": "b.example", "packages": ["b"]}
@@ -237,6 +241,11 @@ mod tests {
         std::fs::write(&file, changed.to_kcl()).unwrap();
         assert!(persist_selection(&file, &pending, &initial, "wms").is_err());
         assert_eq!(EnvironmentDocument::compile(&file).unwrap(), changed);
+        changed.policy.clone_from(&pending.policy);
+        changed.schema.mode = Some(SchemaMode::Migrate);
+        std::fs::write(&file, changed.to_kcl()).unwrap();
+        assert!(persist_selection(&file, &pending, &initial, "wms").is_err());
+        assert_eq!(EnvironmentDocument::compile(&file).unwrap(), changed);
     }
 
     #[test]
@@ -298,11 +307,64 @@ mod tests {
         assert_eq!(compiled.target, input["target"]);
         assert_eq!(compiled.policy, input["policy"]);
         assert_eq!(canonical["integrations"], input["integrations"]);
+        assert_eq!(canonical["schema"], input["schema"]);
+        let selected = super::super::analyse::select_application(&compiled, Some("wms")).unwrap();
+        assert_eq!(selected.schema, compiled.schema);
         let membership = serde_json::to_value(compiled.membership()).unwrap();
         assert_eq!(
             membership["wms"],
             json!({"packages": ["wamn_wms"], "connections": {"erp": "shared_erp", "files": "files"}})
         );
+    }
+
+    #[test]
+    fn schema_modes_match_in_json_and_kcl_and_default_only_from_the_record() {
+        let scratch = wamn_test_infrastructure::scratch::ScratchRoot::create().unwrap();
+        let file = scratch.path().join("environment.k");
+        for mode in [None, Some(SchemaMode::Reset), Some(SchemaMode::Migrate)] {
+            let mut input = document();
+            if let Some(mode) = mode {
+                input["schema"]["mode"] = serde_json::to_value(mode).unwrap();
+            } else {
+                input.as_object_mut().unwrap().remove("schema");
+            }
+            let parsed = EnvironmentDocument::from_json(input.to_string().as_bytes()).unwrap();
+            std::fs::write(&file, parsed.to_kcl()).unwrap();
+            assert_eq!(EnvironmentDocument::compile(&file).unwrap(), parsed);
+            for (disposable, default) in [
+                (Some(true), SchemaMode::Reset),
+                (Some(false), SchemaMode::Migrate),
+                (None, SchemaMode::Migrate),
+            ] {
+                assert_eq!(parsed.schema_mode(disposable), mode.unwrap_or(default));
+            }
+            // Mode edits use only the document owner and retain all application facts.
+            let applications = parsed.applications;
+            let mut edited = EnvironmentDocument::compile(&file).unwrap();
+            for mode in [SchemaMode::Reset, SchemaMode::Migrate, SchemaMode::Reset] {
+                edited.schema.mode = Some(mode);
+                std::fs::write(&file, edited.to_kcl()).unwrap();
+                edited = EnvironmentDocument::compile(&file).unwrap();
+                assert_eq!(edited.applications, applications);
+                assert_eq!(edited.schema.mode, Some(mode));
+            }
+        }
+        let parsed = EnvironmentDocument::from_json(document().to_string().as_bytes()).unwrap();
+        for invalid in ["", "unknown", "RESET"] {
+            let mut input = document();
+            input["schema"]["mode"] = json!(invalid);
+            let error = EnvironmentDocument::from_json(input.to_string().as_bytes()).unwrap_err();
+            assert!(format!("{error:#}").contains(invalid));
+            std::fs::write(
+                &file,
+                parsed
+                    .to_kcl()
+                    .replace("mode = \"reset\"", &format!("mode = {invalid:?}")),
+            )
+            .unwrap();
+            let error = EnvironmentDocument::compile(&file).unwrap_err();
+            assert!(format!("{error:#}").contains("mode"));
+        }
     }
 
     #[test]
