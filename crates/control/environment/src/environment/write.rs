@@ -1,10 +1,5 @@
-//! Step 6 of `apply`: the one rollout write
-//! (docs/architecture/overview.md#environment-lifecycle).
-//!
-//! The verb renders the `release` values, recovers any pending Helm operation,
-//! and runs `helm upgrade --install` with `--wait`, the policy's readiness
-//! budget as `--timeout`, `--rollback-on-failure`, `--history-max 50` and the
-//! description `apply by <actor>`, or `rollback by <actor>: <reason>` (§11.2).
+//! Prepare chart inputs before selection persistence, then apply one application's Helm release.
+//! Helm handles pending operations and reports rollout failures.
 
 pub(super) mod plan;
 
@@ -32,20 +27,20 @@ pub struct Written {
     pub deadline: Instant,
 }
 
-/// Render the values, recover pending operations, and write the release chart.
-///
-/// # Errors
-///
-/// When the values do not render or Helm fails.
-/// A Helm failure leaves the previous release serving:
-/// `--rollback-on-failure` restores it.
-pub async fn write(
+/// Prepared chart inputs, retained until Helm finishes.
+pub(super) struct Prepared {
+    directory: PrivateDirectory,
+    roles: Vec<RoleName>,
+    budget: Duration,
+}
+
+/// Render and validate chart inputs before persisting the application selection.
+pub(super) async fn prepare(
     platform: &Platform,
     document: &EnvironmentDocument,
     analysis: &Analysis,
     release: &ReleaseFacts,
-    reason: Option<&str>,
-) -> anyhow::Result<Written> {
+) -> anyhow::Result<Prepared> {
     crate::platform::edge::warn_conflicts(
         &platform.target,
         &document.applications[&analysis.application].hostname,
@@ -54,7 +49,6 @@ pub async fn write(
     .await?;
     let policy = &analysis.authorities.policy;
     let budget = Duration::from_secs(u64::try_from(policy.readiness_budget_seconds)?);
-    let deadline = Instant::now() + budget;
     let (mut rendered, names) = release_values(
         document,
         &analysis.application,
@@ -89,6 +83,24 @@ pub async fn write(
         "name":release_name, "namespace":platform.target.namespace, "values":rendered,
     }))?;
     super::runtime::require_references(&platform.target, &objects).await?;
+    Ok(Prepared {
+        directory: private,
+        roles: names,
+        budget,
+    })
+}
+
+/// Apply only the prepared application's chart and recover only its pending operation.
+pub(super) async fn write(
+    platform: &Platform,
+    analysis: &Analysis,
+    prepared: Prepared,
+    rollback: bool,
+) -> anyhow::Result<Written> {
+    let release_name = analysis.authorities.release_name.clone();
+    let budget = prepared.budget;
+    let deadline = Instant::now() + budget;
+    let values = prepared.directory.path("values.yaml");
     release_chart::recover_pending(&platform.target, &release_name).await?;
     let poller = host_report::Poller::start(&platform.target, &release_name);
     let upgraded = release_chart::upgrade(
@@ -97,17 +109,18 @@ pub async fn write(
         &release_name,
         &values,
         budget,
-        &match reason {
-            None => format!("apply by {}", analysis.actor),
-            Some(reason) => format!("rollback by {}: {reason}", analysis.actor),
-        },
+        &format!(
+            "{} by {}",
+            if rollback { "rollback" } else { "apply" },
+            analysis.actor
+        ),
     )
     .await;
     let report = poller.finish();
     upgraded.map_err(|error| host_report::attach(&error, &report))?;
     Ok(Written {
         release_name,
-        roles: names,
+        roles: prepared.roles,
         deadline,
     })
 }

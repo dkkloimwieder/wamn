@@ -1,6 +1,6 @@
 //! Arguments and output of the `env` verbs
 //! (docs/architecture/overview.md#environment-lifecycle). `apply` selects an
-//! application and supports `--dry-run`; `rollback` takes `--reason`; `delete` takes
+//! application and supports `--dry-run`; `rollback` selects an application; `delete` takes
 //! `--data`. Every other input is a field of the environment document, or a
 //! platform input that [`wamn_environment_control::environment::Platform::from_env`] reads.
 
@@ -23,14 +23,14 @@ pub enum EnvCommand {
     Apply(ApplyArgs),
     /// Write the committed integration documents of one environment.
     Connections(ConnectionsArgs),
-    /// Restore the previous intended release and web client pin of one environment.
+    /// Apply one application’s previous authored release.
     Rollback(RollbackArgs),
     /// Delete one environment. Its database stays on the cluster unless --data.
     Delete(DeleteArgs),
-    /// Print the environment.k document the authorities hold for one environment.
-    Show(ShowArgs),
+    /// Print the authored environment.k document.
+    Show(FileArgs),
     /// Print the current state of one environment as JSON.
-    Status(ShowArgs),
+    Status(FileArgs),
 }
 
 #[derive(Debug, Args)]
@@ -60,7 +60,7 @@ pub struct ApplyArgs {
     pub dry_run: bool,
     /// The application whose release to analyse or apply.
     #[arg(long)]
-    pub application: Option<String>,
+    pub application: String,
 }
 
 #[derive(Debug, Args)]
@@ -75,11 +75,11 @@ pub struct ConnectionsArgs {
 
 #[derive(Debug, Args)]
 pub struct RollbackArgs {
-    /// The coordinate, `org/project/env`.
-    pub coordinate: String,
-    /// Why. The Helm revision keeps it in its description.
+    /// The authored environment.k file.
+    pub file: PathBuf,
+    /// The application whose previous release to apply.
     #[arg(long)]
-    pub reason: String,
+    pub application: String,
 }
 
 #[derive(Debug, Args)]
@@ -93,12 +93,16 @@ pub struct DeleteArgs {
 }
 
 #[derive(Debug, Args)]
-pub struct ShowArgs {
-    /// The coordinate, `org/project/env`.
-    pub coordinate: String,
+pub struct FileArgs {
+    /// The authored environment.k file.
+    pub file: PathBuf,
 }
 
 pub async fn run(command: EnvCommand) -> anyhow::Result<()> {
+    if let EnvCommand::Show(args) = &command {
+        print!("{}", environment::show::show(&args.file)?.to_kcl());
+        return Ok(());
+    }
     let platform = match &command {
         EnvCommand::Provision(_) | EnvCommand::Initialize(_) => Platform::sql_from_env()?,
         EnvCommand::Apply(_) | EnvCommand::Rollback(_) => Platform::apply_from_env()?,
@@ -131,9 +135,9 @@ pub async fn run(command: EnvCommand) -> anyhow::Result<()> {
         }
         EnvCommand::Apply(args) => {
             let analysis = if args.dry_run {
-                environment::dry_run(&platform, &args.file, args.application.as_deref()).await?
+                environment::dry_run(&platform, &args.file, Some(&args.application)).await?
             } else {
-                environment::apply(&platform, &args.file, args.application.as_deref()).await?
+                environment::apply(&platform, &args.file, &args.application).await?
             };
             for notice in &analysis.notices {
                 println!("{}", serde_json::to_string(notice)?);
@@ -154,9 +158,8 @@ pub async fn run(command: EnvCommand) -> anyhow::Result<()> {
             }
         }
         EnvCommand::Rollback(args) => {
-            let triple = parse_coordinate(&args.coordinate)?;
             let analysis =
-                environment::rollback::rollback(&platform, &triple, &args.reason).await?;
+                environment::rollback::rollback(&platform, &args.file, &args.application).await?;
             for line in &analysis.plan {
                 println!("{line}");
             }
@@ -174,18 +177,11 @@ pub async fn run(command: EnvCommand) -> anyhow::Result<()> {
                 println!("{line}");
             }
         }
-        EnvCommand::Show(args) => {
-            let triple = parse_coordinate(&args.coordinate)?;
-            print!(
-                "{}",
-                environment::show::show(&platform, &triple).await?.to_kcl()
-            );
-        }
+        EnvCommand::Show(_) => unreachable!("show returns before platform inputs"),
         EnvCommand::Status(args) => {
-            let triple = parse_coordinate(&args.coordinate)?;
             let admin_url = std::env::var("WAMN_SYSTEM_ADMIN_URL")
                 .context("set WAMN_SYSTEM_ADMIN_URL for env status")?;
-            let status = environment::status::status(&platform, &triple, &admin_url).await?;
+            let status = environment::status::status(&platform, &args.file, &admin_url).await?;
             println!("{}", serde_json::to_string_pretty(&status)?);
         }
     }
@@ -249,6 +245,9 @@ mod tests {
             #[command(subcommand)]
             command: EnvCommand,
         }
+        for verb in ["apply", "rollback"] {
+            assert!(Command::try_parse_from(["env", verb, "environment.k"]).is_err());
+        }
         let command = Command::try_parse_from([
             "env",
             "apply",
@@ -272,8 +271,7 @@ mod tests {
         )
         .unwrap();
         let selected =
-            environment::analyse::select_application(&document, args.application.as_deref())
-                .unwrap();
+            environment::analyse::select_application(&document, Some(&args.application)).unwrap();
         assert!(args.dry_run);
         assert_eq!(
             selected.applications,

@@ -46,7 +46,7 @@ pub struct EnvironmentRow {
 }
 
 /// One installed package in the project database.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize)]
 pub struct Installed {
     /// The installed package baseline.
     pub current: String,

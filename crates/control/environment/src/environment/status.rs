@@ -1,18 +1,4 @@
-//! The status operation (docs/architecture/execution.md#host-run-routes,
-//! wamn-snz0.6).
-//!
-//! Current state only, read and never written: the newest successful Helm
-//! revision and its digest, the digest the host Deployment's pod template
-//! carries and its rollout, the conditions of the release's
-//! WorkloadDeployments, the live set, and the drain: the pods that are
-//! terminating and the runs pinned to a release with no live pod. No history
-//! of checks, no Secret, no verb. Who applied is in the Helm revision, read
-//! with `helm history`.
-//!
-//! The Deployment, the WorkloadDeployments and the pods are read by
-//! [`wamn_control_provision::environment_state`], the reader the control
-//! host's `environment.status` also uses; this verb adds the Helm revision,
-//! the terminating pods and the stranded runs.
+//! Authored selections and independently observed application and database state.
 
 pub(super) mod plan;
 use plan::terminating;
@@ -37,11 +23,23 @@ pub use wamn_control_provision::environment_state::DeploymentStatus;
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct Status {
     pub applications: BTreeMap<String, ApplicationStatus>,
+    pub installed: Option<BTreeMap<String, super::analyse::Installed>>,
+    pub warnings: Vec<String>,
 }
 
 /// Independently observed state of one application's Helm release and host group.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct ApplicationStatus {
+    pub current: super::document::DeclaredRelease,
+    pub previous: Option<String>,
+    pub hostname: String,
+    pub observed: Option<Observed>,
+    pub warnings: Vec<String>,
+}
+
+/// Runtime state is absent when its authority cannot be read.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct Observed {
     pub release_name: String,
     /// The newest successful Helm revision, or none.
     pub revision: Option<RevisionStatus>,
@@ -54,7 +52,7 @@ pub struct ApplicationStatus {
     /// Release digest to the count of host pods that are terminating.
     pub terminating: BTreeMap<String, usize>,
     /// Runs pinned to a release with no live pod.
-    pub stranded: Vec<Stranded>,
+    pub stranded: Option<Vec<Stranded>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -64,61 +62,77 @@ pub struct RevisionStatus {
     pub manifest_digest: Option<String>,
 }
 
-/// Read the status of one environment.
-///
-/// # Errors
-///
-/// When Helm, Kubernetes or the project database cannot be read.
+/// Read authored selections even when runtime or database state is unavailable.
 pub async fn status(
     platform: &Platform,
-    triple: &Triple,
+    file: &std::path::Path,
     admin_url: &str,
 ) -> anyhow::Result<Status> {
-    let mut revisions = BTreeMap::new();
-    let mut memberships = wamn_catalog::EnvironmentApplications::new();
-    for (application, release_name) in
-        super::analyse::application_releases(platform, triple).await?
-    {
-        let revision = read_revision(platform, &release_name).await?;
-        if let Some(revision) = &revision {
-            memberships.extend(super::show::plan::revision_applications(&revision.values)?);
-        }
-        revisions.insert(application, (release_name, revision));
+    let document = super::document::EnvironmentDocument::compile(file)?;
+    let triple = document.triple();
+    let mut warnings = Vec::new();
+    let installed = match async {
+        let url = project_url(platform, &triple).await?;
+        let env_key = wamn_control_provision::project_env_key(
+            &document.org,
+            &document.project,
+            &document.env,
+        );
+        super::analyse::read_project(&url, &env_key)
+            .await?
+            .context("application database is absent")
     }
-    let mut applications = BTreeMap::new();
-    for (application, (release_name, revision)) in revisions {
-        let mut packages = vec![application.clone()];
-        if let Some(membership) = memberships.get(&application) {
-            packages.extend(
-                membership
-                    .packages
-                    .iter()
-                    .filter(|package| {
-                        memberships
-                            .values()
-                            .filter(|owner| owner.packages.contains(*package))
-                            .count()
-                            == 1
-                    })
-                    .cloned(),
-            );
+    .await
+    {
+        Ok(project) => Some(project.installed),
+        Err(error) => {
+            warnings.push(format!("database unknown: {error:#}"));
+            None
         }
-        let revision = revision.map(|revision| RevisionStatus {
-            number: revision.number,
-            chart: revision.chart.clone(),
-            manifest_digest: revision.manifest_digest().map(str::to_owned),
-        });
-        let namespace = platform.target.namespace.as_str();
-        let observed = observe(namespace, &release_name, |path| async move {
-            let body = kubectl(platform, namespace, &["get", "--raw", &path], None).await?;
-            serde_json::from_str::<Value>(&body).with_context(|| format!("decode {path}"))
-        })
-        .await?;
-        let state = environment_state(&observed, &release_name);
-        let stranded = stranded_runs(platform, triple, &packages, &state.live, admin_url).await?;
-        applications.insert(
-            application,
-            ApplicationStatus {
+    };
+    let mut applications = BTreeMap::new();
+    for (application, selection) in &document.applications {
+        let mut warnings = Vec::new();
+        let release_name = super::analyse::application_release_name(&document, application)?;
+        let mut packages = vec![application.clone()];
+        packages.extend(
+            selection
+                .packages
+                .iter()
+                .filter(|package| {
+                    document
+                        .applications
+                        .values()
+                        .filter(|owner| owner.packages.contains(*package))
+                        .count()
+                        == 1
+                })
+                .cloned(),
+        );
+        let observed = async {
+            let revision = read_revision(platform, &release_name)
+                .await?
+                .map(|revision| RevisionStatus {
+                    manifest_digest: revision.manifest_digest().map(str::to_owned),
+                    number: revision.number,
+                    chart: revision.chart,
+                });
+            let namespace = platform.target.namespace.as_str();
+            let observed = observe(namespace, &release_name, |path| async move {
+                let body = kubectl(platform, namespace, &["get", "--raw", &path], None).await?;
+                serde_json::from_str::<Value>(&body).with_context(|| format!("decode {path}"))
+            })
+            .await?;
+            let state = environment_state(&observed, &release_name);
+            let stranded =
+                match stranded_runs(platform, &triple, &packages, &state.live, admin_url).await {
+                    Ok(runs) => Some(runs),
+                    Err(error) => {
+                        warnings.push(format!("stranded runs unknown: {error:#}"));
+                        None
+                    }
+                };
+            Ok::<_, anyhow::Error>(Observed {
                 terminating: terminating(&observed.pods),
                 release_name,
                 revision,
@@ -126,14 +140,35 @@ pub async fn status(
                 workloads: state.workloads,
                 live: state.live,
                 stranded,
+            })
+        }
+        .await;
+        let observed = match observed {
+            Ok(observed) => Some(observed),
+            Err(error) => {
+                warnings.push(format!("runtime unknown: {error:#}"));
+                None
+            }
+        };
+        applications.insert(
+            application.clone(),
+            ApplicationStatus {
+                current: selection.current.clone(),
+                previous: selection.previous.clone(),
+                hostname: selection.hostname.clone(),
+                observed,
+                warnings,
             },
         );
     }
-    Ok(Status { applications })
+    Ok(Status {
+        applications,
+        installed,
+        warnings,
+    })
 }
 
-/// The runs pinned to a release with no live pod, or none when the
-/// environment has no row or no database.
+/// Read pinned runs. An absent or unreadable database is unknown.
 async fn stranded_runs(
     platform: &Platform,
     triple: &Triple,
@@ -156,12 +191,9 @@ async fn stranded_runs(
         .context("read the environment row")?
         .is_some();
     if !present {
-        return Ok(Vec::new());
+        anyhow::bail!("environment has no provisioned database");
     }
     let url = project_url(platform, triple).await?;
-    if connect(&url).await.is_err() {
-        return Ok(Vec::new());
-    }
     let env_key =
         wamn_control_provision::project_env_key(&triple.org, &triple.project, triple.env.as_str());
     stranded(&url, &env_key, triple.env.as_str(), Some(packages), live).await

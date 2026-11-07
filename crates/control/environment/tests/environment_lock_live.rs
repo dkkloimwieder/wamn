@@ -29,6 +29,24 @@ async fn a_second_verb_refuses_until_the_holder_is_gone() {
         .expect("another coordinate is not blocked");
     drop(other);
 
+    let orders = LifecycleLock::acquire_application(url, &prod, "orders")
+        .await
+        .unwrap();
+    assert!(
+        LifecycleLock::acquire_application(url, &prod, "orders")
+            .await
+            .is_err()
+    );
+    let receiving = LifecycleLock::acquire_application(url, &prod, "receiving")
+        .await
+        .unwrap();
+    orders.release().await;
+    let retry = LifecycleLock::acquire_application(url, &prod, "orders")
+        .await
+        .unwrap();
+    retry.release().await;
+    receiving.release().await;
+
     drop(held);
     // The server ends the session when it reads the closed socket.
     let mut retaken = None;

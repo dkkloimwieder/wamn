@@ -67,7 +67,7 @@ fn manifest(bytes: &[u8]) -> anyhow::Result<wamn_catalog::ServingManifest> {
 #[test]
 fn changing_one_application_selection_leaves_the_other_release_unchanged() -> anyhow::Result<()> {
     use std::collections::BTreeMap;
-    use wamn_environment_control::environment::{document::DeclaredRelease, write};
+    use wamn_environment_control::environment::{document::SelectionChange, write};
 
     let work = ScratchRoot::create()?;
     let mut releases = BTreeMap::new();
@@ -188,14 +188,13 @@ fn changing_one_application_selection_leaves_the_other_release_unchanged() -> an
         .iter()
         .map(|(name, release)| Ok((*name, render(&document, name, release)?)))
         .collect::<anyhow::Result<BTreeMap<_, _>>>()?;
+    let original = releases["orders"].clone();
     let release = releases.get_mut("orders").unwrap();
     release.composed_entry.as_mut().unwrap().reference = format!(
         "entries@{}",
         wamn_execution_contract::bytes_sha256(b"updated entry")
     );
-    let selection = document.applications.get_mut("orders").unwrap();
-    selection.previous = Some(selection.current.to_string());
-    selection.current = DeclaredRelease::Digest(release.digest().as_str().to_owned());
+    document.select_release("orders", SelectionChange::Deploy(release.digest().as_str()))?;
     for (application, release) in &releases {
         let after = render(&document, application, release)?;
         if *application == "orders" {
@@ -212,6 +211,14 @@ fn changing_one_application_selection_leaves_the_other_release_unchanged() -> an
         } else {
             assert_eq!(before[application], after);
         }
+    }
+    document.select_release("orders", SelectionChange::Rollback)?;
+    releases.insert("orders", original);
+    for (application, release) in &releases {
+        assert_eq!(
+            before[application],
+            render(&document, application, release)?
+        );
     }
     Ok(())
 }
@@ -578,4 +585,58 @@ mod shared_resources {
         );
         Ok(())
     }
+}
+
+#[tokio::test]
+async fn unavailable_authorities_preserve_authored_selections_and_report_unknown()
+-> anyhow::Result<()> {
+    use wamn_environment_control::environment::{self, Platform};
+    let scratch = ScratchRoot::create()?;
+    let file = scratch.path().join("environment.k");
+    let digest = wamn_execution_contract::bytes_sha256(b"selected release");
+    let document = fixture_document("dev", "orders.example", &digest);
+    std::fs::write(&file, document.to_kcl())?;
+    let original = std::fs::read(&file)?;
+    let kubeconfig = scratch.path().join("invalid-kubeconfig");
+    std::fs::write(&kubeconfig, "invalid configuration")?;
+    let platform = Platform {
+        system_database_url: "invalid database URL".into(),
+        target: wamn_release_control::release_chart::Target {
+            kubeconfig,
+            context: "absent".into(),
+            namespace: NAMESPACE.into(),
+        },
+        chart: scratch.path().join("absent-chart"),
+        release_artifact_base: "registry.invalid/releases".into(),
+        registry_auth_file: scratch.path().join("absent-auth.json"),
+        oci_ca_paths: Vec::new(),
+        package_artifact_base: None,
+        component_artifact_base: None,
+        database_namespace: "platform".into(),
+        database_host: None,
+        database_port: 5432,
+        host_group: None,
+        pat_issuer: wamn_identity_client::PatIssuerConfig::default(),
+        events: None,
+        auth_nats: None,
+    };
+    assert!(
+        environment::deploy(&platform, &file, &digest)
+            .await
+            .is_err()
+    );
+    assert_eq!(std::fs::read(&file)?, original);
+    let status = environment::status::status(&platform, &file, "invalid database URL").await?;
+    assert!(status.installed.is_none());
+    assert!(!status.warnings.is_empty());
+    for (name, selection) in &document.applications {
+        let reported = &status.applications[name];
+        assert_eq!(reported.current, selection.current);
+        assert_eq!(reported.previous, selection.previous);
+        assert_eq!(reported.hostname, selection.hostname);
+        assert!(reported.observed.is_none());
+        assert!(!reported.warnings.is_empty());
+    }
+    assert_eq!(std::fs::read(&file)?, original);
+    Ok(())
 }

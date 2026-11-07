@@ -37,6 +37,101 @@ impl EnvironmentDocument {
     }
 }
 
+/// A requested change to one application's authored selection.
+#[derive(Debug, Clone, Copy)]
+pub enum SelectionChange<'a> {
+    Deploy(&'a str),
+    Reapply,
+    Rollback,
+}
+
+impl EnvironmentDocument {
+    /// Change one release pair without changing shared configuration or other applications.
+    pub fn select_release(
+        &mut self,
+        application: &str,
+        change: SelectionChange<'_>,
+    ) -> anyhow::Result<()> {
+        let selection = self
+            .applications
+            .get_mut(application)
+            .with_context(|| format!("application {application} is not declared"))?;
+        let next = match change {
+            SelectionChange::Reapply => return Ok(()),
+            SelectionChange::Deploy(digest) => {
+                wamn_package_artifact::ensure_digest(digest)?;
+                if matches!(&selection.current, DeclaredRelease::Digest(current) if current == digest)
+                {
+                    return Ok(());
+                }
+                digest.to_owned()
+            }
+            SelectionChange::Rollback => selection.previous.clone().with_context(|| {
+                format!("application {application}: no retained prior release; nothing was written")
+            })?,
+        };
+        selection.previous =
+            match std::mem::replace(&mut selection.current, DeclaredRelease::Digest(next)) {
+                DeclaredRelease::None => None,
+                DeclaredRelease::Digest(current) => Some(current),
+            };
+        Ok(())
+    }
+}
+
+/// Merge a prepared selection into the latest file under a short file lock.
+/// A concurrent edit to the target or shared configuration refuses before Helm.
+pub(super) fn persist_selection(
+    file: &Path,
+    before: &EnvironmentDocument,
+    prepared: &EnvironmentDocument,
+    application: &str,
+) -> anyhow::Result<EnvironmentDocument> {
+    use std::io::Write as _;
+    let file = std::fs::canonicalize(file)?;
+    let _lock = super::lock::document_lock(&file)?;
+    let mut latest = EnvironmentDocument::compile(&file)?;
+    ensure!(
+        latest.org == before.org
+            && latest.project == before.project
+            && latest.env == before.env
+            && latest.target == before.target
+            && latest.policy == before.policy
+            && latest.integrations == before.integrations
+            && latest.applications.get(application) == before.applications.get(application),
+        "environment configuration or application {application} changed during preparation; retry"
+    );
+    let selection = latest
+        .applications
+        .get_mut(application)
+        .context("application disappeared")?;
+    let intended = &prepared.applications[application];
+    if selection.current == intended.current && selection.previous == intended.previous {
+        return Ok(latest);
+    }
+    selection.current.clone_from(&intended.current);
+    selection.previous.clone_from(&intended.previous);
+    let temporary = file.with_extension("k.pending");
+    let result = (|| -> anyhow::Result<()> {
+        let mut output = std::fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(&temporary)?;
+        output.set_permissions(std::fs::metadata(&file)?.permissions())?;
+        output.write_all(latest.to_kcl().as_bytes())?;
+        output.sync_all()?;
+        std::fs::rename(&temporary, &file)?;
+        std::fs::File::open(file.parent().context("environment parent")?)?.sync_all()?;
+        Ok(())
+    })();
+    if result.is_err() {
+        let _ = std::fs::remove_file(&temporary);
+    }
+    result.with_context(|| format!("persist application {application} in {}", file.display()))?;
+    Ok(latest)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -63,6 +158,116 @@ mod tests {
             },
             "integrations": {"shared_erp": {"version": 1}, "files": {"version": 1}}
         })
+    }
+
+    #[test]
+    fn persisted_deploy_retry_and_rollback_preserve_other_applications_and_configuration() {
+        let scratch = wamn_test_infrastructure::scratch::ScratchRoot::create().unwrap();
+        let file = scratch.path().join("environment.k");
+        let initial = EnvironmentDocument::from_json(document().to_string().as_bytes()).unwrap();
+        std::fs::write(&file, initial.to_kcl()).unwrap();
+        let a0 = initial.applications["wms"].current.clone();
+        let b0 = initial.applications["receiving"].current.clone();
+        let a1 = format!("sha256:{}", "e".repeat(64));
+        let b1 = format!("sha256:{}", "f".repeat(64));
+        let mut expected = initial.clone();
+        for (application, change, current, previous) in [
+            (
+                "wms",
+                SelectionChange::Deploy(&a1),
+                DeclaredRelease::Digest(a1.clone()),
+                Some(a0.to_string()),
+            ),
+            (
+                "wms",
+                SelectionChange::Deploy(&a1),
+                DeclaredRelease::Digest(a1.clone()),
+                Some(a0.to_string()),
+            ),
+            (
+                "wms",
+                SelectionChange::Reapply,
+                DeclaredRelease::Digest(a1.clone()),
+                Some(a0.to_string()),
+            ),
+            (
+                "receiving",
+                SelectionChange::Deploy(&b1),
+                DeclaredRelease::Digest(b1.clone()),
+                Some(b0.to_string()),
+            ),
+            ("wms", SelectionChange::Rollback, a0, Some(a1.clone())),
+        ] {
+            let before = EnvironmentDocument::compile(&file).unwrap();
+            let mut prepared = before.clone();
+            prepared.select_release(application, change).unwrap();
+            persist_selection(&file, &before, &prepared, application).unwrap();
+            let target = expected.applications.get_mut(application).unwrap();
+            target.current = current;
+            target.previous = previous;
+            assert_eq!(EnvironmentDocument::compile(&file).unwrap(), expected);
+        }
+        // A target without a predecessor refuses before any document write.
+        std::fs::write(&file, initial.to_kcl()).unwrap();
+        let bytes = std::fs::read(&file).unwrap();
+        let mut prepared = initial.clone();
+        assert!(
+            prepared
+                .select_release("wms", SelectionChange::Rollback)
+                .is_err()
+        );
+        assert!(
+            prepared
+                .select_release("wms", SelectionChange::Deploy("latest"))
+                .is_err()
+        );
+        assert_eq!(std::fs::read(&file).unwrap(), bytes);
+        // A stale preparation cannot overwrite a changed target or shared policy.
+        let mut prepared = initial.clone();
+        prepared
+            .select_release("wms", SelectionChange::Deploy(&a1))
+            .unwrap();
+        let mut changed = initial.clone();
+        changed.policy = "other".into();
+        std::fs::write(&file, changed.to_kcl()).unwrap();
+        assert!(persist_selection(&file, &initial, &prepared, "wms").is_err());
+        assert_eq!(EnvironmentDocument::compile(&file).unwrap(), changed);
+    }
+
+    #[test]
+    fn concurrent_application_writes_merge_without_losing_either_selection() {
+        let scratch = wamn_test_infrastructure::scratch::ScratchRoot::create().unwrap();
+        let file = scratch.path().join("environment.k");
+        let before = EnvironmentDocument::from_json(document().to_string().as_bytes()).unwrap();
+        std::fs::write(&file, before.to_kcl()).unwrap();
+        let a1 = format!("sha256:{}", "e".repeat(64));
+        let b1 = format!("sha256:{}", "f".repeat(64));
+        let mut a = before.clone();
+        a.select_release("wms", SelectionChange::Deploy(&a1))
+            .unwrap();
+        let mut b = before.clone();
+        b.select_release("receiving", SelectionChange::Deploy(&b1))
+            .unwrap();
+        let barrier = std::sync::Barrier::new(2);
+        std::thread::scope(|scope| {
+            let first = scope.spawn(|| {
+                barrier.wait();
+                persist_selection(&file, &before, &a, "wms").unwrap();
+            });
+            let second = scope.spawn(|| {
+                barrier.wait();
+                persist_selection(&file, &before, &b, "receiving").unwrap();
+            });
+            first.join().unwrap();
+            second.join().unwrap();
+        });
+        a.applications.insert(
+            "receiving".into(),
+            b.applications.remove("receiving").unwrap(),
+        );
+        assert_eq!(EnvironmentDocument::compile(&file).unwrap(), a);
+        assert!(persist_selection(&file, &before, &before, "wms").is_err());
+        assert_eq!(EnvironmentDocument::compile(&file).unwrap(), a);
     }
 
     #[test]

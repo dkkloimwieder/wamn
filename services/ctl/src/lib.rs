@@ -10,6 +10,7 @@
 //! feature and ship in the separate `wamn-ctl-ops` binary. The clients in `dev/` retain argument parsing,
 //! output, and process signals for `wamn-control::dev` sessions.
 
+pub mod application_verbs;
 pub mod artifact_verbs;
 pub mod build_verbs;
 pub mod component_verbs;

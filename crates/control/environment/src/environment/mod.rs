@@ -264,56 +264,119 @@ pub async fn dry_run(
 pub async fn apply(
     platform: &Platform,
     file: &Path,
-    application: Option<&str>,
+    application: &str,
 ) -> anyhow::Result<Analysis> {
-    let document = EnvironmentDocument::compile(file)?;
-    apply_document(platform, &document, application, None).await
+    apply_selection(
+        platform,
+        file,
+        application,
+        document::SelectionChange::Reapply,
+    )
+    .await
 }
 
-/// Prepare application control records, apply its chart, and observe readiness and drain.
-pub(crate) async fn apply_document(
+/// Resolve the published release's application from the document's declared membership.
+pub async fn deploy(platform: &Platform, file: &Path, digest: &str) -> anyhow::Result<Analysis> {
+    wamn_package_artifact::ensure_digest(digest)?;
+    let document = EnvironmentDocument::compile(file)?;
+    let manifest = analyse::pull_release_manifest(platform, digest).await?;
+    let packages = manifest
+        .release
+        .packages
+        .iter()
+        .map(wamn_catalog::PackageCoordinate::package_id)
+        .collect::<std::collections::BTreeSet<_>>();
+    let mut owners = document
+        .applications
+        .iter()
+        .filter(|(_, selection)| {
+            selection
+                .packages
+                .iter()
+                .map(String::as_str)
+                .collect::<std::collections::BTreeSet<_>>()
+                == packages
+        })
+        .map(|(name, _)| name.as_str());
+    let application = owners
+        .next()
+        .context("published release does not match a declared application")?;
+    anyhow::ensure!(
+        owners.next().is_none(),
+        "published release matches multiple applications"
+    );
+    apply_selection(
+        platform,
+        file,
+        application,
+        document::SelectionChange::Deploy(digest),
+    )
+    .await
+}
+
+/// Prepare, persist, and apply one selection while holding only its application lock.
+pub(super) async fn apply_selection(
     platform: &Platform,
-    document: &EnvironmentDocument,
-    application: Option<&str>,
-    reason: Option<&str>,
+    file: &Path,
+    application: &str,
+    change: document::SelectionChange<'_>,
 ) -> anyhow::Result<Analysis> {
-    let private = ensure::PrivateDirectory::create()?;
-    let mut resolved = platform.clone();
-    runtime::resolve_target(&mut resolved, document, &private.path(".")).await?;
-    let platform = &resolved;
-    let mut analysis = analyse::analyse(platform, document, application).await?;
-    expand::expand(platform, document, &analysis)
-        .await
-        .context("prepare application control records")?;
-    let full_document = document;
-    let selected = analyse::select_application(document, Some(&analysis.application))?;
-    let document = &selected;
-    let release_name = analysis.authorities.release_name.clone();
-    if let Some(release) = &analysis.authorities.release {
-        let written = write::write(platform, document, &analysis, release, reason)
+    let before = EnvironmentDocument::compile(file)?;
+    let mut document = before.clone();
+    document.select_release(application, change)?;
+    let lock = lock::LifecycleLock::acquire_application(
+        &platform.system_database_url,
+        &before.triple(),
+        application,
+    )
+    .await?;
+    let result = async {
+        let private = ensure::PrivateDirectory::create()?;
+        let mut platform = platform.clone();
+        runtime::resolve_target(&mut platform, &document, &private.path(".")).await?;
+        let mut analysis = analyse::analyse(&platform, &document, Some(application)).await?;
+        let prepared = match &analysis.authorities.release {
+            Some(release) => Some(write::prepare(&platform, &document, &analysis, release).await?),
+            None => None,
+        };
+        expand::expand(&platform, &document, &analysis)
+            .await
+            .context("prepare application control records")?;
+        let document = document::persist_selection(file, &before, &document, application)?;
+        let release_name = &analysis.authorities.release_name;
+        if let Some(prepared) = prepared {
+            let written = write::write(
+                &platform,
+                &analysis,
+                prepared,
+                matches!(change, document::SelectionChange::Rollback),
+            )
             .await
             .context("write the application release chart")?;
-        readiness::wait(platform, &written)
+            readiness::wait(&platform, &written)
+                .await
+                .context("wait for application readiness")?;
+            analysis
+                .plan
+                .push(format!("wrote a revision of {release_name}"));
+        } else if analyse::release_present(&platform, release_name).await? {
+            release_chart::recover_pending(&platform.target, release_name).await?;
+            release_chart::uninstall(&platform.target, release_name)
+                .await
+                .context("uninstall the application release chart")?;
+            analysis.plan.push(format!("uninstalled {release_name}"));
+        }
+        drain::drain(&platform, &document, &analysis)
             .await
-            .context("wait for application readiness")?;
-        analysis
-            .plan
-            .push(format!("wrote a revision of {release_name}"));
-    } else if analyse::release_present(platform, &release_name).await? {
-        // Release none: no qualification, stage or readiness. The uninstall
-        // starts the drain (§12.2).
-        release_chart::uninstall(&platform.target, &release_name)
+            .context("observe application drain")?;
+        stage::retire(&platform, &document, &analysis)
             .await
-            .context("uninstall the application release chart")?;
-        analysis.plan.push(format!("uninstalled {release_name}"));
+            .context("retire drained application facts")?;
+        Ok(analysis)
     }
-    drain::drain(platform, full_document, &analysis)
-        .await
-        .context("observe application drain")?;
-    stage::retire(platform, full_document, &analysis)
-        .await
-        .context("retire drained application facts")?;
-    Ok(analysis)
+    .await;
+    lock.release().await;
+    result
 }
 
 /// Read event broker inputs for both deployed and local workflow verbs.

@@ -20,6 +20,12 @@ struct Cli {
 #[cfg(target_os = "linux")]
 #[derive(Debug, Subcommand)]
 enum Command {
+    /// Select and apply a published application release.
+    Deploy(wamn_ctl::application_verbs::DeployArgs),
+    /// Apply one application's previous authored release.
+    Rollback(wamn_ctl::application_verbs::RollbackArgs),
+    /// Show authored selections and observed application state.
+    Status(wamn_ctl::application_verbs::StatusArgs),
     /// Deploy or inspect platform configuration.
     #[command(subcommand)]
     Platform(wamn_ctl::platform_verbs::ProductPlatformCommand),
@@ -89,6 +95,9 @@ async fn main() -> anyhow::Result<()> {
             .init();
     }
     match Cli::parse().command {
+        Command::Deploy(args) => wamn_ctl::application_verbs::deploy(args).await,
+        Command::Rollback(args) => wamn_ctl::application_verbs::rollback(args).await,
+        Command::Status(args) => wamn_ctl::application_verbs::status(args).await,
         Command::Platform(command) => {
             wamn_ctl::platform_verbs::run_product(command, std::io::stdout().lock()).await
         }
@@ -122,6 +131,50 @@ fn main() -> anyhow::Result<()> {
 #[cfg(all(test, target_os = "linux"))]
 mod tests {
     use super::*;
+
+    #[test]
+    fn application_commands_require_an_authored_file_and_target() {
+        let digest = format!("sha256:{}", "a".repeat(64));
+        let Command::Deploy(deploy) = Cli::try_parse_from([
+            "wamn",
+            "deploy",
+            "--release",
+            &digest,
+            "--env",
+            "environment.k",
+        ])
+        .unwrap()
+        .command
+        else {
+            panic!("deploy");
+        };
+        assert_eq!(deploy.release, digest);
+        assert_eq!(deploy.env, std::path::Path::new("environment.k"));
+        let Command::Rollback(rollback) =
+            Cli::try_parse_from(["wamn", "rollback", "orders", "--env", "environment.k"])
+                .unwrap()
+                .command
+        else {
+            panic!("rollback");
+        };
+        assert_eq!(rollback.application, "orders");
+        assert_eq!(rollback.env, deploy.env);
+        let Command::Status(status) =
+            Cli::try_parse_from(["wamn", "status", "--env", "environment.k"])
+                .unwrap()
+                .command
+        else {
+            panic!("status");
+        };
+        assert_eq!(status.env, deploy.env);
+        for arguments in [
+            vec!["wamn", "deploy", "--env", "environment.k"],
+            vec!["wamn", "rollback", "--env", "environment.k"],
+            vec!["wamn", "status"],
+        ] {
+            assert!(Cli::try_parse_from(arguments).is_err());
+        }
+    }
 
     #[test]
     fn integration_build_and_publish_parse() {

@@ -19,9 +19,6 @@ use wamn_release_control::release_chart::Target;
 #[path = "../../environment/tests/support/platform_images.rs"]
 pub mod platform_images;
 
-#[path = "support/environment_reapply.rs"]
-mod environment_reapply;
-
 const COMMAND_LIMIT: Duration = Duration::from_mins(15);
 const POLL_LIMIT: Duration = Duration::from_mins(5);
 
@@ -82,9 +79,6 @@ async fn platform_apply_kind() -> anyhow::Result<()> {
     for interrupted in [false, true] {
         let mut run = prepare(&repository, &chart, &binary, &kcl)?;
         exercise(&run, interrupted).await?;
-        if !interrupted {
-            environment_reapply::check(&run).await?;
-        }
         success(Command::new("kind").args([
             "delete",
             "cluster",

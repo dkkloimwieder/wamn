@@ -1,14 +1,6 @@
-//! The lifecycle lock of one environment
-//! (docs/architecture/overview.md#environment-lifecycle).
-//!
-//! `apply`, `rollback` and `delete` take one session-level advisory lock in the
-//! system database, keyed by the coordinate, on a connection of their own, and
-//! hold it for the whole verb. A second verb on the same coordinate refuses at
-//! once. A verb that ends releases the lock before it returns, so a next verb
-//! in the same process finds it free. A killed verb releases the lock with its
-//! connection, when the server reads the closed socket. No transaction is
-//! open on the connection, so no row lock is held across the Helm call.
-//! `--dry-run` and `show` take no lock.
+//! Locks for environment lifecycle operations, application rollouts, and short file writes.
+//! Application rollouts use distinct advisory keys, so other applications can proceed.
+//! The file lock covers only the read, merge, and atomic rename of the authored document.
 
 use anyhow::{Context as _, bail};
 use tokio::task::JoinHandle;
@@ -63,6 +55,37 @@ impl LifecycleLock {
         Ok(Self { client, connection })
     }
 
+    /// Serialize operations on one application without blocking another application's rollout.
+    pub async fn acquire_application(
+        system_url: &str,
+        triple: &Triple,
+        application: &str,
+    ) -> anyhow::Result<Self> {
+        let (client, connection) = tokio_postgres::connect(system_url, NoTls).await?;
+        let connection = tokio::spawn(async move {
+            let _ = connection.await;
+        });
+        let lock = Self { client, connection };
+        let key = serde_json::to_string(&(
+            &triple.org,
+            &triple.project,
+            triple.env.as_str(),
+            application,
+        ))?;
+        let held: bool = lock
+            .client
+            .query_one(
+                "SELECT pg_try_advisory_lock(hashtextextended('wamn-application/' || $1, 0))",
+                &[&key],
+            )
+            .await?
+            .get(0);
+        if !held {
+            bail!("{DEPLOYMENT_IN_PROGRESS}: application {application} in {triple}");
+        }
+        Ok(lock)
+    }
+
     /// Release the lock before the verb returns. The server releases it
     /// anyway when the connection closes, but only once it reads the closed
     /// socket, and a port forward delays that.
@@ -101,4 +124,16 @@ impl Drop for LifecycleLock {
     fn drop(&mut self) {
         self.connection.abort();
     }
+}
+
+/// Hold only the read/merge/rename of an environment document.
+pub(super) fn document_lock(file: &std::path::Path) -> anyhow::Result<std::fs::File> {
+    let lock = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(file.with_extension("k.lock"))?;
+    lock.lock().context("lock the environment document")?;
+    Ok(lock)
 }
