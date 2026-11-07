@@ -48,11 +48,38 @@ pub async fn load_applied_package(
     env_key: &str,
     package_id: &str,
 ) -> anyhow::Result<Option<AppliedPackage>> {
+    read_package(
+        tx,
+        env_key,
+        package_id,
+        &wamn_schema_control::sql::select_package_sql(),
+    )
+    .await
+}
+
+/// Observe installed SQL in a read-only transaction without locking a package row.
+pub async fn read_applied_package(
+    tx: &Transaction<'_>,
+    env_key: &str,
+    package_id: &str,
+) -> anyhow::Result<Option<AppliedPackage>> {
+    read_package(
+        tx,
+        env_key,
+        package_id,
+        wamn_schema_control::sql::select_package_snapshot_sql(),
+    )
+    .await
+}
+
+async fn read_package(
+    tx: &Transaction<'_>,
+    env_key: &str,
+    package_id: &str,
+    query: &str,
+) -> anyhow::Result<Option<AppliedPackage>> {
     let Some(package) = tx
-        .query_opt(
-            wamn_schema_control::sql::select_package_sql(),
-            &[&env_key, &package_id],
-        )
+        .query_opt(query, &[&env_key, &package_id])
         .await
         .context("read installed package schema")?
     else {
@@ -96,17 +123,25 @@ pub async fn installed_environment_fingerprint(
         .await
         .context("read the installed project baseline")?
         .get(0);
-    let packages = tx.query(
+    let rows = tx.query(
         "SELECT package_id, physical_schema_fingerprint FROM catalog.packages WHERE env_key = $1", &[&env_key]
-    ).await.context("read installed package fingerprints")?
-        .iter().map(|row| (row.get::<_, String>(0), row.get::<_, String>(1)))
-        .collect::<std::collections::BTreeMap<_, _>>();
-    Ok(wamn_execution_contract::canonical_json_sha256(
-        &serde_json::json!({
-            "project": project,
-            "packages": packages,
-        }),
-    ))
+    ).await.context("read installed package fingerprints")?;
+    let packages = rows
+        .iter()
+        .map(|row| (row.get::<_, &str>(0), row.get::<_, &str>(1)))
+        .collect();
+    Ok(environment_fingerprint(&project, &packages))
+}
+
+/// Derive an environment recipe identity from its project and package SQL records.
+pub fn environment_fingerprint(
+    project: &str,
+    packages: &std::collections::BTreeMap<&str, &str>,
+) -> String {
+    wamn_execution_contract::canonical_json_sha256(&serde_json::json!({
+        "project": project,
+        "packages": packages,
+    }))
 }
 
 /// A package tree and the digest of the verified package artifact it was

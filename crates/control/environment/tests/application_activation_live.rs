@@ -425,9 +425,35 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
     let selected_b =
         wamn_environment_control::environment::analyse::select_application(&document, Some("b"))?;
     assert!(sql::needs_initialization(&platform, &selected_b).await?);
-    sql::initialize(&platform, &document, system.url(), Some("b"))
-        .await
-        .context("initialize b")?;
+    // Inspect and install B's SQL before selecting or activating B's code.
+    let b_current = std::mem::replace(
+        &mut document.applications.get_mut("b").unwrap().current,
+        wamn_environment_control::environment::document::DeclaredRelease::None,
+    );
+    let (candidate_release, candidates) =
+        sql::schema::release_candidates(&platform, &document, "b", Some(b.digest().as_str()))
+            .await?;
+    let state = sql::schema::state(&platform, &document).await?;
+    let diff = sql::schema::plan(&document, "b", Some(candidate_release), &candidates, &state)?;
+    assert_eq!(
+        diff.database_instance.as_deref(),
+        Some(database_name.as_str())
+    );
+    assert!(diff.packages["b"].installed.is_none());
+    assert_eq!(
+        sql::schema::state(&platform, &document).await?.packages,
+        state.packages
+    );
+    sql::schema::apply(&platform, &document, "b", b.digest().as_str(), system.url()).await?;
+    let installed = sql::schema::state(&platform, &document).await?;
+    for (id, package) in &diff.packages {
+        assert_eq!(
+            installed.packages[id].physical_schema_fingerprint,
+            package.candidate
+        );
+    }
+    assert_eq!(installed.packages["a"], state.packages["a"]);
+    document.applications.get_mut("b").unwrap().current = b_current;
     assert!(!sql::needs_initialization(&platform, &document).await?);
     let mut observer_url = admin_url;
     observer_url.set_path(&database_name);

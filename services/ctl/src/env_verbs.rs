@@ -19,6 +19,8 @@ pub enum EnvCommand {
     Provision(ProvisionArgs),
     /// Initialize absent application baselines after CNPG creates the database.
     Initialize(InitializeArgs),
+    /// Execute the selected schema release inside the SQL Job.
+    SchemaApply(SchemaApplyArgs),
     /// Move one environment toward its environment.k document.
     Apply(ApplyArgs),
     /// Write the committed integration documents of one environment.
@@ -49,6 +51,15 @@ pub struct InitializeArgs {
     /// The application whose absent baselines to initialize.
     #[arg(long)]
     pub application: Option<String>,
+}
+
+#[derive(Debug, Args)]
+pub struct SchemaApplyArgs {
+    pub file: PathBuf,
+    #[arg(long)]
+    pub application: String,
+    #[arg(long)]
+    pub release: String,
 }
 
 #[derive(Debug, Args)]
@@ -104,7 +115,9 @@ pub async fn run(command: EnvCommand) -> anyhow::Result<()> {
         return Ok(());
     }
     let platform = match &command {
-        EnvCommand::Provision(_) | EnvCommand::Initialize(_) => Platform::sql_from_env()?,
+        EnvCommand::Provision(_) | EnvCommand::Initialize(_) | EnvCommand::SchemaApply(_) => {
+            Platform::sql_from_env()?
+        }
         EnvCommand::Apply(_) | EnvCommand::Rollback(_) => Platform::apply_from_env()?,
         _ => Platform::from_env()?,
     };
@@ -132,6 +145,30 @@ pub async fn run(command: EnvCommand) -> anyhow::Result<()> {
                 args.application.as_deref(),
             )
             .await?;
+        }
+        EnvCommand::SchemaApply(args) => {
+            let document = sql_document(&args.file)?;
+            let admin_url = std::env::var("WAMN_SYSTEM_ADMIN_URL")
+                .context("set WAMN_SYSTEM_ADMIN_URL for schema apply")?;
+            environment::lock::LifecycleLock::hold(
+                &platform.system_database_url,
+                &document.triple(),
+                async |_| {
+                    environment::sql::schema::apply(
+                        &platform,
+                        &document,
+                        &args.application,
+                        &args.release,
+                        &admin_url,
+                    )
+                    .await
+                },
+            )
+            .await?;
+            println!(
+                "{}",
+                serde_json::json!({"application": args.application, "release": args.release, "result": "applied"})
+            );
         }
         EnvCommand::Apply(args) => {
             let analysis = if args.dry_run {

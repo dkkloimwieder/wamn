@@ -25,7 +25,7 @@ pub async fn publish(
     root: &Path,
     principal: String,
     database_url: &str,
-) -> anyhow::Result<ManifestDigest> {
+) -> anyhow::Result<(String, ManifestDigest)> {
     ensure!(!principal.is_empty(), "publisher principal is empty");
     let (application, roots) = sources(&document, root)?;
     let mut packages = Vec::with_capacity(roots.len());
@@ -76,9 +76,9 @@ pub async fn publish(
         .applications
         .remove(&application)
         .expect("source resolution selected an existing application");
-    publish_release(
+    let digest = publish_release(
         PublishReleaseRequest {
-            applications: [(application, selection.into())].into(),
+            applications: [(application.clone(), selection.into())].into(),
             application: None,
             org: document.org,
             project: document.project,
@@ -93,10 +93,15 @@ pub async fn publish(
             route_guest: &route_guest,
         }),
     )
-    .await
+    .await?;
+    Ok((application, digest))
 }
 
-fn sources(document: &EnvironmentDocument, root: &Path) -> anyhow::Result<(String, Vec<PathBuf>)> {
+/// Resolve only the source package's declared application and dependency order.
+pub fn sources(
+    document: &EnvironmentDocument,
+    root: &Path,
+) -> anyhow::Result<(String, Vec<PathBuf>)> {
     let root = root
         .canonicalize()
         .context("resolve selected package root")?;

@@ -290,7 +290,7 @@ pub async fn analyse(
                 installed: observed.installed,
                 selected: observed.candidate,
             },
-            next_action: "wamn platform schema apply --scope system".into(),
+            next_action: "Inspect the installed system SQL baseline and rebuild a disposable platform with its selected artifacts".into(),
         });
     }
     Ok(Analysis {

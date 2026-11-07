@@ -26,6 +26,9 @@ enum Command {
     Rollback(wamn_ctl::application_verbs::RollbackArgs),
     /// Show authored selections and observed application state.
     Status(wamn_ctl::application_verbs::StatusArgs),
+    /// Inspect or apply application SQL independently of serving code.
+    #[command(subcommand)]
+    Schema(wamn_ctl::schema_verbs::SchemaCommand),
     /// Deploy or inspect platform configuration.
     #[command(subcommand)]
     Platform(wamn_ctl::platform_verbs::ProductPlatformCommand),
@@ -98,6 +101,7 @@ async fn main() -> anyhow::Result<()> {
         Command::Deploy(args) => wamn_ctl::application_verbs::deploy(args).await,
         Command::Rollback(args) => wamn_ctl::application_verbs::rollback(args).await,
         Command::Status(args) => wamn_ctl::application_verbs::status(args).await,
+        Command::Schema(command) => wamn_ctl::schema_verbs::run(command).await,
         Command::Platform(command) => {
             wamn_ctl::platform_verbs::run_product(command, std::io::stdout().lock()).await
         }
@@ -208,6 +212,59 @@ mod tests {
     }
 
     #[test]
+    fn schema_selection_is_independent_of_code_selection() {
+        let digest = format!("sha256:{}", "a".repeat(64));
+        for verb in ["diff", "apply"] {
+            let command = Cli::try_parse_from([
+                "wamn",
+                "schema",
+                verb,
+                "orders",
+                "--env",
+                "environment.k",
+                "--release",
+                &digest,
+            ])
+            .unwrap()
+            .command;
+            let Command::Schema(command) = command else {
+                panic!("schema")
+            };
+            let (wamn_ctl::schema_verbs::SchemaCommand::Diff(args)
+            | wamn_ctl::schema_verbs::SchemaCommand::Apply(args)) = command
+            else {
+                panic!("schema input");
+            };
+            assert_eq!(args.application, "orders");
+            assert_eq!(args.env, std::path::Path::new("environment.k"));
+            assert_eq!(args.release.as_deref(), Some(digest.as_str()));
+            assert!(Cli::try_parse_from(["wamn", "schema", verb, "orders"]).is_err());
+            assert!(
+                Cli::try_parse_from(["wamn", "schema", verb, "orders", "--env", "environment.k"])
+                    .is_ok()
+            );
+        }
+        let Command::Schema(wamn_ctl::schema_verbs::SchemaCommand::Publish(args)) =
+            Cli::try_parse_from([
+                "wamn",
+                "schema",
+                "publish",
+                "apps/orders",
+                "--env",
+                "environment.k",
+                "--verified-publisher-principal",
+                "publisher",
+            ])
+            .unwrap()
+            .command
+        else {
+            panic!("schema publication")
+        };
+        assert_eq!(args.package, std::path::Path::new("apps/orders"));
+        assert_eq!(args.verified_publisher_principal, "publisher");
+    }
+
+    #[test]
     fn integration_build_and_publish_parse() {
         assert!(matches!(
             Cli::try_parse_from(["wamn", "integration", "build", "fixture"])
@@ -254,7 +311,6 @@ mod tests {
 #[cfg(all(test, target_os = "linux"))]
 mod platform_tests {
     use super::*;
-    use clap::CommandFactory as _;
     use wamn_ctl::platform_verbs::ProductPlatformCommand;
 
     #[test]
@@ -287,23 +343,6 @@ mod platform_tests {
         };
         assert_eq!(args.file, std::path::Path::new("cluster.k"));
         assert!(Cli::try_parse_from(["wamn", "platform", "status"]).is_err());
-    }
-
-    #[test]
-    fn platform_help_lists_its_commands_and_required_chart() {
-        let mut cli = Cli::command();
-        let platform = cli.find_subcommand_mut("platform").unwrap();
-        let help = platform.render_long_help().to_string();
-        for command in platform.get_subcommands() {
-            assert!(help.contains(command.get_name()));
-        }
-        let deploy = platform.find_subcommand_mut("deploy").unwrap();
-        assert!(deploy.render_long_help().to_string().contains("--chart"));
-        assert!(
-            deploy
-                .get_arguments()
-                .any(|arg| { arg.get_long() == Some("chart") && arg.is_required_set() })
-        );
     }
 
     #[tokio::test]

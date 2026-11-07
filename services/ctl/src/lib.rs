@@ -27,6 +27,7 @@ pub mod provisioning_verbs;
 mod qualification;
 pub mod release_verbs;
 pub mod role_verbs;
+pub mod schema_verbs;
 #[cfg(target_os = "linux")]
 pub mod web;
 pub mod workflow_verbs;

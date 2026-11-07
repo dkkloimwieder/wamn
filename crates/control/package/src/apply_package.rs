@@ -44,8 +44,8 @@ pub use error::{
 pub use local_target::{applied_migration_drift, local_target_recreate_reason};
 pub use local_target::{local_target_changes, manifest_digest, record_manifest};
 pub use package_version::{
-    LOCK_PACKAGE_SQL, PackageRoot, installed_environment_fingerprint, load_applied_package,
-    read_package_directory, read_package_root,
+    LOCK_PACKAGE_SQL, PackageRoot, environment_fingerprint, installed_environment_fingerprint,
+    load_applied_package, read_applied_package, read_package_directory, read_package_root,
 };
 
 pub const LOCK_SQL: &str = "SELECT pg_advisory_xact_lock(hashtextextended(\

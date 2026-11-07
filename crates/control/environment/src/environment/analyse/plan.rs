@@ -204,7 +204,7 @@ pub(crate) fn notices(
                         .map(|installed| installed.physical_schema_fingerprint.clone()),
                     selected: selected.clone(),
                 },
-                next_action: format!("wamn schema diff {application} --env {}", document.env),
+                next_action: format!("Inspect {application} with wamn schema diff and pass the environment.k file to --env"),
             });
         }
     }

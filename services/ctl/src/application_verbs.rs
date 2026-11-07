@@ -59,6 +59,7 @@ pub async fn deploy(args: DeployArgs) -> anyhow::Result<()> {
                 &database_url,
             )
             .await?
+            .1
             .to_string()
         }
         None => args

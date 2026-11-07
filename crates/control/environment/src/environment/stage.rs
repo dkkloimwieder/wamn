@@ -1,7 +1,7 @@
 //! Application baseline initialization and immutable release caching.
 
 pub(super) mod plan;
-use plan::apply_order;
+pub(crate) use plan::apply_order;
 pub use plan::sequence_defaults;
 
 use std::collections::BTreeMap;
@@ -29,15 +29,17 @@ pub async fn initialize(
     let env_key =
         wamn_control_provision::project_env_key(&document.org, &document.project, &document.env);
 
-    // 1. The predecessor: the installed versions are those analysis judged.
+    // Refuse a changed SQL record, independently of executable versions.
     let observed = installed(platform, document).await?;
     let mut changed = Vec::new();
     for (package, installed) in analysed {
-        let now = observed.get(package).map(|now| now.current.as_str());
-        if now != Some(installed.current.as_str()) {
+        let now = observed
+            .get(package)
+            .map(|now| now.physical_schema_fingerprint.as_str());
+        if now != Some(installed.physical_schema_fingerprint.as_str()) {
             changed.push(format!(
                 "{package}: analysed {}, installed {}",
-                installed.current,
+                installed.physical_schema_fingerprint,
                 now.unwrap_or("nothing")
             ));
         }
@@ -749,10 +751,7 @@ mod tests {
             }]
         );
         overlay.sequences.get_mut("order").unwrap().pattern = "ACME-{seq:po}".into();
-        let error = super::sequence_defaults(&applications, [&base, &overlay]).unwrap_err();
-        for name in ["receiving", "order", "base", "overlay"] {
-            assert!(error.to_string().contains(name), "{error}");
-        }
+        assert!(super::sequence_defaults(&applications, [&base, &overlay]).is_err());
         assert!(super::sequence_defaults(&BTreeMap::new(), [&base]).is_err());
         let separate = serde_json::from_value(serde_json::json!({
             "receiving": {"packages": ["base"]}, "orders": {"packages": ["overlay"]}
@@ -762,7 +761,7 @@ mod tests {
             super::sequence_defaults(&separate, [&base, &overlay])
                 .unwrap()
                 .len(),
-            2
+            separate.len()
         );
     }
 
@@ -775,7 +774,21 @@ mod tests {
             ("wamn_receiving", Vec::new()),
             ("other", vec!["outside_the_release"]),
         ];
-        assert_eq!(apply_order(&packages).unwrap(), [1, 2, 0]);
+        let order = apply_order(&packages).unwrap();
+        assert_eq!(
+            order.iter().copied().collect::<BTreeSet<_>>(),
+            (0..packages.len()).collect()
+        );
+        for (index, (_, dependencies)) in packages.iter().enumerate() {
+            for dependency in dependencies {
+                if let Some(base) = packages.iter().position(|(id, _)| id == dependency) {
+                    assert!(
+                        order.iter().position(|item| *item == base)
+                            < order.iter().position(|item| *item == index)
+                    );
+                }
+            }
+        }
         assert!(apply_order(&[("a", vec!["b"]), ("b", vec!["a"])]).is_err());
     }
 

@@ -1,9 +1,14 @@
 //! Fixed metadata statements used by package and release effect shells.
 
-/// Read the recorded schema source and baseline for one installed package.
-pub fn select_package_sql() -> &'static str {
+/// Lock the recorded schema source and baseline for a package mutation.
+pub fn select_package_sql() -> String {
+    format!("{} FOR UPDATE", select_package_snapshot_sql())
+}
+
+/// Read package SQL records without taking a write lock.
+pub fn select_package_snapshot_sql() -> &'static str {
     "SELECT artifact_digest, package_version, physical_schema_fingerprint, baseline_fingerprint FROM catalog.packages \
-     WHERE env_key = $1 AND package_id = $2 FOR UPDATE"
+     WHERE env_key = $1 AND package_id = $2"
 }
 
 /// Read the complete immutable migration records in authored order.

@@ -1,5 +1,7 @@
 //! Independent environment provisioning and absent-application initialization.
 
+pub mod schema;
+
 use std::collections::BTreeMap;
 use std::path::Path;
 
@@ -67,13 +69,48 @@ pub async fn initialize(
     Ok(())
 }
 
+/// Execute independent application SQL using the installed platform's ctl image.
+pub async fn apply_deployed(
+    platform: &Platform,
+    document: &EnvironmentDocument,
+    application: &str,
+    release: &str,
+) -> anyhow::Result<()> {
+    let directory = ensure::PrivateDirectory::create()?;
+    let chart = crate::platform::artifact_plan::select(&platform.chart)?;
+    let cluster = crate::provision_project_env::resolve_cluster(
+        &platform.system_database_url,
+        &document.org,
+        &document.policy,
+    )
+    .await?;
+    run_deployed(
+        platform,
+        document,
+        Operation::ApplySchema {
+            application,
+            release,
+        },
+        chart.image("ctl")?,
+        &cluster,
+        &directory.path("schema"),
+    )
+    .await?;
+    Ok(())
+}
+
 /// SQL operations that run in the selected ctl image.
 #[derive(Debug, Clone, Copy)]
-pub enum Operation {
+pub enum Operation<'a> {
     /// Record the environment and return its CNPG Database resource.
     Provision,
     /// Initialize the selected application's absent baselines after CNPG is ready.
     Initialize,
+    /// Advance explicitly selected SQL without activating application code.
+    ApplySchema {
+        application: &'a str,
+        release: &'a str,
+    },
 }
 
 /// Run the SQL operation in a short-lived Job using protected credential inputs.
@@ -82,7 +119,7 @@ pub enum Operation {
 pub async fn run_deployed(
     platform: &Platform,
     document: &EnvironmentDocument,
-    operation: Operation,
+    operation: Operation<'_>,
     image: &str,
     cluster: &str,
     directory: &Path,
@@ -96,6 +133,7 @@ pub async fn run_deployed(
     let verb = match operation {
         Operation::Provision => "provision",
         Operation::Initialize => "initialize",
+        Operation::ApplySchema { .. } => "schema-apply",
     };
     let coordinate = match operation {
         Operation::Provision => {
@@ -104,6 +142,9 @@ pub async fn run_deployed(
                 &document.project,
                 &document.env,
             )?
+        }
+        Operation::ApplySchema { application, .. } => {
+            analyse::application_release_name(document, application)?
         }
         Operation::Initialize => analyse::application_release_name(
             document,
@@ -118,6 +159,13 @@ pub async fn run_deployed(
     let mut arguments = vec!["env", verb, "/inputs/environment.json"];
     if matches!(operation, Operation::Provision) {
         arguments.extend(["--emit-secret", "/out/secret.json"]);
+    }
+    if let Operation::ApplySchema {
+        application,
+        release,
+    } = operation
+    {
+        arguments.extend(["--application", application, "--release", release]);
     }
     let mut job = job::manifest(&name, image, &["/usr/local/bin/wamn-ctl"], &arguments);
     let mut files = BTreeMap::from([(
@@ -246,6 +294,10 @@ pub async fn run_deployed(
         Operation::Provision => Ok(Some(
             serde_json::from_str(&output).context("read the provisioned Database resource")?,
         )),
+        Operation::ApplySchema { .. } => {
+            print!("{output}");
+            Ok(None)
+        }
         Operation::Initialize => {
             ensure::ensure_cdc(platform, document).await?;
             Ok(None)

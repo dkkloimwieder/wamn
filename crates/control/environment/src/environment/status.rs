@@ -25,6 +25,7 @@ pub struct Status {
     pub applications: BTreeMap<String, ApplicationStatus>,
     pub installed: Option<BTreeMap<String, super::analyse::Installed>>,
     pub warnings: Vec<String>,
+    pub schema: Option<super::sql::schema::Status>,
 }
 
 /// Independently observed state of one application's Helm release and host group.
@@ -71,25 +72,31 @@ pub async fn status(
     let document = super::document::EnvironmentDocument::compile(file)?;
     let triple = document.triple();
     let mut warnings = Vec::new();
-    let installed = match async {
-        let url = project_url(platform, &triple).await?;
-        let env_key = wamn_control_provision::project_env_key(
-            &document.org,
-            &document.project,
-            &document.env,
-        );
-        super::analyse::read_project(&url, &env_key)
-            .await?
-            .context("application database is absent")
-    }
-    .await
-    {
-        Ok(project) => Some(project.installed),
+    let schema = match super::sql::schema::status(platform, &document).await {
+        Ok(schema) => Some(schema),
         Err(error) => {
-            warnings.push(format!("database unknown: {error:#}"));
+            warnings.push(format!("schema unknown: {error:#}"));
             None
         }
     };
+    let installed = schema
+        .as_ref()
+        .filter(|schema| schema.installed_environment.is_some())
+        .map(|schema| {
+            schema
+                .installed
+                .iter()
+                .map(|(id, source)| {
+                    (
+                        id.clone(),
+                        super::analyse::Installed {
+                            current: source.version.clone(),
+                            physical_schema_fingerprint: source.fingerprint.clone(),
+                        },
+                    )
+                })
+                .collect()
+        });
     let mut applications = BTreeMap::new();
     for (application, selection) in &document.applications {
         let mut warnings = Vec::new();
@@ -165,6 +172,7 @@ pub async fn status(
         applications,
         installed,
         warnings,
+        schema,
     })
 }
 
