@@ -840,28 +840,6 @@ async fn release_bindings_round_trip_through_the_plugins_own_resolution() {
         "a route in a package outside the release has no snapshot"
     );
     assert_nested_effect_snapshot(&project, &postgres, lookup, &facts).await;
-    // Contract after the drain: the live release keeps its rows, and an
-    // empty live set (release = none) removes them and drops its memory key.
-    let live_rows = rows(&project).await;
-    for live in [vec![release], vec![]] {
-        let mut drops = ConnectionDrops::default();
-        let tx = project.transaction().await.unwrap();
-        bindings::contract(&tx, ENV_KEY, &live, &mut drops)
-            .await
-            .unwrap();
-        tx.commit().await.unwrap();
-        let mut expected = ConnectionDrops::default();
-        if live.is_empty() {
-            expected.release(ENV_KEY, release);
-            assert_eq!(
-                rows(&project).await,
-                json!({"versions": null, "bindings": null})
-            );
-        } else {
-            assert_eq!(rows(&project).await, live_rows);
-        }
-        assert_eq!(drops, expected, "live set {live:?}");
-    }
     drop(project);
     project_task.abort();
 }

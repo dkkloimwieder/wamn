@@ -167,7 +167,7 @@ pub struct HostArgs {
     #[arg(long = "environment", overrides_with = "environment")]
     pub environment: Option<String>,
 
-    /// The applications `environment.k` declares, as canonical JSON:
+    /// The one application this host serves, as canonical JSON:
     /// application name to `{"packages": [...]}`. A release passes it in its
     /// `extraArgs` beside `--environment`. A host that serves a release from
     /// the registry refuses to start without it.
@@ -625,7 +625,12 @@ fn served_release_scope(args: &HostArgs) -> anyhow::Result<ReleaseScope> {
         args.applications.is_some(),
         "a host that serves a release requires --applications"
     );
-    release_scope(args)
+    let scope = release_scope(args)?;
+    anyhow::ensure!(
+        scope.applications.len() == 1,
+        "an application host requires exactly one application"
+    );
+    Ok(scope)
 }
 
 /// The `host.plugins` entries of the chart's host configuration file. Only
@@ -1111,7 +1116,7 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
     let release = if args.control {
         Some(Arc::new(LoadedRelease::control_root()))
     } else if let Some(directory) = args.local_application.as_deref() {
-        let scope = release_scope(&args)?;
+        let scope = served_release_scope(&args)?;
         let loaded = LoadedRelease::load_from(directory, scope)?;
         anyhow::ensure!(
             Some(loaded.release().manifest_digest.as_str())
@@ -1901,22 +1906,12 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
             }
         });
     }
-    // Every application host serves the enabled schedule workflows of the
-    // applications its environment declares, read from `catalog.workflows` at
-    // each tick (docs/architecture/execution.md#workflows).
-    let schedule_release = application.filter(|release| {
-        let declared = !release.scope().applications.is_empty();
-        if !declared {
-            tracing::warn!("the environment declares no application; no workflow schedule task");
-        }
-        declared
-    });
-    if let Some(release) = schedule_release {
+    // Each host admits schedules with its own loaded application release.
+    if let Some(release) = application {
         let url = executor_platform_url
             .clone()
             .context("workflow schedules require WAMN_EXECUTOR_PLATFORM_PG_URL")?;
-        let scope = release.scope().clone();
-        let digest = release.release().manifest_digest.as_str().to_owned();
+        let schedule_release = Arc::clone(release);
         let schedule_postgres = Arc::clone(&postgres);
         let schedule_project = args.project.clone();
         let mut stopped = stopping.clone();
@@ -1935,10 +1930,7 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
                             client,
                             Arc::clone(&schedule_postgres),
                             &schedule_project,
-                            &scope.env_key,
-                            &scope.environment,
-                            scope.applications.clone(),
-                            &digest,
+                            Arc::clone(&schedule_release),
                         );
                         task_connected.store(true, std::sync::atomic::Ordering::Relaxed);
                         let schedule_stopping = stopped.clone();
@@ -2885,8 +2877,11 @@ host:
             arguments.extend_from_slice(extra);
             served_release_scope(&parse(arguments).unwrap().args)
         };
-        let error = scope(&[]).expect_err("no map refuses");
-        assert!(error.to_string().contains("--applications"), "{error}");
+        assert!(scope(&[]).is_err());
+        assert!(scope(&["--applications={}"]).is_err());
+        assert!(
+            scope(&[r#"--applications={"a":{"packages":["a"]},"b":{"packages":["b"]}}"#]).is_err()
+        );
         let scope = scope(&[r#"--applications={"wms":{"packages":["wamn_wms"]}}"#])
             .expect("the map parses");
         assert_eq!(

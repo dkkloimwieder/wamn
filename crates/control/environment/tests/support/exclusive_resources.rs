@@ -87,14 +87,16 @@ impl Fixture {
             "reader":{"current": format!("sha256:{}","c".repeat(64)), "hostname": "reader.example", "packages":["modbus_reader"],"connections":{"registers":"meter"}},
             "writer":{"current": format!("sha256:{}","c".repeat(64)), "hostname": "reader.example", "packages":["observer_fixture"],"connections":{"registers":"meter"}}
         }}))?)?;
-        let release = loaded_release(&document)?;
-        // DEP2-03 replaces the shared candidate with application publication.
-        for application in document.applications.values_mut() {
-            application.current =
-                wamn_environment_control::environment::document::DeclaredRelease::Digest(
-                    release.release().manifest_digest.to_string(),
-                );
-        }
+        let release = loaded_release(&document, "reader")?;
+        document.applications.get_mut("reader").unwrap().current =
+            wamn_environment_control::environment::document::DeclaredRelease::Digest(
+                release.release().manifest_digest.to_string(),
+            );
+        let writer = loaded_release(&document, "writer")?;
+        document.applications.get_mut("writer").unwrap().current =
+            wamn_environment_control::environment::document::DeclaredRelease::Digest(
+                writer.release().manifest_digest.to_string(),
+            );
         let package = wamn_catalog::manifest::PackageManifest::from_slice(&serde_json::to_vec(
             &json!({
                 "package":{"id":"modbus_reader","version":"0.1.0"},
@@ -197,6 +199,14 @@ impl Fixture {
                 .connections
                 .insert("registers".into(), name.into());
         }
+        self.release = loaded_release(&self.document, "reader")?;
+        self.document
+            .applications
+            .get_mut("reader")
+            .unwrap()
+            .current = wamn_environment_control::environment::document::DeclaredRelease::Digest(
+            self.release.release().manifest_digest.to_string(),
+        );
         apply(
             &mut self.admin,
             self.database.url(),
@@ -237,8 +247,18 @@ impl Fixture {
             "dev",
         ));
         let integrations = Integrations::new(
-            facts,
+            Arc::clone(&facts),
             &self.release,
+            &self.postgres,
+            "one",
+            self.registry.clone(),
+            self.registry_credentials.clone(),
+        )
+        .await?;
+        let writer_release = loaded_release(&self.document, "writer")?;
+        let writer = Integrations::new(
+            facts,
+            &writer_release,
             &self.postgres,
             "one",
             self.registry.clone(),
@@ -250,8 +270,7 @@ impl Fixture {
             memory,
             imports: integrations
                 .imports(&format!("sha256:{}", "a".repeat(64)), "modbus_reader")?,
-            writer: integrations
-                .imports(&format!("sha256:{}", "b".repeat(64)), "observer_fixture")?,
+            writer: writer.imports(&format!("sha256:{}", "b".repeat(64)), "observer_fixture")?,
         })
     }
 }

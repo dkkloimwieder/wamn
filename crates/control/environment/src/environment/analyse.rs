@@ -509,19 +509,14 @@ pub fn application_release_name(
     document: &EnvironmentDocument,
     application: &str,
 ) -> anyhow::Result<String> {
-    let environment = release_chart::release_name(&document.org, &document.project, &document.env)?;
-    let digest = wamn_package_artifact::sha256_digest(
-        format!(
-            "{}/{}/{}/{}",
-            document.org, document.project, document.env, application
-        )
-        .as_bytes(),
-    );
-    let prefix = environment
-        .rsplit_once('-')
-        .expect("release name has a hash")
-        .0;
-    Ok(format!("{prefix}-{}", &digest[7..27]))
+    Ok(
+        wamn_control_provision::environment_state::application_release_name(
+            &document.org,
+            &document.project,
+            &document.env,
+            application,
+        )?,
+    )
 }
 
 /// Run `helm` with the platform's kubeconfig and context.
@@ -614,27 +609,77 @@ async fn read_revision_in(
     }))
 }
 
-/// The release the environment serves: the digest of the newest successful
-/// revision of its release chart
-/// (docs/architecture/overview.md#environment-lifecycle). `env_key` is the
-/// environment's `org--project--env`.
-///
-/// None when the environment has no successful revision.
-///
-/// # Errors
-///
-/// When `env_key` is not a coordinate, or Helm cannot be read.
-pub async fn deployed_release(
-    target: &release_chart::Target,
-    env_key: &str,
-) -> anyhow::Result<Option<String>> {
-    let [org, project, env] = env_key.split("--").collect::<Vec<_>>()[..] else {
-        bail!("the tenant {env_key} is not an org--project--env coordinate");
-    };
-    let name = release_chart::release_name(org, project, env)?;
-    Ok(read_revision_in(target, &name)
-        .await?
-        .and_then(|revision| revision.manifest_digest().map(str::to_owned)))
+/// Discover application Helm releases in every status before status or environment deletion.
+pub(crate) async fn application_releases(
+    platform: &Platform,
+    triple: &wamn_control_registry::Triple,
+) -> anyhow::Result<BTreeMap<String, String>> {
+    let coordinate = triple.to_string();
+    let environment =
+        release_chart::release_name(&triple.org, &triple.project, triple.env.as_str())?;
+    let prefix = environment
+        .rsplit_once('-')
+        .expect("release name has a hash")
+        .0;
+    let filter = format!("^{prefix}-");
+    let mut entries = Vec::new();
+    loop {
+        let offset = entries.len().to_string();
+        let output = helm(
+            platform,
+            &[
+                "list", "--all", "--filter", &filter, "--max", "256", "--offset", &offset, "-o",
+                "json",
+            ],
+        )
+        .await?;
+        ensure!(
+            output.status.success(),
+            "helm list failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let page: Vec<Value> = serde_json::from_slice(&output.stdout)?;
+        let last = page.len() < 256;
+        entries.extend(page);
+        if last {
+            break;
+        }
+    }
+    let mut applications = BTreeMap::new();
+    for entry in entries {
+        let name = entry["name"].as_str().context("Helm release has no name")?;
+        let output = helm(platform, &["get", "values", name, "-o", "json"]).await?;
+        ensure!(
+            output.status.success(),
+            "helm get values {name} failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let values: Value = serde_json::from_slice(&output.stdout)?;
+        if values["environment"].as_str() != Some(coordinate.as_str()) {
+            continue;
+        }
+        let membership = super::show::plan::revision_applications(&values)?;
+        ensure!(
+            membership.len() == 1,
+            "release {name} does not belong to one application"
+        );
+        let (application, _) = membership.into_iter().next().expect("one application");
+        let expected = wamn_control_provision::environment_state::application_release_name(
+            &triple.org,
+            &triple.project,
+            triple.env.as_str(),
+            &application,
+        )?;
+        ensure!(
+            expected == name,
+            "application {application} has an unexpected Helm release {name}"
+        );
+        ensure!(
+            applications.insert(application, name.to_owned()).is_none(),
+            "application has multiple Helm releases"
+        );
+    }
+    Ok(applications)
 }
 
 /// Whether Helm holds the release chart of the environment, in any status.

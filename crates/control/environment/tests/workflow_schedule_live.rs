@@ -400,10 +400,7 @@ async fn the_schedule_task_fires_a_row_enabled_after_start_and_stops_after_disab
         connect(&fixture.executor_url).await,
         Arc::clone(&fixture.postgres),
         PROJECT,
-        ENV_KEY,
-        ENVIRONMENT,
-        declared(),
-        &fixture.digest,
+        Arc::clone(&fixture.release),
     );
     let (stop, stopping) = tokio::sync::watch::channel(false);
     let (clock, mut ticks) = ScheduleClock::new();
@@ -509,10 +506,7 @@ async fn schedules_run_from_rows_and_a_missed_tick_is_skipped() {
         connection,
         Arc::clone(&fixture.postgres),
         PROJECT,
-        ENV_KEY,
-        ENVIRONMENT,
-        declared(),
-        &fixture.digest,
+        Arc::clone(&fixture.release),
     );
     let (stop, stopping) = tokio::sync::watch::channel(false);
     let (clock, mut ticks) = ScheduleClock::new();
@@ -567,3 +561,83 @@ async fn schedules_run_from_rows_and_a_missed_tick_is_skipped() {
 
 #[path = "workflow_schedule_live/event_batch.rs"]
 mod event_batch;
+
+/// A replacement changes only A's schedule pins. B keeps admitting under its loaded release.
+#[tokio::test(flavor = "multi_thread")]
+async fn applications_schedule_independently_across_upgrade_and_rollback() {
+    use wamn_workflow::schedule::{PostgresSchedules, ScheduleRows as _};
+    let _lock = wamn_test_postgres::lock();
+    let mut fixture = fixture().await;
+    fixture.grant_workflow_user("reader").await;
+    fixture
+        .author(
+            "nightly",
+            WorkflowTrigger::Schedule(CRON),
+            WorkflowExecution::Role("reader"),
+        )
+        .await
+        .unwrap();
+    fixture.enable("nightly", READER).await.unwrap();
+    fixture.admin.execute(
+        "INSERT INTO catalog.workflows (env_key, environment, application, workflow_id, version, graph_json, wiring_hash, trigger, schedule, execution_type, execution_role, enabled, created_by) \
+         SELECT env_key, environment, 'billing', workflow_id, version, graph_json, wiring_hash, trigger, schedule, execution_type, execution_role, enabled, created_by FROM catalog.workflows WHERE application=$1",
+        &[&APP],
+    ).await.unwrap();
+    let upgraded = Arc::new(release_variant(&fixture, APP, b"1251").await);
+    let billing = Arc::new(release_variant(&fixture, "billing", b"1252").await);
+    let b = PostgresSchedules::new(
+        connect(&fixture.executor_url).await,
+        Arc::clone(&fixture.postgres),
+        PROJECT,
+        Arc::clone(&billing),
+    );
+    let b_rows = b.enabled().await.unwrap();
+    assert!(b_rows.iter().all(|row| row.application == "billing"));
+    assert!(!b_rows.is_empty());
+    for (minute, release) in [
+        (15, &fixture.release),
+        (20, &upgraded),
+        (25, &fixture.release),
+    ] {
+        let a = PostgresSchedules::new(
+            connect(&fixture.executor_url).await,
+            Arc::clone(&fixture.postgres),
+            PROJECT,
+            Arc::clone(release),
+        );
+        let a_rows = a.enabled().await.unwrap();
+        assert!(a_rows.iter().all(|row| row.application == APP));
+        assert!(!a_rows.is_empty());
+        let tick = due(&format!("2026-10-20T10:{minute}:00Z"));
+        for (schedules, rows, loaded) in [(&b, &b_rows, &billing), (&a, &a_rows, release)] {
+            for row in rows {
+                let ScheduleRunAdmitted::Queued { run_id } =
+                    schedules.admit(row, tick).await.unwrap()
+                else {
+                    panic!("schedule was not admitted");
+                };
+                assert_eq!(
+                    schedules.admit(row, tick).await.unwrap(),
+                    ScheduleRunAdmitted::Queued {
+                        run_id: run_id.clone()
+                    }
+                );
+                let stored = fixture
+                    .admin
+                    .query_one(
+                        "SELECT package_id, manifest_digest FROM wamn_run.runs WHERE run_id=$1",
+                        &[&run_id],
+                    )
+                    .await
+                    .unwrap();
+                assert_eq!(stored.get::<_, String>(0), row.application);
+                assert_eq!(
+                    stored.get::<_, String>(1),
+                    loaded.release().manifest_digest.as_str()
+                );
+            }
+        }
+        assert!(a.admit(&b_rows[0], tick).await.is_err());
+        assert_eq!(b.enabled().await.unwrap(), b_rows);
+    }
+}

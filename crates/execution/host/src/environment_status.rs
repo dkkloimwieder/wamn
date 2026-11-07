@@ -20,7 +20,7 @@ use wash_runtime::washlet::{rpc_subject, types::v2};
 use anyhow::Context as _;
 use serde_json::{Value, json};
 use wamn_control_provision::environment_state::{
-    DeploymentStatus, EnvironmentState, environment_state, observe, release_name,
+    DeploymentStatus, EnvironmentState, application_states, observe_environment,
 };
 use wamn_credential_store::kubernetes_api::KubernetesApi;
 
@@ -40,10 +40,42 @@ pub struct KubernetesSource;
 #[async_trait::async_trait]
 impl StatusSource for KubernetesSource {
     async fn read(&self, org: &str, project: &str, env: &str) -> anyhow::Result<Value> {
-        let release_name = release_name(org, project, env).context("derive the release name")?;
         let api = KubernetesApi::in_cluster()?;
-        let observed = observe(&api.namespace, &release_name, |path| api.get(path)).await?;
-        Ok(status_value(&environment_state(&observed, &release_name)))
+        let observed =
+            observe_environment(&api.namespace, &format!("{org}/{project}/{env}"), |path| {
+                api.get(path)
+            })
+            .await?;
+        let applications = application_states(&observed);
+        let mut summary = EnvironmentState {
+            deployment: None,
+            workloads: std::collections::BTreeMap::new(),
+            live: std::collections::BTreeMap::new(),
+        };
+        let single_application = applications.len() == 1;
+        for state in applications.into_values() {
+            if let Some(deployment) = state.deployment {
+                let total = summary.deployment.get_or_insert(DeploymentStatus {
+                    manifest_digest: None,
+                    replicas: 0,
+                    updated_replicas: 0,
+                    ready_replicas: 0,
+                    available_replicas: 0,
+                });
+                total.replicas += deployment.replicas;
+                total.updated_replicas += deployment.updated_replicas;
+                total.ready_replicas += deployment.ready_replicas;
+                total.available_replicas += deployment.available_replicas;
+                if single_application {
+                    total.manifest_digest = deployment.manifest_digest;
+                }
+            }
+            summary.workloads.extend(state.workloads);
+            for (digest, count) in state.live {
+                *summary.live.entry(digest).or_default() += count;
+            }
+        }
+        Ok(status_value(&summary))
     }
 }
 
@@ -182,7 +214,7 @@ fn status_value(state: &EnvironmentState) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use wamn_control_provision::environment_state::Observed;
+    use wamn_control_provision::environment_state::{Observed, environment_state};
 
     #[test]
     fn local_source_reports_the_selected_release_and_observed_workloads() {
@@ -219,7 +251,7 @@ mod tests {
         let observed = Observed {
             deployments: json!({"kind": "DeploymentList", "items": [{
                 "metadata": {"name": "hostgroup-r-prod-x", "namespace": "hosts"},
-                "spec": {"template": {"metadata": {"annotations": {"wamn.release-digest": "sha256:b"}}}},
+                "spec": {"template": {"metadata": {"labels": {"wasmcloud.com/hostgroup": "r-prod-x"}, "annotations": {"wamn.release-digest": "sha256:b"}}}},
                 "status": {"replicas": 2, "updatedReplicas": 1, "readyReplicas": 2, "availableReplicas": 2}
             }]}),
             workloads: json!({"kind": "WorkloadDeploymentList", "items": [
@@ -232,9 +264,9 @@ mod tests {
                 {"metadata": {"name": "r-qa-y-http"}, "status": {"conditions": [{"type": "Ready", "status": "True"}]}}
             ]}),
             pods: json!({"kind": "PodList", "items": [
-                {"metadata": {"annotations": {"wamn.release-digest": "sha256:a"}}, "status": {"phase": "Running"}},
-                {"metadata": {"annotations": {"wamn.release-digest": "sha256:b"}}, "status": {"phase": "Running"}},
-                {"metadata": {"annotations": {"wamn.release-digest": "sha256:b"}}, "status": {"phase": "Failed"}}
+                {"metadata": {"labels": {"wasmcloud.com/hostgroup": "r-prod-x"}, "annotations": {"wamn.release-digest": "sha256:a"}}, "status": {"phase": "Running"}},
+                {"metadata": {"labels": {"wasmcloud.com/hostgroup": "r-prod-x"}, "annotations": {"wamn.release-digest": "sha256:b"}}, "status": {"phase": "Running"}},
+                {"metadata": {"labels": {"wasmcloud.com/hostgroup": "r-prod-x"}, "annotations": {"wamn.release-digest": "sha256:b"}}, "status": {"phase": "Failed"}}
             ]}),
         };
         assert_eq!(

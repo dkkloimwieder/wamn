@@ -39,7 +39,7 @@ use wamn_event_wire::delivery_advisory_stream;
 use wamn_pg_core::{quote_ident, quote_literal};
 
 use super::Platform;
-use super::analyse::release_present;
+use super::analyse::application_releases;
 use super::ensure::{kubectl, management_author_pat_name, project_url};
 use super::lock::LifecycleLock;
 use wamn_control_provision::host_credentials::HOST_CREDENTIALS;
@@ -96,20 +96,41 @@ async fn delete_locked(
         triple.project.as_str(),
         triple.env.as_str(),
     );
-    let name = release_chart::release_name(org, project, env)?;
     let mut lines = Vec::new();
-
-    // The release chart, which starts the drain.
-    if release_present(platform, &name).await? {
-        release_chart::uninstall(&platform.target, &name).await?;
+    let applications = application_releases(platform, triple).await?;
+    for name in applications.values() {
+        release_chart::uninstall(&platform.target, name).await?;
         lines.push(format!("uninstalled {name}"));
     }
-    let live = super::drain::wait(platform, &name, None).await?;
-    if !live.is_empty() {
-        bail!(
-            "host pods of {live:?} are still live after the drain bound; nothing else was deleted"
-        );
+    let observed = wamn_control_provision::environment_state::observe_environment(
+        &platform.target.namespace,
+        &triple.to_string(),
+        |path| async move {
+            let body = kubectl(
+                platform,
+                &platform.target.namespace,
+                &["get", "--raw", &path],
+                None,
+            )
+            .await?;
+            serde_json::from_str::<serde_json::Value>(&body).map_err(anyhow::Error::from)
+        },
+    )
+    .await?;
+    // Pods can outlive their Helm record after an interrupted uninstall.
+    let mut groups: std::collections::BTreeSet<_> = applications.values().cloned().collect();
+    groups.extend(
+        wamn_control_provision::environment_state::application_states(&observed).into_keys(),
+    );
+    for name in groups {
+        let live = super::drain::wait(platform, &name, None).await?;
+        if !live.is_empty() {
+            bail!(
+                "application host group {name} is still live: {live:?}; shared resources were retained"
+            );
+        }
     }
+    let live = std::collections::BTreeMap::new();
 
     // A lifecycle verb: the provisioning credential, as the install Jobs use.
     let mut system = connect(admin_url).await?;
@@ -153,7 +174,7 @@ async fn delete_locked(
     .is_empty();
     if cr_present {
         let url = project_url(platform, triple).await?;
-        match super::drain::stranded(&url, &env_key, env, &live).await {
+        match super::drain::stranded(&url, &env_key, env, None, &live).await {
             Ok(stranded) if !stranded.is_empty() && !data => bail!(
                 "{}; apply a document that names their release to recover them, or delete \
                  with --data; nothing else was deleted",
@@ -168,6 +189,33 @@ async fn delete_locked(
             Err(error) => return Err(error),
         }
     }
+
+    // Shared event resources stop only after every application host drains.
+    let shared = super::ensure::environment_host_name(org, project, env)?;
+    kubectl(
+        platform,
+        &platform.target.namespace,
+        &[
+            "delete",
+            "workloaddeployment",
+            &format!("{shared}-materializer"),
+            "--ignore-not-found",
+            "--wait=true",
+            "--timeout=600s",
+        ],
+        None,
+    )
+    .await?;
+    if super::analyse::release_present(platform, &shared).await? {
+        release_chart::uninstall(&platform.target, &shared).await?;
+        lines.push(format!("uninstalled {shared}"));
+    }
+    anyhow::ensure!(
+        super::drain::wait(platform, &shared, None)
+            .await?
+            .is_empty(),
+        "shared materializer hosts are still live"
+    );
 
     // The provisioning PATs, then the credential Secrets the verb owns.
     let namespace = platform.target.namespace.as_str();

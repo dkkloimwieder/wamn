@@ -20,7 +20,7 @@ pub(in super::super) fn revision_client(
 
 /// The applications one revision's values keep. A revision written before
 /// the values carried them keeps none.
-pub(super) fn revision_applications(
+pub(in super::super) fn revision_applications(
     values: &serde_json::Value,
 ) -> anyhow::Result<wamn_catalog::EnvironmentApplications> {
     match values.get("applications") {

@@ -708,3 +708,40 @@ pub async fn changed_order(fixture: &Fixture) -> i64 {
     admin.batch_execute("COMMIT").await.unwrap();
     txid
 }
+
+pub async fn release_variant(
+    fixture: &Fixture,
+    application: &str,
+    amount: &[u8; 4],
+) -> LoadedRelease {
+    let mut manifest = serde_json::to_value(fixture.release.manifest()).unwrap();
+    let mut bytes = read_component();
+    let offset = bytes.windows(4).position(|part| part == b"1250").unwrap();
+    bytes[offset..offset + amount.len()].copy_from_slice(amount);
+    let component = validate_component_admission(
+        &fixture.engine,
+        &bytes,
+        ComponentAdmissionRequest {
+            declaration: serde_json::from_value(read_declaration()).unwrap(),
+            admitted_platform_packages: BTreeSet::from(["wamn:node".to_owned()]),
+            base_digests: BTreeSet::new(),
+        },
+    )
+    .unwrap()
+    .component;
+    manifest["components"][0]["descriptor"] =
+        serde_json::to_value(ComponentDescriptor::new(component, Vec::new())).unwrap();
+    let manifest: ServingManifest = serde_json::from_value(manifest).unwrap();
+    let release = LoadedRelease::load_canonical_bytes(
+        &manifest.canonical_bytes(),
+        "event-live",
+        ReleaseScope::new(ENV_KEY, ENVIRONMENT)
+            .with_applications([(application.to_owned(), declared().remove(APP).unwrap())].into()),
+    )
+    .unwrap();
+    fixture.admin.execute(
+            "INSERT INTO catalog.releases (env_key, manifest_digest, canonical_bytes) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING",
+            &[&ENV_KEY, &release.release().manifest_digest.as_str(), &manifest.canonical_bytes()],
+        ).await.unwrap();
+    release
+}

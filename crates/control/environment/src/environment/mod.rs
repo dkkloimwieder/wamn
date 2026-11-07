@@ -275,6 +275,7 @@ pub(crate) async fn apply_document(
     let clients = expand::expand(platform, document, &analysis)
         .await
         .context("prepare application control records")?;
+    let full_document = document;
     let selected = analyse::select_application(document, Some(&analysis.application))?;
     let document = &selected;
     let release_name = analysis.authorities.release_name.clone();
@@ -296,9 +297,12 @@ pub(crate) async fn apply_document(
             .context("uninstall the application release chart")?;
         analysis.plan.push(format!("uninstalled {release_name}"));
     }
-    drain::drain(platform, document, &analysis)
+    drain::drain(platform, full_document, &analysis)
         .await
         .context("observe application drain")?;
+    stage::retire(platform, full_document, &analysis)
+        .await
+        .context("retire drained application facts")?;
     Ok(analysis)
 }
 

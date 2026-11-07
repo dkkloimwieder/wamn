@@ -8,40 +8,6 @@ mod event_batch {
     use futures_util::StreamExt as _;
     use wamn_runtime::plugins::wamn_jetstream::WamnJetstreamConfig;
 
-    async fn release(fixture: &Fixture, application: &str, amount: &[u8; 4]) -> LoadedRelease {
-        let mut manifest = serde_json::to_value(fixture.release.manifest()).unwrap();
-        let mut bytes = read_component();
-        let offset = bytes.windows(4).position(|part| part == b"1250").unwrap();
-        bytes[offset..offset + amount.len()].copy_from_slice(amount);
-        let component = validate_component_admission(
-            &fixture.engine,
-            &bytes,
-            ComponentAdmissionRequest {
-                declaration: serde_json::from_value(read_declaration()).unwrap(),
-                admitted_platform_packages: BTreeSet::from(["wamn:node".to_owned()]),
-                base_digests: BTreeSet::new(),
-            },
-        )
-        .unwrap()
-        .component;
-        manifest["components"][0]["descriptor"] =
-            serde_json::to_value(ComponentDescriptor::new(component, Vec::new())).unwrap();
-        let manifest: ServingManifest = serde_json::from_value(manifest).unwrap();
-        let release = LoadedRelease::load_canonical_bytes(
-            &manifest.canonical_bytes(),
-            "event-live",
-            ReleaseScope::new(ENV_KEY, ENVIRONMENT).with_applications(
-                [(application.to_owned(), declared().remove(APP).unwrap())].into(),
-            ),
-        )
-        .unwrap();
-        fixture.admin.execute(
-            "INSERT INTO catalog.releases (env_key, manifest_digest, canonical_bytes) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING",
-            &[&ENV_KEY, &release.release().manifest_digest.as_str(), &manifest.canonical_bytes()],
-        ).await.unwrap();
-        release
-    }
-
     #[tokio::test(flavor = "multi_thread")]
     #[ignore = "requires: env:WAMN_NATS_URL, env:WAMN_NATS_TLS_CA, env:WAMN_NATS_TLS_CERT, env:WAMN_NATS_TLS_KEY"]
     async fn applications_admit_independently_across_upgrade_rollback_and_redelivery() {
@@ -58,8 +24,8 @@ mod event_batch {
              SELECT env_key, environment, 'billing', workflow_id, version, graph_json, wiring_hash, trigger, source_package, entity, ops, enable_sequence, execution_type, execution_role, enabled, created_by FROM catalog.workflows WHERE application = $1",
             &[&APP],
         ).await.unwrap();
-        let upgraded = release(&fixture, APP, b"1251").await;
-        let billing = release(&fixture, "billing", b"1252").await;
+        let upgraded = release_variant(&fixture, APP, b"1251").await;
+        let billing = release_variant(&fixture, "billing", b"1252").await;
         let mut retired = serde_json::to_value(upgraded.manifest()).unwrap();
         retired["components"] = json!([]);
         let retired: ServingManifest = serde_json::from_value(retired).unwrap();

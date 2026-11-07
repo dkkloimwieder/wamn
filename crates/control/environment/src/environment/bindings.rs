@@ -221,7 +221,7 @@ pub async fn write(
             "connection projection {} is absent or inactive; run env connections",
             binding.connection_id
         );
-        changed += tx.execute("INSERT INTO catalog.release_connection(env_key,manifest_digest,connection_id,version) VALUES ($1,$2,$3::text::uuid,$4) ON CONFLICT (env_key,manifest_digest,connection_id) DO UPDATE SET version=EXCLUDED.version WHERE catalog.release_connection.version IS DISTINCT FROM EXCLUDED.version", &[&env_key,&digest,&binding.connection_id,&binding.version]).await?;
+        changed += tx.execute("INSERT INTO catalog.release_connection(env_key,manifest_digest,connection_id,version) VALUES ($1,$2,$3::text::uuid,$4) ON CONFLICT (env_key,manifest_digest,connection_id) DO NOTHING", &[&env_key,&digest,&binding.connection_id,&binding.version]).await?;
     }
     for row in tx
         .query(
@@ -256,7 +256,7 @@ pub async fn write(
             "connection_read_imports_write_interface: {application}.{name}"
         );
         let component: String = row.get(0);
-        changed += tx.execute("INSERT INTO catalog.connection_binding(env_key,manifest_digest,component_digest,package_id,name,connection_id) VALUES ($1,$2,$3,$4,$5,$6::text::uuid) ON CONFLICT (env_key,manifest_digest,component_digest,package_id,name) DO UPDATE SET connection_id=EXCLUDED.connection_id WHERE catalog.connection_binding.connection_id IS DISTINCT FROM EXCLUDED.connection_id", &[&env_key,&digest,&component,&package,&name,&binding.connection_id]).await?;
+        changed += tx.execute("INSERT INTO catalog.connection_binding(env_key,manifest_digest,component_digest,package_id,name,connection_id) VALUES ($1,$2,$3,$4,$5,$6::text::uuid) ON CONFLICT (env_key,manifest_digest,component_digest,package_id,name) DO NOTHING", &[&env_key,&digest,&component,&package,&name,&binding.connection_id]).await?;
     }
     if changed > 0 {
         drops.release(env_key, digest);
@@ -264,34 +264,77 @@ pub async fn write(
     Ok(())
 }
 
-/// Contract after the drain (docs/plan/integration-schema.md#deployment):
-/// remove the binding and `release_connection` rows of every release outside
-/// `live`. A removed release's memory key is recorded in `drops`.
+/// Remove explicit retired releases after checking ownership, live hosts and pinned work.
+/// The caller holds the operation grant lock and supplies a fresh host observation.
 pub async fn contract(
     tx: &tokio_postgres::Transaction<'_>,
     env_key: &str,
+    application: &str,
+    declared: &wamn_catalog::EnvironmentApplications,
+    retired: &[&str],
     live: &[&str],
     drops: &mut wamn_platform_identity::connection_changes::ConnectionDrops,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<Vec<String>> {
+    anyhow::ensure!(
+        !live.contains(&"unlabelled"),
+        "cannot retire bindings with unknown live releases"
+    );
     tx.batch_execute(&wamn_control_provision::bind_platform_principal_sql(
         wamn_control_provision::PlatformComponent::Provisioning,
     ))
     .await?;
-    for table in ["catalog.connection_binding", "catalog.release_connection"] {
-        let removed = tx
-            .query(
-                &format!(
-                    "DELETE FROM {table} WHERE env_key = $1 \
-                     AND NOT manifest_digest = ANY($2::text[]) RETURNING manifest_digest"
-                ),
-                &[&env_key, &live],
+    let mut removed = Vec::new();
+    for digest in retired {
+        if live.contains(digest) {
+            continue;
+        }
+        let row = tx.query_one(
+            "SELECT canonical_bytes FROM catalog.releases WHERE env_key=$1 AND manifest_digest=$2",
+            &[&env_key, digest],
+        ).await?;
+        let (manifest, actual) = wamn_catalog::ServingManifest::from_canonical_bytes(row.get(0))?;
+        anyhow::ensure!(
+            actual.as_str() == *digest,
+            "retired release digest mismatch"
+        );
+        let owners: Vec<_> = declared
+            .iter()
+            .filter(|(_, membership)| {
+                !manifest.release.packages.is_empty()
+                    && manifest
+                        .release
+                        .packages
+                        .iter()
+                        .all(|package| membership.packages.contains(package.package_id()))
+            })
+            .map(|(name, _)| name.as_str())
+            .collect();
+        anyhow::ensure!(
+            owners == [application],
+            "retired release {digest} has no sole owner {application}"
+        );
+        let needed: bool = tx
+            .query_one(
+                "SELECT EXISTS (SELECT FROM wamn_run.runs WHERE env_key=$1 AND manifest_digest=$2 \
+             AND status NOT IN ('completed','failed','infrastructure-failure'))",
+                &[&env_key, digest],
+            )
+            .await?
+            .get(0);
+        if needed {
+            continue;
+        }
+        for table in ["catalog.connection_binding", "catalog.release_connection"] {
+            tx.execute(
+                &format!("DELETE FROM {table} WHERE env_key=$1 AND manifest_digest=$2"),
+                &[&env_key, digest],
             )
             .await?;
-        for row in removed {
-            drops.release(env_key, row.get(0));
         }
+        drops.release(env_key, digest);
+        removed.push((*digest).to_owned());
     }
-    Ok(())
+    Ok(removed)
 }
 
 /// Refresh shared connection projections during provisioning or explicit connection writes.

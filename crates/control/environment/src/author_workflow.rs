@@ -204,7 +204,7 @@ pub struct AuthorWorkflowRequest<'a> {
     pub application: &'a str,
     /// The applications the environment declares, as the serving Helm
     /// revision keeps them
-    /// ([`crate::environment::show::serving_applications`]).
+    /// ([`crate::environment::show::serving_application`]).
     pub declared: &'a wamn_catalog::EnvironmentApplications,
     pub document: &'a WiringDocument,
     pub trigger: WorkflowTrigger<'a>,

@@ -243,19 +243,20 @@ async fn project(scope: &WorkflowScope) -> anyhow::Result<tokio_postgres::Client
 async fn serving_facts(
     triple: &wamn_control_registry::Triple,
     dev_root: Option<&std::path::Path>,
+    application: &str,
 ) -> anyhow::Result<(String, wamn_catalog::EnvironmentApplications)> {
     if let Some(root) = dev_root {
         let release =
             wamn_runtime::local_application::read_local_release(&root.join("local-artifacts"))?;
+        anyhow::ensure!(
+            release.applications.len() == 1 && release.applications.contains_key(application),
+            "local host serves a different application"
+        );
         return Ok((release.manifest_digest.to_string(), release.applications));
     }
     let platform = Platform::from_env()?;
-    let digest =
-        wamn_environment_control::environment::show::serving_release(&platform, triple).await?;
-    let applications =
-        wamn_environment_control::environment::show::serving_applications(&platform, triple)
-            .await?;
-    Ok((digest, applications))
+    wamn_environment_control::environment::show::serving_application(&platform, triple, application)
+        .await
 }
 
 /// Run one workflow verb and print its result.
@@ -291,7 +292,8 @@ pub async fn run(command: WorkflowCommand) -> anyhow::Result<()> {
             let document =
                 wamn_environment_control::author_workflow::read_wiring_document(&args.document)?;
             let triple = parse_coordinate(&args.coordinate)?;
-            let (digest, declared) = serving_facts(&triple, args.dev_root.as_deref()).await?;
+            let (digest, declared) =
+                serving_facts(&triple, args.dev_root.as_deref(), &args.application).await?;
             let hash = wamn_environment_control::author_workflow::author_workflow_in_databases(
                 &args.scope.admin_database_url,
                 &args.control_database_url,
@@ -323,7 +325,8 @@ pub async fn run(command: WorkflowCommand) -> anyhow::Result<()> {
                 (platform.system_database_url, platform.events)
             };
             let triple = parse_coordinate(&args.version.coordinate)?;
-            let (digest, declared) = serving_facts(&triple, args.dev_root.as_deref()).await?;
+            let (digest, declared) =
+                serving_facts(&triple, args.dev_root.as_deref(), &args.version.application).await?;
             let mut client = project(&args.version.scope).await?;
             wamn_environment_control::workflow_lifecycle::enable_workflow(
                 &system_database_url,
@@ -573,6 +576,7 @@ mod tests {
         let facts = serving_facts(
             &wamn_control_registry::Triple::new("org", "project", "dev"),
             Some(&directory),
+            applications.keys().next().unwrap(),
         )
         .await
         .unwrap();

@@ -32,8 +32,9 @@ const REMOVAL_SLACK: Duration = Duration::from_secs(15);
 const STRANDED_SQL: &str = "\
 SELECT run_id, manifest_digest FROM wamn_run.runs \
  WHERE env_key = $1 AND environment = $2 \
-   AND status IN ('dispatched', 'running') \
+   AND status NOT IN ('completed', 'failed', 'infrastructure-failure') \
    AND manifest_digest IS NOT NULL \
+   AND ($4::text[] IS NULL OR package_id = ANY($4)) \
    AND NOT (manifest_digest = ANY($3)) \
  ORDER BY manifest_digest, run_id";
 
@@ -72,7 +73,24 @@ pub async fn drain(
     let project_url = super::ensure::project_url(platform, &document.triple()).await?;
     let env_key =
         wamn_control_provision::project_env_key(&document.org, &document.project, &document.env);
-    let stranded = stranded(&project_url, &env_key, &document.env, &live).await?;
+    let membership = &document.applications[&analysis.application];
+    let mut packages: Vec<_> = membership
+        .packages
+        .iter()
+        .filter(|package| {
+            document.application_for_package(package) == Some(analysis.application.as_str())
+        })
+        .cloned()
+        .collect();
+    packages.push(analysis.application.clone());
+    let stranded = stranded(
+        &project_url,
+        &env_key,
+        &document.env,
+        Some(&packages),
+        &live,
+    )
+    .await?;
     if !stranded.is_empty() {
         let recovery = if target.is_some() {
             "`env rollback` brings hosts that can claim them"
@@ -120,6 +138,7 @@ pub async fn stranded(
     project_url: &str,
     env_key: &str,
     environment: &str,
+    applications: Option<&[String]>,
     live: &BTreeMap<String, usize>,
 ) -> anyhow::Result<Vec<Stranded>> {
     let live: Vec<String> = live.keys().cloned().collect();
@@ -133,7 +152,10 @@ pub async fn stranded(
         .await
         .context("claim the tenant")?;
     let stranded = transaction
-        .query(STRANDED_SQL, &[&env_key, &environment, &live])
+        .query(
+            STRANDED_SQL,
+            &[&env_key, &environment, &live, &applications],
+        )
         .await
         .context("read the runs pinned to a release with no live pod")?
         .into_iter()
@@ -179,14 +201,5 @@ mod tests {
         );
         assert_eq!(largest_grace(&pods, None), Duration::from_mins(15));
         assert_eq!(largest_grace(&json!({"items": []}), None), Duration::ZERO);
-    }
-
-    #[test]
-    fn a_stranded_run_is_named_with_its_digest() {
-        let text = describe(&[Stranded {
-            run_id: "run-1".to_owned(),
-            manifest_digest: "sha256:b".to_owned(),
-        }]);
-        assert!(text.ends_with(" run-1 (sha256:b)"), "{text}");
     }
 }

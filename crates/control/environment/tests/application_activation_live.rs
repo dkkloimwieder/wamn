@@ -208,7 +208,7 @@ fn package(
         ),
     )?;
     if let Some(component) = component {
-        value["base_dependencies"] = json!({"state":{"package":"wamn_integration","version":"1.0.0","digest":STATE_DIGEST,"operations":["data.get"]}});
+        value["base_dependencies"] = json!({"state":{"package":"wamn_integration","version":"1.0.0","digest":STATE_DIGEST,"operations":["data.get","data.update"]}});
         for connection in &component.descriptor.connections {
             value["connections"][&connection.store_alias] =
                 json!({"interface":"wamn:connection/http@0.1.0","mode":"write"});
@@ -592,7 +592,7 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
         .unwrap()
         .connections
         .insert("failed".into(), "erp".into());
-    let mut failed_packages = candidate_packages;
+    let mut failed_packages = candidate_packages.clone();
     let declaration = failed_packages[0].connections["upstream"].clone();
     failed_packages[0]
         .connections
@@ -659,6 +659,201 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
     )?;
     let connection = &old_a.components.first().unwrap().descriptor;
     assert!(observer.query_opt("SELECT 1 FROM catalog.connection_binding WHERE manifest_digest=$1 AND component_digest=$2 AND name='upstream'", &[&old_a.digest().as_str(), &connection.component_digest]).await?.is_some());
+    // Retirement uses the production owner role, its lock, and explicit application digests.
+    project.batch_execute("SET ROLE wamn_db_owner").await?;
+    let releases = BTreeMap::from([
+        (
+            old_a.digest().to_string(),
+            (old_a.clone(), old_packages.to_vec()),
+        ),
+        (
+            new_a.digest().to_string(),
+            (new_a.clone(), candidate_packages.to_vec()),
+        ),
+    ]);
+    let tx = project.transaction().await?;
+    tx.query_one(
+        wamn_control_provision::operation_grants::OPERATION_GRANT_LOCK_SQL,
+        &[&ENV_KEY],
+    )
+    .await?;
+    assert!(
+        wamn_environment_control::environment::bindings::contract(
+            &tx,
+            ENV_KEY,
+            "a",
+            &document.membership(),
+            &[b.digest().as_str()],
+            &[],
+            &mut wamn_platform_identity::connection_changes::ConnectionDrops::default()
+        )
+        .await
+        .is_err()
+    );
+    let retired = wamn_environment_control::environment::bindings::contract(
+        &tx,
+        ENV_KEY,
+        "a",
+        &document.membership(),
+        &[old_a.digest().as_str()],
+        &[new_a.digest().as_str()],
+        &mut wamn_platform_identity::connection_changes::ConnectionDrops::default(),
+    )
+    .await?;
+    assert!(
+        wamn_environment_control::environment::stage::retire_runtime_grants(
+            &admin,
+            &tx,
+            ENV_KEY,
+            &releases,
+            &retired,
+            &mut wamn_platform_identity::auth_changes::AuthDrops::default()
+        )
+        .await
+        .is_err()
+    );
+    tx.rollback().await?;
+    assert!(
+        observer
+            .query_opt(
+                "SELECT 1 FROM catalog.connection_binding WHERE env_key=$1 AND manifest_digest=$2",
+                &[&ENV_KEY, &old_a.digest().as_str()]
+            )
+            .await?
+            .is_some()
+    );
+    observer.execute("INSERT INTO wamn_run.runs(env_key,run_id,package_id,environment,status,manifest_digest,wiring_id,wiring_version,wiring_hash,binding_world_json) VALUES($1,'old-work','a','dev','dispatched',$2,'work',1,$2,'[]')", &[&ENV_KEY, &old_a.digest().as_str()]).await?;
+    observer.execute("INSERT INTO wamn_run.runs(env_key,run_id,package_id,environment,status,manifest_digest,wiring_id,wiring_version,wiring_hash,binding_world_json) VALUES($1,'b-work','b','dev','dispatched',$2,'work',1,$2,'[]')", &[&ENV_KEY, &b.digest().as_str()]).await?;
+    for (live, pinned) in [(true, true), (false, true), (false, false)] {
+        if !pinned {
+            observer
+                .execute(
+                    "UPDATE wamn_run.runs SET status='completed' WHERE run_id='old-work'",
+                    &[],
+                )
+                .await?;
+        }
+        let tx = project.transaction().await?;
+        tx.query_one(
+            wamn_control_provision::operation_grants::OPERATION_GRANT_LOCK_SQL,
+            &[&ENV_KEY],
+        )
+        .await?;
+        tx.batch_execute(&wamn_control_provision::bind_platform_principal_sql(
+            wamn_control_provision::PlatformComponent::Provisioning,
+        ))
+        .await?;
+        let mut auth = wamn_platform_identity::auth_changes::AuthDrops::default();
+        // The failed replacement left a shared role. Restore its exclusive owner before retirement.
+        if live {
+            wamn_platform_identity::application::mutate_grant(
+                &tx,
+                ENV_KEY,
+                wamn_platform_identity::application::GrantAuthority::Provisioning,
+                wamn_platform_identity::application::GrantChange::UserRole {
+                    user_id: b_user.id().as_str(),
+                    role: "application-a",
+                    grant: false,
+                },
+                &mut auth,
+            )
+            .await?;
+        }
+        let old_digest = old_a.digest();
+        let new_digest = new_a.digest();
+        let live_digests = if live {
+            vec![old_digest.as_str(), new_digest.as_str()]
+        } else {
+            vec![new_digest.as_str()]
+        };
+        let retired = wamn_environment_control::environment::bindings::contract(
+            &tx,
+            ENV_KEY,
+            "a",
+            &document.membership(),
+            &[old_digest.as_str()],
+            &live_digests,
+            &mut wamn_platform_identity::connection_changes::ConnectionDrops::default(),
+        )
+        .await?;
+        wamn_environment_control::environment::stage::retire_runtime_grants(
+            &admin, &tx, ENV_KEY, &releases, &retired, &mut auth,
+        )
+        .await?;
+        tx.commit().await?;
+        assert_eq!(retired.is_empty(), live || pinned);
+        let stranded = wamn_environment_control::environment::drain::stranded(
+            observer_url.as_str(),
+            ENV_KEY,
+            "dev",
+            Some(&["a".to_owned()]),
+            &BTreeMap::from([(new_a.digest().to_string(), 1)]),
+        )
+        .await?;
+        assert_eq!(
+            stranded
+                .iter()
+                .map(|run| run.run_id.as_str())
+                .collect::<Vec<_>>(),
+            if pinned { vec!["old-work"] } else { vec![] }
+        );
+        let caller = wamn_runtime::plugins::route_authentication::queued_run_caller(
+            &observer,
+            a_user.id().as_str(),
+            None,
+        )
+        .await?;
+        assert_eq!(
+            caller.permits("wamn-integration:data/get@1.0.0"),
+            live || pinned
+        );
+        assert!(caller.permits("wamn-integration:data/update@1.0.0"));
+        assert_eq!(before_b, rows(&observer, stable_b).await?);
+        assert_eq!(before_sql, rows(&observer, stable_sql).await?);
+    }
+    // A rollback recreates A0's retired bindings and permissions before code can start.
+    document.applications.get_mut("a").unwrap().current =
+        wamn_environment_control::environment::document::DeclaredRelease::Digest(
+            old_a.digest().to_string(),
+        );
+    document
+        .applications
+        .get_mut("a")
+        .unwrap()
+        .connections
+        .remove("extra");
+    document
+        .applications
+        .get_mut("a")
+        .unwrap()
+        .connections
+        .remove("failed");
+    expand::prepare(
+        &platform,
+        &document,
+        "a",
+        old_a.digest().as_str(),
+        &old_a,
+        &old_packages,
+    )
+    .await?;
+    assert!(
+        observer
+            .query_opt(
+                "SELECT 1 FROM catalog.connection_binding WHERE env_key=$1 AND manifest_digest=$2",
+                &[&ENV_KEY, &old_a.digest().as_str()]
+            )
+            .await?
+            .is_some()
+    );
+    let caller = wamn_runtime::plugins::route_authentication::queued_run_caller(
+        &observer,
+        a_user.id().as_str(),
+        None,
+    )
+    .await?;
+    assert!(caller.permits("wamn-integration:data/get@1.0.0"));
+    assert_eq!(before_b, rows(&observer, stable_b).await?);
     drop(project);
     drop(observer);
     admin

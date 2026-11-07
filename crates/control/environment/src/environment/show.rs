@@ -1,8 +1,8 @@
 //! `env show`: an environment document synthesized from the authorities
 //! (docs/architecture/overview.md#environment-lifecycle).
 //!
-//! The release is the digest of the newest successful Helm revision, or
-//! `none`, and the applications are the ones that revision keeps. The route host and the policy name come from the environment row.
+//! Each application comes from its own successful Helm revision.
+//! The environment row supplies the shared policy.
 //! Connection names come from the applied application map, and the
 //! document uses the current authorities. `show` takes no lock.
 
@@ -19,7 +19,6 @@ use super::Platform;
 use super::analyse::{read_revision, read_row};
 use super::document::{ApplicationSelection, Client, DeclaredRelease, EnvironmentDocument};
 use wamn_package_control::database::connect;
-use wamn_release_control::release_chart;
 
 /// Synthesize the document of an environment.
 ///
@@ -40,91 +39,86 @@ pub async fn show(platform: &Platform, triple: &Triple) -> anyhow::Result<Enviro
     let row = read_row(&system, &document)
         .await?
         .with_context(|| format!("environment {triple} has no row"))?;
-    let hostname = row.route_host.clone().unwrap_or_default();
-    document.policy = row.policy_name.clone();
+    document.policy = row.policy_name;
     document.target = system.query_one("SELECT t.name FROM registry.project_envs e JOIN registry.target t ON t.id = e.target_id WHERE e.org = $1 AND e.project = $2 AND e.env = $3", &[&document.org, &document.project, &document.env]).await?.get(0);
-    let name = release_chart::release_name(&document.org, &document.project, &document.env)?;
-    let mut current = DeclaredRelease::None;
-    if let Some(revision) = read_revision(platform, &name).await? {
-        // DEP2-11 replaces the shared Helm revision with application charts.
-        current = revision
+    for (application, name) in super::analyse::application_releases(platform, triple).await? {
+        let Some(revision) = read_revision(platform, &name).await? else {
+            continue;
+        };
+        let mut membership = revision_applications(&revision.values)?;
+        let membership = membership
+            .remove(&application)
+            .context("application is absent from its Helm revision")?;
+        let hostname = revision.values["routeHost"]
+            .as_str()
+            .unwrap_or_default()
+            .to_owned();
+        let current = revision
             .manifest_digest()
             .map_or(DeclaredRelease::None, |digest| {
                 DeclaredRelease::Digest(digest.to_owned())
             });
         let client = revision_client(&revision.values, &hostname)?;
-        document.applications = revision_applications(&revision.values)?
-            .into_iter()
-            .map(|(name, membership)| {
-                (
-                    name,
-                    ApplicationSelection {
-                        current: current.clone(),
-                        previous: None,
-                        hostname: hostname.clone(),
-                        client: client.clone(),
-                        packages: membership.packages,
-                        connections: membership.connections,
-                    },
-                )
-            })
-            .collect();
-    }
-    if let DeclaredRelease::Digest(digest) = &current {
-        let url = super::ensure::project_url(platform, &document.triple()).await?;
-        let project = super::analyse::connect_project(&url).await?;
-        let env_key = wamn_control_provision::project_env_key(
-            &document.org,
-            &document.project,
-            &document.env,
+        document.applications.insert(
+            application.clone(),
+            ApplicationSelection {
+                current: current.clone(),
+                previous: None,
+                hostname,
+                client,
+                packages: membership.packages,
+                connections: membership.connections,
+            },
         );
-        for row in project.query("SELECT i.name,r.version FROM catalog.release_connection r JOIN platform.connection c ON c.id=r.connection_id JOIN platform.integration i ON i.id=c.integration_id WHERE r.env_key=$1 AND r.manifest_digest=$2",&[&env_key,digest]).await? {
-            document.integrations.insert(row.get(0),super::document::Integration {version:row.get(1)});
-        }
-        for binding in project.query(
-            "SELECT b.package_id,b.name,i.name,r.version FROM catalog.connection_binding b JOIN catalog.release_connection r USING(env_key,manifest_digest,connection_id) JOIN platform.connection c ON c.id=b.connection_id JOIN platform.integration i ON i.id=c.integration_id WHERE b.env_key=$1 AND b.manifest_digest=$2",
-            &[&env_key,digest],
-        ).await? {
-            let package: String = binding.get(0);
-            let integration: String = binding.get(2);
-            if let Some(application) = document.application_for_package(&package).map(str::to_owned) {
-                document.applications.get_mut(&application).expect("declared application").connections.insert(binding.get(1), integration.clone());
-                document.integrations.insert(integration, super::document::Integration {version:binding.get(3)});
+        if let DeclaredRelease::Digest(digest) = &current {
+            let url = super::ensure::project_url(platform, triple).await?;
+            let project = super::analyse::connect_project(&url).await?;
+            let env_key = wamn_control_provision::project_env_key(
+                &document.org,
+                &document.project,
+                &document.env,
+            );
+            for binding in project.query(
+                "SELECT b.package_id,b.name,i.name,r.version FROM catalog.connection_binding b JOIN catalog.release_connection r USING(env_key,manifest_digest,connection_id) JOIN platform.connection c ON c.id=b.connection_id JOIN platform.integration i ON i.id=c.integration_id WHERE b.env_key=$1 AND b.manifest_digest=$2",
+                &[&env_key,digest],
+            ).await? {
+                let selection = document.applications.get_mut(&application).expect("observed application");
+                let package: String = binding.get(0);
+                anyhow::ensure!(selection.packages.contains(&package), "binding outside application {application}");
+                let integration: String = binding.get(2);
+                selection.connections.insert(binding.get(1), integration.clone());
+                document.integrations.insert(integration, super::document::Integration { version: binding.get(3) });
             }
         }
     }
     Ok(document)
 }
 
-/// The release an environment serves, as [`show`] derives it: the digest of
-/// the newest successful Helm revision.
-///
-/// # Errors
-///
-/// When Helm cannot be read, or the environment serves no release.
-pub async fn serving_release(platform: &Platform, triple: &Triple) -> anyhow::Result<String> {
-    let name = release_chart::release_name(&triple.org, &triple.project, triple.env.as_str())?;
-    read_revision(platform, &name)
-        .await?
-        .and_then(|revision| revision.manifest_digest().map(str::to_owned))
-        .with_context(|| format!("environment {triple} serves no release"))
-}
-
-/// The applications an environment serves, as [`show`] derives them: the
-/// ones the newest successful Helm revision keeps.
-///
-/// # Errors
-///
-/// When Helm cannot be read, or the environment serves no release.
-pub async fn serving_applications(
+/// Read the target application's release and membership from the same successful revision.
+pub async fn serving_application(
     platform: &Platform,
     triple: &Triple,
-) -> anyhow::Result<wamn_catalog::EnvironmentApplications> {
-    let name = release_chart::release_name(&triple.org, &triple.project, triple.env.as_str())?;
+    application: &str,
+) -> anyhow::Result<(String, wamn_catalog::EnvironmentApplications)> {
+    let name = wamn_control_provision::environment_state::application_release_name(
+        &triple.org,
+        &triple.project,
+        triple.env.as_str(),
+        application,
+    )?;
     let revision = read_revision(platform, &name)
         .await?
-        .with_context(|| format!("environment {triple} serves no release"))?;
-    revision_applications(&revision.values)
+        .with_context(|| format!("application {application} in {triple} serves no release"))?;
+    let membership = revision_applications(&revision.values)?;
+    anyhow::ensure!(
+        membership.len() == 1 && membership.contains_key(application),
+        "application Helm revision has foreign membership"
+    );
+    let digest = revision
+        .manifest_digest()
+        .context("application revision has no release digest")?
+        .to_owned();
+    Ok((digest, membership))
 }
 
 #[cfg(test)]

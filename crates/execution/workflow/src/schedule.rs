@@ -2,7 +2,7 @@
 //! (docs/architecture/execution.md#workflows).
 //!
 //! The task wakes at every minute boundary, reads the enabled schedule
-//! workflows of the applications its environment declares in one SELECT, and
+//! workflows of the application its loaded release serves in one SELECT, and
 //! admits a run for each row whose cron names that minute. A row enabled or disabled between ticks takes
 //! effect at the next tick.
 
@@ -38,36 +38,27 @@ pub trait ScheduleRows: Send + Sync {
 }
 
 /// The enabled schedule workflows of the declared applications. Binds: `$1`
-/// tenant, `$2` environment, `$3` the application names.
+/// tenant, `$2` environment, `$3` the application name.
 const ENABLED_SCHEDULES_SQL: &str = "\
 SELECT application, workflow_id, schedule FROM catalog.workflows \
- WHERE env_key = $1 AND environment = $2 AND application = ANY($3) \
+ WHERE env_key = $1 AND environment = $2 AND application = $3 \
    AND enabled AND trigger = 'schedule'";
 
-/// The schedule rows of the applications a host's environment declares. It
+/// The schedule rows of the application that the host serves. It
 /// reads them on the task's executor connection and admits through
 /// [`WamnPostgres::admit_schedule_run`].
 pub struct PostgresSchedules {
     client: tokio_postgres::Client,
     postgres: Arc<WamnPostgres>,
     project: String,
-    env_key: String,
-    environment: String,
-    applications: wamn_catalog::EnvironmentApplications,
-    /// The names of `applications`, as the read binds them.
-    names: Vec<String>,
-    /// The release the host serves, as its manifest digest.
-    manifest_digest: String,
+    release: Arc<wamn_engine::release_manifest::LoadedRelease>,
 }
 
 impl std::fmt::Debug for PostgresSchedules {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("PostgresSchedules")
             .field("project", &self.project)
-            .field("env_key", &self.env_key)
-            .field("environment", &self.environment)
-            .field("applications", &self.applications)
-            .field("manifest_digest", &self.manifest_digest)
+            .field("release", &self.release)
             .finish_non_exhaustive()
     }
 }
@@ -79,21 +70,13 @@ impl PostgresSchedules {
         client: tokio_postgres::Client,
         postgres: Arc<WamnPostgres>,
         project: impl Into<String>,
-        env_key: impl Into<String>,
-        environment: impl Into<String>,
-        applications: wamn_catalog::EnvironmentApplications,
-        manifest_digest: impl Into<String>,
+        release: Arc<wamn_engine::release_manifest::LoadedRelease>,
     ) -> Self {
-        let names = applications.keys().cloned().collect();
         Self {
-            names,
             client,
             postgres,
             project: project.into(),
-            env_key: env_key.into(),
-            environment: environment.into(),
-            applications,
-            manifest_digest: manifest_digest.into(),
+            release,
         }
     }
 }
@@ -101,11 +84,16 @@ impl PostgresSchedules {
 #[async_trait::async_trait]
 impl ScheduleRows for PostgresSchedules {
     async fn enabled(&self) -> anyhow::Result<Vec<EnabledSchedule>> {
+        let scope = self.release.scope();
+        let (application, _) = scope
+            .applications
+            .first_key_value()
+            .context("schedule host has no application")?;
         let rows = self
             .client
             .query(
                 ENABLED_SCHEDULES_SQL,
-                &[&self.env_key, &self.environment, &self.names],
+                &[&scope.env_key, &scope.environment, application],
             )
             .await
             .context("read the enabled workflow schedules")?;
@@ -126,20 +114,21 @@ impl ScheduleRows for PostgresSchedules {
         schedule: &EnabledSchedule,
         due: DateTime<Utc>,
     ) -> anyhow::Result<ScheduleRunAdmitted> {
-        let application = self
+        let scope = self.release.scope();
+        let application = scope
             .applications
             .get(&schedule.application)
             .with_context(|| format!("application {:?} is not declared", schedule.application))?;
         self.postgres
             .admit_schedule_run(
                 &self.project,
-                &self.env_key,
+                &scope.env_key,
                 &ScheduleRunAdmission {
-                    environment: &self.environment,
+                    environment: &scope.environment,
                     application: &schedule.application,
                     application_packages: &application.packages,
                     workflow_id: &schedule.workflow_id,
-                    manifest_digest: &self.manifest_digest,
+                    manifest_digest: self.release.release().manifest_digest.as_str(),
                     due,
                 },
             )

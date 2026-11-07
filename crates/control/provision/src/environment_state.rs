@@ -43,6 +43,80 @@ pub fn release_name(org: &str, project: &str, env: &str) -> Result<String, Provi
     Ok(format!("r-{slug}-{}", &hash[..HASH_LEN]))
 }
 
+/// The Helm release and host group of one application.
+pub fn application_release_name(
+    org: &str,
+    project: &str,
+    env: &str,
+    application: &str,
+) -> Result<String, ProvisionError> {
+    validate_project_env(org, project, env)?;
+    let hash = hex::encode(Sha256::digest(format!(
+        "{org}/{project}/{env}/{application}"
+    )));
+    let slug: String = env.chars().take(SLUG_LEN).collect();
+    Ok(format!("r-{slug}-{}", &hash[..HASH_LEN]))
+}
+
+/// Observe every application host in an environment through the same resource lists.
+pub async fn observe_environment<F, Fut, E>(
+    namespace: &str,
+    coordinate: &str,
+    mut get: F,
+) -> Result<Observed, E>
+where
+    F: FnMut(String) -> Fut,
+    Fut: Future<Output = Result<Value, E>>,
+{
+    let mut deployments = get(format!("/apis/apps/v1/namespaces/{namespace}/deployments")).await?;
+    let workloads = get(format!(
+        "/apis/runtime.wasmcloud.dev/v1alpha1/namespaces/{namespace}/workloaddeployments"
+    ))
+    .await?;
+    let mut pods = get(format!("/api/v1/namespaces/{namespace}/pods")).await?;
+    if let Some(items) = deployments["items"].as_array_mut() {
+        items.retain(|item| {
+            item["spec"]["template"]["metadata"]["annotations"]["wamn.environment"].as_str()
+                == Some(coordinate)
+        });
+    }
+    if let Some(items) = pods["items"].as_array_mut() {
+        items.retain(|item| {
+            item["metadata"]["annotations"]["wamn.environment"].as_str() == Some(coordinate)
+        });
+    }
+    Ok(Observed {
+        deployments,
+        workloads,
+        pods,
+    })
+}
+
+/// Independent application states, including terminating hosts without a Deployment.
+pub fn application_states(observed: &Observed) -> BTreeMap<String, EnvironmentState> {
+    let groups: std::collections::BTreeSet<_> = observed.deployments["items"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|deployment| {
+            deployment["metadata"]["name"]
+                .as_str()?
+                .strip_prefix("hostgroup-")
+        })
+        .chain(
+            observed.pods["items"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|pod| pod["metadata"]["labels"]["wasmcloud.com/hostgroup"].as_str()),
+        )
+        .collect();
+    groups
+        .into_iter()
+        .map(|group| (group.to_owned(), environment_state(observed, group)))
+        .collect()
+}
+
 /// The three lists one status read takes from the release namespace.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Observed {
@@ -123,13 +197,27 @@ fn list_path(path: &str, key: &str, selector: &str) -> String {
 
 /// The state of `release_name` in what [`observe`] read.
 pub fn environment_state(observed: &Observed, release_name: &str) -> EnvironmentState {
+    let deployment_name = format!("hostgroup-{release_name}");
     EnvironmentState {
         deployment: observed.deployments["items"]
             .as_array()
-            .and_then(|items| items.first())
+            .and_then(|items| {
+                items.iter().find(|deployment| {
+                    deployment["metadata"]["name"].as_str() == Some(deployment_name.as_str())
+                })
+            })
             .map(deployment_status),
         workloads: workload_conditions(&observed.workloads, release_name),
-        live: live_set(&observed.pods),
+        live: live_pods(
+            observed.pods["items"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter(|pod| {
+                    pod["metadata"]["labels"]["wasmcloud.com/hostgroup"].as_str()
+                        == Some(release_name)
+                }),
+        ),
     }
 }
 
@@ -181,8 +269,12 @@ pub fn workload_conditions(
 /// Release digest to the count of host pods that are not terminated: the
 /// live set.
 pub fn live_set(pods: &Value) -> BTreeMap<String, usize> {
+    live_pods(pods["items"].as_array().into_iter().flatten())
+}
+
+fn live_pods<'a>(pods: impl Iterator<Item = &'a Value>) -> BTreeMap<String, usize> {
     let mut live = BTreeMap::new();
-    for pod in pods["items"].as_array().into_iter().flatten() {
+    for pod in pods {
         if matches!(
             pod["status"]["phase"].as_str(),
             Some("Succeeded" | "Failed")
@@ -237,8 +329,12 @@ mod tests {
         let observed = Observed {
             deployments: json!({"items": [{
                 "metadata": {"name": "hostgroup-r-prod-x"},
-                "spec": {"template": {"metadata": {"annotations": {"wamn.release-digest": "sha256:b"}}}},
+                "spec": {"template": {"metadata": {"labels": {"wasmcloud.com/hostgroup": "r-prod-x"}, "annotations": {"wamn.release-digest": "sha256:b"}}}},
                 "status": {"replicas": 3, "updatedReplicas": 2, "readyReplicas": 2, "availableReplicas": 1}
+            }, {
+                "metadata": {"name": "hostgroup-r-prod-other"},
+                "spec": {"template": {"metadata": {"annotations": {"wamn.release-digest": "sha256:other"}}}},
+                "status": {"replicas": 1, "readyReplicas": 1}
             }]}),
             workloads: json!({"items": [
                 {"metadata": {"name": "r-prod-x-http"}, "status": {"conditions": [
@@ -247,14 +343,23 @@ mod tests {
                 {"metadata": {"name": "r-qa-y-http"}, "status": {"conditions": [{"type": "Ready", "status": "False"}]}}
             ]}),
             pods: json!({"items": [
-                {"metadata": {"annotations": {"wamn.release-digest": "sha256:a"}}, "status": {"phase": "Running"}},
-                {"metadata": {"annotations": {"wamn.release-digest": "sha256:b"}}, "status": {"phase": "Running"}},
-                {"metadata": {"annotations": {"wamn.release-digest": "sha256:b"}}, "status": {"phase": "Pending"}},
-                {"metadata": {"annotations": {"wamn.release-digest": "sha256:a"}}, "status": {"phase": "Succeeded"}},
-                {"metadata": {}, "status": {"phase": "Running"}}
+                {"metadata": {"labels": {"wasmcloud.com/hostgroup": "r-prod-x"}, "annotations": {"wamn.release-digest": "sha256:a"}}, "status": {"phase": "Running"}},
+                {"metadata": {"labels": {"wasmcloud.com/hostgroup": "r-prod-x"}, "annotations": {"wamn.release-digest": "sha256:b"}}, "status": {"phase": "Running"}},
+                {"metadata": {"labels": {"wasmcloud.com/hostgroup": "r-prod-x"}, "annotations": {"wamn.release-digest": "sha256:b"}}, "status": {"phase": "Pending"}},
+                {"metadata": {"labels": {"wasmcloud.com/hostgroup": "r-prod-x"}, "annotations": {"wamn.release-digest": "sha256:a"}}, "status": {"phase": "Succeeded"}},
+                {"metadata": {"labels": {"wasmcloud.com/hostgroup": "r-prod-x"}}, "status": {"phase": "Running"}},
+                {"metadata": {"labels": {"wasmcloud.com/hostgroup": "r-prod-other"}, "annotations": {"wamn.release-digest": "sha256:other"}}, "status": {"phase": "Running"}}
             ]}),
         };
-        let state = environment_state(&observed, "r-prod-x");
+        let mut states = application_states(&observed);
+        let state = states.remove("r-prod-x").unwrap();
+        let other = states.remove("r-prod-other").unwrap();
+        assert_eq!(other.live, BTreeMap::from([("sha256:other".to_owned(), 1)]));
+        assert_eq!(
+            other.deployment.unwrap().manifest_digest.as_deref(),
+            Some("sha256:other")
+        );
+        assert!(states.is_empty());
         assert_eq!(
             state.deployment,
             Some(DeploymentStatus {

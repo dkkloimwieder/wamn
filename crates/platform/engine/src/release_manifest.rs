@@ -130,12 +130,12 @@ pub struct CarriedRelease {
     pub manifest_digest: ManifestDigest,
 }
 
-/// The tenant, environment and declared applications a host serves, from the
+/// The tenant, environment and application a host serves, from the
 /// host configuration.
 ///
 /// The serving manifest carries none of them (R1). The host derives the
 /// tenant from its `(org, project, environment)` coordinate, takes the
-/// applications that `environment.k` declares, and every reader takes them
+/// targeted application that `environment.k` declares, and every reader takes it
 /// from here.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReleaseScope {
@@ -143,7 +143,7 @@ pub struct ReleaseScope {
     pub env_key: String,
     /// The short environment name, such as `dev`.
     pub environment: String,
-    /// Application name to its packages
+    /// The single application name and its packages
     /// (docs/architecture/execution.md#workflows).
     pub applications: wamn_catalog::EnvironmentApplications,
 }
@@ -158,7 +158,7 @@ impl ReleaseScope {
         }
     }
 
-    /// This scope with the applications its environment declares.
+    /// This scope with the targeted application membership.
     #[must_use]
     pub fn with_applications(
         mut self,
@@ -225,6 +225,24 @@ impl LoadedRelease {
                 )
             })?;
 
+        if scope.applications.len() > 1 {
+            return Err(ReleaseLoadError::new(
+                ReleaseLoadErrorType::ManifestRejected,
+                "a loaded release serves at most one application",
+            ));
+        }
+        if let Some((application, membership)) = scope.applications.first_key_value()
+            && manifest
+                .release
+                .packages
+                .iter()
+                .any(|package| !membership.packages.contains(package.package_id()))
+        {
+            return Err(ReleaseLoadError::new(
+                ReleaseLoadErrorType::ManifestRejected,
+                format!("release carries a package outside application {application}"),
+            ));
+        }
         Ok(Self {
             release: CarriedRelease { manifest_digest },
             manifest,
@@ -375,6 +393,34 @@ mod tests {
             BTreeMap::new(),
         )
         .expect("fixture manifest is valid")
+    }
+
+    #[test]
+    fn a_loaded_release_refuses_multiple_applications_and_foreign_packages() {
+        let bytes = fixture().canonical_bytes();
+        let mut scoped = scope();
+        scoped
+            .applications
+            .insert("other".into(), scoped.applications["catalog"].clone());
+        assert_eq!(
+            LoadedRelease::load_canonical_bytes(&bytes, "fixture", scoped)
+                .unwrap_err()
+                .error_type(),
+            ReleaseLoadErrorType::ManifestRejected
+        );
+        let mut scoped = scope();
+        scoped
+            .applications
+            .get_mut("catalog")
+            .unwrap()
+            .packages
+            .clear();
+        assert_eq!(
+            LoadedRelease::load_canonical_bytes(&bytes, "fixture", scoped)
+                .unwrap_err()
+                .error_type(),
+            ReleaseLoadErrorType::ManifestRejected
+        );
     }
 
     fn scope() -> ReleaseScope {

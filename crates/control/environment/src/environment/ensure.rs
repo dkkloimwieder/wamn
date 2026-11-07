@@ -189,13 +189,11 @@ pub async fn provision_resources(
     Ok(())
 }
 
-fn environment_host_name(document: &EnvironmentDocument) -> anyhow::Result<String> {
-    Ok(wamn_release_control::release_chart::release_name(
-        &document.org,
-        &document.project,
-        &document.env,
-    )?
-    .replacen("r-", "e-", 1))
+pub(super) fn environment_host_name(org: &str, project: &str, env: &str) -> anyhow::Result<String> {
+    Ok(
+        wamn_release_control::release_chart::release_name(org, project, env)?
+            .replacen("r-", "e-", 1),
+    )
 }
 
 /// Render the shared host without application release arguments or labels.
@@ -218,7 +216,7 @@ pub fn materializer_host_values(
         &document.project,
         &document.env,
     )?)?;
-    let name = environment_host_name(document)?;
+    let name = environment_host_name(&document.org, &document.project, &document.env)?;
     for field in [
         "name",
         "namespace",
@@ -297,7 +295,7 @@ pub fn materializer_workload(
     image: &str,
 ) -> anyhow::Result<serde_json::Value> {
     use wamn_control_provision::materializer_workload::{self, EventIdentity, MaterializerInput};
-    let name = environment_host_name(document)?;
+    let name = environment_host_name(&document.org, &document.project, &document.env)?;
     let rendered = materializer_workload::render_materializer(
         include_str!("../../../../../deploy/platform/materializer.example.yaml"),
         &MaterializerInput {
@@ -349,7 +347,7 @@ async fn provision_materializer(
     let private = PrivateDirectory::create()?;
     let values = private.path("environment-host.yaml");
     std::fs::write(&values, serde_yaml::to_string(&desired)?)?;
-    let name = environment_host_name(document)?;
+    let name = environment_host_name(&document.org, &document.project, &document.env)?;
     release_chart::recover_pending(&platform.target, &name).await?;
     release_chart::upgrade(
         &platform.target,
