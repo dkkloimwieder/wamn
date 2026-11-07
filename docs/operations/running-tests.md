@@ -658,10 +658,11 @@ These cases test connection reuse and authority isolation without measuring thro
 The platform journey exercises `wamn platform deploy` and `wamn platform status` with zero applications.
 It uses prepared artifacts from [local platform production](building.md#local-platform-artifacts).
 It requires Docker, kind, Helm, kubectl, OpenSSL, the pinned KCL compiler, and the selected `wamn` and `wamn-ctl` binaries.
-It needs no application package build, local UI bundle, GCP credentials, bucket, or public DNS.
+The application phase builds two scratch copies of `apps/platform_fixture` through `wamn build`.
+It requires no local UI bundle, GCP credentials, bucket, or public DNS.
 Public infrastructure images and the pinned platform artifacts must be reachable.
 
-The test owns an isolated cluster name, registry, and prepared chart.
+The test owns an isolated cluster name and uses the selected registry and prepared chart.
 It invokes the product command for installation and reads the resulting resources and endpoints.
 It does not install a second copy of the platform through test helpers.
 The acceptance boundary covers these behaviors:
@@ -673,11 +674,56 @@ The acceptance boundary covers these behaviors:
 - An interrupted deployment reports its actual state, and a retry completes.
 - Deployment uses no GCP commands or generic installation-completion ConfigMaps.
 
+After the zero-application assertion, the normal cluster also runs the application journey.
+The journey publishes A0, A1, B0, and B1 before it creates the destination database.
+B0 creates the shared environment through `wamn deploy --release`.
+
+The journey kills that process group when the environment row first appears, before provisioning reaches the shared materializer.
+It requires that no application SQL Job exists at that point.
+The same deploy retries provisioning and initializes SQL.
+The journey kills this attempt after Helm records `pending-install`, before any B0 pod becomes ready.
+This Helm record follows successful SQL initialization through the product command.
+The test fails if either interruption window passes before it can observe and interrupt the command.
+
+Another identical deploy must complete and serve B0 through its widget route.
+The retry must preserve the environment instance and the installed schema, sequences, and data.
+It must also preserve the baseline records and their PostgreSQL transaction identities, which detect rewrites even when row values stay unchanged.
+Both interruption points retain observed product metadata beside the command logs.
+
+Control routes then configure A's HTTP connection before A0 deploys.
+The owner uses identity endpoints for authentication and a personal access token.
+Project creation and environment provisioning give that owner the application permissions.
+
+The journey creates counter and widget rows through both applications.
+It deploys A1 from source, deploys B1 by release, reapplies A, and rolls A back to A0.
+After each operation, it compares the other application's selection, Helm revision, workloads, Service, pod identities, bindings, and effective SQL permissions.
+A read-only database connection compares installed ownership, schema definitions, initialization records, sequence state, and application rows.
+The observed relations come from installed ownership and the built package manifests.
+
+A temporary pod quota prevents A's replacement from becoming ready while its old pod remains available.
+The journey requires command failure, a retained pending selection, and usable routes with the old binding and permissions.
+It interrupts a targeted retry after Helm records a pending revision, removes the quota, and reapplies the persisted selection.
+It then rolls A back again and requires A0 and B1 to serve their retained data.
+Missing registry artifacts must fail without changing either application.
+An absent qualification produces a notice, and each product command records its duration.
+The test asserts no performance threshold.
+
+Set `DATABASE_URL` to a separate disposable PostgreSQL 18 server.
+The build command requires permission to create and drop databases.
+Set `WAMN_FLOW_HTTP_COMPONENT` to the raw pinned `http_route.wasm`.
+Set `WAMN_PACKAGE_ARTIFACT_BASE`, `WAMN_COMPONENT_ARTIFACT_BASE`, and `WAMN_RELEASE_ARTIFACT_BASE` to repositories under the selected kind registry.
+Set `WAMN_REGISTRY_AUTH_FILE` to its protected `.dockerconfigjson` file.
+The registry must use the `localhost:5001` authority from `cluster.k`.
+The test reads database and NATS credentials from Secrets that the product created and forwards their Services for native commands.
+The selected ctl image must include the same deployment implementation as the native CLI binaries.
+No gates image or synthetic application chart is required.
+
 From a shell with `WAMN_RELEASE_CHART` set to the prepared chart, select the debug binaries and run the case:
 
 ```bash
 export PATH="$CARGO_TARGET_DIR/debug:$PATH"
-cargo test --locked -p wamn-dev-control --test platform_apply_kind -- --ignored --nocapture
+cargo build --locked --offline -p wamn-ctl --bin wamn --bin wamn-ctl
+cargo test --locked --offline -p wamn-dev-control --test platform_apply_kind platform_apply_kind -- --ignored --exact --nocapture
 ```
 
 A failed platform run retains its cluster for inspection and prints its cleanup command.
@@ -705,8 +751,9 @@ The database tests in `install_sequence_live.rs` retain restricted SQL roles, pa
 
 ### Environment deployment coverage
 
-The environment checks have no replacement until DEP2-13.
-DEP2-13 owns fresh application installation, reapply, rollback, and data preservation through product commands.
+`platform_apply_kind` now contains the DEP2-13 application journey.
+It asserts fresh installation, independent updates, reapply, rollback, failed replacement, recovery, and data preservation through product commands.
+DEP2-09 already removed `environment_reapply.rs`, its synthetic chart, and its direct Helm write and interruption helpers.
 The old connector, file, drain, deletion, and schedule combinations have no replacement in this epic.
 Product rendering tests and the retained native host, file fixture, and database tests remain at their existing tiers.
 

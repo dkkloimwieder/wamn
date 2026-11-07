@@ -19,6 +19,9 @@ use wamn_release_control::release_chart::Target;
 #[path = "../../environment/tests/support/platform_images.rs"]
 pub mod platform_images;
 
+#[path = "support/application_deploy.rs"]
+mod application_deploy;
+
 const COMMAND_LIMIT: Duration = Duration::from_mins(15);
 const POLL_LIMIT: Duration = Duration::from_mins(5);
 
@@ -46,7 +49,7 @@ impl Drop for Run {
 }
 
 #[tokio::test]
-#[ignore = "requires Docker, kind, Helm, kubectl, OpenSSL, KCL and a prepared WAMN_RELEASE_CHART"]
+#[ignore = "requires kind, prepared platform artifacts, package registry, route component and disposable build PostgreSQL"]
 async fn platform_apply_kind() -> anyhow::Result<()> {
     let repository = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../..")
@@ -62,7 +65,7 @@ async fn platform_apply_kind() -> anyhow::Result<()> {
         .context("debug directory")?
         .join("wamn");
     ensure!(
-        binary.is_file(),
+        binary.is_file() && binary.with_file_name("wamn-ctl").is_file(),
         "build wamn-ctl --bin wamn --bin wamn-ctl first"
     );
     let kcl = match std::env::var_os("WAMN_KCL") {
@@ -288,6 +291,9 @@ async fn exercise(run: &Run, interrupted: bool) -> anyhow::Result<()> {
         );
         sign_in(run, &password, false).await?;
     }
+    if !interrupted {
+        application_deploy::exercise(run, &password).await?;
+    }
     let maps = get(run, "", "configmaps", "--all-namespaces").await?;
     ensure!(
         !maps["items"]
@@ -345,7 +351,7 @@ async fn database_state(run: &Run) -> anyhow::Result<Value> {
         state["environments"] == 0,
         "platform created application environments"
     );
-    // Application releases are Helm releases in hosts; only the control host may exist.
+    // Read application membership from every installed Helm release.
     let releases = success(Command::new("helm").args([
         "--kubeconfig",
         &run.target.kubeconfig.to_string_lossy(),
@@ -357,13 +363,22 @@ async fn database_state(run: &Run) -> anyhow::Result<Value> {
         "-q",
     ]))
     .await?;
-    ensure!(
-        String::from_utf8(releases.stdout)?
-            .split_whitespace()
-            .collect::<Vec<_>>()
-            == [format!("c-{}", run.document.org)],
-        "platform created application releases"
-    );
+    for release in String::from_utf8(releases.stdout)?.split_whitespace() {
+        let values = success(
+            Command::new("helm")
+                .arg("--kubeconfig")
+                .arg(&run.target.kubeconfig)
+                .args(["get", "values", release, "-n", "hosts", "-o", "json"]),
+        )
+        .await?;
+        let values: Value = serde_json::from_slice(&values.stdout)?;
+        ensure!(
+            values["applications"]
+                .as_object()
+                .is_none_or(serde_json::Map::is_empty),
+            "platform created application release {release}"
+        );
+    }
     Ok(state)
 }
 
