@@ -459,7 +459,7 @@ mod tests {
             "provider":"kind", "project_id":"", "zone":"", "cluster_name":"local",
             "org":"example", "owner_email":"owner@example.com", "registry":resources::LOCAL_REGISTRY,
             "buckets":{"web":"", "otel":"", "state":""},
-            "route_hosts":{"control":"control.localhost"}, "resend_from":"owner@example.com"
+            "route_hosts":{"control":"control.wamn.localhost"}, "resend_from":"owner@example.com"
         }))?;
         let auth_file = private.path("registry.json");
         std::fs::write(

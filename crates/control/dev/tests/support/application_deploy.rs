@@ -99,7 +99,7 @@ impl Journey<'_> {
         let endpoint = format!(
             "{}/{app}/{route}",
             self.edge
-                .replace("alpha.localhost", &format!("{app}.localhost"))
+                .replace("alpha.wamn.localhost", &format!("{app}.wamn.localhost"))
         );
         let request = if route.ends_with("/create") {
             self.client.post(endpoint).json(body)
@@ -287,8 +287,8 @@ pub(super) async fn exercise(run: &Run, password: &str) -> anyhow::Result<()> {
         "org":run.document.org,"project":"journey","env":"dev","target":"cloud","policy":"dev",
         "integrations":{"probe":{"version":1}},
         "applications":{
-            "alpha":{"current":"none","hostname":"alpha.localhost","packages":["alpha"],"connections":{"upstream":"probe"}},
-            "beta":{"current":"none","hostname":"beta.localhost","packages":["beta"]}
+            "alpha":{"current":"none","hostname":"alpha.wamn.localhost","packages":["alpha"],"connections":{"upstream":"probe"}},
+            "beta":{"current":"none","hostname":"beta.wamn.localhost","packages":["beta"]}
         }
     }))?)?;
     std::fs::write(&file, document.to_kcl())?;
@@ -299,8 +299,8 @@ pub(super) async fn exercise(run: &Run, password: &str) -> anyhow::Result<()> {
         .add_root_certificate(reqwest::Certificate::from_pem(&secret(
             &edge_tls, "ca.crt",
         )?)?)
-        .resolve("alpha.localhost", ([127, 0, 0, 1], edge.port).into())
-        .resolve("beta.localhost", ([127, 0, 0, 1], edge.port).into())
+        .resolve("alpha.wamn.localhost", ([127, 0, 0, 1], edge.port).into())
+        .resolve("beta.wamn.localhost", ([127, 0, 0, 1], edge.port).into())
         .build()?;
     let journey = Journey {
         run,
@@ -310,7 +310,7 @@ pub(super) async fn exercise(run: &Run, password: &str) -> anyhow::Result<()> {
         principal,
         token,
         client,
-        edge: format!("https://alpha.localhost:{}", edge.port),
+        edge: format!("https://alpha.wamn.localhost:{}", edge.port),
     };
     // Publication precedes destination creation. Every artifact remains in the registry.
     let a0 = journey.publish("alpha", "1.0.0", &sources[0]).await?;

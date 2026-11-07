@@ -75,7 +75,8 @@ A port-forward connects a local port to a pod.
 The control Service has no selector, because the wasmCloud operator manages its endpoints.
 Forward `deployment/hostgroup-c-<org>` in namespace `hosts`.
 Use `route_hosts.control` as the HTTP host.
-For the committed document, the Deployment is `hostgroup-c-local` and the host is `control.localhost`.
+For the committed document, the Deployment is `hostgroup-c-local` and the host is `control.wamn.localhost`.
+Kind application hosts use `<application>.wamn.localhost`, covered by the edge certificate for `*.wamn.localhost`.
 Export the cluster access file to a private directory:
 
 ```bash
@@ -87,11 +88,11 @@ kubectl --kubeconfig /tmp/wamn-local-access/kubeconfig -n hosts \
 ```
 
 Keep that command running while you use the service.
-Send control requests to `http://127.0.0.1:8080` with `Host: control.localhost`.
+Send control requests to `http://127.0.0.1:8080` with `Host: control.wamn.localhost`.
 From another terminal, read the unauthenticated control response:
 
 ```bash
-curl -i -H 'Host: control.localhost' http://127.0.0.1:8080/wamn_control/control/mine
+curl -i -H 'Host: control.wamn.localhost' http://127.0.0.1:8080/wamn_control/control/mine
 ```
 
 This request must return HTTP 401.

@@ -353,6 +353,38 @@ mod tests {
     }
 
     #[test]
+    fn kind_edge_certificate_covers_application_route_names() -> anyhow::Result<()> {
+        use tokio_rustls::rustls::{
+            client::verify_server_name, pki_types::ServerName, server::ParsedCertificate,
+        };
+
+        let repository = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
+        let document = ClusterDocument::compile(&repository.join("deploy/kind/cluster.k"))?;
+        let mut certificate = objects(&repository, "deploy/gcp/letsencrypt.yaml", &document)?
+            .into_iter()
+            .find(|object| {
+                object["kind"] == "Certificate" && object["metadata"]["name"] == "wamn-edge-tls"
+            })
+            .context("kind edge certificate")?;
+        let dns_names: Vec<String> =
+            serde_json::from_value(certificate["spec"]["dnsNames"].take())?;
+        let certificate = rcgen::generate_simple_self_signed(dns_names)?;
+        let parsed = ParsedCertificate::try_from(certificate.cert.der())?;
+        let (_, domain) = document
+            .route_hosts
+            .control
+            .split_once('.')
+            .context("control route domain")?;
+        let application = format!("application.{domain}");
+        // WebPKI enforces the wildcard rule, including the two-label suffix.
+        for hostname in [document.route_hosts.control.as_str(), application.as_str()] {
+            verify_server_name(&parsed, &ServerName::try_from(hostname)?)
+                .with_context(|| format!("kind edge certificate must cover {hostname}"))?;
+        }
+        Ok(())
+    }
+
+    #[test]
     fn kind_removes_pool_placement_but_keeps_other_constraints() {
         let mut value = json!({
             "storageClassName": "premium-rwo",

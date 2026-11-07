@@ -74,7 +74,7 @@ pub(super) async fn start(
     let spec = &deployment[1]["spec"]["template"]["spec"];
     let mut interfaces: Vec<v2::WitInterface> =
         serde_json::from_value(spec["hostInterfaces"].clone())?;
-    let route_host = "control.localhost";
+    let route_host = "control.wamn.localhost";
     for interface in &mut interfaces {
         if interface.namespace == "wasi" && interface.package == "http" {
             interface

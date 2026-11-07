@@ -286,7 +286,7 @@ mod tests {
         assert_eq!(compiled.cluster_name, "wamn-local");
         assert_eq!(compiled.org, "local");
         assert_eq!(compiled.registry, super::super::resources::LOCAL_REGISTRY);
-        assert_eq!(compiled.route_hosts.control, "control.localhost");
+        assert_eq!(compiled.route_hosts.control, "control.wamn.localhost");
         assert!(compiled.project_id.is_empty());
         assert!(compiled.zone.is_empty());
         assert!(compiled.buckets.web.is_empty());
