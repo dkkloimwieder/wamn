@@ -691,6 +691,8 @@ It must also preserve the baseline records and their PostgreSQL transaction iden
 Both interruption points retain observed product metadata beside the command logs.
 
 Control routes then configure A's HTTP connection before A0 deploys.
+A declares `upstream` through a platform `http-request` wiring, as `rest_connector` does.
+The journey compares its installed release binding across deployments.
 The owner uses identity endpoints for authentication and a personal access token.
 Project creation and environment provisioning give that owner the application permissions.
 

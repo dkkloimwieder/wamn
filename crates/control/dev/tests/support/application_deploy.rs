@@ -808,7 +808,7 @@ async fn sources(repository: &Path, checkout: &Path) -> anyhow::Result<[PathBuf;
             ),
         )?;
         if app == "alpha" {
-            require_connection(root, app)?;
+            require_connection(root)?;
         }
     }
     let manifest = apps.join("Cargo.toml");
@@ -828,42 +828,40 @@ async fn sources(repository: &Path, checkout: &Path) -> anyhow::Result<[PathBuf;
     Ok(roots)
 }
 
-fn require_connection(root: &Path, app: &str) -> anyhow::Result<()> {
+fn require_connection(root: &Path) -> anyhow::Result<()> {
     let file = root.join("wamn.k");
-    std::fs::write(&file,std::fs::read_to_string(&file)?
-        .replace("connections = {}", "connections = {upstream = {interface = \"wamn:connection/http@0.1.0\", mode = \"read\"}}")
-        .replace("connections = [\"postgres\"]", "connections = [\"postgres\", \"upstream\"]"))?;
-    let file = root.join("component/wit/authored.wit");
     std::fs::write(
         &file,
         std::fs::read_to_string(&file)?.replace(
-            "world fixture {",
-            "world fixture {\n  import wamn:connection/http@0.1.0;",
+            "connections = {}",
+            "connections = {upstream = {interface = \"wamn:connection/http@0.1.0\", mode = \"read\"}}",
         ),
     )?;
-    let file = root.join("component/src/lib.rs");
+    // Like rest_connector, declare HTTP authority on the platform palette component.
+    // The package-owned component keeps only its PostgreSQL connection.
+    let directory = root.join("publication/wirings");
+    std::fs::create_dir_all(&directory)?;
     std::fs::write(
-        &file,
-        std::fs::read_to_string(&file)?.replace(
-            "\"../../../wit/wamn-node\",",
-            "\"../../../wit/wamn-node\",\n        \"../../../wit/wamn-connection\",",
-        ),
-    )?;
-    let file = root.join(format!("publication/components/{app}.json.in"));
-    let mut declaration: Value = serde_json::from_slice(&std::fs::read(&file)?)?;
-    declaration["connections"] = json!([{"store-alias":"upstream","requirement-type":"http"}]);
-    std::fs::write(&file, serde_json::to_vec_pretty(&declaration)?)?;
-    let file = root.join("component/src/widget.rs");
-    std::fs::write(
-        &file,
-        std::fs::read_to_string(&file)?.replace(
-            "        widget::list(connection)",
-            r#"        crate::wamn::connection::http::send(crate::wamn::connection::http::Request {
-            requirement: "upstream".into(), method: "GET".into(), path_and_query: "/".into(),
-            headers: Vec::new(), body: None, idempotency_key: None,
-        }).await.map_err(|_| codec::map_error("internal_error", |_| None))?;
-        widget::list(connection)"#,
-        ),
+        directory.join("probe.json"),
+        serde_json::to_vec_pretty(&json!({
+            "format-version": "0.1",
+            "wiring-id": "probe",
+            "version": 1,
+            "entry": "request",
+            "nodes": {
+                "request": {
+                    "component": "http-request",
+                    "interface-version": "0.1.0",
+                    "operation": "wamn:node/async-handler@0.1.0",
+                    "params": {
+                        "requirement": "upstream",
+                        "method": "GET",
+                        "path-and-query": "/"
+                    }
+                }
+            },
+            "edges": []
+        }))?,
     )?;
     Ok(())
 }
