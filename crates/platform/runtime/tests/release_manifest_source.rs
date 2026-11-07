@@ -236,11 +236,8 @@ async fn a_published_release_pulls_back_byte_exact_and_loads_the_release_it_name
         "the published manifest digest, sha256:<64 lowercase hex>",
     );
 
-    // The exact pair of calls both service `load_release` functions make, in
-    // that order and with that spelling. This shows the mechanism where it
-    // lives; that each host process still *invokes* it, before it binds a
-    // component, is pinned by the conformance guard
-    // `one_release_load_site_per_host_process`
+    // The registry-backed host loads through these calls. The conformance guard
+    // `release_load_precedes_component_binding` keeps startup ahead of binding
     // (wamn-0h0g.15.101, tests/conformance/src/runtime_policy.rs).
     let source = ReleaseManifestSource::new(&artifact_base, true, Path::new(&registry_auth_file))
         .expect("the disposable registry configures")

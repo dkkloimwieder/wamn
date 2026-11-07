@@ -48,7 +48,7 @@ fn stage<'a>(source: &'a str, name: &str, problems: &mut Problems) -> Option<&'a
 ///
 /// The native stages share one target cache within a checkout (wamn-i6h97).
 /// The checkout key keeps other checkouts from overwriting it (wamn-gc3sl.1).
-/// Edge and cases keep their own per-checkout target caches.
+/// Edge keeps its own per-checkout target cache.
 fn stage_caches(contents: &str, owner: &str, stage_name: &str, problems: &mut Problems) {
     let mounts: Vec<_> = contents
         .lines()
@@ -326,16 +326,13 @@ fn build_graph_has_one_source_stage_and_no_retired_leg(dockerfile: &str, problem
         || "the component build lost its own target cache".to_owned(),
     );
 
-    // Native builds share one stage; edge and cases stay per checkout.
+    // Native builds share one stage; edge stays per checkout.
     // No stage keeps the retired shared root target cache.
     problems.require(!dockerfile.contains("id=wamn-root-target,"), || {
         "a stage still mounts the shared root target cache".to_owned()
     });
-    for stage_name in ["edge", "cases"] {
-        let build_name = format!("build-{stage_name}");
-        if let Some(build) = stage(dockerfile, &build_name, problems) {
-            stage_caches(build, &build_name, stage_name, problems);
-        }
+    if let Some(build) = stage(dockerfile, "build-edge", problems) {
+        stage_caches(build, "build-edge", "edge", problems);
     }
 
     // wamn-0h0g.15.139 audited these against the bare-ordinary-English rule and

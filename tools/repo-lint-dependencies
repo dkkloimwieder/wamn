@@ -154,7 +154,6 @@ PURE_MODULES = {
         "environment::drain::plan",
         "environment::ensure::plan",
         "environment::host_report::plan",
-        "environment::rollback::plan",
         "environment::show::plan",
         "environment::stage::plan",
         "environment::status::plan",

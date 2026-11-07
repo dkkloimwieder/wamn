@@ -1108,8 +1108,8 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
     // existed would have no pair to record. Building it here, ahead of the NATS
     // connections, the engine and every plugin, makes that ordering impossible to
     // get wrong, and makes a host that cannot verify its release refuse before it
-    // opens a socket. The one-site-per-process guard in
-    // tests/conformance/src/runtime_policy.rs pins both facts across both hosts.
+    // opens a socket. The ordering guard in
+    // tests/conformance/src/runtime_policy.rs keeps the load ahead of binding.
     //
     // It also runs after the CA install above, which is why the release pull can
     // reach a registry behind the chart's own CA.
@@ -1864,26 +1864,15 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
     if let Some(release) = application {
         let events = Arc::clone(&jetstream);
         let postgres = Arc::clone(&postgres);
-        let release = Arc::clone(release);
-        let mut stopped = stopping.clone();
-        schedule_tasks.spawn(async move {
-            let mut ticks = tokio::time::interval(Duration::from_secs(1));
-            ticks.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-            loop {
-                tokio::select! {
-                    _ = stopped.changed() => return,
-                    _ = ticks.tick() => {},
+        schedule_tasks.spawn(serve_application_events(
+            Arc::clone(release),
+            stopping.clone(),
+            async move |release: &Arc<LoadedRelease>| {
+                if let Err(error) = events.admit_application_events(&postgres, release).await {
+                    tracing::warn!(?error, "application event admission failed");
                 }
-                tokio::select! {
-                    _ = stopped.changed() => return,
-                    result = events.admit_application_events(&postgres, &release) => {
-                        if let Err(error) = result {
-                            tracing::warn!(?error, "application event admission failed");
-                        }
-                    }
-                }
-            }
-        });
+            },
+        ));
     }
     if let Some(connection) = &control {
         let client = Arc::clone(&connection.client);
@@ -2319,6 +2308,26 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
         .and(probe_result)
 }
 
+/// Admit events with the startup release until the host stops.
+async fn serve_application_events(
+    release: Arc<LoadedRelease>,
+    mut stopped: tokio::sync::watch::Receiver<bool>,
+    mut admit: impl AsyncFnMut(&Arc<LoadedRelease>),
+) {
+    let mut ticks = tokio::time::interval(Duration::from_secs(1));
+    ticks.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    loop {
+        tokio::select! {
+            _ = stopped.changed() => return,
+            _ = ticks.tick() => {},
+        }
+        tokio::select! {
+            _ = stopped.changed() => return,
+            () = admit(&release) => {},
+        }
+    }
+}
+
 /// Pull and compile every component that the release serves.
 async fn preload_release(operations: Option<&Arc<OperationHost>>) -> anyhow::Result<()> {
     // SCHEDULE-TIME PRELOAD. prepare_synchronous_release pulls and compiles
@@ -2744,6 +2753,31 @@ mod tests {
     const RELEASE_BASE: &str = "registry.invalid/wamn/releases";
     const RELEASE_DIGEST: &str =
         "sha256:0000000000000000000000000000000000000000000000000000000000000000";
+
+    #[tokio::test(start_paused = true)]
+    async fn event_admission_reuses_the_startup_release_across_ticks() {
+        let bytes = anonymous_release(Vec::new()).canonical_bytes();
+        let release = Arc::new(
+            LoadedRelease::load_canonical_bytes(
+                &bytes,
+                "startup release",
+                ReleaseScope::new("acme--wms--dev", "dev").with_applications(
+                    serde_json::from_str(r#"{"store":{"packages":["cat"]}}"#).unwrap(),
+                ),
+            )
+            .unwrap(),
+        );
+        let (stop, stopped) = tokio::sync::watch::channel(false);
+        let mut admissions = 0;
+        serve_application_events(Arc::clone(&release), stopped, async |received| {
+            assert!(Arc::ptr_eq(&release, received));
+            admissions += 1;
+            if admissions == 2 {
+                stop.send(true).unwrap();
+            }
+        })
+        .await;
+    }
 
     #[test]
     fn queue_admission_is_hard_for_released_hosts_only() {

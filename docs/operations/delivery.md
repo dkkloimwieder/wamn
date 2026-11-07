@@ -29,38 +29,24 @@ A missing entry still refuses with `registry-credentials-not-found`.
 If the registry certificate chains to a private CA, add `--oci-ca-path` with that CA, or set `WASH_OCI_CA_PATHS`.
 If the registry uses HTTP, add `--insecure-registry` for that registry.
 
-Receiving and WMS start the chart's identity image, because their published application routes accept sessions, and give issuer trust to their application hosts.
-When the chart's images are in a registry at a loopback port, the kind nodes reach it through the container that publishes that port on the `kind` network.
+DEP2-02 removed the duplicate application installers and their cluster cases.
+The runner retains repository inputs and pinned tools, but it carries no application case executables.
+Receiving, WMS, and Acme declare empty case sets, so qualification refuses their empty union.
 
 Run the command from the repository checkout or one of its subdirectories.
 The command reads application declarations from that checkout and builds nothing.
 It pulls the release by its digest.
 It pulls the host, gates, identity and runner images by digest.
-It runs each case in the chart's runner image with `docker run`: the runner carries the case executables, the repository files they read, and pinned `docker`, `kind`, `kubectl` and `helm`.
+For each declared case, it runs the named executable under `/cases` in the runner image with `docker run`.
 The runner uses the Docker daemon of this machine through its socket and the host network.
-Each case runs on its own kind cluster with the image set of the chart.
-Each case installs the candidate's packages from the package repository beside the release repository through the package stage of `apply`, and publishes nothing.
-Each case installs its environment with the release chart, as `env apply` does.
-It copies the release, its components and the role components by digest into its own registry and stamps a copy of the chart with the same image set.
 
 Each package declares its cases in `tests/qualification.json` beside its tests.
 The application owns this declaration. No approver or platform case list exists.
-For example, `apps/wamn_receiving/tests/qualification.json` contains:
+The current `apps/wamn_receiving/tests/qualification.json` contains:
 
 ```json
 {
-  "cases": [
-    {
-      "executable": "wamn-receiving-tests",
-      "name": "route_authentication_live::cluster::route_cases::command_histories",
-      "evidence_env": "WAMN_RECEIVING_EVIDENCE_DIR"
-    },
-    {
-      "executable": "wamn-receiving-tests",
-      "name": "route_authentication_live::cluster::route_cases::user_membership_and_permission_revocation",
-      "evidence_env": "WAMN_RECEIVING_EVIDENCE_DIR"
-    }
-  ]
+  "cases": []
 }
 ```
 
@@ -78,9 +64,6 @@ A missing declaration refuses and names the package. A malformed declaration ref
 An explicit `{"cases": []}` contributes no cases. A release with an empty union refuses.
 
 Every declared case must appear in its executable's listing and execute exactly one passing test without an explicit skip.
-
-Receiving declares command histories. Acme declares the baseline overlay with materializer progress in the Receiving executable.
-WMS declares its released routes, partial-label completion, and restart/cache cases.
 
 The cases write their results in a temporary directory under the system temporary directory.
 Qualification removes that directory after the cases pass.
