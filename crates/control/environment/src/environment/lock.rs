@@ -3,8 +3,9 @@
 //! The file lock covers only the read, merge, and atomic rename of the authored document.
 
 use anyhow::{Context as _, bail};
+use std::{sync::Arc, time::Duration};
 use tokio::task::JoinHandle;
-use tokio_postgres::{Client, NoTls};
+use tokio_postgres::{Client, NoTls, types::ToSql};
 use wamn_control_registry::Triple;
 
 /// The refusal when another verb holds the lock.
@@ -14,9 +15,10 @@ pub const DEPLOYMENT_IN_PROGRESS: &str = "deployment in progress";
 const TRY_LOCK_SQL: &str =
     "SELECT pg_try_advisory_lock(hashtextextended('wamn-env/' || $1 || '/' || $2 || '/' || $3, 0))";
 
-/// A held lifecycle lock. Dropping it closes the connection, which releases it.
+/// A held lifecycle lock. A one-second heartbeat keeps the session alive.
+/// PostgreSQL expires an idle session after five seconds, even behind a port forward.
 pub struct LifecycleLock {
-    client: Client,
+    client: Arc<Client>,
     connection: JoinHandle<()>,
 }
 
@@ -36,23 +38,15 @@ impl LifecycleLock {
     /// When the system database refuses the connection, or another session
     /// holds the lock.
     pub async fn acquire(system_url: &str, triple: &Triple) -> anyhow::Result<Self> {
-        let (client, connection) = tokio_postgres::connect(system_url, NoTls)
-            .await
-            .context("connect to the system database for the lifecycle lock")?;
-        let connection = tokio::spawn(async move {
-            let _ = connection.await;
-        });
+        let lock = Self::connect(system_url).await?;
         let env = triple.env.as_str();
-        let held: bool = client
-            .query_one(TRY_LOCK_SQL, &[&triple.org, &triple.project, &env])
-            .await
-            .context("take the lifecycle lock")?
-            .get(0);
+        let held = lock
+            .try_acquire(TRY_LOCK_SQL, &[&triple.org, &triple.project, &env])
+            .await?;
         if !held {
-            connection.abort();
             bail!("{DEPLOYMENT_IN_PROGRESS}: another verb holds the lifecycle lock of {triple}");
         }
-        Ok(Self { client, connection })
+        Ok(lock)
     }
 
     /// Serialize operations on one application without blocking another application's rollout.
@@ -61,34 +55,68 @@ impl LifecycleLock {
         triple: &Triple,
         application: &str,
     ) -> anyhow::Result<Self> {
-        let (client, connection) = tokio_postgres::connect(system_url, NoTls).await?;
-        let connection = tokio::spawn(async move {
-            let _ = connection.await;
-        });
-        let lock = Self { client, connection };
+        let lock = Self::connect(system_url).await?;
         let key = serde_json::to_string(&(
             &triple.org,
             &triple.project,
             triple.env.as_str(),
             application,
         ))?;
-        let held: bool = lock
-            .client
-            .query_one(
+        let held = lock
+            .try_acquire(
                 "SELECT pg_try_advisory_lock(hashtextextended('wamn-application/' || $1, 0))",
                 &[&key],
             )
-            .await?
-            .get(0);
+            .await?;
         if !held {
             bail!("{DEPLOYMENT_IN_PROGRESS}: application {application} in {triple}");
         }
         Ok(lock)
     }
 
-    /// Release the lock before the verb returns. The server releases it
-    /// anyway when the connection closes, but only once it reads the closed
-    /// socket, and a port forward delays that.
+    async fn connect(system_url: &str) -> anyhow::Result<Self> {
+        let (client, connection) = tokio_postgres::connect(system_url, NoTls)
+            .await
+            .context("connect to the system database for the lifecycle lock")?;
+        let client = Arc::new(client);
+        let heartbeat = Arc::clone(&client);
+        let connection = tokio::spawn(async move {
+            tokio::select! {
+                _ = connection => {},
+                () = async {
+                    loop {
+                        tokio::time::sleep(Duration::from_secs(1)).await;
+                        if heartbeat.simple_query("SELECT 1").await.is_err() {
+                            break;
+                        }
+                    }
+                } => {},
+            }
+        });
+        let lock = Self { client, connection };
+        lock.client
+            .batch_execute("SET idle_session_timeout = '5s'")
+            .await
+            .context("set the lifecycle lock session timeout")?;
+        Ok(lock)
+    }
+
+    async fn try_acquire(&self, sql: &str, params: &[&(dyn ToSql + Sync)]) -> anyhow::Result<bool> {
+        // Allow a dead holder's five-second idle timeout to expire before refusing.
+        tokio::time::timeout(Duration::from_secs(6), async {
+            loop {
+                if self.client.query_one(sql, params).await?.get::<_, bool>(0) {
+                    return Ok::<_, tokio_postgres::Error>(true);
+                }
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
+        })
+        .await
+        .unwrap_or(Ok(false))
+        .context("take the lifecycle lock")
+    }
+
+    /// Release the lock before the verb returns, without waiting for session expiry.
     pub async fn release(self) {
         let _ = self
             .client
