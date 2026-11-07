@@ -56,7 +56,7 @@ async fn local_configuration_refuses_a_removed_model_with_the_apply_refusal() {
     for migration in &directory.migrations {
         std::fs::write(root.join(&migration.relative_path), &migration.bytes).unwrap();
     }
-    let applied = apply_package(ApplyPackageRequest {
+    let applied = apply_package_schema(ApplyPackageRequest {
         component_source: crate::apply_package::component_source_from_env(None).unwrap(),
         changes: wamn_platform_identity::auth_changes::AuthChanges::default(),
         package: crate::package_artifact::fixture_package_root(&root).unwrap(),

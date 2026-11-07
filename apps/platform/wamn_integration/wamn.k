@@ -1,7 +1,7 @@
 import manifest
 
 manifest.Package {
-    package = {id = "wamn_integration", version = "0.1.1", predecessor_version = "0.1.0"}
+    package = {id = "wamn_integration", version = "0.1.1"}
     required_platform_policy_contract = {id = "wamn_integration_data_access", state = "satisfied"}
     models = {
         setting = manifest.Model("setting", "wamn_integration") {

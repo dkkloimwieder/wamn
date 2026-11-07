@@ -4,8 +4,6 @@ use wamn_schema_introspection::migration_policy::DefinitionType;
 
 /// Stable apply-package refusal prefix.
 pub const APPLY_PACKAGE_REFUSAL: &str = "apply-package-refused";
-/// Server refusal translated when release membership seals a package version.
-pub const PACKAGE_VERSION_SEALED_REFUSAL: &str = "package-version-sealed";
 /// An overlay attempted to mutate a definition owned by another package.
 pub const BASE_DEFINITION_MUTATION_REFUSAL: &str = "base-definition-mutation-refused";
 /// A shared relation did not publish additive client-field authority.
@@ -23,7 +21,6 @@ pub const PACKAGE_ARTIFACT_REQUIRED_REFUSAL: &str = "package-artifact-required";
 /// Remedy-distinct apply-package refusal.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ApplyPackageErrorType {
-    PackageVersionSealed,
     BaseDefinitionMutation,
     RelationNotClientExtensible,
     DefinitionOwnerDeclarationMissing,
@@ -35,7 +32,6 @@ pub enum ApplyPackageErrorType {
 impl ApplyPackageErrorType {
     pub const fn as_str(self) -> &'static str {
         match self {
-            Self::PackageVersionSealed => PACKAGE_VERSION_SEALED_REFUSAL,
             Self::BaseDefinitionMutation => BASE_DEFINITION_MUTATION_REFUSAL,
             Self::RelationNotClientExtensible => RELATION_NOT_CLIENT_EXTENSIBLE_REFUSAL,
             Self::DefinitionOwnerDeclarationMissing => DEFINITION_OWNER_DECLARATION_MISSING_REFUSAL,

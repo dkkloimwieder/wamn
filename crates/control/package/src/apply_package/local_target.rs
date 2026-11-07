@@ -1,4 +1,4 @@
-//! The local-target exception to the content conflict and to the release seal.
+//! Working-tree SQL application on a recorded local target.
 
 pub(super) mod plan;
 use plan::migration_changes;
@@ -10,7 +10,7 @@ use anyhow::Context as _;
 use tokio_postgres::{NoTls, Transaction};
 use wamn_catalog::manifest::PackageManifest;
 use wamn_record_history::history_table_name;
-use wamn_runtime::local_application::{LocalTargetComment, read_local_target_comment};
+use wamn_runtime::local_application::LocalTargetComment;
 use wamn_schema_control::{
     AppliedPackage, PackageDirectory, PackageMigrationErrorType, plan_package_migrations,
 };
@@ -20,24 +20,8 @@ use super::package_version::read_source_package_directory;
 use super::roles::{reset_host_role, set_package_owner_role};
 use super::{CLAIM_ENV_KEY_SQL, load_applied_package};
 
-/// The release seal trigger compares this setting with the full database comment.
-const LIFT_RELEASE_SEAL_SQL: &str =
-    "SELECT pg_catalog.set_config('wamn.local_target_comment', $1, true)";
 const COMMENT_ON_TARGET_SQL: &str = "SELECT pg_catalog.format(\
      'COMMENT ON DATABASE %I IS %L', pg_catalog.current_database(), $1::text)";
-
-/// Check the marker inside the apply transaction and lift the seal for that transaction.
-pub(super) async fn lift_release_seal(
-    tx: &Transaction<'_>,
-    env_key: &str,
-    environment: &str,
-) -> anyhow::Result<LocalTargetComment> {
-    let comment = read_local_target_comment(tx, env_key, environment).await?;
-    tx.query_one(LIFT_RELEASE_SEAL_SQL, &[&comment.to_string()])
-        .await
-        .context("lift the release seal for this local target transaction")?;
-    Ok(comment)
-}
 
 /// Record the current manifest digest of one package coordinate in the local target comment.
 ///
@@ -191,7 +175,7 @@ mod tests {
         let plan = plan_package_migrations(&directory, None).unwrap();
         let applied = AppliedPackage {
             coordinate: plan.coordinate,
-            predecessor_version: plan.predecessor_version,
+            baseline_fingerprint: "sha256:baseline".into(),
             artifact_digest: plan.artifact_digest,
             physical_schema_fingerprint: "sha256:baseline".into(),
             migrations: plan

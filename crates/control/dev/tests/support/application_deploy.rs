@@ -795,10 +795,7 @@ async fn sources(repository: &Path, checkout: &Path) -> anyhow::Result<[PathBuf;
         copy_source(&apps.join("platform_fixture"), root, app)?;
         let manifest = root.join("wamn.k");
         let text = std::fs::read_to_string(&manifest)?
-            .replace(
-                "version = \"2.1.1\", predecessor_version = \"2.1.0\"",
-                "version = \"1.0.0\"",
-            )
+            .replace("version = \"2.1.1\"", "version = \"1.0.0\"")
             .replace(
                 "routes = {",
                 &format!("routes = {{path_prefix = \"/{app}\", "),

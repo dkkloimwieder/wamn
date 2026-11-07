@@ -3,7 +3,7 @@
 pub(super) mod plan;
 use plan::{
     desired_acl, desired_effective_acl, render_undeclared_revocation, residue_targets,
-    validate_presented_lineages, validate_recorded_manifests,
+    validate_package_set, validate_recorded_manifests,
 };
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -25,7 +25,7 @@ use wamn_schema_introspection::postgres::DATA_ACCESS_ROLE;
 const CLAIM_ENV_KEY_SQL: &str = "SELECT set_config('app.env_key', $1, true)";
 const SELECT_INSTALLED_SQL: &str = "\
 SELECT package_id, package_version, artifact_digest FROM catalog.packages \
- WHERE env_key = $1 ORDER BY package_id COLLATE \"C\", package_version COLLATE \"C\"";
+ WHERE env_key = $1 ORDER BY package_id COLLATE \"C\"";
 // apply-package owns these OID histories beside application tables. No package
 // declaration consumes them, so the declared relation list leaves them out.
 // The sweep below still reads them, because every relation in a package-owned
@@ -734,24 +734,13 @@ async fn validate_installed_set(
     packages: &[PresentedPackage],
     local: bool,
 ) -> anyhow::Result<()> {
-    let mut installed = CoordinateHashes::new();
-    for row in tx
+    let installed = tx
         .query(SELECT_INSTALLED_SQL, &[&env_key])
         .await
         .context("read complete installed package set")?
-    {
-        let package_id = row.get::<_, String>(0);
-        let package_version = row.get::<_, String>(1);
-        ensure!(
-            installed
-                .insert(
-                    (package_id.clone(), package_version.clone()),
-                    row.get::<_, Option<String>>(2)
-                )
-                .is_none(),
-            "package-data-access-installed-set-repeats-coordinate: {package_id}@{package_version}"
-        );
-    }
+        .into_iter()
+        .map(|row| ((row.get(0), row.get(1)), row.get(2)))
+        .collect::<CoordinateHashes>();
     let presented = packages
         .iter()
         .map(|package| {
@@ -761,10 +750,9 @@ async fn validate_installed_set(
             )
         })
         .collect::<CoordinateHashes>();
-    validate_presented_lineages(&installed, &presented)?;
-    // A published coordinate carries one artifact for good. A local target is
-    // disposable and takes a changed tree at the applied coordinate, so the
-    // presented tree is the truth there and this reconcile records it.
+    validate_package_set(&installed, &presented)?;
+    // Published SQL sources retain their exact artifacts. Local configuration
+    // already checked the installed migration prefix, independently of code version.
     if !local {
         validate_recorded_manifests(&installed, &presented)?;
     }
@@ -779,7 +767,7 @@ mod tests {
 
     use super::{
         CoordinateHashes, UndeclaredResidue, prepare_local, render_undeclared_revocation,
-        validate_presented_lineages, validate_recorded_manifests,
+        validate_package_set, validate_recorded_manifests,
     };
 
     const DOCK_SHA: &str =
@@ -799,49 +787,20 @@ mod tests {
     }
 
     #[test]
-    fn a_tree_carrying_only_the_earlier_version_reconciles_beside_the_applied_bump() {
-        let installed = coordinates(&[("dock", "1.0.0", DOCK_SHA), ("dock", "1.1.0", DOCK_SHA)]);
-        let presented = coordinates(&[("dock", "1.0.0", DOCK_SHA)]);
-        validate_presented_lineages(&installed, &presented)
-            .expect("a reverted tree recovers beside the coordinate its failed bump applied");
-    }
-
-    #[test]
-    fn a_tree_carrying_only_the_newer_version_reconciles_beside_the_applied_predecessor() {
-        let installed = coordinates(&[("dock", "1.0.0", DOCK_SHA), ("dock", "1.1.0", DOCK_SHA)]);
-        let presented = coordinates(&[("dock", "1.1.0", DOCK_SHA)]);
-        validate_presented_lineages(&installed, &presented)
-            .expect("a bumped tree recovers beside the coordinate it replaces");
-    }
-
-    #[test]
-    fn an_applied_package_with_no_presented_root_still_refuses_with_a_remedy_the_author_can_run() {
-        let installed = coordinates(&[("dock", "1.0.0", DOCK_SHA), ("wms", "2.0.0", WMS_SHA)]);
-        let presented = coordinates(&[("dock", "1.0.0", DOCK_SHA)]);
-        let refusal = validate_presented_lineages(&installed, &presented)
-            .expect_err("a dropped package contribution must refuse");
-        let refusal = refusal.to_string();
-        assert!(
-            refusal.contains("missing-packages=[wms]"),
-            "the refusal did not name the uncovered package: {refusal}"
-        );
-        assert!(
-            refusal.contains("remedy=present one root for each applied package"),
-            "the refusal did not name a remedy the author can run: {refusal}"
-        );
-    }
-
-    #[test]
-    fn a_presented_coordinate_that_never_reached_apply_refuses() {
+    fn code_versions_share_one_installed_schema_contribution() {
         let installed = coordinates(&[("dock", "1.0.0", DOCK_SHA)]);
         let presented = coordinates(&[("dock", "1.1.0", DOCK_SHA)]);
-        let refusal = validate_presented_lineages(&installed, &presented)
-            .expect_err("an unapplied presented coordinate must refuse")
-            .to_string();
-        assert!(
-            refusal.contains("unapplied-artifacts=[dock@1.1.0]"),
-            "the refusal did not name the unapplied coordinate: {refusal}"
-        );
+        validate_package_set(&installed, &presented).unwrap();
+        // Published schema reconciliation still requires the installed source.
+        assert!(validate_recorded_manifests(&installed, &presented).is_err());
+    }
+
+    #[test]
+    fn missing_or_uninstalled_package_contributions_refuse() {
+        let complete = coordinates(&[("dock", "1.0.0", DOCK_SHA), ("wms", "2.0.0", WMS_SHA)]);
+        let partial = coordinates(&[("dock", "1.0.0", DOCK_SHA)]);
+        assert!(validate_package_set(&complete, &partial).is_err());
+        assert!(validate_package_set(&partial, &complete).is_err());
     }
 
     /// A coordinate that `wamn dev` applied records no artifact digest, and
@@ -863,15 +822,9 @@ mod tests {
     fn a_presented_root_whose_bytes_moved_under_a_published_version_still_refuses() {
         let installed = coordinates(&[("dock", "1.0.0", DOCK_SHA)]);
         let presented = coordinates(&[("dock", "1.0.0", WMS_SHA)]);
-        validate_presented_lineages(&installed, &presented)
+        validate_package_set(&installed, &presented)
             .expect("the coordinate is covered and applied; only its bytes moved");
-        let refusal = validate_recorded_manifests(&installed, &presented)
-            .expect_err("a moved manifest under a published version must refuse")
-            .to_string();
-        assert!(
-            refusal.contains("package-data-access-source-drift: package=dock@1.0.0"),
-            "the refusal did not name the immutable coordinate: {refusal}"
-        );
+        assert!(validate_recorded_manifests(&installed, &presented).is_err());
 
         // Local cutover retains the owner's exact parsed evidence; removing
         // source files after validation cannot substitute a later manifest/ACL.

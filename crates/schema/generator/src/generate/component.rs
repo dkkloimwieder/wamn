@@ -341,7 +341,6 @@ fn emit_package_world(
         PackageIdentity {
             id: base.package.clone(),
             version: base.version.clone(),
-            predecessor_version: None,
         }
     };
     // The custom lines come first, where the authored world had them, so each

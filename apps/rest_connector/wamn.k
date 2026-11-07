@@ -1,7 +1,7 @@
 import manifest
 
 manifest.Package {
-    package = {id = "rest_connector", version = "0.1.1", predecessor_version = "0.1.0"}
+    package = {id = "rest_connector", version = "0.1.1"}
     required_platform_policy_contract = {id = "rest_connector_data_access", state = "satisfied"}
     base_dependencies = {
         integration = {

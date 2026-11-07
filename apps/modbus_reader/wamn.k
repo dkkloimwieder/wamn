@@ -1,7 +1,7 @@
 import manifest
 
 manifest.Package {
-    package = {id = "modbus_reader", version = "0.1.1", predecessor_version = "0.1.0"}
+    package = {id = "modbus_reader", version = "0.1.1"}
     required_platform_policy_contract = {id = "modbus_reader_data_access", state = "satisfied"}
     models = {}
     custom_operations = {

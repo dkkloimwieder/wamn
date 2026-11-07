@@ -38,19 +38,6 @@ fn wamn_accessor<'a>(source_map: &'a Value, name: &str) -> &'a Value {
 #[test]
 fn strict_manifest_and_ir_references_fail_loudly() {
     let ir = catalog(false);
-    let mut predecessor = manifest();
-    predecessor["package"]["predecessor_version"] = json!("0.9.0");
-    run(&ir, &predecessor, &QUERY_SOURCES)
-        .expect("the optional predecessor version is in the closed manifest vocabulary");
-
-    predecessor["package"]["predecessor_version"] = json!("1.0.0");
-    assert_eq!(
-        run(&ir, &predecessor, &QUERY_SOURCES)
-            .expect_err("a package version cannot name itself as predecessor")
-            .error_type(),
-        GenerateErrorType::InvalidManifest
-    );
-
     let mut unknown = manifest();
     unknown["future"] = json!(true);
     assert_eq!(

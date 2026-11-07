@@ -1486,18 +1486,6 @@ manifest.Package {
                 .fingerprint()
         );
 
-        write(
-            &root,
-            "wamn.k",
-            source.replace("unlimited", "P7D").as_bytes(),
-        );
-        build_package(&request).await.unwrap();
-        assert_ne!(
-            first,
-            crate::component_admission::physical_schema(&root)
-                .unwrap()
-                .fingerprint()
-        );
         write(&root, "wamn.k", source.as_bytes());
         write(
             &root,

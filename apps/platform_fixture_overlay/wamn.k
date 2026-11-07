@@ -3,7 +3,7 @@
 import manifest
 
 manifest.Package {
-    package = {id = "platform_fixture_overlay", version = "2.1.1", predecessor_version = "2.1.0"}
+    package = {id = "platform_fixture_overlay", version = "2.1.1"}
     # The pin is the contract with the base: its version and the digest of its
     # built component. Nothing here imports the base's wamn.k.
     base_dependencies = {

@@ -2,63 +2,53 @@ use super::{
     BTreeMap, BTreeSet, CoordinateHashes, DirectAcl, EffectiveAcl, EffectiveDataAccess,
     UndeclaredResidue, bail, ensure,
 };
+use anyhow::Context as _;
 use std::fmt::Write as _;
 
-/// Refuse unless the presented roots cover every applied package lineage.
-///
-/// A source tree carries one version of a package at a time, so the applied set
-/// is a lineage history rather than a live set. An author who bumps a version,
-/// or who reverts a failed bump, leaves a sibling coordinate applied beside the
-/// live one. That sibling is the same authority contributor at another point in
-/// its lineage, so the presented root speaks for the whole lineage. Only a
-/// package with no presented root at all drops a contribution from the union,
-/// and only that case refuses. A presented coordinate that never reached Apply
-/// also refuses, because its declared relations are not on the server yet.
-///
-/// Whether the presented bytes match the applied bytes is a separate question,
-/// which `validate_recorded_manifests` answers for a published target.
-pub(super) fn validate_presented_lineages(
+/// Require one schema contribution for every installed package.
+/// Code versions do not determine whether a package schema exists.
+pub(super) fn validate_package_set(
     installed: &CoordinateHashes,
     presented: &CoordinateHashes,
 ) -> anyhow::Result<()> {
+    let installed_packages = installed
+        .keys()
+        .map(|(id, _)| id.as_str())
+        .collect::<BTreeSet<_>>();
     let presented_packages = presented
         .keys()
-        .map(|(package_id, _)| package_id.clone())
+        .map(|(id, _)| id.as_str())
         .collect::<BTreeSet<_>>();
-    let missing = installed
-        .keys()
-        .map(|(package_id, _)| package_id.clone())
-        .filter(|package_id| !presented_packages.contains(package_id))
-        .collect::<BTreeSet<_>>()
-        .into_iter()
-        .collect::<Vec<_>>();
-    let unapplied = presented
-        .keys()
-        .filter(|coordinate| !installed.contains_key(*coordinate))
-        .map(|(package_id, package_version)| format!("{package_id}@{package_version}"))
-        .collect::<Vec<_>>();
     ensure!(
-        missing.is_empty() && unapplied.is_empty(),
-        "package-data-access-installed-set-mismatch: missing-packages=[{}]; unapplied-artifacts=[{}]; remedy=present one root for each applied package and apply each presented root",
-        missing.join(","),
-        unapplied.join(",")
+        installed_packages == presented_packages,
+        "package-data-access-installed-set-mismatch: missing-packages={:?}; uninstalled-packages={:?}",
+        installed_packages
+            .difference(&presented_packages)
+            .collect::<Vec<_>>(),
+        presented_packages
+            .difference(&installed_packages)
+            .collect::<Vec<_>>()
     );
     Ok(())
 }
 
 /// Refuse a presented root whose bytes moved under an applied coordinate.
 ///
-/// Every presented coordinate is already known to be applied. A release
-/// reconcile presents verified artifacts only, and refuses a coordinate that
-/// `wamn dev` applied from a working tree.
+/// Published reconciliation uses the recorded SQL source, independently of
+/// executable selection. A working tree supplies no verified artifact.
 pub(super) fn validate_recorded_manifests(
     installed: &CoordinateHashes,
     presented: &CoordinateHashes,
 ) -> anyhow::Result<()> {
     for ((package_id, package_version), presented_hash) in presented {
         let recorded_hash = installed
-            .get(&(package_id.clone(), package_version.clone()))
-            .expect("every presented coordinate was confirmed as applied");
+            .iter()
+            .find_map(|((id, version), digest)| {
+                (id == package_id && version == package_version).then_some(digest)
+            })
+            .with_context(|| format!(
+                "package-data-access-source-drift: package={package_id}@{package_version} is not the recorded schema source"
+            ))?;
         let Some(recorded_hash) = recorded_hash else {
             bail!(
                 "{}: package={package_id}@{package_version} was applied by wamn dev from a working tree; recreate the environment and apply verified artifacts",

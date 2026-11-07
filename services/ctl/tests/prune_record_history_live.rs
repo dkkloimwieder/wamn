@@ -156,12 +156,12 @@ fn write_package(root: &Path) {
     wamn_test_infrastructure::fixture_digest::write_build_record(root);
 }
 
-/// Apply the fixture package through the apply-package library.
+/// Apply the fixture schema through the package library.
 ///
 /// The `apply-package` verb takes only a pushed artifact, so the fixture tree
 /// stands in for one under a digest of its own bytes.
 async fn apply(url: &str, package: &Path) -> anyhow::Result<ApplyOutcome> {
-    apply_package::apply_package(ApplyPackageRequest {
+    apply_package::apply_package_schema(ApplyPackageRequest {
         component_source: apply_package::component_source_from_env(None)?,
         changes: wamn_platform_identity::auth_changes::AuthChanges::default(),
         package: wamn_package_control::apply_package::PackageRoot {

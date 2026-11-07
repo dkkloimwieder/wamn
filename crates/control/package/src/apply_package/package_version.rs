@@ -2,67 +2,45 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context as _, ensure};
 use tokio_postgres::{GenericClient, Transaction};
-use wamn_schema_control::{
-    AppliedPackage, MigrationSource, PackageDirectory, RecordedMigration, plan_package_registration,
-};
+use wamn_schema_control::{AppliedPackage, MigrationSource, PackageDirectory, RecordedMigration};
 
 pub const LOCK_PACKAGE_SQL: &str = "SELECT pg_advisory_xact_lock(hashtextextended(\
      'wamn.package.lineage:' || $1 || ':' || $2, 0))";
-/// Register a package while retaining its lineage lock through the caller's transaction.
-pub async fn register_package(
+/// Record completed SQL in the same transaction as its effects.
+///
+/// The first fingerprint remains the baseline. A matching fingerprint is a
+/// record match, not evidence that the live database is unchanged. The source
+/// artifact reconstructs this schema even when its application stops running.
+pub(super) async fn record_package_schema(
     tx: &Transaction<'_>,
     env_key: &str,
     coordinate: &wamn_catalog::PackageCoordinate,
     artifact_digest: Option<&str>,
-    predecessor_version: Option<&str>,
     physical_schema_fingerprint: &str,
 ) -> anyhow::Result<bool> {
     let package_id = coordinate.package_id();
-    tx.query_one(LOCK_PACKAGE_SQL, &[&env_key, &package_id])
-        .await
-        .context("lock package lineage before registration")?;
-    let recorded = tx
-        .query_opt(
-            wamn_schema_control::sql::select_package_sql(),
-            &[&env_key, &package_id],
-        )
-        .await
-        .context("read package coordinate before registration")?;
-    let recorded = recorded.map(|row| {
-        (
-            row.get::<_, Option<String>>(0),
-            row.get::<_, Option<String>>(1),
-            row.get::<_, String>(2),
-        )
-    });
-    let insert = plan_package_registration(
-        coordinate,
-        artifact_digest,
-        predecessor_version,
-        recorded
-            .as_ref()
-            .filter(|(_, _, version)| version == coordinate.package_version())
-            .map(|(digest, predecessor, _)| (digest.as_deref(), predecessor.as_deref())),
-        recorded.as_ref().map(|(_, _, version)| version.as_str()),
-    )?;
-    if insert {
-        tx.execute(
+    Ok(tx
+        .execute(
             "INSERT INTO catalog.packages \
-             (env_key, package_id, package_version, artifact_digest, predecessor_version, physical_schema_fingerprint) \
-             VALUES ($1, $2, $3, $4, $5, $6)",
+         (env_key, package_id, package_version, artifact_digest, physical_schema_fingerprint) \
+         VALUES ($1, $2, $3, $4, $5) \
+         ON CONFLICT (env_key, package_id) DO UPDATE \
+         SET package_version = EXCLUDED.package_version, \
+             artifact_digest = EXCLUDED.artifact_digest, \
+             physical_schema_fingerprint = EXCLUDED.physical_schema_fingerprint \
+         WHERE catalog.packages.physical_schema_fingerprint IS DISTINCT FROM \
+               EXCLUDED.physical_schema_fingerprint",
             &[
                 &env_key,
                 &package_id,
                 &coordinate.package_version(),
                 &artifact_digest,
-                &predecessor_version,
                 &physical_schema_fingerprint,
             ],
         )
         .await
-        .context("insert immutable package root")?;
-    }
-    Ok(insert)
+        .context("record completed package schema")?
+        != 0)
 }
 
 pub async fn load_applied_package(
@@ -76,7 +54,7 @@ pub async fn load_applied_package(
             &[&env_key, &package_id],
         )
         .await
-        .context("read immutable package root")?
+        .context("read installed package schema")?
     else {
         return Ok(None);
     };
@@ -96,16 +74,16 @@ pub async fn load_applied_package(
         })
         .collect();
     Ok(Some(AppliedPackage {
-        coordinate: wamn_catalog::PackageCoordinate::new(package_id, package.get::<_, &str>(2))
+        coordinate: wamn_catalog::PackageCoordinate::new(package_id, package.get::<_, &str>(1))
             .expect("stored package coordinates passed database checks"),
-        predecessor_version: package.get(1),
         artifact_digest: package.get(0),
-        physical_schema_fingerprint: package.get(3),
+        baseline_fingerprint: package.get(3),
+        physical_schema_fingerprint: package.get(2),
         migrations,
     }))
 }
 
-/// Derive installed SQL identity from this database's project and package baselines.
+/// Derive installed SQL identity from this database's project baseline and current package records.
 pub async fn installed_environment_fingerprint(
     tx: &impl GenericClient,
     env_key: &str,

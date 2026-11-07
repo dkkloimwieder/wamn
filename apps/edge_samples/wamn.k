@@ -7,7 +7,7 @@ _frame = {path = "value.frame", type = "text", label = "Frame", description = "T
 _captured_at = {path = "value.captured_at", type = "timestamptz", label = "Captured at", description = "When the edge box read the frame."}
 
 manifest.Package {
-    package = {id = "edge_samples", version = "2.1.1", predecessor_version = "2.1.0"}
+    package = {id = "edge_samples", version = "2.1.1"}
     required_platform_policy_contract = {id = "edge_samples_data_access", state = "satisfied"}
     models = {
         sample = manifest.Model("sample", _schema) {

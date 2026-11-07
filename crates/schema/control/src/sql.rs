@@ -1,8 +1,8 @@
 //! Fixed metadata statements used by package and release effect shells.
 
-/// Read initialization provenance and physical SQL identity for one installed package.
+/// Read the recorded schema source and baseline for one installed package.
 pub fn select_package_sql() -> &'static str {
-    "SELECT artifact_digest, predecessor_version, package_version, physical_schema_fingerprint FROM catalog.packages \
+    "SELECT artifact_digest, package_version, physical_schema_fingerprint, baseline_fingerprint FROM catalog.packages \
      WHERE env_key = $1 AND package_id = $2 FOR UPDATE"
 }
 

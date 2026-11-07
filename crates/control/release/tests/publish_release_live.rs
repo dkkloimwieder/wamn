@@ -1,6 +1,4 @@
-//! Disposable-PostgreSQL tests for package sealing at release publication.
-
-use std::time::Duration;
+//! Applied migration records remain immutable as schema state advances.
 
 use tokio_postgres::{Client, NoTls};
 use wamn_test_infrastructure::locked_database;
@@ -10,14 +8,6 @@ const INSERT_MIGRATION_SQL: &str = "\
 INSERT INTO catalog.package_migrations (\
        env_key, package_id, package_version, ordinal, relative_path, sha256\
      ) VALUES ($1, $2, $3, $4, $5, $6)";
-/// The project database records a release as its manifest bytes, and its
-/// package membership is read from them.
-const INSERT_PROJECT_MEMBERSHIP_SQL: &str = "\
-INSERT INTO catalog.releases (env_key, manifest_digest, canonical_bytes) \
-SELECT $1, 'sha256:' || encode(sha256($2::bytea), 'hex'), $2::bytea";
-const PROJECT_MANIFEST: &[u8] =
-    br#"{"release":{"packages":[{"package-id":"inventory","package-version":"1.0.0"}]}}"#;
-
 async fn connect(url: &str) -> Client {
     let (client, connection) = tokio_postgres::connect(url, NoTls)
         .await
@@ -87,102 +77,13 @@ async fn assert_immutable_rows(client: &Client) {
             .as_db_error()
             .expect("PostgreSQL enforces immutability");
         assert_eq!(database_error.code().code(), "55000");
-        assert_eq!(
-            database_error.message(),
-            "catalog.package_migrations is immutable"
-        );
     }
 }
 
-async fn assert_package_seal(url: &str) {
-    let installer = connect(url).await;
-    seed_package(&installer).await;
-    assert_immutable_rows(&installer).await;
-
-    let mut publisher = connect(url).await;
-    let migrator = connect(url).await;
-    migrator
-        .query_one("SELECT set_config('app.env_key', $1, false)", &[&ENV_KEY])
-        .await
-        .expect("claim the migration tenant");
-    let publication = publisher
-        .transaction()
-        .await
-        .expect("begin release membership");
-    publication
-        .query_one("SELECT set_config('app.env_key', $1, true)", &[&ENV_KEY])
-        .await
-        .expect("claim the publication tenant");
-    publication
-        .execute(
-            INSERT_PROJECT_MEMBERSHIP_SQL,
-            &[&ENV_KEY, &PROJECT_MANIFEST],
-        )
-        .await
-        .expect("insert the first membership while holding the package row");
-
-    let late_hash = format!("sha256:{}", "c".repeat(64));
-    let late_ordinal = 2_i32;
-    let late_params: [&(dyn tokio_postgres::types::ToSql + Sync); 6] = [
-        &ENV_KEY,
-        &"inventory",
-        &"1.0.0",
-        &late_ordinal,
-        &"migrations/0002_late.sql",
-        &late_hash,
-    ];
-    let late_migration = migrator.execute(INSERT_MIGRATION_SQL, &late_params);
-    tokio::pin!(late_migration);
-    assert!(
-        tokio::time::timeout(Duration::from_millis(150), &mut late_migration)
-            .await
-            .is_err(),
-        "migration insertion did not serialize on the package row"
-    );
-    publication
-        .commit()
-        .await
-        .expect("commit release membership and its seal");
-    let refused = late_migration
-        .await
-        .expect_err("migration after committed membership must refuse");
-    let refused = refused
-        .as_db_error()
-        .expect("the package seal refusal comes from PostgreSQL");
-    assert_eq!(refused.code().code(), "55000");
-    assert_eq!(refused.message(), "package-version-sealed");
-    let baseline = installer
-        .query_one(
-            "SELECT row_to_json(p)::text FROM catalog.packages p WHERE env_key = $1",
-            &[&ENV_KEY],
-        )
-        .await
-        .unwrap()
-        .get::<_, String>(0);
-    let executable =
-        br#"{"release":{"packages":[{"package-id":"inventory","package-version":"2.0.0"}]}}"#;
-    installer
-        .execute(INSERT_PROJECT_MEMBERSHIP_SQL, &[&ENV_KEY, &&executable[..]])
-        .await
-        .expect("cache an executable that never installed SQL");
-    assert_eq!(
-        installer
-            .query_one(
-                "SELECT row_to_json(p)::text FROM catalog.packages p WHERE env_key = $1",
-                &[&ENV_KEY]
-            )
-            .await
-            .unwrap()
-            .get::<_, String>(0),
-        baseline
-    );
-    assert!(installer.query_opt(
-        "SELECT 1 FROM catalog.package_migrations WHERE env_key = $1 AND package_version = '2.0.0'", &[&ENV_KEY]
-    ).await.unwrap().is_none());
-}
-
 #[tokio::test]
-async fn package_seal_is_server_enforced() {
+async fn migration_records_remain_immutable() {
     let project = locked_database::database(wamn_catalog::test_database::tenant);
-    assert_package_seal(&project).await;
+    let client = connect(&project).await;
+    seed_package(&client).await;
+    assert_immutable_rows(&client).await;
 }

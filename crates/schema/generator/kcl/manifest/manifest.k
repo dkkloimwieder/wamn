@@ -43,7 +43,6 @@ type FieldRole = "actor"
 schema PackageIdentity:
     id: str
     version: str
-    predecessor_version?: str
 
 schema ClientPackage:
     name: str

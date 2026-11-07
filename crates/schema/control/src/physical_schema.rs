@@ -49,6 +49,7 @@ pub struct PhysicalSchema {
 
 impl PhysicalSchema {
     /// Hash each owner and SQL byte in execution order with length delimiters.
+    /// A match compares recipes, not the live database or SQL equivalence.
     pub fn fingerprint(&self) -> String {
         let mut hash = Sha256::new();
         for statement in &self.statements {
@@ -327,6 +328,77 @@ SELECT a.attname::text, \
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
+    #[test]
+    fn generated_sql_and_execution_owners_contribute_to_identity() {
+        let mut manifest = PackageManifest::from_slice(
+            br#"{
+            "package":{"id":"records","version":"1.0.0"},
+            "required_platform_policy_contract":{"id":"records_access","state":"satisfied"},
+            "models":{"item":{"schema":"records","table":"item","owner":"records",
+                "audit_log":{"columns":[],"retention":"unlimited"},
+                "operations":{"get":{"permission":"item.get","result":"one"}}}},
+            "connections":{},"components":{"records":{"connections":["postgres"]}}
+        }"#,
+        )
+        .unwrap();
+        let migrations = [MigrationSource {
+            relative_path: "migrations/0001_initial.sql".into(),
+            bytes: b"CREATE TABLE records.item (id int PRIMARY KEY, created_at timestamptz);"
+                .to_vec(),
+        }];
+        let mut physical = PhysicalSchema {
+            columns: BTreeMap::from([(
+                "item".into(),
+                vec![
+                    RelationColumn {
+                        name: "id".into(),
+                        primary_key: true,
+                        timestamptz: false,
+                    },
+                    RelationColumn {
+                        name: "created_at".into(),
+                        primary_key: false,
+                        timestamptz: true,
+                    },
+                ],
+            )]),
+            statements: Vec::new(),
+        };
+        physical.statements = render(&manifest, &migrations, &physical.columns).unwrap();
+        let original = physical.fingerprint();
+        // Retention changes the generated log trigger without authored DDL.
+        let audit_log = manifest
+            .models
+            .get_mut("item")
+            .unwrap()
+            .audit_log
+            .as_mut()
+            .unwrap();
+        audit_log.retention = "P30D".into();
+        physical.statements = render(&manifest, &migrations, &physical.columns).unwrap();
+        assert_ne!(physical.fingerprint(), original);
+        let generated = physical.fingerprint();
+        physical.statements.last_mut().unwrap().owner = ExecutionOwner::Platform;
+        assert_ne!(physical.fingerprint(), generated);
+
+        // A column change also changes the generated history function body.
+        let changed_owner = physical.fingerprint();
+        physical
+            .columns
+            .get_mut("item")
+            .unwrap()
+            .push(RelationColumn {
+                name: "note".into(),
+                primary_key: false,
+                timestamptz: false,
+            });
+        physical.statements = render(&manifest, &migrations, &physical.columns).unwrap();
+        assert_ne!(physical.fingerprint(), generated);
+        assert_ne!(physical.fingerprint(), changed_owner);
+    }
+
     #[test]
     fn generated_names_refuse_postgres_truncation() {
         let relation = "r".repeat(63 - "s__".len() - "_stamp".len());

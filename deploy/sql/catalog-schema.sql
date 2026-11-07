@@ -7,19 +7,19 @@ CREATE TABLE catalog.packages (
     env_key            text        NOT NULL CHECK (env_key <> ''),
     package_id         text        NOT NULL,
     package_version    text        NOT NULL,
-    predecessor_version text,
     registered_at      timestamptz NOT NULL DEFAULT now(),
-    -- Initialization provenance, independent of executable release selection.
+    -- Current SQL source, independent of executable release selection.
     -- NULL: wamn dev applied a working tree.
     artifact_digest    text,
+    baseline_fingerprint text NOT NULL
+        CHECK (baseline_fingerprint ~ '^sha256:[0-9a-f]{64}$'),
     physical_schema_fingerprint text NOT NULL
         CHECK (physical_schema_fingerprint ~ '^sha256:[0-9a-f]{64}$'),
     created_at         timestamptz NOT NULL,
     created_by         uuid        NOT NULL,
     updated_at         timestamptz NOT NULL,
     updated_by         uuid        NOT NULL,
-    CONSTRAINT packages_pkey PRIMARY KEY (env_key, package_id, package_version),
-    CONSTRAINT packages_baseline_key UNIQUE (env_key, package_id),
+    CONSTRAINT packages_pkey PRIMARY KEY (env_key, package_id),
     CONSTRAINT packages_package_id_check
         CHECK (package_id ~ '^[a-z][a-z0-9]*(_[a-z0-9]+)*$'),
     CONSTRAINT packages_package_version_check CHECK (
@@ -27,14 +27,6 @@ CREATE TABLE catalog.packages (
         AND package_version = btrim(package_version)
         AND strpos(package_version, '@') = 0
         AND strpos(package_version, '::') = 0
-    ),
-    CONSTRAINT packages_predecessor_version_check CHECK (
-        predecessor_version IS NULL OR (
-            predecessor_version <> ''
-            AND predecessor_version = btrim(predecessor_version)
-            AND strpos(predecessor_version, '@') = 0
-            AND strpos(predecessor_version, '::') = 0
-        )
     ),
     CONSTRAINT packages_artifact_digest_check
         CHECK (artifact_digest IS NULL OR artifact_digest ~ '^sha256:[0-9a-f]{64}$')
@@ -44,6 +36,29 @@ CREATE TRIGGER wamn_record_history_stamp
     BEFORE INSERT OR UPDATE ON catalog.packages
     FOR EACH ROW
     EXECUTE FUNCTION wamn_history.stamp_row('created_at', 'created_by', 'updated_at', 'updated_by');
+
+-- The database instance owns these records. Replacing it starts a new baseline.
+CREATE FUNCTION catalog.guard_package_schema()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+BEGIN
+    IF TG_OP = 'INSERT' THEN
+        NEW.baseline_fingerprint := NEW.physical_schema_fingerprint;
+    ELSIF ROW(NEW.env_key, NEW.package_id, NEW.baseline_fingerprint, NEW.registered_at)
+          IS DISTINCT FROM
+          ROW(OLD.env_key, OLD.package_id, OLD.baseline_fingerprint, OLD.registered_at) THEN
+        RAISE EXCEPTION USING ERRCODE = '55000', MESSAGE = 'package-baseline-immutable';
+    END IF;
+    RETURN NEW;
+END
+$$;
+CREATE TRIGGER packages_schema_guard
+    BEFORE INSERT OR UPDATE ON catalog.packages
+    FOR EACH ROW EXECUTE FUNCTION catalog.guard_package_schema();
+CREATE TRIGGER packages_delete_immutable
+    BEFORE DELETE ON catalog.packages
+    FOR EACH ROW EXECUTE FUNCTION catalog.reject_immutable_row_change();
 
 CREATE TABLE catalog.package_migrations (
     env_key         text        NOT NULL CHECK (env_key <> ''),
@@ -58,12 +73,12 @@ CREATE TABLE catalog.package_migrations (
     updated_at      timestamptz NOT NULL,
     updated_by      uuid        NOT NULL,
     CONSTRAINT package_migrations_pkey
-        PRIMARY KEY (env_key, package_id, package_version, ordinal),
+        PRIMARY KEY (env_key, package_id, ordinal),
     CONSTRAINT package_migrations_path_key
-        UNIQUE (env_key, package_id, package_version, relative_path),
+        UNIQUE (env_key, package_id, relative_path),
     CONSTRAINT package_migrations_package_fkey
-        FOREIGN KEY (env_key, package_id, package_version)
-        REFERENCES catalog.packages (env_key, package_id, package_version)
+        FOREIGN KEY (env_key, package_id)
+        REFERENCES catalog.packages (env_key, package_id)
         DEFERRABLE INITIALLY DEFERRED
 );
 
@@ -131,82 +146,6 @@ CREATE TRIGGER wamn_record_history_stamp
     BEFORE INSERT OR UPDATE ON catalog.releases
     FOR EACH ROW
     EXECUTE FUNCTION wamn_history.stamp_row('created_at', 'created_by', 'updated_at', 'updated_by');
-
--- Cache membership seals an installed coordinate but does not prove SQL ran. Both the
--- release writer and the migration table serialize on the package rows, so
--- whichever commits first determines whether one last migration precedes the
--- seal or is refused after it. There is no second seal flag.
--- Local-target exception: wamn.local_target_comment equal to the full database comment lifts it.
-CREATE FUNCTION catalog.lock_package_coordinate_for_release_membership()
-RETURNS trigger
-LANGUAGE plpgsql
-AS $$
-BEGIN
-    PERFORM 1
-      FROM catalog.packages AS package
-      JOIN jsonb_array_elements(
-               convert_from(NEW.canonical_bytes, 'UTF8')::jsonb #> '{release,packages}'
-           ) AS member(value)
-        ON package.package_id = member.value ->> 'package-id'
-       AND package.package_version = member.value ->> 'package-version'
-     WHERE package.env_key = NEW.env_key
-     FOR UPDATE OF package;
-    RETURN NEW;
-END
-$$;
-REVOKE ALL ON FUNCTION catalog.lock_package_coordinate_for_release_membership() FROM PUBLIC;
-
-CREATE TRIGGER releases_seal_coordinate
-    BEFORE INSERT ON catalog.releases
-    FOR EACH ROW
-    EXECUTE FUNCTION catalog.lock_package_coordinate_for_release_membership();
-
-CREATE FUNCTION catalog.reject_package_migration_after_release_membership()
-RETURNS trigger
-LANGUAGE plpgsql
-AS $$
-BEGIN
-    PERFORM 1
-      FROM catalog.packages
-     WHERE env_key = NEW.env_key
-       AND package_id = NEW.package_id
-       AND package_version = NEW.package_version
-     FOR UPDATE;
-
-    IF FOUND AND EXISTS (
-        SELECT 1
-          FROM catalog.releases AS release
-          CROSS JOIN LATERAL jsonb_array_elements(
-               convert_from(release.canonical_bytes, 'UTF8')::jsonb #> '{release,packages}'
-          ) AS member(value)
-         WHERE release.env_key = NEW.env_key
-           AND member.value ->> 'package-id' = NEW.package_id
-           AND member.value ->> 'package-version' = NEW.package_version
-    ) AND NOT EXISTS (
-        SELECT 1
-          FROM pg_catalog.pg_database
-         WHERE datname = pg_catalog.current_database()
-           AND pg_catalog.shobj_description(oid, 'pg_database')
-               = pg_catalog.current_setting('wamn.local_target_comment', true)
-    ) THEN
-        RAISE EXCEPTION USING
-            ERRCODE = '55000',
-            MESSAGE = 'package-version-sealed',
-            DETAIL = format(
-                'coordinate=%s@%s belongs to a cached release',
-                NEW.package_id, NEW.package_version
-            ),
-            HINT = 'additional SQL requires an explicit schema operation';
-    END IF;
-    RETURN NEW;
-END
-$$;
-REVOKE ALL ON FUNCTION catalog.reject_package_migration_after_release_membership() FROM PUBLIC;
-
-CREATE TRIGGER package_migrations_release_seal
-    BEFORE INSERT ON catalog.package_migrations
-    FOR EACH ROW
-    EXECUTE FUNCTION catalog.reject_package_migration_after_release_membership();
 
 -- Connection projections precede the catalog references to them.
 CREATE SCHEMA platform AUTHORIZATION CURRENT_USER;
@@ -427,7 +366,7 @@ DECLARE
     relation_name text;
 BEGIN
     FOREACH relation_name IN ARRAY ARRAY[
-        'packages', 'package_migrations', 'package_definition_owners',
+        'package_migrations', 'package_definition_owners',
         'releases',
         'connection_requirement',
         'wiring_tombstones'

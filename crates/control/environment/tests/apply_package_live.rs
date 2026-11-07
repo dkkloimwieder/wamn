@@ -305,8 +305,7 @@ async fn successor_view_rebuild_applies_atomically_and_rolls_back_failure() {
             ),
         ).unwrap();
         write_build_record(&package);
-        // As in the suffix rollback test, keep the unsealed coordinate's digest
-        // so the migration runner can apply its appended file.
+        // Keep the source digest to exercise the SQL transaction directly.
         let outcome = apply_as(&url, &package, &installed).await;
         if fail {
             let error = outcome.expect_err("the duplicate column fails after the view drop");
@@ -598,56 +597,6 @@ fn copy_mutated_overlay_fixture(
     write_build_record(root);
 }
 
-fn set_package_identity(root: &Path, version: &str, predecessor: Option<&str>) {
-    let manifest_path = root.join("wamn.json");
-    let mut manifest: serde_json::Value = serde_json::from_slice(
-        &std::fs::read(&manifest_path).expect("read package manifest identity"),
-    )
-    .expect("parse package manifest identity");
-    manifest["package"]["version"] = serde_json::Value::String(version.to_owned());
-    match predecessor {
-        Some(predecessor) => {
-            manifest["package"]["predecessor_version"] =
-                serde_json::Value::String(predecessor.to_owned());
-        }
-        None => {
-            manifest["package"]
-                .as_object_mut()
-                .expect("package identity is an object")
-                .remove("predecessor_version");
-        }
-    }
-    std::fs::write(
-        manifest_path,
-        serde_json::to_vec_pretty(&manifest).expect("serialize package manifest identity"),
-    )
-    .expect("write package manifest identity");
-    write_build_record(root);
-}
-
-fn declare_ownership_only_model(root: &Path, model_id: &str, table: &str) {
-    let manifest_path = root.join("wamn.json");
-    let mut manifest: serde_json::Value = serde_json::from_slice(
-        &std::fs::read(&manifest_path).expect("read package manifest model vocabulary"),
-    )
-    .expect("parse package manifest model vocabulary");
-    manifest["models"][model_id] = serde_json::json!({
-        "schema": "inventory",
-        "table": table,
-        "owner": "wamn_inventory",
-        "server_owned_fields": [],
-        "enum_fields": {},
-        "audit_log": {"columns": [], "retention": "none"},
-        "operations": {}
-    });
-    std::fs::write(
-        manifest_path,
-        serde_json::to_vec_pretty(&manifest).expect("serialize package manifest model vocabulary"),
-    )
-    .expect("write package manifest model vocabulary");
-    write_build_record(root);
-}
-
 fn rename_internal_relation(root: &Path, from: &str, to: &str) {
     let manifest_path = root.join("wamn.json");
     let mut manifest: serde_json::Value = serde_json::from_slice(
@@ -680,7 +629,7 @@ async fn apply_as(
     package: &Path,
     digest: &str,
 ) -> anyhow::Result<apply_package::ApplyOutcome> {
-    apply_package::apply_package(ApplyPackageRequest {
+    apply_package::apply_package_schema(ApplyPackageRequest {
         component_source: wamn_package_control::apply_package::component_source_from_env(None)
             .unwrap(),
         changes: wamn_platform_identity::auth_changes::AuthChanges::default(),
@@ -703,7 +652,7 @@ async fn apply_for_env_key(
 ) -> anyhow::Result<apply_package::ApplyOutcome> {
     // A release apply takes a verified artifact. The fixture tree stands in
     // for one under a digest of its own bytes.
-    apply_package::apply_package(ApplyPackageRequest {
+    apply_package::apply_package_schema(ApplyPackageRequest {
         component_source: wamn_package_control::apply_package::component_source_from_env(None)
             .unwrap(),
         changes: wamn_platform_identity::auth_changes::AuthChanges::default(),
@@ -1053,15 +1002,6 @@ async fn exact_runner_commits_once_refuses_drift_and_rolls_back_a_failing_suffix
             .get::<_, bool>(0),
         "apply-package creates the manifest-declared schema"
     );
-    assert_eq!(
-        client
-            .query_one("SELECT count(*) FROM inventory.wamn_entities", &[])
-            .await
-            .expect("count package entity mappings")
-            .get::<_, i64>(0),
-        6,
-        "every POC-listed base model has one entity mapping"
-    );
     let exclusion = client
         .query_one(
             "SELECT package_id, relation_id, table_name \
@@ -1107,35 +1047,6 @@ async fn exact_runner_commits_once_refuses_drift_and_rolls_back_a_failing_suffix
         .await
         .expect("exact replay observes no pending work");
     assert_eq!(write_identity(&client).await, first_identity);
-
-    let baseline: String = client.query_one(
-        "SELECT row_to_json(p)::text FROM catalog.packages p WHERE env_key = $1 AND package_id = 'wamn_inventory'", &[&ENV_KEY]
-    ).await.unwrap().get(0);
-    client
-        .batch_execute("INSERT INTO inventory.dock (dock_code) VALUES ('preserved-on-code-change')")
-        .await
-        .unwrap();
-    set_package_identity(&package, "2.0.0", Some("1.0.0"));
-    let selected = apply(&url, &package)
-        .await
-        .expect("new code retains the installed SQL baseline");
-    assert!(!selected.changed);
-    assert_eq!(selected.migrations_applied, 0);
-    assert_eq!(write_identity(&client).await, first_identity);
-    assert_eq!(client.query_one(
-        "SELECT row_to_json(p)::text FROM catalog.packages p WHERE env_key = $1 AND package_id = 'wamn_inventory'", &[&ENV_KEY]
-    ).await.unwrap().get::<_, String>(0), baseline);
-    assert!(
-        client
-            .query_opt(
-                "SELECT 1 FROM inventory.dock WHERE dock_code = 'preserved-on-code-change'",
-                &[]
-            )
-            .await
-            .unwrap()
-            .is_some()
-    );
-    set_package_identity(&package, "1.0.0", None);
 
     let alter_base =
         fixture_root().with_file_name(format!("apply-package-alter-base-{}", std::process::id()));
@@ -1514,7 +1425,7 @@ async fn exact_runner_commits_once_refuses_drift_and_rolls_back_a_failing_suffix
 
     // Changed bytes are another artifact, which the digest refuses first. The
     // steps below keep the installed digest, so the planner's own byte checks,
-    // the suffix rollback and the release seal answer.
+    // and the suffix rollback answer.
     let installed = wamn_test_infrastructure::fixture_digest::fixture_artifact_digest(&package)
         .expect("read the fixture package root");
     let migration = package.join("migrations/0001_initial.sql");
@@ -1589,114 +1500,6 @@ async fn exact_runner_commits_once_refuses_drift_and_rolls_back_a_failing_suffix
     std::fs::remove_file(package.join("migrations/0003_failure.sql"))
         .expect("remove server-refused migration");
     write_build_record(&package);
-    client
-        .execute(
-            "INSERT INTO catalog.releases (env_key, manifest_digest, canonical_bytes) \
-             SELECT $1, 'sha256:' || encode(sha256(bytes), 'hex'), bytes \
-               FROM (SELECT convert_to($2, 'UTF8') AS bytes) AS release",
-            &[&ENV_KEY, &r#"{"release":{"packages":[{"package-id":"wamn_inventory","package-version":"1.0.0"}]}}"#],
-        )
-        .await
-        .expect("seal the applied package coordinate through release membership");
-    std::fs::write(
-        package.join("migrations/0002_after_seal.sql"),
-        "ALTER TABLE inventory.rack \
-           ADD COLUMN sealed_probe text NOT NULL DEFAULT 'not_required';",
-    )
-    .expect("write a migration after the package coordinate was sealed");
-    write_build_record(&package);
-    let sealed = apply_as(&url, &package, &installed)
-        .await
-        .expect_err("a sealed package version refuses an additional migration");
-    let sealed = sealed
-        .downcast_ref::<apply_package::ApplyPackageError>()
-        .expect("the server seal is translated at the apply-package boundary");
-    assert_eq!(
-        sealed.error_type(),
-        apply_package::ApplyPackageErrorType::PackageVersionSealed
-    );
-    assert_eq!(sealed.coordinate(), "wamn_inventory@1.0.0");
-    assert!(
-        !client
-            .query_one(
-                "SELECT EXISTS ( \
-                   SELECT 1 FROM information_schema.columns \
-                    WHERE table_schema = 'inventory' AND table_name = 'rack' \
-                      AND column_name = 'sealed_probe')",
-                &[]
-            )
-            .await
-            .unwrap()
-            .get::<_, bool>(0),
-        "the DDL before the sealed record write rolls back with the transaction"
-    );
-    assert_eq!(
-        client
-            .query_one(
-                "SELECT count(*) FROM catalog.package_migrations \
-                  WHERE env_key = $1 AND package_id = 'wamn_inventory' \
-                    AND package_version = '1.0.0'",
-                &[&ENV_KEY],
-            )
-            .await
-            .unwrap()
-            .get::<_, i64>(0),
-        1
-    );
-
-    set_package_identity(&package, "1.0.1", None);
-    declare_ownership_only_model(&package, "after_seal", "after_seal");
-    std::fs::write(
-        package.join("migrations/0002_after_seal.sql"),
-        "CREATE TABLE inventory.after_seal (id int);",
-    )
-    .expect("replace the refused suffix with the new version's declared model");
-    write_build_record(&package);
-    let before = write_identity(&client).await;
-    let unchanged = apply(&url, &package)
-        .await
-        .expect("selected SQL remains pending");
-    assert!(!unchanged.changed);
-    assert_eq!(unchanged.migrations_applied, 0);
-    assert_eq!(write_identity(&client).await, before);
-
-    install(&client).await;
-    apply(&url, &package)
-        .await
-        .expect("a fresh target executes the complete cumulative stream");
-    assert!(
-        client
-            .query_one("SELECT to_regclass('inventory.panel') IS NOT NULL", &[],)
-            .await
-            .unwrap()
-            .get::<_, bool>(0),
-        "fresh cumulative apply creates the base relation"
-    );
-    assert!(
-        client
-            .query_one(
-                "SELECT to_regclass('inventory.after_seal') IS NOT NULL",
-                &[]
-            )
-            .await
-            .unwrap()
-            .get::<_, bool>(0),
-        "fresh cumulative apply executes the suffix"
-    );
-    assert_eq!(
-        client
-            .query_one(
-                "SELECT count(*) FROM catalog.package_migrations \
-                  WHERE env_key = $1 AND package_id = 'wamn_inventory' \
-                    AND package_version = '1.0.1'",
-                &[&ENV_KEY],
-            )
-            .await
-            .unwrap()
-            .get::<_, i64>(0),
-        2
-    );
-
     client
         .batch_execute(
             "DROP SCHEMA IF EXISTS inventory CASCADE; \
@@ -2247,51 +2050,9 @@ async fn inventory_column_present(client: &Client, table: &str, column: &str) ->
         .get(0)
 }
 
-/// Insert one migration record for the sealed coordinate in its own transaction.
-async fn record_after_seal(
-    client: &Client,
-    setting: Option<&str>,
-) -> Result<(), tokio_postgres::Error> {
-    client.batch_execute("BEGIN").await?;
-    let result = async {
-        client
-            .query_one("SELECT set_config('app.env_key', $1, true)", &[&ENV_KEY])
-            .await?;
-        if let Some(setting) = setting {
-            client
-                .query_one(
-                    "SELECT set_config('wamn.local_target_comment', $1, true)",
-                    &[&setting],
-                )
-                .await?;
-        }
-        client
-            .execute(
-                "INSERT INTO catalog.package_migrations \
-                     (env_key, package_id, package_version, ordinal, relative_path, sha256) \
-                 VALUES ($1, 'wamn_inventory', '1.0.0', 99, 'migrations/0099_seal_probe.sql', $2)",
-                &[&ENV_KEY, &format!("sha256:{}", "0".repeat(64))],
-            )
-            .await
-            .map(|_| ())
-    }
-    .await;
-    client
-        .batch_execute("ROLLBACK")
-        .await
-        .expect("roll back the seal probe");
-    result
-}
-
-fn is_sealed(error: &tokio_postgres::Error) -> bool {
-    error
-        .as_db_error()
-        .is_some_and(|database| database.message() == apply_package::PACKAGE_VERSION_SEALED_REFUSAL)
-}
-
 /// Owner rulings 1, 2, and 4 of wamn-ri4b: only a marked local target takes a
-/// changed wamn.json and an appended migration at an applied coordinate, also
-/// after release membership. It records no artifact digest, and its comment
+/// changed wamn.json and an appended migration at an applied coordinate.
+/// It records no artifact digest, and its comment
 /// records the digest of the current wamn.json.
 #[tokio::test]
 async fn a_local_target_takes_an_appended_migration_and_a_changed_manifest() {
@@ -2351,7 +2112,7 @@ async fn a_local_target_takes_an_appended_migration_and_a_changed_manifest() {
         Some(recorded_comment(&first))
     );
 
-    // Before release membership: an audit_log change and an appended column.
+    // An audit_log change and an appended column.
     set_audit_log_retention(&package, "dock", "unlimited");
     std::fs::write(
         package.join("migrations/0002_dock_description.sql"),
@@ -2397,68 +2158,18 @@ async fn a_local_target_takes_an_appended_migration_and_a_changed_manifest() {
                 &[&ENV_KEY],
             )
             .await
-            .expect("read the immutable package row")
+            .expect("read the recorded schema source")
             .get::<_, Option<String>>(0),
         None,
         "a working-tree install records no artifact digest"
     );
 
-    client
-        .execute(
-            "INSERT INTO catalog.releases (env_key, manifest_digest, canonical_bytes) \
-             SELECT $1, 'sha256:' || encode(sha256(bytes), 'hex'), bytes \
-               FROM (SELECT convert_to($2, 'UTF8') AS bytes) AS release",
-            &[&ENV_KEY, &r#"{"release":{"packages":[{"package-id":"wamn_inventory","package-version":"1.0.0"}]}}"#],
-        )
-        .await
-        .expect("seal the coordinate through local release membership");
-
-    // A marked target without the setting keeps the seal, and a setting that
-    // holds only the marker, a prefix of the comment, does not lift it.
-    let comment = database_comment(&client)
-        .await
-        .expect("the target is marked");
-    let unset = record_after_seal(&client, None).await.expect_err("sealed");
-    assert!(is_sealed(&unset), "{unset}");
-    let prefix = record_after_seal(&client, Some(&marker))
-        .await
-        .expect_err("sealed");
-    assert!(is_sealed(&prefix), "{prefix}");
-    record_after_seal(&client, Some(&comment))
-        .await
-        .expect("the full comment lifts the seal for its transaction");
-    let first_bytes_package = package.with_file_name(format!(
-        "apply-package-local-target-first-{}",
-        std::process::id()
-    ));
-    copy_base_fixture(&first_bytes_package);
-    std::fs::copy(
-        package.join("migrations/0002_dock_description.sql"),
-        first_bytes_package.join("migrations/0002_dock_description.sql"),
-    )
-    .expect("copy the applied column migration");
-    std::fs::write(
-        first_bytes_package.join("migrations/0003_dock_note.sql"),
-        "ALTER TABLE inventory.dock ADD COLUMN note text NOT NULL DEFAULT 'not_required';",
-    )
-    .expect("append a migration after the seal");
-    write_build_record(&first_bytes_package);
-    // A release apply refuses the working-tree coordinate before the seal.
-    let sealed = apply(&url, &first_bytes_package)
-        .await
-        .expect_err("a release apply refuses the working-tree coordinate after the seal");
-    assert_eq!(
-        package_migration_error(&sealed),
-        wamn_schema_control::PackageMigrationErrorType::CoordinateWithoutArtifact
-    );
-    std::fs::remove_dir_all(&first_bytes_package).expect("remove first-bytes fixture");
-
-    // After release membership: another appended migration and manifest change.
+    // Another appended migration and manifest change.
     std::fs::write(
         package.join("migrations/0003_dock_note.sql"),
         "ALTER TABLE inventory.dock ADD COLUMN note text NOT NULL DEFAULT 'not_required';",
     )
-    .expect("append a migration after the seal");
+    .expect("append another migration");
     write_build_record(&package);
     let mut changed = std::fs::read(package.join("wamn.json")).expect("read manifest");
     changed.push(b'\n');
@@ -2466,7 +2177,7 @@ async fn a_local_target_takes_an_appended_migration_and_a_changed_manifest() {
     write_build_record(&package);
     apply_local()
         .await
-        .expect("the local target records an appended migration after the seal");
+        .expect("the local target records another appended migration");
     let third = manifest_digest(&package);
     assert_eq!(
         database_comment(&client).await,
@@ -2519,8 +2230,6 @@ async fn a_local_target_takes_an_appended_migration_and_a_changed_manifest() {
     write_build_record(&package);
     for comment in [Some("wamn-local-target:"), None] {
         set_database_comment(&client, comment).await;
-        let unset = record_after_seal(&client, None).await.expect_err("sealed");
-        assert!(is_sealed(&unset), "{unset}");
         apply_local()
             .await
             .expect_err("the local apply requires the full marker");

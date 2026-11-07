@@ -8,7 +8,7 @@ _errors_after_input = ["retry", "timeout", "permission_denied", "internal_error"
 _claim_errors = ["idempotency_conflict", *_errors_after_input]
 
 manifest.Package {
-    package = {id = "client_acme_receiving", version = "4.2.4", predecessor_version = "4.2.3"}
+    package = {id = "client_acme_receiving", version = "4.2.4"}
     # The pin is the contract with the base: its version and the digest of its
     # built component. Nothing here imports the base's wamn.k.
     base_dependencies = {

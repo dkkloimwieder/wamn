@@ -1,17 +1,18 @@
-//! Install one package baseline from immutable files.
+//! Initialize or explicitly advance package SQL from verified files.
 
 pub(super) mod plan;
+use package_version::record_package_schema;
 use plan::prepare_directory;
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context as _, ensure};
-use tokio_postgres::{NoTls, Transaction, error::SqlState};
+use tokio_postgres::{NoTls, Transaction};
 use wamn_catalog::manifest::PackageManifest;
 use wamn_control_provision::{PlatformComponent, bind_platform_principal_sql};
 use wamn_schema_control::{
-    AppliedPackage, PackageDirectory, RecordedMigration, SqlStatement, plan_package_migrations,
+    PackageDirectory, RecordedMigration, SqlStatement, plan_package_migrations,
 };
 
 use definition_ownership::{
@@ -38,14 +39,13 @@ pub use error::{
     APPLY_PACKAGE_REFUSAL, ApplyPackageError, ApplyPackageErrorType,
     BASE_DEFINITION_MUTATION_REFUSAL, DEFINITION_NOT_FOUND_REFUSAL,
     DEFINITION_OWNER_CONFLICT_REFUSAL, DEFINITION_OWNER_DECLARATION_MISSING_REFUSAL,
-    PACKAGE_ARTIFACT_REQUIRED_REFUSAL, PACKAGE_VERSION_SEALED_REFUSAL,
-    RELATION_NOT_CLIENT_EXTENSIBLE_REFUSAL,
+    PACKAGE_ARTIFACT_REQUIRED_REFUSAL, RELATION_NOT_CLIENT_EXTENSIBLE_REFUSAL,
 };
 pub use local_target::{applied_migration_drift, local_target_recreate_reason};
 pub use local_target::{local_target_changes, manifest_digest, record_manifest};
 pub use package_version::{
     LOCK_PACKAGE_SQL, PackageRoot, installed_environment_fingerprint, load_applied_package,
-    read_package_directory, read_package_root, register_package,
+    read_package_directory, read_package_root,
 };
 
 pub const LOCK_SQL: &str = "SELECT pg_advisory_xact_lock(hashtextextended(\
@@ -157,9 +157,14 @@ pub(crate) fn prepare_package(root: &PackageRoot) -> anyhow::Result<PreparedPack
     prepare_directory(root, directory)
 }
 
-/// Apply the immutable pending suffix from one package directory.
+/// Initialize an absent package. Existing packages retain their installed SQL.
 pub async fn apply_package(request: ApplyPackageRequest) -> anyhow::Result<ApplyOutcome> {
-    apply_request(request, None).await
+    apply_request(request, None, false).await
+}
+
+/// Explicitly advance package SQL without selecting or caching executable releases.
+pub async fn apply_package_schema(request: ApplyPackageRequest) -> anyhow::Result<ApplyOutcome> {
+    apply_request(request, None, true).await
 }
 
 /// Apply one package directory to a local target that wamn dev created.
@@ -167,7 +172,7 @@ pub async fn apply_package(request: ApplyPackageRequest) -> anyhow::Result<Apply
 /// The target also takes a changed tree at an applied coordinate, and a
 /// migration appended after release membership, while every applied migration
 /// stays byte-identical. The target records no artifact digest: its
-/// `catalog.packages` row holds NULL, and the database comment records the
+/// schema source holds NULL, and the database comment records the
 /// digest of the current `wamn.json`.
 pub async fn apply_local_package(
     request: ApplyPackageRequest,
@@ -179,12 +184,13 @@ pub async fn apply_local_package(
         environment,
     )
     .await?;
-    apply_request(request, Some(environment)).await
+    apply_request(request, Some(environment), true).await
 }
 
 async fn apply_request(
     request: ApplyPackageRequest,
     local_environment: Option<&str>,
+    advance_schema: bool,
 ) -> anyhow::Result<ApplyOutcome> {
     ensure!(
         ![&request.org, &request.project, &request.environment]
@@ -207,7 +213,14 @@ async fn apply_request(
         .await
         .context("connect to project environment")?;
     let connection_task = tokio::spawn(connection);
-    let result = apply(&mut client, &request.env_key(), &package, local_environment).await;
+    let result = apply(
+        &mut client,
+        &request.env_key(),
+        &package,
+        local_environment,
+        advance_schema,
+    )
+    .await;
     if let Ok(outcome) = &result {
         request.changes.publish(outcome.drops.clone()).await;
     }
@@ -228,6 +241,7 @@ async fn apply(
     env_key: &str,
     package: &PreparedPackage,
     local_environment: Option<&str>,
+    advance_schema: bool,
 ) -> anyhow::Result<ApplyOutcome> {
     let presented = plan_package_migrations(&package.directory, None)?;
     let tx = client.transaction().await.context("begin package apply")?;
@@ -246,7 +260,7 @@ async fn apply(
     )
     .await
     .context("lock package family")?;
-    let outcome = apply_prepared(&tx, env_key, package, local_environment).await?;
+    let outcome = apply_prepared(&tx, env_key, package, local_environment, advance_schema).await?;
     tx.commit().await.context("commit whole package suffix")?;
     Ok(outcome)
 }
@@ -256,6 +270,7 @@ async fn apply_prepared(
     env_key: &str,
     package: &PreparedPackage,
     local_environment: Option<&str>,
+    advance_schema: bool,
 ) -> anyhow::Result<ApplyOutcome> {
     let package_root = &package.root;
     let directory = &package.directory;
@@ -271,7 +286,10 @@ async fn apply_prepared(
     let coordinate_label = format!("{package_id}@{package_version}");
     let coordinate_text = coordinate_label.as_str();
     let mut local_comment = match local_environment {
-        Some(environment) => Some(local_target::lift_release_seal(tx, env_key, environment).await?),
+        Some(environment) => Some(
+            wamn_runtime::local_application::read_local_target_comment(tx, env_key, environment)
+                .await?,
+        ),
         None => None,
     };
 
@@ -283,34 +301,19 @@ async fn apply_prepared(
         Some(
             directory
                 .artifact_digest
-                .clone()
+                .as_deref()
                 .ok_or_else(|| ApplyPackageError::artifact_required(coordinate_text))?,
         )
     };
     let applied = load_applied_package(tx, env_key, &package_id).await?;
-    let plan = if let Some(applied) = applied.as_ref() {
-        let compared = if local_comment.is_some() {
-            // A local target takes a changed tree at the same coordinate.
-            // The planner still refuses an edited, removed, or reordered
-            // applied migration.
-            plan_package_migrations(
-                directory,
-                Some(&AppliedPackage {
-                    artifact_digest: presented.artifact_digest.clone(),
-                    ..applied.clone()
-                }),
-            )
-        } else {
-            plan_package_migrations(directory, Some(applied))
-        };
-        compared.context("compare package bytes with immutable records")?
-    } else {
-        presented
-    };
-    if applied
-        .as_ref()
-        .is_some_and(|installed| installed.coordinate != plan.coordinate)
-    {
+    // Executable selection, reapply, and rollback never advance SQL, even if
+    // the selected artifact carries older or edited migration inputs.
+    if !advance_schema && let Some(installed) = &applied {
+        wamn_schema_control::validate_package_schema_source(
+            &presented.coordinate,
+            artifact_digest,
+            installed,
+        )?;
         return Ok(ApplyOutcome {
             package_id,
             package_version,
@@ -319,14 +322,19 @@ async fn apply_prepared(
             drops: wamn_platform_identity::auth_changes::AuthDrops::default(),
         });
     }
-    let requirements_written = crate::connection_requirement::install(
-        tx,
-        env_key,
-        package_root,
-        manifest,
-        package.component_source.as_ref(),
-    )
-    .await?;
+    let plan = plan_package_migrations(directory, applied.as_ref())?;
+    let requirements_written = if applied.is_none() {
+        crate::connection_requirement::install(
+            tx,
+            env_key,
+            package_root,
+            manifest,
+            package.component_source.as_ref(),
+        )
+        .await?
+    } else {
+        0
+    };
     let applied_count = plan.pending.len();
     let migration_changed = !plan.is_noop();
     let pending_paths = plan
@@ -376,7 +384,7 @@ async fn apply_prepared(
             roles::execute_migration(tx, manifest, statement).await?;
         } else {
             assert_host_role(tx).await?;
-            execute(tx, statement, coordinate_text).await?;
+            execute(tx, statement).await?;
         }
     }
     assert_host_role(tx).await?;
@@ -392,31 +400,23 @@ async fn apply_prepared(
     let history_changed = create_history_tables(tx, manifest).await?;
     reconcile_entity_maps(tx, &plan, manifest).await?;
     let triggers_changed = reconcile_record_history_triggers(tx, manifest).await?;
-    let initialized_fingerprint;
-    let physical_schema_fingerprint = if let Some(installed) = &applied {
-        installed.physical_schema_fingerprint.as_str()
-    } else {
-        initialized_fingerprint = installed_physical_fingerprint(tx, directory, manifest).await?;
-        &initialized_fingerprint
-    };
-    // catalog.packages is immutable, so a local target keeps the row it first
-    // recorded there and records the current manifest in its comment.
-    let registered_artifact_digest = match &applied {
-        Some(applied) if local_comment.is_some() => applied.artifact_digest.as_deref(),
-        _ => artifact_digest.as_deref(),
-    };
-    let package_inserted = register_package(
+    let physical_schema_fingerprint =
+        installed_physical_fingerprint(tx, directory, manifest).await?;
+    let schema_recorded = record_package_schema(
         tx,
         env_key,
         &plan.coordinate,
-        registered_artifact_digest,
-        plan.predecessor_version.as_deref(),
-        physical_schema_fingerprint,
+        artifact_digest,
+        &physical_schema_fingerprint,
     )
     .await
-    .context("record the completed package baseline")?;
+    .context("record the completed package schema")?;
     let mut drops = wamn_platform_identity::auth_changes::AuthDrops::default();
-    let admin_role_changed = ensure_admin_role(tx, env_key, &mut drops).await?;
+    let admin_role_changed = if applied.is_none() {
+        ensure_admin_role(tx, env_key, &mut drops).await?
+    } else {
+        false
+    };
     let comment_changed = match local_comment.as_mut() {
         Some(comment) => {
             local_target::record_manifest(
@@ -435,7 +435,7 @@ async fn apply_prepared(
         package_version,
         migrations_applied: applied_count,
         changed: requirements_written != 0
-            || package_inserted
+            || schema_recorded
             || migration_changed
             || ownership_changed
             || history_changed
@@ -560,39 +560,12 @@ async fn ensure_model_schemas(
     Ok(())
 }
 
-async fn execute(
-    tx: &Transaction<'_>,
-    statement: &SqlStatement,
-    coordinate: &str,
-) -> anyhow::Result<()> {
+async fn execute(tx: &Transaction<'_>, statement: &SqlStatement) -> anyhow::Result<()> {
     let result = if statement.params.is_empty() {
         tx.batch_execute(&statement.sql).await
     } else {
         let params = crate::sql_params::as_postgres(&statement.params);
         tx.execute(&statement.sql, &params).await.map(|_| ())
     };
-    match result {
-        Ok(()) => Ok(()),
-        Err(source) if is_package_version_sealed(&source) => Err(ApplyPackageError {
-            type_: ApplyPackageErrorType::PackageVersionSealed,
-            coordinate: coordinate.to_owned(),
-            path: None,
-            schema: None,
-            relation: None,
-            definition_type: None,
-            definition: None,
-            owner_package: None,
-            detail: "already belongs to a cached release; additional SQL requires an explicit schema operation".into(),
-            source: Some(Box::new(source)),
-        }
-        .into()),
-        Err(source) => Err(source).with_context(|| format!("apply {}", statement.summary)),
-    }
-}
-
-fn is_package_version_sealed(error: &tokio_postgres::Error) -> bool {
-    error.as_db_error().is_some_and(|database| {
-        database.code() == &SqlState::OBJECT_NOT_IN_PREREQUISITE_STATE
-            && database.message() == PACKAGE_VERSION_SEALED_REFUSAL
-    })
+    result.with_context(|| format!("apply {}", statement.summary))
 }

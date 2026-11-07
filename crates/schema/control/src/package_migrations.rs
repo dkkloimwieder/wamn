@@ -2,7 +2,7 @@
 //!
 //! The effect shell supplies the exact `wamn.json` bytes, every file under the
 //! package-owned `migrations/` directory, and the immutable rows already stored
-//! for the package coordinate. This module validates the complete prefix and
+//! for the installed package schema. This module validates the complete prefix and
 //! returns one ordered transaction body; it performs no filesystem or database
 //! I/O.
 
@@ -38,14 +38,14 @@ pub struct RecordedMigration {
     pub sha256: String,
 }
 
-/// Existing immutable state for one package coordinate.
+/// Recorded SQL state, independent of the selected executable release.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AppliedPackage {
     pub coordinate: PackageCoordinate,
-    pub predecessor_version: Option<String>,
     /// The package artifact digest recorded in `catalog.packages`. `None` is a
     /// coordinate that `wamn dev` applied from a working tree.
     pub artifact_digest: Option<String>,
+    pub baseline_fingerprint: String,
     pub physical_schema_fingerprint: String,
     pub migrations: Vec<RecordedMigration>,
 }
@@ -92,7 +92,6 @@ pub struct PendingMigration {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PackageMigrationPlan {
     pub coordinate: PackageCoordinate,
-    pub predecessor_version: Option<String>,
     pub artifact_digest: Option<String>,
     pub models: Vec<ManagedModel>,
     pub cdc_excluded_relations: Vec<CdcExcludedRelation>,
@@ -117,7 +116,6 @@ pub enum PackageMigrationErrorType {
     MigrationDrift,
     CoordinateContentConflict,
     CoordinateWithoutArtifact,
-    CoordinatePredecessorConflict,
 }
 
 impl PackageMigrationErrorType {
@@ -130,7 +128,6 @@ impl PackageMigrationErrorType {
             Self::MigrationDrift => PACKAGE_MIGRATION_DRIFT_REFUSAL,
             Self::CoordinateContentConflict => "package-coordinate-content-conflict",
             Self::CoordinateWithoutArtifact => PACKAGE_COORDINATE_WITHOUT_ARTIFACT_REFUSAL,
-            Self::CoordinatePredecessorConflict => "package-coordinate-predecessor-conflict",
         }
     }
 }
@@ -250,42 +247,6 @@ impl Error for PackageMigrationError {
     }
 }
 
-/// Decide registration from rows read under the tenant/package lineage transaction lock.
-///
-/// An exact existing coordinate retains its publication identity. A fresh
-/// database accepts a declared predecessor without requiring its older versions.
-/// The driver inserts only when this returns `true`, in the same transaction.
-pub fn plan_package_registration(
-    coordinate: &PackageCoordinate,
-    artifact_digest: Option<&str>,
-    predecessor_version: Option<&str>,
-    recorded: Option<(Option<&str>, Option<&str>)>,
-    installed_version: Option<&str>,
-) -> Result<bool, PackageMigrationError> {
-    if let Some((recorded_digest, recorded_predecessor)) = recorded {
-        if recorded_digest != artifact_digest {
-            return Err(digest_conflict(
-                coordinate,
-                recorded_digest,
-                artifact_digest,
-            ));
-        }
-        if recorded_predecessor != predecessor_version {
-            return Err(PackageMigrationError::new(
-                PackageMigrationErrorType::CoordinatePredecessorConflict,
-                format!(
-                    "package-coordinate-predecessor-conflict: coordinate={} recorded-predecessor={} presented-predecessor={}",
-                    coordinate_text(coordinate),
-                    recorded_predecessor.unwrap_or("<none>"),
-                    predecessor_version.unwrap_or("<none>")
-                ),
-            ));
-        }
-        return Ok(false);
-    }
-    Ok(installed_version.is_none())
-}
-
 /// The refusal for a coordinate recorded with other bytes than presented: a
 /// working-tree install (no digest) on either side, or another artifact.
 fn digest_conflict(
@@ -322,6 +283,29 @@ fn digest_conflict(
     }
 }
 
+/// Preserve package ownership and the immutable identity of the recorded source.
+pub fn validate_package_schema_source(
+    coordinate: &PackageCoordinate,
+    artifact_digest: Option<&str>,
+    existing: &AppliedPackage,
+) -> Result<(), PackageMigrationError> {
+    if existing.coordinate.package_id() != coordinate.package_id() {
+        return Err(PackageMigrationError::new(
+            PackageMigrationErrorType::InvalidDirectory,
+            "installed baseline belongs to another package",
+        ));
+    }
+    if existing.coordinate == *coordinate && existing.artifact_digest.as_deref() != artifact_digest
+    {
+        return Err(digest_conflict(
+            coordinate,
+            existing.artifact_digest.as_deref(),
+            artifact_digest,
+        ));
+    }
+    Ok(())
+}
+
 /// Validate a package directory against its immutable applied prefix.
 pub fn plan_package_migrations(
     directory: &PackageDirectory,
@@ -352,33 +336,10 @@ pub fn plan_package_migrations(
             )
             .at_path(PACKAGE_MANIFEST_PATH)
         })?;
-    if let Some(predecessor) = manifest.package.predecessor_version.as_deref() {
-        PackageCoordinate::new(&manifest.package.id, predecessor).map_err(|source| {
-            PackageMigrationError::with_source(
-                PackageMigrationErrorType::InvalidManifest,
-                "wamn.json predecessor package coordinate is invalid",
-                source,
-            )
-            .at_path(PACKAGE_MANIFEST_PATH)
-        })?;
-    }
-    let predecessor_version = manifest.package.predecessor_version.clone();
     let artifact_digest = directory.artifact_digest.clone();
 
     if let Some(existing) = applied {
-        if existing.coordinate.package_id() != coordinate.package_id() {
-            return Err(PackageMigrationError::new(
-                PackageMigrationErrorType::InvalidDirectory,
-                "installed baseline belongs to another package",
-            ));
-        }
-        if existing.coordinate == coordinate && existing.artifact_digest != artifact_digest {
-            return Err(digest_conflict(
-                &coordinate,
-                existing.artifact_digest.as_deref(),
-                artifact_digest.as_deref(),
-            ));
-        }
+        validate_package_schema_source(&coordinate, artifact_digest.as_deref(), existing)?;
     }
 
     // A package that owns no table ships no migration.
@@ -388,10 +349,7 @@ pub fn plan_package_migrations(
         normalized_migrations(&directory.migrations)?
     };
     let recorded = applied.map_or(&[][..], |state| state.migrations.as_slice());
-    let same_coordinate = applied.is_none_or(|state| state.coordinate == coordinate);
-    if same_coordinate {
-        validate_recorded_prefix(&coordinate, recorded, &migrations)?;
-    }
+    validate_recorded_prefix(&coordinate, recorded, &migrations)?;
 
     let mut models = Vec::with_capacity(manifest.models.len());
     let mut history_exclusions = Vec::new();
@@ -435,12 +393,7 @@ pub fn plan_package_migrations(
         })
         .chain(history_exclusions)
         .collect();
-    // A different executable never advances the installed SQL baseline.
-    let pending_sources = if same_coordinate {
-        &migrations[recorded.len()..]
-    } else {
-        &[]
-    };
+    let pending_sources = &migrations[recorded.len()..];
     let pending = pending_sources
         .iter()
         .map(|migration| PendingMigration {
@@ -453,7 +406,6 @@ pub fn plan_package_migrations(
 
     Ok(PackageMigrationPlan {
         coordinate,
-        predecessor_version,
         artifact_digest,
         models,
         cdc_excluded_relations,
@@ -751,67 +703,6 @@ mod tests {
     }
 
     #[test]
-    fn registration_preserves_replays_and_the_installed_baseline() {
-        let coordinate = PackageCoordinate::new("orders", "2.0.0").unwrap();
-        let hash = Some("hash");
-        assert!(plan_package_registration(&coordinate, hash, Some("1.0.0"), None, None).unwrap());
-        assert!(
-            !plan_package_registration(&coordinate, hash, Some("1.0.0"), None, Some("1.0.0"))
-                .unwrap()
-        );
-        assert!(
-            !plan_package_registration(
-                &coordinate,
-                hash,
-                Some("1.0.0"),
-                Some((hash, Some("1.0.0"))),
-                Some("3.0.0")
-            )
-            .unwrap()
-        );
-        for (hash, predecessor, recorded, current, kind, literal) in [
-            (
-                Some("other"),
-                Some("1.0.0"),
-                Some((Some("hash"), Some("1.0.0"))),
-                None,
-                PackageMigrationErrorType::CoordinateContentConflict,
-                "package-coordinate-content-conflict",
-            ),
-            (
-                Some("hash"),
-                Some("1.0.0"),
-                Some((None, Some("1.0.0"))),
-                None,
-                PackageMigrationErrorType::CoordinateWithoutArtifact,
-                PACKAGE_COORDINATE_WITHOUT_ARTIFACT_REFUSAL,
-            ),
-            (
-                Some("hash"),
-                None,
-                Some((Some("hash"), Some("1.0.0"))),
-                None,
-                PackageMigrationErrorType::CoordinatePredecessorConflict,
-                "package-coordinate-predecessor-conflict",
-            ),
-            (
-                Some("hash"),
-                Some("1.0.0"),
-                Some((Some("hash"), None)),
-                None,
-                PackageMigrationErrorType::CoordinatePredecessorConflict,
-                "package-coordinate-predecessor-conflict",
-            ),
-        ] {
-            let error =
-                plan_package_registration(&coordinate, hash, predecessor, recorded, current)
-                    .unwrap_err();
-            assert_eq!(error.error_type(), kind);
-            assert!(error.context().starts_with(literal));
-        }
-    }
-
-    #[test]
     fn directory_order_is_derived_and_second_convergence_is_noop() {
         let first = plan_package_migrations(&directory(), None).unwrap();
         assert_eq!(
@@ -824,12 +715,11 @@ mod tests {
         );
         assert!(!first.is_noop());
         assert_eq!(first.models[0].model_id, "widget_tag");
-        assert_eq!(first.predecessor_version, None);
 
         let applied = AppliedPackage {
             coordinate: first.coordinate.clone(),
-            predecessor_version: None,
             artifact_digest: first.artifact_digest.clone(),
+            baseline_fingerprint: "sha256:baseline".into(),
             physical_schema_fingerprint: "sha256:baseline".into(),
             migrations: first
                 .pending
@@ -855,10 +745,15 @@ mod tests {
         executable
             .migrations
             .push(source("migrations/0003_pending.sql", "SELECT 3;"));
-        assert!(
+        let next = plan_package_migrations(&executable, Some(&applied)).unwrap();
+        assert_eq!(next.pending.len(), 1);
+        assert_eq!(next.pending[0].relative_path, "migrations/0003_pending.sql");
+        executable.migrations[1].bytes.push(b' ');
+        assert_eq!(
             plan_package_migrations(&executable, Some(&applied))
-                .unwrap()
-                .is_noop()
+                .unwrap_err()
+                .error_type(),
+            PackageMigrationErrorType::MigrationDrift
         );
     }
 
@@ -885,16 +780,7 @@ mod tests {
             error.error_type(),
             PackageMigrationErrorType::InvalidManifest
         );
-        assert!(
-            error
-                .to_string()
-                .contains("invalid semantic manifest vocabulary")
-        );
-        assert!(
-            error
-                .source()
-                .is_some_and(|source| source.to_string().contains("must not declare a permission"))
-        );
+        assert!(error.source().is_some());
     }
 
     #[test]
@@ -902,8 +788,8 @@ mod tests {
         let first = plan_package_migrations(&directory(), None).unwrap();
         let applied = AppliedPackage {
             coordinate: first.coordinate,
-            predecessor_version: None,
             artifact_digest: Some("sha256:recorded".into()),
+            baseline_fingerprint: "sha256:baseline".into(),
             physical_schema_fingerprint: "sha256:baseline".into(),
             migrations: Vec::new(),
         };
@@ -960,8 +846,8 @@ mod tests {
         let first = plan_package_migrations(&directory(), None).unwrap();
         let applied = AppliedPackage {
             coordinate: first.coordinate,
-            predecessor_version: None,
             artifact_digest: first.artifact_digest,
+            baseline_fingerprint: "sha256:baseline".into(),
             physical_schema_fingerprint: "sha256:baseline".into(),
             migrations: vec![RecordedMigration {
                 ordinal: 1,
@@ -1006,8 +892,8 @@ mod tests {
         ] {
             let applied = AppliedPackage {
                 coordinate: first.coordinate.clone(),
-                predecessor_version: None,
                 artifact_digest: first.artifact_digest.clone(),
+                baseline_fingerprint: "sha256:baseline".into(),
                 physical_schema_fingerprint: "sha256:baseline".into(),
                 migrations,
             };

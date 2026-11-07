@@ -527,7 +527,6 @@ fn operation_grant() -> anyhow::Result<String> {
     let package = PackageIdentity {
         id: PACKAGE_ID.to_owned(),
         version: PACKAGE_VERSION.to_owned(),
-        predecessor_version: None,
     };
     let sealed = canonical_operation_identity(&package, OPERATION)
         .context("derive the purchase-order get grant")?;

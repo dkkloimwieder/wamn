@@ -664,25 +664,6 @@ impl PackageManifest {
                 source,
             )
         })?;
-        if manifest
-            .package
-            .predecessor_version
-            .as_deref()
-            .is_some_and(str::is_empty)
-        {
-            return Err(ManifestError::new(
-                ManifestErrorType::InvalidManifest,
-                "package predecessor version must not be empty",
-            ));
-        }
-        if manifest.package.predecessor_version.as_deref()
-            == Some(manifest.package.version.as_str())
-        {
-            return Err(ManifestError::new(
-                ManifestErrorType::InvalidManifest,
-                "package predecessor version must differ from the package version",
-            ));
-        }
         for (name, connection) in &manifest.connections {
             if !valid_connection_name(name) {
                 return Err(ManifestError::new(
@@ -2231,7 +2212,6 @@ pub fn resolve_operation_reference(
     let package = PackageIdentity {
         id: owner.0.clone(),
         version: owner.1.clone(),
-        predecessor_version: None,
     };
     let local = format!(
         "{}.{}",
@@ -2479,8 +2459,6 @@ mod tests {
 pub struct PackageIdentity {
     pub id: String,
     pub version: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub predecessor_version: Option<String>,
 }
 
 /// The package name of the generated TypeScript client.

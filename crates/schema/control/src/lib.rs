@@ -27,7 +27,7 @@ pub use package_migrations::{
     PACKAGE_MIGRATION_DRIFT_REFUSAL, PACKAGE_MIGRATION_DUPLICATE_REFUSAL,
     PACKAGE_MIGRATION_GAP_REFUSAL, PackageDirectory, PackageMigrationError,
     PackageMigrationErrorType, PackageMigrationPlan, PendingMigration, RecordedMigration,
-    plan_package_migrations, plan_package_registration,
+    plan_package_migrations, validate_package_schema_source,
 };
 pub use replica_identity::{
     ReplicaIdentity, ReplicaIdentityFlip, ReplicaIdentityPlan, alter_replica_identity_sql,
