@@ -71,7 +71,7 @@ fn render_chart(root: &Path, release: &str, values: &[&str]) -> RenderDirectory 
     let chart = format!("deploy/platform/release/charts/runtime-operator-{version}.tgz");
     let mut helm = Command::new("helm");
     helm.current_dir(root)
-        .args(["template", release, &chart, "--namespace", "wamn-system"]);
+        .args(["template", release, &chart, "--namespace", "platform"]);
     for value in values {
         helm.args(["--values", value]);
     }
@@ -139,7 +139,7 @@ fn render_host_objects(root: &Path) -> (Value, Value) {
     use wamn_test_infrastructure::rendering::{EventIdentity, HostValuesInput};
     let values = wamn_gate_harness::render_check::host_values(
         &HostValuesInput {
-            namespace: "wamn-system".into(),
+            namespace: "platform".into(),
             host_tag: "dev".into(),
             replicas: 3,
             component_artifact_base: "registry.example/components".into(),
@@ -196,7 +196,7 @@ fn assert_native_host_controls(
 ) {
     let pod = &deployment["spec"]["template"]["spec"];
     let container = host_container(deployment);
-    assert_eq!(deployment["metadata"]["namespace"], "wamn-system");
+    assert_eq!(deployment["metadata"]["namespace"], "platform");
     assert_eq!(pod["terminationGracePeriodSeconds"], 70);
     for (name, expected) in [
         ("WASH_DEFAULT_HEAP_MEMORY", "256MiB"),
