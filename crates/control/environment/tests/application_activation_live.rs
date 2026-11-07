@@ -3,7 +3,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 
 use anyhow::Context as _;
 use serde_json::json;
@@ -29,25 +28,11 @@ async fn connect(url: &str) -> anyhow::Result<tokio_postgres::Client> {
 // Artifact transport only. Initialization and activation use the product operations.
 struct Registry {
     address: String,
-    ca: std::path::PathBuf,
     auth: std::path::PathBuf,
     task: tokio::task::JoinHandle<()>,
 }
 impl Registry {
     async fn start(root: &Path, objects: BTreeMap<String, Vec<u8>>) -> anyhow::Result<Self> {
-        let certificate = rcgen::generate_simple_self_signed(vec!["localhost".into()])?;
-        let ca = root.join("registry.crt");
-        std::fs::write(&ca, certificate.cert.pem())?;
-        let config = tokio_rustls::rustls::ServerConfig::builder()
-            .with_no_client_auth()
-            .with_single_cert(
-                vec![certificate.cert.der().clone()],
-                tokio_rustls::rustls::pki_types::PrivatePkcs8KeyDer::from(
-                    certificate.signing_key.serialize_der(),
-                )
-                .into(),
-            )?;
-        let acceptor = tokio_rustls::TlsAcceptor::from(Arc::new(config));
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
         let address = format!("localhost:{}", listener.local_addr()?.port());
         let auth = root.join("registry.json");
@@ -58,10 +43,7 @@ impl Registry {
             )?,
         )?;
         let task = tokio::spawn(async move {
-            while let Ok((socket, _)) = listener.accept().await {
-                let Ok(mut socket) = acceptor.accept(socket).await else {
-                    continue;
-                };
+            while let Ok((mut socket, _)) = listener.accept().await {
                 let mut request = Vec::new();
                 while !request.ends_with(b"\r\n\r\n") {
                     let mut byte = [0];
@@ -92,7 +74,6 @@ impl Registry {
         });
         Ok(Self {
             address,
-            ca,
             auth,
             task,
         })
@@ -386,7 +367,10 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
         chart: PathBuf::new(),
         release_artifact_base: format!("{}/releases", registry.address),
         registry_auth_file: registry.auth.clone(),
-        oci_ca_paths: vec![registry.ca.clone()],
+        oci_ca_paths: Vec::new(),
+        insecure_registry: wamn_environment_control::environment::runtime::insecure_registry(
+            &json!({"extraArgs":["--allow-insecure-registries"]}),
+        ),
         package_artifact_base: Some(format!("{}/packages", registry.address)),
         component_artifact_base: Some(format!("{}/components", registry.address)),
         database_namespace: "platform".into(),
@@ -440,9 +424,13 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
         .await
         .is_err()
     );
+    let selected_b =
+        wamn_environment_control::environment::analyse::select_application(&document, Some("b"))?;
+    assert!(sql::needs_initialization(&platform, &selected_b).await?);
     sql::initialize(&platform, &document, system.url(), Some("b"))
         .await
         .context("initialize b")?;
+    assert!(!sql::needs_initialization(&platform, &document).await?);
     let mut observer_url = admin_url;
     observer_url.set_path(&database_name);
     let observer = connect(observer_url.as_str()).await?;
@@ -590,6 +578,7 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
         wamn_environment_control::environment::document::DeclaredRelease::Digest(
             new_a.digest().as_str().into(),
         );
+    assert!(!sql::needs_initialization(&platform, &document).await?);
     document
         .applications
         .get_mut("a")

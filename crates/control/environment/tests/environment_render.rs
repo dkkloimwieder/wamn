@@ -549,6 +549,7 @@ async fn unavailable_authorities_preserve_authored_selections_and_report_unknown
         release_artifact_base: "registry.invalid/releases".into(),
         registry_auth_file: scratch.path().join("absent-auth.json"),
         oci_ca_paths: Vec::new(),
+        insecure_registry: false,
         package_artifact_base: None,
         component_artifact_base: None,
         database_namespace: "platform".into(),

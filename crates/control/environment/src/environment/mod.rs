@@ -48,6 +48,8 @@ pub struct Platform {
     pub release_artifact_base: String,
     pub registry_auth_file: PathBuf,
     pub oci_ca_paths: Vec<PathBuf>,
+    /// Registry transport selected by the installed platform host.
+    pub insecure_registry: bool,
     /// `<registry>/<repository>` of package artifacts. Needed only when a
     /// release names a package the environment does not have yet, or the
     /// document pins a web artifact.
@@ -147,7 +149,15 @@ impl Platform {
         let variable = |name: &str| {
             std::env::var(name).with_context(|| format!("set {name} for wamn-ctl env"))
         };
+        let host_group = std::env::var_os("WAMN_RELEASE_HOST_GROUP").map(PathBuf::from);
+        let insecure_registry = match &host_group {
+            Some(path) => runtime::insecure_registry(&serde_yaml::from_slice(
+                &std::fs::read(path).with_context(|| format!("read {}", path.display()))?,
+            )?),
+            None => false,
+        };
         Ok(Self {
+            insecure_registry,
             system_database_url: variable(database_variable)?,
             chart,
             release_artifact_base: variable("WAMN_RELEASE_ARTIFACT_BASE")?,
@@ -171,7 +181,7 @@ impl Platform {
                 .map(|port| port.parse().context("WAMN_DATABASE_PORT is not a port"))
                 .transpose()?
                 .unwrap_or(5432),
-            host_group: std::env::var_os("WAMN_RELEASE_HOST_GROUP").map(PathBuf::from),
+            host_group,
             pat_issuer: PatIssuerConfig {
                 endpoint: std::env::var("WAMN_IDENTITY_URL").ok(),
                 client_cert: std::env::var_os("WAMN_IDENTITY_CLIENT_CERT").map(PathBuf::from),
@@ -195,7 +205,7 @@ impl Platform {
                 Ok(
                     wamn_runtime::component_artifact_source::ComponentArtifactSourceConfig::new(
                         base,
-                        false,
+                        self.insecure_registry,
                         std::time::Duration::from_secs(30),
                     )?
                     .with_registry_auth_file(&self.registry_auth_file)?
@@ -279,7 +289,9 @@ pub async fn apply(
 pub async fn deploy(platform: &Platform, file: &Path, digest: &str) -> anyhow::Result<Analysis> {
     wamn_package_artifact::ensure_digest(digest)?;
     let document = EnvironmentDocument::compile(file)?;
-    let manifest = analyse::pull_release_manifest(platform, digest).await?;
+    let mut platform = platform.clone();
+    runtime::resolve_platform(&mut platform, &document.org).await?;
+    let manifest = analyse::pull_release_manifest(&platform, digest).await?;
     let packages = manifest
         .release
         .packages
@@ -306,7 +318,7 @@ pub async fn deploy(platform: &Platform, file: &Path, digest: &str) -> anyhow::R
         "published release matches multiple applications"
     );
     apply_selection(
-        platform,
+        &platform,
         file,
         application,
         document::SelectionChange::Deploy(digest),
@@ -333,7 +345,18 @@ pub(super) async fn apply_selection(
     let result = async {
         let private = ensure::PrivateDirectory::create()?;
         let mut platform = platform.clone();
-        runtime::resolve_target(&mut platform, &document, &private.path(".")).await?;
+        let control = runtime::resolve_platform(&mut platform, &document.org).await?;
+        if matches!(change, document::SelectionChange::Deploy(_)) {
+            Box::pin(initialize_selection(
+                &platform,
+                &document,
+                application,
+                &private.path("."),
+            ))
+            .await?;
+        }
+        runtime::resolve_application(&mut platform, &document, &private.path("."), &control)
+            .await?;
         let mut analysis = analyse::analyse(&platform, &document, Some(application)).await?;
         let prepared = match &analysis.authorities.release {
             Some(release) => Some(write::prepare(&platform, &document, &analysis, release).await?),
@@ -377,6 +400,42 @@ pub(super) async fn apply_selection(
     .await;
     lock.release().await;
     result
+}
+
+/// First installation uses the independent resource and SQL owners.
+async fn initialize_selection(
+    platform: &Platform,
+    document: &EnvironmentDocument,
+    application: &str,
+    directory: &Path,
+) -> anyhow::Result<()> {
+    let selected = analyse::select_application(document, Some(application))?;
+    let system = wamn_package_control::database::connect(&platform.system_database_url).await?;
+    if analyse::read_row(&system, document).await?.is_none() {
+        let admin = std::env::var("WAMN_SYSTEM_ADMIN_URL")
+            .context("set WAMN_SYSTEM_ADMIN_URL for first environment provisioning")?;
+        ensure::provision_resources(platform, document, &[], &admin).await?;
+    }
+    if !sql::needs_initialization(platform, &selected).await? {
+        return Ok(());
+    }
+    let chart = crate::platform::artifact_plan::select(&platform.chart)?;
+    let cluster = crate::provision_project_env::resolve_cluster(
+        &platform.system_database_url,
+        &document.org,
+        &document.policy,
+    )
+    .await?;
+    sql::run_deployed(
+        platform,
+        &selected,
+        sql::Operation::Initialize,
+        chart.image("ctl")?,
+        &cluster,
+        directory,
+    )
+    .await?;
+    Ok(())
 }
 
 /// Read event broker inputs for both deployed and local workflow verbs.

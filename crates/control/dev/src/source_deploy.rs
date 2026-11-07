@@ -28,6 +28,9 @@ pub async fn publish(
 ) -> anyhow::Result<ManifestDigest> {
     ensure!(!principal.is_empty(), "publisher principal is empty");
     let (application, roots) = sources(&document, root)?;
+    let mut platform = platform.clone();
+    wamn_environment_control::environment::runtime::resolve_platform(&mut platform, &document.org)
+        .await?;
     let registry = PackageRegistry {
         artifact_base: platform
             .package_artifact_base
@@ -35,7 +38,7 @@ pub async fn publish(
             .context("set WAMN_PACKAGE_ARTIFACT_BASE for source deployment")?
             .to_owned(),
         registry_auth_file: platform.registry_auth_file.clone(),
-        insecure_registry: false,
+        insecure_registry: platform.insecure_registry,
         oci_ca_paths: platform.oci_ca_paths.clone(),
     };
     let component_artifact_base = platform

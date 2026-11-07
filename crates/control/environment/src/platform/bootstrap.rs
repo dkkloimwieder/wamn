@@ -70,12 +70,22 @@ fn system_job(document: &ClusterDocument, image: &str) -> Value {
         .control
         .split_once('.')
         .map_or(document.route_hosts.control.as_str(), |(_, domain)| domain);
-    job::manifest(
+    let mut job = job::manifest(
         "platform-system",
         image,
         &["/usr/local/bin/wamn-ctl"],
-        &["provision-system", "--platform-domain", domain],
-    )
+        &[
+            "provision-system",
+            "--platform-domain",
+            domain,
+            "--emit-apply-secret",
+            "/out/secret.json",
+            "--db-host",
+            DATABASE_HOST,
+        ],
+    );
+    job::secret_output(&mut job);
+    job
 }
 
 fn organization_job(document: &ClusterDocument, image: &str) -> Value {
@@ -527,6 +537,35 @@ mod tests {
             "route_hosts":{"control":"control.example.com"}, "resend_from":""
         }))
         .unwrap()
+    }
+
+    #[test]
+    fn system_initialization_hands_off_the_apply_credential() {
+        let mut system = system_job(&document(), "ctl-image");
+        let container = job::container(&mut system);
+        let args = container["args"].as_array().unwrap();
+        assert!(
+            args.windows(2)
+                .any(|pair| pair == ["--emit-apply-secret", "/out/secret.json"])
+        );
+        assert!(
+            args.windows(2)
+                .any(|pair| pair == ["--db-host", DATABASE_HOST])
+        );
+        assert!(
+            container["volumeMounts"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|mount| mount["mountPath"] == "/out")
+        );
+        assert!(
+            system["spec"]["template"]["spec"]["volumes"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|volume| volume["name"] == "out" && volume["emptyDir"]["medium"] == "Memory")
+        );
     }
 
     #[test]

@@ -10,6 +10,21 @@ use super::document::{DeclaredRelease, EnvironmentDocument};
 use super::{Platform, analyse, ensure, stage};
 use crate::platform::{bootstrap, job};
 
+/// Report whether a selected application has any absent package baseline.
+/// Version and schema differences never authorize SQL during code deployment.
+pub async fn needs_initialization(
+    platform: &Platform,
+    document: &EnvironmentDocument,
+) -> anyhow::Result<bool> {
+    let installed = stage::installed(platform, document).await?;
+    Ok(document.applications.values().any(|application| {
+        application
+            .packages
+            .iter()
+            .any(|id| !installed.contains_key(id))
+    }))
+}
+
 /// Initialize project state and absent package baselines after CNPG creates the database.
 /// Committed package records survive a later failure and prevent SQL replay.
 pub async fn initialize(
@@ -158,6 +173,8 @@ pub async fn run_deployed(
         "url",
         &bootstrap::secret_text(&apply, "url")?,
     ));
+    let release_base =
+        super::runtime::pod_artifact_base(platform, &platform.release_artifact_base)?;
     job::environment(
         &mut job,
         &[
@@ -165,10 +182,7 @@ pub async fn run_deployed(
             ("WAMN_DATABASE_NAMESPACE", &platform.database_namespace),
             ("WAMN_DATABASE_HOST", &host),
             ("WAMN_DATABASE_PORT", &platform.database_port.to_string()),
-            (
-                "WAMN_RELEASE_ARTIFACT_BASE",
-                &platform.release_artifact_base,
-            ),
+            ("WAMN_RELEASE_ARTIFACT_BASE", &release_base),
         ],
     );
     for (variable, value) in [
@@ -182,16 +196,58 @@ pub async fn run_deployed(
         ),
     ] {
         if let Some(value) = value {
-            job::environment(&mut job, &[(variable, value)]);
+            job::environment(
+                &mut job,
+                &[(
+                    variable,
+                    &super::runtime::pod_artifact_base(platform, value)?,
+                )],
+            );
         }
     }
-    add_file(
+    // The existing host overlay carries the selected host's transport arguments.
+    files.insert(
+        "host.json".into(),
+        serde_json::to_string(&serde_json::json!({
+            "extraArgs": if platform.insecure_registry {
+                vec!["--allow-insecure-registries"]
+            } else { Vec::new() }
+        }))?,
+    );
+    job::environment(
         &mut job,
-        &mut files,
-        "WAMN_REGISTRY_AUTH_FILE",
-        "registry.json",
-        &platform.registry_auth_file,
-    )?;
+        &[("WAMN_RELEASE_HOST_GROUP", "/inputs/host.json")],
+    );
+    if platform.insecure_registry {
+        let (registry, _) = platform
+            .release_artifact_base
+            .split_once('/')
+            .context("release repository")?;
+        let credentials = wamn_package_artifact::registry_credentials::read_registry_credentials(
+            &platform.registry_auth_file,
+            registry,
+        )?;
+        files.insert(
+            "registry.json".into(),
+            serde_json::to_string(&serde_json::json!({
+                "auths": {crate::platform::resources::POD_REGISTRY: {
+                    "username": credentials.username(), "password": credentials.password()
+                }}
+            }))?,
+        );
+        job::environment(
+            &mut job,
+            &[("WAMN_REGISTRY_AUTH_FILE", "/inputs/registry.json")],
+        );
+    } else {
+        add_file(
+            &mut job,
+            &mut files,
+            "WAMN_REGISTRY_AUTH_FILE",
+            "registry.json",
+            &platform.registry_auth_file,
+        )?;
+    }
     let mut ca_paths = Vec::new();
     for (index, path) in platform.oci_ca_paths.iter().enumerate() {
         let name = format!("registry-ca-{index}.crt");

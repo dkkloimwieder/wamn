@@ -26,7 +26,7 @@ pub(super) async fn analyse(
             .clone()
             .context("set WAMN_PACKAGE_ARTIFACT_BASE for the pinned web artifact")?,
         registry_auth_file: platform.registry_auth_file.clone(),
-        insecure_registry: false,
+        insecure_registry: platform.insecure_registry,
         oci_ca_paths: platform.oci_ca_paths.clone(),
     };
     let web = pull_web_artifact(&registry, &client.web).await?;

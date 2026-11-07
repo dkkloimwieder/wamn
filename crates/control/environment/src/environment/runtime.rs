@@ -39,9 +39,14 @@ pub(super) async fn resolve_target(
     environment: &EnvironmentDocument,
     directory: &Path,
 ) -> anyhow::Result<()> {
+    let control = resolve_platform(platform, &environment.org).await?;
+    resolve_application(platform, environment, directory, &control).await
+}
+
+/// Read platform inputs before an environment or application exists.
+pub async fn resolve_platform(platform: &mut Platform, org: &str) -> anyhow::Result<Value> {
     let target = &platform.target;
     crate::platform::edge::require_running(target).await?;
-    let org = &environment.org;
     let installed = resources::helm(
         target,
         &[
@@ -75,24 +80,47 @@ pub(super) async fn resolve_target(
     )
     .await?;
     let control: Value = serde_json::from_slice(&control)?;
-    let local = control["runtime-operator"]["runtime"]["hostGroups"][0]["extraArgs"]
+    platform.insecure_registry =
+        insecure_registry(&control["runtime-operator"]["runtime"]["hostGroups"][0]);
+    platform.target.namespace = "hosts".into();
+    chart.directory().clone_into(&mut platform.chart);
+    platform.database_namespace = "platform".into();
+    Ok(control)
+}
+
+/// The installed host arguments own the registry transport choice.
+pub fn insecure_registry(group: &Value) -> bool {
+    group["extraArgs"]
         .as_array()
-        .is_some_and(|args| args.iter().any(|arg| arg == "--allow-insecure-registries"));
-    let component_base = if local {
-        let (_, repository) = platform
-            .component_artifact_base
-            .as_deref()
-            .context("missing component registry")?
-            .split_once('/')
-            .context("component repository")?;
-        format!("{}/{repository}", resources::POD_REGISTRY)
+        .is_some_and(|args| args.iter().any(|arg| arg == "--allow-insecure-registries"))
+}
+
+pub(super) fn pod_artifact_base<'a>(
+    platform: &Platform,
+    base: &'a str,
+) -> anyhow::Result<std::borrow::Cow<'a, str>> {
+    if platform.insecure_registry {
+        let (_, repository) = base.split_once('/').context("artifact repository")?;
+        Ok(format!("{}/{repository}", crate::platform::resources::POD_REGISTRY).into())
     } else {
+        Ok(base.into())
+    }
+}
+
+pub(super) async fn resolve_application(
+    platform: &mut Platform,
+    environment: &EnvironmentDocument,
+    directory: &Path,
+    control: &Value,
+) -> anyhow::Result<()> {
+    let target = &platform.target;
+    let component_base = pod_artifact_base(
+        platform,
         platform
             .component_artifact_base
-            .as_ref()
-            .context("missing component registry")?
-            .to_owned()
-    };
+            .as_deref()
+            .context("missing component registry")?,
+    )?;
     let name = super::ensure::environment_host_name(
         &environment.org,
         &environment.project,
@@ -112,12 +140,9 @@ pub(super) async fn resolve_target(
     )
     .await?;
     let shared: Value = serde_json::from_slice(&shared)?;
-    let group = host_group(&control, &shared, &component_base)?;
+    let group = host_group(control, &shared, &component_base)?;
     let path = directory.join("application-host.yaml");
     std::fs::write(&path, serde_yaml::to_string(&group)?)?;
-    platform.target.namespace = "hosts".into();
-    chart.directory().clone_into(&mut platform.chart);
-    platform.database_namespace = "platform".into();
     platform.host_group = Some(path);
     Ok(())
 }
@@ -308,6 +333,17 @@ mod tests {
     use super::*;
     use crate::environment::write;
     use wamn_release_control::release_chart::{self, ImageSet};
+
+    #[test]
+    fn registry_transport_follows_the_installed_host_arguments() {
+        assert!(!insecure_registry(&json!({})));
+        assert!(!insecure_registry(
+            &json!({"extraArgs":["--allow-insecure-registries=false"]})
+        ));
+        assert!(insecure_registry(
+            &json!({"extraArgs":["--allow-insecure-registries"]})
+        ));
+    }
 
     #[test]
     fn application_render_consumes_platform_references_without_control_credentials()

@@ -1039,6 +1039,7 @@ mod tests {
             release_artifact_base: String::new(),
             registry_auth_file: PathBuf::new(),
             oci_ca_paths: Vec::new(),
+            insecure_registry: false,
             component_artifact_base: None,
             package_artifact_base: None,
             database_namespace: String::new(),

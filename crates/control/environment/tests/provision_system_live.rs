@@ -173,6 +173,7 @@ async fn provision_system_repeats_without_changing_the_platform_domain() {
         release_artifact_base: String::new(),
         registry_auth_file: std::path::PathBuf::new(),
         oci_ca_paths: Vec::new(),
+        insecure_registry: false,
         package_artifact_base: None,
         component_artifact_base: None,
         database_namespace: "platform".into(),

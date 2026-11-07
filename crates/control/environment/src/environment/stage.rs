@@ -609,7 +609,7 @@ pub(super) async fn open(
         registry: PackageRegistry {
             artifact_base: base.clone(),
             registry_auth_file: platform.registry_auth_file.clone(),
-            insecure_registry: false,
+            insecure_registry: platform.insecure_registry,
             oci_ca_paths: platform.oci_ca_paths.clone(),
         },
     })

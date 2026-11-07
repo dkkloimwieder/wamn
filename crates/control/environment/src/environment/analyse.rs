@@ -460,7 +460,7 @@ pub async fn pull_release_manifest(
 ) -> anyhow::Result<ServingManifest> {
     let source = ReleaseManifestSource::new(
         &platform.release_artifact_base,
-        false,
+        platform.insecure_registry,
         &platform.registry_auth_file,
     )
     .context("open the release manifest source")?
@@ -484,7 +484,7 @@ async fn read_release(platform: &Platform, digest: &str) -> anyhow::Result<Relea
     let releases = wamn_package_artifact::PackageRegistry {
         artifact_base: platform.release_artifact_base.clone(),
         registry_auth_file: platform.registry_auth_file.clone(),
-        insecure_registry: false,
+        insecure_registry: platform.insecure_registry,
         oci_ca_paths: platform.oci_ca_paths.clone(),
     };
     let image_digests = qualification_artifact::image_set_digests(&image_set)?;
