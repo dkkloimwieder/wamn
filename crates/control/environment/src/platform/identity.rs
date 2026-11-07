@@ -13,6 +13,9 @@ use super::bootstrap::{DATABASE_HOST, SecretData, secret_text};
 use super::document::{ClusterDocument, Provider};
 use super::job::{self, Secret};
 
+/// The platform broker Service used by in-cluster clients.
+pub(crate) const NATS_URL: &str = "nats://wamn-nats.platform.svc.cluster.local:4222";
+
 pub(super) const ISSUER: &str = "https://identity.identity.svc.cluster.local";
 const LOCAL_MAIL: &str = "/var/run/wamn-identity/mail/outbox";
 const OWNER_STATE: &str = "SELECT EXISTS (
@@ -292,10 +295,7 @@ fn invitation_job(
     job::environment(
         &mut job,
         &[
-            (
-                "WAMN_NATS_URL",
-                "nats://wamn-nats.platform.svc.cluster.local:4222",
-            ),
+            ("WAMN_NATS_URL", NATS_URL),
             ("WAMN_NATS_TLS_CA", "/etc/wamn/nats/ca.crt"),
             ("WAMN_NATS_TLS_CERT", "/etc/wamn/nats/tls.crt"),
             ("WAMN_NATS_TLS_KEY", "/etc/wamn/nats/tls.key"),
@@ -366,10 +366,7 @@ fn platform_chart_input(
         },
         mode: Mode::Session {
             targets: Vec::new(),
-            nats: Some((
-                "nats://wamn-nats.platform.svc.cluster.local:4222".into(),
-                "wamn-identity-nats".into(),
-            )),
+            nats: Some((NATS_URL.into(), "wamn-identity-nats".into())),
         },
     })?;
     entry["values"]["localMail"] = if mail { "" } else { LOCAL_MAIL }.into();

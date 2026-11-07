@@ -8,7 +8,7 @@ use serde_json::Value;
 
 use super::document::{DeclaredRelease, EnvironmentDocument};
 use super::{Platform, analyse, ensure, stage};
-use crate::platform::{bootstrap, job};
+use crate::platform::{bootstrap, identity, job};
 
 /// Report whether a selected application has any absent package baseline.
 /// Version and schema differences never authorize SQL during code deployment.
@@ -134,17 +134,13 @@ pub async fn run_deployed(
     )
     .await?
     .context("missing CNPG superuser Secret")?;
-    let host = platform.database_host.clone().unwrap_or_else(|| {
-        format!(
-            "{cluster}-rw.{}.svc.cluster.local",
-            platform.database_namespace
-        )
-    });
+    // SQL Jobs use the CNPG Service and PostgreSQL's default port, never a native forward.
+    let host = format!(
+        "{cluster}-rw.{}.svc.cluster.local",
+        platform.database_namespace
+    );
     let mut admin_url = url::Url::parse("postgresql://postgres@localhost/wamn_system")?;
     admin_url.set_host(Some(&host))?;
-    admin_url
-        .set_port(Some(platform.database_port))
-        .map_err(|()| anyhow::anyhow!("encode the administrator port"))?;
     admin_url
         .set_password(Some(
             &bootstrap::secret_text(&admin, "password")?.replace('%', "%25"),
@@ -181,7 +177,6 @@ pub async fn run_deployed(
             ("WAMN_RELEASE_NAMESPACE", &platform.target.namespace),
             ("WAMN_DATABASE_NAMESPACE", &platform.database_namespace),
             ("WAMN_DATABASE_HOST", &host),
-            ("WAMN_DATABASE_PORT", &platform.database_port.to_string()),
             ("WAMN_RELEASE_ARTIFACT_BASE", &release_base),
         ],
     );
@@ -255,21 +250,14 @@ pub async fn run_deployed(
         ca_paths.push(format!("/inputs/{name}"));
     }
     job::environment(&mut job, &[("WAMN_OCI_CA_PATHS", &ca_paths.join(":"))]);
-    let nats = platform
-        .auth_nats
-        .as_ref()
-        .context("SQL Jobs require the authorization change publisher")?;
-    job::environment(&mut job, &[("WAMN_NATS_URL", &nats.nats_url)]);
-    for (variable, name, path) in [
-        ("WAMN_NATS_TLS_CA", "nats-ca.crt", &nats.nats_tls_ca),
-        ("WAMN_NATS_TLS_CERT", "nats.crt", &nats.nats_tls_cert),
-        ("WAMN_NATS_TLS_KEY", "nats.key", &nats.nats_tls_key),
-    ] {
-        add_file(&mut job, &mut files, variable, name, path)?;
-    }
-    if let Some(server) = &nats.nats_tls_server_name {
-        job::environment(&mut job, &[("WAMN_NATS_TLS_SERVER_NAME", server)]);
-    }
+    nats_inputs(
+        &mut job,
+        &mut files,
+        platform
+            .auth_nats
+            .as_ref()
+            .context("SQL Jobs require the authorization change publisher")?,
+    )?;
     secrets.push(job::files(&mut job, files));
     if matches!(operation, Operation::Provision) {
         job::secret_output(&mut job);
@@ -286,6 +274,23 @@ pub async fn run_deployed(
     }
 }
 
+fn nats_inputs(
+    job: &mut Value,
+    files: &mut BTreeMap<String, String>,
+    nats: &wamn_platform_identity::nats::PlatformNats,
+) -> anyhow::Result<()> {
+    // The Service hostname matches the server certificate without the native TLS override.
+    job::environment(job, &[("WAMN_NATS_URL", identity::NATS_URL)]);
+    for (variable, name, path) in [
+        ("WAMN_NATS_TLS_CA", "nats-ca.crt", &nats.nats_tls_ca),
+        ("WAMN_NATS_TLS_CERT", "nats.crt", &nats.nats_tls_cert),
+        ("WAMN_NATS_TLS_KEY", "nats.key", &nats.nats_tls_key),
+    ] {
+        add_file(job, files, variable, name, path)?;
+    }
+    Ok(())
+}
+
 fn add_file(
     job: &mut Value,
     files: &mut BTreeMap<String, String>,
@@ -299,4 +304,68 @@ fn add_file(
     );
     job::environment(job, &[(variable, &format!("/inputs/{name}"))]);
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde::Deserialize as _;
+    use wamn_platform_identity::nats::PlatformNats;
+
+    #[test]
+    fn sql_job_uses_the_cluster_broker_and_its_certificate_name() -> anyhow::Result<()> {
+        let private = ensure::PrivateDirectory::create()?;
+        let credential = private.path("native-credential");
+        std::fs::write(&credential, "credential bytes")?;
+        let nats = PlatformNats {
+            nats_url: "nats://127.0.0.1:54321".into(),
+            nats_tls_ca: credential.clone(),
+            nats_tls_cert: credential.clone(),
+            nats_tls_key: credential,
+            nats_tls_server_name: Some("native-forward.invalid".into()),
+        };
+        let mut job = job::manifest("initialize", "ctl", &["wamn-ctl"], &["env", "initialize"]);
+        let mut files = BTreeMap::new();
+        nats_inputs(&mut job, &mut files, &nats)?;
+        let variables = job::container(&mut job)["env"].as_array().unwrap();
+        let endpoint = variables
+            .iter()
+            .find(|entry| entry["name"] == "WAMN_NATS_URL")
+            .unwrap()["value"]
+            .as_str()
+            .unwrap();
+        assert_eq!(endpoint, identity::NATS_URL);
+        assert_ne!(endpoint, nats.nats_url);
+        assert!(
+            !variables
+                .iter()
+                .any(|entry| entry["name"] == "WAMN_NATS_TLS_SERVER_NAME")
+        );
+        let host = url::Url::parse(endpoint)?.host_str().unwrap().to_owned();
+        let certificate = serde_yaml::Deserializer::from_str(include_str!(
+            "../../../../../deploy/infra/nats-certificates.yaml"
+        ))
+        .map(Value::deserialize)
+        .collect::<Result<Vec<_>, _>>()?
+        .into_iter()
+        .find(|object| {
+            object["kind"] == "Certificate" && object["metadata"]["name"] == "wasmcloud-nats-tls"
+        })
+        .unwrap();
+        assert!(
+            certificate["spec"]["dnsNames"]
+                .as_array()
+                .unwrap()
+                .contains(&Value::String(host))
+        );
+        for variable in variables
+            .iter()
+            .filter(|entry| entry["name"] != "WAMN_NATS_URL")
+        {
+            let path = variable["value"].as_str().unwrap();
+            let file = path.strip_prefix("/inputs/").unwrap();
+            assert_eq!(files[file], "credential bytes");
+        }
+        Ok(())
+    }
 }
