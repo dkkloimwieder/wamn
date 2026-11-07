@@ -26,7 +26,9 @@ const COMMAND_LIMIT: Duration = Duration::from_mins(15);
 const POLL_LIMIT: Duration = Duration::from_mins(5);
 
 struct Run {
+    repository: PathBuf,
     directory: PathBuf,
+    checkout: PathBuf,
     document: ClusterDocument,
     target: Target,
     binary: PathBuf,
@@ -43,6 +45,13 @@ impl Drop for Run {
                 self.directory.display()
             );
             eprintln!("kind delete cluster --name {}", self.document.cluster_name);
+            if self.checkout.exists() {
+                eprintln!(
+                    "git -C '{}' worktree remove --force '{}'",
+                    self.repository.display(),
+                    self.checkout.display()
+                );
+            }
             eprintln!("rm -rf -- '{}'", self.directory.display());
         }
     }
@@ -89,6 +98,16 @@ async fn platform_apply_kind() -> anyhow::Result<()> {
             &run.document.cluster_name,
         ]))
         .await?;
+        if run.checkout.exists() {
+            success(
+                Command::new("git")
+                    .arg("-C")
+                    .arg(&run.repository)
+                    .args(["worktree", "remove", "--force"])
+                    .arg(&run.checkout),
+            )
+            .await?;
+        }
         std::fs::remove_dir_all(&run.directory)?;
         run.cleaned = true;
     }
@@ -145,6 +164,8 @@ fn prepare(repository: &Path, chart: &Path, binary: &Path, kcl: &Path) -> anyhow
         symlink(executable.canonicalize()?, directory.join("bin").join(tool))?;
     }
     Ok(Run {
+        repository: repository.into(),
+        checkout: directory.join("source"),
         target: Target {
             kubeconfig: directory.join("kubeconfig"),
             context: format!("kind-{name}"),

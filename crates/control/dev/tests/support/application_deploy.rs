@@ -168,10 +168,7 @@ impl Journey<'_> {
 }
 
 pub(super) async fn exercise(run: &Run, password: &str) -> anyhow::Result<()> {
-    let repository = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../..")
-        .canonicalize()?;
-    let sources = sources(&repository, &run.directory)?;
+    let sources = sources(&run.repository, &run.checkout).await?;
     let postgres =
         resources::port_forward(&run.target, "platform", "service/wamn-pg-rw", 5432).await?;
     let nats = resources::port_forward(&run.target, "platform", "service/wamn-nats", 4222).await?;
@@ -767,54 +764,35 @@ fn forwarded(value: &str, port: u16) -> anyhow::Result<String> {
     Ok(url.to_string())
 }
 
-fn sources(repository: &Path, directory: &Path) -> anyhow::Result<[PathBuf; 2]> {
-    use std::os::unix::fs::symlink;
-    let roots = [
-        directory.join("source-alpha/apps/alpha"),
-        directory.join("source-beta/apps/beta"),
-    ];
+async fn sources(repository: &Path, checkout: &Path) -> anyhow::Result<[PathBuf; 2]> {
+    let head = success(
+        Command::new("git")
+            .arg("-C")
+            .arg(repository)
+            .args(["rev-parse", "HEAD"]),
+    )
+    .await?;
+    let head = String::from_utf8(head.stdout)?;
+    success(
+        Command::new("git")
+            .arg("-C")
+            .arg(repository)
+            .args(["worktree", "add", "--detach"])
+            .arg(checkout)
+            .arg(head.trim()),
+    )
+    .await?;
+    success(Command::new("git").arg("-C").arg(checkout).args([
+        "submodule",
+        "update",
+        "--init",
+        "--recursive",
+    ]))
+    .await?;
+    let apps = checkout.join("apps");
+    let roots = [apps.join("alpha"), apps.join("beta")];
     for (app, root) in ["alpha", "beta"].into_iter().zip(&roots) {
-        let apps = root.parent().context("scratch apps")?;
-        let scratch = apps.parent().context("scratch repository")?;
-        std::fs::create_dir_all(apps)?;
-        // Each guest workspace retains its lockfile and component crate name.
-        // Source, generated files and build output for the fixture stay private.
-        for entry in std::fs::read_dir(repository)? {
-            let entry = entry?;
-            if !matches!(
-                entry.file_name().to_str(),
-                Some("apps" | "target" | "tools" | ".git" | ".claude")
-            ) {
-                symlink(entry.path(), scratch.join(entry.file_name()))?;
-            }
-        }
-        // The build owner's script resolves its repository from its own directory.
-        std::fs::create_dir(scratch.join("tools"))?;
-        for entry in std::fs::read_dir(repository.join("tools"))? {
-            let entry = entry?;
-            let destination = scratch.join("tools").join(entry.file_name());
-            if entry.file_name() == "guest-rustflags" {
-                std::fs::copy(entry.path(), destination)?;
-            } else {
-                symlink(entry.path(), destination)?;
-            }
-        }
-        for entry in std::fs::read_dir(repository.join("apps"))? {
-            let entry = entry?;
-            if !matches!(
-                entry.file_name().to_str(),
-                Some("platform_fixture" | "target" | "Cargo.toml" | "Cargo.lock")
-            ) {
-                symlink(entry.path(), apps.join(entry.file_name()))?;
-            }
-        }
-        std::fs::copy(repository.join("apps/Cargo.lock"), apps.join("Cargo.lock"))?;
-        let workspace = std::fs::read_to_string(repository.join("apps/Cargo.toml"))?.replace(
-            "\"platform_fixture/component\"",
-            &format!("\"{app}/component\""),
-        );
-        std::fs::write(apps.join("Cargo.toml"), workspace)?;
-        copy_source(&repository.join("apps/platform_fixture"), root, app)?;
+        copy_source(&apps.join("platform_fixture"), root, app)?;
         let manifest = root.join("wamn.k");
         let text = std::fs::read_to_string(&manifest)?.replace(
             "version = \"2.1.1\", predecessor_version = \"2.1.0\"",
@@ -833,6 +811,20 @@ fn sources(repository: &Path, directory: &Path) -> anyhow::Result<[PathBuf; 2]> 
             require_connection(root)?;
         }
     }
+    let manifest = apps.join("Cargo.toml");
+    let workspace = std::fs::read_to_string(&manifest)?.replace(
+        "\"platform_fixture/component\",",
+        "\"platform_fixture/component\",\n    \"alpha/component\",\n    \"beta/component\",",
+    );
+    std::fs::write(&manifest, workspace)?;
+    // Register the new local crates without updating locked registry dependencies.
+    success(
+        Command::new("cargo")
+            .current_dir(checkout)
+            .args(["update", "--offline", "--workspace", "--manifest-path"])
+            .arg(&manifest),
+    )
+    .await?;
     Ok(roots)
 }
 
@@ -889,7 +881,12 @@ fn copy_source(source: &Path, target: &Path, app: &str) -> anyhow::Result<()> {
                 destination,
                 text.replace("platform_fixture", app)
                     .replace("platform-fixture", app)
-                    .replace("inventory", &format!("{app}_data")),
+                    .replace("inventory", &format!("{app}_data"))
+                    .replace("\"fixture\"", &format!("\"{app}\""))
+                    .replace(
+                        "components = {fixture =",
+                        &format!("components = {{{app} ="),
+                    ),
             )?;
         }
     }
