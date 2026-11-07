@@ -292,14 +292,14 @@ It commits and rolls back commands under the current PostgreSQL role.
 These cases use the environment release chart without a cluster.
 The render cases need Helm 4 on `PATH`.
 The `native-host` suite also needs PostgreSQL 18 and a prebuilt NATS executable.
-Its preparation rows build the host, HTTP guest, materializer, edge package, and HTTP workflow guests.
+Its preparation rows build the host, HTTP guest, edge package, and HTTP workflow guests.
 The runner starts a private PostgreSQL database for application generation.
 
 The case resolves rendered Secrets through the production credential provisioner and starts private PostgreSQL and NATS servers.
 It starts the debug host with rendered arguments and local component files.
 It also sends an upload to the separate file listener and requires the answer of the native file handler.
 This release serves no application host routes, so the handler answers `route-capacity-exhausted`.
-It requires readiness, running HTTP and materializer workloads, and a completed manual HTTP workflow with the expected response.
+It requires readiness, the rendered HTTP workload, and a completed manual HTTP workflow with the expected response.
 Its old `respond` terminal must fail with `respond-without-caller` after the successful workflow.
 That failure proves that rendering alone cannot establish workflow success.
 The case prints its elapsed time and removes its temporary databases, processes, and component files.

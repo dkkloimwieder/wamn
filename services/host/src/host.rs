@@ -1150,10 +1150,14 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
         .await?
     };
     let local_workload = match args.local_application.as_deref() {
-        Some(directory) => Some((
-            load_local_workload(directory).await?,
-            Some(load_local_materializer(directory).await?),
-        )),
+        Some(directory) => {
+            let materializer = if directory.join("materializer.json").try_exists()? {
+                Some(load_local_materializer(directory).await?)
+            } else {
+                None
+            };
+            Some((load_local_workload(directory).await?, materializer))
+        }
         None => match args.local_control.as_deref() {
             Some(directory) => Some((load_local_workload(directory).await?, None)),
             None => None,

@@ -112,9 +112,8 @@ async fn credential_secrets(
     Ok(secrets)
 }
 
-fn workload(document: &Value, directory: &Path, materializer: &Path) -> anyhow::Result<()> {
+fn workload(document: &Value, directory: &Path) -> anyhow::Result<String> {
     let spec = &document["spec"]["template"]["spec"];
-    let is_http = spec["components"].is_array();
     let interfaces = spec["hostInterfaces"]
         .as_array()
         .context("host interfaces")?
@@ -156,44 +155,24 @@ fn workload(document: &Value, directory: &Path, materializer: &Path) -> anyhow::
             ..Default::default()
         })
     };
-    let (components, service) = if is_http {
-        let component = &spec["components"][0];
-        (
-            vec![v2::Component {
-                name: component["name"].as_str().context("component name")?.into(),
-                image: component["image"]
-                    .as_str()
-                    .context("entry reference")?
-                    .into(),
-                image_pull_policy: v2::ImagePullPolicy::Never.into(),
-                max_concurrency: serde_json::from_value(component["maxConcurrency"].clone())?,
-                local_resources: Some(resources(&component["localResources"])?),
-                ..Default::default()
-            }],
-            None,
-        )
-    } else {
-        let bytes = std::fs::read(materializer)?;
-        let digest = wamn_engine::component_admission::component_digest(&bytes);
-        std::fs::write(local_component_path(directory, &digest)?, bytes)?;
-        (
-            Vec::new(),
-            Some(v2::Service {
-                image: digest,
-                image_pull_policy: v2::ImagePullPolicy::Never.into(),
-                max_restarts: serde_json::from_value(spec["service"]["maxRestarts"].clone())?,
-                local_resources: Some(resources(&spec["service"]["localResources"])?),
-                ..Default::default()
-            }),
-        )
-    };
-    let name = if is_http { "flow-http" } else { "materializer" };
+    let component = &spec["components"][0];
+    let components = vec![v2::Component {
+        name: component["name"].as_str().context("component name")?.into(),
+        image: component["image"]
+            .as_str()
+            .context("entry reference")?
+            .into(),
+        image_pull_policy: v2::ImagePullPolicy::Never.into(),
+        max_concurrency: serde_json::from_value(component["maxConcurrency"].clone())?,
+        local_resources: Some(resources(&component["localResources"])?),
+        ..Default::default()
+    }];
+    let name = "flow-http";
     let request = v2::WorkloadStartRequest {
         workload_id: format!("prekind-{name}"),
         workload: Some(v2::Workload {
             namespace: NAMESPACE.into(),
             name: name.into(),
-            service,
             wit_world: Some(v2::WitWorld {
                 components,
                 host_interfaces: interfaces,
@@ -205,7 +184,7 @@ fn workload(document: &Value, directory: &Path, materializer: &Path) -> anyhow::
         directory.join(format!("{name}.json")),
         serde_json::to_vec(&request)?,
     )?;
-    Ok(())
+    Ok(request.workload_id)
 }
 
 fn host_command(
@@ -241,6 +220,7 @@ fn host_command(
                 "HOME"
                     | "DOCKER_CONFIG"
                     | "WAMN_REGISTRY_AUTH_FILE"
+                    | "WAMN_REGISTRY_TOKEN_METADATA"
                     | "WAMN_COMPONENT_ARTIFACT_BASE"
             ) || name.starts_with("OTEL_")
             {
@@ -289,7 +269,10 @@ fn host_command(
         if flag.contains("-tls-")
             || matches!(
                 flag,
-                "--oci-ca-path" | "--release-artifact-base" | "--release-manifest-digest"
+                "--oci-ca-path"
+                    | "--release-artifact-base"
+                    | "--release-manifest-digest"
+                    | "--registry-token-metadata"
             )
         {
             continue;
@@ -369,10 +352,10 @@ async fn outcome(project: &tokio_postgres::Client, run: &str) -> anyhow::Result<
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "requires: env:WAMN_HOST_BINARY, env:WAMN_NATIVE_C_NATS_BIN, env:WAMN_FLOW_HTTP_COMPONENT, env:WAMN_MATERIALIZER_COMPONENT, env:WAMN_EDGE_DEVICE_COMPONENT, bin:helm"]
+#[ignore = "requires: env:WAMN_HOST_BINARY, env:WAMN_NATIVE_C_NATS_BIN, env:WAMN_FLOW_HTTP_COMPONENT, env:WAMN_EDGE_DEVICE_COMPONENT, bin:helm"]
 async fn prekind_http_host_runs_and_rejects_respond_without_caller() -> anyhow::Result<()> {
     wamn_test_postgres::require_ignored_prerequisites(
-        "requires: env:WAMN_HOST_BINARY, env:WAMN_NATIVE_C_NATS_BIN, env:WAMN_FLOW_HTTP_COMPONENT, env:WAMN_MATERIALIZER_COMPONENT, env:WAMN_EDGE_DEVICE_COMPONENT, bin:helm",
+        "requires: env:WAMN_HOST_BINARY, env:WAMN_NATIVE_C_NATS_BIN, env:WAMN_FLOW_HTTP_COMPONENT, env:WAMN_EDGE_DEVICE_COMPONENT, bin:helm",
     );
     let started = Instant::now();
     let _lock = wamn_test_postgres::lock();
@@ -761,15 +744,11 @@ async fn prekind_http_host_runs_and_rejects_respond_without_caller() -> anyhow::
         NAMESPACE,
     ));
     wamn_gate_harness::render_check::assert_complete(&documents, &secrets)?;
-    let materializer = PathBuf::from(
-        std::env::var_os("WAMN_MATERIALIZER_COMPONENT").context("materializer bytes")?,
-    );
-    for document in documents
+    let workloads = documents
         .iter()
         .filter(|document| document["kind"] == "WorkloadDeployment")
-    {
-        workload(document, directory, &materializer)?;
-    }
+        .map(|document| workload(document, directory))
+        .collect::<anyhow::Result<Vec<_>>>()?;
     let auth = wamn_platform_identity::auth_changes::AuthChanges::default();
     let environment = integration::WorkflowEnvironment {
         system_url: control.url(),
@@ -867,15 +846,15 @@ async fn prekind_http_host_runs_and_rejects_respond_without_caller() -> anyhow::
             heartbeat.environment == NAMESPACE && heartbeat.hostname == "prekind",
             "host identity differs"
         );
-        for workload in ["prekind-flow-http", "prekind-materializer"] {
+        for workload in workloads {
+            let request = v2::WorkloadStatusRequest {
+                workload_id: workload,
+            };
             let response: v2::WorkloadStatusResponse = serde_json::from_slice(
                 &client
                     .request(
                         rpc_subject(&heartbeat.id, "workload.status"),
-                        serde_json::to_vec(&v2::WorkloadStatusRequest {
-                            workload_id: workload.into(),
-                        })?
-                        .into(),
+                        serde_json::to_vec(&request)?.into(),
                     )
                     .await?
                     .payload,
@@ -884,7 +863,8 @@ async fn prekind_http_host_runs_and_rejects_respond_without_caller() -> anyhow::
                 response.workload_status.is_some_and(
                     |status| status.workload_state == v2::WorkloadState::Running as i32
                 ),
-                "{workload} is not RUNNING"
+                "{} is not RUNNING",
+                request.workload_id
             );
         }
         let mut successful_response = String::new();
