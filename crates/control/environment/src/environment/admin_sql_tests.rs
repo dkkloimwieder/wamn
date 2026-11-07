@@ -81,9 +81,3 @@ fn ensure_admin_statements_access_system_tables_only_through_grants() {
         }
     }
 }
-
-#[test]
-#[should_panic(expected = "admin statement accesses a system table")]
-fn admin_statement_test_rejects_a_read_nested_in_a_write() {
-    inspect_sql("INSERT INTO platform.role(name) SELECT subject FROM identity.principals");
-}

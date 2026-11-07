@@ -322,7 +322,6 @@ async fn rows(client: &tokio_postgres::Client, query: &str) -> anyhow::Result<Ve
 
 #[tokio::test]
 async fn activation_preserves_sql_other_applications_and_running_release() -> anyhow::Result<()> {
-    let _lock = wamn_test_postgres::lock();
     let _ = tokio_rustls::rustls::crypto::ring::default_provider().install_default();
     let scratch = ScratchRoot::create()?;
     let mut objects = BTreeMap::new();
@@ -337,16 +336,32 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
     let new_a = release(&mut objects, new_component)?;
     let failed_component = component(&mut objects, "a", &["upstream", "extra", "failed"])?;
     let failed_release = release(&mut objects, failed_component)?;
+    let mut missing_objects = objects.clone();
+    missing_objects.remove("/v2/packages/manifests/b-1.0.0");
+    let missing_root = scratch.path().join("missing-registry");
+    std::fs::create_dir(&missing_root)?;
+    let missing_registry = Registry::start(&missing_root, missing_objects).await?;
     let registry = Registry::start(scratch.path(), objects).await?;
-    let system = wamn_control_provision::test_database::system();
+    let mut postgres = wamn_test_postgres::start(&[("wal_level", "logical")])?;
+    let system = postgres.create_database("wamn_system")?;
     let mut admin = connect(system.url()).await?;
-    admin.batch_execute(&format!("BEGIN; SET LOCAL ROLE wamn_system; {} UPDATE registry.meta SET platform_domain='example.invalid'; INSERT INTO registry.target(name,type,status) VALUES('cloud','cloud','active') ON CONFLICT DO NOTHING; UPDATE registry.project_envs SET target_id=(SELECT id FROM registry.target WHERE name='cloud'); COMMIT;", wamn_control_provision::test_database::seed_org_project_env_sql("acme","apps","dev"))).await?;
+    // CNPG supplies this database owner before the platform SQL operation.
     admin
-        .batch_execute(wamn_control_provision::apply::ensure_apply_role_sql())
+        .batch_execute(
+            "CREATE ROLE wamn_system NOLOGIN; ALTER DATABASE wamn_system OWNER TO wamn_system",
+        )
         .await?;
+    wamn_environment_control::provision_system::provision_system(
+        &wamn_environment_control::provision_system::ProvisionSystemRequest {
+            system_database_url: system.url().into(),
+            platform_domain: "example.invalid".into(),
+        },
+    )
+    .await?;
     admin
-        .batch_execute(wamn_control_provision::apply::APPLY_GRANTS_SQL)
+        .batch_execute(&wamn_control_provision::sql::grant_control_surface_sql())
         .await?;
+    admin.batch_execute(&format!("BEGIN; SET LOCAL ROLE wamn_system; {} INSERT INTO registry.target(name,type,status) VALUES('cloud','cloud','active') ON CONFLICT DO NOTHING; UPDATE registry.project_envs SET target_id=(SELECT id FROM registry.target WHERE name='cloud'); COMMIT;", wamn_control_provision::test_database::seed_org_project_env_sql("acme","apps","dev"))).await?;
     let admin_url = url::Url::parse(system.url())?;
     let secret = scratch.path().join("apply.json");
     wamn_environment_control::provision_system::emit_apply_credential(
@@ -1008,6 +1023,147 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
     assert_eq!(before_b_effective, rows(&observer, &b_effective_sql).await?);
     assert_eq!(before_sql, rows(&observer, &stable_sql).await?);
     assert_eq!(before_schema, rows(&observer, schema_query).await?);
+    // Preparation never changes active SQL or release selections.
+    document.applications.get_mut("a").unwrap().current =
+        wamn_environment_control::environment::document::DeclaredRelease::Digest(
+            old_a.digest().to_string(),
+        );
+    document
+        .applications
+        .get_mut("a")
+        .unwrap()
+        .connections
+        .remove("extra");
+    document
+        .applications
+        .get_mut("a")
+        .unwrap()
+        .connections
+        .remove("failed");
+    assert!(
+        sql::reset::prepare(
+            &platform,
+            &document,
+            "a",
+            old_a.digest().as_str(),
+            system.url()
+        )
+        .await
+        .is_err()
+    );
+    admin.batch_execute(&format!(
+        "BEGIN; SET LOCAL ROLE wamn_system; {} UPDATE registry.project_envs SET disposable=true WHERE org='acme' AND project='apps' AND env='dev'; COMMIT;",
+        wamn_control_provision::bind_platform_principal_sql(wamn_control_provision::PlatformComponent::Provisioning),
+    )).await?;
+    let mut unavailable = platform.clone();
+    unavailable.package_artifact_base = Some(format!("{}/packages", missing_registry.address));
+    unavailable.registry_auth_file = missing_registry.auth.clone();
+    // Alpha resolves, but beta's retained SQL is unavailable. No target is allocated.
+    assert!(
+        sql::reset::prepare(
+            &unavailable,
+            &document,
+            "a",
+            old_a.digest().as_str(),
+            system.url()
+        )
+        .await
+        .is_err()
+    );
+    assert!(admin.query_one("SELECT pending_database IS NULL FROM registry.project_envs WHERE org='acme' AND project='apps' AND env='dev'", &[]).await?.get::<_, bool>(0));
+    let cr = sql::reset::prepare(
+        &platform,
+        &document,
+        "a",
+        old_a.digest().as_str(),
+        system.url(),
+    )
+    .await?;
+    let mut changed_policy = document.clone();
+    changed_policy.policy = "unprovisioned-policy".into();
+    let retried = sql::reset::prepare(
+        &platform,
+        &changed_policy,
+        "a",
+        old_a.digest().as_str(),
+        system.url(),
+    )
+    .await?;
+    assert_eq!(cr["spec"]["name"], retried["spec"]["name"]);
+    assert_eq!(retried["spec"]["cluster"]["name"], provisioned.cluster);
+    let replacement = cr["spec"]["name"].as_str().unwrap();
+    assert_ne!(replacement, database_name);
+    // Only CNPG's database creation is represented here. DEP3-11 observes CNPG itself.
+    admin
+        .batch_execute(&format!(
+            "CREATE DATABASE {} OWNER wamn_db_owner",
+            wamn_pg_core::quote_ident(replacement)
+        ))
+        .await?;
+    let mut replacement_url = url::Url::parse(system.url())?;
+    replacement_url.set_path(replacement);
+    let candidate_admin = connect(replacement_url.as_str()).await?;
+    candidate_admin.batch_execute("CREATE FUNCTION public.interrupt_beta() RETURNS event_trigger LANGUAGE plpgsql AS $$ BEGIN IF EXISTS (SELECT FROM pg_event_trigger_ddl_commands() WHERE object_identity='b.data' AND command_tag='CREATE TABLE') THEN RAISE EXCEPTION 'beta initialization interrupted'; END IF; END $$; CREATE EVENT TRIGGER interrupt_beta ON ddl_command_end EXECUTE FUNCTION public.interrupt_beta()").await?;
+    assert!(
+        sql::reset::initialize(&platform, &document, system.url())
+            .await
+            .is_err()
+    );
+    assert_eq!(before_sql, rows(&observer, &stable_sql).await?);
+    assert_eq!(before_schema, rows(&observer, schema_query).await?);
+    assert_eq!(
+        wamn_environment_control::provision_project_env::read_project_env_instance(
+            &platform.system_database_url,
+            &document.triple()
+        )
+        .await?,
+        provisioned.instance
+    );
+    // A committed earlier package survives retry, including rows inserted after it committed.
+    candidate_admin.batch_execute("DROP EVENT TRIGGER interrupt_beta; INSERT INTO a.data(id,value) VALUES (123,'committed-before-retry')").await?;
+    let first = sql::reset::initialize(&platform, &document, system.url()).await?;
+    let second = sql::reset::initialize(&platform, &document, system.url()).await?;
+    assert_eq!(first["database"], second["database"]);
+    assert_eq!(
+        candidate_admin
+            .query_one("SELECT value FROM a.data WHERE id=123", &[])
+            .await?
+            .get::<_, String>(0),
+        "committed-before-retry"
+    );
+    let installed = candidate_admin
+        .query(
+            "SELECT package_id FROM catalog.packages WHERE env_key=$1",
+            &[&ENV_KEY],
+        )
+        .await?
+        .into_iter()
+        .map(|row| row.get::<_, String>(0))
+        .collect::<BTreeSet<_>>();
+    let active_installed = sql::schema::state(&platform, &document)
+        .await?
+        .packages
+        .into_keys()
+        .collect::<BTreeSet<_>>();
+    assert_eq!(installed, active_installed);
+    assert_eq!(
+        wamn_environment_control::provision_project_env::read_project_env_instance(
+            &platform.system_database_url,
+            &document.triple()
+        )
+        .await?,
+        provisioned.instance
+    );
+    assert_eq!(before_sql, rows(&observer, &stable_sql).await?);
+    let capture = first["capture"].as_str().unwrap();
+    candidate_admin.query("SELECT pg_drop_replication_slot(slot_name) FROM pg_replication_slots WHERE slot_name=$1", &[&capture]).await?;
+    drop(candidate_admin);
+    admin
+        .batch_execute(&format!(
+            "DROP DATABASE {} WITH (FORCE)",
+            wamn_pg_core::quote_ident(replacement)
+        ))
+        .await?;
     drop(project);
     drop(observer);
     admin

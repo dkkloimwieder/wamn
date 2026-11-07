@@ -173,6 +173,20 @@ impl StdError for ReconcileTargetError {
 pub async fn reconcile_run_plane(
     args: ReconcileRunPlaneRequest,
 ) -> anyhow::Result<ReconcileRunPlaneOutcome> {
+    reconcile_target(args, false).await
+}
+
+/// Reconcile only the recorded disposable replacement, without changing the active target.
+pub(crate) async fn reconcile_pending_run_plane(
+    args: ReconcileRunPlaneRequest,
+) -> anyhow::Result<ReconcileRunPlaneOutcome> {
+    reconcile_target(args, true).await
+}
+
+async fn reconcile_target(
+    args: ReconcileRunPlaneRequest,
+    pending: bool,
+) -> anyhow::Result<ReconcileRunPlaneOutcome> {
     anyhow::ensure!(
         ![&args.org, &args.project, &args.env]
             .iter()
@@ -199,6 +213,20 @@ pub async fn reconcile_run_plane(
                     source,
                 )
             })?;
+    let instance = if pending {
+        let system = wamn_package_control::database::connect(&args.system_database_url).await?;
+        let target = crate::provision_project_env::registry::pending_database(&system, &triple)
+            .await?
+            .context("no pending database")?;
+        let suffix = target["instance_suffix"]
+            .as_str()
+            .context("pending instance suffix")?;
+        wamn_control_provision::validate_instance_suffix(suffix)?;
+        anyhow::ensure!(suffix != instance, "pending database is active");
+        suffix.to_owned()
+    } else {
+        instance
+    };
     let expected_database =
         project_env_database_name(&args.org, &args.project, &args.env, &instance);
     let (mut client, conn) = tokio_postgres::connect(&args.admin_database_url, NoTls)

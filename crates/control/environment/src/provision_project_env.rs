@@ -101,7 +101,7 @@ mod database;
 mod grants;
 mod output;
 pub mod pat_secrets;
-mod registry;
+pub(crate) mod registry;
 pub(crate) mod workload;
 
 pub(crate) use database::database_host;

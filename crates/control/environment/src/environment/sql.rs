@@ -1,5 +1,6 @@
 //! Independent environment provisioning and absent-application initialization.
 
+pub mod reset;
 pub mod schema;
 
 use std::collections::BTreeMap;
@@ -104,6 +105,13 @@ pub async fn apply_deployed(
 pub enum Operation<'a> {
     /// Record the environment and return its CNPG Database resource.
     Provision,
+    /// Reserve a replacement and return its CNPG Database.
+    PrepareReset {
+        application: &'a str,
+        release: &'a str,
+    },
+    /// Reconstruct the pending database without changing the active selection.
+    InitializeReset,
     /// Initialize the selected application's absent baselines after CNPG is ready.
     Initialize,
     /// Advance explicitly selected SQL without activating application code.
@@ -132,11 +140,13 @@ pub async fn run_deployed(
     }
     let verb = match operation {
         Operation::Provision => "provision",
+        Operation::PrepareReset { .. } => "schema-prepare",
+        Operation::InitializeReset => "schema-initialize",
         Operation::Initialize => "initialize",
         Operation::ApplySchema { .. } => "schema-apply",
     };
     let coordinate = match operation {
-        Operation::Provision => {
+        Operation::Provision | Operation::PrepareReset { .. } | Operation::InitializeReset => {
             wamn_control_provision::environment_state::environment_resource_name(
                 &document.org,
                 &document.project,
@@ -161,6 +171,10 @@ pub async fn run_deployed(
         arguments.extend(["--emit-secret", "/out/secret.json"]);
     }
     if let Operation::ApplySchema {
+        application,
+        release,
+    }
+    | Operation::PrepareReset {
         application,
         release,
     } = operation
@@ -291,9 +305,9 @@ pub async fn run_deployed(
     }
     let output = job::run(&platform.target, directory, &mut job, &mut secrets).await?;
     match operation {
-        Operation::Provision => Ok(Some(
-            serde_json::from_str(&output).context("read the provisioned Database resource")?,
-        )),
+        Operation::Provision | Operation::PrepareReset { .. } | Operation::InitializeReset => Ok(
+            Some(serde_json::from_str(&output).context("read the provisioned Database resource")?),
+        ),
         Operation::ApplySchema { .. } => {
             print!("{output}");
             Ok(None)

@@ -3,7 +3,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use anyhow::{Context as _, ensure};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use wamn_package_control::apply_package::{self, PackageRoot};
 use wamn_schema_control::{AppliedPackage, PackageDirectory, plan_package_migrations};
 
@@ -59,7 +59,7 @@ pub struct PackageDiff {
 }
 
 /// Exact schema sources required to reconstruct the complete environment.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SchemaSource {
     pub version: String,
     pub artifact: Option<String>,
@@ -217,7 +217,7 @@ pub async fn release_candidates(
     Ok((release.to_owned(), candidates))
 }
 
-async fn open(
+pub(super) async fn open(
     platform: &Platform,
     id: &str,
     version: &str,

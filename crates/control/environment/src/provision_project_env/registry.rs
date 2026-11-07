@@ -410,3 +410,68 @@ pub async fn claim_environment_instance(
     transaction.commit().await?;
     Ok(())
 }
+
+/// Read the pending database without allocating or changing its identity.
+pub(crate) async fn pending_database(
+    client: &impl tokio_postgres::GenericClient,
+    triple: &Triple,
+) -> anyhow::Result<Option<serde_json::Value>> {
+    let row = client.query_opt(
+        "SELECT pending_database FROM registry.project_envs WHERE org=$1 AND project=$2 AND env=$3",
+        &[&triple.org, &triple.project, &triple.env.as_str()],
+    ).await?.with_context(|| format!("project-env {triple} is not recorded"))?;
+    Ok(row.get(0))
+}
+
+/// Allocate once after every reconstruction input resolves. Retries retain the target.
+pub(crate) async fn reserve_database(
+    client: &mut tokio_postgres::Client,
+    triple: &Triple,
+    active: &str,
+    inputs: &serde_json::Value,
+) -> anyhow::Result<serde_json::Value> {
+    let tx = super::provisioning_transaction(client).await?;
+    let row = tx
+        .query_opt(
+            "SELECT instance_suffix, disposable, pending_database FROM registry.project_envs \
+         WHERE org=$1 AND project=$2 AND env=$3 FOR UPDATE",
+            &[&triple.org, &triple.project, &triple.env.as_str()],
+        )
+        .await?
+        .with_context(|| format!("project-env {triple} is not recorded"))?;
+    anyhow::ensure!(
+        row.get::<_, bool>(1),
+        "project-env {triple} is not disposable"
+    );
+    anyhow::ensure!(
+        row.get::<_, String>(0) == active,
+        "active database changed during preparation"
+    );
+    let pending: Option<serde_json::Value> = row.get(2);
+    let pending = if let Some(pending) = pending {
+        anyhow::ensure!(
+            pending["inputs"] == *inputs,
+            "pending database has different immutable inputs"
+        );
+        let suffix = pending["instance_suffix"]
+            .as_str()
+            .context("pending instance suffix")?;
+        validate_instance_suffix(suffix)?;
+        anyhow::ensure!(suffix != active, "pending database is active");
+        pending
+    } else {
+        let instance = mint_instance_suffix()?;
+        anyhow::ensure!(
+            instance != active,
+            "replacement instance collides with active instance"
+        );
+        let pending = serde_json::json!({"instance_suffix":instance, "inputs":inputs});
+        tx.execute(
+            "UPDATE registry.project_envs SET pending_database=$4 WHERE org=$1 AND project=$2 AND env=$3",
+            &[&triple.org, &triple.project, &triple.env.as_str(), &pending],
+        ).await?;
+        pending
+    };
+    tx.commit().await?;
+    Ok(pending)
+}

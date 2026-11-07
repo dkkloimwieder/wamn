@@ -68,12 +68,36 @@ pub async fn prepare(
             .map(wamn_catalog::PackageCoordinate::package_id),
     );
     ensure!(refusals.is_empty(), "{}", refusals.join("; "));
-    let env_key =
-        wamn_control_provision::project_env_key(&document.org, &document.project, &document.env);
     let project_url = super::ensure::project_url(platform, &document.triple())
         .await
         .context("environment is not provisioned; run env provision and env initialize")?;
-    let mut project = super::analyse::connect_project(&project_url)
+    prepare_at(
+        platform,
+        document,
+        application,
+        digest,
+        manifest,
+        packages,
+        &project_url,
+    )
+    .await
+}
+
+/// Rebuild runtime facts through the same owner in a prepared replacement database.
+pub(super) async fn prepare_at(
+    platform: &Platform,
+    document: &EnvironmentDocument,
+    application: &str,
+    digest: &str,
+    manifest: &wamn_catalog::ServingManifest,
+    packages: &[wamn_catalog::manifest::PackageManifest],
+    project_url: &str,
+) -> anyhow::Result<()> {
+    let document = super::analyse::select_application(document, Some(application))?;
+    let document = &document;
+    let env_key =
+        wamn_control_provision::project_env_key(&document.org, &document.project, &document.env);
+    let mut project = super::analyse::connect_project(project_url)
         .await
         .context("application database is absent; run env provision and env initialize")?;
     let initialized: bool = project
@@ -101,7 +125,7 @@ pub async fn prepare(
     let bindings = super::bindings::analyse(&system, document, packages).await?;
     let changes = platform.auth_changes().await?;
     // The immutable cache can survive a later preparation failure. It selects no release.
-    super::stage::write_release(&project_url, &env_key, digest, manifest).await?;
+    super::stage::write_release(project_url, &env_key, digest, manifest).await?;
     let tx = project.transaction().await?;
     tx.batch_execute(&wamn_control_provision::bind_platform_principal_sql(
         wamn_project_state::PlatformComponent::Provisioning,

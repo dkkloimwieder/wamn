@@ -500,8 +500,30 @@ pub async fn ensure_project_database(
     admin_url: &str,
 ) -> anyhow::Result<String> {
     let project_url = project_url(platform, &document.triple()).await?;
+    ensure_database_at(
+        platform,
+        document,
+        packages,
+        admin,
+        admin_url,
+        &project_url,
+        false,
+    )
+    .await
+}
+
+/// Reuse the project initializer for an explicitly resolved database target.
+pub(super) async fn ensure_database_at(
+    platform: &Platform,
+    document: &EnvironmentDocument,
+    packages: &[wamn_catalog::manifest::PackageManifest],
+    admin: &tokio_postgres::Client,
+    admin_url: &str,
+    project_url: &str,
+    pending: bool,
+) -> anyhow::Result<String> {
     let mut project_admin = url::Url::parse(admin_url)?;
-    project_admin.set_path(url::Url::parse(&project_url)?.path());
+    project_admin.set_path(url::Url::parse(project_url)?.path());
     let project_admin = project_admin.to_string();
     connect(&project_admin)
         .await?
@@ -512,7 +534,7 @@ pub async fn ensure_project_database(
         .await?;
     admin.batch_execute(&format!(
         "GRANT CONNECT ON DATABASE {} TO wamn_apply; GRANT wamn_platform TO wamn_db_owner WITH INHERIT TRUE, SET FALSE;",
-        wamn_pg_core::quote_ident(url::Url::parse(&project_url)?.path().trim_start_matches('/')),
+        wamn_pg_core::quote_ident(url::Url::parse(project_url)?.path().trim_start_matches('/')),
     )).await?;
     for package in packages {
         admin
@@ -529,19 +551,21 @@ pub async fn ensure_project_database(
             ))
             .await?;
     }
-    crate::reconcile_run_plane::reconcile_run_plane(
-        crate::reconcile_run_plane::ReconcileRunPlaneRequest {
-            system_database_url: platform.system_database_url.clone(),
-            admin_database_url: project_admin.clone(),
-            org: document.org.clone(),
-            project: document.project.clone(),
-            env: document.env.clone(),
-            schema: RUN_SCHEMA.to_owned(),
-            dry_run: false,
-            changes: platform.auth_changes().await?,
-        },
-    )
-    .await
+    let request = crate::reconcile_run_plane::ReconcileRunPlaneRequest {
+        system_database_url: platform.system_database_url.clone(),
+        admin_database_url: project_admin.clone(),
+        org: document.org.clone(),
+        project: document.project.clone(),
+        env: document.env.clone(),
+        schema: RUN_SCHEMA.to_owned(),
+        dry_run: false,
+        changes: platform.auth_changes().await?,
+    };
+    if pending {
+        crate::reconcile_run_plane::reconcile_pending_run_plane(request).await
+    } else {
+        crate::reconcile_run_plane::reconcile_run_plane(request).await
+    }
     .context("reconcile the run plane")?;
     Ok(project_admin)
 }
@@ -884,7 +908,11 @@ pub(super) async fn secret_exists(
 }
 
 /// Wait for a CloudNativePG CR to report `status.applied`.
-async fn wait_applied(platform: &Platform, kind: &str, name: &str) -> anyhow::Result<()> {
+pub(super) async fn wait_applied(
+    platform: &Platform,
+    kind: &str,
+    name: &str,
+) -> anyhow::Result<()> {
     kubectl(
         platform,
         &platform.database_namespace,
@@ -919,7 +947,7 @@ pub(super) async fn kubectl(
 }
 
 /// A replication password: 32 random bytes in hexadecimal.
-fn random_password() -> anyhow::Result<String> {
+pub(super) fn random_password() -> anyhow::Result<String> {
     use ring::rand::SecureRandom as _;
     let mut random = [0u8; 32];
     ring::rand::SystemRandom::new()

@@ -10,7 +10,7 @@ GRANT SELECT ON registry.orgs, registry.env_policies, registry.project_envs,
 GRANT SELECT (org, id), INSERT (org, id) ON registry.projects TO wamn_apply;
 GRANT INSERT (org, project, env, secret_name, secret_namespace, instance_suffix,
     disposable, policy_name, target_id) ON registry.project_envs TO wamn_apply;
-GRANT UPDATE (secret_name, secret_namespace, disposable, target_id, policy_name, route_host)
+GRANT UPDATE (secret_name, secret_namespace, disposable, target_id, policy_name, route_host, pending_database)
     ON registry.project_envs TO wamn_apply;
 GRANT SELECT (id, principal_id, token_prefix, token_hash, revoked_at, expires_at)
     ON identity.pats TO wamn_apply;

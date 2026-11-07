@@ -21,6 +21,10 @@ pub enum EnvCommand {
     Initialize(InitializeArgs),
     /// Execute the selected schema release inside the SQL Job.
     SchemaApply(SchemaApplyArgs),
+    /// Reserve a disposable database candidate and render its CNPG resource.
+    SchemaPrepare(SchemaApplyArgs),
+    /// Initialize the recorded candidate after CNPG creates it.
+    SchemaInitialize(FileArgs),
     /// Move one environment toward its environment.k document.
     Apply(ApplyArgs),
     /// Write the committed integration documents of one environment.
@@ -115,9 +119,11 @@ pub async fn run(command: EnvCommand) -> anyhow::Result<()> {
         return Ok(());
     }
     let platform = match &command {
-        EnvCommand::Provision(_) | EnvCommand::Initialize(_) | EnvCommand::SchemaApply(_) => {
-            Platform::sql_from_env()?
-        }
+        EnvCommand::Provision(_)
+        | EnvCommand::Initialize(_)
+        | EnvCommand::SchemaApply(_)
+        | EnvCommand::SchemaPrepare(_)
+        | EnvCommand::SchemaInitialize(_) => Platform::sql_from_env()?,
         EnvCommand::Apply(_) | EnvCommand::Rollback(_) => Platform::apply_from_env()?,
         _ => Platform::from_env()?,
     };
@@ -145,6 +151,37 @@ pub async fn run(command: EnvCommand) -> anyhow::Result<()> {
                 args.application.as_deref(),
             )
             .await?;
+        }
+        EnvCommand::SchemaPrepare(args) => {
+            let document = sql_document(&args.file)?;
+            let admin = std::env::var("WAMN_SYSTEM_ADMIN_URL").context("SQL administrator URL")?;
+            let result = environment::lock::LifecycleLock::hold(
+                &platform.system_database_url,
+                &document.triple(),
+                async |_| {
+                    environment::sql::reset::prepare(
+                        &platform,
+                        &document,
+                        &args.application,
+                        &args.release,
+                        &admin,
+                    )
+                    .await
+                },
+            )
+            .await?;
+            println!("{}", serde_json::to_string(&result)?);
+        }
+        EnvCommand::SchemaInitialize(args) => {
+            let document = sql_document(&args.file)?;
+            let admin = std::env::var("WAMN_SYSTEM_ADMIN_URL").context("SQL administrator URL")?;
+            let result = environment::lock::LifecycleLock::hold(
+                &platform.system_database_url,
+                &document.triple(),
+                async |_| environment::sql::reset::initialize(&platform, &document, &admin).await,
+            )
+            .await?;
+            println!("{}", serde_json::to_string(&result)?);
         }
         EnvCommand::SchemaApply(args) => {
             let document = sql_document(&args.file)?;
