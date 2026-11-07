@@ -270,7 +270,11 @@ async fn get(run: &Run, namespace: &str, kind: &str, name: &str) -> anyhow::Resu
     if !namespace.is_empty() {
         command.args(["-n", namespace]);
     }
-    let output = success(command.args(["get", kind, name, "-o", "json"])).await?;
+    command.args(["get", kind]);
+    if !name.is_empty() {
+        command.arg(name);
+    }
+    let output = success(command.args(["-o", "json"])).await?;
     Ok(serde_json::from_slice(&output.stdout)?)
 }
 

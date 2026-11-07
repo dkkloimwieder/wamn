@@ -1352,6 +1352,8 @@ async fn helm_history(run: &Run, name: &str) -> anyhow::Result<Value> {
         Command::new("helm")
             .arg("--kubeconfig")
             .arg(&run.target.kubeconfig)
+            .arg("--kube-context")
+            .arg(&run.target.context)
             .args(["history", name, "-n", "hosts", "-o", "json"]),
     )
     .await?;
