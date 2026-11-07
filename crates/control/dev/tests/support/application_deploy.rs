@@ -97,7 +97,7 @@ impl Journey<'_> {
 
     async fn route(&self, app: &str, route: &str, body: &Value) -> anyhow::Result<Value> {
         let endpoint = format!(
-            "{}/{app}/{route}",
+            "{}/api/{app}/{route}",
             self.edge
                 .replace("alpha.wamn.localhost", &format!("{app}.wamn.localhost"))
         );
@@ -794,11 +794,28 @@ async fn sources(repository: &Path, checkout: &Path) -> anyhow::Result<[PathBuf;
     for (app, root) in ["alpha", "beta"].into_iter().zip(&roots) {
         copy_source(&apps.join("platform_fixture"), root, app)?;
         let manifest = root.join("wamn.k");
-        let text = std::fs::read_to_string(&manifest)?.replace(
-            "version = \"2.1.1\", predecessor_version = \"2.1.0\"",
-            "version = \"1.0.0\"",
-        );
+        let text = std::fs::read_to_string(&manifest)?
+            .replace(
+                "version = \"2.1.1\", predecessor_version = \"2.1.0\"",
+                "version = \"1.0.0\"",
+            )
+            .replace(
+                "routes = {",
+                &format!("routes = {{path_prefix = \"/{app}\", "),
+            );
         std::fs::write(manifest, text)?;
+        let file = root.join("publication/attachments.json");
+        let mut attachments: BTreeMap<String, Value> =
+            serde_json::from_slice(&std::fs::read(&file)?)?;
+        for attachment in attachments.values_mut() {
+            let path = attachment["definition"]["route"]["path"]
+                .as_str()
+                .context("fixture route path")?;
+            attachment["definition"]["route"]["path"] = format!("/{app}{path}").into();
+            attachment["definition-hash"] =
+                wamn_execution_contract::canonical_json_sha256(&attachment["definition"]).into();
+        }
+        std::fs::write(file, serde_json::to_vec_pretty(&attachments)?)?;
         let query = root.join("query/widget_list.sql");
         std::fs::write(
             &query,
