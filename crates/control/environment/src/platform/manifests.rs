@@ -31,15 +31,6 @@ pub fn objects(
         if hosts || object["metadata"]["namespace"] == "__ENVIRONMENT_NAMESPACE__" {
             object["metadata"]["namespace"] = "hosts".into();
         }
-        if object["kind"] == "RoleBinding"
-            && let Some(subjects) = object["subjects"].as_array_mut()
-        {
-            for subject in subjects {
-                if subject["namespace"] == "wamn-system" {
-                    subject["namespace"] = "platform".into();
-                }
-            }
-        }
         provider_edits(object, document).with_context(|| format!("render manifest {path}"))?;
         *object = apply_namespace(object.take(), "platform");
     }

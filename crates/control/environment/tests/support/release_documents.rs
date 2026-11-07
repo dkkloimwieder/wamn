@@ -94,36 +94,28 @@ pub fn fixture_releases() -> anyhow::Result<[Vec<u8>; 3]> {
     ])
 }
 
-pub const NAMESPACE: &str = "wamn-system";
+pub const NAMESPACE: &str = "hosts";
 /// The one NATS of the test cluster.
-pub const NATS_URL: &str = "nats://wamn-nats.wamn-system.svc.cluster.local:4222";
+pub const NATS_URL: &str = "nats://wamn-nats.platform.svc.cluster.local:4222";
 pub const ORG: &str = "acme";
 pub const PROJECT: &str = "orders";
 /// The policy provision-org stamps for the trials template.
 pub const POLICY: &str = "dev";
 pub const PLATFORM_DOMAIN: &str = "example.invalid";
 
-pub fn fixture_host_group(local: &str) -> Value {
-    json!({
-        "replicas": 1,
-        "schedulerNatsUrl": NATS_URL,
-        "dataNatsUrl": NATS_URL,
-        "http": {"enabled": true, "port": 80},
-        "env": [
-            {"name": "WAMN_REGISTRY_AUTH_FILE", "value": "/apply-registry/config.json"},
-            {"name": "DOCKER_CONFIG", "value": "/apply-registry"},
-            {"name": "WAMN_COMPONENT_ARTIFACT_BASE", "value": format!("{local}/wamn/components")},
-            {"name": "WAMN_ALLOWED_HOSTS", "value": http::ORIGIN},
-        ],
-        "ociCaPaths": ["/apply-registry/ca.crt"],
-        "volumes": [
-            {"name": "apply-registry", "secret": {"secretName": "apply-registry"}},
-
-        ],
-        "volumeMounts": [
-            {"name": "apply-registry", "mountPath": "/apply-registry", "readOnly": true},
-        ],
-    })
+pub fn fixture_host_group(document: &EnvironmentDocument, local: &str) -> Value {
+    let installed = wamn_environment_control::platform::control::host_values(&document.org);
+    let shared = environment::ensure::materializer_host_values(document, 70, 1, 120, None)
+        .expect("shared environment host");
+    let mut group = serde_json::to_value(
+        environment::runtime::host_group(&installed, &shared, &format!("{local}/wamn/components"))
+            .expect("platform host inputs"),
+    )
+    .expect("host group");
+    group["env"].as_array_mut().unwrap().push(json!({
+        "name":"WAMN_ALLOWED_HOSTS", "value":http::ORIGIN
+    }));
+    group
 }
 
 pub fn fixture_document(env: &str, route_host: &str, digest: &str) -> EnvironmentDocument {
@@ -153,26 +145,6 @@ pub fn fixture_document(env: &str, route_host: &str, digest: &str) -> Environmen
             },
         )]),
     }
-}
-
-/// The host group of `document` with its event coordinates. The release
-/// chart declares the materializer's binding, which inherits the host's data
-/// connection and the environment's certificate (docs/plan/alignment.md R5, R6).
-pub fn event_overlay(document: &EnvironmentDocument, mut group: Value) -> anyhow::Result<Value> {
-    group["env"]
-        .as_array_mut()
-        .context("host environment")?
-        .extend(
-            [
-                ("WAMN_EVT_ORG", document.org.as_str()),
-                ("WAMN_EVT_PROJECT", document.project.as_str()),
-                ("WAMN_EVT_ENV", document.env.as_str()),
-                ("WAMN_EVT_STREAM_REPLICAS", "1"),
-                ("WAMN_EVT_DUP_WINDOW_SECS", "120"),
-            ]
-            .map(|(name, value)| json!({"name":name,"value":value})),
-        );
-    Ok(group)
 }
 
 pub fn rollback_host_group(work: &Path) -> PathBuf {
@@ -1073,42 +1045,6 @@ pub mod workflow {
                 },
             )]),
         }
-    }
-
-    pub fn event_host_values(
-        mut group: Value,
-        issuer: &str,
-        suffix: &str,
-    ) -> anyhow::Result<Value> {
-        group["env"]
-            .as_array_mut()
-            .context("host environment")?
-            .extend(
-                [
-                    ("WAMN_SESSION_ISSUER", issuer),
-                    ("WAMN_SESSION_JWKS_CA", "/integration-session/ca.crt"),
-                    ("WAMN_SESSION_INSTANCE_SUFFIX", suffix),
-                    ("WAMN_EVT_ORG", ORG),
-                    ("WAMN_EVT_PROJECT", PROJECT),
-                    ("WAMN_EVT_ENV", ENVIRONMENT),
-                    ("WAMN_EVT_STREAM_REPLICAS", "1"),
-                    ("WAMN_EVT_DUP_WINDOW_SECS", "120"),
-                ]
-                .map(|(name, value)| json!({"name":name, "value":value})),
-            );
-        group["volumes"]
-            .as_array_mut()
-            .context("host volumes")?
-            .extend([
-                json!({"name":"integration-session","configMap":{"name":"integration-session-ca"}}),
-            ]);
-        group["volumeMounts"]
-        .as_array_mut()
-        .context("host mounts")?
-        .extend([
-            json!({"name":"integration-session","mountPath":"/integration-session","readOnly":true}),
-        ]);
-        Ok(group)
     }
 }
 

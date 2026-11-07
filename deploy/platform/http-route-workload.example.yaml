@@ -9,7 +9,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: flow-http
-  namespace: wamn-system
+  namespace: hosts
   labels: { app: flow-http }
 spec:
   type: ClusterIP
@@ -25,7 +25,7 @@ metadata:
   name: flow-http
   # Must be one of `operator.watchNamespaces` (deploy/infra/values-wamn.yaml),
   # or the operator never sees this object at all.
-  namespace: wamn-system
+  namespace: hosts
 spec:
   replicas: 1
   template:
@@ -42,7 +42,7 @@ spec:
       # `HostSelection=False` condition. Naming it rather than leaving it unset
       # makes the target legible and gives the RC one string to flip to show
       # the refusal.
-      environment: wamn-system
+      environment: hosts
       # HTTP exposure: the operator manages EndpointSlices for this Service
       # (above) — the deprecated runtime-gateway is never adopted.
       kubernetes:
@@ -76,7 +76,7 @@ spec:
           interfaces: [statements]
       components:
         - name: flow-http
-          image: registry.wamn-system.svc.cluster.local:5000/wamn/components/entries@sha256:0000000000000000000000000000000000000000000000000000000000000000
+          image: wamn-registry.platform.svc.cluster.local:5000/wamn/components/entries@sha256:0000000000000000000000000000000000000000000000000000000000000000
           imagePullPolicy: Always
           poolSize: 0
           localResources:

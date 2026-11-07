@@ -66,7 +66,7 @@ pub fn postgres_cluster_inputs(
     Ok(objects)
 }
 
-pub(super) fn runtime_namespaces() -> Vec<Value> {
+pub fn runtime_namespaces() -> Vec<Value> {
     ["platform", "identity", "hosts"]
         .map(namespace_object)
         .into()
@@ -226,7 +226,7 @@ pub fn helm_template(entry: &serde_json::Value) -> anyhow::Result<Vec<serde_json
         .collect()
 }
 
-pub(super) async fn helm(
+pub(crate) async fn helm(
     target: &Target,
     arguments: &[&std::ffi::OsStr],
 ) -> anyhow::Result<Vec<u8>> {

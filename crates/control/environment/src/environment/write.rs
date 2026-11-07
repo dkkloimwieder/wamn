@@ -50,7 +50,7 @@ pub async fn write(
     let policy = &analysis.authorities.policy;
     let budget = Duration::from_secs(u64::try_from(policy.readiness_budget_seconds)?);
     let deadline = Instant::now() + budget;
-    let (rendered, names) = release_values(
+    let (mut rendered, names) = release_values(
         document,
         &release.manifest,
         &release.digest,
@@ -60,11 +60,30 @@ pub async fn write(
         platform.host_group.as_deref(),
         clients,
     )?;
+    let suffix = &analysis
+        .authorities
+        .row
+        .as_ref()
+        .context("missing provisioned environment")?
+        .instance_suffix;
+    rendered["runtime-operator"]["runtime"]["hostGroups"][0]["env"]
+        .as_sequence_mut()
+        .context("application host variables")?
+        .push(serde_yaml::to_value(
+            serde_json::json!({"name":"WAMN_SESSION_INSTANCE_SUFFIX", "value":suffix}),
+        )?);
     let release_name = analysis.authorities.release_name.clone();
     let private = PrivateDirectory::create()?;
     let values = private.path("values.yaml");
     std::fs::write(&values, serde_yaml::to_string(&rendered)?)
         .with_context(|| format!("write {}", values.display()))?;
+    let metadata: serde_json::Value =
+        serde_yaml::from_slice(&std::fs::read(platform.chart.join("Chart.yaml"))?)?;
+    let objects = crate::platform::resources::helm_template(&serde_json::json!({
+        "chart":platform.chart, "version":metadata["version"],
+        "name":release_name, "namespace":platform.target.namespace, "values":rendered,
+    }))?;
+    super::runtime::require_references(&platform.target, &objects).await?;
     release_chart::recover_pending(&platform.target, &release_name).await?;
     let poller = host_report::Poller::start(&platform.target, &release_name);
     let upgraded = release_chart::upgrade(
@@ -91,7 +110,10 @@ pub async fn write(
 /// Render apply values with the platform overlay and derived credential references.
 pub fn render(input: &ValuesInput, path: Option<&Path>) -> anyhow::Result<Value> {
     let mut input = input.clone();
-    input.host_group = host_group(path, &input.org, &input.project, &input.env)?;
+    input.host_group = match path {
+        Some(path) => host_group(Some(path), &input.org, &input.project, &input.env)?,
+        None => plan::host_group(input.host_group, &input.org, &input.project, &input.env)?,
+    };
     release_chart::values(&input)
 }
 

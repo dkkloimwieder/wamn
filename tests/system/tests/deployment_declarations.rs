@@ -13,7 +13,7 @@ const PLATFORM: &str = "deploy/platform";
 
 /// The host image is supplied through Helm values.
 const HOST_VALUES: &str = "release chart host values";
-const IDENTITY_ISSUER: &str = "https://wamn-identity.wamn-system.svc";
+const IDENTITY_ISSUER: &str = "https://identity.identity.svc.cluster.local";
 const IDENTITY_TLS_SECRET: &str = "wamn-identity-serving-tls";
 const EDGE_TLS_SECRET: &str = "wamn-edge-tls";
 const EDGE_IDENTITY_CA: &str = "wamn-identity-ca";
@@ -297,7 +297,7 @@ fn host_values() -> wamn_test_infrastructure::rendering::RenderedHostValues {
     use wamn_test_infrastructure::rendering::{EventIdentity, HostValuesInput};
     wamn_gate_harness::render_check::host_values(
         &HostValuesInput {
-            namespace: "wamn-system".into(),
+            namespace: "hosts".into(),
             host_tag: "dev".into(),
             replicas: 3,
             component_artifact_base: "registry.example/components".into(),
@@ -388,7 +388,7 @@ runtime-operator:
             NAME,
             "deploy/platform/release",
             "--namespace",
-            "wamn-system",
+            "hosts",
             "--skip-crds",
             "-f",
         ])
@@ -408,13 +408,13 @@ fn render_edge(root: &Path, neg: bool) -> Output {
         "wamn-edge",
         "deploy/platform/edge",
         "--namespace",
-        "wamn-system",
+        "hosts",
     ]);
     for value in [
         "applications[0].host=wamn.example.invalid".to_owned(),
         format!("tlsSecret={EDGE_TLS_SECRET}"),
         "issuer=wasmcloud-ca".to_owned(),
-        "applications[0].api=http://flow-http.wamn-system.svc.cluster.local".to_owned(),
+        "applications[0].api=http://flow-http.hosts.svc.cluster.local".to_owned(),
         "applications[0].files=http://release-files.hosts.svc.cluster.local".to_owned(),
         format!("identity={IDENTITY_ISSUER}"),
         format!("identityCaConfigMap={EDGE_IDENTITY_CA}"),
@@ -437,7 +437,7 @@ fn render_identity(
         "wamn-identity",
         "deploy/platform/identity",
         "--namespace",
-        "wamn-system",
+        "identity",
         "-f",
         "deploy/platform/values-identity-default.yaml",
     ]);
@@ -827,51 +827,28 @@ fn only_identity_receives_issuer_credentials_and_other_consumers_keep_their_clas
     }
 }
 
-/// EVERY OBJECT LANDS IN ONE NAMESPACE.
-///
-/// The exceptions are per-environment templates whose namespace is a
-/// substitution placeholder — an object applied as-is would otherwise land in
-/// the wrong environment.
-/// The release-namespace files state no namespace: the install applies them
-/// with `-n <release namespace>`, `wamn-system` on kind and `hosts` on GKE
-/// (docs/architecture/overview.md#environment-lifecycle).
-/// Platform-namespace files state no namespace because the install supplies
-/// `-n platform` on both kind and GKE.
-const RELEASE_NAMESPACE_FILES: [&str; 2] =
-    ["wamn-host-serviceaccount.yaml", "control-status-rbac.yaml"];
-const PLATFORM_NAMESPACE_FILES: [&str; 1] = ["otel-collector.yaml"];
-
+/// Explicit placement stays within the namespaces declared by the platform.
 #[test]
-fn every_platform_object_is_namespaced_to_wamn_system_or_templated() {
+fn every_platform_object_uses_a_declared_namespace_or_template() {
     let root = repository_root();
-    let files = platform_files(&root);
-    for file in files.iter().map(String::as_str) {
-        let source = read(&root, file);
-        for document in documents(&source) {
-            let Some(object) = object(&document, file) else {
+    let namespaces: BTreeSet<_> = wamn_gate_harness::render_check::runtime_namespaces()
+        .into_iter()
+        .map(|object| object["metadata"]["name"].as_str().unwrap().to_owned())
+        .collect();
+    for file in platform_files(&root) {
+        for document in documents(&read(&root, &file)) {
+            let Some(object) = object(&document, &file) else {
                 continue;
             };
-            if RELEASE_NAMESPACE_FILES.contains(&file) || PLATFORM_NAMESPACE_FILES.contains(&file) {
+            // Unqualified resources use the install target's namespace.
+            if let Some(namespace) = object.namespace.as_deref() {
                 assert!(
-                    object.namespace.is_none(),
-                    "{file}: {}/{} states a namespace",
+                    namespaces.contains(namespace) || namespace == "__ENVIRONMENT_NAMESPACE__",
+                    "{file}: {}/{} is namespaced {namespace}",
                     object.kind,
                     object.name
                 );
-                continue;
             }
-            let namespace = object.namespace.as_deref().unwrap_or_else(|| {
-                panic!(
-                    "{file}: {}/{} states no namespace",
-                    object.kind, object.name
-                )
-            });
-            assert!(
-                namespace == "wamn-system" || namespace == "__ENVIRONMENT_NAMESPACE__",
-                "{file}: {}/{} is namespaced {namespace}",
-                object.kind,
-                object.name
-            );
         }
     }
 }

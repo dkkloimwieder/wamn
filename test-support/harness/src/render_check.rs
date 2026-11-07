@@ -2,6 +2,8 @@
 
 use std::path::Path;
 
+pub use wamn_environment_control::platform::resources::runtime_namespaces;
+
 use anyhow::{Context as _, ensure};
 use serde_json::Value;
 use wamn_release_control::release_chart::{self, ImageSet};

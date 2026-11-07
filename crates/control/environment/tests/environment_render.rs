@@ -11,8 +11,8 @@ use wamn_environment_control::environment::document::EnvironmentDocument;
 pub mod release_documents;
 use release_documents::workflow as integration;
 use release_documents::{
-    NAMESPACE, ORG, PROJECT, environment_releases as fixture_releases, event_overlay,
-    fixture_document, fixture_host_group, rollback_host_group,
+    NAMESPACE, ORG, PROJECT, environment_releases as fixture_releases, fixture_document,
+    fixture_host_group, rollback_host_group,
 };
 use wamn_gate_harness::render_check::{
     assert_complete, credential_secrets, environment as render_values, operator_prerequisites,
@@ -93,11 +93,6 @@ fn prekind_environment_renders() -> anyhow::Result<()> {
     let started = Instant::now();
     let work = ScratchRoot::create()?;
     let [a, b, h, http] = fixture_releases()?;
-    let base = fixture_host_group("registry.invalid");
-    std::fs::write(
-        work.path().join("host-group.yaml"),
-        serde_yaml::to_string(&base)?,
-    )?;
     for (name, env, bytes, drain) in [
         ("dev A", "dev", &a, 70),
         ("dev B", "dev", &b, 70),
@@ -114,8 +109,7 @@ fn prekind_environment_renders() -> anyhow::Result<()> {
             &format!("{env}.orders.example"),
             manifest.digest().as_str(),
         );
-        let base = serde_yaml::from_slice(&std::fs::read(work.path().join("host-group.yaml"))?)?;
-        let group = event_overlay(&document, base)?;
+        let group = fixture_host_group(&document, "registry.invalid");
         let path = work.path().join(format!("{env}-event-host-group.yaml"));
         std::fs::write(&path, serde_yaml::to_string(&group)?)?;
         let selected = if name == "rollback A" {
@@ -135,8 +129,7 @@ fn prekind_environment_renders() -> anyhow::Result<()> {
     // Both connectors share integration.k and its session/event host overlay.
     for connector in ["rest_connector", "netsuite"] {
         let document = integration::fixture_document(connector);
-        let group =
-            integration::event_host_values(base.clone(), "https://integration-session", "render")?;
+        let group = fixture_host_group(&document, "registry.invalid");
         let path = work.path().join("integration-host-group.yaml");
         std::fs::write(&path, serde_yaml::to_string(&group)?)?;
         let mut release: Value = serde_json::from_slice(&a)?;
@@ -169,7 +162,7 @@ fn prekind_rejects_old_missing_conn_reader() -> anyhow::Result<()> {
     let work = ScratchRoot::create()?;
     let manifest = manifest(&fixture_releases()?[0])?;
     let document = fixture_document("dev", "dev.orders.example", manifest.digest().as_str());
-    let group = event_overlay(&document, fixture_host_group("registry.invalid"))?;
+    let group = fixture_host_group(&document, "registry.invalid");
     let path = rollback_host_group(work.path());
     std::fs::write(&path, serde_yaml::to_string(&group)?)?;
     let documents = template(&render_values(&document, &manifest, &path, 70)?, NAMESPACE)?;

@@ -85,12 +85,25 @@ pub(super) fn release_values(
     for application in applications.values_mut() {
         application.connections.clear();
     }
+    let local_components = host_group
+        .get("env")
+        .and_then(Value::as_sequence)
+        .into_iter()
+        .flatten()
+        .find(|entry| entry["name"] == "WAMN_COMPONENT_ARTIFACT_BASE")
+        .and_then(|entry| entry["value"].as_str())
+        .filter(|base| base.starts_with(&format!("{}/", crate::platform::resources::POD_REGISTRY)));
+    let pod_artifact_base =
+        local_components.map(|base| base.trim_end_matches("/components").to_owned() + "/releases");
     let mut rendered = release_chart::values(&ValuesInput {
         org: document.org.clone(),
         project: document.project.clone(),
         env: document.env.clone(),
         manifest_digest: manifest_digest.to_owned(),
-        artifact_base: artifact_base.to_owned(),
+        artifact_base: pod_artifact_base
+            .as_deref()
+            .unwrap_or(artifact_base)
+            .to_owned(),
         route_host: document.legacy_hostname().to_owned(),
         applications,
         roles,
@@ -98,6 +111,12 @@ pub(super) fn release_values(
         actor: actor.to_owned(),
         host_group,
     })?;
+    if pod_artifact_base.is_some() {
+        rendered["runtime-operator"]["runtime"]["hostGroups"][0]["extraArgs"]
+            .as_sequence_mut()
+            .context("application host arguments")?
+            .push("--allow-insecure-registries".into());
+    }
     rendered["webClients"] = serde_yaml::to_value(clients)?;
     rendered["webDigests"] = serde_yaml::to_value(
         document

@@ -13,6 +13,7 @@ pub(crate) mod host_report;
 pub mod lock;
 pub mod readiness;
 pub mod rollback;
+pub mod runtime;
 pub mod show;
 pub mod sql;
 pub mod stage;
@@ -32,7 +33,7 @@ use wamn_identity_client::PatIssuerConfig;
 use wamn_release_control::release_chart;
 
 /// The namespace of the release chart when `WAMN_RELEASE_NAMESPACE` is unset.
-const DEFAULT_NAMESPACE: &str = "wamn-system";
+const DEFAULT_NAMESPACE: &str = "hosts";
 
 /// The platform inputs of the lifecycle verbs.
 #[derive(Debug, Clone)]
@@ -86,7 +87,7 @@ pub struct EventBroker {
 impl Platform {
     /// Read the platform inputs: `WAMN_CONTROL_DATABASE_URL`, `KUBECONFIG`
     /// and its current context, `WAMN_RELEASE_NAMESPACE` (default
-    /// `wamn-system`), `WAMN_RELEASE_CHART`, `WAMN_RELEASE_ARTIFACT_BASE`,
+    /// `hosts`), `WAMN_RELEASE_CHART`, `WAMN_RELEASE_ARTIFACT_BASE`,
     /// `WAMN_REGISTRY_AUTH_FILE` and `WAMN_OCI_CA_PATHS` (colon-separated).
     ///
     /// # Errors
@@ -118,7 +119,9 @@ impl Platform {
                 namespace: std::env::var("WAMN_RELEASE_NAMESPACE")
                     .unwrap_or_else(|_| DEFAULT_NAMESPACE.to_owned()),
             },
-            PathBuf::from(variable("WAMN_RELEASE_CHART")?),
+            std::env::var_os("WAMN_RELEASE_CHART")
+                .map(PathBuf::from)
+                .unwrap_or_default(),
         )
     }
 
@@ -161,7 +164,7 @@ impl Platform {
             package_artifact_base: std::env::var("WAMN_PACKAGE_ARTIFACT_BASE").ok(),
             component_artifact_base: std::env::var("WAMN_COMPONENT_ARTIFACT_BASE").ok(),
             database_namespace: std::env::var("WAMN_DATABASE_NAMESPACE")
-                .unwrap_or_else(|_| target.namespace.clone()),
+                .unwrap_or_else(|_| "platform".to_owned()),
             database_host: std::env::var("WAMN_DATABASE_HOST").ok(),
             database_port: std::env::var("WAMN_DATABASE_PORT")
                 .ok()
@@ -246,7 +249,10 @@ pub async fn dry_run(
     application: Option<&str>,
 ) -> anyhow::Result<Analysis> {
     let document = EnvironmentDocument::compile(file)?;
-    analyse::analyse(platform, &document, application).await
+    let private = ensure::PrivateDirectory::create()?;
+    let mut resolved = platform.clone();
+    runtime::resolve_target(&mut resolved, &document, &private.path(".")).await?;
+    analyse::analyse(&resolved, &document, application).await
 }
 
 /// Activate one application without provisioning or initializing its database.
@@ -271,6 +277,10 @@ pub(crate) async fn apply_document(
     application: Option<&str>,
     reason: Option<&str>,
 ) -> anyhow::Result<Analysis> {
+    let private = ensure::PrivateDirectory::create()?;
+    let mut resolved = platform.clone();
+    runtime::resolve_target(&mut resolved, document, &private.path(".")).await?;
+    let platform = &resolved;
     let mut analysis = analyse::analyse(platform, document, application).await?;
     let clients = expand::expand(platform, document, &analysis)
         .await

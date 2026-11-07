@@ -14,8 +14,8 @@ use wamn_release_control::publish_release::{PublishedRelease, record_composed_en
 #[path = "../../environment/tests/support/release_documents.rs"]
 pub mod release_documents;
 use release_documents::{
-    MANIFEST_H, NAMESPACE, ORG, PACKAGE, PLATFORM_DOMAIN, POLICY, PROJECT, event_overlay,
-    fixture_document, fixture_host_group, fixture_http_entry, release,
+    MANIFEST_H, NAMESPACE, ORG, PACKAGE, PLATFORM_DOMAIN, POLICY, PROJECT, fixture_document,
+    fixture_host_group, fixture_http_entry, release,
 };
 use release_documents::{http as http_connection, workflow as integration};
 #[path = "../../environment/tests/support/prekind_host.rs"]

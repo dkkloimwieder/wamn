@@ -721,7 +721,7 @@ async fn prekind_http_host_runs_and_rejects_respond_without_caller() -> anyhow::
             bindings,
         })?,
     )?;
-    let mut group = event_overlay(&document, fixture_host_group("registry.invalid"))?;
+    let mut group = fixture_host_group(&document, "registry.invalid");
     group["env"]
         .as_array_mut()
         .context("environment")?
