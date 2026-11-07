@@ -1,8 +1,8 @@
-//! The current state of one environment in its release namespace
+//! The current application states in one environment's release namespace
 //! (docs/architecture/execution.md#host-run-routes).
 //!
-//! The one reader of the host Deployment, the WorkloadDeployments and the host
-//! pods of an environment's release: `wamn-ctl env status` reads them through
+//! The one reader of host Deployments, WorkloadDeployments and application host
+//! pods: `wamn-ctl env status` reads them through
 //! `kubectl get --raw`, and the control host's `environment.status` through its
 //! read-only ServiceAccount. Both send the same three list requests and decode
 //! them with the same functions. No Secret, no Helm revision, no history.
@@ -27,20 +27,24 @@ pub const HASH_LEN: usize = 20;
 /// The pod-template and pod annotation that carries the release digest.
 const RELEASE_DIGEST_ANNOTATION: &str = "wamn.release-digest";
 
-/// The Helm release name of an environment: `r-<slug>-<hash>`.
+/// The name of shared environment resources: `e-<slug>-<hash>`.
 ///
 /// The slug is the env name cut to 24 characters. The hash is the first 20 hex
 /// characters of SHA-256 over `org/project/env`. The name is at most 47
-/// characters, inside Helm's bound of 53. It is also the environment's host group.
+/// characters, inside Helm's bound of 53.
 ///
 /// # Errors
 ///
 /// When the coordinate is not valid.
-pub fn release_name(org: &str, project: &str, env: &str) -> Result<String, ProvisionError> {
+pub fn environment_resource_name(
+    org: &str,
+    project: &str,
+    env: &str,
+) -> Result<String, ProvisionError> {
     validate_project_env(org, project, env)?;
     let hash = hex::encode(Sha256::digest(format!("{org}/{project}/{env}")));
     let slug: String = env.chars().take(SLUG_LEN).collect();
-    Ok(format!("r-{slug}-{}", &hash[..HASH_LEN]))
+    Ok(format!("e-{slug}-{}", &hash[..HASH_LEN]))
 }
 
 /// The Helm release and host group of one application.
@@ -120,7 +124,7 @@ pub fn application_states(observed: &Observed) -> BTreeMap<String, EnvironmentSt
 /// The three lists one status read takes from the release namespace.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Observed {
-    /// The Deployments named `hostgroup-<release name>`: none or one.
+    /// The Deployments named `hostgroup-<application release name>` in the selected scope.
     pub deployments: Value,
     /// Every WorkloadDeployment of the namespace.
     pub workloads: Value,
@@ -128,7 +132,7 @@ pub struct Observed {
     pub pods: Value,
 }
 
-/// The current state of one environment.
+/// The current state of one application's release.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EnvironmentState {
     /// The host Deployment, or none.
@@ -384,12 +388,16 @@ mod tests {
     }
 
     #[test]
-    fn release_name_matches_the_release_chart() {
-        assert_eq!(
-            release_name("acme", "wms", "dev").expect("valid coordinate"),
-            "r-dev-2d9920a989cb26764e77"
+    fn application_names_are_bounded_and_refuse_invalid_coordinates() {
+        let env = "a".repeat(30);
+        let name = application_release_name("a", "wms", &env, "orders").unwrap();
+        assert!(name.len() <= 47);
+        assert_ne!(
+            name,
+            application_release_name("a", "wms", &env, "receiving").unwrap()
         );
-        assert!(release_name("acme", "wms", "Bad Env").is_err());
+        assert!(application_release_name("acme", "wms", "Bad Env", "orders").is_err());
+        assert!(environment_resource_name("acme", "wms", "Bad Env").is_err());
     }
 
     /// Poll a future whose reads are ready, with no runtime.

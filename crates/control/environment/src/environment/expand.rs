@@ -16,7 +16,7 @@ pub async fn expand(
     };
     let selected = super::analyse::select_application(document, Some(&analysis.application))?;
     let clients = super::clients::resolve(
-        &selected,
+        &selected.applications[&analysis.application],
         analysis.packages.iter().filter_map(|package| {
             package
                 .client_package

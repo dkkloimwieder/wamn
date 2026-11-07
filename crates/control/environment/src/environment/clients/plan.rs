@@ -1,12 +1,12 @@
-use super::{BTreeMap, EnvironmentDocument, WebManifest, ensure};
+use super::{ApplicationSelection, BTreeMap, WebManifest, ensure};
 use anyhow::Context as _;
 
 pub(super) fn verify<'a>(
-    document: &EnvironmentDocument,
+    selection: &ApplicationSelection,
     web: &WebManifest,
     packages: impl Iterator<Item = (&'a str, &'a str)>,
 ) -> anyhow::Result<()> {
-    let client = document.legacy_client().expect("a pinned client");
+    let client = selection.client.as_ref().expect("a pinned client");
     let (package, version) = web
         .package
         .split_once('@')
@@ -15,36 +15,36 @@ pub(super) fn verify<'a>(
         package == client.package,
         "web artifact package {package}@{version} differs from client.package {} for release {}",
         client.package,
-        *document.legacy_release()
+        selection.current
     );
     ensure!(
         packages
             .into_iter()
             .any(|coordinate| coordinate == (package, version)),
         "web artifact package {package}@{version} is not in release {}",
-        *document.legacy_release()
+        selection.current
     );
     Ok(())
 }
 
 pub(in super::super) fn resolve<'a>(
-    document: &EnvironmentDocument,
+    selection: &ApplicationSelection,
     packages: impl Iterator<Item = &'a str>,
 ) -> anyhow::Result<BTreeMap<String, String>> {
-    let selected = match document.legacy_client() {
+    let selected = match selection.client.as_ref() {
         Some(client) => {
             let name = client.package.as_str();
             ensure!(
                 packages.into_iter().any(|package| package == name),
                 "host {} names client package {name}, which the release does not provide",
-                document.legacy_hostname()
+                selection.hostname
             );
             Some(name)
         }
         None => None,
     };
     Ok(selected
-        .map(|name| (document.legacy_hostname().to_owned(), name.to_owned()))
+        .map(|name| (selection.hostname.clone(), name.to_owned()))
         .into_iter()
         .collect())
 }

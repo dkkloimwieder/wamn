@@ -52,6 +52,7 @@ pub async fn write(
     let deadline = Instant::now() + budget;
     let (mut rendered, names) = release_values(
         document,
+        &analysis.application,
         &release.manifest,
         &release.digest,
         &platform.release_artifact_base,
@@ -122,8 +123,9 @@ pub fn render(input: &ValuesInput, path: Option<&Path>) -> anyhow::Result<Value>
     clippy::too_many_arguments,
     reason = "Release values combine document, artifact, policy, and chart inputs"
 )]
-pub(crate) fn release_values(
+pub fn release_values(
     document: &EnvironmentDocument,
+    application: &str,
     manifest: &wamn_catalog::ServingManifest,
     manifest_digest: &str,
     artifact_base: &str,
@@ -140,6 +142,7 @@ pub(crate) fn release_values(
     )?;
     plan::release_values(
         document,
+        application,
         manifest,
         manifest_digest,
         artifact_base,
@@ -167,57 +170,4 @@ pub fn host_group(
         .with_context(|| format!("{} is not a YAML mapping", path.display()))?,
     };
     plan::host_group(group, org, project, env)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use serde_json::json;
-
-    #[test]
-    fn release_values_keep_both_client_maps_and_clear_an_absent_pin() {
-        let mut document = EnvironmentDocument::from_json(
-            br#"{"org":"acme","project":"wms","env":"dev","target":"cloud","policy":"dev","applications":{"fixture":{"packages":["fixture"],"current":"none","hostname":"wms.example.com"}}}"#,
-        ).unwrap();
-        let manifest = serde_json::from_value(json!({
-            "format-version": wamn_catalog::SERVING_MANIFEST_FORMAT_VERSION,
-            "release": {"packages": []}, "components": [], "routes": [], "attachments": {},
-        }))
-        .unwrap();
-        let digest = wamn_execution_contract::bytes_sha256(b"web artifact");
-        for client in [
-            Some(super::super::document::Client {
-                package: "wms".into(),
-                web: digest.clone(),
-            }),
-            None,
-        ] {
-            document.applications.get_mut("fixture").unwrap().client = client;
-            let clients = super::super::clients::resolve(&document, ["wms"].into_iter()).unwrap();
-            let (values, _) = release_values(
-                &document,
-                &manifest,
-                &digest,
-                "registry.example/releases",
-                30,
-                "test",
-                None,
-                &clients,
-            )
-            .unwrap();
-            if document.legacy_client().is_some() {
-                assert_eq!(
-                    values["webClients"]["wms.example.com"].as_str(),
-                    Some("wms")
-                );
-                assert_eq!(
-                    values["webDigests"]["wms.example.com"].as_str(),
-                    Some(digest.as_str())
-                );
-            } else {
-                assert!(values["webClients"].as_mapping().unwrap().is_empty());
-                assert!(values["webDigests"].as_mapping().unwrap().is_empty());
-            }
-        }
-    }
 }

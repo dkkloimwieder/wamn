@@ -2,6 +2,10 @@
 {{- define "release.annotations" -}}
 wamn.environment: {{ required "environment is required" .Values.environment | quote }}
 wamn.release-digest: {{ required "release.manifestDigest is required" .Values.release.manifestDigest | quote }}
+{{- with .Values.applications }}
+{{- if ne (len .) 1 }}{{ fail "a release must select exactly one application" }}{{ end }}
+wamn.application: {{ keys . | first | quote }}
+{{- end }}
 {{- end }}
 
 {{/* The selector of every role workload: the host group and the release.

@@ -1,14 +1,24 @@
 use super::{AttachmentType, Duration, Mapping, ServingManifest, Value, ensure, release_label};
 use anyhow::Context as _;
 
-/// The Helm release name of an environment: `r-<slug>-<hash>`.
+/// The Helm release and host group name of an application: `r-<slug>-<hash>`.
 ///
 /// The slug is the env name cut to 24 characters. The hash is the first 20 hex
-/// characters of SHA-256 over `org/project/env`. The name is at most 47
-/// characters, inside Helm's bound of 53. It is also the environment's host group.
-pub fn release_name(org: &str, project: &str, env: &str) -> anyhow::Result<String> {
-    wamn_control_provision::environment_state::release_name(org, project, env)
-        .context("the environment coordinate is not valid")
+/// characters of SHA-256 over `org/project/env/application`. The name is at most
+/// 47 characters, inside Helm's bound of 53.
+pub fn release_name(
+    org: &str,
+    project: &str,
+    env: &str,
+    application: &str,
+) -> anyhow::Result<String> {
+    wamn_control_provision::environment_state::application_release_name(
+        org,
+        project,
+        env,
+        application,
+    )
+    .context("the environment coordinate is not valid")
 }
 
 /// The name the release chart gives the WorkloadDeployment of `role` in
@@ -104,14 +114,19 @@ pub fn events_plugin(org: &str, project: &str, env: &str) -> anyhow::Result<Valu
     Ok(Value::Sequence(vec![Value::Mapping(entry)]))
 }
 
-/// Render the install values of one environment.
+/// Render the install values of one application.
 pub fn values(input: &ValuesInput) -> anyhow::Result<Value> {
     ensure!(
         MATERIALIZER_DRAIN_BOUND_SECONDS < input.drain_bound_seconds,
         "materializer_drain_bound_seconds ({MATERIALIZER_DRAIN_BOUND_SECONDS}) must be shorter than drain_bound_seconds ({})",
         input.drain_bound_seconds
     );
-    let name = release_name(&input.org, &input.project, &input.env)?;
+    ensure!(
+        input.applications.len() == 1,
+        "a release must select exactly one application"
+    );
+    let application = input.applications.keys().next().expect("one application");
+    let name = release_name(&input.org, &input.project, &input.env, application)?;
     let label = release_label(&input.manifest_digest)
         .context("the release manifest digest is not a sha256 digest")?;
     for key in ["name", "namespace", "service", "extraArgs", "image"] {
@@ -241,6 +256,7 @@ pub fn values(input: &ValuesInput) -> anyhow::Result<Value> {
         mapping([
             ("wamn.release-digest", input.manifest_digest.clone()),
             ("wamn.environment", environment.clone()),
+            ("wamn.application", application.clone()),
         ]),
     );
     let mut account = Mapping::new();
@@ -376,7 +392,7 @@ impl RoleName {
     }
 }
 
-/// The inputs of one environment's install values.
+/// The inputs of one application's install values.
 #[derive(Debug, Clone)]
 pub struct ValuesInput {
     pub org: String,
@@ -386,9 +402,8 @@ pub struct ValuesInput {
     pub manifest_digest: String,
     pub artifact_base: String,
     pub route_host: String,
-    /// The applications the environment declares. The host takes them in
-    /// `--applications` beside `--environment`, and the values keep them for
-    /// `env show`.
+    /// Exactly one application's membership, carried in `--applications` and
+    /// retained in Helm values for status reads.
     pub applications: wamn_catalog::EnvironmentApplications,
     pub roles: Vec<Role>,
     /// The drain bound of the environment policy, rendered as the host pods'

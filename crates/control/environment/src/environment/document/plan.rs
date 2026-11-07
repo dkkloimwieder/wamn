@@ -235,15 +235,6 @@ impl EnvironmentDocument {
             .map_or("", |app| app.hostname.as_str())
     }
 
-    /// The client used by the existing environment-wide chart.
-    pub fn legacy_client(&self) -> Option<&Client> {
-        // DEP2-11 replaces the environment-wide chart with application charts.
-        self.applications
-            .values()
-            .next()
-            .and_then(|app| app.client.as_ref())
-    }
-
     /// The coordinate.
     pub fn triple(&self) -> Triple {
         Triple::new(self.org.as_str(), self.project.as_str(), self.env.as_str())

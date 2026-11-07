@@ -216,11 +216,16 @@ pub async fn analyse(
         }
         None => None,
     };
-    let release = match document.legacy_release() {
+    let release = match &document.applications[application].current {
         DeclaredRelease::None => None,
         DeclaredRelease::Digest(declared) => Some(read_release(platform, declared).await?),
     };
-    super::clients::analyse(platform, document, release.as_ref()).await?;
+    super::clients::analyse(
+        platform,
+        &document.applications[application],
+        release.as_ref(),
+    )
+    .await?;
     let revision = read_revision(platform, &release_name).await?;
     let live = read_live_set(platform, &release_name).await?;
     let (packages, fingerprints) = match &release {
@@ -614,14 +619,19 @@ pub(crate) async fn application_releases(
     platform: &Platform,
     triple: &wamn_control_registry::Triple,
 ) -> anyhow::Result<BTreeMap<String, String>> {
+    wamn_control_provision::validate_project_env(
+        &triple.org,
+        &triple.project,
+        triple.env.as_str(),
+    )?;
     let coordinate = triple.to_string();
-    let environment =
-        release_chart::release_name(&triple.org, &triple.project, triple.env.as_str())?;
-    let prefix = environment
-        .rsplit_once('-')
-        .expect("release name has a hash")
-        .0;
-    let filter = format!("^{prefix}-");
+    let slug: String = triple
+        .env
+        .as_str()
+        .chars()
+        .take(wamn_control_provision::environment_state::SLUG_LEN)
+        .collect();
+    let filter = format!("^r-{slug}-");
     let mut entries = Vec::new();
     loop {
         let offset = entries.len().to_string();

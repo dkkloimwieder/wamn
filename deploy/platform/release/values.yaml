@@ -108,9 +108,8 @@ release:
 # `org/project/env`.
 environment: ""
 routeHost: ""
-# Application name to `{packages: [...]}`, as `environment.k` declares it. It
-# renders nothing: the host takes it in `--applications`, and `env show` reads
-# it back.
+# Exactly one application name to `{packages: [...]}`. The host receives only
+# this membership in `--applications`. Platform and shared hosts leave it empty.
 applications: {}
 # Host to client package id; env apply resolves the package from its declaration.
 webClients: {}
@@ -118,9 +117,7 @@ webClients: {}
 webDigests: {}
 # The control release serves the platform UI at the chart version.
 platformUi: false
-# One entry per role: `{name: http | materializer, config: {}, environment: {}}`.
-# `environment` is for the materializer only.
+# The application's HTTP role: `{name: http, entry: ..., config: {}}`.
 roles: []
-# `{actor}`: who applied. It renders nothing. Helm keeps it with the revision,
-# and `apply` leaves it out when it compares values (§10.1 step 6).
+# `{actor}`: who applied. Helm keeps it with the revision.
 audit: {}

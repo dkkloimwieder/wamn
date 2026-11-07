@@ -22,7 +22,6 @@ use super::Platform;
 use super::analyse::{Analysis, helm};
 use super::document::{Client, DeclaredRelease};
 use super::lock::LifecycleLock;
-use wamn_release_control::release_chart;
 
 /// The refusal when no prior release is retained.
 pub const NO_RETAINED_PRIOR_RELEASE: &str = "no retained prior release";
@@ -39,8 +38,14 @@ pub async fn rollback(
 ) -> anyhow::Result<Analysis> {
     ensure!(!reason.trim().is_empty(), "--reason is empty");
     LifecycleLock::hold(&platform.system_database_url, triple, async |_| {
-        let name = release_chart::release_name(&triple.org, &triple.project, triple.env.as_str())?;
-        let mut document = super::show::show(platform, triple).await?;
+        let document = super::show::show(platform, triple).await?;
+        let mut document = super::analyse::select_application(&document, None)?;
+        let application = document
+            .applications
+            .keys()
+            .next()
+            .expect("one application");
+        let name = super::analyse::application_release_name(&document, application)?;
         let Some((release, client)) =
             previous_intended(platform, &name, document.legacy_hostname()).await?
         else {

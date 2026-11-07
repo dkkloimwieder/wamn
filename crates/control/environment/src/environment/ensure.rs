@@ -190,10 +190,7 @@ pub async fn provision_resources(
 }
 
 pub(super) fn environment_host_name(org: &str, project: &str, env: &str) -> anyhow::Result<String> {
-    Ok(
-        wamn_release_control::release_chart::release_name(org, project, env)?
-            .replacen("r-", "e-", 1),
-    )
+    Ok(wamn_control_provision::environment_state::environment_resource_name(org, project, env)?)
 }
 
 /// Render the shared host without application release arguments or labels.

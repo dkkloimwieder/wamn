@@ -10,16 +10,16 @@ use anyhow::{Context as _, ensure};
 
 use super::Platform;
 use super::analyse::ReleaseFacts;
-use super::document::EnvironmentDocument;
+use super::document::ApplicationSelection;
 use wamn_package_control::package_artifact::PackageRegistry;
 use wamn_package_control::web_artifact::{WebManifest, pull_web_artifact};
 
 pub(super) async fn analyse(
     platform: &Platform,
-    document: &EnvironmentDocument,
+    selection: &ApplicationSelection,
     release: Option<&ReleaseFacts>,
 ) -> anyhow::Result<()> {
-    let Some(client) = document.legacy_client() else {
+    let Some(client) = selection.client.as_ref() else {
         return Ok(());
     };
     let registry = PackageRegistry {
@@ -33,7 +33,7 @@ pub(super) async fn analyse(
     };
     let web = pull_web_artifact(&registry, &client.web).await?;
     verify(
-        document,
+        selection,
         &web,
         release.into_iter().flat_map(|release| {
             release
@@ -49,6 +49,7 @@ pub(super) async fn analyse(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::environment::document::EnvironmentDocument;
 
     fn document() -> EnvironmentDocument {
         serde_json::from_value(serde_json::json!({
@@ -62,7 +63,7 @@ mod tests {
     fn no_pin_serves_no_client() {
         for packages in [vec![], vec!["wms"], vec!["wms", "receiving"]] {
             assert!(
-                resolve(&document(), packages.into_iter())
+                resolve(&document().applications["fixture"], packages.into_iter())
                     .unwrap()
                     .is_empty()
             );
@@ -78,10 +79,14 @@ mod tests {
                 web: wamn_execution_contract::bytes_sha256(b"web artifact"),
             });
         assert_eq!(
-            resolve(&document, ["wms", "receiving"].into_iter()).unwrap()["wms.example.com"],
+            resolve(
+                &document.applications["fixture"],
+                ["wms", "receiving"].into_iter()
+            )
+            .unwrap()["wms.example.com"],
             "receiving"
         );
-        assert!(resolve(&document, ["wms"].into_iter()).is_err());
+        assert!(resolve(&document.applications["fixture"], ["wms"].into_iter()).is_err());
     }
 
     #[test]
@@ -101,8 +106,20 @@ mod tests {
                 package: "web_fixture".into(),
                 web: wamn_execution_contract::bytes_sha256(b"web artifact"),
             });
-        assert!(verify(&document, &web, [("web_fixture", "2.0.0")].into_iter()).is_err());
-        verify(&document, &web, [("web_fixture", "1.0.0")].into_iter()).unwrap();
+        assert!(
+            verify(
+                &document.applications["fixture"],
+                &web,
+                [("web_fixture", "2.0.0")].into_iter()
+            )
+            .is_err()
+        );
+        verify(
+            &document.applications["fixture"],
+            &web,
+            [("web_fixture", "1.0.0")].into_iter(),
+        )
+        .unwrap();
         document
             .applications
             .get_mut("fixture")
@@ -111,7 +128,14 @@ mod tests {
             .as_mut()
             .unwrap()
             .package = "receiving".into();
-        assert!(verify(&document, &web, [("web_fixture", "1.0.0")].into_iter()).is_err());
+        assert!(
+            verify(
+                &document.applications["fixture"],
+                &web,
+                [("web_fixture", "1.0.0")].into_iter()
+            )
+            .is_err()
+        );
         document
             .applications
             .get_mut("fixture")
@@ -124,6 +148,6 @@ mod tests {
         for application in document.applications.values_mut() {
             application.current = super::super::document::DeclaredRelease::None;
         }
-        assert!(verify(&document, &web, [].into_iter()).is_err());
+        assert!(verify(&document.applications["fixture"], &web, [].into_iter()).is_err());
     }
 }

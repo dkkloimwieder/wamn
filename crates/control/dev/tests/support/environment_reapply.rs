@@ -35,7 +35,7 @@ pub(super) async fn check(run: &Run) -> anyhow::Result<()> {
     let document = EnvironmentDocument::from_json(&serde_json::to_vec(&json!({
         "org": run.document.org, "project": "reapply", "env": "dev", "target": "cloud", "policy": "dev",
         "applications": {"fixture": {"current": digest, "hostname": "reapply.example", "packages": ["fixture"]}}}))?)?;
-    let name = release_name(&document.org, &document.project, &document.env)?;
+    let name = release_name(&document.org, &document.project, &document.env, "fixture")?;
     // The write boundary consumes the manifest and policy, not registry or DB credentials.
     let release = ReleaseFacts {
         digest,

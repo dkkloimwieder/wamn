@@ -336,6 +336,7 @@ mod tests {
         }))?;
         let (values, _) = write::release_values(
             &document,
+            "orders",
             &manifest,
             &digest,
             "localhost:5001/wamn/releases",

@@ -133,12 +133,14 @@ fn render_values(env: &str) -> Value {
 }
 
 fn render_yaml(chart: &Path, scratch: &Scratch, env: &str, values: &Value) -> String {
-    let name = release_name("acme", "wms", env).expect("valid coordinate");
+    let name = values["runtime-operator"]["runtime"]["hostGroups"][0]["name"]
+        .as_str()
+        .expect("host group");
     let path = scratch.0.join(format!("values-{env}.yaml"));
     std::fs::write(&path, serde_yaml::to_string(values).expect("yaml")).expect("write values");
     let output = helm(&[
         "template",
-        &name,
+        name,
         chart.to_str().expect("utf-8 path"),
         "--namespace",
         NAMESPACE,
@@ -217,11 +219,101 @@ fn kind_name(document: &Value) -> (String, String) {
 
 #[test]
 #[ignore = "requires: bin:helm"]
+fn applications_in_one_environment_have_independent_release_resources() {
+    wamn_test_postgres::require_ignored_prerequisites("requires: bin:helm");
+    let scratch = Scratch::new("applications");
+    let chart = stamped_chart(&scratch);
+    let mut seen = BTreeSet::new();
+    for application in ["orders", "receiving"] {
+        let mut input = input("prod");
+        input.applications = BTreeMap::from([(
+            application.to_owned(),
+            wamn_catalog::ApplicationDefinition {
+                packages: [application.to_owned()].into(),
+                connections: BTreeMap::new(),
+            },
+        )]);
+        input.route_host = format!("{application}.example");
+        let entry = format!(
+            "entries@{}",
+            wamn_execution_contract::bytes_sha256(application.as_bytes())
+        );
+        input.roles[0].entry = Some(entry.clone());
+        let values = values(&input).unwrap();
+        let name = release_name(&input.org, &input.project, &input.env, application).unwrap();
+        let yaml = render_yaml(&chart, &scratch, &input.env, &values);
+        let documents = serde_yaml::Deserializer::from_str(&yaml)
+            .map(Value::deserialize)
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        for object in documents.iter().filter(|object| !object.is_null()) {
+            assert!(
+                seen.insert(kind_name(object)),
+                "shared object: {:?}",
+                kind_name(object)
+            );
+            match object["kind"].as_str().unwrap() {
+                "Deployment" => {
+                    let pod = &object["spec"]["template"];
+                    assert_eq!(
+                        pod["metadata"]["annotations"]["wamn.application"],
+                        application
+                    );
+                    assert_eq!(pod["metadata"]["labels"]["wasmcloud.com/hostgroup"], name);
+                    let arguments = pod["spec"]["containers"][0]["args"].as_sequence().unwrap();
+                    let membership: wamn_catalog::EnvironmentApplications = serde_json::from_str(
+                        arguments
+                            .iter()
+                            .filter_map(Value::as_str)
+                            .find_map(|arg| arg.strip_prefix("--applications="))
+                            .unwrap(),
+                    )
+                    .unwrap();
+                    assert_eq!(membership, input.applications);
+                }
+                "WorkloadDeployment" => {
+                    let spec = &object["spec"]["template"]["spec"];
+                    assert_eq!(spec["hostSelector"]["hostgroup"], name);
+                    assert_eq!(
+                        spec["components"][0]["image"],
+                        format!("registry.example/components/{entry}")
+                    );
+                    let route = spec["hostInterfaces"]
+                        .as_sequence()
+                        .unwrap()
+                        .iter()
+                        .find(|interface| {
+                            interface["namespace"] == "wasi" && interface["package"] == "http"
+                        })
+                        .unwrap();
+                    assert_eq!(route["config"]["host"], input.route_host);
+                    let service = &spec["kubernetes"]["service"]["name"];
+                    assert!(documents.iter().any(|object| object["kind"] == "Service"
+                        && &object["metadata"]["name"] == service));
+                }
+                "Service" if object["spec"]["selector"].is_mapping() => {
+                    assert_eq!(object["spec"]["selector"]["wasmcloud.com/hostgroup"], name);
+                }
+                "ConfigMap" if object["metadata"]["name"] == name => {
+                    let carrier: serde_json::Value =
+                        serde_json::from_str(object["data"]["release.json"].as_str().unwrap())
+                            .unwrap();
+                    assert_eq!(carrier["host"], input.route_host);
+                    assert_eq!(carrier["digest"], input.manifest_digest);
+                }
+                _ => {}
+            }
+        }
+    }
+}
+
+#[test]
+#[ignore = "requires: bin:helm"]
 fn web_only_changes_leave_all_workloads_byte_equal() {
     wamn_test_postgres::require_ignored_prerequisites("requires: bin:helm");
     let scratch = Scratch::new("web-only");
     let chart = stamped_chart(&scratch);
-    let name = release_name("acme", "wms", "prod").unwrap();
+    let name = release_name("acme", "wms", "prod", "wms").unwrap();
     let first = render_values("prod");
     let before = render_yaml(&chart, &scratch, "prod", &first);
     let documents = |yaml: &str| -> BTreeMap<_, _> {
@@ -287,7 +379,7 @@ async fn the_release_chart_renders_one_host_group_and_its_role_workloads() {
     wamn_test_postgres::require_ignored_prerequisites("requires: bin:helm");
     let scratch = Scratch::new("objects");
     let chart = stamped_chart(&scratch);
-    let name = release_name("acme", "wms", "prod").expect("valid coordinate");
+    let name = release_name("acme", "wms", "prod", "wms").expect("valid coordinate");
     let label = release_label(DIGEST).expect("digest");
     let documents = render(&chart, &scratch, "prod");
     for object in &documents {

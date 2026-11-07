@@ -31,7 +31,12 @@ async fn two_environments_with_the_same_web_digest_share_one_completed_upload() 
     let store = InMemory::new();
     let upload = |environment: &EnvironmentDocument| {
         (
-            environment.legacy_client().unwrap().web.clone(),
+            environment.applications["fixture"]
+                .client
+                .as_ref()
+                .unwrap()
+                .web
+                .clone(),
             environment.org.clone(),
         )
     };

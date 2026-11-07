@@ -64,6 +64,136 @@ fn manifest(bytes: &[u8]) -> anyhow::Result<wamn_catalog::ServingManifest> {
     Ok(manifest)
 }
 
+#[test]
+fn changing_one_application_selection_leaves_the_other_release_unchanged() -> anyhow::Result<()> {
+    use std::collections::BTreeMap;
+    use wamn_environment_control::environment::{document::DeclaredRelease, write};
+
+    let work = ScratchRoot::create()?;
+    let mut releases = BTreeMap::new();
+    let mut applications = serde_json::Map::new();
+    for application in ["orders", "receiving"] {
+        let mut release: wamn_catalog::ServingManifest = serde_json::from_value(json!({
+            "format-version": wamn_catalog::SERVING_MANIFEST_FORMAT_VERSION,
+            "release": {"packages": [{"package-id": application, "package-version":"1.0.0"}]},
+            "components": [], "routes": [],
+            "attachments": {"http": {"type":"http", "package-id":application,
+                "component":application, "operation":"get", "definition":{},
+                "definition-hash":wamn_execution_contract::bytes_sha256(application.as_bytes()),
+                "auth-policy":{"modes":["none"]}}}
+        }))?;
+        let member = wamn_catalog::ServingEntryMember {
+            package_id: application.into(),
+            component: application.into(),
+            digest: wamn_execution_contract::bytes_sha256(application.as_bytes()),
+        };
+        release.composed_entry = Some(wamn_catalog::ServingComposedEntry {
+            reference: format!("entries@{}", member.digest),
+            route_digest: member.digest.clone(),
+            application: member.clone(),
+            members: [member].into(),
+        });
+        applications.insert(application.into(), json!({
+            "packages":[application], "current":release.digest().as_str(),
+            "hostname":format!("{application}.example"),
+            "client":{"package":application, "web":wamn_execution_contract::bytes_sha256(application.as_bytes())}
+        }));
+        releases.insert(application, release);
+    }
+    let mut document = EnvironmentDocument::from_json(&serde_json::to_vec(&json!({
+        "org":ORG,"project":PROJECT,"env":"dev","target":"cloud","policy":"dev",
+        "applications":applications
+    }))?)?;
+    let group = work.path().join("host.yaml");
+    std::fs::write(
+        &group,
+        serde_yaml::to_string(&fixture_host_group(&document, "registry.invalid"))?,
+    )?;
+    let render = |document: &EnvironmentDocument,
+                  application: &str,
+                  release: &wamn_catalog::ServingManifest|
+     -> anyhow::Result<_> {
+        let clients = document
+            .applications
+            .values()
+            .filter_map(|selection| {
+                selection
+                    .client
+                    .as_ref()
+                    .map(|client| (selection.hostname.clone(), client.package.clone()))
+            })
+            .collect();
+        let selection = &document.applications[application];
+        let (values, _) = write::release_values(
+            document,
+            application,
+            release,
+            &selection.current.to_string(),
+            "registry.invalid/wamn/releases",
+            70,
+            "render",
+            Some(&group),
+            &clients,
+        )?;
+        assert_eq!(
+            values["applications"]
+                .as_mapping()
+                .unwrap()
+                .keys()
+                .collect::<Vec<_>>(),
+            [&serde_yaml::Value::from(application)]
+        );
+        assert_eq!(
+            values["routeHost"].as_str(),
+            Some(selection.hostname.as_str())
+        );
+        let carrier = template(&values, NAMESPACE)?;
+        let row = carrier
+            .iter()
+            .find(|object| object["data"]["release.json"].is_string())
+            .unwrap();
+        let row: Value = serde_json::from_str(row["data"]["release.json"].as_str().unwrap())?;
+        let expected = selection
+            .client
+            .as_ref()
+            .map(|client| (selection.hostname.clone(), client.web.clone()))
+            .into_iter()
+            .collect::<BTreeMap<_, _>>();
+        assert_eq!(row["webs"], serde_json::to_value(expected)?);
+        let expected = selection
+            .client
+            .as_ref()
+            .map(|client| (selection.hostname.clone(), client.package.clone()))
+            .into_iter()
+            .collect::<BTreeMap<_, _>>();
+        assert_eq!(row["clients"], serde_json::to_value(expected)?);
+        Ok(carrier)
+    };
+    let before = releases
+        .iter()
+        .map(|(name, release)| Ok((*name, render(&document, name, release)?)))
+        .collect::<anyhow::Result<BTreeMap<_, _>>>()?;
+    let release = releases.get_mut("orders").unwrap();
+    release.composed_entry.as_mut().unwrap().reference = format!(
+        "entries@{}",
+        wamn_execution_contract::bytes_sha256(b"updated entry")
+    );
+    let selection = document.applications.get_mut("orders").unwrap();
+    selection.previous = Some(selection.current.to_string());
+    selection.current = DeclaredRelease::Digest(release.digest().as_str().to_owned());
+    selection.hostname = "new-orders.example".into();
+    selection.client = None;
+    for (application, release) in &releases {
+        let after = render(&document, application, release)?;
+        if *application == "orders" {
+            assert_ne!(before[application], after);
+        } else {
+            assert_eq!(before[application], after);
+        }
+    }
+    Ok(())
+}
+
 fn fixture_secrets(document: &EnvironmentDocument) -> Vec<Value> {
     let mut secrets = credential_secrets(&document.triple(), NAMESPACE);
     secrets.extend(operator_prerequisites(NAMESPACE));

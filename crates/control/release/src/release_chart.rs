@@ -1,7 +1,7 @@
-//! The `release` chart of one environment
+//! The `release` chart of one application
 //! (docs/architecture/overview.md#environment-lifecycle).
 //!
-//! An environment is one Helm release of `deploy/platform/release`: the pinned
+//! An application is one Helm release of `deploy/platform/release`: the pinned
 //! runtime-operator subchart, host-only, plus one WorkloadDeployment per role.
 //! This module derives the release name, renders the install values, stamps the
 //! platform image set and the qualification images into the chart's defaults,
@@ -184,7 +184,7 @@ pub struct Target {
     pub namespace: String,
 }
 
-/// Install or upgrade one environment's release at the version of `chart` and
+/// Install or upgrade one application's release at the version of `chart` and
 /// wait for its host Deployment. `description` is kept with the revision.
 pub async fn upgrade(
     target: &Target,
@@ -227,9 +227,9 @@ pub async fn upgrade(
 
 use plan::Recovery;
 
-/// Clear a pending operation on one environment's release (wamn-jovpg).
+/// Clear a pending operation on one application's release (wamn-jovpg).
 ///
-/// Only the apply of this environment writes its release, and it holds the
+/// Only the apply of this application writes its release, and it holds the
 /// install lock, so a pending operation here belongs to a writer that died,
 /// for example an install Job deleted while Helm waited. Helm refuses every
 /// later upgrade with "another operation (install/upgrade/rollback) is in
@@ -283,7 +283,7 @@ pub async fn recover_pending(target: &Target, name: &str) -> anyhow::Result<()> 
     }
 }
 
-/// Uninstall one environment's release and wait for its objects to go.
+/// Uninstall one application's release and wait for its objects to go.
 pub async fn uninstall(target: &Target, name: &str) -> anyhow::Result<()> {
     helm(&[
         "uninstall".as_ref(),
@@ -401,110 +401,6 @@ mod tests {
     }
 
     #[test]
-    fn release_name_is_bounded_stable_and_cut() {
-        use wamn_control_provision::environment_state::{HASH_LEN, SLUG_LEN};
-        let name = release_name("acme", "wms", "prod").expect("valid coordinate");
-        assert_eq!(
-            name,
-            release_name("acme", "wms", "prod").expect("valid coordinate")
-        );
-        assert!(name.starts_with("r-prod-") && name.len() == "r-prod-".len() + HASH_LEN);
-        assert_eq!(
-            release_name("acme", "wms", "dev").expect("valid coordinate"),
-            "r-dev-2d9920a989cb26764e77"
-        );
-        // A valid env is bounded by the database name it provisions, so a short
-        // org and project leave room for an env longer than the slug.
-        let long = "a".repeat(30);
-        let name = release_name("a", "wms", &long).expect("valid coordinate");
-        assert_eq!(name.len(), 2 + SLUG_LEN + 1 + HASH_LEN);
-        assert!(name.len() <= 47);
-        let other = release_name("a", "wms", &format!("{}b", "a".repeat(29))).expect("valid");
-        assert_ne!(name, other, "envs that share the slug differ by hash");
-        assert_ne!(
-            release_name("acme", "wms", "prod").expect("valid"),
-            release_name("acme", "wms2", "prod").expect("valid")
-        );
-    }
-
-    #[test]
-    fn values_pin_the_release_and_entry_without_overriding_the_runtime_image() {
-        let values = values(&input()).expect("values render");
-        let name = release_name("acme", "wms", "prod").expect("valid coordinate");
-        let label = release_label(DIGEST).expect("digest");
-        assert!(values.get("releaseLabel").is_none());
-        let runtime = &values["runtime-operator"]["runtime"];
-        assert_eq!(runtime["terminationGracePeriodSeconds"].as_u64(), Some(300));
-        assert_eq!(
-            runtime["serviceAccount"]["name"],
-            "wamn-host-acme--wms--prod"
-        );
-        assert_eq!(runtime["serviceAccount"]["create"], false);
-        assert_eq!(runtime["automountServiceAccountToken"], true);
-        assert_eq!(
-            runtime["podLabels"]["wamn.release"].as_str(),
-            Some(label.as_str())
-        );
-        assert_eq!(
-            runtime["podAnnotations"]["wamn.release-digest"].as_str(),
-            Some(DIGEST)
-        );
-        assert_eq!(
-            runtime["podAnnotations"]["wamn.environment"].as_str(),
-            Some("acme/wms/prod")
-        );
-        let group = &runtime["hostGroups"][0];
-        assert_eq!(group["name"].as_str(), Some(name.as_str()));
-        assert_eq!(group["replicas"].as_u64(), Some(3));
-        assert_eq!(
-            group["ports"],
-            serde_yaml::from_str::<Value>("[{name: files, containerPort: 8082, protocol: TCP}]")
-                .expect("yaml")
-        );
-        assert_eq!(
-            group["env"],
-            serde_yaml::from_str::<Value>(
-                "[{name: WAMN_COMPONENT_ARTIFACT_BASE, value: registry.example/components}, \
-                 {name: WAMN_ORG, value: acme}, {name: WAMN_PROJECT, value: wms}, \
-                 {name: WAMN_DRAIN_BOUND_SECONDS, value: '300'}, \
-                 {name: WAMN_MATERIALIZER_DRAIN_BOUND_SECONDS, value: '10'}, \
-                 {name: OTEL_EXPORTER_OTLP_ENDPOINT, \
-                  value: 'http://otel-collector.platform.svc.cluster.local:4317'}, \
-                 {name: OTEL_SERVICE_NAME, value: wamn-host}, \
-                 {name: OTEL_TRACES_SAMPLER, value: parentbased_traceidratio}, \
-                 {name: OTEL_TRACES_SAMPLER_ARG, value: '0.1'}]"
-            )
-            .expect("yaml")
-        );
-        assert_eq!(
-            group["extraArgs"],
-            serde_yaml::from_str::<Value>(&format!(
-                "[--release-artifact-base=registry.example/releases, --release-manifest-digest={DIGEST}, \
-                 --environment=prod, --files-addr=0.0.0.0:8082, '--applications={{\"wms\":{{\"packages\":[\"wamn_wms\"]}}}}']"
-            ))
-            .expect("yaml")
-        );
-        assert_eq!(
-            values["applications"],
-            serde_yaml::from_str::<Value>("{wms: {packages: [wamn_wms]}}").expect("yaml")
-        );
-        assert_eq!(group["networking"]["socketEgress"].as_str(), Some("count"));
-        assert!(runtime.get("image").is_none());
-        assert_eq!(values["audit"]["actor"].as_str(), Some("ops"));
-        assert!(values.get("platform").is_none());
-        assert_eq!(
-            values["roles"][0]["entry"].as_str(),
-            Some(
-                format!(
-                    "registry.example/components/entries@sha256:{}",
-                    "a".repeat(64)
-                )
-                .as_str()
-            )
-        );
-    }
-
-    #[test]
     fn a_retired_workflow_http_attachment_does_not_render_the_http_role() {
         let value = serde_json::json!({
             "format-version": wamn_catalog::SERVING_MANIFEST_FORMAT_VERSION,
@@ -596,6 +492,16 @@ mod tests {
             input.drain_bound_seconds = host_bound;
             assert!(values(&input).is_ok(), "host bound {host_bound} is valid");
         }
+    }
+
+    #[test]
+    fn values_require_one_application() {
+        let mut input = input();
+        let (name, application) = input.applications.pop_first().unwrap();
+        assert!(values(&input).is_err());
+        input.applications.insert(name, application.clone());
+        input.applications.insert("another".into(), application);
+        assert!(values(&input).is_err());
     }
 
     #[test]

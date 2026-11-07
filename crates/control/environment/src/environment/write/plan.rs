@@ -71,6 +71,7 @@ pub(super) fn host_group(
 )]
 pub(super) fn release_values(
     document: &EnvironmentDocument,
+    application: &str,
     manifest: &wamn_catalog::ServingManifest,
     manifest_digest: &str,
     artifact_base: &str,
@@ -81,10 +82,17 @@ pub(super) fn release_values(
 ) -> anyhow::Result<(Value, Vec<RoleName>)> {
     let roles = release_chart::roles(manifest, &document.org, &document.project, &document.env);
     let names = roles.iter().map(|role| role.name).collect();
-    let mut applications = document.membership();
-    for application in applications.values_mut() {
-        application.connections.clear();
-    }
+    let selection = document
+        .applications
+        .get(application)
+        .with_context(|| format!("application {application} is not declared"))?;
+    let applications = std::collections::BTreeMap::from([(
+        application.to_owned(),
+        wamn_catalog::ApplicationDefinition {
+            packages: selection.packages.clone(),
+            connections: std::collections::BTreeMap::new(),
+        },
+    )]);
     let local_components = host_group
         .get("env")
         .and_then(Value::as_sequence)
@@ -104,7 +112,7 @@ pub(super) fn release_values(
             .as_deref()
             .unwrap_or(artifact_base)
             .to_owned(),
-        route_host: document.legacy_hostname().to_owned(),
+        route_host: selection.hostname.clone(),
         applications,
         roles,
         drain_bound_seconds,
@@ -117,11 +125,18 @@ pub(super) fn release_values(
             .context("application host arguments")?
             .push("--allow-insecure-registries".into());
     }
-    rendered["webClients"] = serde_yaml::to_value(clients)?;
+    rendered["webClients"] = serde_yaml::to_value(
+        clients
+            .get(&selection.hostname)
+            .map(|client| (&selection.hostname, client))
+            .into_iter()
+            .collect::<std::collections::BTreeMap<_, _>>(),
+    )?;
     rendered["webDigests"] = serde_yaml::to_value(
-        document
-            .legacy_client()
-            .map(|client| (document.legacy_hostname().to_owned(), client.web.clone()))
+        selection
+            .client
+            .as_ref()
+            .map(|client| (&selection.hostname, &client.web))
             .into_iter()
             .collect::<std::collections::BTreeMap<_, _>>(),
     )?;

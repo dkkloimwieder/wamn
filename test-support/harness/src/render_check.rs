@@ -26,7 +26,13 @@ pub fn host_values(
             manifest_digest: input.manifest_digest.clone(),
             artifact_base: input.release_artifact_base.clone(),
             route_host: "fixture.invalid".into(),
-            applications: std::collections::BTreeMap::new(),
+            applications: std::collections::BTreeMap::from([(
+                schema.to_owned(),
+                wamn_catalog::ApplicationDefinition {
+                    packages: [schema.to_owned()].into(),
+                    connections: std::collections::BTreeMap::new(),
+                },
+            )]),
             roles: Vec::new(),
             drain_bound_seconds: 70,
             actor: "prekind render".into(),
@@ -169,15 +175,11 @@ pub fn template(values: &serde_yaml::Value, namespace: &str) -> anyhow::Result<V
     )?;
     let file = work.path().join("values.yaml");
     std::fs::write(&file, serde_yaml::to_string(values)?)?;
-    let coordinate = values["environment"]
+    let name = values["runtime-operator"]["runtime"]["hostGroups"][0]["name"]
         .as_str()
-        .context("rendered environment")?
-        .split('/')
-        .collect::<Vec<_>>();
-    ensure!(coordinate.len() == 3, "environment coordinate");
-    let name = release_chart::release_name(coordinate[0], coordinate[1], coordinate[2])?;
+        .context("application host group")?;
     let output = std::process::Command::new("helm")
-        .args(["template", &name, "--namespace", namespace])
+        .args(["template", name, "--namespace", namespace])
         .arg(&chart)
         .arg("--values")
         .arg(&file)

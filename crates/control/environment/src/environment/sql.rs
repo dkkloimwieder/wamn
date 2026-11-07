@@ -83,11 +83,13 @@ pub async fn run_deployed(
         Operation::Initialize => "initialize",
     };
     let coordinate = match operation {
-        Operation::Provision => wamn_release_control::release_chart::release_name(
-            &document.org,
-            &document.project,
-            &document.env,
-        )?,
+        Operation::Provision => {
+            wamn_control_provision::environment_state::environment_resource_name(
+                &document.org,
+                &document.project,
+                &document.env,
+            )?
+        }
         Operation::Initialize => analyse::application_release_name(
             document,
             document
