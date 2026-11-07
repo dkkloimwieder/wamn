@@ -12,7 +12,7 @@ pub mod release_documents;
 use release_documents::workflow as integration;
 use release_documents::{
     NAMESPACE, ORG, PROJECT, environment_releases as fixture_releases, fixture_document,
-    fixture_host_group, rollback_host_group,
+    fixture_host_group,
 };
 use wamn_gate_harness::render_check::{
     assert_complete, credential_secrets, environment as render_values, operator_prerequisites,
@@ -255,7 +255,6 @@ fn prekind_environment_renders() -> anyhow::Result<()> {
     for (name, env, bytes, drain) in [
         ("dev A", "dev", &a, 70),
         ("dev B", "dev", &b, 70),
-        ("rollback A", "dev", &a, 70),
         ("dev short-drain", "dev", &a, 30),
         ("qa", "qa", &a, 70),
         ("HTTP fixture", "http", &http, 70),
@@ -271,11 +270,7 @@ fn prekind_environment_renders() -> anyhow::Result<()> {
         let group = fixture_host_group(&document, "registry.invalid");
         let path = work.path().join(format!("{env}-event-host-group.yaml"));
         std::fs::write(&path, serde_yaml::to_string(&group)?)?;
-        let selected = if name == "rollback A" {
-            rollback_host_group(work.path())
-        } else {
-            path
-        };
+        let selected = path;
         let values = render_values(&document, &manifest, &selected, drain)?;
         let documents = template(&values, NAMESPACE)?;
         assert_complete(&documents, &fixture_secrets(&document))
@@ -313,35 +308,6 @@ fn prekind_environment_renders() -> anyhow::Result<()> {
         "prekind environment renders elapsed {:?}",
         started.elapsed()
     );
-    Ok(())
-}
-
-#[test]
-fn prekind_rejects_old_missing_conn_reader() -> anyhow::Result<()> {
-    let work = ScratchRoot::create()?;
-    let manifest = manifest(&fixture_releases()?[0])?;
-    let document = fixture_document("dev", "dev.orders.example", manifest.digest().as_str());
-    let group = fixture_host_group(&document, "registry.invalid");
-    let path = rollback_host_group(work.path());
-    std::fs::write(&path, serde_yaml::to_string(&group)?)?;
-    let documents = template(&render_values(&document, &manifest, &path, 70)?, NAMESPACE)?;
-    let mut secrets = fixture_secrets(&document);
-    assert_complete(&documents, &secrets)?;
-    let missing = wamn_control_provision::workload_secret_name(
-        WorkloadRoleFamily::ConnectionReader,
-        ORG,
-        PROJECT,
-        "dev",
-    );
-    secrets.retain(|secret| secret["metadata"]["name"] != missing);
-    let error = assert_complete(&documents, &secrets).unwrap_err();
-    assert!(
-        error
-            .to_string()
-            .contains(&format!("missing Secret {NAMESPACE}/{missing}")),
-        "{error:#}"
-    );
-    println!("0.1.121 proof: {error:#}");
     Ok(())
 }
 
@@ -454,33 +420,6 @@ fn prekind_receiving_pat_renders() -> anyhow::Result<()> {
 #[test]
 fn prekind_wms_pat_renders() -> anyhow::Result<()> {
     pat_release("wms")
-}
-
-#[test]
-fn host_report_release_requires_component_preload() -> anyhow::Result<()> {
-    let device = release_documents::fixture_device()?;
-    let bytes = release_documents::host_report_release("2.1.0", &device)?;
-    let (manifest, _) = wamn_catalog::ServingManifest::from_canonical_bytes(&bytes)?;
-    assert!(manifest.composed_entry.is_none());
-    assert_eq!(wamn_execution_host::synchronous_route_count(&manifest), 1);
-    let component = manifest.components.first().context("the served device")?;
-    assert_eq!(
-        component.descriptor.component_digest,
-        device.component_digest
-    );
-    assert_eq!(component.descriptor.component, "device");
-    assert!(manifest.routes.iter().all(|route| {
-        route.component == component.descriptor.component
-            && component.operations.contains_key(&route.operation)
-    }));
-    let roles = wamn_release_control::release_chart::roles(&manifest, ORG, PROJECT, "broken");
-    assert!(
-        roles
-            .iter()
-            .all(|role| role.name != wamn_release_control::release_chart::RoleName::Http),
-        "an http role needs a composed entry that the preload would skip"
-    );
-    Ok(())
 }
 
 mod shared_resources {

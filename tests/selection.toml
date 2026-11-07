@@ -86,7 +86,6 @@ targets = [
   { workspace="root", package="wamn-environment-control", target="test:prune_record_history_live", tier="live-postgres" },
   { workspace="root", package="wamn-release-control", target="test:publish_release_live", tier="live-postgres" },
   { workspace="root", package="wamn-release-control", target="test:release_chart_render", tier="contract" },
-  { workspace="root", package="wamn-dev-control", target="test:release_one_digest", tier="live-postgres" },
   { workspace="root", package="wamn-release-control", target="test:release_permissions_live", tier="live-postgres" },
   { workspace="root", package="wamn-release-control", target="test:release_qualification_live", tier="contract" },
   { workspace="root", package="wamn-environment-control", target="test:replica_identity_live", tier="live-postgres" },

@@ -1103,6 +1103,46 @@ mod tests {
     use super::*;
     use wamn_package_control::test_support::{closure_component, source_manifest};
 
+    #[test]
+    fn one_application_release_has_one_digest_across_environments() {
+        let manifest = source_manifest();
+        let packages = BTreeSet::from([PackageCoordinate::new(
+            &manifest.package.id,
+            &manifest.package.version,
+        )
+        .unwrap()]);
+        let manifests = BTreeMap::from([(manifest.package.id.clone(), manifest)]);
+        let publish = |environment| {
+            let request = PublishReleaseManifest {
+                org: "acme",
+                project: "apps",
+                environment,
+                verified_publisher_principal: "publisher",
+                packages: &packages,
+                attachments: &BTreeMap::new(),
+                environment_is_disposable: false,
+            };
+            let mut component = closure_component("source_fixture", None);
+            component.scope.package_id = "source_fixture".to_owned();
+            component.scope.env_key = request.env_key();
+            let mut components = ReleaseComponents::default();
+            components
+                .insert(component, Vec::new(), BTreeMap::new())
+                .unwrap();
+            publish_release_with_package_manifests(
+                &request,
+                &components,
+                &manifests,
+                &BTreeMap::new(),
+            )
+            .unwrap()
+        };
+        let staging = publish("staging");
+        let production = publish("production");
+        assert_eq!(staging.canonical_bytes, production.canonical_bytes);
+        assert_eq!(staging.digest, production.digest);
+    }
+
     fn refresh_definition_hash(attachment: &mut ServingAttachment) {
         attachment.definition_hash = wamn_catalog::DefinitionHash::parse(
             wamn_execution_contract::canonical_json_sha256(&attachment.definition),

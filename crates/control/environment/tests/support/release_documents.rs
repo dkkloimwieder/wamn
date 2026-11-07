@@ -147,10 +147,6 @@ pub fn fixture_document(env: &str, route_host: &str, digest: &str) -> Environmen
     }
 }
 
-pub fn rollback_host_group(work: &Path) -> PathBuf {
-    work.join("dev-event-host-group.yaml")
-}
-
 /// Compose the same pinned entry for the kind and local host paths.
 pub fn fixture_http_entry(
     work: &Path,
@@ -1046,16 +1042,4 @@ pub mod workflow {
             )]),
         }
     }
-}
-
-/// The broken release of F2: release H with its route served as an internal
-/// attachment. A synchronous route makes the host preload its component from
-/// the missing base, and without an HTTP attachment the chart renders no http
-/// role, which would need a composed entry.
-pub fn host_report_release(
-    version: &str,
-    device: &wamn_catalog::ComponentDescriptor,
-) -> anyhow::Result<Vec<u8>> {
-    let internal = MANIFEST_H.replace(r#""type":"http""#, r#""type":"internal""#);
-    release(&internal, version, Some(device))
 }

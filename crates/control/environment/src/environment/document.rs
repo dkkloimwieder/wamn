@@ -161,76 +161,81 @@ mod tests {
     }
 
     #[test]
-    fn persisted_deploy_retry_and_rollback_preserve_other_applications_and_configuration() {
+    fn replacement_retry_and_rollback_change_only_the_target_selection() {
+        let digest = |byte: char| format!("sha256:{}", byte.to_string().repeat(64));
+        let (a0, a1, b0, b1) = (digest('a'), digest('b'), digest('c'), digest('d'));
+        let mut document = EnvironmentDocument::from_json(
+            &serde_json::to_vec(&serde_json::json!({
+                "org": "acme", "project": "apps", "env": "dev",
+                "target": "cloud", "policy": "dev",
+                "applications": {
+                    "a": {"current": a0, "hostname": "a.example", "packages": ["a"]},
+                    "b": {"current": b0, "hostname": "b.example", "packages": ["b"]}
+                }
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        let mut expected = document.clone();
+        for (application, change, current, previous) in [
+            ("a", SelectionChange::Deploy(&a1), &a1, Some(&a0)),
+            // Retry a pending selection after a failed apply without rotating its predecessor.
+            ("a", SelectionChange::Reapply, &a1, Some(&a0)),
+            ("a", SelectionChange::Deploy(&a1), &a1, Some(&a0)),
+            ("b", SelectionChange::Deploy(&b1), &b1, Some(&b0)),
+            ("a", SelectionChange::Rollback, &a0, Some(&a1)),
+        ] {
+            document.select_release(application, change).unwrap();
+            let target = expected.applications.get_mut(application).unwrap();
+            target.current = DeclaredRelease::Digest(current.to_owned());
+            target.previous = previous.cloned();
+            assert_eq!(document, expected);
+        }
+        for (application, change) in [
+            ("a", SelectionChange::Deploy("latest")),
+            ("absent", SelectionChange::Deploy(&a1)),
+        ] {
+            assert!(document.select_release(application, change).is_err());
+            assert_eq!(document, expected);
+        }
+        document.applications.get_mut("a").unwrap().current = DeclaredRelease::None;
+        document.applications.get_mut("a").unwrap().previous = None;
+        assert!(
+            document
+                .select_release("a", SelectionChange::Rollback)
+                .is_err()
+        );
+        document
+            .select_release("a", SelectionChange::Deploy(&a0))
+            .unwrap();
+        assert_eq!(
+            document.applications["a"].current,
+            DeclaredRelease::Digest(a0)
+        );
+        assert!(document.applications["a"].previous.is_none());
+    }
+
+    #[test]
+    fn persistence_keeps_pending_selection_and_refuses_stale_configuration() {
         let scratch = wamn_test_infrastructure::scratch::ScratchRoot::create().unwrap();
         let file = scratch.path().join("environment.k");
         let initial = EnvironmentDocument::from_json(document().to_string().as_bytes()).unwrap();
         std::fs::write(&file, initial.to_kcl()).unwrap();
-        let a0 = initial.applications["wms"].current.clone();
-        let b0 = initial.applications["receiving"].current.clone();
-        let a1 = format!("sha256:{}", "e".repeat(64));
-        let b1 = format!("sha256:{}", "f".repeat(64));
-        let mut expected = initial.clone();
-        for (application, change, current, previous) in [
-            (
-                "wms",
-                SelectionChange::Deploy(&a1),
-                DeclaredRelease::Digest(a1.clone()),
-                Some(a0.to_string()),
-            ),
-            (
-                "wms",
-                SelectionChange::Deploy(&a1),
-                DeclaredRelease::Digest(a1.clone()),
-                Some(a0.to_string()),
-            ),
-            (
-                "wms",
-                SelectionChange::Reapply,
-                DeclaredRelease::Digest(a1.clone()),
-                Some(a0.to_string()),
-            ),
-            (
-                "receiving",
-                SelectionChange::Deploy(&b1),
-                DeclaredRelease::Digest(b1.clone()),
-                Some(b0.to_string()),
-            ),
-            ("wms", SelectionChange::Rollback, a0, Some(a1.clone())),
-        ] {
-            let before = EnvironmentDocument::compile(&file).unwrap();
-            let mut prepared = before.clone();
-            prepared.select_release(application, change).unwrap();
-            persist_selection(&file, &before, &prepared, application).unwrap();
-            let target = expected.applications.get_mut(application).unwrap();
-            target.current = current;
-            target.previous = previous;
-            assert_eq!(EnvironmentDocument::compile(&file).unwrap(), expected);
-        }
-        // A target without a predecessor refuses before any document write.
-        std::fs::write(&file, initial.to_kcl()).unwrap();
+        let mut prepared = initial.clone();
+        let selection = prepared.applications.get_mut("wms").unwrap();
+        selection.previous = Some(selection.current.to_string());
+        selection.current = DeclaredRelease::Digest(format!("sha256:{}", "e".repeat(64)));
+        persist_selection(&file, &initial, &prepared, "wms").unwrap();
+        // A failed rollout leaves the prepared selection on disk for the next invocation.
+        let pending = EnvironmentDocument::compile(&file).unwrap();
+        assert_eq!(pending, prepared);
         let bytes = std::fs::read(&file).unwrap();
-        let mut prepared = initial.clone();
-        assert!(
-            prepared
-                .select_release("wms", SelectionChange::Rollback)
-                .is_err()
-        );
-        assert!(
-            prepared
-                .select_release("wms", SelectionChange::Deploy("latest"))
-                .is_err()
-        );
+        persist_selection(&file, &pending, &pending, "wms").unwrap();
         assert_eq!(std::fs::read(&file).unwrap(), bytes);
-        // A stale preparation cannot overwrite a changed target or shared policy.
-        let mut prepared = initial.clone();
-        prepared
-            .select_release("wms", SelectionChange::Deploy(&a1))
-            .unwrap();
-        let mut changed = initial.clone();
+        let mut changed = pending.clone();
         changed.policy = "other".into();
         std::fs::write(&file, changed.to_kcl()).unwrap();
-        assert!(persist_selection(&file, &initial, &prepared, "wms").is_err());
+        assert!(persist_selection(&file, &pending, &initial, "wms").is_err());
         assert_eq!(EnvironmentDocument::compile(&file).unwrap(), changed);
     }
 
