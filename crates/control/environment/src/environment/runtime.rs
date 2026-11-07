@@ -95,15 +95,24 @@ pub fn insecure_registry(group: &Value) -> bool {
         .is_some_and(|args| args.iter().any(|arg| arg == "--allow-insecure-registries"))
 }
 
-pub(super) fn pod_artifact_base<'a>(
-    platform: &Platform,
-    base: &'a str,
-) -> anyhow::Result<std::borrow::Cow<'a, str>> {
-    if platform.insecure_registry {
-        let (_, repository) = base.split_once('/').context("artifact repository")?;
-        Ok(format!("{}/{repository}", crate::platform::resources::POD_REGISTRY).into())
-    } else {
+pub(super) fn pod_artifact_base(
+    insecure_registry: bool,
+    base: &str,
+) -> anyhow::Result<std::borrow::Cow<'_, str>> {
+    let (registry, repository) = base.split_once('/').context("artifact repository")?;
+    let pod_registry = pod_registry(insecure_registry, registry);
+    if pod_registry == registry {
         Ok(base.into())
+    } else {
+        Ok(format!("{pod_registry}/{repository}").into())
+    }
+}
+
+pub(super) fn pod_registry(insecure_registry: bool, registry: &str) -> &str {
+    if insecure_registry && registry == resources::LOCAL_REGISTRY {
+        resources::POD_REGISTRY
+    } else {
+        registry
     }
 }
 
@@ -115,7 +124,7 @@ pub(super) async fn resolve_application(
 ) -> anyhow::Result<()> {
     let target = &platform.target;
     let component_base = pod_artifact_base(
-        platform,
+        platform.insecure_registry,
         platform
             .component_artifact_base
             .as_deref()
@@ -335,6 +344,24 @@ mod tests {
     use wamn_release_control::release_chart::{self, ImageSet};
 
     #[test]
+    fn only_the_known_local_registry_is_rewritten_for_pods() {
+        for (registry, expected) in [
+            (resources::LOCAL_REGISTRY, resources::POD_REGISTRY),
+            (resources::POD_REGISTRY, resources::POD_REGISTRY),
+            ("registry.example:5001", "registry.example:5001"),
+            ("localhost:5002", "localhost:5002"),
+            ("127.0.0.1:5001", "127.0.0.1:5001"),
+        ] {
+            let base = format!("{registry}/wamn/components");
+            assert_eq!(pod_artifact_base(false, &base).unwrap(), base);
+            assert_eq!(
+                pod_artifact_base(true, &base).unwrap(),
+                format!("{expected}/wamn/components")
+            );
+        }
+    }
+
+    #[test]
     fn registry_transport_follows_the_installed_host_arguments() {
         assert!(!insecure_registry(&json!({})));
         assert!(!insecure_registry(
@@ -371,6 +398,26 @@ mod tests {
             "format-version":wamn_catalog::SERVING_MANIFEST_FORMAT_VERSION,
             "release":{"packages":[]}, "components":[], "routes":[], "attachments":{}
         }))?;
+        // Local components do not redirect an independently published release.
+        let remote = "registry.example/custom/releases";
+        let (remote_values, _) = write::release_values(
+            &document,
+            "orders",
+            &manifest,
+            &digest,
+            remote,
+            70,
+            "test",
+            Some(&path),
+        )?;
+        assert!(
+            remote_values["runtime-operator"]["runtime"]["hostGroups"][0]["extraArgs"]
+                .as_sequence()
+                .unwrap()
+                .contains(&serde_yaml::Value::String(format!(
+                    "--release-artifact-base={remote}"
+                )))
+        );
         let (values, _) = write::release_values(
             &document,
             "orders",

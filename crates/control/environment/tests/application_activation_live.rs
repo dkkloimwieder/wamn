@@ -368,9 +368,7 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
         release_artifact_base: format!("{}/releases", registry.address),
         registry_auth_file: registry.auth.clone(),
         oci_ca_paths: Vec::new(),
-        insecure_registry: wamn_environment_control::environment::runtime::insecure_registry(
-            &json!({"extraArgs":["--allow-insecure-registries"]}),
-        ),
+        insecure_registry: true,
         package_artifact_base: Some(format!("{}/packages", registry.address)),
         component_artifact_base: Some(format!("{}/components", registry.address)),
         database_namespace: "platform".into(),

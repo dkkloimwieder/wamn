@@ -402,7 +402,7 @@ pub(super) async fn apply_selection(
     result
 }
 
-/// First installation uses the independent resource and SQL owners.
+/// Complete interrupted installation through the independent resource and SQL owners.
 async fn initialize_selection(
     platform: &Platform,
     document: &EnvironmentDocument,
@@ -410,14 +410,20 @@ async fn initialize_selection(
     directory: &Path,
 ) -> anyhow::Result<()> {
     let selected = analyse::select_application(document, Some(application))?;
-    let system = wamn_package_control::database::connect(&platform.system_database_url).await?;
-    if analyse::read_row(&system, document).await?.is_none() {
+    let resources_ready = ensure::resources_in_place(platform, document).await?;
+    let baseline_missing =
+        !resources_ready || sql::needs_initialization(platform, &selected).await?;
+    let mut plan = initialization_plan(resources_ready, baseline_missing);
+    if plan.provision {
         let admin = std::env::var("WAMN_SYSTEM_ADMIN_URL")
-            .context("set WAMN_SYSTEM_ADMIN_URL for first environment provisioning")?;
+            .context("set WAMN_SYSTEM_ADMIN_URL for environment provisioning or repair")?;
         ensure::provision_resources(platform, document, &[], &admin).await?;
+        // A repair can retain committed application baselines.
+        plan.initialize = sql::needs_initialization(platform, &selected).await?;
     }
-    if !sql::needs_initialization(platform, &selected).await? {
-        return Ok(());
+    if !plan.initialize {
+        // A committed baseline does not prove that the following CDC step finished.
+        return ensure::ensure_cdc(platform, &selected).await;
     }
     let chart = crate::platform::artifact_plan::select(&platform.chart)?;
     let cluster = crate::provision_project_env::resolve_cluster(
@@ -438,6 +444,19 @@ async fn initialize_selection(
     Ok(())
 }
 
+#[derive(Debug, PartialEq, Eq)]
+struct InitializationPlan {
+    provision: bool,
+    initialize: bool,
+}
+
+fn initialization_plan(resources_ready: bool, baseline_missing: bool) -> InitializationPlan {
+    InitializationPlan {
+        provision: !resources_ready,
+        initialize: baseline_missing,
+    }
+}
+
 /// Read event broker inputs for both deployed and local workflow verbs.
 pub fn event_broker_from_env() -> anyhow::Result<Option<EventBroker>> {
     Ok(match std::env::var_os("WAMN_NATS_URL") {
@@ -456,4 +475,31 @@ pub fn event_broker_from_env() -> anyhow::Result<Option<EventBroker>> {
                 .unwrap_or(120),
         }),
     })
+}
+
+#[cfg(test)]
+mod initialization_tests {
+    use super::*;
+
+    #[test]
+    fn initialization_owners_follow_installed_resources_and_baselines() {
+        for (resources_ready, baseline_missing, provision, initialize) in [
+            // Fresh environment or a row left by interrupted provisioning.
+            (false, true, true, true),
+            // Provisioned environment, before SQL initialization.
+            (true, true, false, true),
+            // Repair with committed baselines does not replay their SQL.
+            (false, false, true, false),
+            // SQL committed before Helm, or a fully installed code-only deploy.
+            (true, false, false, false),
+        ] {
+            assert_eq!(
+                initialization_plan(resources_ready, baseline_missing),
+                InitializationPlan {
+                    provision,
+                    initialize
+                }
+            );
+        }
+    }
 }

@@ -300,6 +300,9 @@ pub fn operator_payload_values(
     Ok(values)
 }
 
+/// The native authority declared by deploy/kind/cluster.k.
+pub const LOCAL_REGISTRY: &str = "localhost:5001";
+
 /// The OCI authority used by pods to reach the local registry.
 pub const POD_REGISTRY: &str = "wamn-registry.platform.svc.cluster.local:5000";
 

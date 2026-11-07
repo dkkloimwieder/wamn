@@ -169,8 +169,10 @@ pub async fn run_deployed(
         "url",
         &bootstrap::secret_text(&apply, "url")?,
     ));
-    let release_base =
-        super::runtime::pod_artifact_base(platform, &platform.release_artifact_base)?;
+    let release_base = super::runtime::pod_artifact_base(
+        platform.insecure_registry,
+        &platform.release_artifact_base,
+    )?;
     job::environment(
         &mut job,
         &[
@@ -195,7 +197,7 @@ pub async fn run_deployed(
                 &mut job,
                 &[(
                     variable,
-                    &super::runtime::pod_artifact_base(platform, value)?,
+                    &super::runtime::pod_artifact_base(platform.insecure_registry, value)?,
                 )],
             );
         }
@@ -213,36 +215,15 @@ pub async fn run_deployed(
         &mut job,
         &[("WAMN_RELEASE_HOST_GROUP", "/inputs/host.json")],
     );
-    if platform.insecure_registry {
-        let (registry, _) = platform
-            .release_artifact_base
-            .split_once('/')
-            .context("release repository")?;
-        let credentials = wamn_package_artifact::registry_credentials::read_registry_credentials(
-            &platform.registry_auth_file,
-            registry,
-        )?;
-        files.insert(
-            "registry.json".into(),
-            serde_json::to_string(&serde_json::json!({
-                "auths": {crate::platform::resources::POD_REGISTRY: {
-                    "username": credentials.username(), "password": credentials.password()
-                }}
-            }))?,
-        );
-        job::environment(
-            &mut job,
-            &[("WAMN_REGISTRY_AUTH_FILE", "/inputs/registry.json")],
-        );
-    } else {
-        add_file(
-            &mut job,
-            &mut files,
-            "WAMN_REGISTRY_AUTH_FILE",
-            "registry.json",
-            &platform.registry_auth_file,
-        )?;
-    }
+    let registry = pod_registry_credentials(
+        platform.insecure_registry,
+        serde_json::from_slice(&std::fs::read(&platform.registry_auth_file)?)?,
+    )?;
+    files.insert("registry.json".into(), serde_json::to_string(&registry)?);
+    job::environment(
+        &mut job,
+        &[("WAMN_REGISTRY_AUTH_FILE", "/inputs/registry.json")],
+    );
     let mut ca_paths = Vec::new();
     for (index, path) in platform.oci_ca_paths.iter().enumerate() {
         let name = format!("registry-ca-{index}.crt");
@@ -272,6 +253,20 @@ pub async fn run_deployed(
             Ok(None)
         }
     }
+}
+
+fn pod_registry_credentials(insecure_registry: bool, mut registry: Value) -> anyhow::Result<Value> {
+    let auths = registry["auths"]
+        .as_object_mut()
+        .context("registry credentials auths")?;
+    let local = crate::platform::resources::LOCAL_REGISTRY;
+    let pod = super::runtime::pod_registry(insecure_registry, local);
+    if pod != local
+        && let Some(credentials) = auths.remove(local)
+    {
+        auths.insert(pod.into(), credentials);
+    }
+    Ok(registry)
 }
 
 fn nats_inputs(
@@ -311,6 +306,30 @@ mod tests {
     use super::*;
     use serde::Deserialize as _;
     use wamn_platform_identity::nats::PlatformNats;
+
+    #[test]
+    fn sql_job_keeps_credentials_for_other_registries() -> anyhow::Result<()> {
+        use crate::platform::resources::{LOCAL_REGISTRY, POD_REGISTRY};
+        let credentials = serde_json::json!({"auths": {
+            LOCAL_REGISTRY: {"username":"local", "password":"local-password"},
+            "registry.example": {"username":"remote", "password":"remote-password"}
+        }});
+        assert_eq!(
+            pod_registry_credentials(false, credentials.clone())?,
+            credentials
+        );
+        let rewritten = pod_registry_credentials(true, credentials.clone())?;
+        assert_eq!(
+            rewritten["auths"][POD_REGISTRY],
+            credentials["auths"][LOCAL_REGISTRY]
+        );
+        assert!(rewritten["auths"].get(LOCAL_REGISTRY).is_none());
+        assert_eq!(
+            rewritten["auths"]["registry.example"],
+            credentials["auths"]["registry.example"]
+        );
+        Ok(())
+    }
 
     #[test]
     fn sql_job_uses_the_cluster_broker_and_its_certificate_name() -> anyhow::Result<()> {

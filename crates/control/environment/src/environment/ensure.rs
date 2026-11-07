@@ -189,6 +189,34 @@ pub async fn provision_resources(
     Ok(())
 }
 
+/// Observe the resources at the end of provisioning, not merely its first row.
+/// The materializer is installed only after credentials, the database, and CDC
+/// preparation succeed. An interrupted prefix therefore remains repairable.
+pub(super) async fn resources_in_place(
+    platform: &Platform,
+    document: &EnvironmentDocument,
+) -> anyhow::Result<bool> {
+    let system = connect(&platform.system_database_url).await?;
+    if super::analyse::read_row(&system, document).await?.is_none() {
+        return Ok(false);
+    }
+    let name = environment_host_name(&document.org, &document.project, &document.env)?;
+    if !super::analyse::release_present(platform, &name).await? {
+        return Ok(false);
+    }
+    let workload: Option<serde_json::Value> = crate::kubectl::get(
+        &platform.target.kubeconfig,
+        &platform.target.context,
+        &platform.target.namespace,
+        "workloaddeployment",
+        &format!("{name}-materializer"),
+    )
+    .await?;
+    // A transient readiness failure does not authorize another SQL operation.
+    // The only remaining provisioning action after this object is a readiness wait.
+    Ok(workload.is_some())
+}
+
 pub(super) fn environment_host_name(org: &str, project: &str, env: &str) -> anyhow::Result<String> {
     Ok(wamn_control_provision::environment_state::environment_resource_name(org, project, env)?)
 }
