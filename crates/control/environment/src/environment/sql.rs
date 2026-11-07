@@ -135,10 +135,8 @@ pub async fn run_deployed(
     .await?
     .context("missing CNPG superuser Secret")?;
     // SQL Jobs use the CNPG Service and PostgreSQL's default port, never a native forward.
-    let host = format!(
-        "{cluster}-rw.{}.svc.cluster.local",
-        platform.database_namespace
-    );
+    let host =
+        crate::provision_project_env::database_host(None, cluster, &platform.database_namespace);
     let mut admin_url = url::Url::parse("postgresql://postgres@localhost/wamn_system")?;
     admin_url.set_host(Some(&host))?;
     admin_url

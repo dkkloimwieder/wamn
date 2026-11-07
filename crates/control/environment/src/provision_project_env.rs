@@ -104,6 +104,7 @@ pub mod pat_secrets;
 mod registry;
 pub(crate) mod workload;
 
+pub(crate) use database::database_host;
 use database::{
     connect_config, exact_project_database_config, named_database_config, workload_config,
     workload_url,
@@ -281,7 +282,11 @@ pub struct WorkloadActionRequest {
     /// placement and the recorded project-env policy in the registry.
     pub cluster: Option<String>,
 
-    /// Host every emitted credential URL names. Defaults to `<cluster>-rw`,
+    /// Namespace of the target CNPG `Cluster`.
+    pub cluster_namespace: String,
+
+    /// Host every emitted credential URL names. Defaults to
+    /// `<cluster>-rw.<cluster_namespace>.svc.cluster.local`,
     /// never the admin URL's host (finding wamn-lczu).
     pub db_host: Option<String>,
 

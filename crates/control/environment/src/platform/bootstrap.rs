@@ -19,7 +19,9 @@ use super::document::ClusterDocument;
 use super::job::{self, Secret};
 use crate::kubectl;
 
-pub(super) const DATABASE_HOST: &str = "wamn-pg-rw.platform.svc.cluster.local";
+pub(super) fn database_host() -> String {
+    crate::provision_project_env::database_host(None, "wamn-pg", "platform").into_owned()
+}
 
 /// Encoded Secret data. Debug output omits every value.
 #[derive(Deserialize)]
@@ -51,7 +53,8 @@ pub(crate) fn secret_text(secret: &SecretData, key: &str) -> anyhow::Result<Stri
 /// Construct the system administrator credential from the CNPG Secret.
 pub(super) fn administrator(job: &mut Value, secret: &SecretData) -> anyhow::Result<Secret> {
     let mut url = url::Url::parse(&format!(
-        "postgresql://postgres@{DATABASE_HOST}/wamn_system"
+        "postgresql://postgres@{}/wamn_system",
+        database_host()
     ))?;
     url.set_password(Some(&secret_text(secret, "password")?.replace('%', "%25")))
         .map_err(|()| anyhow::anyhow!("encode the system administrator password"))?;
@@ -81,7 +84,7 @@ fn system_job(document: &ClusterDocument, image: &str) -> Value {
             "--emit-apply-secret",
             "/out/secret.json",
             "--db-host",
-            DATABASE_HOST,
+            &database_host(),
         ],
     );
     job::secret_output(&mut job);
@@ -123,7 +126,7 @@ fn issuer_credential_job(image: &str) -> Value {
             "--emit-secret",
             "/out/secret.json",
             "--db-host",
-            DATABASE_HOST,
+            &database_host(),
         ],
     );
     job::secret_output(&mut job);
@@ -146,7 +149,7 @@ fn control_credential_job(document: &ClusterDocument, image: &str) -> Value {
                 "--emit-control-secret",
                 "/out/secret.json",
                 "--db-host",
-                DATABASE_HOST,
+                &database_host(),
             ]
             .map(Value::from),
         );
@@ -364,7 +367,7 @@ fn probe_job(name: &str, image: &str, user: &str, query: &str) -> Value {
     job::environment(
         &mut job,
         &[
-            ("PGHOST", DATABASE_HOST),
+            ("PGHOST", &database_host()),
             ("PGUSER", user),
             ("PGDATABASE", "wamn_system"),
         ],
@@ -485,7 +488,7 @@ fn credential_password(credential: &Credential, raw: &str) -> anyhow::Result<(us
         .map_err(|_| anyhow::anyhow!("bootstrap credential is not a PostgreSQL URL"))?;
     ensure!(
         matches!(url.scheme(), "postgres" | "postgresql")
-            && url.host_str() == Some(DATABASE_HOST)
+            && url.host_str() == Some(database_host().as_str())
             && url.port().is_none_or(|port| port == 5432)
             && url.path() == "/wamn_system"
             && url.query().is_none()
@@ -550,7 +553,7 @@ mod tests {
         );
         assert!(
             args.windows(2)
-                .any(|pair| pair == ["--db-host", DATABASE_HOST])
+                .any(|pair| pair == ["--db-host", "wamn-pg-rw.platform.svc.cluster.local"])
         );
         assert!(
             container["volumeMounts"]
@@ -585,14 +588,15 @@ mod tests {
         let document = document();
         for service in service_credentials(&document, "ctl-image").unwrap() {
             for (index, role) in service.roles.iter().enumerate() {
-                let url =
-                    format!("postgresql://{role}:private%40value@{DATABASE_HOST}/wamn_system");
+                let url = format!(
+                    "postgresql://{role}:private%40value@wamn-pg-rw.platform.svc.cluster.local/wamn_system"
+                );
                 let (generation, password) = credential_password(&service, &url).unwrap();
                 assert_eq!(generation, index);
                 assert_eq!(password, "private@value");
                 for invalid in [
                     url.replace(role, "postgres"),
-                    url.replace(DATABASE_HOST, "other-db"),
+                    url.replace("wamn-pg-rw.platform.svc.cluster.local", "other-db"),
                     url.replace("wamn_system", "other_database"),
                     format!("{url}?options=-crole=postgres"),
                     format!("{url}#private"),
@@ -614,7 +618,7 @@ mod tests {
         let admin = administrator(&mut job, &secret).unwrap();
         assert_eq!(
             admin.0["stringData"]["url"],
-            format!("postgresql://postgres:p%40ss%3A%2F%3F%23%25@{DATABASE_HOST}/wamn_system")
+            "postgresql://postgres:p%40ss%3A%2F%3F%23%25@wamn-pg-rw.platform.svc.cluster.local/wamn_system"
         );
         assert!(!format!("{admin:?}").contains("p%40ss"));
     }

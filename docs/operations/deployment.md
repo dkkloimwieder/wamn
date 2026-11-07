@@ -20,6 +20,8 @@ Certificate subjects must match the endpoint names that their clients verify.
 From the source checkout, prepare the registry and artifacts as [building](building.md#local-platform-artifacts) describes.
 The example uses `localhost:5001`, as `deploy/kind/cluster.k` does.
 The prepared directory must include its `platform/` resources and operator chart archive.
+On kind, `wamn platform deploy` reads `WAMN_REGISTRY_AUTH_FILE` to create the `hosts/wamn-registry-pull` Secret.
+Set this variable to the platform registry credential file before deployment.
 Deploy that directory explicitly:
 
 ```bash

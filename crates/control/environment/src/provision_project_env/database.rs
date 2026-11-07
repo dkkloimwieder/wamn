@@ -1,10 +1,22 @@
 //! PostgreSQL connection configuration for workload credentials.
 
-use std::str::FromStr as _;
+use std::{borrow::Cow, str::FromStr as _};
 
 use anyhow::Context as _;
 
 use super::{NoTls, PgConfig, Url};
+
+/// Host shared by in-cluster credentials, unless the caller supplies an override.
+pub(crate) fn database_host<'a>(
+    explicit: Option<&'a str>,
+    cluster: &str,
+    namespace: &str,
+) -> Cow<'a, str> {
+    match explicit {
+        Some(host) => Cow::Borrowed(host),
+        None => Cow::Owned(format!("{cluster}-rw.{namespace}.svc.cluster.local")),
+    }
+}
 
 pub(super) fn exact_project_database_config(
     admin_url: &str,

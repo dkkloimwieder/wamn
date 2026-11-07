@@ -167,7 +167,7 @@ pub struct ProvisionProjectEnvArgs {
     pub cluster_namespace: String,
 
     /// Host every emitted credential URL names. Defaults to the target
-    /// cluster's read-write service `<cluster>-rw`, never the admin URL's host.
+    /// Service `<cluster>-rw.<cluster_namespace>.svc.cluster.local`, never the admin host.
     #[arg(long)]
     pub db_host: Option<String>,
 
@@ -506,7 +506,7 @@ pub struct EnableCdcProjectEnvArgs {
     pub replication_password: String,
 
     /// Host the reader reaches the project-env database at. Defaults to the
-    /// target cluster's read-write service `<cluster>-rw`.
+    /// Service `<cluster>-rw.<cluster_namespace>.svc.cluster.local`.
     #[arg(long)]
     pub db_host: Option<String>,
 
@@ -759,6 +759,7 @@ fn workload_action_request(
         system_database_url: args.system_database_url,
         target_admin_database_url: args.target_admin_database_url,
         cluster: args.cluster,
+        cluster_namespace: args.cluster_namespace,
         db_host: args.db_host,
         db_port: args.db_port,
         namespace: args.namespace,

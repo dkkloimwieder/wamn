@@ -345,6 +345,7 @@ pub fn generation_args(
         system_database_url: Some(system_url.to_owned()),
         target_admin_database_url: target_admin_url.map(str::to_owned),
         cluster: None,
+        cluster_namespace: "wamn-system".to_owned(),
         db_host: admin.host_str().map(str::to_owned),
         db_port: admin.port_or_known_default().unwrap_or(5432),
         namespace: "wamn-system".to_owned(),

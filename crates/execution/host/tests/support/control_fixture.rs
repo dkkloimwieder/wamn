@@ -166,6 +166,7 @@ pub(super) async fn project_database(
         system_database_url: Some(system_url.to_owned()),
         target_admin_database_url: Some(target_url.to_string()),
         cluster: None,
+        cluster_namespace: "platform".to_owned(),
         db_host: target_url.host_str().map(str::to_owned),
         db_port: target_url.port_or_known_default().unwrap_or(5432),
         namespace: "hosts".to_owned(),

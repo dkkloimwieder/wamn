@@ -624,12 +624,11 @@ async fn prepare_cdc(
         .map_err(|()| anyhow::anyhow!("encode replication user"))?;
     url.set_password(Some(&replication_password))
         .map_err(|()| anyhow::anyhow!("encode replication password"))?;
-    url.set_host(Some(
-        platform
-            .database_host
-            .as_deref()
-            .unwrap_or(&format!("{cluster}-rw")),
-    ))?;
+    url.set_host(Some(&crate::provision_project_env::database_host(
+        platform.database_host.as_deref(),
+        &cluster,
+        &platform.database_namespace,
+    )))?;
     url.set_port(Some(platform.database_port))
         .map_err(|()| anyhow::anyhow!("encode replication port"))?;
     url.set_path(&database);
@@ -1150,7 +1149,7 @@ mod tests {
             insecure_registry: false,
             component_artifact_base: None,
             package_artifact_base: None,
-            database_namespace: String::new(),
+            database_namespace: "databases".into(),
             database_host: Some("database".into()),
             database_port: 5432,
             host_group: None,
@@ -1175,6 +1174,9 @@ mod tests {
                 "cluster",
                 "postgresql://project",
             );
+            assert_eq!(request.cluster_namespace, platform.database_namespace);
+            assert_eq!(request.namespace, platform.target.namespace);
+            assert_eq!(request.db_host, platform.database_host);
             assert_eq!(request.action.family, credential.family);
             assert_eq!(request.action.verb, WorkloadActionVerb::Prepare);
             assert_eq!(request.action.generation, CredentialGeneration::A);

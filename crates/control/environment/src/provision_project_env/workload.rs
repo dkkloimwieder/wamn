@@ -15,10 +15,10 @@ use super::{
     PgConfig, SecondsFormat, SessionTarget, SystemRandom, Triple, Utc, WorkloadActionOutcome,
     WorkloadActionRequest, WorkloadActionVerb, WorkloadGenerationAction, WorkloadRoleFamily,
     WorkloadRoleScope, WorkloadRoleScopeKind, WorkloadSecretBody, WorkloadSecretBodyKind,
-    connect_config, ensure_secret_path, exact_project_database_config, named_database_config,
-    project_env_database_name, read_project_env_instance, read_project_env_policy,
-    render_org_workload_secret_manifest, render_workload_secret_manifest, resolve_cluster,
-    role_sql, sql, tenant_key, validate_project_env, validate_session_env_key,
+    connect_config, database_host, ensure_secret_path, exact_project_database_config,
+    named_database_config, project_env_database_name, read_project_env_instance,
+    read_project_env_policy, render_org_workload_secret_manifest, render_workload_secret_manifest,
+    resolve_cluster, role_sql, sql, tenant_key, validate_project_env, validate_session_env_key,
     workload_action_flag, workload_config, workload_generation_role, workload_secret_flag,
     workload_url, write_output, write_secret_json,
 };
@@ -324,11 +324,12 @@ pub(crate) async fn run_workload_action_with_admin(
         GenerationPasswords::connect(&named_database_config(system_url, "system database")?)
             .await?;
     let db_host = match (&args.db_host, &args.cluster) {
-        (Some(host), _) => host.clone(),
-        (None, Some(cluster)) => format!("{cluster}-rw"),
+        (Some(host), _) => std::borrow::Cow::Borrowed(host.as_str()),
+        (None, Some(cluster)) => database_host(None, cluster, &args.cluster_namespace),
         (None, None) => {
             let policy = read_project_env_policy(system_url, &triple).await?;
-            format!("{}-rw", resolve_cluster(system_url, org, &policy).await?)
+            let cluster = resolve_cluster(system_url, org, &policy).await?;
+            database_host(None, &cluster, &args.cluster_namespace)
         }
     };
 

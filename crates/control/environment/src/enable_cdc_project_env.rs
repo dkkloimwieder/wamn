@@ -87,7 +87,7 @@ pub struct EnableCdcProjectEnvRequest {
     pub replication_password: String,
 
     /// Host the reader reaches the project-env database at. Defaults to the
-    /// target cluster's read-write service `<cluster>-rw`.
+    /// Service `<cluster>-rw.<cluster_namespace>.svc.cluster.local`.
     pub db_host: Option<String>,
 
     /// Port the reader reaches the database at.
@@ -213,10 +213,11 @@ pub async fn enable_cdc_project_env(
     let db_name = project_env_database_name(&args.org, &args.project, &args.env, &instance);
     let cdc_name = cdc_object_name(&args.org, &args.project, &args.env, &instance);
     let secret_name = project_env_cdc_secret_name(&args.org, &args.project, &args.env);
-    let db_host = args
-        .db_host
-        .clone()
-        .unwrap_or_else(|| format!("{cluster}-rw"));
+    let db_host = crate::provision_project_env::database_host(
+        args.db_host.as_deref(),
+        &cluster,
+        &args.cluster_namespace,
+    );
     let cdc_url = compose_url(
         &cdc_name,
         &args.replication_password,

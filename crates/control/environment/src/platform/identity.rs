@@ -9,7 +9,7 @@ use crate::kubectl;
 use wamn_release_control::release_chart::{self, Target};
 
 use super::artifact_plan::SelectedChart;
-use super::bootstrap::{DATABASE_HOST, SecretData, secret_text};
+use super::bootstrap::{SecretData, database_host, secret_text};
 use super::document::{ClusterDocument, Provider};
 use super::job::{self, Secret};
 
@@ -331,7 +331,7 @@ fn owner_state_job(document: &ClusterDocument, image: &str) -> (Value, Secret) {
     job::environment(
         &mut job,
         &[
-            ("PGHOST", DATABASE_HOST),
+            ("PGHOST", &database_host()),
             ("PGUSER", "postgres"),
             ("PGDATABASE", "wamn_system"),
         ],
@@ -538,7 +538,7 @@ fn key_state_job(image: &str) -> Value {
     job::environment(
         &mut job,
         &[
-            ("PGHOST", DATABASE_HOST),
+            ("PGHOST", &database_host()),
             ("PGUSER", "postgres"),
             ("PGDATABASE", "wamn_system"),
         ],

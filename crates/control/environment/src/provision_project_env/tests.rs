@@ -1372,22 +1372,52 @@ async fn env_key_projection_and_instance_claim_hold_on_postgres() {
 }
 
 #[test]
-fn workload_url_names_the_cluster_host_not_the_admin_url_host() {
-    // wamn-lczu: an operator runs the verb through a port-forward, and the
-    // emitted credential must name the host a pod reaches.
-    let url = workload_url(
-        "postgresql://postgres:admin@127.0.0.1:15432/postgres?sslmode=disable",
-        "wamn-pg-rw.platform.svc.cluster.local",
-        5432,
-        "wamn_role",
-        "p@ss",
-        "wamn-db-dkk--receiving--dev--4pqjfmli",
-    )
-    .expect("the URL builds");
-    assert_eq!(
-        url,
-        "postgresql://wamn_role:p%40ss@wamn-pg-rw.platform.svc.cluster.local:5432/wamn-db-dkk--receiving--dev--4pqjfmli"
-    );
+fn workload_urls_use_the_database_service_namespace_unless_overridden() {
+    for (explicit, cluster, namespace, expected) in [
+        (
+            None,
+            "wamn-pg",
+            "platform",
+            "wamn-pg-rw.platform.svc.cluster.local",
+        ),
+        (
+            None,
+            "tenant-pg",
+            "databases",
+            "tenant-pg-rw.databases.svc.cluster.local",
+        ),
+        (
+            Some("db.example.com"),
+            "wamn-pg",
+            "platform",
+            "db.example.com",
+        ),
+    ] {
+        let host = database_host(explicit, cluster, namespace);
+        let url = workload_url(
+            "postgresql://postgres:admin@127.0.0.1:15432/postgres?sslmode=disable",
+            &host,
+            5432,
+            "wamn_role",
+            "p@ss",
+            "wamn-db-dkk--receiving--dev--4pqjfmli",
+        )
+        .expect("the URL builds");
+        assert_eq!(
+            url,
+            format!(
+                "postgresql://wamn_role:p%40ss@{expected}:5432/wamn-db-dkk--receiving--dev--4pqjfmli"
+            )
+        );
+        let cdc_url = wamn_control_provision::compose_url(
+            "replication",
+            "private",
+            &host,
+            5432,
+            "project_database",
+        );
+        assert_eq!(Url::parse(&cdc_url).unwrap().host_str(), Some(expected));
+    }
 }
 
 /// `env apply` passes no marker, so a row `wamn dev up` marked disposable

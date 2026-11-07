@@ -209,6 +209,7 @@ fn request(
         },
         target_admin_database_url: Some(fixture.url.clone()),
         cluster: None,
+        cluster_namespace: "wamn-system".to_owned(),
         db_host: system_url.host_str().map(str::to_owned),
         db_port: system_url.port_or_known_default().unwrap_or(5432),
         action: WorkloadGenerationAction {

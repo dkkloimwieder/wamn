@@ -21,6 +21,7 @@ pub(super) fn credential_request(
         target_admin_database_url: (credential.database == CredentialDatabase::Project)
             .then(|| project_url.to_owned()),
         cluster: Some(cluster.to_owned()),
+        cluster_namespace: platform.database_namespace.clone(),
         db_host: platform.database_host.clone(),
         db_port: platform.database_port,
         namespace: platform.target.namespace.clone(),
