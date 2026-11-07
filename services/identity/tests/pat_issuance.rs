@@ -791,6 +791,7 @@ async fn start(
         .env("WAMN_IDENTITY_ISSUER", ISSUER)
         .env("WAMN_IDENTITY_DATABASE_URL", url)
         .env_remove("WAMN_IDENTITY_OPERATOR_CA")
+        .env_remove("WAMN_NATS_URL")
         .env("RUST_LOG", "info")
         .args(["serve", "--bind", "127.0.0.1:0", "--tls-cert"])
         .arg(certificate)
