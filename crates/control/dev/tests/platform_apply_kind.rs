@@ -165,7 +165,7 @@ fn prepare(repository: &Path, chart: &Path, binary: &Path, kcl: &Path) -> anyhow
     }
     Ok(Run {
         repository: repository.into(),
-        checkout: directory.join("source"),
+        checkout: directory.join("checkout"),
         target: Target {
             kubeconfig: directory.join("kubeconfig"),
             context: format!("kind-{name}"),

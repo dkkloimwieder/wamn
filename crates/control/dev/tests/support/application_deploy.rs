@@ -808,7 +808,7 @@ async fn sources(repository: &Path, checkout: &Path) -> anyhow::Result<[PathBuf;
             ),
         )?;
         if app == "alpha" {
-            require_connection(root)?;
+            require_connection(root, app)?;
         }
     }
     let manifest = apps.join("Cargo.toml");
@@ -828,7 +828,7 @@ async fn sources(repository: &Path, checkout: &Path) -> anyhow::Result<[PathBuf;
     Ok(roots)
 }
 
-fn require_connection(root: &Path) -> anyhow::Result<()> {
+fn require_connection(root: &Path, app: &str) -> anyhow::Result<()> {
     let file = root.join("wamn.k");
     std::fs::write(&file,std::fs::read_to_string(&file)?
         .replace("connections = {}", "connections = {upstream = {interface = \"wamn:connection/http@0.1.0\", mode = \"read\"}}")
@@ -849,7 +849,7 @@ fn require_connection(root: &Path) -> anyhow::Result<()> {
             "\"../../../wit/wamn-node\",\n        \"../../../wit/wamn-connection\",",
         ),
     )?;
-    let file = root.join("publication/components/fixture.json.in");
+    let file = root.join(format!("publication/components/{app}.json.in"));
     let mut declaration: Value = serde_json::from_slice(&std::fs::read(&file)?)?;
     declaration["connections"] = json!([{"store-alias":"upstream","requirement-type":"http"}]);
     std::fs::write(&file, serde_json::to_vec_pretty(&declaration)?)?;
@@ -872,7 +872,14 @@ fn copy_source(source: &Path, target: &Path, app: &str) -> anyhow::Result<()> {
     std::fs::create_dir_all(target)?;
     for entry in std::fs::read_dir(source)? {
         let entry = entry?;
-        let destination = target.join(entry.file_name());
+        let name = entry.file_name();
+        let name = name
+            .to_str()
+            .context("fixture source path is not UTF-8")?
+            .replace("platform_fixture", app)
+            .replace("platform-fixture", app)
+            .replace("fixture", app);
+        let destination = target.join(name);
         if entry.file_type()?.is_dir() {
             copy_source(&entry.path(), &destination, app)?;
         } else {
