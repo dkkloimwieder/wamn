@@ -20,7 +20,7 @@ struct Cli {
 #[cfg(target_os = "linux")]
 #[derive(Debug, Subcommand)]
 enum Command {
-    /// Select and apply a published application release.
+    /// Build source or select published bytes, then deploy one application release.
     Deploy(wamn_ctl::application_verbs::DeployArgs),
     /// Apply one application's previous authored release.
     Rollback(wamn_ctl::application_verbs::RollbackArgs),
@@ -148,7 +148,7 @@ mod tests {
         else {
             panic!("deploy");
         };
-        assert_eq!(deploy.release, digest);
+        assert_eq!(deploy.release.as_deref(), Some(digest.as_str()));
         assert_eq!(deploy.env, std::path::Path::new("environment.k"));
         let Command::Rollback(rollback) =
             Cli::try_parse_from(["wamn", "rollback", "orders", "--env", "environment.k"])
@@ -167,8 +167,39 @@ mod tests {
             panic!("status");
         };
         assert_eq!(status.env, deploy.env);
+        let Command::Deploy(source) = Cli::try_parse_from([
+            "wamn",
+            "deploy",
+            "apps/orders",
+            "--env",
+            "environment.k",
+            "--verified-publisher-principal",
+            "publisher",
+        ])
+        .unwrap()
+        .command
+        else {
+            panic!("deploy source");
+        };
+        assert_eq!(
+            source.package.as_deref(),
+            Some(std::path::Path::new("apps/orders"))
+        );
+        assert!(source.release.is_none());
         for arguments in [
             vec!["wamn", "deploy", "--env", "environment.k"],
+            vec!["wamn", "deploy", "apps/orders", "--env", "environment.k"],
+            vec![
+                "wamn",
+                "deploy",
+                "apps/orders",
+                "--release",
+                &digest,
+                "--env",
+                "environment.k",
+                "--verified-publisher-principal",
+                "publisher",
+            ],
             vec!["wamn", "rollback", "--env", "environment.k"],
             vec!["wamn", "status"],
         ] {

@@ -1040,7 +1040,7 @@ pub fn resolve_dev_packages(
     })
 }
 
-pub(super) fn read_package_manifest(root: &Path) -> Result<PackageManifest, DevPackageError> {
+pub(crate) fn read_package_manifest(root: &Path) -> Result<PackageManifest, DevPackageError> {
     if wamn_schema_generator::is_authored(root) {
         let path = root.join(wamn_schema_generator::AUTHORED_MANIFEST);
         let bytes = wamn_schema_generator::compile_manifest(root).map_err(|source| {

@@ -7,9 +7,19 @@ use wamn_environment_control::environment::{self, Platform};
 
 #[derive(Debug, Args)]
 pub struct DeployArgs {
+    /// The selected application's source package directory.
+    #[arg(
+        required_unless_present = "release",
+        conflicts_with = "release",
+        requires = "verified_publisher_principal"
+    )]
+    pub package: Option<PathBuf>,
     /// The published application release digest.
     #[arg(long)]
-    pub release: String,
+    pub release: Option<String>,
+    /// Principal already authenticated by the publication boundary.
+    #[arg(long, requires = "package")]
+    pub verified_publisher_principal: Option<String>,
     /// The authored environment.k file.
     #[arg(long)]
     pub env: PathBuf,
@@ -31,9 +41,31 @@ pub struct StatusArgs {
 }
 
 pub async fn deploy(args: DeployArgs) -> anyhow::Result<()> {
-    environment::document::EnvironmentDocument::compile(&args.env)?;
+    let document = environment::document::EnvironmentDocument::compile(&args.env)?;
     let platform = Platform::apply_from_env()?;
-    print_analysis(environment::deploy(&platform, &args.env, &args.release).await?)
+    let digest = match args.package {
+        Some(package) => {
+            let principal = args
+                .verified_publisher_principal
+                .context("source deployment requires --verified-publisher-principal")?;
+            let database_url = std::env::var("DATABASE_URL").context(
+                "set DATABASE_URL to the PostgreSQL server for disposable build databases",
+            )?;
+            wamn_dev_control::source_deploy::publish(
+                &platform,
+                document,
+                &package,
+                principal,
+                &database_url,
+            )
+            .await?
+            .to_string()
+        }
+        None => args
+            .release
+            .context("select a source package or --release")?,
+    };
+    print_analysis(environment::deploy(&platform, &args.env, &digest).await?)
 }
 
 pub async fn rollback(args: RollbackArgs) -> anyhow::Result<()> {
