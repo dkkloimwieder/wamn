@@ -55,10 +55,10 @@ impl WamnPostgres {
     pub(crate) fn require_event_materializer(
         &self,
         component: &str,
-        release: &LoadedRelease,
+        env_key: &str,
     ) -> Result<(), ProductionClaimError> {
         if self.workload_authority_for(component) != AuthorityClass::EventMaterializer
-            || self.env_key_for(component).as_deref() != Some(release.scope().env_key.as_str())
+            || self.env_key_for(component).as_deref() != Some(env_key)
         {
             return Err(ProductionClaimError::new(
                 ProductionClaimErrorType::Identity,
@@ -69,19 +69,21 @@ impl WamnPostgres {
         Ok(())
     }
 
-    /// Read the enabled triggers of the applications bound to this host.
+    /// Read enabled event triggers installed in this environment.
     pub async fn event_triggers(
         &self,
         project: &str,
-        release: &LoadedRelease,
+        env_key: &str,
+        environment: &str,
     ) -> Result<Vec<EventTrigger>, ProductionClaimError> {
-        let scope = release.scope();
-        let names: Vec<_> = scope.applications.keys().cloned().collect();
-        self.executor_read(project, &scope.env_key, async |connection| {
+        self.executor_read(project, env_key, async |connection| {
             connection
                 .query(
-                    ENABLED_EVENTS_SQL,
-                    &[&scope.env_key, &scope.environment, &names],
+                    "SELECT application, workflow_id, source_package, entity, \
+                     array_to_json(ops)::text, condition, enable_sequence \
+                     FROM catalog.workflows WHERE env_key = $1 AND environment = $2 \
+                     AND enabled AND trigger = 'event' ORDER BY application, workflow_id",
+                    &[&env_key, &environment],
                 )
                 .await?
                 .iter()
@@ -172,6 +174,14 @@ impl WamnPostgres {
             let principal = workflow_user_id().to_string();
             let delivery = format!("event:{}:{}", admission.sequence, admission.source_event_id);
             for (row, event, input) in matches {
+                let key = serde_json::json!(["event", scope.environment, event.application, event.workflow_id, delivery]).to_string();
+                let input = input.to_string();
+                // A delivery committed by an earlier host retains its manifest
+                // and node digests, even when this release cannot run its graph.
+                if connection.query_opt(select_event_run_sql(), &[env_key, &key, &input]).await
+                    .map_err(|error| storage("read existing event run", error))?.is_some() {
+                    continue;
+                }
                 let version: i32 = row.get(7);
                 let graph_json: String = row.get(8);
                 let hash: String = row.get(9);
@@ -185,8 +195,6 @@ impl WamnPostgres {
                 let components = wamn_catalog::resolve_workflow_components(env_key, packages, release.manifest(), &graph)
                     .map_err(|error| invalid("resolve event workflow", error))?;
                 let digests = serde_json::Value::Object(components.into_iter().map(|(node, component)| (node, serde_json::Value::String(component.component_digest))).collect()).to_string();
-                let key = serde_json::json!(["event", scope.environment, event.application, event.workflow_id, delivery]).to_string();
-                let input = input.to_string();
                 let digest = release.release().manifest_digest.as_str();
                 let inserted = connection.query_opt(&insert_event_run_sql(), &[
                     env_key, &event.application, &digest, &scope.environment, &event.workflow_id,
@@ -294,19 +302,24 @@ mod tests {
             HashMap::new(),
             None,
         )));
-        let release = LoadedRelease::control_root();
-        postgres
-            .set_env_key("guest", &release.scope().env_key)
-            .unwrap();
+        let env_key = "acme--apps--dev";
+        postgres.set_env_key("guest", env_key).unwrap();
         let error = postgres
-            .require_event_materializer("guest", &release)
+            .require_event_materializer("guest", env_key)
             .unwrap_err();
         assert_eq!(error.error_type(), ProductionClaimErrorType::Identity);
         postgres
             .bind_workload_authority("guest", "event-materializer")
             .unwrap();
         postgres
-            .require_event_materializer("guest", &release)
+            .require_event_materializer("guest", env_key)
             .unwrap();
+        assert_eq!(
+            postgres
+                .require_event_materializer("guest", "another-environment")
+                .unwrap_err()
+                .error_type(),
+            ProductionClaimErrorType::Identity
+        );
     }
 }

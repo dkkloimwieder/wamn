@@ -1621,7 +1621,6 @@ mod tests {
                         "wamn.env_key".into(),
                         "parity-test".into(),
                     )]),
-                    environment: None,
                 }],
                 // The fixture environment policy allows a 70-second drain.
                 drain_bound_seconds: 70,

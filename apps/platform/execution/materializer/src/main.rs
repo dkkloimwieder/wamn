@@ -1,4 +1,4 @@
-//! Durable JetStream registration delivery through the shared router bridge.
+//! Route environment events to application hosts through durable consumers.
 #![expect(unsafe_code, reason = "wit-bindgen generated FFI glue")]
 #[allow(
     clippy::same_length_and_capacity,
@@ -18,16 +18,12 @@ mod bindings {
     });
 }
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 
 use serde_json::Value;
 use wamn_event_reg::{EventRegistration, RegistrationInput};
 use wamn_event_wire::{DerivedEvent, Envelope};
-use wamn_materializer::{
-    DecideError, MAX_CAUSATION_DEPTH, RefuseReason, SkipReason, Verdict, VerifiedSourceEventId,
-    decide, decide_derived, serviceable, sql::select_known_package_ids_sql,
-    verified_derived_source_event_id, verified_source_event_id,
-};
+use wamn_materializer::{verified_derived_source_event_id, verified_source_event_id};
 
 #[cfg(not(test))]
 use bindings::events::{self, MessageHandle as Message};
@@ -35,8 +31,6 @@ use bindings::events::{self, MessageHandle as Message};
 use bindings::wamn::jetstream::registration::ConsumerConfig;
 #[cfg(not(test))]
 use bindings::wamn::jetstream::registration::{self, ConsumerConfig};
-use bindings::wamn::postgres::client;
-use bindings::wamn::postgres::types::{PgError, SqlValue};
 use bindings::wasmcloud::nats::types::HeaderEntry as Header;
 #[cfg(test)]
 use tests::{events, events::MessageHandle as Message, registration};
@@ -62,7 +56,6 @@ struct Config {
     fetch_ms: u32,
     sweep_ms: u64,
     max_sweeps: u64,
-    max_depth: u32,
     ack_wait_ms: u64,
     nack_delay_ms: u32,
     max_deliver: u32,
@@ -116,9 +109,6 @@ impl Config {
             max_sweeps: env_or("WAMN_MAT_MAX_SWEEPS", "0")
                 .parse()
                 .map_err(|error| format!("WAMN_MAT_MAX_SWEEPS: {error}"))?,
-            max_depth: env_or("WAMN_MAT_MAX_DEPTH", &MAX_CAUSATION_DEPTH.to_string())
-                .parse()
-                .map_err(|error| format!("WAMN_MAT_MAX_DEPTH: {error}"))?,
             ack_wait_ms: env_or("WAMN_MAT_ACK_WAIT_MS", "30000")
                 .parse()
                 .map_err(|error| format!("WAMN_MAT_ACK_WAIT_MS: {error}"))?,
@@ -137,17 +127,6 @@ struct Counters {
     deliveries: u64,
     batches: u64,
     acked: u64,
-    skip_entity: u64,
-    skip_package_by_registration: BTreeMap<String, u64>,
-    skip_op: u64,
-    skip_foreign_tenant: u64,
-    skip_condition_false: u64,
-    refuse_depth: u64,
-    refuse_tenant_unscopable: u64,
-    refuse_old_image_absent: u64,
-    refuse_condition_error: u64,
-    refuse_source_package_identity_unknown: u64,
-    held_registrations: u64,
     poison: u64,
     retry: u64,
     terminated: u64,
@@ -161,17 +140,6 @@ impl Counters {
             "deliveries": self.deliveries,
             "batches": self.batches,
             "acked": self.acked,
-            "skip-entity": self.skip_entity,
-            "skip-package-mismatch-by-registration": &self.skip_package_by_registration,
-            "skip-op": self.skip_op,
-            "skip-foreign-tenant": self.skip_foreign_tenant,
-            "skip-condition-false": self.skip_condition_false,
-            "refuse-depth": self.refuse_depth,
-            "refuse-tenant-unscopable": self.refuse_tenant_unscopable,
-            "refuse-old-image-absent": self.refuse_old_image_absent,
-            "refuse-condition-error": self.refuse_condition_error,
-            "refuse-source-package-identity-unknown": self.refuse_source_package_identity_unknown,
-            "held-registrations": self.held_registrations,
             "poison": self.poison,
             "retry": self.retry,
             "terminated": self.terminated,
@@ -181,33 +149,8 @@ impl Counters {
     }
 }
 
-fn pg_name(error: &PgError) -> String {
-    match error {
-        PgError::SerializationFailure => "serialization-failure".into(),
-        PgError::ConnectionUnavailable => "connection-unavailable".into(),
-        PgError::StatementTimeout => "statement-timeout".into(),
-        PgError::RowLimitExceeded(limit) => format!("row-limit-exceeded({limit})"),
-        PgError::UniqueViolation(constraint) => format!("unique-violation({constraint})"),
-        PgError::ForeignKeyViolation(constraint) => {
-            format!("foreign-key-violation({constraint})")
-        }
-        PgError::CheckViolation(constraint) => format!("check-violation({constraint})"),
-        PgError::ExclusionViolation(constraint) => format!("exclusion-violation({constraint})"),
-        PgError::PermissionDenied => "permission-denied".into(),
-        PgError::QueryError((state, message)) => format!("query-error({state}: {message})"),
-    }
-}
-
 struct Serving {
     registration: EventRegistration,
-    enable_sequence: u64,
-    condition: Option<wamn_materializer::CompiledCondition>,
-    resident_env_key: String,
-}
-
-struct LoadedServings {
-    servings: Vec<Serving>,
-    known_packages: BTreeSet<String>,
 }
 
 fn nats_message_ids(headers: &[Header]) -> Vec<&str> {
@@ -218,141 +161,33 @@ fn nats_message_ids(headers: &[Header]) -> Vec<&str> {
         .collect()
 }
 
-async fn load_servings(counters: &mut Counters) -> Result<LoadedServings, String> {
-    let package_rows = client::query(select_known_package_ids_sql(), Vec::new())
-        .await
-        .map_err(|error| pg_name(&error))?
-        .rows;
-    let mut known_packages = BTreeSet::new();
-    for row in package_rows {
-        let Some(SqlValue::Text(package_id)) = row.first() else {
-            return Err("package identity row shape".into());
-        };
-        known_packages.insert(package_id.clone());
-    }
+async fn load_servings() -> Result<Vec<Serving>, String> {
     let document = registration::triggers()
         .await
         .map_err(|error| format!("{error:?}"))?;
     let rows: Vec<wamn_materializer::workflow::EventTrigger> =
         serde_json::from_str(&document).map_err(|error| error.to_string())?;
-    let mut servings = Vec::with_capacity(rows.len());
-    for row in rows {
-        let registration = EventRegistration {
-            schema_version: wamn_event_reg::SCHEMA_VERSION.to_owned(),
-            registration_id: row.workflow_id,
-            package_id: row.application,
-            source_package_id: row.source_package,
-            entity: row.entity,
-            ops: row.ops,
-            condition: row.condition,
-            input: RegistrationInput::Event,
-        };
-        let registration_id = &registration.registration_id;
-        let condition = match serviceable(&registration) {
-            Ok(condition) => condition,
-            Err(DecideError::UnserviceableCondition(reason)) => {
-                counters.held_registrations += 1;
-                eprintln!(
-                    "wamn::materializer HELD registration {registration_id}: condition is not serviceable ({reason:?})"
-                );
-                continue;
-            }
-        };
-        servings.push(Serving {
-            registration,
-            condition,
-            resident_env_key: required("WAMN_MAT_ENV_KEY")?,
-            enable_sequence: row.enable_sequence,
-        });
-    }
-    Ok(LoadedServings {
-        servings,
-        known_packages,
-    })
+    Ok(rows
+        .into_iter()
+        .map(|row| Serving {
+            registration: EventRegistration {
+                schema_version: wamn_event_reg::SCHEMA_VERSION.to_owned(),
+                registration_id: row.workflow_id,
+                package_id: row.application,
+                source_package_id: row.source_package,
+                entity: row.entity,
+                ops: row.ops,
+                condition: row.condition,
+                input: RegistrationInput::Event,
+            },
+        })
+        .collect())
 }
 
 enum Preparation {
     Deliver { source_event_id: String },
-    Ack,
     Nack,
     Terminate(&'static str),
-}
-
-#[derive(Debug, PartialEq)]
-enum PreparationGate<'a> {
-    Ready(&'a VerifiedSourceEventId),
-    MissingSourceId,
-    SourcePackageIdentityRefusal(&'a RefuseReason),
-}
-
-fn preparation_gate<'a>(
-    source_event_id: Option<&'a VerifiedSourceEventId>,
-    verdict: &'a Verdict,
-) -> PreparationGate<'a> {
-    match verdict {
-        Verdict::Refuse(reason @ RefuseReason::SourcePackageIdentityUnknown { .. }) => {
-            PreparationGate::SourcePackageIdentityRefusal(reason)
-        }
-        _ => source_event_id.map_or(PreparationGate::MissingSourceId, PreparationGate::Ready),
-    }
-}
-
-fn record_skip(counters: &mut Counters, serving: &Serving, reason: SkipReason) {
-    match reason {
-        SkipReason::SourcePackageMismatch => {
-            let identity = serving.registration.qualified_id();
-            *counters
-                .skip_package_by_registration
-                .entry(identity)
-                .or_default() += 1;
-        }
-        SkipReason::EntityMismatch => counters.skip_entity += 1,
-        SkipReason::OpMismatch => counters.skip_op += 1,
-        SkipReason::ForeignTenant => counters.skip_foreign_tenant += 1,
-        SkipReason::ConditionFalse => counters.skip_condition_false += 1,
-    }
-}
-
-fn record_refusal(counters: &mut Counters, reason: &RefuseReason) -> &'static str {
-    match reason {
-        RefuseReason::SourcePackageIdentityUnknown { .. } => {
-            counters.refuse_source_package_identity_unknown += 1;
-            "source-package-identity-unknown"
-        }
-        RefuseReason::DepthExceeded { .. } => {
-            counters.refuse_depth += 1;
-            "registration-depth-exceeded"
-        }
-        RefuseReason::TenantUnscopable => {
-            counters.refuse_tenant_unscopable += 1;
-            "registration-tenant-unscopable"
-        }
-        RefuseReason::OldImageAbsent => {
-            counters.refuse_old_image_absent += 1;
-            "registration-old-image-absent"
-        }
-        RefuseReason::ConditionError(_) => {
-            counters.refuse_condition_error += 1;
-            "registration-condition-error"
-        }
-    }
-}
-
-fn refuse_message(
-    serving: &Serving,
-    message: &Message,
-    stream_seq: u64,
-    counters: &mut Counters,
-    reason: &RefuseReason,
-) -> Preparation {
-    let literal = record_refusal(counters, reason);
-    eprintln!(
-        "wamn::materializer REFUSED registration={} subject={} stream_seq={} reason={reason:?}",
-        serving.registration.qualified_id(),
-        message.message().subject,
-        stream_seq
-    );
-    Preparation::Terminate(literal)
 }
 
 #[derive(Debug, PartialEq)]
@@ -374,13 +209,7 @@ fn decode_source_event(body: &[u8]) -> Result<SourceEvent, &'static str> {
     }
 }
 
-fn prepare_message(
-    config: &Config,
-    serving: &Serving,
-    known_packages: &BTreeSet<String>,
-    message: &Message,
-    counters: &mut Counters,
-) -> Preparation {
+fn prepare_message(config: &Config, message: &Message, counters: &mut Counters) -> Preparation {
     let stream_seq = message.sequence();
     if stream_seq == 0 {
         counters.retry += 1;
@@ -400,64 +229,25 @@ fn prepare_message(
     };
     let headers = contents.headers.unwrap_or_default();
     let message_ids = nats_message_ids(&headers);
-    let (source_event_id, verdict) = match &source {
+    let source_event_id = match &source {
         SourceEvent::Cdc(envelope) => {
-            let source_event_id =
-                verified_source_event_id(&config.project, &config.env, envelope, &message_ids);
-            let verdict = decide(
-                &serving.registration,
-                serving.condition.as_ref(),
-                envelope,
-                known_packages,
-                &config.env_key,
-                source_event_id
-                    .as_ref()
-                    .map(|_| serving.resident_env_key.as_str()),
-                config.max_depth,
-            );
-            (source_event_id, verdict)
+            verified_source_event_id(&config.project, &config.env, envelope, &message_ids)
         }
-        SourceEvent::Derived(event) => (
-            verified_derived_source_event_id(
-                &config.env_key,
-                &config.project,
-                &config.env,
-                event,
-                &message_ids,
-            ),
-            decide_derived(
-                &serving.registration,
-                serving.condition.as_ref(),
-                event,
-                known_packages,
-                &config.env_key,
-                config.max_depth,
-            ),
+        SourceEvent::Derived(event) => verified_derived_source_event_id(
+            &config.env_key,
+            &config.project,
+            &config.env,
+            event,
+            &message_ids,
         ),
     };
-    let source_event_id = match preparation_gate(source_event_id.as_ref(), &verdict) {
-        PreparationGate::Ready(source_event_id) => source_event_id.as_str().to_string(),
-        PreparationGate::SourcePackageIdentityRefusal(reason) => {
-            return refuse_message(serving, message, stream_seq, counters, reason);
+    if let Some(id) = source_event_id {
+        Preparation::Deliver {
+            source_event_id: id.as_str().to_owned(),
         }
-        PreparationGate::MissingSourceId => {
-            counters.poison += 1;
-            eprintln!(
-                "wamn::materializer REFUSED poison stream_seq={stream_seq}: Nats-Msg-Id is missing, duplicated, or inconsistent"
-            );
-            return Preparation::Terminate("poison-source-id");
-        }
-    };
-    if stream_seq <= serving.enable_sequence {
-        return Preparation::Ack;
-    }
-    match verdict {
-        Verdict::Deliver(_) => Preparation::Deliver { source_event_id },
-        Verdict::Skip(reason) => {
-            record_skip(counters, serving, reason);
-            Preparation::Ack
-        }
-        Verdict::Refuse(reason) => refuse_message(serving, message, stream_seq, counters, &reason),
+    } else {
+        counters.poison += 1;
+        Preparation::Terminate("poison-source-id")
     }
 }
 
@@ -490,13 +280,8 @@ async fn terminate(message: &Message, reason: &'static str, counters: &mut Count
     }
 }
 
-async fn serve(
-    config: &Config,
-    servings: &[&Serving],
-    known_packages: &BTreeSet<String>,
-    counters: &mut Counters,
-) {
-    let registration = &servings[0].registration;
+async fn serve(config: &Config, serving: &Serving, counters: &mut Counters) {
+    let registration = &serving.registration;
     let durable = wamn_materializer::workflow::entity_durable(
         &registration.source_package_id,
         &registration.entity,
@@ -555,48 +340,18 @@ async fn serve(
         }
     };
     for message in messages {
-        let mut source_event_id = None;
-        let mut refused = false;
-        for serving in servings {
-            match prepare_message(config, serving, known_packages, &message, counters) {
-                Preparation::Deliver {
-                    source_event_id: id,
-                } => source_event_id = Some(id),
-                Preparation::Ack => {}
-                Preparation::Nack => {
-                    nack(&message, config, counters).await;
-                    refused = true;
-                    break;
-                }
-                Preparation::Terminate(reason) => {
-                    terminate(&message, reason, counters).await;
-                    refused = true;
-                    break;
-                }
+        let source_event_id = match prepare_message(config, &message, counters) {
+            Preparation::Deliver { source_event_id } => source_event_id,
+            Preparation::Nack => {
+                nack(&message, config, counters).await;
+                continue;
             }
-        }
-        if refused {
-            continue;
-        }
-        let contents = message.message();
-        // Even an empty guest match set reaches the transaction: enabled rows
-        // can change between this sweep and admission.
-        let source_event_id = source_event_id.or_else(|| {
-            let source = wamn_materializer::workflow::SourceEvent::decode(&contents.body).ok()?;
-            let headers = contents.headers.clone().unwrap_or_default();
-            source
-                .identity(
-                    &config.env_key,
-                    &config.project,
-                    &config.env,
-                    &nats_message_ids(&headers),
-                )
-                .map(|id| id.as_str().to_owned())
-        });
-        let Some(source_event_id) = source_event_id else {
-            terminate(&message, "poison-source-id", counters).await;
-            continue;
+            Preparation::Terminate(reason) => {
+                terminate(&message, reason, counters).await;
+                continue;
+            }
         };
+        let contents = message.message();
         let Ok(envelope) = String::from_utf8(contents.body) else {
             terminate(&message, "poison-invalid-envelope", counters).await;
             continue;
@@ -615,7 +370,7 @@ async fn serve(
                 acknowledge(&message, counters).await;
             }
             Err(error) => {
-                eprintln!("wamn::materializer batch admission failed: {error:?}");
+                eprintln!("wamn::materializer routing failed: {error:?}");
                 nack(&message, config, counters).await;
             }
         }
@@ -653,26 +408,25 @@ async fn run_service() {
     let mut counters = Counters::default();
     loop {
         counters.sweeps += 1;
-        match load_servings(&mut counters).await {
-            Ok(loaded) if loaded.servings.is_empty() => {
+        match load_servings().await {
+            Ok(loaded) if loaded.is_empty() => {
                 bindings::wasi::clocks::monotonic_clock::wait_for(
                     config.sweep_ms.saturating_mul(1_000_000),
                 )
                 .await;
             }
             Ok(loaded) => {
-                let mut entities = BTreeMap::<_, Vec<_>>::new();
-                for serving in &loaded.servings {
+                let mut entities = BTreeMap::new();
+                for serving in &loaded {
                     entities
                         .entry((
                             &serving.registration.source_package_id,
                             &serving.registration.entity,
                         ))
-                        .or_default()
-                        .push(serving);
+                        .or_insert(serving);
                 }
-                for servings in entities.values() {
-                    serve(&config, servings, &loaded.known_packages, &mut counters).await;
+                for serving in entities.values() {
+                    serve(&config, serving, &mut counters).await;
                 }
             }
             Err(error) => {
@@ -830,7 +584,6 @@ mod tests {
             fetch_ms: 1,
             sweep_ms: 1,
             max_sweeps: 1,
-            max_depth: MAX_CAUSATION_DEPTH,
             ack_wait_ms: 30000,
             nack_delay_ms: 1234,
             max_deliver: 5,
@@ -854,11 +607,11 @@ mod tests {
         }
     }
 
-    fn serve_message(serving: &Serving, known: &BTreeSet<String>, message: Message) -> Counters {
+    fn serve_message(serving: &Serving, message: Message) -> Counters {
         events::MESSAGES.set(vec![message]);
         registration::ADMITS.set(0);
         let mut counters = Counters::default();
-        ready(serve(&config(), &[serving], known, &mut counters));
+        ready(serve(&config(), serving, &mut counters));
         counters
     }
 
@@ -866,18 +619,13 @@ mod tests {
     fn refused_message_terminates_without_admission() {
         let serving = serving();
         let message = message();
-        let known = BTreeSet::new();
+        let mut message = message;
+        message.contents.headers = None;
         assert!(matches!(
-            prepare_message(
-                &config(),
-                &serving,
-                &known,
-                &message,
-                &mut Counters::default()
-            ),
-            Preparation::Terminate("source-package-identity-unknown")
+            prepare_message(&config(), &message, &mut Counters::default()),
+            Preparation::Terminate("poison-source-id")
         ));
-        let counters = serve_message(&serving, &known, message.clone());
+        let counters = serve_message(&serving, message.clone());
         assert_eq!(
             *message.settlements.borrow(),
             vec![events::Settlement::Terminate]
@@ -890,11 +638,7 @@ mod tests {
     fn transient_admission_failure_nacks_with_delay() {
         registration::TRANSIENT.set(true);
         let message = message();
-        let counters = serve_message(
-            &serving(),
-            &BTreeSet::from(["receiving".into()]),
-            message.clone(),
-        );
+        let counters = serve_message(&serving(), message.clone());
         assert_eq!(
             *message.settlements.borrow(),
             vec![events::Settlement::Nack(Some(1234))]
@@ -906,25 +650,13 @@ mod tests {
     }
 
     #[test]
-    fn skipped_message_is_acked_after_host_admission() {
+    fn routing_does_not_evaluate_application_conditions() {
         let mut serving = serving();
-        serving.registration.entity = "other".into();
+        serving.registration.condition = Some("invalid condition".into());
         let message = message();
-        let known = BTreeSet::from(["receiving".into()]);
-        assert!(matches!(
-            prepare_message(
-                &config(),
-                &serving,
-                &known,
-                &message,
-                &mut Counters::default()
-            ),
-            Preparation::Ack
-        ));
-        let counters = serve_message(&serving, &known, message.clone());
+        let counters = serve_message(&serving, message.clone());
         assert_eq!(*message.settlements.borrow(), vec![events::Settlement::Ack]);
         assert_eq!(registration::ADMITS.get(), 1);
-        assert_eq!(counters.skip_entity, 1);
         assert_eq!(counters.acked, 1);
     }
 
@@ -949,9 +681,6 @@ mod tests {
                 input: RegistrationInput::Event,
                 condition: None,
             },
-            condition: None,
-            resident_env_key: "tenant".into(),
-            enable_sequence: 0,
         }
     }
 
@@ -1052,49 +781,5 @@ mod tests {
             decode_source_event(&serde_json::to_vec(&future).unwrap()),
             Err("poison-invalid-derived-event")
         );
-    }
-
-    #[test]
-    fn unknown_source_package_refusal_has_a_typed_literal_and_counter() {
-        let mut counters = Counters::default();
-        assert_eq!(
-            record_refusal(
-                &mut counters,
-                &RefuseReason::SourcePackageIdentityUnknown {
-                    source_package_id: "uninstalled".into(),
-                },
-            ),
-            "source-package-identity-unknown"
-        );
-        assert_eq!(counters.refuse_source_package_identity_unknown, 1);
-    }
-
-    #[test]
-    fn known_package_mismatch_is_counted_per_registration() {
-        let serving = serving();
-        let known_packages = BTreeSet::from(["receiving".to_owned(), "overlay".to_owned()]);
-        let mut event = envelope();
-        event.package_id = "overlay".into();
-        let Verdict::Skip(reason) = decide(
-            &serving.registration,
-            None,
-            &event,
-            &known_packages,
-            "tenant",
-            Some("tenant"),
-            MAX_CAUSATION_DEPTH,
-        ) else {
-            panic!("a known foreign package must be normal filtration");
-        };
-        assert_eq!(reason, SkipReason::SourcePackageMismatch);
-        let mut counters = Counters::default();
-        record_skip(&mut counters, &serving, reason);
-        assert_eq!(
-            counters
-                .skip_package_by_registration
-                .get("client_acme_receiving::receive-receipt"),
-            Some(&1)
-        );
-        assert_eq!(counters.skip_entity, 0);
     }
 }

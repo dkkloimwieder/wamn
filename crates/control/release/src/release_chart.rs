@@ -384,7 +384,6 @@ mod tests {
                 statements: vec!["sql-0".to_owned()],
                 name: RoleName::Http,
                 config: Mapping::new(),
-                environment: None,
             }],
             drain_bound_seconds: 300,
             actor: "ops".into(),
@@ -518,24 +517,7 @@ mod tests {
         )
         .unwrap();
         let roles = roles(&manifest, "acme", "orders", "dev");
-        assert_eq!(roles.len(), 1);
-        assert_eq!(roles[0].name, RoleName::Materializer);
-    }
-
-    #[test]
-    fn an_empty_release_still_renders_the_materializer() {
-        let manifest: ServingManifest = serde_json::from_value(serde_json::json!({
-            "format-version": wamn_catalog::SERVING_MANIFEST_FORMAT_VERSION,
-            "release": {"packages": []}, "components": [], "routes": [], "attachments": {},
-        }))
-        .unwrap();
-        let roles = roles(&manifest, "acme", "orders", "dev");
-        assert_eq!(roles.len(), 1);
-        assert_eq!(roles[0].name, RoleName::Materializer);
-        assert_eq!(
-            roles[0].environment.as_ref().unwrap()["WAMN_MAT_STREAM"].as_str(),
-            Some(wamn_control_provision::event_stream_name("acme", "orders", "dev").as_str())
-        );
+        assert!(roles.is_empty());
     }
 
     #[test]

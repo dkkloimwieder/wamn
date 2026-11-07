@@ -10,7 +10,9 @@ use serde_json::json;
 use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
 use wamn_catalog::manifest::PackageManifest;
 use wamn_catalog::{ComponentDescriptor, PackageCoordinate, ServingComponent, ServingManifest};
-use wamn_environment_control::environment::{Platform, document::EnvironmentDocument, expand, sql};
+use wamn_environment_control::environment::{
+    Platform, document::EnvironmentDocument, ensure, expand, sql,
+};
 use wamn_package_artifact::sha256_digest;
 use wamn_test_infrastructure::scratch::ScratchRoot;
 
@@ -440,6 +442,23 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
     let mut observer_url = admin_url;
     observer_url.set_path(&database_name);
     let observer = connect(observer_url.as_str()).await?;
+    // Initialization extends capture from all installed baselines, even when the
+    // caller supplies only B's selected document.
+    let selected_b =
+        wamn_environment_control::environment::analyse::select_application(&document, Some("b"))?;
+    let captured = ensure::installed_manifests(&platform, &selected_b).await?;
+    let schemas = captured
+        .iter()
+        .flat_map(|package| package.models.values().map(|model| model.schema.as_str()))
+        .collect::<BTreeSet<_>>();
+    let installed_schemas = observer.query(
+        "SELECT DISTINCT schema_name FROM catalog.package_definition_owners WHERE env_key=$1 AND definition_type='relation'",
+        &[&ENV_KEY],
+    ).await?.into_iter().map(|row| row.get::<_, String>(0)).collect::<BTreeSet<_>>();
+    assert_eq!(
+        schemas,
+        installed_schemas.iter().map(String::as_str).collect()
+    );
     let old_packages = [old_package.clone(), base_package.clone()];
     expand::prepare(
         &platform,

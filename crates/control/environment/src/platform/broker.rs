@@ -12,7 +12,7 @@ use wamn_control_provision::events::{advisory_stream_config, source_stream_confi
 use crate::environment::document::EnvironmentDocument;
 
 /// The Secret that holds the authorization file of the one NATS.
-pub(super) const AUTHORIZATION: &str = "wamn-nats-authorization";
+pub(crate) const AUTHORIZATION: &str = "wamn-nats-authorization";
 
 #[derive(Serialize, Deserialize)]
 pub(super) struct Authorization {
@@ -171,24 +171,7 @@ fn keep_platform_users(authorization: &mut Authorization) {
 /// # Errors
 /// Returns an error if the live authorization Secret cannot be decoded.
 pub fn platform_objects(live: Option<&Value>, org: &str) -> anyhow::Result<Vec<Value>> {
-    let mut authorization = match live {
-        Some(live) => {
-            let encoded = live["data"]["authorization.conf"]
-                .as_str()
-                .context("the broker Secret has no authorization.conf")?;
-            let bytes = STANDARD
-                .decode(encoded)
-                .map_err(|_| anyhow::anyhow!("decode the broker authorization"))?;
-            let text = std::str::from_utf8(&bytes)
-                .map_err(|_| anyhow::anyhow!("decode the broker authorization"))?;
-            serde_json::from_str::<Authorization>(
-                text.strip_prefix("authorization: ")
-                    .context("the broker authorization has no prefix")?,
-            )
-            .map_err(|_| anyhow::anyhow!("decode the broker authorization"))?
-        }
-        None => Authorization { users: Vec::new() },
-    };
+    let mut authorization = read_authorization(live)?;
     keep_platform_users(&mut authorization);
     let (control, certificate) = control_user(org);
     keep_user(&mut authorization, control);
@@ -206,10 +189,50 @@ pub fn platform_objects(live: Option<&Value>, org: &str) -> anyhow::Result<Vec<V
     ])
 }
 
+fn read_authorization(live: Option<&Value>) -> anyhow::Result<Authorization> {
+    Ok(match live {
+        Some(live) => {
+            let encoded = live["data"]["authorization.conf"]
+                .as_str()
+                .context("the broker Secret has no authorization.conf")?;
+            let bytes = STANDARD
+                .decode(encoded)
+                .map_err(|_| anyhow::anyhow!("decode the broker authorization"))?;
+            let text = std::str::from_utf8(&bytes)
+                .map_err(|_| anyhow::anyhow!("decode the broker authorization"))?;
+            serde_json::from_str::<Authorization>(
+                text.strip_prefix("authorization: ")
+                    .context("the broker authorization has no prefix")?,
+            )
+            .map_err(|_| anyhow::anyhow!("decode the broker authorization"))?
+        }
+        None => Authorization { users: Vec::new() },
+    })
+}
+
+/// Add one environment's broker user and Certificate without replacing other users.
+pub fn environment_objects(
+    live: &Value,
+    document: &EnvironmentDocument,
+) -> anyhow::Result<Vec<Value>> {
+    let mut authorization = read_authorization(Some(live))?;
+    let mut objects = render(&document.triple(), &mut authorization);
+    objects.push(serde_json::to_value(secret(
+        "platform",
+        AUTHORIZATION,
+        [(
+            "authorization.conf".into(),
+            format!("authorization: {}\n", json!(authorization)),
+        )]
+        .into(),
+    ))?);
+    Ok(objects)
+}
+
 /// The NATS objects of a cluster that runs the platform in one `namespace`, as
 /// the kind tests do: the authorization Secret with the platform users, the
 /// control host user of `org` and one user per environment of `environments`,
-/// and each user's Certificate and materializer binding.
+/// and each user's Certificate.
 ///
 /// # Errors
 ///
@@ -259,13 +282,17 @@ fn render(scope: &wamn_control_registry::Triple, authorization: &mut Authorizati
     let user = wamn_control_registry::environment_nats_user(&env_key);
     // The environment's events, and what its host and its materializer read
     // on that environment's own stream: every consumer of the stream, by
-    // wildcard. Stream and consumer management stays with the provisioning
-    // client (docs/plan/alignment.md R5, docs/architecture/capabilities.md).
+    // wildcard. The materializer creates application consumers with filters
+    // confined to this environment. Provisioning owns the streams.
     let mut publish = vec![source.subjects[0].clone()];
     for name in [&source.name, &advisory.name] {
         publish.push(format!("$JS.API.STREAM.INFO.{name}"));
     }
     publish.extend([
+        format!(
+            "$JS.API.CONSUMER.CREATE.{}.*.{}",
+            source.name, source.subjects[0]
+        ),
         format!("$JS.API.CONSUMER.INFO.{}.*", source.name),
         format!("$JS.API.CONSUMER.MSG.NEXT.{}.*", source.name),
         format!("$JS.ACK.{}.>", source.name),
@@ -294,8 +321,7 @@ fn render(scope: &wamn_control_registry::Triple, authorization: &mut Authorizati
             },
         },
     );
-    // The release chart declares the materializer's binding, which inherits
-    // the host's data connection (docs/plan/alignment.md R6).
+    // Environment provisioning owns the materializer and its host's data binding.
     vec![environment_certificate(
         &format!("wamn-nats-{env_key}"),
         &user,
@@ -405,6 +431,42 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn provisioning_an_environment_preserves_existing_broker_users() {
+        let first = document("one");
+        let second = document("two");
+        let objects = single_namespace_nats("platform", "test", &[first.triple()]).unwrap();
+        let live = objects
+            .iter()
+            .find(|object| object["kind"] == "Secret")
+            .unwrap();
+        let added = environment_objects(live, &second).unwrap();
+        let updated = added
+            .iter()
+            .find(|object| object["kind"] == "Secret")
+            .unwrap();
+        let before = serde_json::to_value(read_authorization(Some(live)).unwrap()).unwrap();
+        let after = serde_json::to_value(read_authorization(Some(updated)).unwrap()).unwrap();
+        for user in before["users"].as_array().unwrap() {
+            assert!(after["users"].as_array().unwrap().contains(user));
+        }
+        assert_eq!(environment_objects(updated, &second).unwrap(), added);
+        assert!(
+            after["users"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|user| user["user"]
+                    == wamn_control_registry::environment_nats_user(
+                        &wamn_control_registry::project_env_key(
+                            &second.org,
+                            &second.project,
+                            &second.env
+                        )
+                    ))
+        );
     }
 
     #[test]
@@ -523,13 +585,13 @@ mod tests {
                     .contains(&format!("$KV.{bucket}.test--one--dev.>"))
             );
         }
-        // Environment one is refused consumer and stream management on its own
-        // event stream; only the filtered KV watches are its own consumers.
+        // Routing can create filtered consumers inside this environment.
+        // Unfiltered consumers, foreign filters and stream mutations stay refused.
         let stream =
             source_stream_config(&document("one").triple(), 1, Duration::from_secs(120)).name;
         for subject in [
             format!("$JS.API.CONSUMER.CREATE.{stream}.mat"),
-            format!("$JS.API.CONSUMER.CREATE.{stream}.mat.evt.test.one.dev.>"),
+            format!("$JS.API.CONSUMER.CREATE.{stream}.mat.evt.test.two.dev.>"),
             format!("$JS.API.CONSUMER.DURABLE.CREATE.{stream}.mat"),
             format!("$JS.API.CONSUMER.DELETE.{stream}.mat"),
             format!("$JS.API.STREAM.CREATE.{stream}"),
@@ -545,16 +607,18 @@ mod tests {
                 "{subject} is granted"
             );
         }
-        assert!(
-            one.permissions
-                .publish
-                .allow
-                .iter()
-                .any(|pattern| subject_matches(
-                    pattern,
-                    &format!("$JS.API.CONSUMER.MSG.NEXT.{stream}.mat")
-                ))
-        );
+        for subject in [
+            format!("$JS.API.CONSUMER.MSG.NEXT.{stream}.mat"),
+            format!("$JS.API.CONSUMER.CREATE.{stream}.mat.evt.test.one.dev.order.>"),
+        ] {
+            assert!(
+                one.permissions
+                    .publish
+                    .allow
+                    .iter()
+                    .any(|pattern| subject_matches(pattern, &subject))
+            );
+        }
     }
 
     /// The control host and an environment host open their auth memory

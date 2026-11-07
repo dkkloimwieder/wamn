@@ -18,8 +18,7 @@ pub fn workload_name(release_name: &str, role: RoleName) -> String {
     format!("{release_name}-{}", role.as_str())
 }
 
-/// The roles a release implies (R4, epic decision D6): http iff the manifest
-/// has an HTTP route attachment, materializer in every environment.
+/// The application HTTP role exists when the manifest has an HTTP route attachment.
 /// Each role's configuration derives from the coordinate.
 pub fn roles(manifest: &ServingManifest, org: &str, project: &str, env: &str) -> Vec<Role> {
     let env_key = wamn_control_provision::project_env_key(org, project, env);
@@ -55,27 +54,6 @@ pub fn roles(manifest: &ServingManifest, org: &str, project: &str, env: &str) ->
                     }
                 }),
             config: scope(&[]),
-            environment: None,
-        });
-    }
-    {
-        let stream = wamn_control_provision::event_stream_name(org, project, env);
-        let environment = [
-            ("WAMN_MAT_STREAM", stream.as_str()),
-            ("WAMN_MAT_ORG", org),
-            ("WAMN_MAT_PROJECT", project),
-            ("WAMN_MAT_ENV", env),
-            ("WAMN_MAT_ENV_KEY", env_key.as_str()),
-        ]
-        .iter()
-        .map(|(key, value)| ((*key).into(), (*value).into()))
-        .collect();
-        roles.push(Role {
-            name: RoleName::Materializer,
-            entry: None,
-            statements: Vec::new(),
-            config: scope(&[("wamn.postgres.authority", "event-materializer")]),
-            environment: Some(environment),
         });
     }
     roles
@@ -249,9 +227,6 @@ pub fn values(input: &ValuesInput) -> anyhow::Result<Value> {
                 "statements".into(),
                 Value::Sequence(role.statements.iter().cloned().map(Value::String).collect()),
             );
-            if let Some(environment) = &role.environment {
-                entry.insert("environment".into(), Value::Mapping(environment.clone()));
-            }
             Ok(Value::Mapping(entry))
         })
         .collect::<anyhow::Result<_>>()?;
@@ -373,7 +348,7 @@ pub struct QualificationImages {
     pub identity: String,
 }
 
-/// One role workload: `http` or `materializer`, with its configuration.
+/// One application HTTP workload with its configuration.
 #[derive(Debug, Clone)]
 pub struct Role {
     pub name: RoleName,
@@ -384,23 +359,19 @@ pub struct Role {
     pub statements: Vec<String>,
     /// `localResources.config` of the role's component.
     pub config: Mapping,
-    /// `localResources.environment.config`; the materializer only.
-    pub environment: Option<Mapping>,
 }
 
 /// The roles a release can imply (R4).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RoleName {
     Http,
-    Materializer,
 }
 
 impl RoleName {
-    /// `http` or `materializer`, the suffix of the role's object names.
+    /// The suffix of the role's object names.
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Http => "http",
-            Self::Materializer => "materializer",
         }
     }
 }

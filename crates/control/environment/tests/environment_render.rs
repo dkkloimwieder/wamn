@@ -330,3 +330,107 @@ fn host_report_release_requires_component_preload() -> anyhow::Result<()> {
     );
     Ok(())
 }
+
+mod shared_resources {
+    use serde::Deserialize as _;
+    use serde_json::{Value, json};
+    use wamn_environment_control::environment::{document::EnvironmentDocument, ensure};
+    use wamn_release_control::release_chart::{self, ImageSet};
+    use wamn_test_infrastructure::scratch::ScratchRoot;
+
+    #[test]
+    fn shared_materializer_has_stable_placement_outside_application_releases() -> anyhow::Result<()>
+    {
+        let mut document = EnvironmentDocument::from_json(br#"{"org":"acme","project":"apps","env":"dev","target":"cloud","policy":"dev","applications":{}}"#)?;
+        let image = format!("registry.example/materializer@sha256:{}", "a".repeat(64));
+        let workload = ensure::materializer_workload(&document, "hosts", &image)?;
+        let values = ensure::materializer_host_values(&document, 30, 1, 120, None)?;
+        document.applications = serde_json::from_value(json!({
+            "a":{"packages":["a"],"current":format!("sha256:{}", "b".repeat(64)),"hostname":"a.example.com"},
+            "b":{"packages":["b"],"current":format!("sha256:{}", "c".repeat(64)),"hostname":"b.example.com"}
+        }))?;
+        assert_eq!(
+            workload,
+            ensure::materializer_workload(&document, "hosts", &image)?
+        );
+        assert_eq!(
+            values,
+            ensure::materializer_host_values(&document, 30, 1, 120, None)?
+        );
+        let group = &values["runtime-operator"]["runtime"]["hostGroups"][0];
+        assert_eq!(
+            workload["spec"]["template"]["spec"]["hostSelector"],
+            json!({"hostgroup":group["name"]})
+        );
+        assert_eq!(
+            workload["spec"]["template"]["spec"]["service"]["image"],
+            image
+        );
+        for application in document.applications.keys() {
+            assert_ne!(
+                group["name"],
+                wamn_environment_control::environment::analyse::application_release_name(
+                    &document,
+                    application
+                )?
+            );
+        }
+        let scratch = ScratchRoot::create()?;
+        let chart = scratch.path().join("chart");
+        release_chart::stamp(
+            &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../../deploy/platform/release"),
+            &ImageSet {
+                host: format!("registry.example/host:dev@sha256:{}", "d".repeat(64)),
+                http: format!("registry.example/http@sha256:{}", "e".repeat(64)),
+                materializer: image,
+            },
+            None,
+            &chart,
+        )?;
+        let file = scratch.path().join("values.yaml");
+        std::fs::write(&file, serde_yaml::to_string(&values)?)?;
+        let output = std::process::Command::new("helm")
+            .args(["template", group["name"].as_str().unwrap()])
+            .arg(&chart)
+            .args(["--namespace", "hosts", "--skip-crds", "-f"])
+            .arg(file)
+            .output()?;
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let objects = serde_yaml::Deserializer::from_str(std::str::from_utf8(&output.stdout)?)
+            .map(Value::deserialize)
+            .collect::<Result<Vec<_>, _>>()?;
+        let host = objects
+            .iter()
+            .find(|object| object["kind"] == "Deployment")
+            .unwrap();
+        let pod = &host["spec"]["template"];
+        assert_eq!(
+            pod["metadata"]["labels"]["wasmcloud.com/hostgroup"],
+            group["name"]
+        );
+        assert!(pod["metadata"]["labels"].get("wamn.release").is_none());
+        assert!(
+            pod["metadata"]["annotations"]
+                .get("wamn.release-digest")
+                .is_none()
+        );
+        assert!(
+            objects
+                .iter()
+                .all(|object| object["kind"] != "WorkloadDeployment")
+        );
+        assert!(
+            !pod["spec"]["containers"][0]["args"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|arg| arg.as_str().unwrap().starts_with("--release-"))
+        );
+        Ok(())
+    }
+}

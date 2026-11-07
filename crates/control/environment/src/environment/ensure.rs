@@ -45,6 +45,10 @@ pub async fn provision_resources(
     packages: &[wamn_catalog::manifest::PackageManifest],
     admin_url: &str,
 ) -> anyhow::Result<()> {
+    platform
+        .events
+        .as_ref()
+        .context("environment provisioning requires the event broker")?;
     let admin = connect(admin_url).await?;
     let triple = document.triple();
     let policy = document.policy.as_str();
@@ -155,7 +159,232 @@ pub async fn provision_resources(
         .await
         .context("commit the administrator rows")?;
     platform.auth_changes().await?.publish(drops).await;
-    prepare_cdc(platform, document, packages, &admin, &project_admin).await?;
+    let authorization = crate::kubectl::get::<serde_json::Value>(
+        &platform.target.kubeconfig,
+        &platform.target.context,
+        "platform",
+        "secret",
+        crate::platform::broker::AUTHORIZATION,
+    )
+    .await?
+    .context("missing event broker authorization Secret")?;
+    for mut object in crate::platform::broker::environment_objects(&authorization, document)? {
+        let object_namespace = if object["kind"] == "Certificate" {
+            namespace
+        } else {
+            "platform"
+        };
+        object["metadata"]["namespace"] = object_namespace.into();
+        crate::kubectl::apply(
+            &platform.target.kubeconfig,
+            &platform.target.context,
+            object_namespace,
+            &object,
+        )
+        .await?;
+    }
+    prepare_cdc(platform, document, &admin, &project_admin).await?;
+    ensure_streams(platform, document, &[]).await?;
+    provision_materializer(platform, document).await?;
+    Ok(())
+}
+
+fn environment_host_name(document: &EnvironmentDocument) -> anyhow::Result<String> {
+    Ok(wamn_release_control::release_chart::release_name(
+        &document.org,
+        &document.project,
+        &document.env,
+    )?
+    .replacen("r-", "e-", 1))
+}
+
+/// Render the shared host without application release arguments or labels.
+pub fn materializer_host_values(
+    document: &EnvironmentDocument,
+    drain_bound_seconds: u32,
+    stream_replicas: usize,
+    dup_window_secs: u64,
+    host_group: Option<&Path>,
+) -> anyhow::Result<serde_json::Value> {
+    use serde_json::json;
+    use wamn_release_control::release_chart;
+    anyhow::ensure!(
+        drain_bound_seconds > release_chart::MATERIALIZER_DRAIN_BOUND_SECONDS,
+        "the environment host drain bound must exceed the materializer drain bound"
+    );
+    let mut group = serde_json::to_value(super::write::host_group(
+        host_group,
+        &document.org,
+        &document.project,
+        &document.env,
+    )?)?;
+    let name = environment_host_name(document)?;
+    for field in [
+        "name",
+        "namespace",
+        "service",
+        "extraArgs",
+        "image",
+        "plugins",
+    ] {
+        anyhow::ensure!(
+            group.get(field).is_none(),
+            "the environment host group sets derived field {field}"
+        );
+    }
+    group["name"] = name.into();
+    group["extraArgs"] = json!([format!("--environment={}", document.env)]);
+    group["plugins"] = serde_json::to_value(release_chart::events_plugin(
+        &document.org,
+        &document.project,
+        &document.env,
+    )?)?;
+    let variables = group["env"]
+        .as_array_mut()
+        .context("host env is not a list")?;
+    for (key, value) in [
+        ("WAMN_EVT_ORG", document.org.clone()),
+        ("WAMN_EVT_PROJECT", document.project.clone()),
+        ("WAMN_EVT_ENV", document.env.clone()),
+        ("WAMN_EVT_STREAM_REPLICAS", stream_replicas.to_string()),
+        ("WAMN_EVT_DUP_WINDOW_SECS", dup_window_secs.to_string()),
+    ] {
+        if let Some(variable) = variables.iter().find(|variable| variable["name"] == key) {
+            anyhow::ensure!(
+                variable["value"] == value,
+                "the environment host group overrides {key}"
+            );
+        } else {
+            variables.push(json!({"name":key,"value":value}));
+        }
+    }
+    for (key, value) in [
+        ("WAMN_ORG", document.org.clone()),
+        ("WAMN_PROJECT", document.project.clone()),
+        ("WAMN_DRAIN_BOUND_SECONDS", drain_bound_seconds.to_string()),
+        (
+            "WAMN_MATERIALIZER_DRAIN_BOUND_SECONDS",
+            release_chart::MATERIALIZER_DRAIN_BOUND_SECONDS.to_string(),
+        ),
+    ]
+    .into_iter()
+    .chain(release_chart::TELEMETRY_VARIABLES.map(|(key, value)| (key, value.to_owned())))
+    {
+        anyhow::ensure!(
+            !variables.iter().any(|variable| variable["name"] == key),
+            "the environment host group sets derived variable {key}"
+        );
+        variables.push(json!({"name":key,"value":value}));
+    }
+    let env_key =
+        wamn_control_provision::project_env_key(&document.org, &document.project, &document.env);
+    Ok(json!({
+        "roles": [],
+        "runtime-operator": {"runtime": {
+            "terminationGracePeriodSeconds": drain_bound_seconds,
+            "serviceAccount": {"create":false, "name": wamn_credential_store::kubernetes::service_account_name(&document.org, &document.project, &document.env)},
+            "automountServiceAccountToken": true,
+            "hostGroups": [group]
+        }},
+        "global": {"certificates": {"dataCertSecretName": format!("wamn-nats-{env_key}")}}
+    }))
+}
+
+/// Render the environment materializer on its stable host group.
+pub fn materializer_workload(
+    document: &EnvironmentDocument,
+    namespace: &str,
+    image: &str,
+) -> anyhow::Result<serde_json::Value> {
+    use wamn_control_provision::materializer_workload::{self, EventIdentity, MaterializerInput};
+    let name = environment_host_name(document)?;
+    let rendered = materializer_workload::render_materializer(
+        include_str!("../../../../../deploy/platform/materializer.example.yaml"),
+        &MaterializerInput {
+            workload: format!("{name}-materializer"),
+            namespace: namespace.to_owned(),
+            image: image.to_owned(),
+            env_key: wamn_control_provision::project_env_key(
+                &document.org,
+                &document.project,
+                &document.env,
+            ),
+            event: EventIdentity {
+                org: document.org.clone(),
+                project: document.project.clone(),
+                environment: document.env.clone(),
+            },
+            event_stream: wamn_control_provision::event_stream_name(
+                &document.org,
+                &document.project,
+                &document.env,
+            ),
+            fetch_ms: materializer_workload::FETCH_MS,
+            sweep_ms: materializer_workload::SWEEP_MS,
+        },
+    )?;
+    let mut workload: serde_json::Value = serde_yaml::from_str(&rendered)?;
+    workload["spec"]["template"]["spec"]["hostSelector"] = serde_json::json!({"hostgroup":name});
+    Ok(workload)
+}
+
+async fn provision_materializer(
+    platform: &Platform,
+    document: &EnvironmentDocument,
+) -> anyhow::Result<()> {
+    use wamn_release_control::release_chart;
+    let system = connect(&platform.system_database_url).await?;
+    let policy = super::analyse::read_policy(&system, &document.org, &document.policy).await?;
+    let events = platform
+        .events
+        .as_ref()
+        .context("environment provisioning requires the event broker")?;
+    let desired = materializer_host_values(
+        document,
+        u32::try_from(policy.drain_bound_seconds)?,
+        events.stream_replicas,
+        events.dup_window_secs,
+        platform.host_group.as_deref(),
+    )?;
+    let private = PrivateDirectory::create()?;
+    let values = private.path("environment-host.yaml");
+    std::fs::write(&values, serde_yaml::to_string(&desired)?)?;
+    let name = environment_host_name(document)?;
+    release_chart::recover_pending(&platform.target, &name).await?;
+    release_chart::upgrade(
+        &platform.target,
+        &platform.chart,
+        &name,
+        &values,
+        std::time::Duration::from_secs(u64::try_from(policy.readiness_budget_seconds)?),
+        "environment provisioning",
+    )
+    .await?;
+    let image = release_chart::image_set(&platform.chart)
+        .await?
+        .materializer;
+    let workload = materializer_workload(document, &platform.target.namespace, &image)?;
+    crate::kubectl::apply(
+        &platform.target.kubeconfig,
+        &platform.target.context,
+        &platform.target.namespace,
+        &workload,
+    )
+    .await
+    .context("apply the environment materializer")?;
+    kubectl(
+        platform,
+        &platform.target.namespace,
+        &[
+            "wait",
+            "--for=condition=Ready",
+            &format!("workloaddeployment/{name}-materializer"),
+            &format!("--timeout={}s", policy.readiness_budget_seconds),
+        ],
+        None,
+    )
+    .await
+    .context("wait for the environment materializer")?;
     Ok(())
 }
 
@@ -269,31 +498,9 @@ pub async fn ensure_project_database(
 async fn prepare_cdc(
     platform: &Platform,
     document: &EnvironmentDocument,
-    manifests: &[wamn_catalog::manifest::PackageManifest],
     admin: &tokio_postgres::Client,
     project_admin_url: &str,
 ) -> anyhow::Result<()> {
-    if !manifests.iter().any(|manifest| {
-        !manifest.models.is_empty()
-            && document
-                .applications
-                .values()
-                .any(|application| application.packages.contains(&manifest.package.id))
-    }) {
-        return Ok(());
-    }
-    let schemas = manifests
-        .iter()
-        .filter(|manifest| {
-            document
-                .applications
-                .values()
-                .any(|application| application.packages.contains(&manifest.package.id))
-        })
-        .flat_map(|manifest| manifest.models.values().map(|model| model.schema.clone()))
-        .collect::<std::collections::BTreeSet<_>>()
-        .into_iter()
-        .collect::<Vec<_>>();
     let project_admin = connect(project_admin_url).await?;
     let instance =
         read_project_env_instance(&platform.system_database_url, &document.triple()).await?;
@@ -303,9 +510,6 @@ async fn prepare_cdc(
         &document.env,
         &instance,
     );
-    if cdc_in_place(&project_admin, &role, &schemas).await? {
-        return Ok(());
-    }
     let namespace = platform.target.namespace.as_str();
     let secret_name = wamn_control_provision::project_env_cdc_secret_name(
         &document.org,
@@ -393,34 +597,38 @@ async fn prepare_cdc(
     Ok(())
 }
 
+/// Read every installed baseline, independent of the selected application release.
+pub async fn installed_manifests(
+    platform: &Platform,
+    document: &EnvironmentDocument,
+) -> anyhow::Result<Vec<wamn_catalog::manifest::PackageManifest>> {
+    let mut manifests = Vec::new();
+    for (id, baseline) in super::stage::installed(platform, document).await? {
+        let package = super::stage::open(platform, &id, &baseline.current).await?;
+        let path = wamn_schema_generator::package_manifest_path(package.root());
+        manifests.push(wamn_catalog::manifest::PackageManifest::from_slice(
+            &std::fs::read(&path).with_context(|| format!("read {}", path.display()))?,
+        )?);
+    }
+    Ok(manifests)
+}
+
 /// Ensure capture of every model in the environment's installed applications.
 /// The slot and publication belong to the environment, as do its entity consumers.
 ///
 /// # Errors
 ///
 /// When the event broker is absent or a substrate write fails.
-pub async fn ensure_cdc(
-    platform: &Platform,
-    document: &EnvironmentDocument,
-    manifests: &[wamn_catalog::manifest::PackageManifest],
-) -> anyhow::Result<()> {
-    let captured = manifests
-        .iter()
-        .filter(|manifest| {
-            document
-                .applications
-                .values()
-                .any(|application| application.packages.contains(&manifest.package.id))
-        })
-        .collect::<Vec<_>>();
-    let schemas = captured
+pub async fn ensure_cdc(platform: &Platform, document: &EnvironmentDocument) -> anyhow::Result<()> {
+    let manifests = installed_manifests(platform, document).await?;
+    let schemas = manifests
         .iter()
         .flat_map(|manifest| manifest.models.values().map(|model| model.schema.clone()))
         .collect::<std::collections::BTreeSet<_>>()
         .into_iter()
         .collect::<Vec<_>>();
     if schemas.is_empty() {
-        return ensure_streams(platform, document, manifests).await;
+        return ensure_streams(platform, document, &manifests).await;
     }
     let triple = document.triple();
     let instance = read_project_env_instance(&platform.system_database_url, &triple).await?;
@@ -442,7 +650,7 @@ pub async fn ensure_cdc(
         .filter(|row| row.get::<_, String>(2) == "f")
         .map(|row| (row.get::<_, String>(0), row.get::<_, String>(1)))
         .collect::<std::collections::BTreeSet<_>>();
-    for manifest in &captured {
+    for manifest in &manifests {
         for model in manifest.models.values() {
             if !full.insert((model.schema.clone(), model.table.clone())) {
                 continue;
@@ -461,9 +669,9 @@ pub async fn ensure_cdc(
         }
     }
     if !cdc_in_place(&project, &cdc_name, &schemas).await? {
-        enable_cdc(platform, document, manifests, &schemas, &project, &instance).await?;
+        enable_cdc(platform, document, &schemas, &project, &instance).await?;
     }
-    ensure_streams(platform, document, manifests).await?;
+    ensure_streams(platform, document, &manifests).await?;
     let namespace = platform.target.namespace.as_str();
     crate::enable_cdc_project_env::record_event_reader(
         &platform.system_database_url,
@@ -492,12 +700,6 @@ async fn ensure_streams(
         &triple,
         manifests
             .iter()
-            .filter(|manifest| {
-                document
-                    .applications
-                    .values()
-                    .any(|application| application.packages.contains(&manifest.package.id))
-            })
             .flat_map(wamn_catalog::manifest::PackageManifest::entity_pairs),
     );
     let broker = async_nats::jetstream::new(
@@ -521,7 +723,6 @@ async fn ensure_streams(
 async fn enable_cdc(
     platform: &Platform,
     document: &EnvironmentDocument,
-    manifests: &[wamn_catalog::manifest::PackageManifest],
     schemas: &[String],
     project: &tokio_postgres::Client,
     instance: &str,
@@ -530,7 +731,6 @@ async fn enable_cdc(
         "the environment captures application models and has no event broker; \
          set WAMN_NATS_URL and its WAMN_NATS_TLS_* certificate",
     )?;
-    ensure_streams(platform, document, manifests).await?;
     let cluster = resolve_cluster(
         &platform.system_database_url,
         &document.org,

@@ -221,7 +221,10 @@ pub async fn run_deployed(
         Operation::Provision => Ok(Some(
             serde_json::from_str(&output).context("read the provisioned Database resource")?,
         )),
-        Operation::Initialize => Ok(None),
+        Operation::Initialize => {
+            ensure::ensure_cdc(platform, document).await?;
+            Ok(None)
+        }
     }
 }
 

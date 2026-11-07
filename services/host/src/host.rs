@@ -1244,7 +1244,16 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
     let data_nats_user = if args.control {
         args.org.as_deref().map(control_nats_user)
     } else {
-        application.map(|release| environment_nats_user(&release.scope().env_key))
+        application
+            .map(|release| environment_nats_user(&release.scope().env_key))
+            .or_else(|| {
+                args.org
+                    .as_deref()
+                    .zip(args.environment.as_deref())
+                    .map(|(org, environment)| {
+                        environment_nats_user(&project_env_key(org, &args.project, environment))
+                    })
+            })
     };
     let data_nats_client = connect_data_nats(
         &args,
@@ -1552,8 +1561,7 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
     if !args.control {
         jetstream_config = jetstream_config.with_nats(data_nats_client.clone());
     }
-    let jetstream =
-        Arc::new(WamnJetstream::new(jetstream_config).with_release(application.cloned()));
+    let jetstream = Arc::new(WamnJetstream::new(jetstream_config));
     jetstream
         .activate_events()
         .await
@@ -1848,6 +1856,30 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
     let probe_state = ProbeState::default().with_liveness(Arc::clone(&liveness));
     let (stop_queue, stopping) = tokio::sync::watch::channel(false);
     let mut schedule_tasks = tokio::task::JoinSet::new();
+    if let Some(release) = application {
+        let events = Arc::clone(&jetstream);
+        let postgres = Arc::clone(&postgres);
+        let release = Arc::clone(release);
+        let mut stopped = stopping.clone();
+        schedule_tasks.spawn(async move {
+            let mut ticks = tokio::time::interval(Duration::from_secs(1));
+            ticks.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            loop {
+                tokio::select! {
+                    _ = stopped.changed() => return,
+                    _ = ticks.tick() => {},
+                }
+                tokio::select! {
+                    _ = stopped.changed() => return,
+                    result = events.admit_application_events(&postgres, &release) => {
+                        if let Err(error) = result {
+                            tracing::warn!(?error, "application event admission failed");
+                        }
+                    }
+                }
+            }
+        });
+    }
     if let Some(connection) = &control {
         let client = Arc::clone(&connection.client);
         let org = connection.org.clone();

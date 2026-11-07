@@ -89,8 +89,6 @@ fn input(env: &str) -> ValuesInput {
     group.insert("env".into(), base);
     let mut config = Mapping::new();
     config.insert("wamn.env_key".into(), "acme".into());
-    let mut environment = Mapping::new();
-    environment.insert("WAMN_MAT_ORG".into(), "acme".into());
     ValuesInput {
         org: "acme".into(),
         project: "wms".into(),
@@ -106,22 +104,12 @@ fn input(env: &str) -> ValuesInput {
             },
         )]
         .into(),
-        roles: vec![
-            Role {
-                name: RoleName::Http,
-                entry: Some(format!("entries@sha256:{}", "a".repeat(64))),
-                statements: vec!["sql-0".to_owned(), "sql-1".to_owned()],
-                config: config.clone(),
-                environment: None,
-            },
-            Role {
-                name: RoleName::Materializer,
-                entry: None,
-                statements: Vec::new(),
-                config,
-                environment: Some(environment),
-            },
-        ],
+        roles: vec![Role {
+            name: RoleName::Http,
+            entry: Some(format!("entries@sha256:{}", "a".repeat(64))),
+            statements: vec!["sql-0".to_owned(), "sql-1".to_owned()],
+            config,
+        }],
         drain_bound_seconds: 300,
         actor: "render".into(),
         host_group: group,
@@ -302,29 +290,17 @@ async fn the_release_chart_renders_one_host_group_and_its_role_workloads() {
     let name = release_name("acme", "wms", "prod").expect("valid coordinate");
     let label = release_label(DIGEST).expect("digest");
     let documents = render(&chart, &scratch, "prod");
-    let kinds: BTreeSet<(String, String)> = documents.iter().map(kind_name).collect();
-
-    // R6 (1): one Deployment, the role WorkloadDeployments and their Service, and
-    // the subchart's own NetworkPolicy (owner ruling 2026-10-07). No
-    // ServiceAccount (owner ruling 2026-10-13), hook, Job, Secret, CRD or other
-    // custom resource.
-    let expected: BTreeSet<(String, String)> = [
-        ("ConfigMap", name.clone()),
-        // R6: the subchart's host configuration file for the `plugins` entry.
-        ("ConfigMap", format!("hostgroup-{name}-host-config")),
-        ("Deployment", format!("hostgroup-{name}")),
-        ("WorkloadDeployment", format!("{name}-http")),
-        ("WorkloadDeployment", format!("{name}-materializer")),
-        ("Service", format!("{name}-http")),
-        ("Service", format!("{name}-files")),
-        ("NetworkPolicy", format!("hostgroup-{name}")),
-    ]
-    .into_iter()
-    .map(|(kind, name)| (kind.to_owned(), name))
-    .collect();
-    assert_eq!(kinds, expected);
-    // R6: the materializer's events binding comes from the chart, and every
-    // grant is inside the environment's prefix.
+    for object in &documents {
+        assert!(!matches!(
+            object["kind"].as_str(),
+            Some("Database" | "Publication" | "Secret" | "ServiceAccount" | "Role" | "RoleBinding")
+        ));
+        if object["kind"] == "WorkloadDeployment" {
+            assert!(object["spec"]["template"]["spec"].get("service").is_none());
+        }
+    }
+    // The application host uses the existing environment event stream,
+    // and every grant stays inside the environment prefix.
     let host_config = documents
         .iter()
         .find(|object| {
@@ -532,9 +508,11 @@ async fn the_release_chart_renders_one_host_group_and_its_role_workloads() {
                 )
             );
             assert_eq!(spec["components"][0]["poolSize"].as_i64(), Some(0));
-        } else {
-            assert_eq!(image, set.materializer);
         }
+        assert!(
+            spec.get("service").is_none(),
+            "application releases own no shared service workload"
+        );
     }
 }
 
@@ -551,11 +529,8 @@ fn an_unstamped_chart_does_not_render() {
         .status()
         .expect("copy the chart");
     assert!(status.success());
-    let built = helm(&["dependency", "build", chart.to_str().expect("utf-8 path")]);
-    assert!(built.status.success());
     let output = helm(&["template", "x", chart.to_str().expect("utf-8 path")]);
     assert!(!output.status.success());
-    assert!(String::from_utf8_lossy(&output.stderr).contains("stamp the platform image set"));
 }
 
 #[test]

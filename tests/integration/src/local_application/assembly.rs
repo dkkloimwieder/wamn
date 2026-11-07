@@ -397,9 +397,7 @@ pub(super) async fn assemble(
         readiness.status == RouterReadinessStatus::Ready,
         "local application release is not ready: {readiness:?}"
     );
-    let jetstream = Arc::new(
-        WamnJetstream::new(WamnJetstreamConfig::default()).with_release(Some(Arc::clone(&release))),
-    );
+    let jetstream = Arc::new(WamnJetstream::new(WamnJetstreamConfig::default()));
     let queue = LocalQueue {
         driver: Arc::clone(&driver),
         postgres: Arc::clone(&postgres),
