@@ -282,7 +282,7 @@ pub(crate) async fn apply_document(
     runtime::resolve_target(&mut resolved, document, &private.path(".")).await?;
     let platform = &resolved;
     let mut analysis = analyse::analyse(platform, document, application).await?;
-    let clients = expand::expand(platform, document, &analysis)
+    expand::expand(platform, document, &analysis)
         .await
         .context("prepare application control records")?;
     let full_document = document;
@@ -290,7 +290,7 @@ pub(crate) async fn apply_document(
     let document = &selected;
     let release_name = analysis.authorities.release_name.clone();
     if let Some(release) = &analysis.authorities.release {
-        let written = write::write(platform, document, &analysis, release, reason, &clients)
+        let written = write::write(platform, document, &analysis, release, reason)
             .await
             .context("write the application release chart")?;
         readiness::wait(platform, &written)

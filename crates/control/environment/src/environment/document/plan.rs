@@ -226,15 +226,6 @@ impl EnvironmentDocument {
             .map_or(&DeclaredRelease::None, |app| &app.current)
     }
 
-    /// The hostname used by the existing environment-wide route.
-    pub fn legacy_hostname(&self) -> &str {
-        // DEP2-17 replaces the environment-wide route with application routing.
-        self.applications
-            .values()
-            .next()
-            .map_or("", |app| app.hostname.as_str())
-    }
-
     /// The coordinate.
     pub fn triple(&self) -> Triple {
         Triple::new(self.org.as_str(), self.project.as_str(), self.env.as_str())

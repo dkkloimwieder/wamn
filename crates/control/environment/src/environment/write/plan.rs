@@ -78,7 +78,6 @@ pub(super) fn release_values(
     drain_bound_seconds: u32,
     actor: &str,
     host_group: Mapping,
-    clients: &std::collections::BTreeMap<String, String>,
 ) -> anyhow::Result<(Value, Vec<RoleName>)> {
     let roles = release_chart::roles(manifest, &document.org, &document.project, &document.env);
     let names = roles.iter().map(|role| role.name).collect();
@@ -126,9 +125,10 @@ pub(super) fn release_values(
             .push("--allow-insecure-registries".into());
     }
     rendered["webClients"] = serde_yaml::to_value(
-        clients
-            .get(&selection.hostname)
-            .map(|client| (&selection.hostname, client))
+        selection
+            .client
+            .as_ref()
+            .map(|client| (&selection.hostname, &client.package))
             .into_iter()
             .collect::<std::collections::BTreeMap<_, _>>(),
     )?;

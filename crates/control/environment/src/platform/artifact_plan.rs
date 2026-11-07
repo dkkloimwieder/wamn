@@ -8,6 +8,13 @@ use serde_json::Value;
 // The portable payload emitted by platform_build (DEP-02).
 const PAYLOAD_FILES: &[&str] = &[
     "platform/resources/registry.yaml",
+    "platform/resources/letsencrypt.yaml",
+    "platform/edge/Chart.yaml",
+    "platform/edge/values.yaml",
+    "platform/edge/templates/configmap.yaml",
+    "platform/edge/templates/deployment.yaml",
+    "platform/edge/templates/service.yaml",
+    "platform/edge/templates/rbac.yaml",
     "platform/identity/Chart.yaml",
     "platform/identity/values.yaml",
     "platform/identity/templates/deployment.yaml",
@@ -126,7 +133,13 @@ pub fn select(chart: &Path) -> anyhow::Result<SelectedChart> {
     };
     validate_image(&host).context("invalid selected host image")?;
     validate_platform_images(&values["platform"]).context("invalid selected platform image")?;
-    for name in ["ctl", "identity", "roles/http", "roles/materializer"] {
+    for name in [
+        "ctl",
+        "identity",
+        "edge",
+        "roles/http",
+        "roles/materializer",
+    ] {
         ensure!(
             values
                 .pointer(&format!("/platform/{name}/image"))
@@ -238,13 +251,20 @@ mod tests {
             let target = chart.0.join(file);
             let source = if let Some(identity) = file.strip_prefix("platform/identity/") {
                 repository.join("deploy/platform/identity").join(identity)
+            } else if let Some(edge) = file.strip_prefix("platform/edge/") {
+                repository.join("deploy/platform/edge").join(edge)
             } else {
                 let basename = Path::new(file).file_name().unwrap();
-                ["deploy/infra", "deploy/platform", "deploy/kind"]
-                    .into_iter()
-                    .map(|root| repository.join(root).join(basename))
-                    .find(|path| path.is_file())
-                    .unwrap()
+                [
+                    "deploy/infra",
+                    "deploy/platform",
+                    "deploy/kind",
+                    "deploy/gcp",
+                ]
+                .into_iter()
+                .map(|root| repository.join(root).join(basename))
+                .find(|path| path.is_file())
+                .unwrap()
             };
             std::fs::create_dir_all(target.parent().unwrap()).unwrap();
             std::fs::copy(source, target).unwrap();
@@ -254,6 +274,7 @@ mod tests {
             json!({"image": format!("ctl.example/wamn-ctl:ctl-build@sha256:{digest}")});
         values["platform"]["identity"]["image"] =
             json!(format!("identity.example/identity@sha256:{digest}"));
+        values["platform"]["edge"]["image"] = json!(format!("edge.example/edge@sha256:{digest}"));
         write_values(&chart, &values);
         chart
     }

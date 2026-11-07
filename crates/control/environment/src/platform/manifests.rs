@@ -189,6 +189,7 @@ pub(super) fn provider_edits(value: &mut Value, document: &ClusterDocument) -> a
         .into();
     }
     if value["kind"] == "Certificate" && value["metadata"]["name"] == "wamn-edge-tls" {
+        value["metadata"]["namespace"] = "hosts".into();
         let domain = document
             .route_hosts
             .control

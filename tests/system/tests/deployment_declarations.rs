@@ -50,7 +50,11 @@ const RETIRED_IMAGE_MARKERS: [&str; 4] = ["wamn-gates", "node-host", "serve-node
 /// Externally supplied Secrets and ConfigMaps with their provisioning owner.
 /// Mounted names must be declared by a platform manifest or allowed here.
 /// A Certificate declares its `spec.secretName` output, which cert-manager writes.
-const EXTERNAL_PREREQUISITES: [(&str, &str); 9] = [
+const EXTERNAL_PREREQUISITES: [(&str, &str); 10] = [
+    (
+        EDGE_TLS_SECRET,
+        "wamn platform deploy: existing edge certificate",
+    ),
     ("wamn-oauth", "wamn platform deploy: local OAuth key"),
     // The host Pod's runtime and data certificates, which cert-manager issues
     // from deploy/infra/nats-certificates.yaml (docs/plan/alignment.md R4).
@@ -399,8 +403,7 @@ runtime-operator:
     output
 }
 
-/// The edge chart as the kind edge installs it, with its certificate issued
-/// in place. With `neg`, it is the GCP edge behind the load balancer.
+/// The edge chart installed by the platform with its existing certificate. With `neg`, it is the GCP edge behind the load balancer.
 fn render_edge(root: &Path, neg: bool) -> Output {
     let mut command = Command::new("helm");
     command.current_dir(root).args([
@@ -411,11 +414,8 @@ fn render_edge(root: &Path, neg: bool) -> Output {
         "hosts",
     ]);
     for value in [
-        "applications[0].host=wamn.example.invalid".to_owned(),
         format!("tlsSecret={EDGE_TLS_SECRET}"),
-        "issuer=wasmcloud-ca".to_owned(),
-        "applications[0].api=http://flow-http.hosts.svc.cluster.local".to_owned(),
-        "applications[0].files=http://release-files.hosts.svc.cluster.local".to_owned(),
+        format!("web.image=registry.invalid/edge@sha256:{}", "a".repeat(64)),
         format!("identity={IDENTITY_ISSUER}"),
         format!("identityCaConfigMap={EDGE_IDENTITY_CA}"),
     ] {
@@ -1005,84 +1005,4 @@ fn the_gcp_edge_differs_from_kind_only_by_the_neg_annotation() {
     assert!(!kind.contains(annotation));
     assert_eq!(gcp.matches(annotation).count(), 1);
     assert_eq!(gcp.replace(annotation, ""), kind);
-}
-
-#[test]
-fn control_edge_serves_the_platform_ui_and_forwards_its_api() {
-    let root = repository_root();
-    let output = Command::new("helm")
-        .current_dir(&root)
-        .args([
-            "template",
-            "wamn-edge",
-            "deploy/platform/edge",
-            "--namespace",
-            "edge",
-            "--set",
-            "tlsSecret=wamn-edge-tls,identity=https://identity.identity.svc.cluster.local,identityCaConfigMap=identity-ca,control.host=control.wamn.dev,control.api=http://c-dkk-http.hosts.svc.cluster.local",
-            "--set",
-            "issuer=test-issuer",
-        ])
-        .output()
-        .expect("render the edge locally");
-    assert!(
-        output.status.success(),
-        "{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    let rendered = String::from_utf8(output.stdout).unwrap();
-    let objects: Vec<serde_yaml::Value> = rendered
-        .split("---\n")
-        .filter(|document| !document.trim().is_empty())
-        .map(|document| serde_yaml::from_str(document).unwrap())
-        .collect();
-    let config = objects
-        .iter()
-        .find(|value| value["kind"] == "ConfigMap")
-        .unwrap();
-    let nginx = config["data"]["nginx.conf"].as_str().unwrap();
-    let control = nginx
-        .split("server_name control.wamn.dev;")
-        .nth(1)
-        .unwrap()
-        .split("server {")
-        .next()
-        .unwrap();
-    assert!(nginx.contains("server c-dkk-http.hosts.svc.cluster.local resolve;"));
-    assert!(nginx.lines().any(|line| line == "worker_processes auto;"));
-    let upstream = nginx
-        .split("upstream api_0 {")
-        .nth(1)
-        .unwrap()
-        .split('}')
-        .next()
-        .unwrap();
-    assert!(upstream.lines().any(|line| line.trim() == "keepalive 32;"));
-    let api = control
-        .split("location /api/ {")
-        .nth(1)
-        .unwrap()
-        .split('}')
-        .next()
-        .unwrap();
-    assert!(
-        api.lines()
-            .any(|line| line.trim() == "proxy_set_header Connection \"\";")
-    );
-    assert!(control.contains("proxy_pass http://api_0/;"));
-    assert!(control.contains("proxy_pass https://identity.identity.svc.cluster.local;"));
-    assert!(control.contains("location / {"));
-    assert!(control.contains("proxy_pass http://wamn-edge-web.edge.svc.cluster.local;"));
-    assert!(control.contains("proxy_set_header Host $host;"));
-    assert!(!control.contains("rewrite "));
-    let certificate = objects
-        .iter()
-        .find(|value| value["kind"] == "Certificate")
-        .unwrap();
-    assert!(
-        certificate["spec"]["dnsNames"]
-            .as_sequence()
-            .unwrap()
-            .contains(&"control.wamn.dev".into())
-    );
 }

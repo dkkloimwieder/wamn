@@ -94,6 +94,7 @@ pub async fn read(document: &ClusterDocument, target: &Target) -> anyhow::Result
         ("platform", "wamn"),
         ("identity", "identity"),
         ("hosts", control.as_str()),
+        ("hosts", "wamn-edge"),
     ] {
         let result = helm_json(
             target,
@@ -127,6 +128,8 @@ pub async fn read(document: &ClusterDocument, target: &Target) -> anyhow::Result
         ("platform", "StatefulSet", "wamn-nats"),
         ("platform", "Cluster.postgresql.cnpg.io", "wamn-pg"),
         ("identity", "Deployment", "identity"),
+        ("hosts", "Deployment", "wamn-edge"),
+        ("hosts", "Certificate", "wamn-edge-tls"),
         ("hosts", "Deployment", control_host.as_str()),
         ("hosts", "WorkloadDeployment", control_http.as_str()),
         ("cert-manager", "Certificate", "wasmcloud-ca"),
@@ -174,6 +177,7 @@ pub async fn read(document: &ClusterDocument, target: &Target) -> anyhow::Result
         ("cnpg-system", String::new()),
         ("identity", "app.kubernetes.io/name=wamn-identity".into()),
         ("hosts", format!("wasmcloud.com/hostgroup={control}")),
+        ("hosts", "app.kubernetes.io/name=wamn-edge".into()),
     ] {
         let arguments = if selector.is_empty() {
             vec![]
@@ -191,6 +195,7 @@ pub async fn read(document: &ClusterDocument, target: &Target) -> anyhow::Result
         ("platform", "wamn-pg-rw"),
         ("identity", "identity"),
         ("hosts", control_http.as_str()),
+        ("hosts", "wamn-edge"),
     ] {
         let result = list(
             target,

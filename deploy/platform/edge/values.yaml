@@ -1,36 +1,22 @@
-# nginx proxies web requests to the Rust edge and API requests to their hosts.
+# nginx terminates TLS and forwards application requests to the Rust edge.
 image:
   repository: nginx
   # nginx:1.27-alpine. A digest selects exact bytes, and a tag does not.
   digest: sha256:65645c7bb6a0661892a8b03b89d0743208a18dd2f3f17a54ef4b76fb8e2f2a10
   pullPolicy: IfNotPresent
 
-# The applications the edge serves, one server each. host is the public host,
-# the config.host of the environment's http workload, so the edge passes the
-# Host header to the router unchanged. api is the URL of the http Service of
-# the environment's release, plain HTTP. The edge removes /api before it forwards.
-# files is the native file Service URL. File requests keep their full /api path.
-# The edge streams uploads without a configured size limit.
-# oauth forwards /oauth/callback unchanged to the control host.
-# The optional control root uses host/api, oauth: true, and no files.
-control: null
-applications: []
-#  - host: receiving.example.com
-#    api: http://r-prod-<hash>-http.hosts.svc.cluster.local
-#    files: http://r-prod-<hash>-files.hosts.svc.cluster.local
-
-# The serving certificate. With issuer set, the chart requests it from that
-# cert-manager ClusterIssuer into tlsSecret. Without it, tlsSecret must exist.
+# Platform provisioning supplies the existing serving certificate.
 tlsSecret: ""
-issuer: ""
 
 # The identity service, HTTPS. The edge checks its certificate against ca.crt
 # in identityCaConfigMap, for the DNS name in the identity URL.
 identity: ""
 identityCaConfigMap: ""
 
-# The Rust edge that serves every other path. Empty leaves those paths out.
-web: http://wamn-edge-web.edge.svc.cluster.local
+# The selected Rust edge image discovers application routes in Kubernetes.
+web:
+  image: ""
+  bucket: ""
 
 # Google Cloud: annotate the Service for the load balancer's endpoint group.
 neg: false

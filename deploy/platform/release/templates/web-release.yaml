@@ -11,3 +11,20 @@ metadata:
 data:
   release.json: {{ dict "host" .Values.routeHost "digest" .Values.release.manifestDigest "clients" .Values.webClients "webs" .Values.webDigests "platformVersion" (ternary .Chart.AppVersion "" .Values.platformUi) | toJson | quote }}
 {{- end }}
+
+{{- if .Values.routeHost }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-route
+  namespace: {{ .Release.Namespace }}
+  labels:
+    wamn.route: "true"
+  {{- if .Values.applications }}
+  annotations:
+    {{- include "release.annotations" . | nindent 4 }}
+  {{- end }}
+data:
+  route.json: {{ dict "host" .Values.routeHost "release" .Release.Name "api" (printf "http://%s-http.%s.svc.cluster.local" .Release.Name .Release.Namespace) "files" (ternary (printf "http://%s-files.%s.svc.cluster.local" .Release.Name .Release.Namespace) "" (not (empty .Values.applications))) | toJson | quote }}
+{{- end }}

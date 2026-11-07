@@ -1,8 +1,3 @@
-{{- $applications := .Values.applications -}}
-{{- with .Values.control -}}
-{{- $applications = append $applications . -}}
-{{- end -}}
-{{- $applications = required "Set applications or control to the hosts the edge serves." $applications -}}
 {{- $identity := required "Set identity to the identity service URL." .Values.identity -}}
 {{- if not (hasPrefix "https://" $identity) -}}
 {{- fail "identity must use HTTPS." -}}
@@ -33,60 +28,11 @@ data:
       # CoreDNS and GKE expose cluster DNS through this Service.
       # https://kubernetes.io/docs/tasks/administer-cluster/dns-custom-nameservers/
       resolver kube-dns.kube-system.svc.cluster.local;
-{{- range $index, $application := $applications }}
-{{- $host := required "Set host of each application to its public host name." .host }}
-{{- $api := required "Set api of each application to the URL of the http Service of its release." .api }}
-{{- $files := .files }}
-      upstream api_{{ $index }} {
-        zone api_{{ $index }} 64k;
-        server {{ trimPrefix "http://" (trimSuffix "/" $api) }} resolve;
-        keepalive 32;
-      }
-{{- with $files }}
-      upstream files_{{ $index }} {
-        zone files_{{ $index }} 64k;
-        server {{ trimPrefix "http://" (trimSuffix "/" .) }} resolve;
-      }
-{{- end }}
       server {
         listen 8443 ssl;
-        server_name {{ $host }};
+        server_name _;
         ssl_certificate /etc/wamn-edge/tls/tls.crt;
         ssl_certificate_key /etc/wamn-edge/tls/tls.key;
-{{- if $files }}
-
-        # Native file transfers keep the full /api path. The regex location
-        # wins over the /api/ prefix location below.
-        location ~ ^/api/[^/]+/files(/|$) {
-          proxy_pass http://files_{{ $index }};
-          proxy_http_version 1.1;
-          proxy_set_header Host $host;
-          proxy_request_buffering off;
-          client_max_body_size 0;
-        }
-{{- end }}
-
-        # The router reads the release from the Host header, so it passes
-        # unchanged. The trailing slash removes /api and preserves URI escaping.
-        location /api/ {
-          proxy_pass http://api_{{ $index }}/;
-          proxy_redirect {{ trimSuffix "/" $api }}/ /api/;
-          proxy_http_version 1.1;
-          proxy_set_header Host $host;
-          proxy_set_header Connection "";
-        }
-
-{{- if .oauth }}
-        location = /oauth/callback {
-          proxy_pass http://api_{{ $index }};
-          proxy_http_version 1.1;
-          proxy_set_header Host $host;
-          proxy_set_header Connection "";
-        }
-{{- end }}
-
-        # Identity sets the session cookies with no Domain, so the browser
-        # keeps them for this host.
         location /password/ {
           proxy_pass {{ trimSuffix "/" $identity }};
           proxy_http_version 1.1;
@@ -95,21 +41,14 @@ data:
           proxy_ssl_verify on;
           proxy_ssl_trusted_certificate /etc/wamn-edge/identity-ca/ca.crt;
         }
-
-        # The load balancer health check.
-        location = /healthz {
-          return 200;
-        }
-{{- with $.Values.web }}
-
-        # The Rust edge selects the live release and reads its private bucket.
         location / {
-          limit_except GET { deny all; }
-          proxy_pass {{ . }};
+          proxy_pass http://127.0.0.1:8080;
           proxy_http_version 1.1;
           proxy_set_header Host $host;
+          proxy_set_header Connection "";
+          proxy_request_buffering off;
+          client_max_body_size 0;
         }
-{{- end }}
       }
-{{- end }}
     }
+  web.json: {{ dict "listen" "0.0.0.0:8080" "bucket" .Values.web.bucket | toJson | quote }}

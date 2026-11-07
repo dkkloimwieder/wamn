@@ -22,6 +22,7 @@ spec:
       annotations:
         checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
     spec:
+      serviceAccountName: {{ .Release.Name }}
       automountServiceAccountToken: false
       containers:
         - name: edge
@@ -31,8 +32,10 @@ spec:
             - name: https
               containerPort: 8443
           readinessProbe:
-            tcpSocket:
+            httpGet:
+              path: /healthz
               port: https
+              scheme: HTTPS
           volumeMounts:
             - name: config
               mountPath: /etc/nginx/nginx.conf
@@ -46,7 +49,37 @@ spec:
               readOnly: true
           resources:
 {{ toYaml .Values.resources | indent 12 }}
+        - name: routes
+          image: {{ required "Set web.image to the selected Rust edge image." .Values.web.image | quote }}
+          args: ["--config", "/etc/wamn-edge/web.json", "web"]
+          ports:
+            - name: routes
+              containerPort: 8080
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: routes
+          volumeMounts:
+            - name: config
+              mountPath: /etc/wamn-edge/web.json
+              subPath: web.json
+              readOnly: true
+            - name: discovery
+              mountPath: /var/run/secrets/kubernetes.io/serviceaccount
+              readOnly: true
+          resources:
+{{ toYaml .Values.resources | indent 12 }}
       volumes:
+        - name: discovery
+          projected:
+            sources:
+              - serviceAccountToken:
+                  path: token
+              - configMap:
+                  name: kube-root-ca.crt
+                  items:
+                    - key: ca.crt
+                      path: ca.crt
         - name: config
           configMap:
             name: {{ .Release.Name }}

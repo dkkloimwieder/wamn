@@ -7,6 +7,7 @@ pub mod artifact_plan;
 pub mod control;
 pub mod deploy;
 pub mod document;
+pub mod edge;
 pub mod identity;
 pub(crate) mod job;
 pub mod manifests;

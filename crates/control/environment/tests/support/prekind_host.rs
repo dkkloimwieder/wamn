@@ -836,7 +836,7 @@ async fn prekind_http_host_runs_and_rejects_respond_without_caller() -> anyhow::
             .post(format!(
                 "http://{files}/api/{PACKAGE}/files?binding=files&name=prekind.txt"
             ))
-            .header("Host", document.legacy_hostname())
+            .header("Host", &document.applications[PACKAGE].hostname)
             .header("Content-Type", "text/plain")
             .body("prekind")
             .send()
@@ -852,7 +852,7 @@ async fn prekind_http_host_runs_and_rejects_respond_without_caller() -> anyhow::
         );
         let response = reqwest::Client::new()
             .get(format!("http://{http}/no-such-route"))
-            .header("Host", document.legacy_hostname())
+            .header("Host", &document.applications[PACKAGE].hostname)
             .send()
             .await?;
         ensure!(

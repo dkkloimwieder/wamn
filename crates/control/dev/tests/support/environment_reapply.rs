@@ -87,8 +87,7 @@ pub(super) async fn check(run: &Run) -> anyhow::Result<()> {
         plan: Vec::new(),
         packages: Vec::new(),
     };
-    let clients = BTreeMap::new();
-    write::write(&platform, &document, &analysis, &release, None, &clients).await?;
+    write::write(&platform, &document, &analysis, &release, None).await?;
     for interrupted in [false, true] {
         let status = helm_json(run, &["status", &name, "-o", "json"]).await?;
         let version = status["version"].as_u64().context("Helm revision")?;
@@ -102,7 +101,7 @@ pub(super) async fn check(run: &Run) -> anyhow::Result<()> {
             interrupt_upgrade(run, &platform, &name).await?;
         }
         let previous = helm_json(run, &["status", &name, "-o", "json"]).await?;
-        write::write(&platform, &document, &analysis, &release, None, &clients).await?;
+        write::write(&platform, &document, &analysis, &release, None).await?;
         let after = helm_json(run, &["status", &name, "-o", "json"]).await?;
         // Recovery itself writes a rollback revision. Require an upgrade after it.
         ensure!(

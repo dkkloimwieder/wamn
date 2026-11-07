@@ -44,7 +44,7 @@ fn selected_images(request: &BuildPlatformRequest) -> &'static [&'static str] {
     {
         &["host", "runner", "gates", "identity", "edge-web"]
     } else {
-        &["host", "ctl", "identity"]
+        &["host", "ctl", "identity", "edge-web"]
     }
 }
 
@@ -60,6 +60,7 @@ type Pinned = (BTreeMap<&'static str, String>, (String, String));
 /// Authored resources carried beside the stamped release chart.
 const RESOURCES: &[&str] = &[
     "deploy/kind/registry.yaml",
+    "deploy/gcp/letsencrypt.yaml",
     "deploy/infra/cert-manager.yaml",
     "deploy/infra/cnpg-operator.yaml",
     "deploy/infra/nats-certificates.yaml",
@@ -451,10 +452,12 @@ fn stamp_chart(
     std::fs::write(path, serde_yaml::to_string(&defaults)?)?;
     let platform = chart.join("platform");
     std::fs::create_dir_all(platform.join("resources"))?;
-    copy_package_output(
-        &request.repository.join("deploy/platform/identity"),
-        &platform.join("identity"),
-    )?;
+    for name in ["identity", "edge"] {
+        copy_package_output(
+            &request.repository.join("deploy/platform").join(name),
+            &platform.join(name),
+        )?;
+    }
     for source in RESOURCES {
         let source = request.repository.join(source);
         std::fs::copy(
@@ -2402,7 +2405,7 @@ mod tests {
 
     fn copy_platform_sources(repository: &Path) {
         let source = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
-        for chart in ["release", "identity"] {
+        for chart in ["release", "identity", "edge"] {
             let relative = format!("deploy/platform/{chart}");
             let destination = repository.join(&relative);
             if destination.exists() {
@@ -2491,18 +2494,23 @@ mod tests {
                     .unwrap()
                 );
             }
-            let mut identity_files = Vec::new();
-            let identity = repository.join("deploy/platform/identity");
-            wamn_package_control::web_artifact::collect(&identity, &mut identity_files).unwrap();
-            for source in identity_files {
-                assert_eq!(
-                    std::fs::read(&source).unwrap(),
-                    std::fs::read(
-                        out.join("platform/identity")
-                            .join(source.strip_prefix(&identity).unwrap())
-                    )
-                    .unwrap()
-                );
+            for packaged in std::fs::read_dir(out.join("platform")).unwrap() {
+                let packaged = packaged.unwrap().path();
+                if !packaged.join("Chart.yaml").is_file() {
+                    continue;
+                }
+                let mut files = Vec::new();
+                let directory = repository
+                    .join("deploy/platform")
+                    .join(packaged.file_name().unwrap());
+                wamn_package_control::web_artifact::collect(&directory, &mut files).unwrap();
+                for source in files {
+                    assert_eq!(
+                        std::fs::read(&source).unwrap(),
+                        std::fs::read(packaged.join(source.strip_prefix(&directory).unwrap()))
+                            .unwrap()
+                    );
+                }
             }
             assert!(
                 build_record

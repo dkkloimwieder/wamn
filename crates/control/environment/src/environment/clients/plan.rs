@@ -1,4 +1,4 @@
-use super::{ApplicationSelection, BTreeMap, WebManifest, ensure};
+use super::{ApplicationSelection, WebManifest, ensure};
 use anyhow::Context as _;
 
 pub(super) fn verify<'a>(
@@ -17,34 +17,35 @@ pub(super) fn verify<'a>(
         client.package,
         selection.current
     );
-    ensure!(
-        packages
-            .into_iter()
-            .any(|coordinate| coordinate == (package, version)),
-        "web artifact package {package}@{version} is not in release {}",
-        selection.current
-    );
+    let selected_version = packages
+        .into_iter()
+        .find_map(|(id, version)| (id == package).then_some(version))
+        .with_context(|| {
+            format!(
+                "web artifact package {package}@{version} is not in release {}",
+                selection.current
+            )
+        })?;
+    if selected_version != version {
+        tracing::warn!(%package, web_version = version, release_version = selected_version,
+            "selected web artifact uses a different package version");
+    }
     Ok(())
 }
 
-pub(in super::super) fn resolve<'a>(
+pub(in super::super) fn verify_client_package<'a>(
     selection: &ApplicationSelection,
     packages: impl Iterator<Item = &'a str>,
-) -> anyhow::Result<BTreeMap<String, String>> {
-    let selected = match selection.client.as_ref() {
-        Some(client) => {
-            let name = client.package.as_str();
-            ensure!(
-                packages.into_iter().any(|package| package == name),
-                "host {} names client package {name}, which the release does not provide",
-                selection.hostname
-            );
-            Some(name)
-        }
-        None => None,
-    };
-    Ok(selected
-        .map(|name| (selection.hostname.clone(), name.to_owned()))
-        .into_iter()
-        .collect())
+) -> anyhow::Result<()> {
+    if let Some(client) = &selection.client {
+        ensure!(
+            packages
+                .into_iter()
+                .any(|package| package == client.package),
+            "host {} names client package {}, which the release does not provide",
+            selection.hostname,
+            client.package
+        );
+    }
+    Ok(())
 }

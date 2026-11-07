@@ -199,12 +199,7 @@ fn release_values(
     group["env"].as_array_mut().expect("host environment").push(
         json!({"name":"WAMN_CONTROL_PUBLIC_ORIGIN","value":format!("{scheme}://{}", document.route_hosts.control)}));
     desired["platformUi"] = platform_ui.into();
-    desired["routeHost"] = if platform_ui {
-        document.route_hosts.control.as_str()
-    } else {
-        ""
-    }
-    .into();
+    desired["routeHost"] = document.route_hosts.control.as_str().into();
     // Direct apply owns the control Service and WorkloadDeployment.
     desired["roles"] = json!([]);
     Ok(desired)
@@ -431,7 +426,7 @@ mod tests {
         let values = release_values(&document, &chart, false).unwrap();
         assert_eq!(values["runtime-operator"]["runtime"]["image"], image);
         assert_eq!(values["platformUi"], false);
-        assert_eq!(values["routeHost"], "");
+        assert_eq!(values["routeHost"], document.route_hosts.control);
         assert_eq!(values["roles"], json!([]));
         let groups = values["runtime-operator"]["runtime"]["hostGroups"]
             .as_array()

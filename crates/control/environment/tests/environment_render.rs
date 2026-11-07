@@ -113,16 +113,6 @@ fn changing_one_application_selection_leaves_the_other_release_unchanged() -> an
                   application: &str,
                   release: &wamn_catalog::ServingManifest|
      -> anyhow::Result<_> {
-        let clients = document
-            .applications
-            .values()
-            .filter_map(|selection| {
-                selection
-                    .client
-                    .as_ref()
-                    .map(|client| (selection.hostname.clone(), client.package.clone()))
-            })
-            .collect();
         let selection = &document.applications[application];
         let (values, _) = write::release_values(
             document,
@@ -133,7 +123,6 @@ fn changing_one_application_selection_leaves_the_other_release_unchanged() -> an
             70,
             "render",
             Some(&group),
-            &clients,
         )?;
         assert_eq!(
             values["applications"]
@@ -152,6 +141,32 @@ fn changing_one_application_selection_leaves_the_other_release_unchanged() -> an
             .iter()
             .find(|object| object["data"]["release.json"].is_string())
             .unwrap();
+        let name = row["metadata"]["name"].as_str().unwrap();
+        let object = carrier
+            .iter()
+            .find(|object| object["metadata"]["labels"]["wamn.route"] == "true")
+            .unwrap();
+        let route: Value = serde_json::from_str(object["data"]["route.json"].as_str().unwrap())?;
+        assert_eq!(route["host"], selection.hostname);
+        assert_eq!(route["release"], name);
+        for role in ["http", "files"] {
+            let service = carrier
+                .iter()
+                .find(|object| {
+                    object["kind"] == "Service"
+                        && object["metadata"]["name"] == format!("{name}-{role}")
+                })
+                .unwrap();
+            let key = if role == "http" { "api" } else { role };
+            assert_eq!(
+                route[key],
+                format!(
+                    "http://{}.{}.svc.cluster.local",
+                    service["metadata"]["name"].as_str().unwrap(),
+                    NAMESPACE
+                )
+            );
+        }
         let row: Value = serde_json::from_str(row["data"]["release.json"].as_str().unwrap())?;
         let expected = selection
             .client
@@ -181,12 +196,19 @@ fn changing_one_application_selection_leaves_the_other_release_unchanged() -> an
     let selection = document.applications.get_mut("orders").unwrap();
     selection.previous = Some(selection.current.to_string());
     selection.current = DeclaredRelease::Digest(release.digest().as_str().to_owned());
-    selection.hostname = "new-orders.example".into();
-    selection.client = None;
     for (application, release) in &releases {
         let after = render(&document, application, release)?;
         if *application == "orders" {
             assert_ne!(before[application], after);
+            let before_route = before[application]
+                .iter()
+                .find(|object| object["data"]["route.json"].is_string())
+                .unwrap();
+            let after_route = after
+                .iter()
+                .find(|object| object["data"]["route.json"].is_string())
+                .unwrap();
+            assert_eq!(before_route["data"], after_route["data"]);
         } else {
             assert_eq!(before[application], after);
         }

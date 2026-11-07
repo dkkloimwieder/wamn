@@ -35,7 +35,6 @@ pub struct DevUpRequest {
 /// Provision the environment and return the configuration file.
 pub async fn provision_environment(mut args: DevUpRequest) -> anyhow::Result<PathBuf> {
     let document = super::session::read_environment(&args.root.join("environment.k"))?;
-    args.route_host = document.legacy_hostname().to_owned();
     // Settled before a single credential is minted: an environment is
     // expensive to stand up.
     wamn_control_provision::validate_platform_domain(&args.platform_domain)?;

@@ -10,7 +10,7 @@ use wamn_release_control::release_chart::Target;
 
 use super::artifact_plan::SelectedChart;
 use super::document::{ClusterDocument, Provider};
-use super::{bootstrap, broker, control, identity, manifests, provider, resources};
+use super::{bootstrap, broker, control, edge, identity, manifests, provider, resources};
 use crate::kubectl;
 
 /// Apply platform resources, initialize the system, and start identity and control.
@@ -179,6 +179,10 @@ pub async fn deploy(
     identity::apply(target, document, chart, directory).await?;
     control::credentials(target, document).await?;
     control::release(target, document, chart, directory).await?;
+    let certificates = edge::certificates(&payload, document)?;
+    apply(target, &certificates).await?;
+    certificates_ready(target, &certificates).await?;
+    edge::apply(target, document, chart, directory).await?;
     control::probe(target, document).await
 }
 

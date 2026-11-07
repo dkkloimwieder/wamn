@@ -479,6 +479,14 @@ pub fn environment(
     host_group: &Path,
     drain_bound_seconds: u32,
 ) -> anyhow::Result<serde_yaml::Value> {
+    let mut selections = document.applications.values();
+    let selection = selections
+        .next()
+        .context("the fixture has no application")?;
+    anyhow::ensure!(
+        selections.next().is_none(),
+        "render one application at a time"
+    );
     let mut applications = document.membership();
     for application in applications.values_mut() {
         application.connections.clear();
@@ -490,7 +498,7 @@ pub fn environment(
             env: document.env.clone(),
             manifest_digest: manifest.digest().as_str().to_owned(),
             artifact_base: "registry.invalid/wamn/releases".into(),
-            route_host: document.legacy_hostname().to_owned(),
+            route_host: selection.hostname.clone(),
             applications,
             roles: fixture_roles(manifest, &document.org, &document.project, &document.env),
             drain_bound_seconds,

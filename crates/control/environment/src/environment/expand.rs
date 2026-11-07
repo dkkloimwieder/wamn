@@ -10,12 +10,12 @@ pub async fn expand(
     platform: &Platform,
     document: &EnvironmentDocument,
     analysis: &Analysis,
-) -> anyhow::Result<std::collections::BTreeMap<String, String>> {
+) -> anyhow::Result<()> {
     let Some(release) = &analysis.authorities.release else {
-        return Ok(std::collections::BTreeMap::new());
+        return Ok(());
     };
     let selected = super::analyse::select_application(document, Some(&analysis.application))?;
-    let clients = super::clients::resolve(
+    super::clients::verify_client_package(
         &selected.applications[&analysis.application],
         analysis.packages.iter().filter_map(|package| {
             package
@@ -32,8 +32,7 @@ pub async fn expand(
         &release.manifest,
         &analysis.packages,
     )
-    .await?;
-    Ok(clients)
+    .await
 }
 
 /// Commit the control facts used by application activation, without invoking Kubernetes.

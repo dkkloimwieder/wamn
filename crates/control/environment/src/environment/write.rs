@@ -45,8 +45,13 @@ pub async fn write(
     analysis: &Analysis,
     release: &ReleaseFacts,
     reason: Option<&str>,
-    clients: &std::collections::BTreeMap<String, String>,
 ) -> anyhow::Result<Written> {
+    crate::platform::edge::warn_conflicts(
+        &platform.target,
+        &document.applications[&analysis.application].hostname,
+        &analysis.authorities.release_name,
+    )
+    .await?;
     let policy = &analysis.authorities.policy;
     let budget = Duration::from_secs(u64::try_from(policy.readiness_budget_seconds)?);
     let deadline = Instant::now() + budget;
@@ -59,7 +64,6 @@ pub async fn write(
         u32::try_from(policy.drain_bound_seconds)?,
         &analysis.actor,
         platform.host_group.as_deref(),
-        clients,
     )?;
     let suffix = &analysis
         .authorities
@@ -132,7 +136,6 @@ pub fn release_values(
     drain_bound_seconds: u32,
     actor: &str,
     host_group_path: Option<&Path>,
-    clients: &std::collections::BTreeMap<String, String>,
 ) -> anyhow::Result<(Value, Vec<RoleName>)> {
     let group = host_group(
         host_group_path,
@@ -149,7 +152,6 @@ pub fn release_values(
         drain_bound_seconds,
         actor,
         group,
-        clients,
     )
 }
 

@@ -40,6 +40,7 @@ pub(super) async fn resolve_target(
     directory: &Path,
 ) -> anyhow::Result<()> {
     let target = &platform.target;
+    crate::platform::edge::require_running(target).await?;
     let org = &environment.org;
     let installed = resources::helm(
         target,
@@ -343,7 +344,6 @@ mod tests {
             70,
             "test",
             Some(&path),
-            &std::collections::BTreeMap::new(),
         )?;
         let image = format!("registry.example/host:render@{digest}");
         let chart = release_chart::stamp(

@@ -1,10 +1,8 @@
-//! Resolve the environment's web client before writing its release chart.
+//! Resolve an application's web client before writing its release chart.
 
 pub(super) mod plan;
-pub(super) use plan::resolve;
 use plan::verify;
-
-use std::collections::BTreeMap;
+pub(super) use plan::verify_client_package;
 
 use anyhow::{Context as _, ensure};
 
@@ -60,17 +58,6 @@ mod tests {
     }
 
     #[test]
-    fn no_pin_serves_no_client() {
-        for packages in [vec![], vec!["wms"], vec!["wms", "receiving"]] {
-            assert!(
-                resolve(&document().applications["fixture"], packages.into_iter())
-                    .unwrap()
-                    .is_empty()
-            );
-        }
-    }
-
-    #[test]
     fn a_named_client_selects_its_package() {
         let mut document = document();
         document.applications.get_mut("fixture").unwrap().client =
@@ -78,19 +65,18 @@ mod tests {
                 package: "receiving".into(),
                 web: wamn_execution_contract::bytes_sha256(b"web artifact"),
             });
-        assert_eq!(
-            resolve(
-                &document.applications["fixture"],
-                ["wms", "receiving"].into_iter()
-            )
-            .unwrap()["wms.example.com"],
-            "receiving"
+        verify_client_package(
+            &document.applications["fixture"],
+            ["wms", "receiving"].into_iter(),
+        )
+        .unwrap();
+        assert!(
+            verify_client_package(&document.applications["fixture"], ["wms"].into_iter()).is_err()
         );
-        assert!(resolve(&document.applications["fixture"], ["wms"].into_iter()).is_err());
     }
 
     #[test]
-    fn a_web_pin_requires_its_exact_package_version_in_the_release() {
+    fn a_web_pin_requires_its_package_but_allows_a_different_code_version() {
         let web: WebManifest =
             serde_json::from_str(include_str!("../../tests/support/web-artifact/web.json"))
                 .unwrap();
@@ -106,14 +92,12 @@ mod tests {
                 package: "web_fixture".into(),
                 web: wamn_execution_contract::bytes_sha256(b"web artifact"),
             });
-        assert!(
-            verify(
-                &document.applications["fixture"],
-                &web,
-                [("web_fixture", "2.0.0")].into_iter()
-            )
-            .is_err()
-        );
+        verify(
+            &document.applications["fixture"],
+            &web,
+            [("web_fixture", "2.0.0")].into_iter(),
+        )
+        .unwrap();
         verify(
             &document.applications["fixture"],
             &web,
