@@ -343,7 +343,7 @@ pub(super) async fn exercise(run: &Run, password: &str) -> anyhow::Result<()> {
         ),
         (
             "connection/write",
-            json!({"project":"journey","env":"dev","name":"probe","parameters":{"primary-authority":format!("http://c-{}-http.hosts.svc.cluster.local",run.document.org),"tls-verification":"disabled"},"credential":null}),
+            json!({"project":"journey","env":"dev","name":"probe","parameters":{"primary-authority":format!("http://c-{}-http.hosts.svc.cluster.local",run.document.org),"tls-verification":"disabled"}}),
         ),
         (
             "connection/enable",
