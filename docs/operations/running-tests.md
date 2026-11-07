@@ -525,7 +525,8 @@ Do not infer execution from the aggregate Cargo pass count.
 | --- | --- |
 | `[RUN-PLANE-RECONCILE]` | `crates/control/environment/tests/run_plane_live.rs`: covers creation, current no-op, two-plane residency, platform configuration, and current security behavior under the process lock |
 | `[CLAIMS-LIVE]` | Runtime `plugins::wamn_postgres::claims::tests` `live_*` cases: run by default on the test server, and the cases that create fixed roles hold the process lock |
-| `[EFFECT-SNAPSHOT]` | `crates/platform/runtime/tests/effect_snapshot_live.rs`: ignored, starts its own server with `pg_stat_statements`, and needs `WAMN_NATS_URL`. It runs the production cluster snapshot as a provisioned HTTP admitter, holds the process lock, and makes sure that a repeated snapshot sends no statement. || `[R18-NEG]` | Runtime `plugins::wamn_postgres::claims::tests::live_scs_off_server_fails_checkout_closed`: runs by default on a separate server started with `standard_conforming_strings=off` |
+| `[EFFECT-SNAPSHOT]` | `crates/platform/runtime/tests/effect_snapshot_live.rs`: ignored in live-nats, starts its own server with `pg_stat_statements`, and needs the NATS inputs below. It runs the production cluster snapshot as a provisioned HTTP admitter, holds the process lock, and makes sure that a repeated snapshot sends no statement. |
+| `[R18-NEG]` | Runtime `plugins::wamn_postgres::claims::tests::live_scs_off_server_fails_checkout_closed`: runs by default on a separate server started with `standard_conforming_strings=off` |
 | `[EVT-READER]` | `services/cdc-reader/tests/event_reader_live.rs`: ignored in live-nats, starts its own server with `wal_level=logical`, and needs `WAMN_READER_NATS_URL` |
 | `[CAPTURE-GAP]` | `crates/control/environment/tests/capture_gap_live.rs`: ignored, starts its own server with `wal_level=logical`, and needs `WAMN_READER_NATS_URL`. It does not test the refusal of an active slot, because only a streaming reader holds a slot active |
 | `[SQLX-TRANSACTION]` | `crates/platform/runtime/tests/sqlx_transaction_live.rs`: ignored in live-postgres, takes its database from the test server, and needs `WAMN_SQLX_TRANSACTION_COMPONENT` |
@@ -536,6 +537,13 @@ Do not infer execution from the aggregate Cargo pass count.
 The source owners declare additional credentials, artifact paths, and selected assertions.
 Do not substitute shared services for missing test inputs.
 For deployed runs, use [cluster commands](cluster-tests.md).
+
+The broker cases in `auth_drops_live`, `connection_drops_live`, and `effect_snapshot_live` use the platform NATS client.
+Set `WAMN_NATS_URL`, `WAMN_NATS_TLS_CA`, `WAMN_NATS_TLS_CERT`, and `WAMN_NATS_TLS_KEY` for a private TLS broker.
+Each case creates its memory buckets through the production function and needs permission to create and delete keys.
+The [delivery fixture](#local-saved-edit-acceptance) supplies an owned broker and development certificates.
+Inside its child command, use `WAMN_RECEIVING_DEV_NATS_URL` for `WAMN_NATS_URL`.
+Use its `WAMN_DEV_ENV_NATS_TLS_CA`, `WAMN_DEV_ENV_NATS_TLS_CERT`, and `WAMN_DEV_ENV_NATS_TLS_KEY` for the corresponding platform variables.
 
 `production_operator_authentication_and_operation_authorization` keeps `identity.log` and `test.log` in a new `wamn-route-auth-*` directory under `${TMPDIR:-/var/tmp}`.
 A failure prints both paths; the Receiving qualification cases keep these logs in their existing results directory and print their paths on failure.

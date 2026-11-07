@@ -402,11 +402,15 @@ async fn every_application_writer_records_a_drop_of_its_env_key_or_principal() {
 
 /// The broker must be private to this test run.
 #[tokio::test]
-#[ignore = "requires: env:WAMN_NATS_URL"]
+#[ignore = "requires: env:WAMN_NATS_URL, env:WAMN_NATS_TLS_CA, env:WAMN_NATS_TLS_CERT, env:WAMN_NATS_TLS_KEY"]
 async fn every_application_grant_write_deletes_exactly_its_auth_keys() {
     use wamn_platform_identity::auth_changes::{AuthChanges, auth_bucket};
-    wamn_test_postgres::require_ignored_prerequisites("requires: env:WAMN_NATS_URL");
-    let broker = async_nats::connect(std::env::var("WAMN_NATS_URL").unwrap())
+    wamn_test_postgres::require_ignored_prerequisites(
+        "requires: env:WAMN_NATS_URL, env:WAMN_NATS_TLS_CA, env:WAMN_NATS_TLS_CERT, env:WAMN_NATS_TLS_KEY",
+    );
+    let broker = wamn_platform_identity::nats::PlatformNats::from_env()
+        .unwrap()
+        .connect()
         .await
         .unwrap();
     wamn_platform_identity::kv_memory::create_buckets(&broker)

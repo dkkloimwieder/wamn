@@ -42,10 +42,10 @@ async fn reads(admin: &Client) -> anyhow::Result<i64> {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "requires: bin:/usr/lib/postgresql/18/bin/postgres, env:WAMN_NATS_URL"]
+#[ignore = "requires: bin:/usr/lib/postgresql/18/bin/postgres, env:WAMN_NATS_URL, env:WAMN_NATS_TLS_CA, env:WAMN_NATS_TLS_CERT, env:WAMN_NATS_TLS_KEY"]
 async fn cluster_effect_snapshot_as_http_admitter() -> anyhow::Result<()> {
     wamn_test_postgres::require_ignored_prerequisites(
-        "requires: bin:/usr/lib/postgresql/18/bin/postgres, env:WAMN_NATS_URL",
+        "requires: bin:/usr/lib/postgresql/18/bin/postgres, env:WAMN_NATS_URL, env:WAMN_NATS_TLS_CA, env:WAMN_NATS_TLS_CERT, env:WAMN_NATS_TLS_KEY",
     );
     let _lock = wamn_test_postgres::lock();
     let mut server =
@@ -197,7 +197,10 @@ async fn cluster_effect_snapshot_as_http_admitter() -> anyhow::Result<()> {
         candidate_binding: None,
     };
     let memory = std::sync::Arc::new(wamn_runtime::connection_memory::ConnectionMemory::default());
-    let broker = async_nats::connect(std::env::var("WAMN_NATS_URL")?).await?;
+    let broker = wamn_platform_identity::nats::PlatformNats::from_env()?
+        .connect()
+        .await?;
+    wamn_platform_identity::kv_memory::create_buckets(&broker).await?;
     let changes = wamn_runtime::connection_memory::replicate(
         &broker,
         Some(ENV_KEY),
