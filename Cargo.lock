@@ -6831,6 +6831,7 @@ dependencies = [
  "wamn-dev-control",
  "wamn-environment-control",
  "wamn-platform-identity",
+ "wamn-schema-control",
  "wamn-schema-generator",
  "wamn-test-postgres",
 ]

@@ -364,11 +364,14 @@ impl ArtifactRegistry {
         let root = self.directory.join(package);
         std::fs::create_dir_all(root.join("generated"))?;
         std::fs::create_dir_all(root.join("descriptors"))?;
+        std::fs::create_dir_all(root.join("migrations"))?;
         std::fs::write(root.join("wamn.k"), "# synthetic management_live package\n")?;
         std::fs::write(
             root.join("generated/wamn.json"),
             serde_json::to_vec(&serde_json::json!({
                 "package": {"id": package, "version": CANDIDATE_PACKAGE_VERSION},
+                "required_platform_policy_contract": {"id": "fixture", "state": "satisfied"},
+                "models": {}, "components": {}, "connections": {},
             }))?,
         )?;
         for descriptor in descriptors {
@@ -380,6 +383,10 @@ impl ArtifactRegistry {
                 wamn_execution_contract::canonical_json_bytes(&serde_json::to_value(&parsed)?),
             )?;
         }
+        wamn_test_infrastructure::fixture_digest::write_physical_schema(
+            &root,
+            std::collections::BTreeMap::new(),
+        )?;
         let packed = wamn_package_control::package_artifact::pack_package(&root)?;
         let http = reqwest::Client::new();
         let base = format!("http://{}/v2/{PACKAGE_REPOSITORY}", self.local.address);

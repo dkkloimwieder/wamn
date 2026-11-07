@@ -51,6 +51,42 @@ pub fn fixture_artifact_digest(root: &Path) -> anyhow::Result<String> {
     Ok(format!("sha256:{}", hex::encode(context.finish())))
 }
 
+/// Write physical SQL for a synthetic package and its declared relation columns.
+pub fn write_physical_schema(
+    root: &Path,
+    columns: std::collections::BTreeMap<
+        String,
+        Vec<wamn_schema_control::physical_schema::RelationColumn>,
+    >,
+) -> anyhow::Result<()> {
+    use wamn_schema_control::physical_schema::{PhysicalSchema, render};
+
+    let manifest = wamn_catalog::manifest::PackageManifest::from_slice(&std::fs::read(
+        wamn_schema_generator::package_manifest_path(root),
+    )?)?;
+    let mut migrations = Vec::new();
+    for entry in std::fs::read_dir(root.join("migrations"))? {
+        let path = entry?.path();
+        if path.extension().is_some_and(|extension| extension == "sql") {
+            migrations.push(wamn_schema_control::MigrationSource {
+                relative_path: path.strip_prefix(root)?.to_string_lossy().into_owned(),
+                bytes: std::fs::read(path)?,
+            });
+        }
+    }
+    let statements = render(&manifest, &migrations, &columns)?;
+    let output = wamn_schema_generator::output_root(root);
+    std::fs::create_dir_all(&output)?;
+    std::fs::write(
+        output.join("physical-schema.json"),
+        serde_json::to_vec(&PhysicalSchema {
+            columns,
+            statements,
+        })?,
+    )?;
+    Ok(())
+}
+
 /// Record output that a test writes, without compiling a guest.
 pub fn write_build_record(root: &Path) {
     use wamn_schema_generator::build_record;

@@ -58,8 +58,11 @@ impl Drop for Run {
 }
 
 #[tokio::test]
-#[ignore = "requires kind, prepared platform artifacts, package registry, route component and disposable build PostgreSQL"]
+#[ignore = "requires: bin:kind, bin:docker, bin:kubectl, bin:helm, bin:openssl"]
 async fn platform_apply_kind() -> anyhow::Result<()> {
+    wamn_test_postgres::require_ignored_prerequisites(
+        "requires: bin:kind, bin:docker, bin:kubectl, bin:helm, bin:openssl",
+    );
     let repository = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../..")
         .canonicalize()?;

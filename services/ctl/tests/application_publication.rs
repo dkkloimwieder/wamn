@@ -93,6 +93,12 @@ fn package(work: &Path, id: &str, version: &str) -> anyhow::Result<PathBuf> {
         .encode()?;
     let path = "components/entry.wasm";
     std::fs::write(output.join(path), &bytes)?;
+    wamn_test_infrastructure::fixture_digest::write_physical_schema(
+        &root,
+        serde_json::from_value(json!({"item": [
+            {"name": "id", "primary_key": true, "timestamptz": false}
+        ]}))?,
+    )?;
     wamn_test_infrastructure::fixture_digest::write_build_record(&root);
     let mut record = build_record::read(&output)?;
     record.outputs.components.push(BuildComponent {
@@ -120,6 +126,7 @@ fn run(command: &mut Command) -> anyhow::Result<String> {
 #[tokio::test]
 #[ignore = "requires: env:WAMN_FLOW_HTTP_COMPONENT"]
 async fn applications_publish_independently_before_destination_creation() -> anyhow::Result<()> {
+    wamn_test_postgres::require_ignored_prerequisites("requires: env:WAMN_FLOW_HTTP_COMPONENT");
     let route =
         std::env::var_os("WAMN_FLOW_HTTP_COMPONENT").context("pinned HTTP route component")?;
     let scratch = wamn_test_infrastructure::scratch::ScratchRoot::create()?;
