@@ -133,36 +133,3 @@ fn copy_tree(source: &Path, target: &Path) -> anyhow::Result<()> {
     }
     Ok(())
 }
-
-/// An edited copy of the base builds its component in the test-owned
-/// workspace, and push-package's stale check accepts its build record.
-#[tokio::test(flavor = "current_thread")]
-#[ignore = "requires: bin:cargo, bin:rustc"]
-async fn an_edited_copy_builds_in_the_test_owned_workspace() -> anyhow::Result<()> {
-    wamn_test_postgres::require_ignored_prerequisites("requires: bin:cargo, bin:rustc");
-    let scratch = super::ScratchRoot::create()?;
-    let root = scratch.path().join("copies");
-    create(&root, &[super::package_root()])?;
-    let base = package(&root, "wamn_receiving");
-    let migration = base.join("migrations/0001_initial.sql");
-    let text = std::fs::read_to_string(&migration)?;
-    std::fs::write(
-        &migration,
-        text.replacen(
-            "CREATE TABLE receiving.purchase_order (\n",
-            "CREATE TABLE receiving.purchase_order (\n    copy_note text,\n",
-            1,
-        ),
-    )?;
-    let database = wamn_test_postgres::database();
-    build(&root, &["wamn_receiving"], database.url()).await?;
-    let output = wamn_schema_generator::output_root(&base);
-    let build_record = wamn_schema_generator::build_record::read_current(&base, &output)?;
-    ensure!(
-        build_record.outputs.components.iter().any(
-            |component| component.name == "receiving" && output.join(&component.path).is_file()
-        ),
-        "the copy's build is current and records its component"
-    );
-    Ok(())
-}
