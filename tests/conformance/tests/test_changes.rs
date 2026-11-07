@@ -1279,16 +1279,17 @@ fn runtime_changes_select_the_native_host_reader() {
         .find(|section| section.contains("id = \"native-host\""))
         .unwrap();
     assert!(host.contains("crates/platform/runtime/"));
+    let prerequisites = host
+        .lines()
+        .find(|line| line.starts_with("prerequisites = "))
+        .unwrap();
     // The fixture has no runtime package, so a fixture package stands for it.
     let host = host
         .replace("crates/platform/runtime/", "crates/far/")
         .replace("package = \"wamn-dev-control\"", "package = \"user\"")
         .replace("target = [\"test:native_host\"]", "target = [\"lib:user\"]")
         .replace("features = [\"ops\"]", "features = []")
-        .replace(
-            "prerequisites = [\"fixture\", \"edge\", \"nats\", \"host\", \"http-route\", \"materializer\", \"workflow-guests\"]",
-            "prerequisites = []",
-        )
+        .replace(prerequisites, "prerequisites = []")
         .replace(
             "prekind_host::prekind_http_host_runs_and_rejects_respond_without_caller",
             "fixture::case",
