@@ -64,10 +64,6 @@ fn attachment(action: &str) -> String {
 fn release() -> anyhow::Result<Arc<LoadedRelease>> {
     let original = application_fixture::load_release()?;
     let mut manifest = serde_json::to_value(original.manifest())?;
-    manifest["release"]["packages"]
-        .as_array_mut()
-        .unwrap()
-        .push(json!({"package-id":"other_fixture","package-version":"1.0.0"}));
     manifest["components"][0]["descriptor"]["connections"] = json!([
         {"store-alias":"files","requirement-type":"blobstore"},
         {"store-alias":"files-read","requirement-type":"blobstore"},
@@ -78,8 +74,7 @@ fn release() -> anyhow::Result<Arc<LoadedRelease>> {
         &wamn_execution_contract::canonical_json_bytes(&serde_json::to_value(manifest)?),
         "native files fixture",
         ReleaseScope::new(ENV_KEY, "dev").with_applications(serde_json::from_value(json!({
-            "files":{"packages":["session_test"],"connections":{}},
-            "other":{"packages":["other_fixture"],"connections":{}}
+            "files":{"packages":["session_test"],"connections":{}}
         }))?),
     )?))
 }

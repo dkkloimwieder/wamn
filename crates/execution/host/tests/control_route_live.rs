@@ -1868,7 +1868,7 @@ async fn connection_routes_refuse_mismatches_and_project_only_enabled_rows() -> 
         .await?;
     let document = wamn_environment_control::environment::document::EnvironmentDocument::from_json(
         &serde_json::to_vec(
-            &json!({"org":ORG,"project":"billing","env":"dev","target":"cloud","release":"none","route_host":"billing.example","policy":"dev","applications":{}}),
+            &json!({"org":ORG,"project":"billing","env":"dev","target":"cloud","policy":"dev","applications":{}}),
         )?,
     )?;
     // The projection runs as the database owner, as env apply runs it.

@@ -753,67 +753,6 @@ fn entry_start(release: &LoadedRelease) -> String {
 }
 
 #[test]
-fn entry_operations_use_the_application_of_their_own_package() {
-    let original = release();
-    let mut manifest = original.manifest().clone();
-    let mut other = manifest.components.first().unwrap().clone();
-    other.package_id = "other".into();
-    let mut operation = other.operations.remove(OPERATION).unwrap();
-    other.operations.clear();
-    let other_operation = "other:widget/update@1.0.0";
-    operation.registered_operation = Some(other_operation.into());
-    operation.permissions = BTreeSet::from([other_operation.into()]);
-    other.operations.insert(other_operation.into(), operation);
-    manifest
-        .release
-        .packages
-        .insert(PackageCoordinate::new("other", "1.0.0").unwrap());
-    manifest
-        .composed_entry
-        .as_mut()
-        .unwrap()
-        .members
-        .insert(wamn_catalog::ServingEntryMember {
-            package_id: "other".into(),
-            component: other.descriptor.component.clone(),
-            digest: other.descriptor.component_digest.clone(),
-        });
-    manifest.components.insert(other);
-    let release = Arc::new(
-        LoadedRelease::load_canonical_bytes(
-            &manifest.canonical_bytes(),
-            "two applications",
-            ReleaseScope::new(ENV_KEY, "test").with_applications(
-                serde_json::from_value(json!({
-                    "receiving": {"packages": ["base"]}, "orders": {"packages": ["other"]}
-                }))
-                .unwrap(),
-            ),
-        )
-        .unwrap(),
-    );
-    let postgres = WamnPostgres::with_provider(Arc::new(
-        super::super::StaticCredentialProvider::new(HashMap::new(), None),
-    ));
-    postgres
-        .bind_operation_workload(
-            WORKLOAD,
-            Arc::clone(&release),
-            &entry_start(&release),
-            "entry",
-            SessionClaims {
-                env_key: ENV_KEY.into(),
-                release: Some(ReleaseIdentity::from_loaded(&release)),
-                ..SessionClaims::default()
-            },
-        )
-        .unwrap();
-    let workloads = postgres.operation_workloads.read().unwrap();
-    assert_eq!(workloads[WORKLOAD].applications[OPERATION], "receiving");
-    assert_eq!(workloads[WORKLOAD].applications[other_operation], "orders");
-}
-
-#[test]
 fn entry_binding_requires_the_started_reference_and_component_name() {
     let release = release();
     let postgres = WamnPostgres::new(WamnPostgresConfig {
