@@ -76,13 +76,13 @@ pub(super) async fn prepare(
     let values = private.path("values.yaml");
     std::fs::write(&values, serde_yaml::to_string(&rendered)?)
         .with_context(|| format!("write {}", values.display()))?;
-    let metadata: serde_json::Value =
-        serde_yaml::from_slice(&std::fs::read(platform.chart.join("Chart.yaml"))?)?;
-    let objects = crate::platform::resources::helm_template(&serde_json::json!({
-        "chart":platform.chart, "version":metadata["version"],
-        "name":release_name, "namespace":platform.target.namespace, "values":rendered,
-    }))?;
-    super::runtime::require_references(&platform.target, &objects).await?;
+    super::runtime::require_chart_references(
+        &platform.target,
+        &platform.chart,
+        &release_name,
+        &rendered,
+    )
+    .await?;
     Ok(Prepared {
         directory: private,
         roles: names,

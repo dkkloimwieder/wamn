@@ -252,36 +252,84 @@ pub fn host_group(
     serde_yaml::from_value(serde_yaml::to_value(group)?).context("application host inputs")
 }
 
-/// Refuse missing required Secrets and ConfigMaps before Helm can change a workload.
-pub(super) async fn require_references(target: &Target, objects: &[Value]) -> anyhow::Result<()> {
+/// Validate the same rendered inputs that Helm will install or upgrade.
+pub(super) async fn require_chart_references(
+    target: &Target,
+    chart: &Path,
+    name: &str,
+    values: &impl serde::Serialize,
+) -> anyhow::Result<()> {
+    let metadata: Value = serde_yaml::from_slice(&std::fs::read(chart.join("Chart.yaml"))?)?;
+    let objects = resources::helm_template(&json!({
+        "chart":chart, "version":metadata["version"], "name":name,
+        "namespace":target.namespace, "values":values,
+    }))?;
+    require_references(
+        &target.namespace,
+        &objects,
+        async |namespace, kind, name| {
+            crate::kubectl::get(&target.kubeconfig, &target.context, namespace, kind, name).await
+        },
+    )
+    .await
+}
+
+/// Rendered objects satisfy internal references. Only external objects need a cluster read.
+async fn require_references(
+    namespace: &str,
+    objects: &[Value],
+    mut get: impl AsyncFnMut(&str, &str, &str) -> anyhow::Result<Option<Value>>,
+) -> anyhow::Result<()> {
     let mut references = std::collections::BTreeMap::new();
     for object in objects {
         if object["kind"] != "Deployment" {
             continue;
         }
-        collect_references(&object["spec"]["template"]["spec"], &mut references)?;
+        let namespace = object["metadata"]["namespace"]
+            .as_str()
+            .unwrap_or(namespace);
+        collect_references(
+            &object["spec"]["template"]["spec"],
+            references
+                .entry(namespace)
+                .or_insert_with(std::collections::BTreeMap::new),
+        )?;
     }
-    for ((kind, name), keys) in references {
-        let object: Value = crate::kubectl::get(
-            &target.kubeconfig,
-            &target.context,
-            &target.namespace,
-            &kind,
-            &name,
-        )
-        .await?
-        .with_context(|| format!("missing required {kind} {}/{name}", target.namespace))?;
-        for key in keys {
-            ensure!(
-                object["data"][&key]
-                    .as_str()
-                    .is_some_and(|value| !value.is_empty())
-                    || object["binaryData"][&key]
+    for (reference_namespace, references) in references {
+        for ((kind, name), keys) in references {
+            let external;
+            let object = if let Some(object) = objects.iter().find(|object| {
+                object["kind"] == kind
+                    && object["metadata"]["name"] == name
+                    && object["metadata"]["namespace"]
                         .as_str()
-                        .is_some_and(|value| !value.is_empty()),
-                "required {kind} {}/{name} lacks {key}",
-                target.namespace
-            );
+                        .unwrap_or(namespace)
+                        == reference_namespace
+            }) {
+                object
+            } else {
+                external = get(reference_namespace, &kind, &name)
+                    .await?
+                    .with_context(|| {
+                        format!("missing required {kind} {reference_namespace}/{name}")
+                    })?;
+                &external
+            };
+            for key in keys {
+                ensure!(
+                    object["data"][&key]
+                        .as_str()
+                        .is_some_and(|value| !value.is_empty())
+                        || object["binaryData"][&key]
+                            .as_str()
+                            .is_some_and(|value| !value.is_empty())
+                        || (kind == "Secret"
+                            && object["stringData"][&key]
+                                .as_str()
+                                .is_some_and(|value| !value.is_empty())),
+                    "required {kind} {reference_namespace}/{name} lacks {key}"
+                );
+            }
         }
     }
     Ok(())
@@ -343,6 +391,37 @@ mod tests {
     use crate::environment::write;
     use wamn_release_control::release_chart::{self, ImageSet};
 
+    #[tokio::test]
+    async fn references_use_rendered_config_and_require_external_secret_keys() -> anyhow::Result<()>
+    {
+        for (internal_key, external_exists, external_key, succeeds) in [
+            (true, true, true, true),
+            (true, false, false, false),
+            (true, true, false, false),
+            (false, true, true, false),
+        ] {
+            let objects = [
+                json!({"kind":"Deployment", "metadata":{"namespace":"hosts"}, "spec":{"template":{"spec":{
+                    "containers":[{"env":[{"name":"TOKEN", "valueFrom":{"secretKeyRef":{"name":"credential","key":"token"}}}]}],
+                    "volumes":[{"configMap":{"name":"host-config", "items":[{"key":"config","path":"config"}]}}]
+                }}}}),
+                json!({"kind":"ConfigMap", "metadata":{"name":"host-config"},
+                    "data": if internal_key { json!({"config":"rendered"}) } else { json!({}) }}),
+            ];
+            let result = require_references("hosts", &objects, async |namespace, kind, name| {
+                assert_eq!((namespace, kind, name), ("hosts", "Secret", "credential"));
+                Ok(external_exists.then(|| {
+                    json!({"data":
+                        if external_key { json!({"token":"credential"}) } else { json!({}) }
+                    })
+                }))
+            })
+            .await;
+            assert_eq!(result.is_ok(), succeeds);
+        }
+        Ok(())
+    }
+
     #[test]
     fn only_the_known_local_registry_is_rewritten_for_pods() {
         for (registry, expected) in [
@@ -372,8 +451,8 @@ mod tests {
         ));
     }
 
-    #[test]
-    fn application_render_consumes_platform_references_without_control_credentials()
+    #[tokio::test]
+    async fn application_render_consumes_platform_references_without_control_credentials()
     -> anyhow::Result<()> {
         let private = crate::environment::ensure::PrivateDirectory::create()?;
         let mut control = crate::platform::control::host_values("example");
@@ -492,6 +571,28 @@ mod tests {
                 .iter()
                 .all(|object| !matches!(object["kind"].as_str(), Some("Secret" | "Certificate")))
         );
+        // Only references absent from the real chart need a cluster read.
+        let internal = objects
+            .iter()
+            .filter_map(|object| {
+                let kind = object["kind"].as_str()?;
+                let name = object["metadata"]["name"].as_str()?;
+                references
+                    .contains_key(&(kind.to_owned(), name.to_owned()))
+                    .then_some((kind, name))
+            })
+            .collect::<std::collections::BTreeSet<_>>();
+        assert!(internal.iter().any(|(kind, _)| *kind == "ConfigMap"));
+        require_references("hosts", &objects, async |namespace, kind, name| {
+            assert_eq!(namespace, "hosts");
+            assert!(!internal.contains(&(kind, name)), "{namespace}/{name}");
+            let data: serde_json::Map<_, _> = references[&(kind.to_owned(), name.to_owned())]
+                .iter()
+                .map(|key| (key.to_owned(), json!("credential")))
+                .collect();
+            Ok(Some(json!({"data":data})))
+        })
+        .await?;
         Ok(())
     }
 }

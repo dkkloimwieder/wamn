@@ -395,6 +395,8 @@ async fn provision_materializer(
     let values = private.path("environment-host.yaml");
     std::fs::write(&values, serde_yaml::to_string(&desired)?)?;
     let name = environment_host_name(&document.org, &document.project, &document.env)?;
+    super::runtime::require_chart_references(&platform.target, &platform.chart, &name, &desired)
+        .await?;
     release_chart::recover_pending(&platform.target, &name).await?;
     release_chart::upgrade(
         &platform.target,
