@@ -105,7 +105,7 @@ pub const PLATFORM_DOMAIN: &str = "example.invalid";
 
 pub fn fixture_host_group(document: &EnvironmentDocument, local: &str) -> Value {
     let installed = wamn_environment_control::platform::control::host_values(&document.org);
-    let shared = environment::ensure::materializer_host_values(document, 70, 1, 120, None)
+    let shared = environment::ensure::materializer_host_values(document, 70, 1, 120, None, false)
         .expect("shared environment host");
     let mut group = serde_json::to_value(
         environment::runtime::host_group(&installed, &shared, &format!("{local}/wamn/components"))

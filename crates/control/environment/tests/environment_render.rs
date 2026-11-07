@@ -434,19 +434,19 @@ mod shared_resources {
     {
         let mut document = EnvironmentDocument::from_json(br#"{"org":"acme","project":"apps","env":"dev","target":"cloud","policy":"dev","applications":{}}"#)?;
         let image = format!("registry.example/materializer@sha256:{}", "a".repeat(64));
-        let workload = ensure::materializer_workload(&document, "hosts", &image)?;
-        let values = ensure::materializer_host_values(&document, 30, 1, 120, None)?;
+        let workload = ensure::materializer_workload(&document, "hosts", &image, false)?;
+        let values = ensure::materializer_host_values(&document, 30, 1, 120, None, false)?;
         document.applications = serde_json::from_value(json!({
             "a":{"packages":["a"],"current":format!("sha256:{}", "b".repeat(64)),"hostname":"a.example.com"},
             "b":{"packages":["b"],"current":format!("sha256:{}", "c".repeat(64)),"hostname":"b.example.com"}
         }))?;
         assert_eq!(
             workload,
-            ensure::materializer_workload(&document, "hosts", &image)?
+            ensure::materializer_workload(&document, "hosts", &image, false)?
         );
         assert_eq!(
             values,
-            ensure::materializer_host_values(&document, 30, 1, 120, None)?
+            ensure::materializer_host_values(&document, 30, 1, 120, None, false)?
         );
         let group = &values["runtime-operator"]["runtime"]["hostGroups"][0];
         assert_eq!(

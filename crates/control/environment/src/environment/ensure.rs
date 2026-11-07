@@ -228,6 +228,7 @@ pub fn materializer_host_values(
     stream_replicas: usize,
     dup_window_secs: u64,
     host_group: Option<&Path>,
+    insecure_registry: bool,
 ) -> anyhow::Result<serde_json::Value> {
     use serde_json::json;
     use wamn_release_control::release_chart;
@@ -256,7 +257,11 @@ pub fn materializer_host_values(
         );
     }
     group["name"] = name.into();
-    group["extraArgs"] = json!([format!("--environment={}", document.env)]);
+    let mut arguments = vec![format!("--environment={}", document.env)];
+    if insecure_registry {
+        arguments.push("--allow-insecure-registries".into());
+    }
+    group["extraArgs"] = json!(arguments);
     group["plugins"] = serde_json::to_value(release_chart::events_plugin(
         &document.org,
         &document.project,
@@ -265,6 +270,21 @@ pub fn materializer_host_values(
     let variables = group["env"]
         .as_array_mut()
         .context("host env is not a list")?;
+    for variable in &mut *variables {
+        if matches!(
+            variable["name"].as_str(),
+            Some(
+                "WAMN_COMPONENT_ARTIFACT_BASE"
+                    | "WAMN_PACKAGE_ARTIFACT_BASE"
+                    | "WAMN_RELEASE_ARTIFACT_BASE"
+            )
+        ) && let Some(base) = variable["value"].as_str()
+        {
+            variable["value"] = super::runtime::pod_artifact_base(insecure_registry, base)?
+                .into_owned()
+                .into();
+        }
+    }
     for (key, value) in [
         ("WAMN_EVT_ORG", document.org.clone()),
         ("WAMN_EVT_PROJECT", document.project.clone()),
@@ -318,6 +338,7 @@ pub fn materializer_workload(
     document: &EnvironmentDocument,
     namespace: &str,
     image: &str,
+    insecure_registry: bool,
 ) -> anyhow::Result<serde_json::Value> {
     use wamn_control_provision::materializer_workload::{self, EventIdentity, MaterializerInput};
     let name = environment_host_name(&document.org, &document.project, &document.env)?;
@@ -326,7 +347,7 @@ pub fn materializer_workload(
         &MaterializerInput {
             workload: format!("{name}-materializer"),
             namespace: namespace.to_owned(),
-            image: image.to_owned(),
+            image: super::runtime::pod_artifact_base(insecure_registry, image)?.into_owned(),
             env_key: wamn_control_provision::project_env_key(
                 &document.org,
                 &document.project,
@@ -368,6 +389,7 @@ async fn provision_materializer(
         events.stream_replicas,
         events.dup_window_secs,
         platform.host_group.as_deref(),
+        platform.insecure_registry,
     )?;
     let private = PrivateDirectory::create()?;
     let values = private.path("environment-host.yaml");
@@ -386,7 +408,12 @@ async fn provision_materializer(
     let image = release_chart::image_set(&platform.chart)
         .await?
         .materializer;
-    let workload = materializer_workload(document, &platform.target.namespace, &image)?;
+    let workload = materializer_workload(
+        document,
+        &platform.target.namespace,
+        &image,
+        platform.insecure_registry,
+    )?;
     crate::kubectl::apply(
         &platform.target.kubeconfig,
         &platform.target.context,
@@ -1042,6 +1069,57 @@ async fn ensure_credential_access(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn shared_materializer_uses_platform_registry_transport_and_addresses() -> anyhow::Result<()> {
+        use crate::platform::resources::{LOCAL_REGISTRY, POD_REGISTRY};
+        use serde_json::json;
+        let document = EnvironmentDocument::from_json(br#"{"org":"acme","project":"apps","env":"dev","target":"cloud","policy":"dev","applications":{}}"#)?;
+        let private = PrivateDirectory::create()?;
+        let overlay = private.path("host.yaml");
+        for (insecure_registry, registry, pod_registry) in [
+            (true, LOCAL_REGISTRY, POD_REGISTRY),
+            (false, "registry.example", "registry.example"),
+        ] {
+            let variables = [
+                ("WAMN_COMPONENT_ARTIFACT_BASE", "components"),
+                ("WAMN_PACKAGE_ARTIFACT_BASE", "packages"),
+                ("WAMN_RELEASE_ARTIFACT_BASE", "releases"),
+            ].map(|(name, repository)| json!({"name":name, "value":format!("{registry}/wamn/{repository}")}));
+            std::fs::write(&overlay, serde_yaml::to_string(&json!({"env":variables}))?)?;
+            let values =
+                materializer_host_values(&document, 30, 1, 120, Some(&overlay), insecure_registry)?;
+            let group = &values["runtime-operator"]["runtime"]["hostGroups"][0];
+            assert_eq!(
+                group["extraArgs"]
+                    .as_array()
+                    .unwrap()
+                    .contains(&json!("--allow-insecure-registries")),
+                insecure_registry
+            );
+            let rendered = group["env"].as_array().unwrap();
+            for variable in &variables {
+                let (_, repository) = variable["value"].as_str().unwrap().split_once('/').unwrap();
+                let actual = rendered
+                    .iter()
+                    .find(|entry| entry["name"] == variable["name"])
+                    .unwrap();
+                assert_eq!(actual["value"], format!("{pod_registry}/{repository}"));
+            }
+            let reference = format!("wamn/materializer@sha256:{}", "a".repeat(64));
+            let workload = materializer_workload(
+                &document,
+                "hosts",
+                &format!("{registry}/{reference}"),
+                insecure_registry,
+            )?;
+            assert_eq!(
+                workload["spec"]["template"]["spec"]["service"]["image"],
+                format!("{pod_registry}/{reference}")
+            );
+        }
+        Ok(())
+    }
 
     #[test]
     fn apply_writes_the_registry_reader_secret_of_the_cdc_reader() {

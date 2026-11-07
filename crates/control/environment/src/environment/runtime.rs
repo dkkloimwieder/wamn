@@ -389,8 +389,9 @@ mod tests {
             "org":"example", "project":"orders", "env":"dev", "target":"cloud", "policy":"dev",
             "applications":{"orders":{"packages":["orders"],"current":digest,"hostname":"orders.example"}}
         }))?)?;
-        let shared =
-            crate::environment::ensure::materializer_host_values(&document, 70, 1, 120, None)?;
+        let shared = crate::environment::ensure::materializer_host_values(
+            &document, 70, 1, 120, None, false,
+        )?;
         let group = host_group(&control, &shared, &component_base)?;
         let path = private.path("host.yaml");
         std::fs::write(&path, serde_yaml::to_string(&group)?)?;
