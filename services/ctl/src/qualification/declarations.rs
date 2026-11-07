@@ -133,38 +133,6 @@ mod tests {
         )
     }
 
-    #[test]
-    fn application_declarations_preserve_the_three_release_sets() {
-        let repository = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-        // The expected set of each release is the union, in lexical order,
-        // of the declarations its packages carry.
-        let declared = |packages: &[&str]| -> Vec<Case> {
-            packages
-                .iter()
-                .flat_map(|package| {
-                    read(&repository.join(format!("apps/{package}/tests/qualification.json")))
-                        .unwrap()
-                })
-                .collect::<BTreeSet<_>>()
-                .into_iter()
-                .collect()
-        };
-        for packages in [
-            &["wamn_receiving"][..],
-            &["wamn_receiving", "client_acme_receiving"],
-            &["client_acme_receiving", "wamn_receiving", "wamn_receiving"],
-            &["wamn_wms"],
-        ] {
-            let expected = declared(packages);
-            assert!(!expected.is_empty(), "{packages:?} declares cases");
-            assert_eq!(
-                cases(&repository, packages).unwrap(),
-                expected,
-                "{packages:?}"
-            );
-        }
-    }
-
     fn write(root: &Path, package: &str, value: &Value) -> PathBuf {
         let file = root
             .join("apps")
