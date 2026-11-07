@@ -28,6 +28,20 @@ pub async fn publish(
 ) -> anyhow::Result<ManifestDigest> {
     ensure!(!principal.is_empty(), "publisher principal is empty");
     let (application, roots) = sources(&document, root)?;
+    let mut packages = Vec::with_capacity(roots.len());
+    for root in &roots {
+        // build_package owns current_build/current_generation and builds only stale inputs.
+        let record = build_package(&BuildRequest::new(
+            root,
+            &default_output_root(root),
+            database_url,
+        ))
+        .await?;
+        packages.push(PackageCoordinate::new(
+            record.package.id,
+            record.package.version,
+        )?);
+    }
     let mut platform = platform.clone();
     wamn_environment_control::environment::runtime::resolve_platform(&mut platform, &document.org)
         .await?;
@@ -45,20 +59,6 @@ pub async fn publish(
         .component_artifact_base
         .as_deref()
         .context("set WAMN_COMPONENT_ARTIFACT_BASE for source deployment")?;
-    let mut packages = Vec::with_capacity(roots.len());
-    for root in &roots {
-        // build_package owns current_build/current_generation and builds only stale inputs.
-        let record = build_package(&BuildRequest::new(
-            root,
-            &default_output_root(root),
-            database_url,
-        ))
-        .await?;
-        packages.push(PackageCoordinate::new(
-            record.package.id,
-            record.package.version,
-        )?);
-    }
     let mut publication = PushPackageRequest {
         package: PathBuf::new(),
         registry,
