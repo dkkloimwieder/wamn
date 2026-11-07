@@ -393,17 +393,26 @@ fn pat_release(project: &str) -> anyhow::Result<()> {
     })?;
     secrets.extend(operator_prerequisites(NAMESPACE));
     secrets.push(prerequisite("wamn-oauth", &["key"], NAMESPACE));
-    // platform fixture startup emits the registry Secret, and cert-manager the
-    // environment's NATS certificate, before either application installs its
-    // release.
-    secrets.extend([
-        prerequisite("wamn-registry-pull", &[".dockerconfigjson"], NAMESPACE),
-        prerequisite(
-            &format!("wamn-nats-acme--{project}--dev"),
-            &["ca.crt", "tls.crt", "tls.key"],
-            NAMESPACE,
-        ),
-    ]);
+    // The platform credential owner emits the registry Secret before applications install.
+    let scratch = ScratchRoot::create()?;
+    let cluster = wamn_environment_control::platform::document::ClusterDocument::compile(
+        &Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../deploy/kind/cluster.k"),
+    )?;
+    let auth_file = scratch.path().join("registry.json");
+    std::fs::write(
+        &auth_file,
+        serde_json::to_vec(&json!({"auths":{
+            &cluster.registry:{"username":"platform", "password":"credential"}
+        }}))?,
+    )?;
+    secrets.push(
+        wamn_environment_control::platform::control::registry_pull_secret(&cluster, &auth_file)?,
+    );
+    secrets.push(prerequisite(
+        &format!("wamn-nats-acme--{project}--dev"),
+        &["ca.crt", "tls.crt", "tls.key"],
+        NAMESPACE,
+    ));
     assert_complete(
         &template(&serde_yaml::to_value(values)?, NAMESPACE)?,
         &secrets,

@@ -13,8 +13,37 @@ use super::artifact_plan::SelectedChart;
 use super::bootstrap::{SecretData, secret_text};
 use super::document::{ClusterDocument, Provider};
 
+const REGISTRY_PULL: &str = "wamn-registry-pull";
+const REGISTRY_AUTH_FILE: &str = "/etc/wamn/registry/config.json";
+
+/// Render the platform registry credential for hosts using the local registry Service.
+pub fn registry_pull_secret(document: &ClusterDocument, auth_file: &Path) -> anyhow::Result<Value> {
+    let authority = document.registry.split('/').next().unwrap_or_default();
+    let credential = wamn_package_artifact::registry_credentials::read_registry_credentials(
+        auth_file, authority,
+    )?;
+    let mut config: Value = serde_json::from_slice(&std::fs::read(auth_file)?)?;
+    config["auths"][super::resources::POD_REGISTRY] = json!({
+        "username":credential.username(), "password":credential.password(),
+    });
+    Ok(json!({
+        "apiVersion":"v1", "kind":"Secret", "type":"kubernetes.io/dockerconfigjson",
+        "metadata":{"name":REGISTRY_PULL, "namespace":"hosts"},
+        "stringData":{".dockerconfigjson":serde_json::to_string(&config)?},
+    }))
+}
+
 /// Read bootstrap credentials and copy the operator Secret through the deploy client.
 pub async fn credentials(target: &Target, document: &ClusterDocument) -> anyhow::Result<()> {
+    if document.provider == Provider::Kind {
+        let auth_file = std::env::var_os("WAMN_REGISTRY_AUTH_FILE")
+            .context("set WAMN_REGISTRY_AUTH_FILE for the platform registry credential")?;
+        super::resources::apply_object(
+            target,
+            &registry_pull_secret(document, Path::new(&auth_file))?,
+        )
+        .await?;
+    }
     let credential: SecretData = kubectl::get(
         &target.kubeconfig,
         &target.context,
@@ -159,7 +188,7 @@ fn component_image<'a>(
     }
 }
 
-fn release_values(
+pub(crate) fn release_values(
     document: &ClusterDocument,
     chart: &Value,
     platform_ui: bool,
@@ -170,22 +199,19 @@ fn release_values(
     let group = &mut desired["runtime-operator"]["runtime"]["hostGroups"][0];
     super::oauth::host_group(group, &super::oauth::configuration(document))?;
     if document.provider == Provider::Kind {
-        group["env"]
+        let variables = group["env"].as_array_mut().expect("host environment");
+        variables.retain(|value| value["name"] != "WAMN_REGISTRY_TOKEN_METADATA");
+        variables.push(json!({"name":"WAMN_REGISTRY_AUTH_FILE", "value":REGISTRY_AUTH_FILE}));
+        let volume = group["volumes"]
             .as_array_mut()
-            .expect("host environment")
-            .retain(|value| {
-                !matches!(
-                    value["name"].as_str(),
-                    Some("DOCKER_CONFIG" | "WAMN_REGISTRY_TOKEN_METADATA")
-                )
-            });
-        for field in ["volumes", "volumeMounts"] {
-            group[field]
-                .as_array_mut()
-                .expect("host volumes")
-                .retain(|value| value["name"] != "registry-pull");
-        }
-        // This host loads only the control HTTP component from the local Service.
+            .expect("host volumes")
+            .iter_mut()
+            .find(|volume| volume["name"] == "registry-pull")
+            .expect("registry volume");
+        *volume = json!({"name":"registry-pull", "secret":{
+            "secretName":REGISTRY_PULL, "optional":false,
+            "items":[{"key":".dockerconfigjson", "path":"config.json"}],
+        }});
         group["extraArgs"]
             .as_array_mut()
             .expect("host arguments")
@@ -441,10 +467,17 @@ mod tests {
                 .contains(&json!("--allow-insecure-registries"))
         );
         let variables = group["env"].as_array().unwrap();
-        assert!(!variables.iter().any(|value| matches!(
-            value["name"].as_str(),
-            Some("DOCKER_CONFIG" | "WAMN_REGISTRY_TOKEN_METADATA")
-        )));
+        assert!(
+            !variables
+                .iter()
+                .any(|value| value["name"] == "WAMN_REGISTRY_TOKEN_METADATA")
+        );
+        assert!(
+            variables
+                .iter()
+                .any(|value| value["name"] == "WAMN_REGISTRY_AUTH_FILE"
+                    && value["value"] == REGISTRY_AUTH_FILE)
+        );
         assert!(
             variables
                 .iter()
@@ -475,7 +508,11 @@ mod tests {
                             || volume["secret"]["secretName"] == "operator-acme"))
             );
         }
-        assert!(!mounts.iter().any(|mount| mount["name"] == "registry-pull"));
+        assert!(
+            mounts
+                .iter()
+                .any(|mount| mount["name"] == "registry-pull" && mount["readOnly"] == true)
+        );
 
         let mut cloud = document;
         cloud.provider = Provider::Gcp;

@@ -455,7 +455,42 @@ mod tests {
     async fn application_render_consumes_platform_references_without_control_credentials()
     -> anyhow::Result<()> {
         let private = crate::environment::ensure::PrivateDirectory::create()?;
-        let mut control = crate::platform::control::host_values("example");
+        let cluster: ClusterDocument = serde_json::from_value(json!({
+            "provider":"kind", "project_id":"", "zone":"", "cluster_name":"local",
+            "org":"example", "owner_email":"owner@example.com", "registry":resources::LOCAL_REGISTRY,
+            "buckets":{"web":"", "otel":"", "state":""},
+            "route_hosts":{"control":"control.localhost"}, "resend_from":"owner@example.com"
+        }))?;
+        let auth_file = private.path("registry.json");
+        std::fs::write(
+            &auth_file,
+            serde_json::to_vec(&json!({"auths":{
+                resources::LOCAL_REGISTRY:{"username":"platform", "password":"credential"},
+                "remote.example":{"username":"remote", "password":"remote-credential"}
+            }}))?,
+        )?;
+        let registry_secret = crate::platform::control::registry_pull_secret(&cluster, &auth_file)?;
+        let projected = private.path("projected-registry.json");
+        std::fs::write(
+            &projected,
+            registry_secret["stringData"][".dockerconfigjson"]
+                .as_str()
+                .context("registry projection")?,
+        )?;
+        let credentials = wamn_package_artifact::registry_credentials::read_registry_credentials(
+            &projected,
+            resources::POD_REGISTRY,
+        )?;
+        assert_eq!(credentials.username(), "platform");
+        assert_eq!(credentials.password(), "credential");
+        assert!(
+            wamn_package_artifact::registry_credentials::read_registry_credentials(
+                &projected,
+                "remote.example"
+            )
+            .is_ok()
+        );
+        let mut control = crate::platform::control::release_values(&cluster, &json!({}), false)?;
         let installed = &mut control["runtime-operator"]["runtime"]["hostGroups"][0];
         for entry in installed["env"].as_array_mut().unwrap() {
             if entry["name"] == "WAMN_SESSION_ISSUER" {
@@ -478,6 +513,34 @@ mod tests {
             "format-version":wamn_catalog::SERVING_MANIFEST_FORMAT_VERSION,
             "release":{"packages":[]}, "components":[], "routes":[], "attachments":{}
         }))?;
+        let mut cloud = cluster;
+        cloud.provider = crate::platform::document::Provider::Gcp;
+        cloud.project_id = "project-one".into();
+        cloud.zone = "us-east1-b".into();
+        let cloud_control = crate::platform::control::release_values(&cloud, &json!({}), false)?;
+        let cloud_group = host_group(&cloud_control, &shared, "remote.example/components")?;
+        let cloud_path = private.path("cloud-host.yaml");
+        std::fs::write(&cloud_path, serde_yaml::to_string(&cloud_group)?)?;
+        let (cloud_values, _) = write::release_values(
+            &document,
+            "orders",
+            &manifest,
+            &digest,
+            "remote.example/releases",
+            70,
+            "test",
+            Some(&cloud_path),
+        )?;
+        let cloud_args = cloud_values["runtime-operator"]["runtime"]["hostGroups"][0]["extraArgs"]
+            .as_sequence()
+            .unwrap();
+        assert!(cloud_args.contains(&serde_yaml::Value::String(
+            "--registry-token-metadata".into()
+        )));
+        assert!(!cloud_args.iter().any(|arg| {
+            arg.as_str()
+                .is_some_and(|arg| arg.starts_with("--registry-auth-file="))
+        }));
         // Local components do not redirect an independently published release.
         let remote = "registry.example/custom/releases";
         let (remote_values, _) = write::release_values(
@@ -542,6 +605,39 @@ mod tests {
                 .any(|variable| variable["name"] == "WAMN_CONTROL_URL")
         );
         let arguments = host["args"].as_array().context("host arguments")?;
+        let auth = variables
+            .iter()
+            .find(|entry| entry["name"] == "WAMN_REGISTRY_AUTH_FILE")
+            .context("application registry credential")?["value"]
+            .as_str()
+            .unwrap();
+        assert!(arguments.contains(&json!(format!("--registry-auth-file={auth}"))));
+        assert!(!arguments.contains(&json!("--registry-token-metadata")));
+        let mount = host["volumeMounts"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|mount| auth.starts_with(mount["mountPath"].as_str().unwrap()))
+            .context("registry mount")?;
+        assert_eq!(mount["readOnly"], true);
+        let volume = pod["volumes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|volume| volume["name"] == mount["name"])
+            .context("registry volume")?;
+        assert_eq!(
+            volume["secret"]["secretName"],
+            registry_secret["metadata"]["name"]
+        );
+        assert!(
+            volume["secret"]["items"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|item| item["key"] == ".dockerconfigjson"
+                    && auth.ends_with(item["path"].as_str().unwrap()))
+        );
         assert!(arguments.contains(&json!("--allow-insecure-registries")));
         assert!(arguments.contains(&json!(format!(
             "--release-artifact-base={}/wamn/releases",
@@ -586,6 +682,9 @@ mod tests {
         require_references("hosts", &objects, async |namespace, kind, name| {
             assert_eq!(namespace, "hosts");
             assert!(!internal.contains(&(kind, name)), "{namespace}/{name}");
+            if kind == "Secret" && registry_secret["metadata"]["name"] == name {
+                return Ok(Some(registry_secret.clone()));
+            }
             let data: serde_json::Map<_, _> = references[&(kind.to_owned(), name.to_owned())]
                 .iter()
                 .map(|key| (key.to_owned(), json!("credential")))
