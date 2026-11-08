@@ -696,25 +696,30 @@ async fn assert_concurrent_package_grants_share_one_carrier(url: &str) {
         .await
         .expect("hold the shared tenant grant lock");
 
-    let alpha_url = url.to_owned();
+    let mut worker_url = url::Url::parse(url).expect("parse race worker URL");
+    worker_url
+        .query_pairs_mut()
+        .append_pair("application_name", "schema-grant-race");
+    let alpha_url = worker_url.to_string();
     let alpha_task =
         tokio::spawn(async move { apply_for_env_key(&alpha_url, &alpha, RACE_ENV_KEY).await });
-    let beta_url = url.to_owned();
+    let beta_url = worker_url.to_string();
     let beta_task =
         tokio::spawn(async move { apply_for_env_key(&beta_url, &beta, RACE_ENV_KEY).await });
 
     // Package application takes the database data-access lock first. One
     // package holds it while waiting on the grant carrier, and the other
-    // waits on the data-access lock.
+    // waits outside PostgreSQL without a snapshot.
+    tokio::time::sleep(Duration::from_millis(300)).await;
     tokio::time::timeout(Duration::from_secs(10), async {
         loop {
+            assert!(!alpha_task.is_finished() && !beta_task.is_finished());
             let waiting = observer
                 .query_one(
-                    "SELECT count(*) FILTER (WHERE query LIKE '%wamn.operation-grants:%'), \
-                            count(*) FILTER (WHERE query LIKE '%wamn.package.data-access:%') \
-                       FROM pg_stat_activity \
-                      WHERE datname = current_database() \
-                        AND wait_event_type = 'Lock' AND wait_event = 'advisory'",
+                    "SELECT count(*) FILTER (WHERE wait_event_type='Lock' AND wait_event='advisory'), \
+                            count(*) FILTER (WHERE state='idle' AND backend_xmin IS NULL AND backend_xid IS NULL) \
+                       FROM pg_stat_activity WHERE datname=current_database() \
+                         AND application_name='schema-grant-race'",
                     &[],
                 )
                 .await

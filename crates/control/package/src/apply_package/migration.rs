@@ -127,3 +127,52 @@ pub(super) async fn complete(
     );
     Ok(())
 }
+
+/// Acquire the existing lock key without retaining a snapshot while waiting.
+/// A blocking advisory-lock query can deadlock with CREATE INDEX CONCURRENTLY,
+/// which waits for older snapshots. Each attempt finishes before the client sleeps.
+pub(super) async fn lock_session(
+    client: &Client,
+    transaction_lock_sql: &str,
+    parameters: &[&(dyn tokio_postgres::types::ToSql + Sync)],
+) -> anyhow::Result<()> {
+    let key: i64 = client
+        .query_one(
+            &transaction_lock_sql.replace("pg_advisory_xact_lock", ""),
+            parameters,
+        )
+        .await
+        .context("read package schema lock key")?
+        .get(0);
+    let mut delay = std::time::Duration::from_millis(25);
+    let mut reported_holders = None;
+    loop {
+        if client
+            .query_one("SELECT pg_try_advisory_lock($1)", &[&key])
+            .await
+            .context("try package schema session lock")?
+            .get::<_, bool>(0)
+        {
+            return Ok(());
+        }
+        let holders = client
+            .query(
+                "SELECT pid FROM pg_locks WHERE locktype='advisory' AND granted \
+             AND database=(SELECT oid FROM pg_database WHERE datname=current_database()) \
+             AND classid::bigint=(($1::bigint >> 32) & 4294967295) \
+             AND objid::bigint=($1::bigint & 4294967295) AND objsubid=1 ORDER BY pid",
+                &[&key],
+            )
+            .await
+            .context("read package schema lock holders")?
+            .iter()
+            .map(|row| row.get::<_, Option<i32>>(0))
+            .collect::<Vec<_>>();
+        if reported_holders.as_ref() != Some(&holders) {
+            eprintln!("waiting for package schema lock {key}; PostgreSQL holders: {holders:?}");
+            reported_holders = Some(holders);
+        }
+        tokio::time::sleep(delay).await;
+        delay = (delay * 2).min(std::time::Duration::from_millis(250));
+    }
+}

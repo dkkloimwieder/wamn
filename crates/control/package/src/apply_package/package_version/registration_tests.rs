@@ -842,3 +842,207 @@ async fn resolution_selects_one_package_with_a_shared_migration_path() {
     assert_eq!(after.last().unwrap().outcome, MigrationOutcome::Applied);
     assert_eq!(after.last().unwrap().sha256, beta.last().unwrap().sha256);
 }
+
+#[tokio::test]
+async fn lost_commit_response_retries_without_repeating_sql() -> anyhow::Result<()> {
+    use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+    use tokio::net::{TcpListener, TcpStream};
+    use tokio::time::{Duration, timeout};
+
+    let _lock = wamn_test_postgres::lock();
+    let database = wamn_project_state::test_database::tenant_platform();
+    database.execute(&[
+        wamn_control_provision::sql::ensure_db_owner_role_sql(),
+        "DO $grant$ BEGIN EXECUTE format('GRANT CREATE ON DATABASE %I TO wamn_db_owner', current_database()); END $grant$;",
+    ])?;
+    let scratch = wamn_test_infrastructure::scratch::ScratchRoot::create()?;
+    let root = scratch.path().join("lost-result");
+    crate::test_support::copy_schema_fixture(&root);
+    apply_package(request(&root, database.url())).await?;
+    let manifest = root.join("wamn.json");
+    std::fs::write(
+        &manifest,
+        std::fs::read_to_string(&manifest)?.replace("1.0.0", "2.0.0"),
+    )?;
+    let client = crate::database::connect(database.url()).await?;
+    client
+        .batch_execute("INSERT INTO inventory.dock (dock_code) VALUES ('retained')")
+        .await?;
+    let path = "migrations/0002_note.sql";
+    std::fs::write(
+        root.join(path),
+        "ALTER TABLE inventory.dock ADD COLUMN note text;",
+    )?;
+
+    let listener = TcpListener::bind("127.0.0.1:0").await?;
+    let mut proxy_url = url::Url::parse(database.url())?;
+    let endpoint = proxy_url.socket_addrs(|| None)?[0];
+    proxy_url
+        .set_port(Some(listener.local_addr()?.port()))
+        .unwrap();
+    let proxy = tokio::spawn(async move {
+        let (mut caller, _) = listener.accept().await?;
+        let mut server = TcpStream::connect(endpoint).await?;
+        let (mut caller_read, mut caller_write) = caller.split();
+        let (mut server_read, mut server_write) = server.split();
+        let forward = tokio::io::copy(&mut caller_read, &mut server_write);
+        let lose_commit = async {
+            loop {
+                // PostgreSQL sends a tag and a length before each response body.
+                let tag = server_read.read_u8().await?;
+                let length = server_read.read_u32().await?;
+                let mut body = vec![0; usize::try_from(length - 4)?];
+                server_read.read_exact(&mut body).await?;
+                if tag == b'C' && body == b"COMMIT\0" {
+                    return Ok::<_, anyhow::Error>(());
+                }
+                caller_write.write_u8(tag).await?;
+                caller_write.write_u32(length).await?;
+                caller_write.write_all(&body).await?;
+            }
+        };
+        tokio::select! {
+            result = lose_commit => result,
+            result = forward => anyhow::bail!("caller closed before COMMIT: {result:?}"),
+        }
+    });
+    timeout(
+        Duration::from_secs(15),
+        apply_package_schema(request(&root, proxy_url.as_str()), None),
+    )
+    .await?
+    .expect_err("the proxy discards the committed response");
+    timeout(Duration::from_secs(2), proxy).await???;
+    let before = client
+        .query_one(
+            "SELECT sha256, xmin::text FROM catalog.package_migrations WHERE env_key=$1 AND relative_path=$2",
+            &[&ENV_KEY, &path],
+        )
+        .await?;
+    let result = apply_package_schema(request(&root, database.url()), None).await?;
+    assert_eq!(result.migrations_applied, 0);
+    let after = client
+        .query_one(
+            "SELECT sha256, xmin::text FROM catalog.package_migrations WHERE env_key=$1 AND relative_path=$2",
+            &[&ENV_KEY, &path],
+        )
+        .await?;
+    assert_eq!(before.get::<_, String>(0), after.get::<_, String>(0));
+    assert_eq!(before.get::<_, String>(1), after.get::<_, String>(1));
+    assert_eq!(
+        client
+            .query_one(
+                "SELECT dock_code FROM inventory.dock WHERE note IS NULL",
+                &[]
+            )
+            .await?
+            .get::<_, String>(0),
+        "retained"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn resolution_waits_for_a_running_nontransactional_statement() -> anyhow::Result<()> {
+    use crate::apply_package::read_package_migrations;
+    use tokio::time::{Duration, timeout};
+    use wamn_schema_control::MigrationOutcome;
+
+    let _lock = wamn_test_postgres::lock();
+    let database = wamn_project_state::test_database::tenant_platform();
+    database.execute(&[
+        wamn_control_provision::sql::ensure_db_owner_role_sql(),
+        "DO $grant$ BEGIN EXECUTE format('GRANT CREATE ON DATABASE %I TO wamn_db_owner', current_database()); END $grant$;",
+    ])?;
+    let scratch = wamn_test_infrastructure::scratch::ScratchRoot::create()?;
+    let root = scratch.path().join("running-sql");
+    crate::test_support::copy_schema_fixture(&root);
+    apply_package(request(&root, database.url())).await?;
+    let manifest = root.join("wamn.json");
+    std::fs::write(
+        &manifest,
+        std::fs::read_to_string(&manifest)?.replace("1.0.0", "2.0.0"),
+    )?;
+    let path = "migrations/0002_index.sql";
+    std::fs::write(
+        root.join(path),
+        "-- wamn:no-transaction\nCREATE INDEX CONCURRENTLY dock_code_idx ON inventory.dock (dock_code);",
+    )?;
+    let observer = crate::database::connect(database.url()).await?;
+    let mut blocker_owner = crate::database::connect(database.url()).await?;
+    let blocker = blocker_owner.transaction().await?;
+    blocker
+        .batch_execute("LOCK TABLE inventory.dock IN SHARE MODE")
+        .await?;
+    let mut worker_url = url::Url::parse(database.url())?;
+    worker_url
+        .query_pairs_mut()
+        .append_pair("application_name", "running-schema-worker");
+    let work = request(&root, worker_url.as_str());
+    let worker = tokio::spawn(async move { apply_package_schema(work, None).await });
+    timeout(Duration::from_secs(15), async {
+        loop {
+            assert!(!worker.is_finished());
+            if observer.query_one(
+                "SELECT EXISTS (SELECT FROM pg_stat_activity WHERE application_name='running-schema-worker' AND wait_event_type='Lock')",
+                &[],
+            ).await?.get::<_, bool>(0) {
+                break Ok::<_, anyhow::Error>(());
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    }).await??;
+    let started = read_package_migrations(&observer, ENV_KEY, "wamn_inventory").await?;
+    assert_eq!(started.last().unwrap().outcome, MigrationOutcome::Started);
+    worker_url
+        .query_pairs_mut()
+        .clear()
+        .append_pair("application_name", "schema-resolution-worker");
+    let work = request(&root, worker_url.as_str());
+    let choice = format!("wamn_inventory:{path}=applied").parse()?;
+    let mut resolution =
+        tokio::spawn(async move { apply_package_schema(work, Some(&choice)).await });
+    // Keep the writer blocked while the resolver attempts acquisition and backs off.
+    assert!(
+        timeout(Duration::from_millis(300), &mut resolution)
+            .await
+            .is_err()
+    );
+    timeout(Duration::from_secs(15), async {
+        loop {
+            assert!(!resolution.is_finished());
+            if observer.query_one(
+                "SELECT EXISTS (SELECT FROM pg_stat_activity WHERE application_name='schema-resolution-worker' AND state='idle' AND backend_xmin IS NULL AND backend_xid IS NULL)",
+                &[],
+            ).await?.get::<_, bool>(0) {
+                break Ok::<_, anyhow::Error>(());
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    }).await??;
+    assert_eq!(
+        read_package_migrations(&observer, ENV_KEY, "wamn_inventory").await?,
+        started
+    );
+    blocker.commit().await?;
+    assert_eq!(
+        timeout(Duration::from_secs(15), worker)
+            .await???
+            .migrations_applied,
+        1
+    );
+    assert_eq!(
+        timeout(Duration::from_secs(15), resolution)
+            .await???
+            .migrations_applied,
+        0
+    );
+    let completed = read_package_migrations(&observer, ENV_KEY, "wamn_inventory").await?;
+    assert_eq!(
+        completed.last().unwrap().sha256,
+        started.last().unwrap().sha256
+    );
+    assert_eq!(completed.last().unwrap().outcome, MigrationOutcome::Applied);
+    assert!(observer.query_one("SELECT indisvalid FROM pg_index WHERE indexrelid='inventory.dock_code_idx'::regclass", &[]).await?.get::<_, bool>(0));
+    Ok(())
+}

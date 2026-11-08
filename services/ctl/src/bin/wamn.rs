@@ -137,6 +137,29 @@ mod tests {
     use super::*;
 
     #[test]
+    fn source_publication_refuses_a_caller_supplied_publisher() {
+        for arguments in [
+            vec!["wamn", "deploy", "apps/orders", "--env", "environment.k"],
+            vec![
+                "wamn",
+                "schema",
+                "publish",
+                "apps/orders",
+                "--env",
+                "environment.k",
+            ],
+        ] {
+            assert!(Cli::try_parse_from(&arguments).is_ok());
+            let mut impersonated = arguments;
+            impersonated.extend(["--verified-publisher-principal", "another-user"]);
+            assert_eq!(
+                Cli::try_parse_from(impersonated).unwrap_err().kind(),
+                clap::error::ErrorKind::UnknownArgument
+            );
+        }
+    }
+
+    #[test]
     fn application_commands_require_an_authored_file_and_target() {
         let digest = format!("sha256:{}", "a".repeat(64));
         let Command::Deploy(deploy) = Cli::try_parse_from([

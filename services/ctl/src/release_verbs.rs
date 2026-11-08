@@ -131,10 +131,18 @@ mod tests {
             "one application needs no selector"
         );
         assert_eq!(args.file, PathBuf::from("environment.k"));
-        for removed in ["--tenant", "--org", "--environment"] {
+        for removed in [
+            "--tenant",
+            "--org",
+            "--environment",
+            "--verified-publisher-principal",
+        ] {
             let mut arguments = PUBLISH.to_vec();
             arguments.extend([removed, "unexpected"]);
-            assert!(PublishProbe::try_parse_from(arguments).is_err());
+            assert_eq!(
+                PublishProbe::try_parse_from(arguments).unwrap_err().kind(),
+                clap::error::ErrorKind::UnknownArgument
+            );
         }
         assert!(
             PublishProbe::try_parse_from(&PUBLISH[..4]).is_err(),

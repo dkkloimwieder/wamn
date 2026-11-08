@@ -266,20 +266,13 @@ async fn apply(
     let presented = plan_package_migrations(&package.directory, None, &[])?;
     // Match the transaction lock keys, but retain exclusion across file commits.
     // apply_request closes this dedicated connection on every result.
-    client
-        .query_one(
-            &LOCK_SQL.replace("pg_advisory_xact_lock", "pg_advisory_lock"),
-            &[],
-        )
-        .await
-        .context("lock data access for package SQL")?;
-    client
-        .query_one(
-            &LOCK_PACKAGE_SQL.replace("pg_advisory_xact_lock", "pg_advisory_lock"),
-            &[&env_key, &presented.coordinate.package_id()],
-        )
-        .await
-        .context("lock package family")?;
+    migration::lock_session(client, LOCK_SQL, &[]).await?;
+    migration::lock_session(
+        client,
+        LOCK_PACKAGE_SQL,
+        &[&env_key, &presented.coordinate.package_id()],
+    )
+    .await?;
     let mut tx = migration::begin(client, env_key).await?;
     let package_root = &package.root;
     let directory = &package.directory;
