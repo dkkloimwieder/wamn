@@ -274,7 +274,24 @@ Package migrations and their checksums are part of the immutable package artifac
 
 CloudNativePG owns the database, not application SQL. In deployed kind/GCP environments, **a Kubernetes Job running the WAMN SQL executor is the default**; no developer laptop port-forward is required. `wamn dev` may connect directly to its local database. Record applied SQL only after actual completion; recognize identical retries; report real SQL errors.
 
-A PostgreSQL statement that cannot run in a transaction goes in its own migration file whose first line is exactly `-- wamn:no-transaction`. The marker is part of the checksummed bytes. The SQL operation records that file as `started` in its own committed transaction, runs it, and then records it as `applied`. A `started` record at the next schema apply is an uncertain outcome: the apply refuses and names the file. The developer resolves it explicitly with `wamn schema apply <app> --env <file> --resolve <path>=applied|retry`. WAMN never reports atomicity or exactly-once execution for such a file, and it has no general retry planner. No Atlas operator or additional SQL controller is required.
+Ordinary migration files are transactional: each file commits with its record. A PostgreSQL statement that cannot run in a transaction goes in its own migration file, whose first line is exactly `-- wamn:no-transaction` and which holds exactly one standalone statement. The marker is part of the checksummed bytes.
+
+For a marked file, the SQL operation runs these steps:
+
+1. Commit a `started` record with the package, the path, and the checksum, before the statement runs.
+2. Run the statement outside a transaction.
+3. Record it as `applied` only after the statement succeeds.
+
+An unresolved `started` file never counts as completed schema state. The package fingerprint, status, and later decisions treat it as not applied. The next schema apply refuses and names the package and the file.
+
+The developer resolves it explicitly with `wamn schema apply <app> --env <file> --resolve <package>:<path>=applied|retry`. The package name keeps the resolution unambiguous when two packages use the same path.
+
+- `applied` means that the developer inspected the database and confirms that the statement completed. WAMN records the file as applied and does not run the SQL again.
+- `retry` permits WAMN to run the same checksummed bytes again, after any manual cleanup that the developer did. A failed concurrent index build can leave an invalid index, which the developer removes before a retry. `retry` does not permit a changed file, and WAMN does not repair anything automatically. If the file bytes differ from the recorded checksum, the resolution refuses.
+
+Execution and resolution use the same schema exclusion. The database worker holds a PostgreSQL session-level advisory lock across the transaction boundaries of the operation. So a resolution cannot run while an operation continues after the CLI disconnects. WAMN never reports atomicity or exactly-once execution for a marked file, and it has no automatic retry framework.
+
+No Atlas operator or additional SQL controller is required.
 
 The system database's initial setup is a separate SQL operation. `provision_system::install_control_store` installs the control store and baseline in one transaction. Existing incomplete state reports a repair action. Application schema mode never authorizes a system database reset.
 
