@@ -69,7 +69,6 @@ async fn both_applications_publish_with_exact_dependencies_and_private_state() -
         org: "rest".into(),
         project: "publication".into(),
         environment: "test".into(),
-        verified_publisher_principal: "publisher".into(),
         packages: [
             "wamn_integration",
             "rest_connector",

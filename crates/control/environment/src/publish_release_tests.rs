@@ -53,7 +53,6 @@ fn application_packages_with_different_model_schemas_publish_and_pass_apply_anal
             org: "tenant-a",
             project: "fixture",
             environment: "dev",
-            verified_publisher_principal: "publisher",
             packages: &packages,
             attachments: &BTreeMap::new(),
             environment_is_disposable: false,

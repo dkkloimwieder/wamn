@@ -54,8 +54,6 @@ pub struct PublishArgs {
     pub package: PathBuf,
     #[arg(long)]
     pub env: PathBuf,
-    #[arg(long)]
-    pub verified_publisher_principal: String,
 }
 
 pub async fn run(command: SchemaCommand) -> anyhow::Result<()> {
@@ -197,14 +195,9 @@ async fn publish(args: PublishArgs) -> anyhow::Result<()> {
     let platform = Platform::apply_from_env()?;
     let database_url =
         std::env::var("DATABASE_URL").context("set DATABASE_URL for disposable build databases")?;
-    let (application, digest) = wamn_dev_control::source_deploy::publish(
-        &platform,
-        document,
-        &args.package,
-        args.verified_publisher_principal,
-        &database_url,
-    )
-    .await?;
+    let (application, digest) =
+        wamn_dev_control::source_deploy::publish(&platform, document, &args.package, &database_url)
+            .await?;
     println!(
         "{}",
         serde_json::json!({"application": application, "release": digest.as_str()})

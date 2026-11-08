@@ -71,7 +71,6 @@ pub struct PublishReleaseManifest<'a> {
     pub org: &'a str,
     pub project: &'a str,
     pub environment: &'a str,
-    pub verified_publisher_principal: &'a str,
     pub packages: &'a BTreeSet<PackageCoordinate>,
     pub attachments: &'a BTreeMap<String, ServingAttachment>,
     /// Local development can use rebuilt dependencies after target validation.
@@ -266,8 +265,6 @@ pub struct PublishReleaseRequest {
     pub project: String,
     /// Environment the release is published for.
     pub environment: String,
-    /// Principal already authenticated by the publication boundary.
-    pub verified_publisher_principal: String,
     /// Available exact coordinates for the declared application packages.
     pub packages: Vec<PackageCoordinate>,
 }
@@ -596,7 +593,6 @@ pub fn assemble_local_release(
         org: &args.org,
         project: &args.project,
         environment: &args.environment,
-        verified_publisher_principal: &args.verified_publisher_principal,
         packages: &packages,
         attachments: &attachments,
         environment_is_disposable: true,
@@ -696,10 +692,6 @@ async fn publish_candidate(
         !args.environment.is_empty(),
         "environment must not be empty"
     );
-    ensure!(
-        !args.verified_publisher_principal.is_empty(),
-        "verified-publisher-principal must not be empty"
-    );
     let (_, application) = select_application(&args.applications, args.application.as_deref())?;
     let (coordinates, opened) =
         package_sources::open_application(registry, application, &args.packages).await?;
@@ -717,7 +709,6 @@ async fn publish_candidate(
         org: &args.org,
         project: &args.project,
         environment: &args.environment,
-        verified_publisher_principal: &args.verified_publisher_principal,
         packages: &packages,
         attachments: &attachments,
         environment_is_disposable: false,
@@ -1117,7 +1108,6 @@ mod tests {
                 org: "acme",
                 project: "apps",
                 environment,
-                verified_publisher_principal: "publisher",
                 packages: &packages,
                 attachments: &BTreeMap::new(),
                 environment_is_disposable: false,

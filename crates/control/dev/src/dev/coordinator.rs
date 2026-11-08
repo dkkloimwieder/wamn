@@ -811,7 +811,7 @@ impl ProductionDevStageRunner {
 
     async fn release(&mut self) -> Result<(), ProductionDevStageError> {
         self.clear_after(DevStage::Release);
-        let principal = self.reauthenticate_publisher().await?;
+        self.reauthenticate_publisher().await?;
         let packages = self.package_inputs()?;
         let package_coordinates = packages
             .iter()
@@ -839,7 +839,6 @@ impl ProductionDevStageRunner {
             org: identity.org.clone(),
             project: identity.project.clone(),
             environment: identity.environment.clone(),
-            verified_publisher_principal: principal,
             packages: package_coordinates,
         };
         let local = self.config.local_artifacts();
@@ -1214,7 +1213,7 @@ impl ProductionDevStageRunner {
             })
     }
 
-    async fn reauthenticate_publisher(&self) -> Result<String, ProductionDevStageError> {
+    async fn reauthenticate_publisher(&self) -> Result<(), ProductionDevStageError> {
         let endpoint = self.config.identity_database_endpoint().to_owned();
         let (client, connection) =
             tokio_postgres::connect(self.config.identity_database_url(), NoTls)
@@ -1248,14 +1247,14 @@ impl ProductionDevStageRunner {
             .map_err(|source| {
                 ProductionDevStageError::authentication_unavailable(endpoint.clone(), source.into())
             })?;
-        let authenticated = authenticated.ok_or_else(|| {
+        authenticated.ok_or_else(|| {
             ProductionDevStageError::owner_at(
                 "re-authenticate publisher",
                 endpoint,
                 "the configured PAT was refused; supply a valid credential",
             )
         })?;
-        Ok(authenticated.principal().id().as_str().to_owned())
+        Ok(())
     }
 
     fn clear_after(&mut self, stage: DevStage) {

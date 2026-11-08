@@ -97,7 +97,6 @@ fn fixture() -> Fixture {
         org: "rest".into(),
         project: "publication".into(),
         environment: "test".into(),
-        verified_publisher_principal: "publisher".into(),
         packages: ["wamn_integration", "netsuite", "rest_consumer_fixture"]
             .into_iter()
             .map(|name| PackageCoordinate::new(name, "0.1.1").unwrap())

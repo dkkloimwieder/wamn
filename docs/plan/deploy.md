@@ -76,7 +76,7 @@ This section records the current code. It replaces the historical list of earlie
 | Schema commands | `wamn schema publish`, `wamn schema diff`, and `wamn schema apply` exist. `wamn status` reports schema state. `schema diff` also reads an unpublished source directory. That read-only path stays. Section 4 requires published bytes for deployed SQL execution. |
 | Environment fingerprint | `apply_package/package_version.rs::environment_fingerprint` hashes the project baseline and each package identifier with its physical-schema hash. It excludes code versions and release digests. |
 | Reset preparation | `environment/sql/reset.rs` authorizes, resolves every schema input, and records the inputs in `registry.project_envs.pending_database`. It also reserves a fresh instance suffix. Section 4 keeps the inputs and replaces the new suffix with a same-name reset. |
-| Publisher identity | `wamn deploy --package` and `wamn schema publish` take `--verified-publisher-principal` from the caller. Section 3 replaces this with an identity from authenticated credentials. |
+| Publisher identity | No command accepts a caller-supplied publisher string. Publication records no publisher. The `catalog.releases` row of an applied release carries the record-history stamp of the authenticated deploy actor. |
 | Development loop | `wamn dev` watches selected sources and keeps running code after a failed candidate. Its reset decisions still need the common mode rule. |
 | Platform UI | Local kind deployment does not select the UI. The separate upload path still consumes a local bundle matching its stamped chart. |
 
@@ -127,7 +127,7 @@ Direct kubeconfig and database access is the trusted developer and bootstrap pat
 
 The product target is authenticated WAMN control routes. The CLI and the UI call the same operations through those routes. They do not get separate deployment implementations. Each operation runs as a deployment Job with only the scope that its target needs.
 
-The publisher identity comes from the authenticated credentials of the request. A caller-supplied string, such as today's `--verified-publisher-principal`, does not set it. On the trusted direct path, the identity comes from the credentials that the developer uses for that path.
+The publisher identity comes from the authenticated credentials of the request. A caller-supplied string does not set it. Recording a human publisher comes with the authenticated control routes. On the trusted direct path, the identity comes from the credentials that the developer uses for that path.
 
 A package digest is not a release digest. `--release` always selects an application release containing that application's dependency closure. The publisher, chart, host, CLI, and status readers use the same application boundary. A host receives only its application's release and membership. The chart routes its hostname to its own HTTP workload and Service. Full reuse of a release digest across environments is not required initially.
 

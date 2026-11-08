@@ -19,7 +19,6 @@ struct Journey<'a> {
     sources: &'a [PathBuf; 2],
     file: PathBuf,
     variables: BTreeMap<String, String>,
-    principal: String,
     token: String,
     client: reqwest::Client,
     edge: String,
@@ -152,8 +151,6 @@ impl Journey<'_> {
                         app,
                         "--package",
                         &format!("{app}@{version}"),
-                        "--verified-publisher-principal",
-                        &self.principal,
                         "--artifact-base",
                         &self.variables["WAMN_PACKAGE_ARTIFACT_BASE"],
                         "--insecure-registry",
@@ -307,7 +304,6 @@ pub(super) async fn exercise(run: &Run, password: &str) -> anyhow::Result<()> {
         sources: &sources,
         file,
         variables,
-        principal,
         token,
         client,
         edge: format!("https://alpha.wamn.localhost:{}", edge.port),
@@ -408,11 +404,7 @@ pub(super) async fn exercise(run: &Run, password: &str) -> anyhow::Result<()> {
             journey
                 .command(false, &["deploy"])
                 .arg(&sources[0])
-                .args([
-                    "--verified-publisher-principal",
-                    &journey.principal,
-                    "--env",
-                ])
+                .arg("--env")
                 .arg(&journey.file),
         )
         .await?;

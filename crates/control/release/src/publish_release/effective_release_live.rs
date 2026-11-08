@@ -14,7 +14,6 @@ use super::{
 
 const ENV_KEY: &str = "effective-release-poc--fixture--dev";
 const ENVIRONMENT: &str = "dev";
-const PUBLISHER: &str = "effective-release-poc-publisher";
 const BASE_WASM_ENV: &str = "WAMN_EFFECTIVE_RELEASE_BASE_COMPONENT_WASM";
 const OVERLAY_WASM_ENV: &str = "WAMN_EFFECTIVE_RELEASE_OVERLAY_COMPONENT_WASM";
 /// The fixture version, read from the compiled manifest that authors it. The
@@ -182,7 +181,6 @@ fn base_and_overlay_project_admitted_routes() {
         org: "effective-release-poc",
         project: "fixture",
         environment: ENVIRONMENT,
-        verified_publisher_principal: PUBLISHER,
         packages: &packages,
         attachments: &attachments,
         environment_is_disposable: false,

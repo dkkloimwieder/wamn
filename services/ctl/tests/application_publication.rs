@@ -184,8 +184,6 @@ async fn applications_publish_independently_before_destination_creation() -> any
             .args([
                 "--application",
                 application,
-                "--verified-publisher-principal",
-                "publisher",
                 "--package",
                 &format!("appa@{a_version}"),
                 "--package",

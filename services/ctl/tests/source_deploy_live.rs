@@ -79,7 +79,6 @@ async fn source_builds_only_selected_outputs_and_keeps_selection_on_failure() ->
             .arg(root)
             .arg("--env")
             .arg(&file)
-            .args(["--verified-publisher-principal", "publisher"])
             .env("DATABASE_URL", database.url())
             .env("KUBECONFIG", &kubeconfig)
             .env("WAMN_APPLY_DATABASE_URL", database.url())

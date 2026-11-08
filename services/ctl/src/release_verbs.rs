@@ -20,9 +20,6 @@ pub struct PublishReleaseArgs {
     /// Application to publish; omitted when the map names one application.
     #[arg(long)]
     pub application: Option<String>,
-    /// Principal already authenticated by the publication boundary.
-    #[arg(long)]
-    pub verified_publisher_principal: String,
     /// Exact coordinates of declared application packages. Publication reads
     /// the selected application and expands its dependencies from the registry.
 
@@ -83,7 +80,6 @@ pub async fn publish(args: PublishReleaseArgs) -> anyhow::Result<()> {
             org: environment.org,
             project: environment.project,
             environment: environment.env,
-            verified_publisher_principal: args.verified_publisher_principal,
             packages: args.packages,
         },
         &registry,
@@ -108,11 +104,9 @@ mod tests {
         args: PublishReleaseArgs,
     }
 
-    const PUBLISH: [&str; 9] = [
+    const PUBLISH: [&str; 7] = [
         "publish-release",
         "environment.k",
-        "--verified-publisher-principal",
-        "publisher",
         "--package",
         "orders@1.0.0",
         "--artifact-base",
@@ -143,7 +137,7 @@ mod tests {
             assert!(PublishProbe::try_parse_from(arguments).is_err());
         }
         assert!(
-            PublishProbe::try_parse_from(&PUBLISH[..6]).is_err(),
+            PublishProbe::try_parse_from(&PUBLISH[..4]).is_err(),
             "publish-release parsed with no package artifact base"
         );
         let mut selected = PUBLISH.to_vec();

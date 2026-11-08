@@ -353,7 +353,6 @@ ENV_KEY=dkk--receiving--dev
 WAMN_RELEASE_ARTIFACT_BASE="$RELEASE_BASE" wamn-ctl publish-release \
   deploy/gcp/environments/"$ENV_KEY".k \
   --database-url "$OWNER_URL" --control-database-url "$CONTROL_URL" \
-  --verified-publisher-principal "$PUBLISHER_PRINCIPAL" \
   --run-schema "$RUN_SCHEMA" \
   --package "$PACKAGE_ID@$PACKAGE_VERSION" \
   --artifact-base "$PACKAGE_BASE" --registry-auth-file "$PUSH_DOCKERCONFIG"

@@ -6,7 +6,7 @@
 use std::path::{Path, PathBuf};
 
 use wamn_catalog::edge_bundle::{BUNDLE_FILE_NAME, EdgeBundle, INGRESS_FILE_NAME};
-use wamn_dev_control::dev::edge_bundle::{EdgeScope, PackageRelease, write_package};
+use wamn_dev_control::dev::edge_bundle::{EdgeScope, write_package};
 use wamn_execution_contract::bytes_sha256;
 
 fn repository() -> PathBuf {
@@ -35,13 +35,10 @@ fn the_bundle_pins_the_entry_composed_from_the_route_guest_and_the_application()
         "device",
         &component,
         &route,
-        &PackageRelease {
-            scope: EdgeScope {
-                org: "acme",
-                project: "plant",
-                environment: "dev",
-            },
-            publisher: "0b5c7f3e-9a41-4d2e-8f6a-1c2d3e4f5a6b",
+        &EdgeScope {
+            org: "acme",
+            project: "plant",
+            environment: "dev",
         },
         &out,
     )

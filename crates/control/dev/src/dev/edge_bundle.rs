@@ -94,13 +94,6 @@ pub fn write(
     )
 }
 
-/// The release identity of a bundle that [`write_package`] writes.
-#[derive(Debug)]
-pub struct PackageRelease<'a> {
-    pub scope: EdgeScope<'a>,
-    pub publisher: &'a str,
-}
-
 /// Write the bundle of `package`, whose component `component` is built at
 /// `bytes`, into the new directory `out`, and return the digest of
 /// `edge-release.json`.
@@ -113,13 +106,13 @@ pub fn write_package(
     component: &str,
     bytes: &Path,
     ingress: &Path,
-    release: &PackageRelease<'_>,
+    scope: &EdgeScope<'_>,
     out: &Path,
 ) -> anyhow::Result<String> {
     let template = package
         .join(PACKAGE_COMPONENTS)
         .join(format!("{component}.json.in"));
-    let env_key = release.scope.env_key();
+    let env_key = scope.env_key();
     let document = render_declaration_document(&template, &env_key)?;
     let declaration = TemporaryFile::write(&serde_json::to_vec(&document)?)?;
     let admission = admit_component(AdmitComponentRequest {
@@ -145,10 +138,9 @@ pub fn write_package(
         )]
         .into(),
         application: None,
-        org: release.scope.org.to_owned(),
-        project: release.scope.project.to_owned(),
-        environment: release.scope.environment.to_owned(),
-        verified_publisher_principal: release.publisher.to_owned(),
+        org: scope.org.to_owned(),
+        project: scope.project.to_owned(),
+        environment: scope.environment.to_owned(),
         packages: vec![PackageCoordinate::new(
             admission.package_id(),
             admission.package_version(),

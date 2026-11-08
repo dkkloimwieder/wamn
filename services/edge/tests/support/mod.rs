@@ -22,7 +22,7 @@ use ring::signature::{Ed25519KeyPair, KeyPair as _};
 use serde_json::json;
 use wamn_catalog::edge_bundle::BUNDLE_FILE_NAME;
 use wamn_catalog::{RELEASE_MANIFEST_FILE_NAME, ServingManifest};
-use wamn_dev_control::dev::edge_bundle::{EdgeScope, PackageRelease, write_package};
+use wamn_dev_control::dev::edge_bundle::{EdgeScope, write_package};
 use wamn_edge::config::{
     EdgeConfig, HttpConfig, ReleaseConfig, ScopeConfig, SessionConfig, StoreConfig,
 };
@@ -147,13 +147,10 @@ fn build_bundle() -> PathBuf {
         "device",
         &repository.join("apps/target/wamn/edge_device/components/device.wasm"),
         &ingress,
-        &PackageRelease {
-            scope: EdgeScope {
-                org: ORG,
-                project: PROJECT,
-                environment: ENVIRONMENT,
-            },
-            publisher: PRINCIPAL,
+        &EdgeScope {
+            org: ORG,
+            project: PROJECT,
+            environment: ENVIRONMENT,
         },
         &out,
     )

@@ -23,10 +23,8 @@ pub async fn publish(
     platform: &Platform,
     mut document: EnvironmentDocument,
     root: &Path,
-    principal: String,
     database_url: &str,
 ) -> anyhow::Result<(String, ManifestDigest)> {
-    ensure!(!principal.is_empty(), "publisher principal is empty");
     let (application, roots) = sources(&document, root)?;
     let mut packages = Vec::with_capacity(roots.len());
     for root in &roots {
@@ -83,7 +81,6 @@ pub async fn publish(
             org: document.org,
             project: document.project,
             environment: document.env,
-            verified_publisher_principal: principal,
             packages,
         },
         &publication.registry,

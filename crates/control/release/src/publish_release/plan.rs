@@ -172,10 +172,10 @@ pub(super) fn verify_environment_name(
 pub(super) fn validate_request(
     request: &PublishReleaseManifest<'_>,
 ) -> Result<(), PublishManifestError> {
-    if request.environment.is_empty() || request.verified_publisher_principal.is_empty() {
+    if request.environment.is_empty() {
         return Err(PublishManifestError::new(
             PublishManifestErrorType::Release,
-            "environment and publisher principal are required",
+            "environment is required",
         ));
     }
     if request.packages.is_empty() {

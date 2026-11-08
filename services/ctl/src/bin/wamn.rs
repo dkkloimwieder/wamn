@@ -187,17 +187,10 @@ mod tests {
             panic!("status");
         };
         assert_eq!(status.env, deploy.env);
-        let Command::Deploy(source) = Cli::try_parse_from([
-            "wamn",
-            "deploy",
-            "apps/orders",
-            "--env",
-            "environment.k",
-            "--verified-publisher-principal",
-            "publisher",
-        ])
-        .unwrap()
-        .command
+        let Command::Deploy(source) =
+            Cli::try_parse_from(["wamn", "deploy", "apps/orders", "--env", "environment.k"])
+                .unwrap()
+                .command
         else {
             panic!("deploy source");
         };
@@ -208,7 +201,6 @@ mod tests {
         assert!(source.release.is_none());
         for arguments in [
             vec!["wamn", "deploy", "--env", "environment.k"],
-            vec!["wamn", "deploy", "apps/orders", "--env", "environment.k"],
             vec![
                 "wamn",
                 "deploy",
@@ -217,8 +209,6 @@ mod tests {
                 &digest,
                 "--env",
                 "environment.k",
-                "--verified-publisher-principal",
-                "publisher",
             ],
             vec!["wamn", "rollback", "--env", "environment.k"],
             vec!["wamn", "status"],
@@ -291,8 +281,6 @@ mod tests {
                 "apps/orders",
                 "--env",
                 "environment.k",
-                "--verified-publisher-principal",
-                "publisher",
             ])
             .unwrap()
             .command
@@ -300,7 +288,6 @@ mod tests {
             panic!("schema publication")
         };
         assert_eq!(args.package, std::path::Path::new("apps/orders"));
-        assert_eq!(args.verified_publisher_principal, "publisher");
     }
 
     #[test]
