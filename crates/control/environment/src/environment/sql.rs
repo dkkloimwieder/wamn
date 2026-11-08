@@ -425,17 +425,20 @@ pub async fn run_deployed(
     }
     let output = job::run(&platform.target, directory, &mut job, &mut secrets).await?;
     match operation {
-        Operation::Provision | Operation::Reset { .. } => Ok(Some(
-            serde_json::from_str(&output).context("read the provisioned Database resource")?,
+        Operation::Provision | Operation::Reset { .. } => {}
+        Operation::ApplySchema { .. } | Operation::AdoptSchema => print!("{output}"),
+        Operation::Initialize => ensure::ensure_cdc(platform, document).await?,
+    }
+    database_resource(operation, &output)
+}
+
+/// Provisioning alone returns a new Database resource. Other Jobs return only logs.
+fn database_resource(operation: Operation<'_>, output: &str) -> anyhow::Result<Option<Value>> {
+    match operation {
+        Operation::Provision => Ok(Some(
+            serde_json::from_str(output).context("read the provisioned Database resource")?,
         )),
-        Operation::ApplySchema { .. } | Operation::AdoptSchema => {
-            print!("{output}");
-            Ok(None)
-        }
-        Operation::Initialize => {
-            ensure::ensure_cdc(platform, document).await?;
-            Ok(None)
-        }
+        _ => Ok(None),
     }
 }
 
@@ -490,6 +493,19 @@ mod tests {
     use super::*;
     use serde::Deserialize as _;
     use wamn_platform_identity::nats::PlatformNats;
+
+    #[test]
+    fn reset_completion_does_not_require_a_database_resource() -> anyhow::Result<()> {
+        for candidate in [None, Some(("alpha", "sha256:release"))] {
+            for log in [
+                "",
+                "SQL execution diagnostics\n{\"database\":\"same-name\"}",
+            ] {
+                assert!(database_resource(Operation::Reset { candidate }, log)?.is_none());
+            }
+        }
+        Ok(())
+    }
 
     #[test]
     fn sql_job_keeps_credentials_for_other_registries() -> anyhow::Result<()> {

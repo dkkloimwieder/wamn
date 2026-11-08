@@ -1162,7 +1162,7 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
             .await
             .is_err()
     );
-    let pending = sql::reset::prepare(
+    sql::reset::prepare(
         &platform,
         &document,
         "a",
@@ -1170,9 +1170,12 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
         system.url(),
     )
     .await?;
+    let pending: serde_json::Value = admin.query_one(
+        "SELECT pending_database FROM registry.project_envs WHERE org='acme' AND project='apps' AND env='dev'", &[],
+    ).await?.get(0);
     let mut changed_policy = document.clone();
     changed_policy.policy = "unprovisioned-policy".into();
-    let retried = sql::reset::prepare(
+    sql::reset::prepare(
         &platform,
         &changed_policy,
         "a",
@@ -1180,6 +1183,9 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
         system.url(),
     )
     .await?;
+    let retried: serde_json::Value = admin.query_one(
+        "SELECT pending_database FROM registry.project_envs WHERE org='acme' AND project='apps' AND env='dev'", &[],
+    ).await?.get(0);
     assert_eq!(pending, retried);
     let installed_before = sql::schema::state(&platform, &document).await?;
     let old_identity = installed_before.initialization_identity;
@@ -1221,9 +1227,8 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
     assert!(!sql::reset::needs_recreation(&platform, &document).await?);
     // A committed earlier package survives retry, including rows inserted after it committed.
     candidate_admin.batch_execute("DROP EVENT TRIGGER interrupt_beta; INSERT INTO a.data(id,value) VALUES (123,'committed-before-retry')").await?;
-    let first = sql::reset::initialize(&platform, &document, system.url()).await?;
-    let second = sql::reset::initialize(&platform, &document, system.url()).await?;
-    assert_eq!(first["database"], second["database"]);
+    sql::reset::initialize(&platform, &document, system.url()).await?;
+    sql::reset::initialize(&platform, &document, system.url()).await?;
     assert_eq!(
         candidate_admin
             .query_one("SELECT value FROM a.data WHERE id=123", &[])
@@ -1285,7 +1290,10 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
     for selection in stopped.applications.values_mut() {
         selection.current = wamn_environment_control::environment::document::DeclaredRelease::None;
     }
-    let retained = sql::reset::prepare_retained(&platform, &stopped, system.url()).await?;
+    sql::reset::prepare_retained(&platform, &stopped, system.url()).await?;
+    let retained: serde_json::Value = admin.query_one(
+        "SELECT pending_database FROM registry.project_envs WHERE org='acme' AND project='apps' AND env='dev'", &[],
+    ).await?.get(0);
     assert_ne!(
         retained["initialization_identity"],
         pending["initialization_identity"]

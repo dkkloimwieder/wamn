@@ -429,7 +429,7 @@ pub(crate) async fn record_reset(
     triple: &Triple,
     active: &str,
     inputs: &serde_json::Value,
-) -> anyhow::Result<serde_json::Value> {
+) -> anyhow::Result<()> {
     let tx = super::provisioning_transaction(client).await?;
     let row = tx
         .query_opt(
@@ -448,12 +448,11 @@ pub(crate) async fn record_reset(
         "active database changed during preparation"
     );
     let pending: Option<serde_json::Value> = row.get(2);
-    let pending = if let Some(pending) = pending {
+    if let Some(pending) = pending {
         anyhow::ensure!(
             pending["inputs"] == *inputs,
             "pending database has different immutable inputs"
         );
-        pending
     } else {
         let identity: String = tx
             .query_one("SELECT clock_timestamp()::text", &[])
@@ -464,10 +463,9 @@ pub(crate) async fn record_reset(
             "UPDATE registry.project_envs SET pending_database=$4 WHERE org=$1 AND project=$2 AND env=$3",
             &[&triple.org, &triple.project, &triple.env.as_str(), &pending],
         ).await?;
-        pending
-    };
+    }
     tx.commit().await?;
-    Ok(pending)
+    Ok(())
 }
 
 /// Complete the reset after SQL, CDC and event disposal, before writers resume.

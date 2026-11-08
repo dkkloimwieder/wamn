@@ -34,7 +34,7 @@ pub async fn prepare(
     application: &str,
     release: &str,
     admin_url: &str,
-) -> anyhow::Result<Value> {
+) -> anyhow::Result<()> {
     let (release, selected) =
         schema::release_candidates(platform, document, application, Some(release)).await?;
     let state = schema::state(platform, document).await?;
@@ -70,7 +70,7 @@ pub async fn prepare_retained(
     platform: &Platform,
     document: &EnvironmentDocument,
     admin_url: &str,
-) -> anyhow::Result<Value> {
+) -> anyhow::Result<()> {
     let state = schema::state(platform, document).await?;
     ensure!(
         state.disposable == Some(true),
@@ -124,7 +124,7 @@ async fn prepare_inputs(
     inputs: Inputs,
     expected: Option<&str>,
     admin_url: &str,
-) -> anyhow::Result<Value> {
+) -> anyhow::Result<()> {
     ensure!(
         inputs.project_baseline == wamn_control_provision::schema_baseline::project_sha256(),
         "SQL image differs from installed project substrate"
@@ -142,14 +142,12 @@ async fn prepare_inputs(
         Some(database(document, &active).as_str()) == expected,
         "active database changed during input resolution"
     );
-    let pending: Pending = serde_json::from_value(
-        registry::record_reset(&mut system, &document.triple(), &active, &inputs).await?,
-    )?;
+    registry::record_reset(&mut system, &document.triple(), &active, &inputs).await?;
     connect(admin_url)
         .await?
         .batch_execute(&crate::provision_project_env::role_posture_sql())
         .await?;
-    Ok(serde_json::to_value(pending)?)
+    Ok(())
 }
 
 fn database(document: &EnvironmentDocument, instance: &str) -> String {
@@ -247,7 +245,7 @@ pub async fn initialize(
     platform: &Platform,
     document: &EnvironmentDocument,
     admin_url: &str,
-) -> anyhow::Result<Value> {
+) -> anyhow::Result<()> {
     let pending = read_pending(platform, document).await?;
     ensure!(
         pending.inputs.project_baseline
@@ -368,9 +366,7 @@ pub async fn initialize(
         )
         .await?;
     }
-    Ok(
-        serde_json::json!({"database":database, "initialization_identity":pending.initialization_identity}),
-    )
+    Ok(())
 }
 
 /// Resolve through the installed SQL image before stopping any workload.

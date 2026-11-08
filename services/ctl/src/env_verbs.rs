@@ -186,18 +186,23 @@ pub async fn run(command: EnvCommand) -> anyhow::Result<()> {
                 serde_json::from_slice(&std::fs::read(&args.database)?)?;
             let lock = expected.lock(&platform, &document, true).await?;
             let admin = std::env::var("WAMN_SYSTEM_ADMIN_URL").context("SQL administrator URL")?;
-            let result = if expected.pending.is_some() {
-                environment::sql::reset::initialize(&platform, &document, &admin).await?
+            if expected.pending.is_some() {
+                environment::sql::reset::initialize(&platform, &document, &admin).await?;
             } else if let Some((application, release)) =
                 args.application.as_deref().zip(args.release.as_deref())
             {
-                environment::sql::reset::prepare(&platform, &document, application, release, &admin)
-                    .await?
+                environment::sql::reset::prepare(
+                    &platform,
+                    &document,
+                    application,
+                    release,
+                    &admin,
+                )
+                .await?;
             } else {
-                environment::sql::reset::prepare_retained(&platform, &document, &admin).await?
-            };
+                environment::sql::reset::prepare_retained(&platform, &document, &admin).await?;
+            }
             lock.release().await;
-            println!("{}", serde_json::to_string(&result)?);
         }
         EnvCommand::SchemaAdopt(args) => {
             let document = sql_document(&args.file)?;
