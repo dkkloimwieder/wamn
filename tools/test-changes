@@ -772,9 +772,12 @@ wamn_root_test() {
       any(.targets[]; .workspace == "root" and .package == $package and .target == $target
         and .tier != "kind" and (.tier | IN($tiers | split(",") | .[])))' \
       <<<"$WAMN_POLICY" >/dev/null || continue
-    wamn_step "root ignored $name" "$WAMN_TOOL_DIRECTORY/require-test-result" \
-      --expected-test "$name" "$executable" "$name" --ignored --exact --test-threads=1 |
-      tee -a "$result" || exit_code=1
+    (
+      cd -- "${manifest%/*}" || exit 1
+      export CARGO_MANIFEST_DIR="${manifest%/*}" CARGO_MANIFEST_PATH="$manifest"
+      wamn_step "root ignored $name" "$WAMN_TOOL_DIRECTORY/require-test-result" \
+        --expected-test "$name" "$executable" "$name" --ignored --exact --test-threads=1
+    ) | tee -a "$result" || exit_code=1
   done < <(python3 - "$result" "$WAMN_RUN_SUITES" <(jq '[.packages[] | {manifest_path, name}]' <<<"${WAMN_METADATA[0]}") <<'PYTHON'
 import json
 import os

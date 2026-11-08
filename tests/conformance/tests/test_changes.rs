@@ -1838,6 +1838,82 @@ fn an_unknown_path_keeps_one_default_command_per_workspace() {
 }
 
 #[test]
+fn the_root_runs_ignored_cases_from_their_package_directory() {
+    let serial = NEXT_DIRECTORY.fetch_add(1, Ordering::Relaxed);
+    let directory =
+        std::env::temp_dir().join(format!("wamn root package {} {serial}", std::process::id()));
+    let fixture = Fixture {
+        root: directory.join("package"),
+        directory,
+    };
+    fixture.write(
+        "Cargo.toml",
+        "[package]\nname = \"runner-relative-input\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+    );
+    fixture.write("input.txt", "package input\n");
+    fixture.write(
+        "src/lib.rs",
+        r#"
+#[test]
+#[ignore = "requires: bin:cargo"]
+fn reads_package_input() {
+    use std::io::Write as _;
+    let mut runs = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(concat!(env!("CARGO_MANIFEST_DIR"), "/case-runs"))
+        .unwrap();
+    writeln!(runs, "executed").unwrap();
+    assert_eq!(std::fs::read_to_string("input.txt").unwrap(), "package input\n");
+    assert_eq!(std::env::var("CARGO_MANIFEST_DIR").unwrap(), env!("CARGO_MANIFEST_DIR"));
+    assert_eq!(std::env::var("CARGO_MANIFEST_PATH").unwrap(), env!("CARGO_MANIFEST_PATH"));
+}
+"#,
+    );
+    let output = Command::new("bash")
+        .args([
+            "-c",
+            r#"
+set -euo pipefail
+WAMN_TOOL_DIRECTORY="$1/tools"
+WAMN_CARGO="$CARGO"
+source "$WAMN_TOOL_DIRECTORY/require-test-result"
+source <(sed -n '/^wamn_step() {$/,/^}$/p; /^wamn_root_test() {$/,/^}$/p' "$WAMN_TOOL_DIRECTORY/test-changes")
+WAMN_METADATA=("$("$WAMN_CARGO" metadata --manifest-path "$2" --offline --format-version 1)")
+WAMN_POLICY="$(jq '{suites: [], targets: [.packages[] | .name as $package | .targets[] | {workspace: "root", package: $package, target: (.kind[0] + ":" + .name), tier: "contract"}]}' <<<"${WAMN_METADATA[0]}")"
+WAMN_RUN_SUITES='[]'
+WAMN_SUITES=''
+WAMN_TIERS=contract
+WAMN_COMMAND=run
+label=root
+packages=runner-relative-input
+targets=''
+failed=0
+wamn_root_test test --manifest-path "$2" --locked --offline --no-fail-fast
+"#,
+            "root-package-fixture",
+        ])
+        .arg(repository_root())
+        .arg(fixture.root.join("Cargo.toml"))
+        .current_dir(&fixture.directory)
+        .output()
+        .expect("run the root runner with real Cargo");
+    assert!(
+        output.status.success(),
+        "root runner failed:\n{}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        fs::read_to_string(fixture.root.join("case-runs"))
+            .unwrap()
+            .lines()
+            .count(),
+        1
+    );
+}
+
+#[test]
 fn the_root_runs_control_route_cases_after_the_nats_input() {
     // wamn-inmae.10: the nats preparation supplies these control_route_live cases.
     let fixture = Fixture::new();
