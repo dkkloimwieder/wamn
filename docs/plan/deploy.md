@@ -75,7 +75,7 @@ This section records the current code. It replaces the historical list of earlie
 | Schema records | `catalog.packages` keeps one row per package: an immutable baseline fingerprint, the current fingerprint, and the current schema source. `catalog.package_migrations` keeps checksums per package, not per code version. |
 | Schema commands | `wamn schema publish`, `wamn schema diff`, and `wamn schema apply` exist. `wamn status` reports schema state. `schema diff` also reads an unpublished source directory. Section 4 replaces that path for deployed targets. |
 | Environment fingerprint | `apply_package/package_version.rs::environment_fingerprint` hashes the project baseline and each package identifier with its physical-schema hash. It excludes code versions and release digests. |
-| Reset preparation | `environment/sql/reset.rs` reserves a fresh instance suffix and records it in `registry.project_envs.pending_database`. Section 4 replaces this with a same-name reset. |
+| Reset preparation | `environment/sql/reset.rs` authorizes, resolves every schema input, and records the inputs in `registry.project_envs.pending_database`. It also reserves a fresh instance suffix. Section 4 keeps the inputs and replaces the new suffix with a same-name reset. |
 | Publisher identity | `wamn deploy --package` and `wamn schema publish` take `--verified-publisher-principal` from the caller. Section 3 replaces this with an identity from authenticated credentials. |
 | Development loop | `wamn dev` watches selected sources and keeps running code after a failed candidate. Its reset decisions still need the common mode rule. |
 | Platform UI | Local kind deployment does not select the UI. The separate upload path still consumes a local bundle matching its stamped chart. |
@@ -209,21 +209,40 @@ A deployed reset is environment-wide. It replaces the whole project-environment 
 The reset runs these steps in order:
 
 1. List every affected application, including stopped applications whose installed schemas the environment keeps.
-2. Resolve the complete SQL and permissions for the project substrate and every installed application. If an input is missing, stop before any change.
-3. Hold the environment lock so that no application deployment runs at the same time.
-4. Stop the affected application workloads and the event processing that writes to the database.
-5. Ensure the Database `absent`, and wait for CNPG to complete the deletion.
-6. Ensure the Database `present` under the same name, and wait for CNPG to complete the creation.
-7. Restore the complete SQL and permissions through the existing SQL Job.
-8. Rebuild the CDC state through its existing owner.
-9. Discard only this environment's obsolete queued events through the existing broker owner.
-10. Resume the workloads with their unchanged release selections.
+2. Resolve the complete SQL and permissions for the project substrate and every installed application. Unchanged applications use their recorded schema sources, even when their running code selects an older release. The project substrate comes from the installed platform artifact set, independently of the invoking CLI version. If an input is missing, stop before any change.
+3. Record the resolved inputs on the environment's system registry record, outside the project database. Step 5 destroys the project database and its `catalog.packages` records, so a retry must read its inputs from the registry record.
+4. Hold the environment lock so that no application deployment runs at the same time.
+5. Stop the affected application workloads and the event processing that writes to the database.
+6. Ensure the Database `absent`, and wait for CNPG to complete the deletion. Removing a retaining Database resource alone does not delete its database, so the reset uses the `ensure` field, not resource deletion.
+7. Ensure the Database `present` under the same name, and wait for CNPG to complete the creation.
+8. Restore the complete SQL and permissions through the existing SQL Job, from the recorded inputs.
+9. Rebuild the required bindings, caches, and CDC state through their existing owners. Do not copy arbitrary old rows, and do not reconstruct manually created workflows without an existing source.
+10. Discard only this environment's obsolete queued events through the existing broker owner. An old database event must not create a run against the recreated database.
+11. Resume the workloads with their unchanged release selections. Both alpha and beta can restart, but beta's selected executable stays unchanged when only alpha requests a release change.
 
 The reset keeps every application's release selection. It records a fresh database initialization identity, so that status and later decisions can tell the new database from the old one.
 
-The command states the downtime and the data loss before it starts. All affected applications stop until step 10. The data loss cannot be reversed: every application row, workflow definition created by hand, queued run, and other database-local state is gone. Authored seeds run only when the initialization recipe explicitly includes them.
+The command states the downtime and the data loss before it starts. All affected applications stop until step 11. The data loss cannot be reversed: every application row, workflow definition created by hand, queued run, and other database-local state is gone. The command reports these losses. Authored seeds run only when the initialization recipe explicitly includes them.
 
-If the reset fails after step 5, the old data is already gone. A retry runs the same steps again on the same database name. It does not create another candidate, and it does not rotate any application's `previous` selection.
+If the reset fails before step 6, the old database and the running applications stay usable. If it fails after step 6, the old data is already gone. The command reports the completed steps and the applications that did not resume. A retry reads the recorded inputs and runs the remaining steps on the same database name. It does not create another candidate, and it does not rotate any application's `previous` selection.
+
+### Reconciliation with the committed replacement-instance code
+
+DEP3-04 (`8b7758c72`) implemented reset preparation for a fresh replacement instance. The same-name decision changes the target of the reset, not its inputs. The committed code is kept, changed, or deleted as follows:
+
+| Committed part | Disposition | Reason |
+|---|---|---|
+| Authorization against `registry.project_envs.disposable` | Keep | The rule is unchanged. |
+| Candidate resolution and validation (`schema::reset_candidates`, `validate_candidates`) | Keep | Step 2 needs every input before any change. |
+| Check that the SQL image matches the installed project substrate | Keep | Step 2 takes the substrate from the installed platform artifact set. |
+| `registry.project_envs.pending_database` with the resolved inputs | Keep, and change its meaning | Step 3 needs the inputs outside the project database for a retry. It holds the reset inputs and the fresh initialization identity, not a new instance name. |
+| Reservation of a new instance suffix (`reserve_database`) | Delete | The database name does not change. |
+| Rendering of a second candidate Database resource | Delete | CNPG `ensure` on the existing resource replaces it. |
+| Active-instance checks that compare the pending and the active suffix | Delete | There is one database name. |
+| `reset::initialize` through the SQL Job | Keep, and target the same name | Step 8 uses it with the recorded inputs. |
+| Retired-instance cleanup (planned, not committed) | Not built | No old instance remains. |
+
+The trade-off is explicit. A replacement instance kept the old database usable until the switch. The same-name reset loses the old data at step 6 and has a longer interruption. Steps 2 and 3 move every refusal before step 6, which keeps the data while an input is missing. If kind measurements show the interruption to be unworkable, reconsider the implementation without changing developer-facing mode semantics.
 
 Other-application isolation applies to code-only deployment. It does not apply to a shared-database reset, which affects every application in the environment by design.
 
@@ -596,7 +615,7 @@ Epic 3 extends the existing resource and SQL owners with these operations:
 |---|---|---|---|
 | Schema configuration | Shared mode and recorded disposable defaults | Conflicting reset rules and stale implementation tasks | Selection writes preserve mode and other applications |
 | Schema records and decisions | Installed schema sources, checksums, explicit schema input, and mode decisions | Immutable-root assumptions that prevent independent schema changes | Code selection and installed SQL advance independently |
-| Disposable reset | Environment-wide reset with CNPG ensure absent then present under the same name, writer stop and resume, CDC rebuild, and old-event disposal | Fresh-instance replacement, pending instance records, retired-instance cleanup, and local reset decisions based only on edited migration history | Schema-changing deploy resets the whole authorized database |
+| Disposable reset | Environment-wide reset with CNPG ensure absent then present under the same name, writer stop and resume, CDC rebuild, and old-event disposal | New instance-name reservation, a second candidate Database, retired-instance cleanup, and local reset decisions based only on edited migration history | Schema-changing deploy resets the whole authorized database |
 | Migration and adoption | Cross-version SQL application, nontransactional outcomes, and reversible mode switches | Implicit SQL during code activation | Explicit SQL preserves application selection and supports retries |
 | Selection and identity | `previous` from the last successful apply under the application lock, explicit rollback target, publisher identity from credentials | File-only rotation and caller-supplied publisher strings | A stale checkout cannot lose a rollback target |
 | Recovery and acceptance | Same-name reset retry and focused product-command journeys | Duplicate installers or test-owned deployment steps | Reset, migrate, and code-only behavior work through product commands |
