@@ -8,6 +8,9 @@ An interface can be a product Rust function, database executor, component, HTTP 
 The expected result comes from the accepted behavior, not the implementation under test.
 Name only the boundary exercised: compilation is not execution, a renderer is not an operator, and message delivery is not workflow admission.
 
+Repository lints check dependency graphs and compiler or tool results, never hand-written module rosters or source markers.
+Test a requirement through behavior at its owning interface, or record it as untested.
+
 [CLAUDE.md](../../CLAUDE.md) owns the five test rules and integration selection.
 [Mutation tests](mutation.md) owns deliberate-defect evaluation; [test results](evidence.md) owns reporting.
 [Running tests](../operations/running-tests.md) owns commands, prerequisites, timing, and cleanup.

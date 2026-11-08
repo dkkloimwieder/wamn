@@ -10,8 +10,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 const TOOL: &str = "tools/repo-lint";
 const COMPONENT_MANIFEST: &str = "apps/Cargo.toml";
 const NO_STD_MANIFEST: &str = "apps/platform/no-std/Cargo.toml";
-const LEG_LABELS: [&str; 13] = [
-    "connection HTTP scoped retained clients",
+const LEG_LABELS: [&str; 12] = [
     "root rustfmt",
     "components rustfmt",
     "no-std rustfmt",
@@ -54,12 +53,11 @@ if [[ "${1-}" == tree ]]; then
       fi
       ;;
     *" -p wamn-engine "*)
-      printf '%s\n' wamn-engine anyhow async-trait boon data-encoding hex hyper opentelemetry serde serde_json sha2 tokio tracing tracing-opentelemetry wamn-catalog wamn-component-policy wamn-event-wire wamn-execution-contract wamn-project-state wamn-run-state wamn-session wash-runtime wasmparser wasmtime wasmtime-wasi wasmtime-wasi-http
-      if [[ " $* " != *" --prune wash-runtime "* && " $* " != *" --depth 1 "* ]]; then
+      printf '%s\n' wamn-engine
+      if [[ " $* " != *" --prune wash-runtime "* ]]; then
         printf '%s\n' async-nats hyper-rustls hyper-util opentelemetry-otlp redis tonic
       fi
       ;;
-    *" -p wamn-host "*) printf '%s\n' wamn-host wamn-workflow ;;
     *" -p wamn-runtime "*) printf '%s\n' wamn-runtime ;;
     *" -p wamn-execution-host "*) printf '%s\n' wamn-execution-host ;;
     *) exit 64 ;;
@@ -167,19 +165,6 @@ fn repo_lint_uses_cargo_owned_workspace_selection_from_any_directory() {
     let tool = root.join(TOOL);
     let metadata = fs::metadata(&tool).expect("read repo-lint metadata");
     assert_ne!(metadata.permissions().mode() & 0o111, 0);
-    let source = fs::read_to_string(&tool).expect("read repo-lint source");
-    // wamn-0h0g.15.139: the needle is `eval ` with the trailing space, not bare
-    // `eval`. The target is the bash builtin, which always takes an argument and
-    // so is always followed by whitespace. Bare, the needle is a prefix of
-    // ordinary English — `evaluate`, `evaluation`, `re-evaluate` — so one comment
-    // in this shell tool saying it re-evaluates its leg list would have failed a
-    // guard about executing argv directly. That is the `flowrunner` shape of
-    // wamn-0h0g.15.131. Do not re-broaden this to the bare word.
-    assert!(
-        !source.contains("eval "),
-        "repo-lint must execute argv directly"
-    );
-
     let directory = TestDirectory::new();
     executable(&directory.path("fake cargo"), FAKE_CARGO);
     let output = run_tool(&root, &directory, &[]);
@@ -210,10 +195,8 @@ fn repo_lint_uses_cargo_owned_workspace_selection_from_any_directory() {
         ("wamn-edge", vec!["--target", "aarch64-unknown-linux-gnu"]),
         ("wamn-engine", vec!["--prune", "wash-runtime"]),
         ("wamn-engine", vec![]),
-        ("wamn-engine", vec!["--depth", "1"]),
         ("wamn-runtime", vec![]),
         ("wamn-execution-host", vec![]),
-        ("wamn-host", vec![]),
     ] {
         let mut invocation = vec![
             root_path.clone(),
@@ -227,8 +210,8 @@ fn repo_lint_uses_cargo_owned_workspace_selection_from_any_directory() {
         invocation.extend(["--prefix", "none", "--locked", "--offline"].map(str::to_owned));
         expected_dependencies.push(invocation);
     }
-    assert_eq!(&invocations[10..20], expected_dependencies);
-    let other_invocations = [&invocations[..10], &invocations[20..]].concat();
+    assert_eq!(&invocations[10..18], expected_dependencies);
+    let other_invocations = [&invocations[..10], &invocations[18..]].concat();
     assert_eq!(
         other_invocations,
         vec![
@@ -368,7 +351,7 @@ fn repo_lint_uses_cargo_owned_workspace_selection_from_any_directory() {
     );
     let rustflags = fs::read_to_string(directory.path("cargo calls.rustflags"))
         .expect("read fake Cargo RUSTFLAGS log");
-    let mut expected_flags = vec![""; 21];
+    let mut expected_flags = vec![""; 19];
     expected_flags[5] = "-C panic=abort";
     expected_flags[8] = "-C panic=abort";
     assert_eq!(rustflags.lines().collect::<Vec<_>>(), expected_flags);
@@ -389,7 +372,7 @@ fn repo_lint_reports_every_leg_when_an_early_leg_fails() {
     assert_eq!(output.status.code(), Some(1));
     assert_eq!(
         captured_invocations(&directory.path("cargo calls")).len(),
-        21,
+        19,
         "an early failure must not hide a later Cargo leg"
     );
     assert_leg_statuses(&output, Some(("root rustfmt", 23)));
@@ -402,14 +385,14 @@ fn repo_lint_returns_failure_when_the_last_leg_fails() {
     executable(&directory.path("fake cargo"), FAKE_CARGO);
 
     let output = tool_command(&root, &directory)
-        .env("WAMN_FAKE_CARGO_FAIL_AT", "21")
+        .env("WAMN_FAKE_CARGO_FAIL_AT", "19")
         .arg("run")
         .output()
         .expect("run failing repo-lint tool");
     assert_eq!(output.status.code(), Some(1));
     assert_eq!(
         captured_invocations(&directory.path("cargo calls")).len(),
-        21,
+        19,
         "the final Cargo leg must run"
     );
     assert_leg_statuses(&output, Some(("repository policy", 23)));
@@ -428,7 +411,6 @@ fn dry_run_is_side_effect_free_and_invalid_commands_are_refused() {
     assert!(plan.contains("connection-http-native-clippy: RUSTFLAGS=-C\\ panic=abort"));
     assert!(plan.contains("no-std-native-clippy: RUSTFLAGS=-C\\ panic=abort"));
     for label in [
-        "connection-http-scope:",
         "root-rustfmt:",
         "components-rustfmt:",
         "no-std-rustfmt:",
