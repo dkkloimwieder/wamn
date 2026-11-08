@@ -1164,11 +1164,23 @@ mod tests {
         state.installed_environment = changed.candidate_environment;
         let mut next = candidate("alpha", "2.0.0");
         next.fingerprint = "changed-schema".into();
-        assert!(
-            !plan(&document, "alpha", None, &[next], &state)
-                .unwrap()
-                .requires_reset()
-        );
+        // Changing mode in either direction only changes the plan. Matching
+        // installed inputs need neither recreation nor another migration.
+        for mode in [SchemaMode::Reset, SchemaMode::Migrate, SchemaMode::Reset] {
+            document.schema.mode = Some(mode);
+            let matched = plan(
+                &document,
+                "alpha",
+                None,
+                std::slice::from_ref(&next),
+                &state,
+            )
+            .unwrap();
+            assert_eq!(matched.mode, mode);
+            assert_eq!(matched.candidate_environment, state.installed_environment);
+            assert!(!matched.requires_reset());
+            assert!(matched.packages["alpha"].pending.is_empty());
+        }
         let fresh = plan(&document, "alpha", None, &[alpha], &State::default()).unwrap();
         assert!(!fresh.requires_reset());
     }

@@ -207,6 +207,8 @@ async fn explicit_sql_advances_across_versions_without_selecting_code() {
             .get::<_, String>(0),
         "retained-migrated"
     );
+    // A retry must preserve the recorded paths, checksums and outcomes as well as the data.
+    assert_eq!(state(&mut client).await, installed);
     let data_path = next.join("migrations/0002_dock_note.sql");
     let data_sql = std::fs::read_to_string(&data_path).unwrap();
     std::fs::write(

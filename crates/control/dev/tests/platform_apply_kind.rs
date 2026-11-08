@@ -67,28 +67,28 @@ impl Drop for Run {
 // The cluster document is the one target input authorized by wamn-alrvy.18.
 // The namespace annotation records consent to use the platform as disposable.
 #[tokio::test]
-#[ignore = "requires: bin:kind, bin:docker, bin:kubectl, bin:helm, bin:openssl"]
+#[ignore = "requires: bin:kind, bin:docker, bin:kubectl, bin:helm, bin:openssl, bin:script"]
 async fn application_deploy_kind() -> anyhow::Result<()> {
     wamn_test_postgres::require_ignored_prerequisites(
-        "requires: bin:kind, bin:docker, bin:kubectl, bin:helm, bin:openssl",
+        "requires: bin:kind, bin:docker, bin:kubectl, bin:helm, bin:openssl, bin:script",
     );
     focused(application_deploy::Case::Application).await
 }
 
 #[tokio::test]
-#[ignore = "requires: bin:kind, bin:docker, bin:kubectl, bin:helm, bin:openssl"]
+#[ignore = "requires: bin:kind, bin:docker, bin:kubectl, bin:helm, bin:openssl, bin:script"]
 async fn sql_job_kind() -> anyhow::Result<()> {
     wamn_test_postgres::require_ignored_prerequisites(
-        "requires: bin:kind, bin:docker, bin:kubectl, bin:helm, bin:openssl",
+        "requires: bin:kind, bin:docker, bin:kubectl, bin:helm, bin:openssl, bin:script",
     );
     focused(application_deploy::Case::SqlJob).await
 }
 
 #[tokio::test]
-#[ignore = "requires: bin:kind, bin:docker, bin:kubectl, bin:helm, bin:openssl"]
+#[ignore = "requires: bin:kind, bin:docker, bin:kubectl, bin:helm, bin:openssl, bin:script"]
 async fn same_name_reset_kind() -> anyhow::Result<()> {
     wamn_test_postgres::require_ignored_prerequisites(
-        "requires: bin:kind, bin:docker, bin:kubectl, bin:helm, bin:openssl",
+        "requires: bin:kind, bin:docker, bin:kubectl, bin:helm, bin:openssl, bin:script",
     );
     focused(application_deploy::Case::Reset).await
 }
@@ -104,10 +104,10 @@ async fn platform_install_recovery_kind() -> anyhow::Result<()> {
 
 /// Fresh-platform acceptance includes each platform case and each focused body once.
 #[tokio::test]
-#[ignore = "requires: bin:kind, bin:docker, bin:kubectl, bin:helm, bin:openssl"]
+#[ignore = "requires: bin:kind, bin:docker, bin:kubectl, bin:helm, bin:openssl, bin:script"]
 async fn platform_apply_kind() -> anyhow::Result<()> {
     wamn_test_postgres::require_ignored_prerequisites(
-        "requires: bin:kind, bin:docker, bin:kubectl, bin:helm, bin:openssl",
+        "requires: bin:kind, bin:docker, bin:kubectl, bin:helm, bin:openssl, bin:script",
     );
     fresh(true).await
 }
@@ -184,7 +184,7 @@ async fn focused(case: application_deploy::Case) -> anyhow::Result<()> {
     let password = std::env::var("WAMN_TEST_OWNER_PASSWORD")
         .context("set WAMN_TEST_OWNER_PASSWORD to the disposable platform owner's password")?;
     ensure!(!password.is_empty(), "WAMN_TEST_OWNER_PASSWORD is empty");
-    application_deploy::exercise(&run, case, &password).await?;
+    application_deploy::exercise(&run, &[case], &password).await?;
     cleanup(&mut run).await
 }
 
@@ -195,24 +195,22 @@ async fn fresh(acceptance: bool) -> anyhow::Result<()> {
     eprintln!("Selected chart: {}", chart.display());
     eprintln!("Selected host: {}", selected.image("host")?);
     report_images(&selected.values()["platform"]);
-    for interrupted in [false, true]
-        .into_iter()
-        .take(if acceptance { 2 } else { 1 })
-    {
+    // The focused recovery case always interrupts a fresh platform installation.
+    let installations: &[bool] = if acceptance { &[false, true] } else { &[true] };
+    for &interrupted in installations {
         let mut run = prepare(&repository, &chart, &binary, &kcl, None)?;
         let password = exercise(&run, interrupted).await?;
-        if !interrupted {
-            application_deploy::exercise(&run, application_deploy::Case::Recovery, &password)
-                .await?;
-            if acceptance {
-                for case in [
+        if acceptance && !interrupted {
+            application_deploy::exercise(
+                &run,
+                &[
                     application_deploy::Case::Application,
                     application_deploy::Case::SqlJob,
                     application_deploy::Case::Reset,
-                ] {
-                    application_deploy::exercise(&run, case, &password).await?;
-                }
-            }
+                ],
+                &password,
+            )
+            .await?;
         }
         cleanup(&mut run).await?;
     }

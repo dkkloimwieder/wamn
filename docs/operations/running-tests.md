@@ -167,7 +167,7 @@ Other cross-package file readers still need explicit path rules.
 Each required command must report at least one executed passing case and exit successfully.
 Missing packages, targets, and exact test names fail before any test runs.
 The same rule applies to contract-diff, owned delivery, and the upstream release tests.
-`tools/require-test-result` captures command output in a private temporary file, prints it after completion, and removes the file.
+`tools/require-test-result` streams child output immediately, keeps a private temporary copy for result checks, and removes the copy after completion.
 It preserves command failures and refuses absent or entirely ignored test results.
 An explicit dry run or a change set with no selected tests remains a planning result.
 It records no permanent result.
@@ -406,7 +406,7 @@ A target with no tests takes unit.
 Unit and contract run per issue, live tiers run per merge, and kind runs per epic.
 `platform_apply_kind` runs once at each epic close and once on `main` before a GCP build.
 It never runs for a single fix.
-The timeout in the selection file stops a stage after 30 minutes of silence.
+Both runners use the shared process boundary in `tools/require-test-result`. `WAMN_TEST_SILENCE_SECONDS` sets its silence limit, with a default of 1800 seconds. Output on either stream resets the limit. Silence past the limit stops the child process group, names the stage, and fails the run.
 It gives no expected duration.
 The epoch interruption case lives in `wamn-engine --test deadline`.
 Paused-time scheduling decisions live in `wamn-workflow --test schedule_decisions`.
@@ -700,17 +700,36 @@ Select each test by its exact name in the `platform_apply_kind` Cargo target:
 
 | Test | Coverage | Platform |
 | --- | --- | --- |
-| `platform_install_recovery_kind` | Install, sign-in, reapply, pod recovery, release repair, interrupted application installation and replacement recovery | Creates one fresh kind cluster |
-| `application_deploy_kind` | Source and published code updates, reapply, rollback, missing artifacts, stale checkout, retained data, and independent applications | Attaches to an existing disposable kind platform |
-| `sql_job_kind` | SQL before and after code, migration checksums, retry without repeated data effects, both mode transitions, and matching adoption | Attaches to an existing disposable kind platform |
-| `same_name_reset_kind` | Source and published schema reset, unchanged input, interruption before and after recreation, same-name retry, durable refusal, and environment isolation | Attaches to an existing disposable kind platform |
+| `platform_install_recovery_kind` | Interrupt platform installation after its first Kubernetes write, retry, status, and owner sign-in | Creates one fresh kind cluster |
+| `application_deploy_kind` | Source and published code updates, interrupted installation and replacement recovery, reapply, rollback, missing artifacts, stale checkout, retained data, and independent applications | Attaches to an existing disposable kind platform |
+| `sql_job_kind` | One published data migration through the SQL Job, unchanged serving code, and data read through the deployed host | Attaches to an existing disposable kind platform |
+| `same_name_reset_kind` | Two initial application releases, data, published schema-change reset, interrupted same-name CNPG reset, reconnection, durable refusal, and environment isolation | Attaches to an existing disposable kind platform |
 | `platform_apply_kind` | Fresh-platform acceptance: normal installation and interrupted installation once each, plus all focused bodies on the normal platform | Creates two fresh kind clusters |
 
 The focused application and schema tests never install or rebuild the platform.
-Each invocation creates unique project, environment, hostname, and package-version names.
+Each focused application invocation creates a unique project, hostnames, and package versions.
+The aggregate journey prepares each immutable artifact once and reuses it across its focused bodies.
+Each body starts with an absent environment and installs only its required initial releases.
+The SQL body uses one counter model and no integration connection, code upgrade, or source deploy.
+The reset body installs no earlier code versions.
+Only the application body deploys from source.
+Artifact preparation uses the product build and publication operation before the focused bodies run.
 These tests can run in any order on the same platform.
-They retain application environments until the disposable platform is deleted.
-Platform and application recovery checks run only in the platform tests.
+Application recovery belongs to the application body. Platform recovery publishes no applications.
+
+After a body succeeds, `wamn-ctl env delete <org/project/env> --data` deletes its environment, database, and roles.
+Reset also deletes its isolation environment after all assertions succeed.
+Failed bodies retain their resources and logs.
+Project deletion has no command or control route (`services/ctl/src/project_verbs.rs:10`, `crates/catalog/model/src/host_route.rs:192`).
+The `--data` confirmation requires a terminal (`services/ctl/src/env_verbs.rs:338`).
+The harness supplies a virtual terminal with `script` and types only the coordinate of the environment that it created.
+Tests do not write control tables or supply a project deletion workaround.
+
+PostgreSQL owns retries and matching adoption in `wamn-package-control`:
+`explicit_sql_advances_across_versions_without_selecting_code` and `adoption_preserves_execution_records_and_never_executes_asserted_files`.
+The first test also asserts that retry preserves migration records, including checksums and outcomes.
+The planner test `reset_identity_uses_the_complete_schema_set_without_code_coordinates` covers matching inputs across both mode transitions.
+These tests replace the SQL Job retry and mode matrix.
 Stale-event admission has no test because deployed environments have no workflow authoring operation (`wamn-alrvy.19`).
 Reset still asserts old-event disposal and environment isolation.
 `wamn-alrvy.20` (temporary directory leak) and `wamn-alrvy.22` (uncovered lint requirements) remain open.
@@ -720,11 +739,13 @@ These test descriptions do not claim persistent system database upgrades or GCP 
 
 
 All tests require Docker, kind, Helm, kubectl, OpenSSL, and a prepared KCL compiler selected by `WAMN_KCL`.
+Focused application bodies and fresh-platform acceptance also require `script` for product deletion confirmation.
 Build the native `wamn` and `wamn-ctl` binaries beside the test executable in `$CARGO_TARGET_DIR/debug`.
 Use prepared artifacts from [local platform production](building.md#local-platform-artifacts).
 Keep the complete prepared chart directory and its pinned images unchanged after installation.
-The application bodies build scratch copies of `apps/platform_fixture` through product commands.
-All tests therefore also require these publication inputs:
+Artifact preparation builds scratch copies of `apps/platform_fixture` through product commands.
+The SQL artifact contains only its counter model and generated create/get operations.
+Focused application bodies and aggregate acceptance also require these publication inputs:
 
 - Set `DATABASE_URL` to a separate disposable PostgreSQL 18 server with permission to create and drop databases.
 - Set `WAMN_FLOW_HTTP_COMPONENT` to the raw pinned `http_route.wasm`.

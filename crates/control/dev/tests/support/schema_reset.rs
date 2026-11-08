@@ -5,7 +5,6 @@
 //! remain observable through the deployed broker.
 
 use std::collections::BTreeMap;
-use std::path::Path;
 use std::process::Stdio;
 use std::time::{Duration, Instant};
 
@@ -17,19 +16,10 @@ use wamn_environment_control::environment::document::{
 };
 
 use super::{
-    Journey, POLL_LIMIT, ProcessGroup, get, mode, observer, runtime, same_database, state, stored,
-    version,
+    Journey, POLL_LIMIT, ProcessGroup, get, mode, observer, runtime, same_database, stored,
 };
 
-pub(super) async fn changes(
-    journey: &Journey<'_>,
-    root: &Path,
-    beta: &str,
-    rows: &mut BTreeMap<&str, (Value, Value)>,
-) -> anyhow::Result<String> {
-    eprintln!(
-        "scenario 2: explicitly provision disposable authorization, then source and published schema changes"
-    );
+pub(super) async fn designate(journey: &Journey<'_>) -> anyhow::Result<()> {
     let binary = journey.run.binary.with_file_name("wamn-ctl");
     journey
         .apply(
@@ -66,132 +56,46 @@ pub(super) async fn changes(
         journey.status().await?["schema"]["disposable"] == true,
         "explicit provisioning did not record disposable authorization"
     );
+    mode(journey, SchemaMode::Reset)
+}
+
+// A published physical change must use the same CNPG reset as explicit reset.
+pub(super) async fn published(
+    journey: &Journey<'_>,
+    candidate: &str,
+    rows: &mut BTreeMap<&str, (Value, Value)>,
+) -> anyhow::Result<()> {
     let database = observer(journey).await?;
-    let identity = stored(journey, &database).await?;
-    journey
-        .apply(
-            "apply-keeps-disposable-marker",
-            journey
-                .cli(&binary, &["env", "apply"])
-                .arg(&journey.file)
-                .args(["--application", "alpha"]),
-        )
-        .await?;
-    ensure!(
-        journey.status().await?["schema"]["disposable"] == true
-            && stored(journey, &database).await? == identity,
-        "environment apply lost the recorded marker or changed the database"
-    );
+    let before = stored(journey, &database).await?;
+    let beta = runtime(journey, "beta").await?;
     drop(database);
-    mode(journey, SchemaMode::Reset)?;
-    let mut current = String::new();
-    for (source, previous, version_number, sql) in [
-        (
-            true,
-            "1.0.1",
-            "1.0.2",
-            "\nCREATE INDEX widget_note_idx ON alpha_data.widget (note);\n".to_owned(),
-        ),
-        (
-            false,
-            "1.0.2",
-            "1.0.3",
-            "\nCREATE INDEX counter_edit_version_idx ON alpha_data.counter (edit_version);\n"
-                .to_owned(),
-        ),
-    ] {
-        let database = observer(journey).await?;
-        let before = stored(journey, &database).await?;
-        let beta_before = runtime(journey, "beta").await?;
-        version(root, previous, version_number)?;
-        let initial = root.join("migrations/0001_initial.sql");
-        let mut bytes = std::fs::read_to_string(&initial)?;
-        bytes.push_str(&sql);
-        std::fs::write(initial, bytes)?;
-        drop(database);
-        let candidate = journey.publish("alpha", version_number, root).await?;
-        let label = if source {
-            "reset-from-source"
-        } else {
-            "reset-from-release"
-        };
-        journey
-            .apply(
-                &format!("diff-{label}"),
-                &mut super::schema_command(journey, "diff", Some(&candidate)),
-            )
-            .await?;
-        let mut command = if source {
-            let mut command = journey.command(&["deploy"]);
-            command.arg(root).arg("--env").arg(&journey.file);
-            command
-        } else {
-            journey.deploy(&candidate)
-        };
-        attempt(journey, label, &mut command, Stop::Complete, true).await?;
-        let database = observer(journey).await?;
-        let after = stored(journey, &database).await?;
-        recreated(&before, &after)?;
-        ensure!(
-            after["fingerprint"] != before["fingerprint"],
-            "schema reset retained the old fingerprint"
-        );
-        removed(&database, rows).await?;
-        ensure!(
-            database
-                .query_one(
-                    "SELECT EXISTS(SELECT FROM pg_index WHERE indexrelid=to_regclass('alpha_data.widget_note_idx') AND indisvalid)",
-                    &[],
-                )
-                .await?
-                .get::<_, bool>(0),
-            "reset omitted its selected index"
-        );
-        let status = journey.status().await?;
-        ensure!(
-            status["applications"]["alpha"]["current"] == candidate,
-            "reset selected different bytes from its schema candidate"
-        );
-        current = candidate;
-        ensure!(
-            status["applications"]["beta"]["current"] == beta_before["current"]
-                && status["applications"]["beta"]["previous"] == beta_before["previous"],
-            "shared reset changed beta's executable selection"
-        );
-        refill(journey, rows).await?;
-        state(
-            journey,
-            &database,
-            &after,
-            rows,
-            [(&current, "v1"), (beta, "v1")],
-        )
-        .await?;
-        let beta_after = runtime(journey, "beta").await?;
-        let mut repeat = if source {
-            let mut command = journey.command(&["deploy"]);
-            command.arg(root).arg("--env").arg(&journey.file);
-            command
-        } else {
-            journey.deploy(&current)
-        };
-        journey
-            .apply(&format!("repeat-{label}"), &mut repeat)
-            .await?;
-        state(
-            journey,
-            &database,
-            &after,
-            rows,
-            [(&current, "v1"), (beta, "v1")],
-        )
-        .await?;
-        ensure!(
-            runtime(journey, "beta").await? == beta_after,
-            "unchanged schema input restarted beta"
-        );
-    }
-    Ok(current)
+    attempt(
+        journey,
+        "reset-from-release",
+        &mut journey.deploy(candidate),
+        Stop::Complete,
+        true,
+    )
+    .await?;
+    let database = observer(journey).await?;
+    let after = stored(journey, &database).await?;
+    recreated(&before, &after)?;
+    ensure!(
+        after["fingerprint"] != before["fingerprint"],
+        "published reset retained the old schema"
+    );
+    removed(&database, rows).await?;
+    ensure!(database.query_one(
+        "SELECT EXISTS(SELECT FROM pg_index WHERE indexrelid=to_regclass('alpha_data.widget_note_idx') AND indisvalid)",
+        &[]).await?.get::<_, bool>(0), "reset omitted the selected published index");
+    let status = journey.status().await?;
+    ensure!(
+        status["applications"]["alpha"]["current"] == candidate
+            && status["applications"]["beta"]["current"] == beta["current"]
+            && status["applications"]["beta"]["previous"] == beta["previous"],
+        "published reset changed the wrong code selection"
+    );
+    refill(journey, rows).await
 }
 
 fn recreated(before: &Value, after: &Value) -> anyhow::Result<()> {
@@ -446,7 +350,7 @@ async fn stopped(journey: &Journey<'_>, status: &Value) -> anyhow::Result<()> {
 
 pub(super) async fn recovery(
     journey: &Journey<'_>,
-    beta_root: &Path,
+    digest: &str,
     rows: &mut BTreeMap<&str, (Value, Value)>,
 ) -> anyhow::Result<()> {
     eprintln!(
@@ -477,9 +381,8 @@ pub(super) async fn recovery(
         client: journey.client,
         edge: journey.edge,
     };
-    let digest = other.publish("beta", "1.0.1", beta_root).await?;
     other
-        .apply("install-isolation", &mut other.deploy(&digest))
+        .apply("install-isolation", &mut other.deploy(digest))
         .await?;
     ensure!(
         other.status().await?["schema"]["disposable"] == false,
@@ -672,7 +575,8 @@ pub(super) async fn recovery(
     );
     refill(journey, rows).await?;
     event(journey, &broker, "new-after-reset").await?;
-    Ok(())
+    drop(other_database);
+    other.delete_environment().await
 }
 
 async fn broker(journey: &Journey<'_>) -> anyhow::Result<async_nats::jetstream::Context> {

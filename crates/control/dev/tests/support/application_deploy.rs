@@ -1,6 +1,7 @@
 //! Application deployment uses product commands; Kubernetes and SQL are observers.
 
 use std::collections::BTreeMap;
+use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::time::{Duration, Instant};
@@ -27,7 +28,6 @@ pub(super) enum Case {
     Application,
     SqlJob,
     Reset,
-    Recovery,
 }
 
 struct Journey<'a> {
@@ -168,10 +168,44 @@ impl Journey<'_> {
         eprintln!("published {app}@{version}: {digest}");
         Ok(digest)
     }
+    async fn delete_environment(&self) -> anyhow::Result<()> {
+        let coordinate = format!(
+            "{}/{}/{}",
+            self.run.document.org, self.project, self.environment
+        );
+        let binary = self.run.binary.with_file_name("wamn-ctl");
+        let binary = binary.to_str().context("CLI path is not UTF-8")?;
+        let deletion = format!(
+            "exec '{}' env delete '{}' --data",
+            binary.replace('\'', "'\\''"),
+            coordinate.replace('\'', "'\\''"),
+        );
+        let input = self.run.directory.join("delete-environment.input");
+        std::fs::write(&input, format!("{coordinate}\n"))?;
+        // script supplies the terminal that the product's destructive confirmation requires.
+        self.apply(
+            "delete-environment",
+            self.cli(
+                Path::new("sh"),
+                &[
+                    "-c",
+                    "exec script -qec \"$1\" /dev/null < \"$2\"",
+                    "cleanup",
+                    &deletion,
+                ],
+            )
+            .arg(input),
+        )
+        .await?;
+        eprintln!(
+            "Deleted environment {coordinate} and its data. Project deletion has no product operation."
+        );
+        Ok(())
+    }
 }
 
-pub(super) async fn exercise(run: &Run, case: Case, password: &str) -> anyhow::Result<()> {
-    exercise_inner(run, case, password).await?;
+pub(super) async fn exercise(run: &Run, cases: &[Case], password: &str) -> anyhow::Result<()> {
+    exercise_inner(run, cases, password).await?;
     success(
         Command::new("git")
             .args(["-c", "core.hooksPath=/dev/null"])
@@ -184,7 +218,8 @@ pub(super) async fn exercise(run: &Run, case: Case, password: &str) -> anyhow::R
     Ok(())
 }
 
-async fn exercise_inner(run: &Run, case: Case, password: &str) -> anyhow::Result<()> {
+async fn exercise_inner(run: &Run, cases: &[Case], password: &str) -> anyhow::Result<()> {
+    success(Command::new("script").arg("--version")).await?;
     let id = uuid::Uuid::new_v4().simple().to_string();
     // The unique project keeps every environment fresh within the 63-byte name limit.
     let project = format!("journey-{}", &id[..8]);
@@ -192,7 +227,7 @@ async fn exercise_inner(run: &Run, case: Case, password: &str) -> anyhow::Result
     let alpha_host = format!("alpha-{}.wamn.localhost", &id[..12]);
     let beta_host = format!("beta-{}.wamn.localhost", &id[..12]);
     let isolated_host = format!("isolated-{}.wamn.localhost", &id[..12]);
-    let sources = sources(&run.repository, &run.checkout, &id).await?;
+    let sources = sources(&run.repository, &run.checkout, &id, cases).await?;
     let postgres =
         resources::port_forward(&run.target, "platform", "service/wamn-pg-rw", 5432).await?;
     let nats = resources::port_forward(&run.target, "platform", "service/wamn-nats", 4222).await?;
@@ -293,30 +328,11 @@ async fn exercise_inner(run: &Run, case: Case, password: &str) -> anyhow::Result
         .json(&json!({"principal_id":principal,"label":"deployment journey","lifetime_seconds":14400}))
         .send().await?.error_for_status()?.json().await?;
     let token = issued["token"].as_str().context("owner PAT")?.to_owned();
-    let created: Value = identity_client
-        .post(format!(
-            "http://127.0.0.1:{}/wamn_control/project/create",
-            control.port
-        ))
-        .header(reqwest::header::HOST, &run.document.route_hosts.control)
-        .bearer_auth(access)
-        .json(&json!([{"request_id":uuid::Uuid::new_v4().to_string(),"value":{"project":project}}]))
-        .send()
-        .await?
-        .error_for_status()?
-        .json()
-        .await?;
-    ensure!(
-        created[0].get("value").is_some(),
-        "project creation refused: {created}"
-    );
-
     let file = run.directory.join("environments/environment.k");
     let document = EnvironmentDocument::from_json(&serde_json::to_vec(&json!({
         "org":run.document.org,"project":project,"env":environment,"target":"cloud","policy":"dev",
-        "integrations":{"probe":{"version":1}},
         "applications":{
-            "alpha":{"current":"none","hostname":alpha_host,"packages":["alpha"],"connections":{"upstream":"probe"}},
+            "alpha":{"current":"none","hostname":alpha_host,"packages":["alpha"]},
             "beta":{"current":"none","hostname":beta_host,"packages":["beta"]}
         }
     }))?)?;
@@ -344,192 +360,260 @@ async fn exercise_inner(run: &Run, case: Case, password: &str) -> anyhow::Result
         client: &client,
         edge: &edge_url,
     };
-    // Publication precedes destination creation. Every artifact remains in the registry.
-    let a0 = journey.publish("alpha", "1.0.0", &sources[0]).await?;
-    let b0 = journey.publish("beta", "1.0.0", &sources[1]).await?;
-    version(&sources[0], "1.0.0", "1.0.1")?;
-    version(&sources[1], "1.0.0", "1.0.1")?;
-    let a1 = journey.publish("alpha", "1.0.1", &sources[0]).await?;
-    let b1 = journey.publish("beta", "1.0.1", &sources[1]).await?;
-    // Publication can outlive the initial access token.
-    let login = super::owner_session(run, &identity_client, &endpoint, password, false).await?;
-    let access = login["access_token"]
-        .as_str()
-        .context("owner control session")?;
-    if case == Case::Recovery {
-        first_install(&journey, &b0).await?;
-    } else {
-        let system =
-            wamn_package_control::database::connect(&variables["WAMN_SYSTEM_ADMIN_URL"]).await?;
-        system
-            .batch_execute("SET default_transaction_read_only = on")
-            .await?;
-        ensure!(
-            system
-                .query_opt(
-                    "SELECT 1 FROM registry.project_envs WHERE org=$1 AND project=$2 AND env=$3",
-                    &[&run.document.org, &journey.project, &journey.environment],
-                )
-                .await?
-                .is_none(),
-            "publication created the destination environment"
-        );
-        journey
-            .apply("install-beta", &mut journey.deploy(&b0))
-            .await?;
-    }
-    // No delay or retry after install-beta: the control host must already read
-    // the new administration login when integration/write prepares A's connection.
-    for (route, value) in [
-        (
-            "integration/write",
-            json!({"project":project,"name":"probe","integration_type":"http","auth_type":"none","external_system":null}),
-        ),
-        (
-            "connection/write",
-            json!({"project":project,"env":environment,"name":"probe","parameters":{"primary-authority":format!("http://c-{}-http.hosts.svc.cluster.local",run.document.org),"tls-verification":"disabled"}}),
-        ),
-        (
-            "connection/enable",
-            json!({"project":project,"env":environment,"name":"probe"}),
-        ),
-    ] {
-        let answer: Value = journey
-            .client
-            .post(format!(
-                "http://127.0.0.1:{}/wamn_control/{route}",
-                control.port
-            ))
-            .header(reqwest::header::HOST, &run.document.route_hosts.control)
-            .bearer_auth(access)
-            .json(&json!([{"request_id":uuid::Uuid::new_v4().to_string(),"value":value}]))
-            .send()
-            .await?
-            .error_for_status()?
-            .json()
-            .await?;
-        ensure!(
-            answer[0].get("value").is_some(),
-            "{route} refused: {answer}"
-        );
-    }
-    journey
-        .apply("install-alpha", &mut journey.deploy(&a0))
+    let created: Value = identity_client
+        .post(format!(
+            "http://127.0.0.1:{}/wamn_control/project/create",
+            control.port
+        ))
+        .header(reqwest::header::HOST, &run.document.route_hosts.control)
+        .bearer_auth(access)
+        .json(&json!([{"request_id":uuid::Uuid::new_v4().to_string(),"value":{"project":project}}]))
+        .send()
+        .await?
+        .error_for_status()?
+        .json()
         .await?;
-    let mut rows = BTreeMap::new();
-    if matches!(case, Case::SqlJob | Case::Reset) {
-        journey
-            .apply("prepare-alpha-v1", &mut journey.deploy(&a1))
-            .await?;
-        journey
-            .apply("prepare-beta-v1", &mut journey.deploy(&b1))
-            .await?;
+    ensure!(
+        created[0].get("value").is_some(),
+        "project creation refused: {created}"
+    );
+
+    let artifacts = prepare_artifacts(&journey, &sources, cases).await?;
+    for &case in cases {
+        let document = case_document(&document, case);
+        std::fs::write(&journey.file, document.to_kcl())?;
+        let result = match case {
+            Case::SqlJob => {
+                schema_job::exercise(&journey, &artifacts["sql0"], &artifacts["sql1"]).await
+            }
+            Case::Reset => reset(&journey, &artifacts).await,
+            Case::Application => application(&journey, &sources["alpha"], &artifacts).await,
+        };
+        result?;
+        journey.delete_environment().await?;
     }
-    for app in document.applications.keys().map(String::as_str) {
+    Ok(())
+}
+
+fn case_document(document: &EnvironmentDocument, case: Case) -> EnvironmentDocument {
+    let mut document = document.clone();
+    if case == Case::SqlJob {
+        document.applications.retain(|name, _| name == "alpha");
+        document
+            .applications
+            .get_mut("alpha")
+            .expect("alpha")
+            .packages = ["probe".into()].into();
+        document.schema.mode = Some(SchemaMode::Migrate);
+    }
+    document
+}
+
+// Produce immutable inputs once, before any focused body. This uses the same
+// build and publication operation as source deploy, without installing code.
+async fn prepare_artifacts(
+    journey: &Journey<'_>,
+    sources: &BTreeMap<&str, PathBuf>,
+    cases: &[Case],
+) -> anyhow::Result<BTreeMap<&'static str, String>> {
+    let document = EnvironmentDocument::compile(&journey.file)?;
+    let mut artifacts = BTreeMap::new();
+    if cases.iter().any(|case| *case != Case::SqlJob) {
+        artifacts.insert(
+            "a0",
+            journey.publish("alpha", "1.0.0", &sources["alpha"]).await?,
+        );
+        artifacts.insert(
+            "b0",
+            journey.publish("beta", "1.0.0", &sources["beta"]).await?,
+        );
+    }
+    if cases.contains(&Case::Application) {
+        for (app, key) in [("alpha", "a1"), ("beta", "b1")] {
+            version(&sources[app], "1.0.0", "1.0.1")?;
+            artifacts.insert(key, journey.publish(app, "1.0.1", &sources[app]).await?);
+        }
+        version(&sources["alpha"], "1.0.1", "1.0.2")?;
+        artifacts.insert(
+            "a2",
+            journey.publish("alpha", "1.0.2", &sources["alpha"]).await?,
+        );
+        version(&sources["alpha"], "1.0.2", "1.0.1")?;
+    }
+    if cases.contains(&Case::Reset) {
+        let root = &sources["alpha"];
+        let manifest = root.join("wamn.k");
+        let initial = root.join("migrations/0001_initial.sql");
+        let code = std::fs::read_to_string(&manifest)?;
+        let sql = std::fs::read_to_string(&initial)?;
+        let previous = if cases.contains(&Case::Application) {
+            "1.0.1"
+        } else {
+            "1.0.0"
+        };
+        std::fs::write(
+            &manifest,
+            code.replace(&format!("version = \"{previous}"), "version = \"1.1.0"),
+        )?;
+        std::fs::write(
+            &initial,
+            format!("{sql}\nCREATE INDEX widget_note_idx ON alpha_data.widget (note);\n"),
+        )?;
+        artifacts.insert("reset", journey.publish("alpha", "1.1.0", root).await?);
+        std::fs::write(manifest, code)?;
+        std::fs::write(initial, sql)?;
+        let mut isolated = document.clone();
+        isolated.env = format!("isolated-{}", journey.environment);
+        isolated.applications.retain(|name, _| name == "beta");
+        std::fs::write(&journey.file, isolated.to_kcl())?;
+        artifacts.insert(
+            "isolation",
+            journey
+                .publish("beta", "isolation", &sources["beta"])
+                .await?,
+        );
+    }
+    if cases.contains(&Case::SqlJob) {
+        std::fs::write(
+            &journey.file,
+            case_document(&document, Case::SqlJob).to_kcl(),
+        )?;
+        let root = &sources["probe"];
+        artifacts.insert("sql0", journey.publish("probe", "1.0.0", root).await?);
+        let manifest = root.join("wamn.json");
+        let mut value: Value = serde_json::from_slice(&std::fs::read(&manifest)?)?;
+        value["package"]["version"] = "1.1.0".into();
+        std::fs::write(manifest, serde_json::to_vec_pretty(&value)?)?;
+        std::fs::write(
+            root.join("migrations/0002_counter_data.sql"),
+            "UPDATE probe_data.counter SET label = label || '-migrated';\n",
+        )?;
+        artifacts.insert("sql1", journey.publish("probe", "1.1.0", root).await?);
+    }
+    std::fs::write(&journey.file, document.to_kcl())?;
+    Ok(artifacts)
+}
+
+async fn data(journey: &Journey<'_>) -> anyhow::Result<BTreeMap<&'static str, (Value, Value)>> {
+    let mut rows = BTreeMap::new();
+    for app in ["alpha", "beta"] {
         let counter = journey
             .route(
                 app,
                 "counter/create",
-                &json!([{"request_id":uuid::Uuid::new_v4().to_string(),"idempotency_key":uuid::Uuid::new_v4().to_string(),"label":app}]),
+                &json!([{
+                    "request_id":uuid::Uuid::new_v4().to_string(),
+                    "idempotency_key":uuid::Uuid::new_v4().to_string(), "label":app
+                }]),
             )
             .await?;
-        let widget = journey.route(app,"widget/create",&json!([{"request_id":uuid::Uuid::new_v4().to_string(),"idempotency_key":uuid::Uuid::new_v4().to_string(),"id":uuid::Uuid::new_v4().to_string(),"code":"standard","maker_id":null,"note":app}])).await?;
+        let widget = journey.route(app, "widget/create", &json!([{
+            "request_id":uuid::Uuid::new_v4().to_string(),
+            "idempotency_key":uuid::Uuid::new_v4().to_string(),
+            "id":uuid::Uuid::new_v4().to_string(), "code":"standard", "maker_id":null,"note":app
+        }])).await?;
         rows.insert(app, (counter, widget));
     }
-    let database = observer(&journey).await?;
-    match case {
-        Case::SqlJob => {
-            return schema_job::exercise(&journey, &sources[0], &database, &mut rows, &a1, &b1)
-                .await;
-        }
-        Case::Reset => {
-            schema_reset::changes(&journey, &sources[0], &b1, &mut rows).await?;
-            return schema_reset::recovery(&journey, &sources[1], &mut rows).await;
-        }
-        Case::Recovery => {
-            let baseline = stored(&journey, &database).await?;
-            let before = runtime(&journey, "beta").await?;
-            recovery(&journey, &a1, &a0, &database, &baseline).await?;
-            ensure!(
-                runtime(&journey, "beta").await? == before,
-                "recovery changed beta"
-            );
-            return state(
-                &journey,
-                &database,
-                &baseline,
-                &rows,
-                [(&a0, "v0"), (&b0, "v0")],
-            )
-            .await;
-        }
-        Case::Application => {}
-    }
+    Ok(rows)
+}
+
+async fn reset(journey: &Journey<'_>, artifacts: &BTreeMap<&str, String>) -> anyhow::Result<()> {
+    journey
+        .apply("install-beta", &mut journey.deploy(&artifacts["b0"]))
+        .await?;
+    journey
+        .apply("install-alpha", &mut journey.deploy(&artifacts["a0"]))
+        .await?;
+    let mut rows = data(journey).await?;
+    schema_reset::designate(journey).await?;
+    schema_reset::published(journey, &artifacts["reset"], &mut rows).await?;
+    schema_reset::recovery(journey, &artifacts["isolation"], &mut rows).await
+}
+
+async fn application(
+    journey: &Journey<'_>,
+    root: &Path,
+    artifacts: &BTreeMap<&str, String>,
+) -> anyhow::Result<()> {
+    let (a0, b0, a1, b1, a2) = (
+        artifacts["a0"].as_str(),
+        artifacts["b0"].as_str(),
+        artifacts["a1"].as_str(),
+        artifacts["b1"].as_str(),
+        artifacts["a2"].as_str(),
+    );
+    first_install(journey, b0).await?;
+    journey
+        .apply("install-alpha", &mut journey.deploy(a0))
+        .await?;
+    let rows = data(journey).await?;
+    let database = observer(journey).await?;
     eprintln!(
         "scenario 1: code-only source deploy, published deploy, reapply and rollback preserve rows and beta"
     );
-    let baseline = stored(&journey, &database).await?;
+    let baseline = stored(journey, &database).await?;
     state(
-        &journey,
+        journey,
         &database,
         &baseline,
         &rows,
-        [(&a0, "v0"), (&b0, "v0")],
+        [(a0, "v0"), (b0, "v0")],
     )
     .await?;
-    let before = runtime(&journey, "beta").await?;
+    recovery(journey, a1, a0, &database, &baseline).await?;
+    let before = runtime(journey, "beta").await?;
     journey
         .apply(
             "source-alpha",
             journey
                 .command(&["deploy"])
-                .arg(&sources[0])
+                .arg(root)
                 .arg("--env")
                 .arg(&journey.file),
         )
         .await?;
     ensure!(
-        runtime(&journey, "beta").await? == before,
+        runtime(journey, "beta").await? == before,
         "alpha update changed beta"
     );
     state(
-        &journey,
+        journey,
         &database,
         &baseline,
         &rows,
-        [(&a1, "v1"), (&b0, "v0")],
+        [(a1, "v1"), (b0, "v0")],
     )
     .await?;
-    let before = runtime(&journey, "alpha").await?;
+    let before = runtime(journey, "alpha").await?;
     journey
-        .apply("update-beta", &mut journey.deploy(&b1))
+        .apply("update-beta", &mut journey.deploy(b1))
         .await?;
     ensure!(
-        runtime(&journey, "alpha").await? == before,
+        runtime(journey, "alpha").await? == before,
         "beta update changed alpha"
     );
     state(
-        &journey,
+        journey,
         &database,
         &baseline,
         &rows,
-        [(&a1, "v1"), (&b1, "v1")],
+        [(a1, "v1"), (b1, "v1")],
     )
     .await?;
-    let before = runtime(&journey, "beta").await?;
+    let before = runtime(journey, "beta").await?;
     journey
         .apply("reapply-alpha", &mut journey.reapply())
         .await?;
     ensure!(
-        runtime(&journey, "beta").await? == before,
+        runtime(journey, "beta").await? == before,
         "reapply changed beta"
     );
     state(
-        &journey,
+        journey,
         &database,
         &baseline,
         &rows,
-        [(&a1, "v1"), (&b1, "v1")],
+        [(a1, "v1"), (b1, "v1")],
     )
     .await?;
     journey
@@ -541,18 +625,18 @@ async fn exercise_inner(run: &Run, case: Case, password: &str) -> anyhow::Result
         )
         .await?;
     ensure!(
-        runtime(&journey, "beta").await? == before,
+        runtime(journey, "beta").await? == before,
         "rollback changed beta"
     );
     state(
-        &journey,
+        journey,
         &database,
         &baseline,
         &rows,
-        [(&a0, "v0"), (&b1, "v1")],
+        [(a0, "v0"), (b1, "v1")],
     )
     .await?;
-    let alpha = runtime(&journey, "alpha").await?;
+    let alpha = runtime(journey, "alpha").await?;
     let absent = format!(
         "sha256:{}{}",
         uuid::Uuid::new_v4().simple(),
@@ -567,35 +651,33 @@ async fn exercise_inner(run: &Run, case: Case, password: &str) -> anyhow::Result
         "missing artifact was accepted"
     );
     ensure!(
-        runtime(&journey, "alpha").await? == alpha,
+        runtime(journey, "alpha").await? == alpha,
         "missing artifact changed alpha"
     );
     ensure!(
-        runtime(&journey, "beta").await? == before,
+        runtime(journey, "beta").await? == before,
         "missing artifact changed beta"
     );
     state(
-        &journey,
+        journey,
         &database,
         &baseline,
         &rows,
-        [(&a0, "v0"), (&b1, "v1")],
+        [(a0, "v0"), (b1, "v1")],
     )
     .await?;
-    version(&sources[0], "1.0.1", "1.0.2")?;
-    let a2 = journey.publish("alpha", "1.0.2", &sources[0]).await?;
     journey
-        .apply("prepare-stale-selection", &mut journey.deploy(&a2))
+        .apply("prepare-stale-selection", &mut journey.deploy(a2))
         .await?;
     state(
-        &journey,
+        journey,
         &database,
         &baseline,
         &rows,
-        [(&a2, "v1"), (&b1, "v1")],
+        [(a2, "v1"), (b1, "v1")],
     )
     .await?;
-    stale_checkout(&journey, &database, &rows, &a0, &a1, &b1).await
+    stale_checkout(journey, &database, &rows, a0, a1, b1).await
 }
 
 fn mode(journey: &Journey<'_>, selected: SchemaMode) -> anyhow::Result<()> {
@@ -619,12 +701,6 @@ fn same_database(before: &Value, after: &Value) -> anyhow::Result<()> {
         ensure!(before[key] == after[key], "schema operation replaced {key}");
     }
     Ok(())
-}
-
-async fn migration_records(database: &tokio_postgres::Client) -> anyhow::Result<Value> {
-    let records = query(database, "SELECT coalesce(jsonb_agg(jsonb_build_array(relative_path,sha256,outcome) ORDER BY ordinal),'[]'::jsonb) FROM catalog.package_migrations WHERE package_id='alpha'").await?;
-    eprintln!("alpha migration checksums and outcomes: {records}");
-    Ok(records)
 }
 
 async fn stale_checkout(
@@ -903,7 +979,12 @@ fn forwarded(value: &str, port: u16) -> anyhow::Result<String> {
     Ok(url.to_string())
 }
 
-async fn sources(repository: &Path, checkout: &Path, id: &str) -> anyhow::Result<[PathBuf; 2]> {
+async fn sources(
+    repository: &Path,
+    checkout: &Path,
+    id: &str,
+    cases: &[Case],
+) -> anyhow::Result<BTreeMap<&'static str, PathBuf>> {
     let head = success(
         Command::new("git")
             .args(["-c", "core.hooksPath=/dev/null"])
@@ -932,8 +1013,14 @@ async fn sources(repository: &Path, checkout: &Path, id: &str) -> anyhow::Result
     )
     .await?;
     let apps = checkout.join("apps");
-    let roots = [apps.join("alpha"), apps.join("beta")];
-    for (app, root) in ["alpha", "beta"].into_iter().zip(&roots) {
+    let mut roots = BTreeMap::new();
+    if cases.iter().any(|case| *case != Case::SqlJob) {
+        roots.extend([("alpha", apps.join("alpha")), ("beta", apps.join("beta"))]);
+    }
+    if cases.contains(&Case::SqlJob) {
+        roots.insert("probe", apps.join("probe"));
+    }
+    for (&app, root) in &roots {
         copy_source(&apps.join("platform_fixture"), root, app)?;
         let manifest = root.join("wamn.k");
         let text = std::fs::read_to_string(&manifest)?
@@ -966,14 +1053,18 @@ async fn sources(repository: &Path, checkout: &Path, id: &str) -> anyhow::Result
                 "to_jsonb(widget) || '{\"behavior\":\"v0\"}'::jsonb",
             ),
         )?;
-        if app == "alpha" {
-            require_connection(root)?;
+        if app == "probe" {
+            counter_only(root)?;
         }
     }
     let manifest = apps.join("Cargo.toml");
+    let mut members = String::new();
+    for app in roots.keys() {
+        writeln!(members, "    \"{app}/component\",")?;
+    }
     let workspace = std::fs::read_to_string(&manifest)?.replace(
         "\"platform_fixture/component\",",
-        "\"platform_fixture/component\",\n    \"alpha/component\",\n    \"beta/component\",",
+        &format!("\"platform_fixture/component\",\n{members}"),
     );
     std::fs::write(&manifest, workspace)?;
     // Register the new local crates without updating locked registry dependencies.
@@ -987,40 +1078,39 @@ async fn sources(repository: &Path, checkout: &Path, id: &str) -> anyhow::Result
     Ok(roots)
 }
 
-fn require_connection(root: &Path) -> anyhow::Result<()> {
-    let file = root.join("wamn.k");
+fn counter_only(root: &Path) -> anyhow::Result<()> {
+    let mut manifest: Value =
+        serde_json::from_slice(&wamn_schema_generator::compile_manifest(root)?)?;
+    manifest["models"]
+        .as_object_mut()
+        .context("models")?
+        .retain(|name, _| name == "counter");
+    manifest["models"]["counter"]["operations"]
+        .as_object_mut()
+        .context("counter operations")?
+        .retain(|name, _| matches!(name.as_str(), "create" | "get"));
+    manifest["routes"]["path_prefix"] = "/alpha".into();
+    manifest["custom_operations"] = json!({});
+    manifest["sequences"] = json!({});
+    std::fs::remove_file(root.join("wamn.k"))?;
     std::fs::write(
-        &file,
-        std::fs::read_to_string(&file)?.replace(
-            "connections = {}",
-            "connections = {upstream = {interface = \"wamn:connection/http@0.1.0\", mode = \"read\"}}",
-        ),
+        root.join("wamn.json"),
+        serde_json::to_vec_pretty(&manifest)?,
     )?;
-    // Like rest_connector, declare HTTP authority on the platform palette component.
-    // The package-owned component keeps only its PostgreSQL connection.
-    let directory = root.join("publication/wirings");
-    std::fs::create_dir_all(&directory)?;
+    let migration = root.join("migrations/0001_initial.sql");
+    let sql = std::fs::read_to_string(&migration)?;
+    let start = sql
+        .find("CREATE TABLE probe_data.counter (")
+        .context("counter SQL")?;
+    std::fs::write(migration, &sql[start..])?;
+    std::fs::write(root.join("publication/attachments.json"), "{}\n")?;
+    let declaration = root.join("publication/components/probe.json.in");
+    let mut value: Value = serde_json::from_slice(&std::fs::read(&declaration)?)?;
+    value["operations"] = json!({});
+    std::fs::write(declaration, serde_json::to_vec_pretty(&value)?)?;
     std::fs::write(
-        directory.join("probe.json"),
-        serde_json::to_vec_pretty(&json!({
-            "format-version": "0.1",
-            "wiring-id": "probe",
-            "version": 1,
-            "entry": "request",
-            "nodes": {
-                "request": {
-                    "component": "http-request",
-                    "interface-version": "0.1.0",
-                    "operation": "wamn:node/async-handler@0.1.0",
-                    "params": {
-                        "requirement": "upstream",
-                        "method": "GET",
-                        "path-and-query": "/"
-                    }
-                }
-            },
-            "edges": []
-        }))?,
+        root.join("component/src/lib.rs"),
+        include_str!("counter_component.rs"),
     )?;
     Ok(())
 }
