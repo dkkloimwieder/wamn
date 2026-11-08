@@ -396,6 +396,7 @@ WAMN_SUITES="$(jq -r --argjson paths "$WAMN_RELEVANT" --argjson selected "$WAMN_
   .suites[] | . as $suite
   | if $requested != "" then select(.id | IN($requested | split(",") | .[])) else
     select(.mode == "always" or (.tier | IN($tiers | split(",") | .[])))
+  | select(.always != false)
   | select((.id | IN($rows.suites[]?)) or $discovery.unknown or (.always == true and $paths != [])
       or any($paths[]; . as $path | any($suite.inputs[]; . as $pattern | $path | test($pattern)))
       or any($selected[].packages[]; IN($suite.select_packages[]?))
@@ -552,28 +553,42 @@ wamn_suite_arguments() {
 export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$WAMN_REPOSITORY_ROOT/target}"
 [[ "$CARGO_TARGET_DIR" == /* ]] || export CARGO_TARGET_DIR="$WAMN_REPOSITORY_ROOT/$CARGO_TARGET_DIR"
 export PATH="$CARGO_TARGET_DIR/debug:$PATH"
-WAMN_PREREQUISITES="$(jq -r --argjson selected "$WAMN_SELECTED" --argjson members "$WAMN_PACKAGES" \
+# Exact and filtered suites declare their own inputs. Whole targets use bindings.
+WAMN_PREPARATION_TARGETS="$(jq -nc --arg plan "$WAMN_PLAN" --argjson suites "$WAMN_RUN_SUITES" '
+  [($plan | split("\n")[] | split("\t") | select(length >= 4)
+      | {workspace: (["root", "apps", "no-std"][.[0] | tonumber]),
+         packages: (.[3] | split(" ")), target: ((.[5] // "") | split(" ") | map(select(. != "")))}),
+   ($suites[] | select(.execution == "libtest" and .tests == [] and (.filter // "") == "")
+      | {workspace, packages: [.package], target})]')"
+WAMN_PREREQUISITES="$(jq -r --argjson selected "$WAMN_PREPARATION_TARGETS" --argjson members "$WAMN_PACKAGES" \
   --arg suites "$WAMN_SUITES" '
   [(.suites[] | select(.id | IN($suites | split("\n") | .[])) | .prerequisites[]),
    (.preparation[] | select(.id == null) | . as $rule
      | select(if .suites then
          any(.suites[]; IN($suites | split("\n") | .[])) and any($members[]; IN($rule.packages[]))
-         else any($selected[] | select(.index == 0) | .packages[]; IN($rule.packages[])) end)
+         else any($selected[]; .workspace == "root"
+           and any(.packages[]; IN($rule.packages[]))
+           and ((($rule.target // []) == []) or .target == []
+             or any(.target[]; IN($rule.target[])))) end)
      | .prerequisites[]?)] | unique | .[]' <<<"$WAMN_POLICY")"
 wamn_prerequisite() { grep -qxF -- "$1" <<<"$WAMN_PREREQUISITES"; }
 WAMN_INPUTS="$(jq -c --arg prerequisites "$WAMN_PREREQUISITES" '
-  [.preparation[] | select(.id != null)
-    | select(.id | IN($prerequisites | split("\n") | .[]))]
+  [.preparation[] | select(.id != null)] as $steps
+  | def needed:
+      (.outputs | keys) as $names
+      | $names == [] or any($names[]; ($ENV[.] // "") == "");
+    def dependencies($ids):
+      reduce $steps[] as $step ($ids;
+        . as $required
+        | if ($step.id | IN($required[])) and ($step | needed)
+          then . + ($step.prerequisites // []) else . end)
+      | unique;
+    ($prerequisites | split("\n") | unique)
+  | until(. == dependencies(.); dependencies(.))
+  | . as $required
+  | [$steps[] | select(.id | IN($required[]))]
   | sort_by(if .id == "nats" then 0 else 1 end)' <<<"$WAMN_POLICY")"
-# Package selection also prepares inputs for cases outside the named suites.
-if [[ -z "$WAMN_REQUESTED_SUITES" ]]; then
-  WAMN_INPUTS="$(jq -c --argjson required "$WAMN_INPUTS" --argjson selected "$WAMN_SELECTED" '
-    [$required[], (.preparation[] | select(.id != null) | . as $step
-      | select(any($selected[] | select(.index == 0) | .packages[]; IN($step.packages[]?))))]
-    | unique_by(.id) | sort_by(if .id == "nats" then 0 else 1 end)' <<<"$WAMN_POLICY")"
-fi
-# Clippy compiles generated source in the apps workspace.
-# Derive those application roots from Cargo targets.
+# Build only the applications required by selected inputs.
 declare -a applications=()
 declare -A application_seen=()
 wamn_application() {
@@ -591,21 +606,6 @@ wamn_application() {
   done < <(sed -n 's/^[[:space:]]*package = "\([^" ]*\)".*/\1/p' "$app/wamn.k")
   applications+=("$app")
 }
-if wamn_prerequisite applications; then
-  mapfile -t input_sources < <(printf '%s\n' "${WAMN_METADATA[@]}" | jq -rs -r '
-    .[] | . as $md | .packages[] | select(.id | IN($md.workspace_members[]))
-    | .manifest_path, .targets[].src_path? // empty')
-  for source in "${input_sources[@]}"; do
-    directory="${source%/*}"
-    while [[ "$directory" == "$WAMN_REPOSITORY_ROOT/apps/"* ]]; do
-      if [[ -f "$directory/wamn.k" ]]; then
-        wamn_application "${directory#"$WAMN_REPOSITORY_ROOT/"}"
-        break
-      fi
-      directory="${directory%/*}"
-    done
-  done
-fi
 if wamn_prerequisite fixture; then
   wamn_application apps/platform_fixture
   wamn_application apps/platform_fixture_overlay
@@ -613,7 +613,6 @@ fi
 if wamn_prerequisite packages; then
   while IFS= read -r app; do wamn_application "$app"; done \
     < <(jq -r '.packages[]' deploy/gcp/environments/*.json | sort -u)
-  if wamn_prerequisite client-acme; then wamn_application apps/client_acme_receiving; fi
 fi
 
 wamn_expand_input() {

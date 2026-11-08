@@ -75,12 +75,14 @@ elif [[ $1 == metadata ]]; then
   jq -n --arg root "$root" --arg workspace "$workspace" '
     [if $root == $workspace then
       ["wamn-package-control", "crates/control/package"], ["wamn-release-control", "crates/control/release"], ["wamn-environment-control", "crates/control/environment"], ["wamn-dev-control", "crates/control/dev"], ["wamn-control-provision", "crates/control/provision"],
-      ["wamn-schema-generator", "crates/schema/generator"], ["wamn-runtime", "crates/platform/runtime"],
+      ["wamn-schema-generator", "crates/schema/generator"], ["wamn-schema-introspection", "crates/schema/introspection"], ["wamn-runtime", "crates/platform/runtime"],
       ["wamn-ctl", "services/ctl"], ["wamn-receiving-tests", "apps/wamn_receiving/tests"],
       ["wamn-wms-tests", "apps/wamn_wms/tests"] else empty end
     | {name: .[0], id: .[0], manifest_path: ($root + "/" + .[1] + "/Cargo.toml"),
        targets: [{name: (.[0] | gsub("-"; "_")), kind: ["lib"]},
          {name: "package_digest", kind: ["test"]},
+         {name: "migration_policy", kind: ["test"]},
+         {name: "apply_package_live", kind: ["test"]},
          {name: "environment_apply_kind", kind: ["test"]},
          {name: "platform_apply_kind", kind: ["test"]},
          {name: "environment_render", kind: ["test"]},

@@ -14,8 +14,10 @@ Before a lane or test run, prepare the checkout once from its repository root:
 eval "$(tools/lane-start "$PWD")"
 ```
 
-The script initializes submodules, builds the native tools, installs the web dependencies, and runs `wamn build` for every package.
-Docker supplies a private PostgreSQL 18 container that the script removes when it exits.
+The script initializes submodules and selects the Cargo cache directory.
+It runs no builds, web installation, or database.
+Build the artifacts required by the selected command.
+For tests, [the selection file](../../tests/selection.toml) binds preparation to its consuming targets and suites.
 The script prints two exports.
 `CARGO_TARGET_DIR` is `$HOME/.cache/wamn-target/<key>`, and `WAMN_CHECKOUT_KEY` is the key.
 Cargo writes its output to `CARGO_TARGET_DIR`, so commands in this repository use `$CARGO_TARGET_DIR` and not `target/` or `apps/target`.
@@ -293,6 +295,7 @@ export DOCKER_CONFIG=$(mktemp -d /var/tmp/wamn-test-revision-docker.XXXXXX)
 printf '{}\n' > "$DOCKER_CONFIG/config.json"
 registry=$(tools/local-registry)
 revision_out=$(mktemp -d /var/tmp/wamn-test-revision.XXXXXX)
+cargo build --locked --offline -p wamn-ctl --bin wamn-ctl
 "$CARGO_TARGET_DIR/debug/wamn-ctl" build-platform \
   --registry "$registry" --out "$revision_out/release-chart"
 export WAMN_RELEASE_CHART="$revision_out/release-chart"

@@ -10,13 +10,14 @@ Before a test run, prepare the checkout once from its repository root:
 eval "$(tools/lane-start "$PWD")"
 ```
 
-The script prepares submodules, native tools, and every package.
+The script initializes submodules and selects the Cargo cache directory.
+It runs no builds, web installation, or database.
 It exports `CARGO_TARGET_DIR` and `WAMN_CHECKOUT_KEY`.
 Cargo output lies in `$CARGO_TARGET_DIR`, so the commands below use that path and not `target/` or `apps/target`.
 `wamn build` still writes package output to `apps/target/wamn`.
 After the package build, `tools/test-changes` runs `wamn web build` for each selected application with `web/package.json`.
 The standalone web artifacts supply browser files for the developer session tests.
-The script needs Docker and the [build prerequisites](building.md), including installed web dependencies.
+Selected tests supply their own preparation from `tests/selection.toml`.
 
 ## Select the relevant tests
 
@@ -72,9 +73,16 @@ The runner combines feature requirements for targets that both Cargo paths and s
 A target runs through Cargo selection or its suite once for each execution mode: ordinary or ignored.
 These contract targets compile separately from the kind cases.
 Web changes select repository web lint, runtime tests, and platform UI checks, tests, and build.
-Every change outside documentation selects `tools/repo-lint run`, including root formatting and Clippy for every target.
+Full-workspace lint is an explicit integration operation:
 
-The tool builds native binaries, application packages, and guests only when selected suites need them.
+```bash
+tools/test-changes --suite quality
+```
+
+The quality suite runs `tools/repo-lint run` without application preparation.
+Prepare generated application inputs through their owning build commands before full-workspace Clippy.
+
+The tool builds native binaries, application packages, and guests only when selected targets or suites need them.
 The selection file names each preparation step, its output variables, and its commands.
 The runner keeps nonempty overrides and skips their preparation commands.
 The pinned HTTP guest keeps its required release artifact. Other native and standalone guest inputs use debug mode.
@@ -82,8 +90,12 @@ It builds the three HTTP workflow guests under `$CARGO_TARGET_DIR/no-std`.
 It copies those debug guests to the root target path that the native host test reads.
 It builds applications through a private PostgreSQL database.
 Root workspace targets compile without `apps/target/wamn`.
-The quality suite still needs generated application files because Clippy compiles the apps workspace.
-The tool derives those application roots from Cargo metadata and builds each base before its overlays.
+Preparation bindings name their packages and executable targets in the selection file.
+The runner matches bindings against selected Cargo targets and suites that run a whole target.
+Exact or filtered suites declare their own prerequisites.
+Application preparation builds each base before its overlays.
+Web consumers share one workspace installation per selection.
+The runner skips that installation when no selected consumer needs it.
 It exports `WAMN_APPLICATION_COMPONENTS` and the selected guest and host paths.
 Control and CLI suites enable `ops`.
 Runtime changes also select the ignored JetStream round trip.
@@ -95,6 +107,15 @@ It never downloads or compiles NATS.
 
 Use `--suite ID[,ID]` to run named suites on any tree, including an unchanged tree.
 This selects only those suites and their preparation steps.
+The migration validator and database executor need no application, web, device, or platform preparation:
+
+```bash
+tools/test-changes --suite migration-policy
+tools/test-changes --suite package-executor
+```
+
+These suites run `migration_policy` and `apply_package_live`, respectively.
+A source diff still selects dependent packages and their integration inputs.
 Run the Receiving and WMS proof from the repository root:
 
 ```bash

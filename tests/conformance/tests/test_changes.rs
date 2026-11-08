@@ -825,7 +825,7 @@ fn unknown_paths_select_every_applicable_suite() {
         );
         let stdout = String::from_utf8(output.stdout).unwrap();
         assert!(
-            stdout.contains("suites: quality packages-alone web docker-guests"),
+            stdout.contains("suites: packages-alone web docker-guests"),
             "{stdout}"
         );
         assert!(stdout.contains("root (full:"), "{stdout}");
@@ -834,7 +834,7 @@ fn unknown_paths_select_every_applicable_suite() {
         let output = fixture.tool(&["--tier", "kind", "dry-run"]);
         let stdout = String::from_utf8(output.stdout).unwrap();
         assert!(output.status.success());
-        assert!(stdout.contains("suites: quality\n"), "{stdout}");
+        assert!(stdout.contains("suites: \n"), "{stdout}");
         assert!(!stdout.contains("apps (full:"), "{stdout}");
     }
 }
@@ -946,7 +946,7 @@ fn shared_header_and_selector_edits_select_everything() {
         );
         let stdout = String::from_utf8(output.stdout).unwrap();
         assert!(
-            stdout.contains("suites: quality packages-alone web docker-guests\n"),
+            stdout.contains("suites: packages-alone web docker-guests\n"),
             "{stdout}"
         );
         for workspace in ["root", "apps", "no-std"] {
@@ -969,7 +969,7 @@ fn package_and_suite_row_edits_select_the_union() {
     assert_eq!(calls[1], fixture.selector_tests());
     assert!(calls[2].contains(&"fixture::changed".into()), "{calls:?}");
     assert!(fixture.guest_calls().is_empty());
-    assert!(fixture.directory.join("quality calls").exists());
+    assert!(!fixture.directory.join("quality calls").exists());
 }
 
 #[test]
@@ -1057,17 +1057,15 @@ fn dry_run_prints_the_commands_without_running_tests() {
     assert!(!fixture.directory.join("cargo calls").exists());
     let stdout = String::from_utf8(output.stdout).unwrap();
     let lines = stdout.lines().collect::<Vec<_>>();
-    assert_eq!(lines.len(), 6, "{stdout}");
     assert!(lines[0].starts_with("working-directory: "), "{stdout}");
     assert!(lines[1].starts_with("base: "), "{stdout}");
     assert!(
-        lines[2] == "suites: quality packages-alone"
-            && lines[3].starts_with("repo-lint: ")
-            && lines[4].starts_with("root (full: \"Cargo.lock\"): ")
-            && lines[4].ends_with(
+        lines[2] == "suites: packages-alone"
+            && lines[3].starts_with("root (full: \"Cargo.lock\"): ")
+            && lines[3].ends_with(
                 " --no-fail-fast --workspace --features wamn-environment-control/ops\\,wamn-ctl/ops"
             )
-            && lines[5] == "packages alone: tools/check-packages-alone",
+            && lines[4] == "packages alone: tools/check-packages-alone",
         "{stdout}"
     );
 }
@@ -1091,12 +1089,8 @@ fn kind_runs_the_root_ignored_tests_one_at_a_time() {
         assert!(output.status.success());
         let stdout = String::from_utf8(output.stdout).unwrap();
         let lines = stdout.lines().collect::<Vec<_>>();
-        assert_eq!(lines.len(), 5, "{stdout}");
         assert!(
-            lines[2] == "suites: quality"
-                && lines[3].starts_with("repo-lint: ")
-                && lines[4].starts_with("root: ")
-                && lines[4].ends_with(ending),
+            lines[2] == "suites: " && lines[3].starts_with("root: ") && lines[3].ends_with(ending),
             "{stdout}"
         );
     }
@@ -1106,7 +1100,7 @@ fn kind_runs_the_root_ignored_tests_one_at_a_time() {
     assert!(output.status.success());
     let stdout = String::from_utf8(output.stdout).unwrap();
     assert!(
-        stdout.lines().nth(4).is_some_and(|line| line.ends_with(
+        stdout.lines().nth(3).is_some_and(|line| line.ends_with(
             " --workspace --features wamn-environment-control/ops\\,wamn-ctl/ops\\,demo-tests/cluster -- --ignored --test-threads=1"
         )),
         "{stdout}"
@@ -1381,12 +1375,10 @@ fn a_dry_run_prints_the_guest_builds_and_a_failed_build_fails_the_run() {
     assert!(!fixture.directory.join("guest calls").exists());
     let stdout = String::from_utf8(output.stdout).unwrap();
     let lines = stdout.lines().collect::<Vec<_>>();
-    assert_eq!(lines.len(), 7, "{stdout}");
     assert!(
-        lines[2] == "suites: quality docker-guests"
-            && lines[3].starts_with("repo-lint: ")
-            && lines[6].starts_with("guests (Dockerfile component-builder): ")
-            && lines[6].contains(" build --target component-builder "),
+        lines[2] == "suites: docker-guests"
+            && lines[5].starts_with("guests (Dockerfile component-builder): ")
+            && lines[5].contains(" build --target component-builder "),
         "{stdout}"
     );
 
@@ -1538,6 +1530,79 @@ fn an_explicit_ignored_suite_runs_on_an_unchanged_tree_and_refuses_zero_cases() 
 }
 
 #[test]
+fn quality_runs_only_when_requested() {
+    let fixture = Fixture::new();
+    fixture.write("crates/core/src/lib.rs", "changed\n");
+    fixture.selected(&[]);
+    assert!(!fixture.directory.join("quality calls").exists());
+    let output = fixture.tool(&["--suite", "quality", "run"]);
+    assert!(output.status.success());
+    assert!(fixture.directory.join("quality calls").exists());
+}
+
+#[test]
+fn preparation_follows_the_selected_target_and_stops_on_failure() {
+    let fixture = Fixture::new();
+    let prepare = fixture.directory.join("prepare");
+    let prepared = fixture.directory.join("prepared");
+    let fail = fixture.directory.join("fail");
+    executable(
+        &prepare,
+        "#!/bin/sh\n[ ! -f \"$2\" ] || exit 29\nprintf built > \"$1\"\n",
+    );
+    let policy = fixture.root.join("tests/selection.toml");
+    let text = format!(
+        "{}\n[[preparation]]\nid = \"fixture-component\"\noutputs = {{WAMN_FIXTURE_COMPONENT = \"{{target}}/component.wasm\"}}\ncommands = [[{:?}, {:?}, {:?}]]\n\n[[preparation]]\npackages = [\"user\"]\ntarget = [\"test:user_live\"]\nprerequisites = [\"fixture-component\"]\n",
+        fs::read_to_string(&policy).unwrap(),
+        prepare.to_str().unwrap(),
+        prepared.to_str().unwrap(),
+        fail.to_str().unwrap(),
+    );
+    fixture.write("tests/selection.toml", &text);
+    let suite = EXACT_SUITE
+        .replace("package = \"core\"", "package = \"user\"")
+        .replace("inputs = [\"^crates/core/\"]", "inputs = []")
+        .replace("tests = [\"fixture::case\"]", "tests = []");
+    fixture.add_suite(&suite.replace("lib:core", "lib:user"));
+    fixture.add_suite(
+        &suite
+            .replace("fixture-exact", "fixture-input")
+            .replace("lib:core", "test:user_live"),
+    );
+    for (id, needs_input) in [("fixture-exact", false), ("fixture-input", true)] {
+        let output = fixture.tool(&["--suite", id, "run"]);
+        assert!(output.status.success(), "{output:?}");
+        assert_eq!(prepared.exists(), needs_input);
+        eprintln!(
+            "binding {id}: exit {}, prepared={needs_input}",
+            output.status.code().unwrap()
+        );
+    }
+    fs::remove_file(&prepared).unwrap();
+    let text = fs::read_to_string(&policy).unwrap().replace(
+        "target=\"test:user_live\", tier=\"unit\"",
+        "target=\"test:user_live\", tier=\"live-postgres\"",
+    );
+    fixture.write("tests/selection.toml", &text);
+    fixture.commit("fixture preparation tiers");
+    fixture.write("crates/user/src/lib.rs", "changed\n");
+    for (tier, needs_input) in [("unit", false), ("live-postgres", true)] {
+        let output = fixture.tool(&["--tier", tier, "run"]);
+        assert!(output.status.success(), "{output:?}");
+        assert_eq!(prepared.exists(), needs_input);
+        eprintln!("binding tier {tier}: exit 0, prepared={needs_input}");
+    }
+    fs::remove_file(&prepared).unwrap();
+    fs::remove_file(fixture.directory.join("cargo calls")).unwrap();
+    fs::write(&fail, "fail").unwrap();
+    let output = fixture.tool(&["--suite", "fixture-input", "run"]);
+    assert_eq!(output.status.code(), Some(1));
+    assert!(!prepared.exists());
+    assert!(fixture.calls().is_empty());
+    eprintln!("binding failed preparation: command exit 29, runner exit 1, no tests");
+}
+
+#[test]
 fn suite_preparation_sets_its_input_and_preserves_a_nonempty_override() {
     let fixture = Fixture::new();
     let prepare = fixture.directory.join("prepare component");
@@ -1631,6 +1696,67 @@ applications = ["apps/web_client", "apps/no_web"]
 }
 
 #[test]
+fn two_web_consumers_share_one_install_and_overrides_need_none() {
+    let fixture = Fixture::new();
+    fixture.write("apps/wamn_wms/wamn.k", "");
+    fixture.add_suite(EXACT_SUITE);
+    fixture.add_suite(
+        &EXACT_SUITE.replace("fixture-exact", "fixture-web").replace(
+            "prerequisites = []",
+            "prerequisites = [\"platform-ui\", \"sync-bench\"]",
+        ),
+    );
+    let target = fixture.directory.join("target");
+    fs::create_dir_all(target.join("debug")).unwrap();
+    executable(
+        &target.join("debug/wamn-test-postgres"),
+        "#!/bin/sh\nexit 0\n",
+    );
+    executable(
+        &fixture.directory.join("pnpm"),
+        "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$WAMN_FAKE_SCREEN_CALLS\"\n",
+    );
+    let calls = fixture.directory.join("pnpm calls");
+    for (suite, supplied, needs_install) in [
+        ("fixture-exact", "", false),
+        ("fixture-web", "", true),
+        ("fixture-web", "/supplied/web", false),
+    ] {
+        let output = fixture
+            .tool_command(&["--suite", suite])
+            .env("CARGO_TARGET_DIR", &target)
+            .env("WAMN_PLATFORM_UI_DIST", supplied)
+            .env("WAMN_SYNC_BENCH_DIST", supplied)
+            .env("WAMN_FAKE_SCREEN_CALLS", &calls)
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{output:?}");
+        assert_eq!(calls.exists(), needs_install);
+        if needs_install {
+            let commands = fs::read_to_string(&calls).unwrap();
+            assert_eq!(
+                commands
+                    .lines()
+                    .filter(|line| *line == "install --offline")
+                    .count(),
+                1,
+                "{commands}"
+            );
+            assert!(commands.starts_with("install --offline\n"), "{commands}");
+            assert!(
+                commands.contains("--filter @wamn/platform-ui build"),
+                "{commands}"
+            );
+            assert!(
+                commands.contains("--dir web/sync-bench run build"),
+                "{commands}"
+            );
+            fs::remove_file(&calls).unwrap();
+        }
+    }
+}
+
+#[test]
 fn the_screen_build_follows_application_generation_and_preserves_an_override() {
     let fixture = Fixture::new();
     fixture.write("apps/wamn_wms/wamn.k", "");
@@ -1717,17 +1843,14 @@ fn the_root_runs_control_route_cases_after_the_nats_input() {
     // wamn-inmae.10: the nats preparation supplies these control_route_live cases.
     let fixture = Fixture::new();
     let policy = fixture.root.join("tests/selection.toml");
-    let text = fs::read_to_string(&policy)
-        .unwrap()
-        .replacen(
-            "packages = [\"wamn-runtime\"",
-            "packages = [\"core\", \"wamn-runtime\"",
-            1,
-        )
-        .replace(
+    let text = format!(
+        "{}\n[[preparation]]\npackages = [\"core\"]\ntarget = [\"lib:core\"]\nprerequisites = [\"nats\"]\n",
+        fs::read_to_string(&policy).unwrap().replacen(
             "packages = [\"wamn-execution-host\"]",
             "packages = [\"core\"]",
-        );
+            1,
+        )
+    );
     fs::write(policy, text).unwrap();
     fixture.commit("fixture nats input");
     executable(
@@ -1816,7 +1939,7 @@ fn the_root_runs_generated_schema_after_its_output_is_exported() {
     let fixture = Fixture::new();
     let policy = fixture.root.join("tests/selection.toml");
     let text = fs::read_to_string(&policy).unwrap();
-    let preparation = "[[preparation]]\nid = \"schema\"\npackages = [\"core\"]\noutputs = {WAMN_GENERATED_WIDGET_UPDATE_SCHEMA = \"{target}/widget/update.json\"}\n";
+    let preparation = "[[preparation]]\nid = \"schema\"\noutputs = {WAMN_GENERATED_WIDGET_UPDATE_SCHEMA = \"{target}/widget/update.json\"}\n\n[[preparation]]\npackages = [\"user\"]\ntarget = [\"test:user_live\"]\nprerequisites = [\"schema\"]\n";
     fs::write(
         &policy,
         text.replacen("[[suites]]", &format!("{preparation}\n[[suites]]"), 1),

@@ -42,49 +42,4 @@ fi
 cd -- "$worktree"
 printf 'lane-start: initialize submodules\n' >&2
 git submodule update --init --recursive >&2
-printf 'lane-start: build native binaries\n' >&2
-cargo build --locked -p wamn-ctl --bin wamn --bin wamn-ctl >&2
-cargo build --locked -p wamn-scenario-worker >&2
-printf 'lane-start: install web dependencies\n' >&2
-pnpm install --frozen-lockfile >&2
-
-# Build pinned dependencies before their applications. Discover the remaining
-# top-level packages below.
-packages=(apps/platform_fixture apps/wamn_receiving apps/platform/wamn_integration apps/rest_consumer_fixture)
-for manifest in apps/*/wamn.k; do
-  [[ -f "$manifest" ]] || continue
-  package=${manifest%/wamn.k}
-  case "$package" in
-    apps/platform_fixture|apps/wamn_receiving|apps/rest_consumer_fixture) ;;
-    *) packages+=("$package") ;;
-  esac
-done
-
-container="wamn-lane-$WAMN_CHECKOUT_KEY-build-pg-$$"
-container_id=
-cleanup() {
-  if [[ -n "$container_id" ]]; then
-    docker rm -f -v "$container_id" >&2
-  fi
-}
-trap cleanup EXIT
-trap 'exit 130' INT
-trap 'exit 143' TERM
-printf 'lane-start: start the package build database\n' >&2
-container_id=$(docker create --name "$container" \
-  -e POSTGRES_HOST_AUTH_METHOD=trust -p 127.0.0.1:0:5432 postgres:18)
-docker start "$container_id" >&2
-deadline=$((SECONDS + 300))
-until docker exec "$container_id" pg_isready -h 127.0.0.1 -U postgres >&2; do
-  ((SECONDS < deadline)) || fail 'the package build database did not become ready in 300 seconds'
-  sleep 1
-done
-binding=$(docker port "$container_id" 5432/tcp)
-[[ "$binding" =~ ^127\.0\.0\.1:([0-9]+)$ ]] \
-  || fail 'the package build database has no loopback port'
-export DATABASE_URL="postgres://postgres@127.0.0.1:${BASH_REMATCH[1]}/postgres"
-printf 'lane-start: build every package\n' >&2
-"$CARGO_TARGET_DIR/debug/wamn" build "${packages[@]}" >&2
-cleanup
-container_id=
 print_env

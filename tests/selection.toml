@@ -343,22 +343,6 @@ inputs = ['^apps/[^/]+/']
 application = true
 
 [[preparation]]
-packages = ["wamn-package-control", "wamn-release-control", "wamn-environment-control", "wamn-dev-control"]
-prerequisites = ["packages", "fixture"]
-
-[[preparation]]
-packages = ["wamn-schema-generator"]
-prerequisites = ["packages", "client-acme"]
-
-[[preparation]]
-packages = ["wamn-control-provision"]
-prerequisites = ["fixture"]
-
-[[preparation]]
-packages = ["wamn-edge"]
-prerequisites = ["edge"]
-
-[[preparation]]
 packages = ["wamn-engine"]
 features = ["wasm_component_model_implements"]
 
@@ -374,51 +358,49 @@ features = ["test-util"]
 id = "nats"
 outputs = {WAMN_NATIVE_C_NATS_BIN = "nats-server"}
 aliases = {WAMN_HOST_LIVE_NATS_SERVER_BIN = "WAMN_NATIVE_C_NATS_BIN"}
-packages = ["wamn-runtime", "wamn-execution-host", "wamn-host", "wamn-ctl", "wamn-package-control", "wamn-release-control", "wamn-environment-control", "wamn-dev-control", "wamn-integration-tests", "wamn-receiving-tests", "wamn-wms-tests", "wamn-workflow"]
+
+[[preparation]]
+id = "web-install"
+outputs = {}
+commands = [["pnpm", "install", "--offline"]]
 
 [[preparation]]
 id = "application-components"
 outputs = {WAMN_APPLICATION_COMPONENTS = "{target}/virtualized/std-empty-environment"}
 applications = ["apps/wamn_receiving", "apps/client_acme_receiving", "apps/wamn_wms"]
-packages = ["wamn-integration-tests", "wamn-receiving-tests", "wamn-wms-tests"]
+prerequisites = ["web-install"]
 
 [[preparation]]
 id = "edge"
 outputs = {WAMN_EDGE_DEVICE_COMPONENT = "{root}/apps/target/wamn/edge_device/components/device.wasm"}
 applications = ["apps/edge_device"]
-packages = ["wamn-package-control", "wamn-release-control", "wamn-environment-control", "wamn-dev-control", "wamn-edge"]
 
 [[preparation]]
 id = "jsonata"
 outputs = {WAMN_JSONATA_COMPONENT = "{root}/apps/target/wamn/wamn_wms/components/jsonata.wasm"}
 applications = ["apps/wamn_wms"]
-packages = ["wamn-workflow"]
 
 [[preparation]]
 id = "fixture-components"
 outputs = {WAMN_EFFECTIVE_RELEASE_BASE_COMPONENT_WASM = "{root}/apps/target/wamn/platform_fixture/components/fixture.wasm", WAMN_EFFECTIVE_RELEASE_OVERLAY_COMPONENT_WASM = "{root}/apps/target/wamn/platform_fixture_overlay/components/fixture_overlay.wasm", WAMN_GENERATED_WIDGET_UPDATE_SCHEMA = "{root}/apps/target/wamn/platform_fixture/routes/widget/update.json"}
 applications = ["apps/platform_fixture", "apps/platform_fixture_overlay"]
-packages = ["wamn-package-control", "wamn-release-control", "wamn-environment-control", "wamn-dev-control", "wamn-client"]
 
 [[preparation]]
 id = "host"
 outputs = {WAMN_HOST_BINARY = "{target}/debug/wamn-host"}
 aliases = {WAMN_RECEIVING_DEV_HOST_BIN = "WAMN_HOST_BINARY"}
 commands = [["cargo", "build", "--locked", "--offline", "-p", "wamn-host"]]
-packages = ["wamn-package-control", "wamn-release-control", "wamn-environment-control", "wamn-dev-control", "wamn-receiving-tests"]
 
 [[preparation]]
 id = "ctl"
 outputs = {WAMN_RECEIVING_DEV_BIN = "{target}/debug/wamn-ctl"}
 aliases = {WAMN_SESSION_EXCHANGE_CTL_BIN = "WAMN_RECEIVING_DEV_BIN"}
 commands = [["cargo", "build", "--locked", "--offline", "-p", "wamn-ctl", "--bin", "wamn-ctl", "--features", "ops"]]
-packages = ["wamn-execution-host", "wamn-receiving-tests"]
 
 [[preparation]]
 id = "identity"
 outputs = {WAMN_IDENTITY_BINARY = "{target}/debug/wamn-identity"}
 commands = [["cargo", "build", "--locked", "--offline", "-p", "wamn-identity", "--features", "test-util"]]
-packages = ["wamn-integration-tests", "wamn-receiving-tests"]
 
 [[preparation]]
 id = "http-route"
@@ -427,7 +409,6 @@ aliases = {WAMN_DEV_ENV_FLOW_HTTP_COMPONENT = "WAMN_FLOW_HTTP_COMPONENT"}
 commands = [
   ["env", "RUSTFLAGS={guest-rustflags}", "cargo", "build", "--locked", "--offline", "--release", "--manifest-path", "apps/Cargo.toml", "--target-dir", "{target}", "--target", "wasm32-wasip2", "-p", "http-route"],
 ]
-packages = ["wamn-ctl", "wamn-package-control", "wamn-release-control", "wamn-environment-control", "wamn-dev-control", "wamn-integration-tests", "wamn-receiving-tests", "wamn-wms-tests"]
 
 [[preparation]]
 id = "materializer"
@@ -436,7 +417,6 @@ aliases = {WAMN_DEV_ENV_MATERIALIZER_COMPONENT = "WAMN_MATERIALIZER_COMPONENT"}
 commands = [
   ["env", "RUSTFLAGS={guest-rustflags}", "cargo", "build", "--locked", "--offline", "--manifest-path", "apps/Cargo.toml", "--target-dir", "{target}", "--target", "wasm32-wasip2", "-p", "materializer"],
 ]
-packages = ["wamn-package-control", "wamn-release-control", "wamn-environment-control", "wamn-dev-control", "wamn-receiving-tests"]
 
 [[preparation]]
 id = "blob-put"
@@ -451,7 +431,6 @@ outputs = {WAMN_SQLX_TRANSACTION_COMPONENT = "{target}/wasm32-wasip2/debug/sqlx_
 commands = [
   ["env", "RUSTFLAGS={guest-rustflags}", "cargo", "build", "--locked", "--offline", "--manifest-path", "apps/Cargo.toml", "--target-dir", "{target}", "--target", "wasm32-wasip2", "-p", "sqlx-command"],
 ]
-packages = ["wamn-runtime"]
 
 [[preparation]]
 id = "workflow-guests"
@@ -466,19 +445,183 @@ commands = [
 [[preparation]]
 id = "platform-ui"
 outputs = {WAMN_PLATFORM_UI_DIST = "{root}/apps/platform_ui/dist"}
+prerequisites = ["web-install"]
 commands = [["pnpm", "--filter", "@wamn/platform-ui", "build"]]
-packages = ["wamn-ctl"]
 
 [[preparation]]
 id = "sync-bench"
 outputs = {WAMN_SYNC_BENCH_DIST = "{target}/sync-bench/web"}
 applications = ["apps/wamn_wms"]
 after_applications = true
-before_applications = [["pnpm", "install", "--offline"]]
+prerequisites = ["web-install"]
 commands = [
   ["pnpm", "--dir", "web/sync-bench", "run", "build", "--outDir", "{target}/sync-bench/web"],
 ]
+
+[[preparation]]
+id = "client-acme"
+outputs = {}
+applications = ["apps/wamn_receiving", "apps/client_acme_receiving"]
+prerequisites = ["web-install"]
+
+[[preparation]]
+packages = ["wamn-schema-generator"]
+target = ["test:build_live"]
+prerequisites = ["client-acme"]
+
+[[preparation]]
+id = "receiving-manifest"
+outputs = {}
+applications = ["apps/wamn_receiving"]
+prerequisites = ["web-install"]
+
+[[preparation]]
+id = "publication-applications"
+outputs = {}
+applications = ["apps/wamn_receiving", "apps/wamn_wms"]
+prerequisites = ["web-install"]
+
+[[preparation]]
+id = "modbus-reader"
+outputs = {}
+applications = ["apps/modbus_reader"]
+
+[[preparation]]
+packages = ["wamn-package-control"]
+target = ["test:package_artifact_live"]
+prerequisites = ["publication-applications"]
+
+[[preparation]]
+packages = ["wamn-environment-control"]
+target = ["test:integration_restart_live"]
+prerequisites = ["modbus-reader"]
+
+[[preparation]]
+packages = ["wamn-environment-control"]
+target = ["test:workflow_manual_run_live"]
+prerequisites = ["jsonata"]
+
+# Preparation follows selected executable targets. Exact or filtered suites name their own inputs.
+
+[[preparation]]
+packages = ["wamn-package-control"]
+target = ["test:package_digest"]
+prerequisites = ["packages", "fixture"]
+
+[[preparation]]
+packages = ["wamn-package-control"]
+target = ["lib:wamn_package_control"]
+prerequisites = ["fixture", "nats", "receiving-manifest"]
+
+[[preparation]]
+packages = ["wamn-release-control"]
+target = ["lib:wamn_release_control"]
+prerequisites = ["fixture-components"]
+
+[[preparation]]
+packages = ["wamn-environment-control"]
+target = ["lib:wamn_environment_control", "test:package_data_access_live", "test:provision_system_live", "test:run_plane_live"]
+prerequisites = ["fixture"]
+
+[[preparation]]
+packages = ["wamn-dev-control"]
+target = ["lib:wamn_dev_control"]
+prerequisites = ["fixture"]
+
+[[preparation]]
+packages = ["wamn-control-provision"]
+target = ["lib:wamn_control_provision", "test:deploy_sql_authority"]
+prerequisites = ["fixture"]
+
+[[preparation]]
+packages = ["wamn-client"]
+target = ["test:generated_schema"]
+prerequisites = ["fixture-components"]
+
+[[preparation]]
+packages = ["wamn-schema-generator"]
+target = ["test:platform_generation", "test:client_plan", "test:client_projection", "test:client_component", "test:client_ts_emitter"]
+prerequisites = ["fixture"]
+
+[[preparation]]
+packages = ["wamn-edge"]
+target = ["test:device", "test:forward", "test:route"]
+prerequisites = ["edge"]
+
+[[preparation]]
+packages = ["wamn-dev-control"]
+target = ["test:edge_bundle"]
+prerequisites = ["edge", "http-route"]
+
+[[preparation]]
+packages = ["wamn-release-control"]
+target = ["test:application_composition"]
+prerequisites = ["http-route"]
+
+[[preparation]]
+packages = ["wamn-ctl"]
+target = ["test:application_publication"]
+prerequisites = ["http-route"]
+
+[[preparation]]
+packages = ["wamn-runtime"]
+target = ["lib:wamn_runtime"]
+prerequisites = ["nats", "sqlx-command"]
+
+[[preparation]]
+packages = ["wamn-execution-host"]
+target = ["test:control_route_live"]
+prerequisites = ["nats"]
+
+[[preparation]]
+packages = ["wamn-execution-host"]
+target = ["test:host_route_live"]
+prerequisites = ["ctl"]
+
+[[preparation]]
+packages = ["wamn-host"]
+target = ["bin:wamn-host", "test:native_lifecycle_live"]
+prerequisites = ["nats"]
+
+[[preparation]]
+packages = ["wamn-ctl"]
+target = ["test:pat_bootstrap_live"]
+prerequisites = ["nats", "identity"]
+
+[[preparation]]
+packages = ["wamn-ctl"]
+target = ["test:platform_ui_live", "test:receiving_ui_live"]
+prerequisites = ["platform-ui", "ctl", "host"]
+
+[[preparation]]
+packages = ["wamn-identity"]
+target = ["test:session_exchange"]
+prerequisites = ["ctl"]
+
+[[preparation]]
+packages = ["wamn-integration-tests"]
+target = ["lib:wamn_integration_tests"]
+prerequisites = ["application-components", "http-route", "nats", "identity"]
+
+[[preparation]]
+packages = ["wamn-receiving-tests"]
+target = ["lib:wamn_receiving_tests"]
+prerequisites = ["application-components", "http-route", "nats", "host", "ctl", "identity", "materializer"]
+
+[[preparation]]
 packages = ["wamn-wms-tests"]
+target = ["lib:wamn_wms_tests"]
+prerequisites = ["application-components", "http-route", "nats", "sync-bench"]
+
+[[preparation]]
+packages = ["wamn-workflow"]
+target = ["lib:wamn_workflow"]
+prerequisites = ["nats", "jsonata"]
+
+[[preparation]]
+packages = ["wamn-environment-control"]
+target = ["lib:wamn_environment_control", "test:integration_restart_live"]
+prerequisites = ["nats"]
 
 [[suites]]
 id = "quality"
@@ -488,11 +631,11 @@ package = ""
 target = []
 tests = []
 features = []
-prerequisites = ["applications"]
+prerequisites = []
 inputs = []
 execution = "commands"
 mode = "always"
-always = true
+always = false
 commands = [["repo-lint", "tools/repo-lint", "run"]]
 resource_lock = ""
 timeout = 1800
@@ -536,7 +679,7 @@ package = "wamn-control-provision"
 target = []
 tests = []
 features = []
-prerequisites = ["fixture"]
+prerequisites = []
 inputs = ["^(apps/platform_fixture(_overlay)?/|crates/catalog/|deploy/sql/)"]
 execution = "libtest"
 mode = "local"
@@ -633,7 +776,7 @@ package = ""
 target = []
 tests = []
 features = []
-prerequisites = []
+prerequisites = ["web-install"]
 inputs = ["^(web/|apps/[^/]+/web/|apps/platform_ui/|package.json$|pnpm-)"]
 execution = "commands"
 mode = "local"
@@ -733,5 +876,37 @@ execution = "libtest"
 mode = "local"
 select_packages = ["wamn-wms-tests"]
 ignored = true
+resource_lock = ""
+timeout = 1800
+
+[[suites]]
+id = "migration-policy"
+tier = "contract"
+workspace = "root"
+package = "wamn-schema-introspection"
+target = ["test:migration_policy"]
+tests = []
+features = []
+prerequisites = []
+inputs = []
+execution = "libtest"
+mode = "local"
+always = false
+resource_lock = ""
+timeout = 1800
+
+[[suites]]
+id = "package-executor"
+tier = "live-postgres"
+workspace = "root"
+package = "wamn-environment-control"
+target = ["test:apply_package_live"]
+tests = []
+features = []
+prerequisites = []
+inputs = []
+execution = "libtest"
+mode = "local"
+always = false
 resource_lock = ""
 timeout = 1800
