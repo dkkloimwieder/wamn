@@ -18,7 +18,7 @@ fn package(work: &Path, id: &str, version: &str) -> anyhow::Result<PathBuf> {
     std::fs::create_dir_all(root.join("migrations"))?;
     std::fs::write(
         root.join("migrations/0001_initial.sql"),
-        format!("CREATE SCHEMA {id}; CREATE TABLE {id}.item (id uuid PRIMARY KEY);"),
+        format!("CREATE TABLE {id}.item (id uuid CONSTRAINT item_pkey PRIMARY KEY);"),
     )?;
     std::fs::create_dir_all(output.join("contracts/item"))?;
     std::fs::create_dir_all(output.join("components"))?;

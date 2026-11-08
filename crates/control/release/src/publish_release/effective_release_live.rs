@@ -154,12 +154,16 @@ fn base_and_overlay_project_admitted_routes() {
     let inputs = packages();
     let (admitted_digests, components) = admit_components(&inputs);
 
+    let roots = inputs
+        .iter()
+        .map(|input| input.root.clone())
+        .collect::<Vec<_>>();
+    let (manifests, kinds) = read_package_manifests(&roots)
+        .expect("consume exact package manifests and package contracts");
     let manifest_paths = inputs
         .iter()
         .map(|input| wamn_schema_generator::package_manifest_path(&input.root))
         .collect::<Vec<_>>();
-    let (manifests, kinds) = read_package_manifests(&manifest_paths)
-        .expect("consume exact package manifests and package contracts");
     let packages = inputs
         .iter()
         .map(|input| PackageCoordinate::new(input.id, input.version).unwrap())
