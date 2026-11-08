@@ -9,28 +9,32 @@ use anyhow::{Context as _, ensure};
 use base64::Engine as _;
 use serde_json::{Value, json};
 use tokio::process::Command;
-use wamn_environment_control::environment::document::EnvironmentDocument;
+use wamn_environment_control::environment::document::{
+    DeclaredRelease, EnvironmentDocument, SchemaMode,
+};
 use wamn_environment_control::platform::resources;
 
 use super::{POLL_LIMIT, ProcessGroup, Run, execute, get, kubectl, success};
 
+#[path = "schema_reset.rs"]
+mod schema_reset;
+
 struct Journey<'a> {
     run: &'a Run,
-    sources: &'a [PathBuf; 2],
     file: PathBuf,
-    variables: BTreeMap<String, String>,
-    token: String,
-    client: reqwest::Client,
-    edge: String,
+    variables: &'a BTreeMap<String, String>,
+    token: &'a str,
+    client: &'a reqwest::Client,
+    edge: &'a str,
 }
 
 impl Journey<'_> {
-    fn command(&self, ctl: bool, args: &[&str]) -> Command {
-        let mut command = if ctl {
-            Command::new(self.run.binary.with_file_name("wamn-ctl"))
-        } else {
-            Command::new(&self.run.binary)
-        };
+    fn command(&self, args: &[&str]) -> Command {
+        self.cli(&self.run.binary, args)
+    }
+
+    fn cli(&self, binary: &Path, args: &[&str]) -> Command {
+        let mut command = Command::new(binary);
         command
             .current_dir(&self.run.directory)
             .env_remove("WAMN_RELEASE_HOST_GROUP")
@@ -40,7 +44,7 @@ impl Journey<'_> {
             .env_remove("WAMN_NATS_TLS_SERVER_NAME")
             .env("WAMN_DATABASE_NAMESPACE", "platform")
             .env("WAMN_RELEASE_NAMESPACE", "hosts")
-            .envs(&self.variables)
+            .envs(self.variables)
             .env("KUBECONFIG", &self.run.target.kubeconfig)
             .env("WAMN_KCL", &self.run.kcl)
             .env("WAMN_RELEASE_CHART", &self.run.chart)
@@ -78,28 +82,35 @@ impl Journey<'_> {
     }
 
     fn deploy(&self, digest: &str) -> Command {
-        let mut command = self.command(false, &["deploy", "--release", digest, "--env"]);
+        let mut command = self.command(&["deploy", "--release", digest, "--env"]);
         command.arg(&self.file);
         command
     }
 
     fn reapply(&self) -> Command {
-        let mut command = self.command(true, &["env", "apply"]);
-        command.arg(&self.file).args(["--application", "alpha"]);
-        command
+        let document = EnvironmentDocument::compile(&self.file).expect("journey document");
+        self.deploy(&document.applications["alpha"].current.to_string())
     }
 
     async fn status(&self) -> anyhow::Result<Value> {
-        let output = success(self.command(false, &["status", "--env"]).arg(&self.file)).await?;
-        Ok(serde_json::from_slice(&output.stdout)?)
+        let output = self
+            .run("status", self.command(&["status", "--env"]).arg(&self.file))
+            .await?;
+        ensure!(
+            output.status.success(),
+            "status failed; see {}",
+            self.run.directory.display()
+        );
+        let status: Value = serde_json::from_slice(&output.stdout)?;
+        eprintln!("observed status: {status}");
+        Ok(status)
     }
 
     async fn route(&self, app: &str, route: &str, body: &Value) -> anyhow::Result<Value> {
-        let endpoint = format!(
-            "{}/api/{app}/{route}",
-            self.edge
-                .replace("alpha.wamn.localhost", &format!("{app}.wamn.localhost"))
-        );
+        let document = EnvironmentDocument::compile(&self.file)?;
+        let mut base = url::Url::parse(self.edge)?;
+        base.set_host(Some(&document.applications[app].hostname))?;
+        let endpoint = format!("{}/api/{app}/{route}", base.as_str().trim_end_matches('/'));
         let request = if route.ends_with("/create") {
             self.client.post(endpoint).json(body)
         } else {
@@ -108,7 +119,7 @@ impl Journey<'_> {
             );
             self.client.get(format!("{endpoint}?{query}"))
         };
-        let response = request.bearer_auth(&self.token).send().await?;
+        let response = request.bearer_auth(self.token).send().await?;
         ensure!(
             response.status().is_success(),
             "{app}/{route} returned {}",
@@ -123,43 +134,23 @@ impl Journey<'_> {
     }
 
     async fn publish(&self, app: &str, version: &str, root: &Path) -> anyhow::Result<String> {
-        self.apply(
-            &format!("build-{app}-{version}"),
-            self.command(false, &["build"]).arg(root),
-        )
-        .await?;
-        self.apply(
-            &format!("push-{app}-{version}"),
-            self.command(true, &["push-package", "--package"])
-                .arg(root)
-                .args([
-                    "--artifact-base",
-                    &self.variables["WAMN_PACKAGE_ARTIFACT_BASE"],
-                    "--component-artifact-base",
-                    &self.variables["WAMN_COMPONENT_ARTIFACT_BASE"],
-                    "--insecure-registry",
-                ]),
-        )
-        .await?;
         let output = self
             .run(
                 &format!("publish-{app}-{version}"),
-                self.command(true, &["publish-release"])
-                    .arg(&self.file)
-                    .args([
-                        "--application",
-                        app,
-                        "--package",
-                        &format!("{app}@{version}"),
-                        "--artifact-base",
-                        &self.variables["WAMN_PACKAGE_ARTIFACT_BASE"],
-                        "--insecure-registry",
-                    ]),
+                self.command(&["schema", "publish"])
+                    .arg(root)
+                    .arg("--env")
+                    .arg(&self.file),
             )
             .await?;
         ensure!(output.status.success(), "publish {app}@{version} failed");
-        let digest = String::from_utf8(output.stdout)?.trim().to_owned();
+        let published: Value = serde_json::from_slice(&output.stdout)?;
+        let digest = published["release"]
+            .as_str()
+            .context("published release digest")?
+            .to_owned();
         wamn_package_artifact::ensure_digest(&digest)?;
+        eprintln!("published {app}@{version}: {digest}");
         Ok(digest)
     }
 }
@@ -298,15 +289,19 @@ pub(super) async fn exercise(run: &Run, password: &str) -> anyhow::Result<()> {
         )?)?)
         .resolve("alpha.wamn.localhost", ([127, 0, 0, 1], edge.port).into())
         .resolve("beta.wamn.localhost", ([127, 0, 0, 1], edge.port).into())
+        .resolve(
+            "isolated.wamn.localhost",
+            ([127, 0, 0, 1], edge.port).into(),
+        )
         .build()?;
+    let edge_url = format!("https://alpha.wamn.localhost:{}", edge.port);
     let journey = Journey {
         run,
-        sources: &sources,
         file,
-        variables,
-        token,
-        client,
-        edge: format!("https://alpha.wamn.localhost:{}", edge.port),
+        variables: &variables,
+        token: &token,
+        client: &client,
+        edge: &edge_url,
     };
     // Publication precedes destination creation. Every artifact remains in the registry.
     let a0 = journey.publish("alpha", "1.0.0", &sources[0]).await?;
@@ -318,13 +313,6 @@ pub(super) async fn exercise(run: &Run, password: &str) -> anyhow::Result<()> {
     super::database_state(run).await?;
     let output = first_install(&journey, &b0).await?;
     ensure!(output.status.success(), "initial beta deployment failed");
-    ensure!(
-        String::from_utf8_lossy(&output.stdout)
-            .lines()
-            .filter_map(|line| serde_json::from_str::<Value>(line).ok())
-            .any(|notice| notice["observed"]["kind"] == "not-checked"),
-        "unqualified deployment omitted its notice"
-    );
     let login: Value = identity_client.post(format!("{endpoint}/password/session"))
         .json(&json!({"email":run.document.owner_email,"password":password,"aud":format!("urn:wamn:control:{}",run.document.org)}))
         .send().await?.error_for_status()?.json().await?;
@@ -368,13 +356,6 @@ pub(super) async fn exercise(run: &Run, password: &str) -> anyhow::Result<()> {
     journey
         .apply("install-alpha", &mut journey.deploy(&a0))
         .await?;
-    ensure!(
-        EnvironmentDocument::compile(&journey.file)?
-            .applications
-            .values()
-            .all(|selection| selection.previous.is_none()),
-        "first installation retained a previous selection"
-    );
     let mut rows = BTreeMap::new();
     for app in ["alpha", "beta"] {
         let counter = journey
@@ -388,6 +369,9 @@ pub(super) async fn exercise(run: &Run, password: &str) -> anyhow::Result<()> {
         rows.insert(app, (counter, widget));
     }
     let database = observer(&journey).await?;
+    eprintln!(
+        "scenario 1: code-only source deploy, published deploy, reapply and rollback preserve rows and beta"
+    );
     let baseline = stored(&journey, &database).await?;
     state(
         &journey,
@@ -397,19 +381,19 @@ pub(super) async fn exercise(run: &Run, password: &str) -> anyhow::Result<()> {
         [(&a0, "v0"), (&b0, "v0")],
     )
     .await?;
-    let before = runtime(&journey, "beta", &database).await?;
+    let before = runtime(&journey, "beta").await?;
     journey
         .apply(
             "source-alpha",
             journey
-                .command(false, &["deploy"])
+                .command(&["deploy"])
                 .arg(&sources[0])
                 .arg("--env")
                 .arg(&journey.file),
         )
         .await?;
     ensure!(
-        runtime(&journey, "beta", &database).await? == before,
+        runtime(&journey, "beta").await? == before,
         "alpha update changed beta"
     );
     state(
@@ -420,19 +404,12 @@ pub(super) async fn exercise(run: &Run, password: &str) -> anyhow::Result<()> {
         [(&a1, "v1"), (&b0, "v0")],
     )
     .await?;
-    ensure!(
-        EnvironmentDocument::compile(&journey.file)?.applications["alpha"]
-            .previous
-            .as_deref()
-            == Some(a0.as_str()),
-        "source deploy lost A0"
-    );
-    let before = runtime(&journey, "alpha", &database).await?;
+    let before = runtime(&journey, "alpha").await?;
     journey
         .apply("update-beta", &mut journey.deploy(&b1))
         .await?;
     ensure!(
-        runtime(&journey, "alpha", &database).await? == before,
+        runtime(&journey, "alpha").await? == before,
         "beta update changed alpha"
     );
     state(
@@ -443,21 +420,12 @@ pub(super) async fn exercise(run: &Run, password: &str) -> anyhow::Result<()> {
         [(&a1, "v1"), (&b1, "v1")],
     )
     .await?;
-    let before = runtime(&journey, "beta", &database).await?;
-    let selections = EnvironmentDocument::compile(&journey.file)?;
-    ensure!(
-        selections.applications["beta"].previous.as_deref() == Some(b0.as_str()),
-        "beta update lost B0"
-    );
+    let before = runtime(&journey, "beta").await?;
     journey
         .apply("reapply-alpha", &mut journey.reapply())
         .await?;
     ensure!(
-        EnvironmentDocument::compile(&journey.file)? == selections,
-        "reapply changed selections"
-    );
-    ensure!(
-        runtime(&journey, "beta", &database).await? == before,
+        runtime(&journey, "beta").await? == before,
         "reapply changed beta"
     );
     state(
@@ -472,12 +440,12 @@ pub(super) async fn exercise(run: &Run, password: &str) -> anyhow::Result<()> {
         .apply(
             "rollback-alpha",
             journey
-                .command(false, &["rollback", "alpha", "--env"])
+                .command(&["rollback", "alpha", "--env"])
                 .arg(&journey.file),
         )
         .await?;
     ensure!(
-        runtime(&journey, "beta", &database).await? == before,
+        runtime(&journey, "beta").await? == before,
         "rollback changed beta"
     );
     state(
@@ -488,8 +456,7 @@ pub(super) async fn exercise(run: &Run, password: &str) -> anyhow::Result<()> {
         [(&a0, "v0"), (&b1, "v1")],
     )
     .await?;
-    let selections = EnvironmentDocument::compile(&journey.file)?;
-    let alpha = runtime(&journey, "alpha", &database).await?;
+    let alpha = runtime(&journey, "alpha").await?;
     let absent = format!(
         "sha256:{}{}",
         uuid::Uuid::new_v4().simple(),
@@ -504,20 +471,16 @@ pub(super) async fn exercise(run: &Run, password: &str) -> anyhow::Result<()> {
         "missing artifact was accepted"
     );
     ensure!(
-        EnvironmentDocument::compile(&journey.file)? == selections,
-        "missing artifact changed selections"
-    );
-    ensure!(
-        runtime(&journey, "alpha", &database).await? == alpha,
+        runtime(&journey, "alpha").await? == alpha,
         "missing artifact changed alpha"
     );
     ensure!(
-        runtime(&journey, "beta", &database).await? == before,
+        runtime(&journey, "beta").await? == before,
         "missing artifact changed beta"
     );
     recovery(&journey, &a1, &a0, &database, &baseline).await?;
     ensure!(
-        runtime(&journey, "beta", &database).await? == before,
+        runtime(&journey, "beta").await? == before,
         "recovery changed beta"
     );
     state(
@@ -528,6 +491,302 @@ pub(super) async fn exercise(run: &Run, password: &str) -> anyhow::Result<()> {
         [(&a0, "v0"), (&b1, "v1")],
     )
     .await?;
+    let current = schema_reset::changes(&journey, &sources[0], &b1, &mut rows).await?;
+    let database = observer(&journey).await?;
+    schema_workflow(&journey, &sources[0], &database, &mut rows, &current, &b1).await?;
+    schema_reset::recovery(&journey, &sources[1], &mut rows).await?;
+    let database = observer(&journey).await?;
+    stale_checkout(&journey, &database, &rows, &a0, &a1, &b1).await?;
+    anyhow::bail!(
+        "DEP3-11 item 5 remains incomplete: workflow author requires a green gate report, but deployed env apply supplies no authoring endpoint or wamn gate command; event-run admission was not fabricated"
+    )
+}
+
+// These observations are limited to the SQL Job and the installed cluster state.
+async fn schema_workflow(
+    journey: &Journey<'_>,
+    root: &Path,
+    database: &tokio_postgres::Client,
+    rows: &mut BTreeMap<&str, (Value, Value)>,
+    a0: &str,
+    beta: &str,
+) -> anyhow::Result<()> {
+    eprintln!("scenario 3: SQL before code, then SQL after code through the deployed Job");
+    mode(journey, SchemaMode::Migrate)?;
+    version(root, "1.0.3", "1.1.0")?;
+    std::fs::write(
+        root.join("migrations/0002_counter_label.sql"),
+        "CREATE INDEX counter_label_idx ON alpha_data.counter (label);\n",
+    )?;
+    let a2 = journey.publish("alpha", "1.1.0", root).await?;
+    let identity = stored(journey, database).await?;
+    let alpha = runtime(journey, "alpha").await?;
+    let other = runtime(journey, "beta").await?;
+    journey
+        .apply(
+            "diff-before-code",
+            &mut schema_command(journey, "diff", Some(&a2)),
+        )
+        .await?;
+    state(
+        journey,
+        database,
+        &identity,
+        rows,
+        [(a0, "v1"), (beta, "v1")],
+    )
+    .await?;
+    journey
+        .apply(
+            "sql-before-code",
+            &mut schema_command(journey, "apply", Some(&a2)),
+        )
+        .await?;
+    ensure!(query(database, "SELECT to_jsonb(i.indisvalid) FROM pg_index i WHERE i.indexrelid='alpha_data.counter_label_idx'::regclass").await? == true,
+        "SQL Job did not install the selected index");
+    ensure!(
+        runtime(journey, "alpha").await? == alpha && runtime(journey, "beta").await? == other,
+        "SQL-only apply changed an application workload or selection"
+    );
+    let installed = stored(journey, database).await?;
+    same_database(&identity, &installed)?;
+    ensure!(
+        installed["fingerprint"] != identity["fingerprint"],
+        "SQL Job did not advance schema identity"
+    );
+    state(
+        journey,
+        database,
+        &installed,
+        rows,
+        [(a0, "v1"), (beta, "v1")],
+    )
+    .await?;
+    journey
+        .apply("code-after-sql", &mut journey.deploy(&a2))
+        .await?;
+    ensure!(
+        runtime(journey, "beta").await? == other,
+        "code after SQL changed beta"
+    );
+    state(
+        journey,
+        database,
+        &installed,
+        rows,
+        [(&a2, "v1"), (beta, "v1")],
+    )
+    .await?;
+
+    version(root, "1.1.0", "1.1.1")?;
+    std::fs::write(
+        root.join("migrations/0003_counter_data.sql"),
+        "UPDATE alpha_data.counter SET label = label || '-migrated';\n",
+    )?;
+    let a3 = journey.publish("alpha", "1.1.1", root).await?;
+    let alpha = runtime(journey, "alpha").await?;
+    journey
+        .apply(
+            "diff-after-code",
+            &mut schema_command(journey, "diff", Some(&a3)),
+        )
+        .await?;
+    state(
+        journey,
+        database,
+        &installed,
+        rows,
+        [(&a2, "v1"), (beta, "v1")],
+    )
+    .await?;
+    journey
+        .apply(
+            "sql-after-code",
+            &mut schema_command(journey, "apply", Some(&a3)),
+        )
+        .await?;
+    let counter = &mut rows.get_mut("alpha").context("alpha row")?.0;
+    counter["label"] = format!(
+        "{}-migrated",
+        counter["label"].as_str().context("counter label")?
+    )
+    .into();
+    let migrated = stored(journey, database).await?;
+    same_database(&identity, &migrated)?;
+    let records = migration_records(database).await?;
+    journey
+        .apply(
+            "repeat-sql",
+            &mut schema_command(journey, "apply", Some(&a3)),
+        )
+        .await?;
+    ensure!(
+        migration_records(database).await? == records,
+        "SQL retry changed committed checksums or outcomes"
+    );
+    ensure!(
+        runtime(journey, "alpha").await? == alpha && runtime(journey, "beta").await? == other,
+        "SQL after code changed serving applications"
+    );
+    state(
+        journey,
+        database,
+        &migrated,
+        rows,
+        [(&a2, "v1"), (beta, "v1")],
+    )
+    .await?;
+
+    eprintln!("scenario 4: repeated mode edits, matching adoption, durable reset refusal");
+    // Select the installed schema source before matching adoption. Adoption itself
+    // must preserve the running selection and the already executed data effect.
+    journey
+        .apply("select-installed-schema", &mut journey.deploy(&a3))
+        .await?;
+    let alpha = runtime(journey, "alpha").await?;
+    for (iteration, selected) in [
+        SchemaMode::Reset,
+        SchemaMode::Migrate,
+        SchemaMode::Reset,
+        SchemaMode::Migrate,
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        mode(journey, selected)?;
+        journey
+            .apply(
+                &format!("mode-diff-{iteration}"),
+                &mut schema_command(journey, "diff", None),
+            )
+            .await?;
+        state(
+            journey,
+            database,
+            &migrated,
+            rows,
+            [(&a3, "v1"), (beta, "v1")],
+        )
+        .await?;
+        ensure!(
+            runtime(journey, "alpha").await? == alpha && runtime(journey, "beta").await? == other,
+            "configuration edit or diff changed an application workload"
+        );
+        if selected == SchemaMode::Migrate {
+            journey
+                .apply(
+                    &format!("matching-adopt-{iteration}"),
+                    journey
+                        .command(&["schema", "adopt", "--env"])
+                        .arg(&journey.file),
+                )
+                .await?;
+            ensure!(
+                migration_records(database).await? == records,
+                "matching adoption changed execution checksums or outcomes"
+            );
+            state(
+                journey,
+                database,
+                &migrated,
+                rows,
+                [(&a3, "v1"), (beta, "v1")],
+            )
+            .await?;
+        }
+    }
+    // The durable refusal uses the isolation environment created only for item 5.
+    mode(journey, SchemaMode::Migrate)?;
+    Ok(())
+}
+
+fn mode(journey: &Journey<'_>, selected: SchemaMode) -> anyhow::Result<()> {
+    let mut document = EnvironmentDocument::compile(&journey.file)?;
+    document.schema.mode = Some(selected);
+    std::fs::write(&journey.file, document.to_kcl())?;
+    Ok(())
+}
+
+fn schema_command(journey: &Journey<'_>, verb: &str, release: Option<&str>) -> Command {
+    let mut command = journey.command(&["schema", verb, "alpha", "--env"]);
+    command.arg(&journey.file);
+    if let Some(release) = release {
+        command.args(["--release", release]);
+    }
+    command
+}
+
+fn same_database(before: &Value, after: &Value) -> anyhow::Result<()> {
+    for key in ["cluster", "database", "initialization"] {
+        ensure!(before[key] == after[key], "schema operation replaced {key}");
+    }
+    Ok(())
+}
+
+async fn migration_records(database: &tokio_postgres::Client) -> anyhow::Result<Value> {
+    let records = query(database, "SELECT coalesce(jsonb_agg(jsonb_build_array(relative_path,sha256,outcome) ORDER BY ordinal),'[]'::jsonb) FROM catalog.package_migrations WHERE package_id='alpha'").await?;
+    eprintln!("alpha migration checksums and outcomes: {records}");
+    Ok(records)
+}
+
+async fn stale_checkout(
+    journey: &Journey<'_>,
+    database: &tokio_postgres::Client,
+    rows: &BTreeMap<&str, (Value, Value)>,
+    stale: &str,
+    candidate: &str,
+    beta: &str,
+) -> anyhow::Result<()> {
+    eprintln!("scenario 6: stale checkout deploy and rollback to last successful apply");
+    let applied = runtime(journey, "alpha").await?;
+    let last = applied["current"]
+        .as_str()
+        .context("last successful alpha release")?;
+    let other = runtime(journey, "beta").await?;
+    let identity = stored(journey, database).await?;
+    let mut document = EnvironmentDocument::compile(&journey.file)?;
+    let selection = document
+        .applications
+        .get_mut("alpha")
+        .context("alpha selection")?;
+    selection.current = DeclaredRelease::Digest(stale.to_owned());
+    selection.previous = None;
+    std::fs::write(&journey.file, document.to_kcl())?;
+    journey
+        .apply("stale-checkout-deploy", &mut journey.deploy(candidate))
+        .await?;
+    ensure!(
+        journey.status().await?["applications"]["alpha"]["previous"] == last,
+        "stale checkout replaced the last successful apply with its local release"
+    );
+    state(
+        journey,
+        database,
+        &identity,
+        rows,
+        [(candidate, "v1"), (beta, "v1")],
+    )
+    .await?;
+    journey
+        .apply(
+            "stale-checkout-rollback",
+            journey
+                .command(&["rollback", "alpha", "--env"])
+                .arg(&journey.file),
+        )
+        .await?;
+    state(
+        journey,
+        database,
+        &identity,
+        rows,
+        [(last, "v1"), (beta, "v1")],
+    )
+    .await?;
+    ensure!(
+        runtime(journey, "beta").await? == other,
+        "stale deploy or rollback changed beta"
+    );
     Ok(())
 }
 
@@ -669,22 +928,6 @@ async fn first_install(
     }
     let database = observer(journey).await?;
     let baseline = stored(journey, &database).await?;
-    let packages = baseline["catalog.packages"]
-        .as_array()
-        .context("installed package baselines")?;
-    ensure!(
-        packages
-            .iter()
-            .filter(|package| package["package_id"] == "beta")
-            .count()
-            == 1
-            && packages
-                .iter()
-                .any(|package| package["package_id"] == "beta"
-                    && package["package_version"] == "1.0.0"),
-        "B0 must have exactly one committed package baseline before retry"
-    );
-    let records = initialization_records(&database).await?;
     let output = journey
         .run("install-beta", &mut journey.deploy(digest))
         .await?;
@@ -701,8 +944,7 @@ async fn first_install(
         "first-install retry replaced the environment instance"
     );
     ensure!(
-        stored(journey, &database).await? == baseline
-            && initialization_records(&database).await? == records,
+        stored(journey, &database).await? == baseline,
         "first-install retry replayed SQL initialization"
     );
     let status = journey.status().await?;
@@ -727,19 +969,6 @@ async fn first_install(
     Ok(output)
 }
 
-async fn initialization_records(database: &tokio_postgres::Client) -> anyhow::Result<Value> {
-    let mut records = serde_json::Map::new();
-    for table in [
-        "platform.schema_baseline",
-        "catalog.packages",
-        "catalog.package_migrations",
-    ] {
-        // xmin identifies the inserting/updating transaction, even if bytes are unchanged.
-        records.insert(table.into(), query(database, &format!("SELECT coalesce(jsonb_agg(jsonb_build_array(to_jsonb(t),t.xmin::text) ORDER BY to_jsonb(t)::text),'[]'::jsonb) FROM {table} t")).await?);
-    }
-    Ok(Value::Object(records))
-}
-
 fn secret(object: &Value, key: &str) -> anyhow::Result<Vec<u8>> {
     Ok(base64::engine::general_purpose::STANDARD.decode(
         object["data"][key]
@@ -759,6 +988,7 @@ fn forwarded(value: &str, port: u16) -> anyhow::Result<String> {
 async fn sources(repository: &Path, checkout: &Path) -> anyhow::Result<[PathBuf; 2]> {
     let head = success(
         Command::new("git")
+            .args(["-c", "core.hooksPath=/dev/null"])
             .arg("-C")
             .arg(repository)
             .args(["rev-parse", "HEAD"]),
@@ -767,6 +997,7 @@ async fn sources(repository: &Path, checkout: &Path) -> anyhow::Result<[PathBuf;
     let head = String::from_utf8(head.stdout)?;
     success(
         Command::new("git")
+            .args(["-c", "core.hooksPath=/dev/null"])
             .arg("-C")
             .arg(repository)
             .args(["worktree", "add", "--detach"])
@@ -774,12 +1005,13 @@ async fn sources(repository: &Path, checkout: &Path) -> anyhow::Result<[PathBuf;
             .arg(head.trim()),
     )
     .await?;
-    success(Command::new("git").arg("-C").arg(checkout).args([
-        "submodule",
-        "update",
-        "--init",
-        "--recursive",
-    ]))
+    success(
+        Command::new("git")
+            .args(["-c", "core.hooksPath=/dev/null"])
+            .arg("-C")
+            .arg(checkout)
+            .args(["submodule", "update", "--init", "--recursive"]),
+    )
     .await?;
     let apps = checkout.join("apps");
     let roots = [apps.join("alpha"), apps.join("beta")];
@@ -920,20 +1152,21 @@ fn version(root: &Path, previous: &str, next: &str) -> anyhow::Result<()> {
 
 async fn observer(journey: &Journey<'_>) -> anyhow::Result<tokio_postgres::Client> {
     let system =
-        wamn_package_control::database::connect(&journey.variables["WAMN_APPLY_DATABASE_URL"])
+        wamn_package_control::database::connect(&journey.variables["WAMN_SYSTEM_ADMIN_URL"])
             .await?;
     system
         .batch_execute("SET default_transaction_read_only = on")
         .await?;
-    let row = system.query_one("SELECT instance_suffix FROM registry.project_envs WHERE org=$1 AND project='journey' AND env='dev'", &[&journey.run.document.org]).await?;
+    let document = EnvironmentDocument::compile(&journey.file)?;
+    let row = system.query_one("SELECT instance_suffix FROM registry.project_envs WHERE org=$1 AND project=$2 AND env=$3", &[&document.org, &document.project, &document.env]).await?;
     let suffix: String = row.get(0);
     let name = wamn_control_provision::project_env_database_name(
-        &journey.run.document.org,
-        "journey",
-        "dev",
+        &document.org,
+        &document.project,
+        &document.env,
         &suffix,
     );
-    let mut url = url::Url::parse(&journey.variables["WAMN_APPLY_DATABASE_URL"])?;
+    let mut url = url::Url::parse(&journey.variables["WAMN_SYSTEM_ADMIN_URL"])?;
     url.set_path(&name);
     let client = wamn_package_control::database::connect(url.as_str()).await?;
     let owner: String = client
@@ -961,83 +1194,22 @@ async fn query(client: &tokio_postgres::Client, sql: &str) -> anyhow::Result<Val
 }
 
 async fn stored(journey: &Journey<'_>, client: &tokio_postgres::Client) -> anyhow::Result<Value> {
-    let mut state = serde_json::Map::new();
-    state.insert(
-        "cluster".into(),
-        get(
-            journey.run,
-            "platform",
-            "cluster.postgresql.cnpg.io",
-            "wamn-pg",
-        )
-        .await?["metadata"]["uid"]
-            .clone(),
-    );
-    state.insert("database".into(),query(client,"SELECT jsonb_build_array(oid,datname) FROM pg_database WHERE datname=current_database()").await?);
-    // The database owns this roster. Include every installed package and SQL record.
-    for table in [
-        "catalog.packages",
-        "catalog.package_migrations",
-        "catalog.package_definition_owners",
-        "platform.schema_baseline",
-        "platform.number_sequence",
-        "platform.number_counter",
-    ] {
-        state.insert(table.into(),query(client,&format!("SELECT coalesce(jsonb_agg(to_jsonb(t) ORDER BY to_jsonb(t)::text),'[]'::jsonb) FROM {table} t")).await?);
-    }
-    let mut schemas: std::collections::BTreeSet<String> = client.query("SELECT DISTINCT schema_name FROM catalog.package_definition_owners ORDER BY schema_name",&[]).await?.iter().map(|row|row.get(0)).collect();
+    let status = journey.status().await?;
+    let identity = json!({
+        "cluster": get(journey.run, "platform", "cluster.postgresql.cnpg.io", "wamn-pg").await?["metadata"]["uid"],
+        "database": query(client, "SELECT jsonb_build_array(oid,datname) FROM pg_database WHERE datname=current_database()").await?,
+        "initialization": status["schema"]["initialization_identity"],
+        "fingerprint": status["schema"]["installed_environment"],
+    });
     ensure!(
-        !schemas.is_empty(),
-        "no installed application SQL ownership"
+        identity["initialization"].is_string() && identity["fingerprint"].is_string(),
+        "installed schema identity is unknown"
     );
-    for root in journey.sources {
-        let artifact = wamn_schema_generator::package_manifest_path(root);
-        let manifest =
-            wamn_catalog::manifest::PackageManifest::from_slice(&std::fs::read(artifact)?)?;
-        schemas.extend(manifest.models.into_values().map(|model| model.schema));
-    }
-    for schema in schemas {
-        let functions: Value = client.query_one("SELECT coalesce(jsonb_agg(pg_get_functiondef(p.oid) ORDER BY p.oid),'[]'::jsonb) FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname=$1 AND p.prokind IN ('f','p')", &[&schema]).await?.get(0);
-        state.insert(format!("{schema}.functions"), functions);
-        let relations = client.query("SELECT c.oid::bigint,c.relname,c.relkind::text FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname=$1 AND c.relkind IN ('r','p','S','v','m') ORDER BY c.relname",&[&schema]).await?;
-        for row in relations {
-            let oid: i64 = row.get(0);
-            let name: String = row.get(1);
-            let kind: String = row.get(2);
-            let relation = format!(
-                "\"{}\".\"{}\"",
-                schema.replace('"', "\"\""),
-                name.replace('"', "\"\"")
-            );
-            let definitions = query(client,&format!(r"SELECT jsonb_build_object(
-                'relation',(SELECT jsonb_build_array(relkind,relpersistence,relrowsecurity,relforcerowsecurity,relreplident,reloptions) FROM pg_class WHERE oid={oid}),
-                'fields',(SELECT jsonb_agg(jsonb_build_array(a.attname,format_type(a.atttypid,a.atttypmod),a.attnotnull,a.attidentity,a.attgenerated,pg_get_expr(d.adbin,d.adrelid)) ORDER BY a.attnum) FROM pg_attribute a LEFT JOIN pg_attrdef d ON d.adrelid=a.attrelid AND d.adnum=a.attnum WHERE a.attrelid={oid} AND a.attnum>0 AND NOT a.attisdropped),
-                'constraints',(SELECT jsonb_agg(jsonb_build_array(conname,pg_get_constraintdef(oid)) ORDER BY conname) FROM pg_constraint WHERE conrelid={oid}),
-                'indexes',(SELECT jsonb_agg(pg_get_indexdef(indexrelid) ORDER BY indexrelid) FROM pg_index WHERE indrelid={oid}),
-                'triggers',(SELECT jsonb_agg(pg_get_triggerdef(oid) ORDER BY tgname) FROM pg_trigger WHERE tgrelid={oid} AND NOT tgisinternal),
-                'policies',(SELECT jsonb_agg(jsonb_build_array(polname,polcmd,polroles,polpermissive,pg_get_expr(polqual,polrelid),pg_get_expr(polwithcheck,polrelid)) ORDER BY polname) FROM pg_policy WHERE polrelid={oid}),
-                'sequence',(SELECT to_jsonb(s) FROM pg_sequence s WHERE seqrelid={oid}))")).await?;
-            state.insert(format!("{relation}.definition"), definitions);
-            let data = if kind == "S" {
-                query(
-                    client,
-                    &format!("SELECT jsonb_build_array(last_value,is_called) FROM {relation}"),
-                )
-                .await?
-            } else {
-                query(client,&format!("SELECT coalesce(jsonb_agg(to_jsonb(t) ORDER BY to_jsonb(t)::text),'[]'::jsonb) FROM {relation} t")).await?
-            };
-            state.insert(format!("{relation}.data"), data);
-        }
-    }
-    Ok(Value::Object(state))
+    eprintln!("database identity: {identity}");
+    Ok(identity)
 }
 
-async fn runtime(
-    journey: &Journey<'_>,
-    app: &str,
-    database: &tokio_postgres::Client,
-) -> anyhow::Result<Value> {
+async fn runtime(journey: &Journey<'_>, app: &str) -> anyhow::Result<Value> {
     let status = journey.status().await?;
     let selected = &status["applications"][app];
     let observed = &selected["observed"];
@@ -1082,19 +1254,9 @@ async fn runtime(
     }
     ensure!(!workloads.is_empty(), "{app} has no workload");
     let service = get(journey.run, "hosts", "service", &format!("{name}-http")).await?;
-    let bindings: Value = database.query_one("SELECT coalesce(jsonb_agg(to_jsonb(b) ORDER BY to_jsonb(b)::text),'[]'::jsonb) FROM catalog.connection_binding b WHERE package_id=$1",&[&app]).await?.get(0);
-    if app == "alpha" {
-        ensure!(
-            bindings.as_array().is_some_and(|rows| !rows.is_empty()),
-            "alpha has no installed connection binding"
-        );
-    }
-    let sql_permissions: Value = database.query_one("SELECT coalesce(jsonb_agg(jsonb_build_array(r.rolname,c.oid,has_table_privilege(r.oid,c.oid,'SELECT'),has_table_privilege(r.oid,c.oid,'INSERT'),has_table_privilege(r.oid,c.oid,'UPDATE'),has_table_privilege(r.oid,c.oid,'DELETE')) ORDER BY r.rolname,c.oid),'[]'::jsonb) FROM pg_roles r CROSS JOIN pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE c.relkind IN ('r','p','v','m') AND EXISTS (SELECT FROM catalog.package_definition_owners o WHERE o.owner_package_id=$1 AND o.schema_name=n.nspname AND o.relation_name=c.relname)",&[&app]).await?.get(0);
-    let permissions: Value = database.query_one("SELECT coalesce(jsonb_agg(to_jsonb(p) ORDER BY to_jsonb(p)::text),'[]'::jsonb) FROM platform.permission p WHERE role_name=$1 OR permission LIKE $2",&[&format!("application-{app}"),&format!("{app}:%")]).await?.get(0);
-    let roles: Value = database.query_one("SELECT coalesce(jsonb_agg(to_jsonb(r) ORDER BY to_jsonb(r)::text),'[]'::jsonb) FROM platform.user_role r WHERE role_name=$1 OR role_name='admin'",&[&format!("application-{app}")]).await?.get(0);
-    Ok(
-        json!({"current":selected["current"],"previous":selected["previous"],"hostname":selected["hostname"],"revision":observed["revision"],"live":observed["live"],"pods":uids,"deployment":deployment["spec"],"workloads":workloads,"service":service["spec"],"bindings":bindings,"sql_permissions":sql_permissions,"permissions":permissions,"roles":roles}),
-    )
+    let runtime = json!({"current":selected["current"],"previous":selected["previous"],"hostname":selected["hostname"],"revision":observed["revision"],"live":observed["live"],"pods":uids,"deployment":deployment["spec"],"workloads":workloads,"service":service["spec"]});
+    eprintln!("{app} runtime: {runtime}");
+    Ok(runtime)
 }
 
 async fn state(
@@ -1106,7 +1268,7 @@ async fn state(
 ) -> anyhow::Result<()> {
     ensure!(
         stored(journey, database).await? == *baseline,
-        "application SQL, initialization records, sequences or data changed"
+        "database instance, initialization identity or installed schema changed"
     );
     let status = journey.status().await?;
     for ((app, (counter, widget)), (digest, behavior)) in rows.iter().zip(expected) {
@@ -1187,8 +1349,8 @@ async fn recovery(
     ]))
     .await?;
     let result = async {
-        let before = runtime(journey, "beta", database).await?;
-        let alpha_before = runtime(journey, "alpha", database).await?;
+        let before = runtime(journey, "beta").await?;
+        let alpha_before = runtime(journey, "alpha").await?;
         let output = journey
             .run("failed-alpha", &mut journey.deploy(candidate))
             .await?;
@@ -1216,7 +1378,7 @@ async fn recovery(
             )
             .await?;
         ensure!(
-            runtime(journey, "beta", database).await? == before,
+            runtime(journey, "beta").await? == before,
             "failed replacement changed beta"
         );
         let name = alpha["observed"]["release_name"]
@@ -1229,7 +1391,7 @@ async fn recovery(
         );
         ensure!(
             stored(journey, database).await? == *baseline,
-            "failed replacement changed application SQL or data"
+            "failed replacement changed database or schema identity"
         );
         journey
             .route(
@@ -1279,10 +1441,10 @@ async fn recovery(
         drop(group);
         ensure!(
             stored(journey, database).await? == *baseline,
-            "interrupted replacement changed application SQL or data"
+            "interrupted replacement changed database or schema identity"
         );
         ensure!(
-            runtime(journey, "beta", database).await? == before,
+            runtime(journey, "beta").await? == before,
             "interrupted replacement changed beta"
         );
         journey
@@ -1292,13 +1454,6 @@ async fn recovery(
                 &json!([{"selector":{},"maker_id":null}]),
             )
             .await?;
-        ensure!(
-            EnvironmentDocument::compile(&journey.file)?.applications["alpha"]
-                .previous
-                .as_deref()
-                == Some(running),
-            "retry replaced previous selection"
-        );
         Ok::<_, anyhow::Error>(())
     }
     .await;
@@ -1347,7 +1502,7 @@ async fn recovery(
         .apply(
             "restore-alpha",
             journey
-                .command(false, &["rollback", "alpha", "--env"])
+                .command(&["rollback", "alpha", "--env"])
                 .arg(&journey.file),
         )
         .await

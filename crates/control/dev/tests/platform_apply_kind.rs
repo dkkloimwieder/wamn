@@ -47,7 +47,7 @@ impl Drop for Run {
             eprintln!("kind delete cluster --name {}", self.document.cluster_name);
             if self.checkout.exists() {
                 eprintln!(
-                    "git -C '{}' worktree remove --force '{}'",
+                    "git -c core.hooksPath=/dev/null -C '{}' worktree remove --force '{}'",
                     self.repository.display(),
                     self.checkout.display()
                 );
@@ -68,6 +68,7 @@ async fn platform_apply_kind() -> anyhow::Result<()> {
         .canonicalize()?;
     let chart = platform_images::source_chart(&repository, &repository)?;
     let selected = artifact_plan::select(&chart)?;
+    eprintln!("Selected chart: {}", chart.display());
     eprintln!("Selected host: {}", selected.image("host")?);
     report_images(&selected.values()["platform"]);
     let binary = std::env::current_exe()?
@@ -80,6 +81,7 @@ async fn platform_apply_kind() -> anyhow::Result<()> {
         binary.is_file() && binary.with_file_name("wamn-ctl").is_file(),
         "build wamn-ctl --bin wamn --bin wamn-ctl first"
     );
+    eprintln!("Selected CLI: {}", binary.display());
     let kcl = match std::env::var_os("WAMN_KCL") {
         Some(path) => PathBuf::from(path).canonicalize()?,
         None => PathBuf::from(
@@ -104,6 +106,7 @@ async fn platform_apply_kind() -> anyhow::Result<()> {
         if run.checkout.exists() {
             success(
                 Command::new("git")
+                    .args(["-c", "core.hooksPath=/dev/null"])
                     .arg("-C")
                     .arg(&run.repository)
                     .args(["worktree", "remove", "--force"])
