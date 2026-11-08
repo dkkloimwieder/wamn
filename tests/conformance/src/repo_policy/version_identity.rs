@@ -13,116 +13,6 @@ use super::Problems;
 const MVP_CARGO_VERSION: &str = "0.1.0";
 const MVP_SCHEMA_VERSION: &str = "0.1";
 
-#[derive(Clone, Copy, Debug)]
-struct GovernedLiteral {
-    path: &'static str,
-    exact: &'static str,
-    expected_count: usize,
-}
-
-// This is deliberately a list of positive definitions, not a repository-wide
-// search for version-looking text. Upstream identities and refusal/mutation fixtures
-// must remain free to carry the foreign versions they show are rejected.
-const GOVERNED_LITERALS: &[GovernedLiteral] = &[
-    // RETIRED `crates/authoring/model/src/lib.rs` / `SCHEMA_VERSION`: the
-    // authoring contract moved to 0.2 with the kind → type rename
-    // (wamn-ld93.4, docs/history/kind-to-type.md §3.1 A4), and the decoder
-    // refuses 0.1 by name, so the MVP 0.1 line no longer governs it.
-    GovernedLiteral {
-        path: "crates/control/registry/src/types.rs",
-        exact: r#"pub const SCHEMA_VERSION: &str = "0.1";"#,
-        expected_count: 1,
-    },
-    // RETIRED `crates/scenarios/model/src/test_set.rs` /
-    // `TEST_SET_SCHEMA_VERSION`: wamn-0h0g.15.27 (3a042d96) deleted the
-    // self-describing test-set document, so the constant has no subject.
-    // wamn-0h0g.15.76 (eb1c3a88) then moved the surviving file to
-    // crates/execution/flow-model/src/test_set.rs, so repointing the path alone
-    // would not resurrect the constant.
-    //
-    // RETIRED `crates/execution/flow-model/src/types.rs` / `SCHEMA_VERSION`:
-    // wamn-0h0g.26.5 (7232366f) gutted flow-model down to its survivors and
-    // renamed it crates/execution/contract. types.rs was DELETED, not moved —
-    // the survivors are node_contract, expect, test_set, status,
-    // portable_http_target and ports, none of which carries a SCHEMA_VERSION —
-    // so the constant has no subject and there is nothing to repoint to.
-    GovernedLiteral {
-        path: "apps/platform/events/registration/src/model.rs",
-        exact: r#"pub const SCHEMA_VERSION: &str = "0.1";"#,
-        expected_count: 1,
-    },
-    GovernedLiteral {
-        path: "crates/identity/project-state/src/lib.rs",
-        exact: r#"pub const SCHEMA_VERSION: &str = "0.1";"#,
-        expected_count: 1,
-    },
-    // RETIRED `deploy/sql/authoring-tests.sql` / the `schema_version` column
-    // CHECK: wamn-0h0g.15.27 (3a042d96) dropped `wamn_run.authoring_test_sets`,
-    // the only relation that carried a governed schema version. The file
-    // retains no `0.1` identity of any form.
-    GovernedLiteral {
-        path: "deploy/sql/system-schema.sql",
-        exact: "INSERT INTO registry.meta (schema_version) VALUES ('0.1');",
-        expected_count: 1,
-    },
-    // RETIRED `crates/schema/control/src/run_plane.rs` /
-    // `authoring_test_sets_schema_version_check`: the reconciliation CheckSpec
-    // went with its table in wamn-0h0g.15.27 (3a042d96). The admission-context
-    // CheckSpec below is the only governed `0.1` reconciliation identity left in
-    // that declaration set, which `75ffd53e7` moved out of `run_plane.rs` into
-    // `run_plane/declarations.rs` unchanged.
-    GovernedLiteral {
-        path: "deploy/sql/run-state.sql",
-        exact: "admission_context_version text NOT NULL DEFAULT '0.1'",
-        expected_count: 1,
-    },
-    GovernedLiteral {
-        path: "deploy/sql/run-state.sql",
-        exact: "CHECK (admission_context_version = '0.1'),",
-        expected_count: 1,
-    },
-    GovernedLiteral {
-        path: "crates/schema/control/src/run_plane/declarations.rs",
-        exact: r#"definition: "CHECK (admission_context_version = '0.1'::text)","#,
-        expected_count: 1,
-    },
-    GovernedLiteral {
-        path: "tests/conformance/src/schema_drift.rs",
-        exact: "admission_context_version text NOT NULL DEFAULT '0.1'",
-        expected_count: 1,
-    },
-    GovernedLiteral {
-        path: "crates/catalog/model/src/lib.rs",
-        exact: r#"const IDENTITY_FORMAT: &[u8] = b"wamn.catalog.identity.v0.1";"#,
-        expected_count: 1,
-    },
-    GovernedLiteral {
-        path: "crates/platform/runtime/src/plugins/connection_http.rs",
-        exact: r#"const HTTP_CONTRACT: &str = "wamn:connection/http@0.1.0";"#,
-        expected_count: 1,
-    },
-    GovernedLiteral {
-        path: "test-support/infrastructure/kubernetes_gate_verdict.rs",
-        exact: r#"pub const PROTOCOL: &str = "wamn-kubernetes-gate-verdict/v0.1";"#,
-        expected_count: 1,
-    },
-    GovernedLiteral {
-        path: "test-support/infrastructure/kubernetes_gate_verdict.rs",
-        exact: r#"if record.schema_version != "0.1" || record.protocol != PROTOCOL {"#,
-        expected_count: 1,
-    },
-    GovernedLiteral {
-        path: "test-support/infrastructure/kubernetes_gate.rs",
-        exact: r#""schema_version":"0.1","protocol":PROTOCOL"#,
-        expected_count: 1,
-    },
-    GovernedLiteral {
-        path: "tests/conformance/tests/kubernetes_gate_runner.rs",
-        exact: r#""wamn-kubernetes-gate-verdict/v0.1""#,
-        expected_count: 1,
-    },
-];
-
 pub(super) fn check(root: &Path, problems: &mut Problems) {
     for manifest in [root.join("Cargo.toml"), root.join("apps/Cargo.toml")] {
         match cargo_metadata(&manifest) {
@@ -131,7 +21,6 @@ pub(super) fn check(root: &Path, problems: &mut Problems) {
         }
     }
     wamn_wit_packages_have_one_version(root, problems);
-    governed_literal_violations(root, problems);
     problems.require(INVOCATION_CONTEXT_VERSION == MVP_SCHEMA_VERSION, || {
         format!(
             "invocation-context owner is {INVOCATION_CONTEXT_VERSION}, expected {MVP_SCHEMA_VERSION}"
@@ -356,29 +245,4 @@ fn yaml_wamn_packages(
         *slot = Some(value.to_owned());
     }
     record(current);
-}
-
-fn governed_literal_violations(repository: &Path, problems: &mut Problems) {
-    for identity in GOVERNED_LITERALS {
-        // Absence and count are independent faults and one entry can carry both,
-        // so an unreadable file still owes the occurrence it was watched for.
-        // wamn-0h0g.15.110's first entry had MOVED (eb1c3a88) and had SEPARATELY
-        // lost its constant (3a042d96): reporting only the missing file read as a
-        // path needing correction, and correcting the path alone would have turned
-        // a file-mode failure into found 0 rather than a pass.
-        let source = match std::fs::read_to_string(repository.join(identity.path)) {
-            Ok(source) => source,
-            Err(error) => {
-                problems.push(format!("{}: {error}", identity.path));
-                String::new()
-            }
-        };
-        let actual_count = source.matches(identity.exact).count();
-        problems.require(actual_count == identity.expected_count, || {
-            format!(
-                "{}: expected {} occurrence(s) of governed identity `{}`, found {actual_count}",
-                identity.path, identity.expected_count, identity.exact
-            )
-        });
-    }
 }

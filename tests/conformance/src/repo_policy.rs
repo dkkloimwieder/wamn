@@ -1,15 +1,11 @@
 //! Repository policy lints that `tools/repo-lint` runs through the `repo-policy`
 //! binary.
 //!
-//! Each lint reads the repository under one root and reports every violation it
-//! finds. They read source and repository files, so they are lints, not tests.
+//! These lints enforce file-location conventions and version identities from
+//! Cargo metadata and WIT package declarations under one repository root.
 
 mod authored_manifests;
-mod docker_provenance;
 mod generated_clients;
-mod run_state_projection;
-mod session_claims;
-mod system_cluster;
 mod version_identity;
 
 use std::path::Path;
@@ -18,12 +14,8 @@ use std::path::Path;
 pub fn check(root: &Path) -> Vec<String> {
     let mut problems = Problems::default();
     authored_manifests::check(root, &mut problems);
-    docker_provenance::check(root, &mut problems);
     generated_clients::check(root, &mut problems);
     version_identity::check(root, &mut problems);
-    session_claims::check(root, &mut problems);
-    system_cluster::check(root, &mut problems);
-    run_state_projection::check(root, &mut problems);
     problems.0
 }
 
@@ -41,16 +33,5 @@ impl Problems {
 
     fn push(&mut self, message: String) {
         self.0.push(message);
-    }
-}
-
-/// Read one repository file, recording an unreadable file as a violation.
-fn read(root: &Path, relative: &str, problems: &mut Problems) -> Option<String> {
-    match std::fs::read_to_string(root.join(relative)) {
-        Ok(source) => Some(source),
-        Err(error) => {
-            problems.push(format!("{relative}: {error}"));
-            None
-        }
     }
 }

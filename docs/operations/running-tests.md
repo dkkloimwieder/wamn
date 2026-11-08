@@ -216,7 +216,7 @@ cargo test --manifest-path apps/Cargo.toml --locked --offline \
 The application READMEs identify additional tests and binary owners.
 Use `tools/repo-lint dry-run` to see its exact commands without executing them.
 `tools/repo-lint run` runs formatting and Clippy across all three workspaces.
-It then runs dependency boundaries and the repository policy lints of the `repo-policy` binary.
+It then runs dependency boundaries and `repo-policy` for file-location conventions and version identities.
 It reports each command and returns a nonzero status if any command fails.
 The full schema files own fresh platform installations.
 

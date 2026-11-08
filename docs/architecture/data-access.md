@@ -684,8 +684,7 @@ The function reads no user row, and no stamp column has a foreign key.
 The platform trigger functions read `app.user_id`.
 Generated statements read it too: a create fills each actor field, an update fills the `updated_by` actor field, and a tombstone delete sets `deleted_by`.
 No authorization or row policy reads it.
-The [claims lint](../../tests/conformance/src/repo_policy/session_claims.rs) admits those readers by name, and it admits `wamn_history.log_row_change` as the reader of `app.operation`.
-It also admits the two function templates of `apply_package/record_history.rs`, which generate the functions of the package relations, and the actor stamps of generated statements.
+`wamn_history.log_row_change` reads `app.operation` to record attribution.
 
 After the migrations apply, apply-package installs one `wamn_record_history_stamp` trigger on each owned relation whose declaration selects at least one column.
 The trigger runs `BEFORE INSERT OR UPDATE` for each row and executes the generated function `wamn_history.<schema>__<relation>_stamp()`.
