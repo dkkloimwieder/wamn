@@ -1256,7 +1256,149 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
         state.initialization_identity.as_deref(),
         pending["initialization_identity"].as_str()
     );
-    let mut system_writer = connect(system.url()).await?;
+    let mut system_writer = connect(&platform.system_database_url).await?;
+    let role = system_writer
+        .query_one(
+            "SELECT current_user, rolsuper FROM pg_roles WHERE rolname=current_user",
+            &[],
+        )
+        .await?;
+    assert_eq!(role.get::<_, String>(0), "wamn_apply");
+    assert!(!role.get::<_, bool>(1));
+    assert!(
+        !system_writer
+            .query_one(
+                "SELECT has_table_privilege(current_user, 'registry.capture_gap', 'SELECT')",
+                &[]
+            )
+            .await?
+            .get::<_, bool>(0)
+    );
+    let capture = wamn_control_provision::cdc_object_name(
+        &document.org,
+        &document.project,
+        &document.env,
+        &provisioned.instance,
+    );
+    let manifests = ensure::installed_manifests(&platform, &document).await?;
+    let schemas = manifests
+        .iter()
+        .flat_map(|manifest| manifest.models.values().map(|model| model.schema.clone()))
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect::<Vec<_>>();
+    wamn_environment_control::enable_cdc_project_env::record_event_reader(
+        &platform.system_database_url,
+        &document.triple(),
+        &schemas,
+        &capture,
+        None,
+    )
+    .await?;
+    // The existing recovery owner connects through the administrator, then
+    // executes registry reads and writes as the non-superuser wamn_system owner.
+    sql::reset::reconnect_capture_gap(&platform, &document, system.url()).await?;
+    let mut capture_owner = connect(system.url()).await?;
+    capture_owner.batch_execute("SET ROLE wamn_system").await?;
+    let role = capture_owner
+        .query_one(
+            "SELECT current_user, rolsuper FROM pg_roles WHERE rolname=current_user",
+            &[],
+        )
+        .await?;
+    assert_eq!(role.get::<_, String>(0), "wamn_system");
+    assert!(!role.get::<_, bool>(1));
+    let tx = wamn_environment_control::provision_project_env::provisioning_transaction(
+        &mut capture_owner,
+    )
+    .await?;
+    let start: chrono::DateTime<chrono::Utc> = tx.query_one("SELECT now()", &[]).await?.get(0);
+    tx.query_one(
+        wamn_control_registry::sql::insert_capture_gap_sql(),
+        &[
+            &document.org,
+            &document.project,
+            &document.env,
+            &capture,
+            &Option::<String>::None,
+            &start,
+            &"missing",
+            &"0/0",
+        ],
+    )
+    .await?;
+    tx.commit().await?;
+    sql::reset::reconnect_capture_gap(&platform, &document, system.url()).await?;
+    sql::reset::reconnect_capture_gap(&platform, &document, system.url()).await?;
+    assert!(
+        capture_owner
+            .query_one(
+                wamn_control_registry::sql::select_capture_gap_sql(),
+                &[&document.org, &document.project, &document.env]
+            )
+            .await?
+            .get::<_, bool>(1)
+    );
+
+    // A CNPG publication can already exist after recreation while grants on
+    // the newly created maps still need restoration by the CDC SQL owner.
+    admin
+        .batch_execute(&wamn_control_provision::sql::ensure_replication_role_sql(
+            &capture,
+            "reset-replication-password",
+        ))
+        .await?;
+    candidate_admin
+        .batch_execute(
+            &wamn_control_provision::sql::create_publication_schemas_sql(&capture, &schemas),
+        )
+        .await?;
+    assert!(ensure::cdc_in_place(&candidate_admin, &capture, &schemas).await?);
+    let maps = schemas
+        .iter()
+        .flat_map(|schema| {
+            wamn_catalog::manifest::CONTROL_OWNED_RELATION_TABLES
+                .map(|table| format!("{schema}.{table}"))
+        })
+        .collect::<Vec<_>>();
+    for map in &maps {
+        assert!(
+            !candidate_admin
+                .query_one(
+                    "SELECT has_table_privilege($1,$2,'SELECT')",
+                    &[&capture, map]
+                )
+                .await?
+                .get::<_, bool>(0)
+        );
+    }
+    wamn_environment_control::enable_cdc_project_env::apply_cdc_sql(
+        project_admin_url.as_str(),
+        &schemas,
+        &capture,
+        &database_name,
+    )
+    .await?;
+    let mut replication_url = project_admin_url.clone();
+    replication_url.set_username(&capture).unwrap();
+    replication_url
+        .set_password(Some("reset-replication-password"))
+        .unwrap();
+    let reader = connect(replication_url.as_str()).await?;
+    let role = reader
+        .query_one(
+            "SELECT current_user, rolsuper FROM pg_roles WHERE rolname=current_user",
+            &[],
+        )
+        .await?;
+    assert_eq!(role.get::<_, String>(0), capture);
+    assert!(!role.get::<_, bool>(1));
+    for map in &maps {
+        reader
+            .query(&format!("SELECT * FROM {map} LIMIT 1"), &[])
+            .await?;
+    }
+
     assert!(
         require_connected(&system_writer, &document.triple())
             .await
@@ -1299,6 +1441,8 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
         pending["initialization_identity"]
     );
     assert_eq!(retained["inputs"], pending["inputs"]);
+    candidate_admin.query("SELECT pg_drop_replication_slot(slot_name) FROM pg_replication_slots WHERE slot_name=$1", &[&capture]).await?;
+    drop(reader);
     drop(candidate_admin);
     admin
         .batch_execute(&format!(

@@ -722,8 +722,24 @@ pub async fn ensure_cdc(platform: &Platform, document: &EnvironmentDocument) -> 
             })?;
         }
     }
+    let database = wamn_control_provision::project_env_database_name(
+        &document.org,
+        &document.project,
+        &document.env,
+        &instance,
+    );
+    let mut admin_url =
+        url::Url::parse(&std::env::var("WAMN_SYSTEM_ADMIN_URL").context("CDC administrator URL")?)?;
+    admin_url.set_path(&database);
+    crate::enable_cdc_project_env::apply_cdc_sql(
+        admin_url.as_str(),
+        &schemas,
+        &cdc_name,
+        &database,
+    )
+    .await?;
     if !cdc_in_place(&project, &cdc_name, &schemas).await? {
-        enable_cdc(platform, document, &schemas, &project, &instance).await?;
+        enable_cdc(platform, document, &schemas, &instance).await?;
     }
     ensure_streams(platform, document, &manifests).await?;
     let namespace = platform.target.namespace.as_str();
@@ -828,7 +844,6 @@ async fn enable_cdc(
     platform: &Platform,
     document: &EnvironmentDocument,
     schemas: &[String],
-    project: &tokio_postgres::Client,
     instance: &str,
 ) -> anyhow::Result<()> {
     platform.events.as_ref().context(
@@ -848,11 +863,6 @@ async fn enable_cdc(
         &document.env,
         instance,
     );
-    project
-        .batch_execute(&crate::enable_cdc_project_env::cdc_sql_bundle(
-            schemas, &capture, &database,
-        ))
-        .await?;
     let publication = wamn_control_provision::database::render_project_env_publication(
         &document.triple(),
         instance,

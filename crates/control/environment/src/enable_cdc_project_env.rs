@@ -279,6 +279,28 @@ pub async fn enable_cdc_project_env(
     })
 }
 
+/// Restore the CDC slot, maps and grants through the project database administrator.
+pub async fn apply_cdc_sql(
+    admin_database_url: &str,
+    schemas: &[String],
+    cdc_name: &str,
+    database: &str,
+) -> anyhow::Result<()> {
+    let client = wamn_package_control::database::connect(admin_database_url).await?;
+    let connected: String = client
+        .query_one("SELECT current_database()", &[])
+        .await?
+        .get(0);
+    anyhow::ensure!(
+        connected == database,
+        "CDC SQL targets a different database"
+    );
+    client
+        .batch_execute(&cdc_sql_bundle(schemas, cdc_name, database))
+        .await
+        .context("restore CDC slot, maps and grants")
+}
+
 /// Record the CDC reader registration of `triple` in the registry
 /// (idempotent + refreshing: recording it again leaves one row). The caller
 /// records it last, once the role SQL, the CDC SQL, the publication and the

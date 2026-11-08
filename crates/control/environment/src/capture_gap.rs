@@ -223,6 +223,21 @@ pub async fn recover_capture_gap(
 
 /// Set `resync_at` on the newest gap row of one registration.
 pub async fn close_capture_gap(args: &CloseCaptureGapRequest) -> anyhow::Result<ClosedCaptureGap> {
+    close_gap(args, false)
+        .await?
+        .context("capture gap was not closed")
+}
+
+/// Close an open gap after database reconstruction, retaining an already closed or absent gap.
+pub async fn close_open_capture_gap(args: &CloseCaptureGapRequest) -> anyhow::Result<()> {
+    close_gap(args, true).await?;
+    Ok(())
+}
+
+async fn close_gap(
+    args: &CloseCaptureGapRequest,
+    optional: bool,
+) -> anyhow::Result<Option<ClosedCaptureGap>> {
     let triple = Triple::new(&args.org, &args.project, args.env.as_str());
     let mut system = connect_system(&args.system_database_url).await?;
     let env = triple.env.as_str();
@@ -235,12 +250,18 @@ pub async fn close_capture_gap(args: &CloseCaptureGapRequest) -> anyhow::Result<
         .await
         .context("read the newest registry.capture_gap row")?;
     let Some(newest) = newest else {
+        if optional {
+            return Ok(None);
+        }
         bail!("{triple} has no capture gap row");
     };
     let created_at: DateTime<Utc> = newest.get(0);
     let slot: String = newest.get(1);
     let closed: bool = newest.get(2);
     if closed {
+        if optional {
+            return Ok(None);
+        }
         bail!("the newest capture gap row of {triple} already has resync_at");
     }
     let resync_at: DateTime<Utc> = transaction
@@ -255,12 +276,12 @@ pub async fn close_capture_gap(args: &CloseCaptureGapRequest) -> anyhow::Result<
         .commit()
         .await
         .context("commit the close transaction")?;
-    Ok(ClosedCaptureGap {
+    Ok(Some(ClosedCaptureGap {
         triple,
         slot,
         created_at,
         resync_at,
-    })
+    }))
 }
 
 /// The LSN and `commit_ts` of the newest CDC event on the source stream. `None`

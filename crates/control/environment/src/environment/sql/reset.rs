@@ -694,6 +694,23 @@ async fn recreate(
     Ok(())
 }
 
+/// Reconnect capture recovery through the registry owner's administrator credential.
+pub async fn reconnect_capture_gap(
+    platform: &Platform,
+    document: &EnvironmentDocument,
+    admin_url: &str,
+) -> anyhow::Result<()> {
+    let mut owner_url = url::Url::parse(admin_url)?;
+    owner_url.set_path(url::Url::parse(&platform.system_database_url)?.path());
+    crate::capture_gap::close_open_capture_gap(&crate::capture_gap::CloseCaptureGapRequest {
+        org: document.org.clone(),
+        project: document.project.clone(),
+        env: document.env.clone(),
+        system_database_url: owner_url.into(),
+    })
+    .await
+}
+
 async fn reconnect(
     platform: &Platform,
     document: &EnvironmentDocument,
@@ -718,22 +735,7 @@ async fn reconnect(
         project_admin.as_str(),
     )
     .await?;
-    if system
-        .query_opt(
-            wamn_control_registry::sql::select_capture_gap_sql(),
-            &[&document.org, &document.project, &document.env],
-        )
-        .await?
-        .is_some_and(|row| !row.get::<_, bool>(1))
-    {
-        crate::capture_gap::close_capture_gap(&crate::capture_gap::CloseCaptureGapRequest {
-            org: document.org.clone(),
-            project: document.project.clone(),
-            env: document.env.clone(),
-            system_database_url: platform.system_database_url.clone(),
-        })
-        .await?;
-    }
+    reconnect_capture_gap(platform, document, &admin_url).await?;
     ensure::ensure_cdc(platform, document).await?;
     completed.push("CDC rebuilt");
     let broker = platform
