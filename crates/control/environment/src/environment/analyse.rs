@@ -687,8 +687,7 @@ pub(crate) async fn application_releases(
         let output = helm(
             platform,
             &[
-                "list", "--all", "--filter", &filter, "--max", "256", "--offset", &offset, "-o",
-                "json",
+                "list", "--filter", &filter, "--max", "256", "--offset", &offset, "-o", "json",
             ],
         )
         .await?;
