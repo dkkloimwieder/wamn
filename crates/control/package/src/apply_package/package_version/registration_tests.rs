@@ -435,3 +435,297 @@ async fn nontransactional_files_keep_committed_work_and_require_explicit_resolut
             .changed
     );
 }
+
+#[tokio::test]
+async fn adoption_preserves_execution_records_and_never_executes_asserted_files() {
+    use crate::apply_package::adopt_package_schemas;
+    use wamn_schema_control::MigrationOutcome;
+    let _lock = wamn_test_postgres::lock();
+    let database = wamn_project_state::test_database::tenant_platform();
+    database.execute(&[
+        include_str!("../../../../../../deploy/sql/app-schema-baseline.sql"),
+        wamn_control_provision::sql::ensure_db_owner_role_sql(),
+        "DO $grant$ BEGIN EXECUTE format('GRANT CREATE ON DATABASE %I TO wamn_db_owner', current_database()); END $grant$;",
+    ]).unwrap();
+    let mut client = crate::database::connect(database.url()).await.unwrap();
+    crate::schema_baseline::record_project(&client)
+        .await
+        .unwrap();
+    let initialization: String = client
+        .query_one(
+            "SELECT installed_at::text FROM platform.schema_baseline WHERE singleton",
+            &[],
+        )
+        .await
+        .unwrap()
+        .get(0);
+    let scratch = wamn_test_infrastructure::scratch::ScratchRoot::create().unwrap();
+    let root = scratch.path().join("application");
+    crate::test_support::copy_schema_fixture(&root);
+    apply_package(request(&root, database.url())).await.unwrap();
+    client
+        .batch_execute("INSERT INTO inventory.dock (dock_code) VALUES ('retained')")
+        .await
+        .unwrap();
+    let baseline = state(&mut client).await;
+    let manifest = wamn_catalog::manifest::PackageManifest::from_slice(
+        &std::fs::read(root.join("wamn.json")).unwrap(),
+    )
+    .unwrap();
+    let tx = client.transaction().await.unwrap();
+    let mut columns = std::collections::BTreeMap::new();
+    for (id, model) in &manifest.models {
+        columns.insert(
+            id.to_owned(),
+            crate::apply_package::record_history::read_relation_columns(
+                &tx,
+                &model.schema,
+                &model.table,
+            )
+            .await
+            .unwrap(),
+        );
+    }
+    tx.rollback().await.unwrap();
+    let source = || {
+        let directory = crate::apply_package::read_package_directory(&root).unwrap();
+        let manifest =
+            wamn_catalog::manifest::PackageManifest::from_slice(&directory.manifest_bytes).unwrap();
+        let statements = wamn_schema_control::physical_schema::render(
+            &manifest,
+            &directory.migrations,
+            &columns,
+        )
+        .unwrap();
+        std::fs::write(
+            root.join("generated/physical-schema.json"),
+            serde_json::to_vec(&serde_json::json!({"columns": columns, "statements": statements}))
+                .unwrap(),
+        )
+        .unwrap();
+        request(&root, database.url()).package
+    };
+    let selected = source();
+    let matched =
+        adopt_package_schemas(database.url(), ENV_KEY, &initialization, &[&selected], None)
+            .await
+            .unwrap();
+    assert!(matched.values().all(Vec::is_empty));
+    assert_eq!(state(&mut client).await, baseline);
+
+    // The user accepts a pending file as a starting point. Adoption records
+    // that assertion without executing its DDL.
+    std::fs::write(
+        root.join("migrations/0002_asserted.sql"),
+        "ALTER TABLE inventory.dock ADD COLUMN asserted text;",
+    )
+    .unwrap();
+    let selected = source();
+    adopt_package_schemas(database.url(), ENV_KEY, &initialization, &[&selected], None)
+        .await
+        .unwrap();
+    let adopted = state(&mut client).await;
+    assert_eq!(adopted.baseline_fingerprint, baseline.baseline_fingerprint);
+    assert_eq!(
+        adopted.migrations[..baseline.migrations.len()],
+        baseline.migrations
+    );
+    assert_eq!(
+        adopted.migrations.last().unwrap().outcome,
+        MigrationOutcome::Adopted
+    );
+    assert!(
+        !client
+            .query_one(
+                "SELECT EXISTS (SELECT FROM information_schema.columns WHERE table_schema='inventory' AND table_name='dock' AND column_name='asserted')",
+                &[]
+            )
+            .await
+            .unwrap()
+            .get::<_, bool>(0)
+    );
+    assert!(
+        client
+            .query_one(
+                "SELECT applied_at IS NULL FROM catalog.package_migrations WHERE outcome='adopted'",
+                &[]
+            )
+            .await
+            .unwrap()
+            .get::<_, bool>(0)
+    );
+
+    let mut next_manifest = manifest.clone();
+    next_manifest.package.version = "2.0.0".into();
+    std::fs::write(
+        root.join("wamn.json"),
+        serde_json::to_vec(&next_manifest).unwrap(),
+    )
+    .unwrap();
+    std::fs::write(
+        root.join("migrations/0003_next.sql"),
+        "ALTER TABLE inventory.dock ADD COLUMN next text;",
+    )
+    .unwrap();
+    assert_eq!(
+        apply_package_schema(request(&root, database.url()), None)
+            .await
+            .unwrap()
+            .migrations_applied,
+        1
+    );
+    assert!(
+        !apply_package_schema(request(&root, database.url()), None)
+            .await
+            .unwrap()
+            .changed
+    );
+    let executed = state(&mut client).await;
+    assert_eq!(
+        executed.migrations.last().unwrap().outcome,
+        MigrationOutcome::Applied
+    );
+    assert!(
+        client
+            .query_one(
+                "SELECT EXISTS (SELECT FROM information_schema.columns WHERE table_schema='inventory' AND table_name='dock' AND column_name='next')",
+                &[]
+            )
+            .await
+            .unwrap()
+            .get::<_, bool>(0)
+    );
+
+    // Manual repair changes an accepted input. Ordinary apply refuses its drift.
+    let initial = root.join(&baseline.migrations[0].relative_path);
+    let mut sql = std::fs::read(initial.clone()).unwrap();
+    sql.extend_from_slice(b"\n-- accepted manual repair\n");
+    std::fs::write(initial, sql).unwrap();
+    assert!(
+        apply_package_schema(request(&root, database.url()), None)
+            .await
+            .is_err()
+    );
+    assert_eq!(state(&mut client).await, executed);
+    let selected = source();
+    // The same database name cannot authorize an assertion after recreation.
+    assert!(
+        adopt_package_schemas(
+            database.url(),
+            ENV_KEY,
+            "old-initialization",
+            &[&selected],
+            None
+        )
+        .await
+        .is_err()
+    );
+    assert_eq!(state(&mut client).await, executed);
+    adopt_package_schemas(database.url(), ENV_KEY, &initialization, &[&selected], None)
+        .await
+        .unwrap();
+    let repaired = state(&mut client).await;
+    assert_eq!(repaired.migrations[0].outcome, MigrationOutcome::Adopted);
+    assert_eq!(repaired.migrations[1..], executed.migrations[1..]);
+    assert!(
+        adopt_package_schemas(database.url(), ENV_KEY, &initialization, &[&selected], None)
+            .await
+            .unwrap()
+            .values()
+            .all(Vec::is_empty)
+    );
+    assert_eq!(state(&mut client).await, repaired);
+    assert!(
+        client
+            .query_one(
+                "SELECT EXISTS (SELECT FROM inventory.dock WHERE dock_code='retained')",
+                &[]
+            )
+            .await
+            .unwrap()
+            .get::<_, bool>(0)
+    );
+    next_manifest.package.version = "3.0.0".into();
+    std::fs::write(
+        root.join("wamn.json"),
+        serde_json::to_vec(&next_manifest).unwrap(),
+    )
+    .unwrap();
+    std::fs::write(root.join("migrations/0004_uncertain.sql"),
+        "-- wamn:no-transaction\nCREATE INDEX CONCURRENTLY uncertain_idx ON inventory.dock (absent);").unwrap();
+    assert!(
+        apply_package_schema(request(&root, database.url()), None)
+            .await
+            .is_err()
+    );
+    let uncertain = state(&mut client).await;
+    assert_eq!(
+        uncertain.migrations.last().unwrap().outcome,
+        MigrationOutcome::Started
+    );
+    let selected = source();
+    assert!(
+        adopt_package_schemas(database.url(), ENV_KEY, &initialization, &[&selected], None)
+            .await
+            .is_err()
+    );
+    assert_eq!(state(&mut client).await, uncertain);
+}
+
+#[tokio::test]
+async fn adoption_establishes_a_missing_baseline_without_running_ddl() {
+    use crate::apply_package::adopt_package_schemas;
+    let _lock = wamn_test_postgres::lock();
+    let database = wamn_project_state::test_database::tenant_platform();
+    database
+        .execute(&[include_str!(
+            "../../../../../../deploy/sql/app-schema-baseline.sql"
+        )])
+        .unwrap();
+    let mut client = crate::database::connect(database.url()).await.unwrap();
+    crate::schema_baseline::record_project(&client)
+        .await
+        .unwrap();
+    let initialization: String = client
+        .query_one(
+            "SELECT installed_at::text FROM platform.schema_baseline WHERE singleton",
+            &[],
+        )
+        .await
+        .unwrap()
+        .get(0);
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/component_package");
+    let source = crate::package_artifact::fixture_package_root(&root).unwrap();
+    let result = adopt_package_schemas(database.url(), ENV_KEY, &initialization, &[&source], None)
+        .await
+        .unwrap();
+    let tx = client.transaction().await.unwrap();
+    let adopted = load_applied_package(&tx, ENV_KEY, "source_fixture")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        adopted.baseline_fingerprint,
+        adopted.physical_schema_fingerprint
+    );
+    assert!(
+        adopted
+            .migrations
+            .iter()
+            .all(|file| file.outcome == wamn_schema_control::MigrationOutcome::Adopted)
+    );
+    assert_eq!(
+        result["source_fixture"],
+        adopted
+            .migrations
+            .iter()
+            .map(|file| file.relative_path.clone())
+            .collect::<Vec<_>>()
+    );
+    assert!(
+        tx.query_one("SELECT to_regclass('inventory.item') IS NULL", &[])
+            .await
+            .unwrap()
+            .get::<_, bool>(0)
+    );
+}

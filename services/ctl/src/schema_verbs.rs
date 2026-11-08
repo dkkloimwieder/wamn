@@ -18,6 +18,8 @@ pub enum SchemaCommand {
     Publish(PublishArgs),
     /// Replace the recorded disposable environment database and reconnect its users.
     Reset(EnvironmentArgs),
+    /// Assert the selected schema as a starting point without executing SQL.
+    Adopt(EnvironmentArgs),
 }
 
 #[derive(Debug, Args)]
@@ -59,6 +61,24 @@ pub struct PublishArgs {
 pub async fn run(command: SchemaCommand) -> anyhow::Result<()> {
     let (args, apply, resolution) = match command {
         SchemaCommand::Publish(args) => return publish(args).await,
+        SchemaCommand::Adopt(args) => {
+            let configuration = args.env.with_file_name("dev.json");
+            if configuration.is_file() {
+                let result =
+                    wamn_dev_control::dev::target_database::adopt_schema(&configuration, &args.env)
+                        .await?;
+                println!(
+                    "{}",
+                    serde_json::json!({"adopted": result, "sql_executed": false, "live_verified": false})
+                );
+            } else {
+                let document = EnvironmentDocument::compile(&args.env)?;
+                let mut platform = Platform::apply_from_env()?;
+                environment::runtime::resolve_platform(&mut platform, &document.org).await?;
+                environment::sql::adopt_deployed(&platform, &document).await?;
+            }
+            return Ok(());
+        }
         SchemaCommand::Reset(args) => {
             let platform = Platform::apply_from_env()?;
             let result = Box::pin(environment::sql::reset::reset_deployed(

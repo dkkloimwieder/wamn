@@ -67,7 +67,7 @@ CREATE TABLE catalog.package_migrations (
     ordinal         int         NOT NULL CHECK (ordinal > 0),
     relative_path   text        NOT NULL CHECK (relative_path ~ '^migrations/[0-9]{4}_[a-z0-9_]+\.sql$'),
     sha256          text        NOT NULL CHECK (sha256 ~ '^sha256:[0-9a-f]{64}$'),
-    outcome         text        NOT NULL CHECK (outcome IN ('applied', 'started')),
+    outcome         text        NOT NULL CHECK (outcome IN ('applied', 'adopted', 'started')),
     applied_at      timestamptz,
     created_at      timestamptz NOT NULL,
     created_by      uuid        NOT NULL,
@@ -82,10 +82,16 @@ CREATE TABLE catalog.package_migrations (
 );
 
 -- A first installation can commit files before its completed package record.
--- File identity stays immutable. Only a started outcome can become applied.
+-- Execution identities stay immutable. Explicit adoption can replace asserted bytes.
+-- Adoption never supplies an execution timestamp or resolves an uncertain file.
 CREATE FUNCTION catalog.guard_migration_outcome()
 RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
+    IF NEW.outcome = 'adopted' AND OLD.outcome <> 'started'
+       AND ROW(NEW.env_key, NEW.package_id, NEW.ordinal)
+           IS NOT DISTINCT FROM ROW(OLD.env_key, OLD.package_id, OLD.ordinal) THEN
+        RETURN NEW;
+    END IF;
     IF ROW(NEW.env_key, NEW.package_id, NEW.package_version, NEW.ordinal,
            NEW.relative_path, NEW.sha256)
        IS DISTINCT FROM

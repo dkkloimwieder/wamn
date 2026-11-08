@@ -262,11 +262,22 @@ Do not reset the WAMN system database during an application reset. A disposable 
 
 ### Switching modes
 
-- **`reset` → `migrate`:** Editing configuration does nothing immediately. On the first mutating schema operation, compare the recorded package baseline hashes and database instance. When they match the selected state, adopt the baseline without SQL or data loss. A record match confirms what WAMN last installed, not that nobody subsequently modified the database; optional introspection can warn about drift.
+- **`reset` → `migrate`:** Editing configuration does nothing immediately. On the first mutating schema operation, compare the recorded package baseline hashes and database initialization identity. When they match the selected state, adopt the baseline without SQL or data loss. A record match confirms what WAMN last installed, not that nobody subsequently modified the database; optional introspection can warn about drift.
 - **Mismatch during adoption:** Show the differences and offer explicit adopt, manual repair, or reset. Do not silently claim unexecuted SQL has run.
 - **`migrate` → `reset`:** Editing configuration does nothing immediately. The next physical schema change performs a reset only when the target is already marked disposable. Current schema must be reconstructable, including the baseline and any migrations needed to produce it.
 - **Repeated transitions:** Supported. A reset recreates the database under the same name and records a fresh initialization identity. Previous disposable history is not carried forward.
 - **Version 1.0:** Does not silently change the environment mode. Stability is a recommendation, not a data-loss policy.
+
+Matching `catalog.packages` and `catalog.package_migrations` records already supply the migration starting point.
+Mode edits add no history record and run no SQL.
+`wamn schema adopt --env <file>` records an explicit user assertion in those same records.
+Matching migration rows keep their checksums and execution outcomes.
+New or changed asserted files receive `outcome = 'adopted'` and no `applied_at` timestamp.
+Adoption executes none of their SQL and makes no claim about the live schema.
+The next schema apply skips adopted files and executes only the remaining prefix continuation.
+An uncertain `started` file requires `--resolve` before adoption.
+Stopped applications retain their installed schema sources.
+
 
 ### SQL execution
 

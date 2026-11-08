@@ -119,6 +119,7 @@ pub async fn read_package_migrations(
             sha256: row.get(2),
             outcome: match row.get::<_, &str>(3) {
                 "applied" => MigrationOutcome::Applied,
+                "adopted" => MigrationOutcome::Adopted,
                 "started" => MigrationOutcome::Started,
                 value => unreachable!("database constrains migration outcome: {value}"),
             },

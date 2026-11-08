@@ -144,6 +144,65 @@ pub(crate) fn validate_schema_reset(
     Ok(())
 }
 
+/// Assert configured local sources without executing their SQL or selecting code.
+pub async fn adopt_schema(
+    configuration: &Path,
+    environment: &Path,
+) -> anyhow::Result<BTreeMap<String, Vec<String>>> {
+    use anyhow::Context as _;
+    use wamn_package_control::apply_package::{self, PackageRoot};
+    let config = super::config::parse_config(&std::fs::read(configuration)?)?;
+    let document = super::session::read_environment(environment)?;
+    recorded_disposable(&config, &document).await?;
+    let identity = config.activation_identity();
+    let state = wamn_environment_control::environment::sql::schema::database_state(
+        config.target_database_url(),
+        &identity.env_key(),
+    )
+    .await?;
+    let lease = acquire(&config).await?;
+    lease.instance(&config).await?;
+    let mut roots = BTreeMap::new();
+    for source in config.package_sources() {
+        let manifest = wamn_catalog::manifest::PackageManifest::from_slice(
+            &apply_package::read_package_directory(source)?.manifest_bytes,
+        )?;
+        if !document
+            .applications
+            .values()
+            .any(|application| application.packages.contains(&manifest.package.id))
+        {
+            continue;
+        }
+        let (_, sources) = crate::source_deploy::sources(&document, source)?;
+        for path in sources {
+            let root = PackageRoot {
+                path,
+                artifact_digest: None,
+            };
+            let directory = apply_package::read_package_root(&root)?;
+            let manifest =
+                wamn_catalog::manifest::PackageManifest::from_slice(&directory.manifest_bytes)?;
+            roots.insert(manifest.package.id, root);
+        }
+    }
+    anyhow::ensure!(
+        state.packages.keys().all(|id| roots.contains_key(id)),
+        "local adoption requires the retained sources of every installed package"
+    );
+    apply_package::adopt_package_schemas(
+        config.target_database_url(),
+        &identity.env_key(),
+        state
+            .initialization_identity
+            .as_deref()
+            .context("adoption requires a known initialization identity")?,
+        &roots.values().collect::<Vec<_>>(),
+        Some(&identity.environment),
+    )
+    .await
+}
+
 /// Inspect or explicitly apply local source SQL without selecting application code.
 #[cfg(target_os = "linux")]
 pub async fn schema_operation(
@@ -792,6 +851,18 @@ impl TargetLease {
                 )
                 .with_source(source)
             })?;
+        let target = wamn_package_control::database::connect(config.target_database_url())
+            .await
+            .map_err(|source| TargetDatabaseError {
+                source: Some(source.into_boxed_dyn_error()),
+                ..TargetDatabaseError::new(
+                    TargetDatabaseErrorType::CreateFailed,
+                    "connect to the recreated local database",
+                )
+            })?;
+        target.batch_execute("UPDATE platform.schema_baseline SET installed_at=clock_timestamp() WHERE singleton")
+            .await.map_err(|source| TargetDatabaseError::new(TargetDatabaseErrorType::CreateFailed,
+                "record the recreated database initialization identity").with_source(source))?;
         Ok(instance)
     }
 }
@@ -1014,7 +1085,8 @@ mod tests {
         let mut config = crate::dev::config::tests::complete_document(&[endpoint; 10]);
         config["target_database_url"] = json!(target.url());
         config["system_database_url"] = json!(system.url());
-        let config = super::super::config::parse_config(&serde_json::to_vec(&config)?)?;
+        let config_bytes = serde_json::to_vec(&config)?;
+        let config = super::super::config::parse_config(&config_bytes)?;
         let instance: u32 = target_client
             .query_one(
                 "SELECT oid FROM pg_catalog.pg_database WHERE datname=current_database()",
@@ -1095,6 +1167,17 @@ mod tests {
         assert!(!schema_changes(&config, &document, &roots).await?[0].requires_reset());
         document.schema.mode = Some(SchemaMode::Reset);
         assert!(!schema_changes(&config, &document, &roots).await?[0].requires_reset());
+        let configuration = scratch.path().join("dev.json");
+        let environment = scratch.path().join("environment.json");
+        let mut local: serde_json::Value = serde_json::from_slice(&config_bytes)?;
+        local["package_sources"] = json!([root]);
+        std::fs::write(&configuration, serde_json::to_vec(&local)?)?;
+        document.schema.mode = Some(SchemaMode::Migrate);
+        std::fs::write(&environment, document.canonical_json()?)?;
+        let adopted = adopt_schema(&configuration, &environment).await?;
+        assert!(adopted.values().all(Vec::is_empty));
+        document.schema.mode = Some(SchemaMode::Reset);
+        assert!(!schema_changes(&config, &document, &roots).await?[0].requires_reset());
         std::fs::write(
             root.join("migrations/0002_note.sql"),
             "ALTER TABLE inventory.item ADD COLUMN note text;",
@@ -1170,6 +1253,10 @@ mod tests {
             .batch_execute(wamn_catalog::CATALOG_SCHEMA_SQL)
             .await?;
         template
+            .batch_execute(wamn_control_provision::APP_SCHEMA_SQL)
+            .await?;
+        wamn_package_control::schema_baseline::record_project(&template).await?;
+        template
             .batch_execute("CREATE TABLE saved_data(value text);")
             .await?;
         drop(template);
@@ -1181,6 +1268,13 @@ mod tests {
             TargetDatabaseErrorType::LeaseUnavailable
         );
         let first = lease.recreate(&config).await?;
+        let first_initialization =
+            wamn_environment_control::environment::sql::schema::database_state(
+                target_database.url(),
+                &config.activation_identity().env_key(),
+            )
+            .await?
+            .initialization_identity;
         let identity = config.activation_identity();
         wamn_runtime::local_application::require_local_target(
             target_database.url(),
@@ -1318,6 +1412,14 @@ JOIN platform.external_system AS external ON external.id = integration.external_
 
         let second = lease.recreate(&config).await?;
         assert_ne!(first, second);
+        let second_initialization =
+            wamn_environment_control::environment::sql::schema::database_state(
+                target_database.url(),
+                &config.activation_identity().env_key(),
+            )
+            .await?
+            .initialization_identity;
+        assert_ne!(first_initialization, second_initialization);
         let (target, driver) = tokio_postgres::connect(target_database.url(), NoTls).await?;
         let driver = tokio::spawn(driver);
         assert_eq!(

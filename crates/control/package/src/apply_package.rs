@@ -22,6 +22,8 @@ use operation_grants::ensure_admin_role;
 use record_history::{create_history_tables, reconcile_record_history_triggers};
 use roles::assert_host_role;
 
+mod adoption;
+pub use adoption::adopt_package_schemas;
 mod definition_ownership;
 mod entity_maps;
 mod error;

@@ -21,6 +21,8 @@ pub enum EnvCommand {
     Initialize(InitializeArgs),
     /// Execute the selected schema release inside the SQL Job.
     SchemaApply(SchemaApplyArgs),
+    /// Record an explicit schema assertion inside the SQL Job.
+    SchemaAdopt(SchemaAdoptArgs),
     /// Resolve or restore the recorded same-name reset inputs in the SQL Job.
     Reset(ResetArgs),
     /// Move one environment toward its environment.k document.
@@ -55,6 +57,12 @@ pub struct InitializeArgs {
     /// The application whose absent baselines to initialize.
     #[arg(long)]
     pub application: Option<String>,
+}
+
+#[derive(Debug, Args)]
+pub struct SchemaAdoptArgs {
+    pub file: PathBuf,
+    pub database: PathBuf,
 }
 
 #[derive(Debug, Args)]
@@ -135,6 +143,7 @@ pub async fn run(command: EnvCommand) -> anyhow::Result<()> {
         EnvCommand::Provision(_)
         | EnvCommand::Initialize(_)
         | EnvCommand::SchemaApply(_)
+        | EnvCommand::SchemaAdopt(_)
         | EnvCommand::Reset(_) => Platform::sql_from_env()?,
         EnvCommand::Apply(_) | EnvCommand::Rollback(_) => Platform::apply_from_env()?,
         _ => Platform::from_env()?,
@@ -186,6 +195,26 @@ pub async fn run(command: EnvCommand) -> anyhow::Result<()> {
             };
             lock.release().await;
             println!("{}", serde_json::to_string(&result)?);
+        }
+        EnvCommand::SchemaAdopt(args) => {
+            let document = sql_document(&args.file)?;
+            let expected: environment::sql::ExpectedDatabase =
+                serde_json::from_slice(&std::fs::read(&args.database)?)?;
+            let lock = expected.lock(&platform, &document, false).await?;
+            let result = environment::sql::schema::adopt(
+                &platform,
+                &document,
+                expected
+                    .initialization_identity
+                    .as_deref()
+                    .context("adoption requires an initialization identity")?,
+            )
+            .await?;
+            lock.release().await;
+            println!(
+                "{}",
+                serde_json::json!({"adopted": result, "sql_executed": false, "live_verified": false})
+            );
         }
         EnvCommand::SchemaApply(args) => {
             let document = sql_document(&args.file)?;

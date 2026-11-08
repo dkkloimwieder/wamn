@@ -43,6 +43,8 @@ pub struct RecordedMigration {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MigrationOutcome {
     Applied,
+    /// The user asserted these effects. WAMN did not execute this file.
+    Adopted,
     Started,
 }
 
@@ -405,7 +407,7 @@ pub fn plan_package_migrations(
         .collect();
     let completed = recorded
         .iter()
-        .take_while(|row| row.outcome == MigrationOutcome::Applied)
+        .take_while(|row| row.outcome != MigrationOutcome::Started)
         .count();
     let pending_sources = &migrations[completed..];
     let pending = pending_sources

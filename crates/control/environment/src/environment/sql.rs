@@ -18,6 +18,7 @@ use crate::platform::{bootstrap, identity, job};
 pub struct ExpectedDatabase {
     active: Option<String>,
     pub pending: Option<String>,
+    pub initialization_identity: Option<String>,
 }
 
 impl ExpectedDatabase {
@@ -32,10 +33,12 @@ impl ExpectedDatabase {
             Some(row) => Self {
                 active: Some(row.get(0)),
                 pending: row.get(1),
+                initialization_identity: None,
             },
             None => Self {
                 active: None,
                 pending: None,
+                initialization_identity: None,
             },
         })
     }
@@ -65,6 +68,13 @@ impl ExpectedDatabase {
             actual.active == self.active && actual.pending == self.pending,
             "SQL Job database instance changed before execution"
         );
+        if let Some(expected) = &self.initialization_identity {
+            let state = schema::state(platform, document).await?;
+            ensure!(
+                state.initialization_identity.as_ref() == Some(expected),
+                "SQL Job database initialization changed before execution"
+            );
+        }
         if !exclusive {
             crate::provision_project_env::registry::require_connected(
                 lock.client(),
@@ -141,10 +151,7 @@ pub async fn apply_deployed(
     release: &str,
     resolution: Option<&wamn_package_control::apply_package::MigrationResolution>,
 ) -> anyhow::Result<()> {
-    let directory = ensure::PrivateDirectory::create()?;
-    let chart = crate::platform::artifact_plan::select(&platform.chart)?;
-    let cluster = reset::recorded_cluster(platform, document).await?;
-    run_deployed(
+    run_schema_deployed(
         platform,
         document,
         Operation::ApplySchema {
@@ -152,6 +159,30 @@ pub async fn apply_deployed(
             release,
             resolution,
         },
+    )
+    .await
+}
+
+/// Record an explicit assertion through the installed platform SQL Job.
+pub async fn adopt_deployed(
+    platform: &Platform,
+    document: &EnvironmentDocument,
+) -> anyhow::Result<()> {
+    run_schema_deployed(platform, document, Operation::AdoptSchema).await
+}
+
+async fn run_schema_deployed(
+    platform: &Platform,
+    document: &EnvironmentDocument,
+    operation: Operation<'_>,
+) -> anyhow::Result<()> {
+    let directory = ensure::PrivateDirectory::create()?;
+    let chart = crate::platform::artifact_plan::select(&platform.chart)?;
+    let cluster = reset::recorded_cluster(platform, document).await?;
+    run_deployed(
+        platform,
+        document,
+        operation,
         chart.image("ctl")?,
         &cluster,
         &directory.path("schema"),
@@ -171,6 +202,8 @@ pub enum Operation<'a> {
     },
     /// Initialize the selected application's absent baselines after CNPG is ready.
     Initialize,
+    /// Assert selected SQL state without executing package SQL.
+    AdoptSchema,
     /// Advance explicitly selected SQL without activating application code.
     ApplySchema {
         application: &'a str,
@@ -201,9 +234,10 @@ pub async fn run_deployed(
         Operation::Reset { .. } => "reset",
         Operation::Initialize => "initialize",
         Operation::ApplySchema { .. } => "schema-apply",
+        Operation::AdoptSchema => "schema-adopt",
     };
     let coordinate = match operation {
-        Operation::Provision | Operation::Reset { .. } => {
+        Operation::Provision | Operation::Reset { .. } | Operation::AdoptSchema => {
             wamn_control_provision::environment_state::environment_resource_name(
                 &document.org,
                 &document.project,
@@ -259,10 +293,19 @@ pub async fn run_deployed(
         "environment.json".into(),
         String::from_utf8(document.canonical_json()?)?,
     )]);
-    files.insert(
-        "database.json".into(),
-        serde_json::to_string(&ExpectedDatabase::read(platform, document).await?)?,
-    );
+    let mut expected = ExpectedDatabase::read(platform, document).await?;
+    if matches!(
+        operation,
+        Operation::AdoptSchema | Operation::ApplySchema { .. }
+    ) {
+        expected.initialization_identity = Some(
+            schema::state(platform, document)
+                .await?
+                .initialization_identity
+                .context("schema mutation requires a known initialization identity")?,
+        );
+    }
+    files.insert("database.json".into(), serde_json::to_string(&expected)?);
     let mut secrets = Vec::new();
     let admin: bootstrap::SecretData = crate::kubectl::get(
         &platform.target.kubeconfig,
@@ -385,7 +428,7 @@ pub async fn run_deployed(
         Operation::Provision | Operation::Reset { .. } => Ok(Some(
             serde_json::from_str(&output).context("read the provisioned Database resource")?,
         )),
-        Operation::ApplySchema { .. } => {
+        Operation::ApplySchema { .. } | Operation::AdoptSchema => {
             print!("{output}");
             Ok(None)
         }

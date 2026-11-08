@@ -58,6 +58,7 @@ pub struct PackageDiff {
     pub edited_applied: Vec<EditedMigration>,
     pub migration_error: Option<String>,
     pub uncertain: Option<String>,
+    pub adopted: Vec<String>,
 }
 
 /// Exact schema sources required to reconstruct the complete environment.
@@ -76,6 +77,7 @@ pub struct Diff {
     pub mode: SchemaMode,
     pub disposable: Option<bool>,
     pub database_instance: Option<String>,
+    pub initialization_identity: Option<String>,
     pub installed_environment: Option<String>,
     pub candidate_environment: Option<String>,
     pub packages: BTreeMap<String, PackageDiff>,
@@ -401,6 +403,7 @@ pub fn plan(
         mode: document.schema_mode(state.disposable),
         disposable: state.disposable,
         database_instance: state.database_instance.clone(),
+        initialization_identity: state.initialization_identity.clone(),
         installed_environment: state.installed_environment.clone(),
         candidate_environment,
         packages,
@@ -451,6 +454,11 @@ fn package_diff(
             .iter()
             .find(|file| file.outcome == wamn_schema_control::MigrationOutcome::Started)
             .map(|file| file.relative_path.clone()),
+        adopted: recorded
+            .iter()
+            .filter(|file| file.outcome == wamn_schema_control::MigrationOutcome::Adopted)
+            .map(|file| file.relative_path.clone())
+            .collect(),
     }
 }
 
@@ -559,6 +567,76 @@ pub fn validate_candidates(
     Ok((packages, order))
 }
 
+/// Assert selected recipes and retain installed sources for stopped applications.
+pub async fn adopt(
+    platform: &Platform,
+    document: &EnvironmentDocument,
+    initialization_identity: &str,
+) -> anyhow::Result<BTreeMap<String, Vec<String>>> {
+    let state = state(platform, document).await?;
+    ensure!(
+        state.initialization_identity.as_deref() == Some(initialization_identity),
+        "database initialization changed before adoption"
+    );
+    let mut selected = BTreeMap::new();
+    for (application, selection) in &document.applications {
+        if matches!(selection.current, DeclaredRelease::None) {
+            continue;
+        }
+        let (_, candidates) = release_candidates(platform, document, application, None).await?;
+        for candidate in candidates {
+            let manifest = PackageManifest::from_slice(&candidate.directory.manifest_bytes)?;
+            if let Some(previous) = selected.get(&manifest.package.id) {
+                let previous: &Candidate = previous;
+                ensure!(
+                    previous.fingerprint == candidate.fingerprint,
+                    "conflicting adoption sources for {}",
+                    manifest.package.id
+                );
+            } else {
+                selected.insert(manifest.package.id, candidate);
+            }
+        }
+    }
+    for (id, installed) in &state.packages {
+        if !selected.contains_key(id) {
+            let artifact = installed
+                .artifact_digest
+                .as_deref()
+                .with_context(|| format!("retained package {id} has no published schema source"))?;
+            let candidate = open(
+                platform,
+                id,
+                installed.coordinate.package_version(),
+                Some(artifact),
+            )
+            .await?;
+            ensure!(
+                candidate.fingerprint == installed.physical_schema_fingerprint,
+                "retained package {id} differs from its installed source"
+            );
+            selected.insert(id.to_owned(), candidate);
+        }
+    }
+    let system = wamn_package_control::database::connect(&platform.system_database_url).await?;
+    let row = analyse::read_row(&system, document)
+        .await?
+        .context("adoption requires an existing database")?;
+    let url = analyse::project_url(platform, document, &row)?;
+    let roots = selected
+        .values()
+        .map(|candidate| &candidate.root)
+        .collect::<Vec<_>>();
+    apply_package::adopt_package_schemas(
+        &url,
+        &wamn_control_provision::project_env_key(&document.org, &document.project, &document.env),
+        initialization_identity,
+        &roots,
+        None,
+    )
+    .await
+}
+
 /// Apply selected SQL through the package owner without caching or activating code.
 pub async fn apply(
     platform: &Platform,
@@ -598,7 +676,7 @@ pub async fn apply(
     for (id, package) in &diff.packages {
         ensure!(
             package.migration_error.is_none(),
-            "package {id}: {}",
+            "package {id}: {}. Compare recorded and selected inputs with wamn schema diff; explicitly adopt the selected state with wamn schema adopt, repair the SQL, or reset an authorized disposable target",
             package.migration_error.as_deref().unwrap_or_default()
         );
     }
@@ -710,6 +788,7 @@ pub struct Status {
     pub pending_database: Option<serde_json::Value>,
     pub installed_environment: Option<String>,
     pub installed: BTreeMap<String, SchemaSource>,
+    pub adopted: BTreeMap<String, Vec<String>>,
     pub applications: BTreeMap<String, Diff>,
     pub unknowns: Vec<String>,
 }
@@ -747,6 +826,23 @@ pub async fn status(platform: &Platform, document: &EnvironmentDocument) -> anyh
         database_instance: state.database_instance,
         initialization_identity: state.initialization_identity,
         installed_environment: state.installed_environment,
+        adopted: state
+            .packages
+            .iter()
+            .map(|(id, package)| {
+                (
+                    id.to_owned(),
+                    package
+                        .migrations
+                        .iter()
+                        .filter(|file| {
+                            file.outcome == wamn_schema_control::MigrationOutcome::Adopted
+                        })
+                        .map(|file| file.relative_path.clone())
+                        .collect(),
+                )
+            })
+            .collect(),
         installed: state
             .packages
             .into_iter()
