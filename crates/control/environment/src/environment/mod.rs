@@ -326,7 +326,7 @@ pub async fn deploy(platform: &Platform, file: &Path, digest: &str) -> anyhow::R
     .await
 }
 
-/// Prepare, persist, and apply one selection while holding only its application lock.
+/// Prepare schema first, then persist and apply one selection under its application lock.
 pub(super) async fn apply_selection(
     platform: &Platform,
     file: &Path,
@@ -336,18 +336,82 @@ pub(super) async fn apply_selection(
     let before = EnvironmentDocument::compile(file)?;
     let mut document = before.clone();
     document.select_release(application, change)?;
-    let lock = lock::LifecycleLock::acquire_application(
-        &platform.system_database_url,
-        &before.triple(),
-        application,
-    )
-    .await?;
-    let result = async {
+    let private = ensure::PrivateDirectory::create()?;
+    let mut platform = platform.clone();
+    let control = runtime::resolve_platform(&mut platform, &document.org).await?;
+    let mut schema_operations = Vec::new();
+    let lock = loop {
+        let lock = lock::LifecycleLock::acquire_application(
+            &platform.system_database_url,
+            &before.triple(),
+            application,
+        )
+        .await?;
+        if let document::SelectionChange::Deploy(release) = change {
+            let pending = crate::provision_project_env::registry::pending_database(
+                lock.client(),
+                &before.triple(),
+            )
+            .await?;
+            let reset = if pending.is_some() {
+                // The project database can be absent during a retry. Its pinned inputs own recovery.
+                let disposable = analyse::read_row(lock.client(), &before)
+                    .await?
+                    .map(|row| row.disposable);
+                document.schema_mode(disposable) == document::SchemaMode::Reset
+                    && disposable == Some(true)
+            } else {
+                let (_, candidates) = sql::schema::release_candidates(
+                    &platform,
+                    &document,
+                    application,
+                    Some(release),
+                )
+                .await?;
+                let state = sql::schema::state(&platform, &document).await?;
+                let diff = sql::schema::plan(
+                    &document,
+                    application,
+                    Some(release.to_owned()),
+                    &candidates,
+                    &state,
+                )?;
+                if diff.packages.values().any(|package| {
+                    package.installed.as_ref() != Some(&package.candidate)
+                        || !package.pending.is_empty()
+                        || package.migration_error.is_some()
+                }) {
+                    eprintln!("{}", serde_json::to_string(&diff)?);
+                }
+                diff.requires_reset() && diff.disposable == Some(true)
+            };
+            if reset {
+                // One command performs at most one reset. A repeated decision is a defect.
+                anyhow::ensure!(
+                    schema_operations.is_empty(),
+                    "schema still differs after a completed reset; no further reset runs"
+                );
+                // Reset takes exclusive environment ownership and reconnects the existing selections.
+                lock.release().await;
+                let outcome = Box::pin(sql::reset::reset_deployed(
+                    &platform,
+                    file,
+                    Some((application, release)),
+                ))
+                .await
+                .context(
+                    "reset before application selection; release selections remain unchanged",
+                )?;
+                schema_operations.push(serde_json::to_string(&outcome)?);
+                // Re-read installed fingerprints under the shared lock before code preparation.
+                continue;
+            }
+        }
         crate::provision_project_env::registry::require_no_reset(lock.client(), &before.triple())
             .await?;
-        let private = ensure::PrivateDirectory::create()?;
-        let mut platform = platform.clone();
-        let control = runtime::resolve_platform(&mut platform, &document.org).await?;
+        break lock;
+    };
+    let result = async {
         if matches!(change, document::SelectionChange::Deploy(_)) {
             Box::pin(initialize_selection(
                 &platform,
@@ -360,6 +424,7 @@ pub(super) async fn apply_selection(
         runtime::resolve_application(&mut platform, &document, &private.path("."), &control)
             .await?;
         let mut analysis = analyse::analyse(&platform, &document, Some(application)).await?;
+        analysis.plan.extend(schema_operations);
         let prepared = match &analysis.authorities.release {
             Some(release) => Some(write::prepare(&platform, &document, &analysis, release).await?),
             None => None,
@@ -415,17 +480,22 @@ async fn initialize_selection(
     let resources_ready = ensure::resources_in_place(platform, document).await?;
     let baseline_missing =
         !resources_ready || sql::needs_initialization(platform, &selected).await?;
-    let mut plan = initialization_plan(resources_ready, baseline_missing);
-    if plan.provision {
+    let mut initialize = baseline_missing;
+    if !resources_ready {
         let admin = std::env::var("WAMN_SYSTEM_ADMIN_URL")
             .context("set WAMN_SYSTEM_ADMIN_URL for environment provisioning or repair")?;
         ensure::provision_resources(platform, document, &[], &admin).await?;
         // A repair can retain committed application baselines.
-        plan.initialize = sql::needs_initialization(platform, &selected).await?;
+        initialize = sql::needs_initialization(platform, &selected).await?;
     }
-    if !plan.initialize {
-        // A committed baseline does not prove that the following CDC step finished.
-        return ensure::ensure_cdc(platform, &selected).await;
+    if !initialize {
+        // Before the first Helm release, committed SQL can still need its CDC step repaired.
+        // Later code updates do not reconcile shared database objects or event processing.
+        let release_name = analyse::application_release_name(document, application)?;
+        if !analyse::release_present(platform, &release_name).await? {
+            ensure::ensure_cdc(platform, &selected).await?;
+        }
+        return Ok(());
     }
     let chart = crate::platform::artifact_plan::select(&platform.chart)?;
     let cluster = sql::reset::recorded_cluster(platform, document).await?;
@@ -439,19 +509,6 @@ async fn initialize_selection(
     )
     .await?;
     Ok(())
-}
-
-#[derive(Debug, PartialEq, Eq)]
-struct InitializationPlan {
-    provision: bool,
-    initialize: bool,
-}
-
-fn initialization_plan(resources_ready: bool, baseline_missing: bool) -> InitializationPlan {
-    InitializationPlan {
-        provision: !resources_ready,
-        initialize: baseline_missing,
-    }
 }
 
 /// Read event broker inputs for both deployed and local workflow verbs.
@@ -472,31 +529,4 @@ pub fn event_broker_from_env() -> anyhow::Result<Option<EventBroker>> {
                 .unwrap_or(120),
         }),
     })
-}
-
-#[cfg(test)]
-mod initialization_tests {
-    use super::*;
-
-    #[test]
-    fn initialization_owners_follow_installed_resources_and_baselines() {
-        for (resources_ready, baseline_missing, provision, initialize) in [
-            // Fresh environment or a row left by interrupted provisioning.
-            (false, true, true, true),
-            // Provisioned environment, before SQL initialization.
-            (true, true, false, true),
-            // Repair with committed baselines does not replay their SQL.
-            (false, false, true, false),
-            // SQL committed before Helm, or a fully installed code-only deploy.
-            (true, false, false, false),
-        ] {
-            assert_eq!(
-                initialization_plan(resources_ready, baseline_missing),
-                InitializationPlan {
-                    provision,
-                    initialize
-                }
-            );
-        }
-    }
 }

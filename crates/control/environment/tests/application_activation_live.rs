@@ -1072,6 +1072,10 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
         .is_err()
     );
     assert!(admin.query_one("SELECT pending_database IS NULL FROM registry.project_envs WHERE org='acme' AND project='apps' AND env='dev'", &[]).await?.get::<_, bool>(0));
+    assert_eq!(before_sql, rows(&observer, &stable_sql).await?);
+    assert_eq!(before_schema, rows(&observer, schema_query).await?);
+    assert_eq!(before_b, rows(&observer, stable_b).await?);
+    assert_eq!(before_b_effective, rows(&observer, &b_effective_sql).await?);
     let mut omitted = document.clone();
     omitted.applications.remove("b");
     assert!(

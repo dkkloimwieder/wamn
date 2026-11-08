@@ -88,9 +88,9 @@ impl Diff {
     pub fn requires_reset(&self) -> bool {
         self.mode == SchemaMode::Reset
             && self
-                .packages
-                .values()
-                .any(|package| package.installed.as_ref() != Some(&package.candidate))
+                .candidate_environment
+                .as_ref()
+                .is_some_and(|candidate| self.installed_environment.as_ref() != Some(candidate))
     }
 }
 
@@ -665,7 +665,7 @@ mod tests {
         let document = document();
         let beta = candidate("beta", "9.0.0");
         let beta = applied(&beta);
-        let mut state = State {
+        let state = State {
             disposable: Some(true),
             project_baseline: Some("project".into()),
             packages: [("beta".into(), beta)].into(),
@@ -702,18 +702,79 @@ mod tests {
             published.candidate_environment
         );
         assert!(published.requires_reset());
-        state
-            .packages
-            .insert("alpha".into(), applied(&candidate("alpha", "1.0.0")));
-        let unchanged = plan(
-            &document,
-            "alpha",
-            None,
-            &[candidate("alpha", "2.0.0")],
-            &state,
-        )
-        .unwrap();
-        assert!(!unchanged.requires_reset());
+    }
+
+    #[test]
+    fn reset_identity_uses_the_complete_schema_set_without_code_coordinates() {
+        let mut document = document();
+        let alpha = candidate("alpha", "1.0.0");
+        let beta = candidate("beta", "9.0.0");
+        let mut state = State {
+            disposable: Some(true),
+            project_baseline: Some("project".into()),
+            packages: [
+                ("alpha".into(), applied(&alpha)),
+                ("beta".into(), applied(&beta)),
+            ]
+            .into(),
+            ..State::default()
+        };
+        state.installed_environment = Some(apply_package::environment_fingerprint(
+            "project",
+            &state
+                .packages
+                .iter()
+                .map(|(id, package)| (id.as_str(), package.physical_schema_fingerprint.as_str()))
+                .collect(),
+        ));
+        let mut next = candidate("alpha", "2.0.0");
+        next.root.artifact_digest = Some(format!("sha256:{}", "b".repeat(64)));
+        let code = plan(&document, "alpha", Some("new-code".into()), &[next], &state).unwrap();
+        assert_eq!(code.candidate_environment, state.installed_environment);
+        assert!(!code.requires_reset());
+
+        let mut next = candidate("alpha", "2.0.0");
+        next.fingerprint = "changed-schema".into();
+        let installed = applied(&next);
+        let changed = plan(&document, "alpha", None, &[next], &state).unwrap();
+        assert_eq!(
+            changed.candidate_environment,
+            Some(apply_package::environment_fingerprint(
+                "project",
+                &state
+                    .packages
+                    .iter()
+                    .map(|(id, package)| (
+                        id.as_str(),
+                        if id == "alpha" {
+                            "changed-schema"
+                        } else {
+                            package.physical_schema_fingerprint.as_str()
+                        }
+                    ))
+                    .collect(),
+            ))
+        );
+        assert!(changed.requires_reset());
+        document.schema.mode = Some(SchemaMode::Migrate);
+        let mut next = candidate("alpha", "2.0.0");
+        next.fingerprint = "changed-schema".into();
+        let migrate = plan(&document, "alpha", None, &[next], &state).unwrap();
+        assert_eq!(migrate.candidate_environment, changed.candidate_environment);
+        assert!(!migrate.requires_reset());
+
+        document.schema.mode = Some(SchemaMode::Reset);
+        state.packages.insert("alpha".into(), installed);
+        state.installed_environment = changed.candidate_environment;
+        let mut next = candidate("alpha", "2.0.0");
+        next.fingerprint = "changed-schema".into();
+        assert!(
+            !plan(&document, "alpha", None, &[next], &state)
+                .unwrap()
+                .requires_reset()
+        );
+        let fresh = plan(&document, "alpha", None, &[alpha], &State::default()).unwrap();
+        assert!(!fresh.requires_reset());
     }
 
     #[test]
