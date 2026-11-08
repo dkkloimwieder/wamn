@@ -51,6 +51,7 @@ impl Journey<'_> {
         let mut command = Command::new(binary);
         command
             .current_dir(&self.run.directory)
+            .env_remove("WAMN_TEST_OWNER_PASSWORD")
             .env_remove("WAMN_RELEASE_HOST_GROUP")
             .env_remove("WAMN_DATABASE_HOST")
             .env_remove("WAMN_DATABASE_PORT")
@@ -169,8 +170,8 @@ impl Journey<'_> {
     }
 }
 
-pub(super) async fn exercise(run: &Run, case: Case) -> anyhow::Result<()> {
-    exercise_inner(run, case).await?;
+pub(super) async fn exercise(run: &Run, case: Case, password: &str) -> anyhow::Result<()> {
+    exercise_inner(run, case, password).await?;
     success(
         Command::new("git")
             .args(["-c", "core.hooksPath=/dev/null"])
@@ -183,7 +184,7 @@ pub(super) async fn exercise(run: &Run, case: Case) -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn exercise_inner(run: &Run, case: Case) -> anyhow::Result<()> {
+async fn exercise_inner(run: &Run, case: Case, password: &str) -> anyhow::Result<()> {
     let id = uuid::Uuid::new_v4().simple().to_string();
     let project = format!("journey-{}", &id[..12]);
     let environment = format!("test-{}", &id[..12]);
@@ -273,14 +274,20 @@ async fn exercise_inner(run: &Run, case: Case) -> anyhow::Result<()> {
     system
         .batch_execute("SET default_transaction_read_only = on")
         .await?;
-    let principal: String = system
+    let enrolled: bool = system
         .query_one(
-            "SELECT id::text FROM identity.principals WHERE email=$1",
+            "SELECT EXISTS(SELECT FROM identity.password_credentials c WHERE c.principal_id=p.id) \
+             FROM identity.principals p WHERE p.email=$1",
             &[&run.document.owner_email],
         )
         .await?
         .get(0);
     drop(system);
+    let login = super::owner_session(run, &identity_client, &endpoint, password, !enrolled).await?;
+    let principal = login["sub"].as_str().context("owner session principal")?;
+    let access = login["access_token"]
+        .as_str()
+        .context("owner control session")?;
     let issued: Value = identity_client.post(format!("{endpoint}/pats"))
         .json(&json!({"principal_id":principal,"label":"deployment journey","lifetime_seconds":14400}))
         .send().await?.error_for_status()?.json().await?;
@@ -291,7 +298,7 @@ async fn exercise_inner(run: &Run, case: Case) -> anyhow::Result<()> {
             control.port
         ))
         .header(reqwest::header::HOST, &run.document.route_hosts.control)
-        .bearer_auth(&token)
+        .bearer_auth(access)
         .json(&json!([{"request_id":uuid::Uuid::new_v4().to_string(),"value":{"project":project}}]))
         .send()
         .await?
@@ -343,6 +350,11 @@ async fn exercise_inner(run: &Run, case: Case) -> anyhow::Result<()> {
     version(&sources[1], "1.0.0", "1.0.1")?;
     let a1 = journey.publish("alpha", "1.0.1", &sources[0]).await?;
     let b1 = journey.publish("beta", "1.0.1", &sources[1]).await?;
+    // Publication can outlive the initial access token.
+    let login = super::owner_session(run, &identity_client, &endpoint, password, false).await?;
+    let access = login["access_token"]
+        .as_str()
+        .context("owner control session")?;
     if case == Case::Recovery {
         first_install(&journey, &b0).await?;
     } else {
@@ -388,7 +400,7 @@ async fn exercise_inner(run: &Run, case: Case) -> anyhow::Result<()> {
                 control.port
             ))
             .header(reqwest::header::HOST, &run.document.route_hosts.control)
-            .bearer_auth(&token)
+            .bearer_auth(access)
             .json(&json!([{"request_id":uuid::Uuid::new_v4().to_string(),"value":value}]))
             .send()
             .await?

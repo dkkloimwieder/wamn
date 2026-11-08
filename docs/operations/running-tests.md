@@ -695,8 +695,17 @@ All tests therefore also require these publication inputs:
 - Set `WAMN_REGISTRY_AUTH_FILE` to the registry's protected `.dockerconfigjson` file.
 
 The registry authority must match `cluster.k`, normally `localhost:5001`.
-Tests read product-created credentials from Secrets and issue an owner PAT (personal access token) through identity's operator endpoint.
-Focused tests do not consume the initial invitation or need the owner's password.
+Tests read product-created service credentials from Secrets.
+Control routes require a password-login session and refuse a PAT (personal access token).
+Application routes use an owner PAT issued through identity's operator endpoint.
+
+Supply `WAMN_TEST_OWNER_PASSWORD` for the existing platform's owner before the first focused run.
+The first run enrolls an owner without a password through `/password/enroll`, with the product's local invitation.
+It then signs in through `/password/session` for the control audience.
+Later runs observe the stored password credential and skip enrollment without reading or consuming another invitation.
+They obtain the same password from the caller's `WAMN_TEST_OWNER_PASSWORD` and sign in again.
+Tests never print or persist this password and create no saved-step file.
+Fresh-platform tests generate one password in memory and reuse it across their focused bodies.
 
 Install once with the product command from a shell with the prepared chart and publication inputs:
 
@@ -720,6 +729,17 @@ Focused tests refuse an absent or false annotation before any platform mutation.
 The cluster document supplies the name for the existing provider's kubeconfig export and the product's `Target`.
 Helm's `platform/chart` value supplies the installed chart path, regardless of the caller's `WAMN_RELEASE_CHART`.
 
+Before the first focused run, enter the owner password without echoing it:
+
+```bash
+read -r -s -p 'Disposable owner password: ' WAMN_TEST_OWNER_PASSWORD
+printf '\n'
+export WAMN_TEST_OWNER_PASSWORD
+```
+
+Keep that password in your normal secret store.
+In later shells, load the same value into `WAMN_TEST_OWNER_PASSWORD` from that store.
+If the owner already has a password, supply that existing password.
 Run one focused SQL test against that platform:
 
 ```bash

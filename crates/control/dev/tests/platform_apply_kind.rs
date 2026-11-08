@@ -181,7 +181,10 @@ async fn focused(case: application_deploy::Case) -> anyhow::Result<()> {
     .canonicalize()?;
     let selected = artifact_plan::select(&run.chart)?;
     report_images(&selected.values()["platform"]);
-    application_deploy::exercise(&run, case).await?;
+    let password = std::env::var("WAMN_TEST_OWNER_PASSWORD")
+        .context("set WAMN_TEST_OWNER_PASSWORD to the disposable platform owner's password")?;
+    ensure!(!password.is_empty(), "WAMN_TEST_OWNER_PASSWORD is empty");
+    application_deploy::exercise(&run, case, &password).await?;
     cleanup(&mut run).await
 }
 
@@ -197,16 +200,17 @@ async fn fresh(acceptance: bool) -> anyhow::Result<()> {
         .take(if acceptance { 2 } else { 1 })
     {
         let mut run = prepare(&repository, &chart, &binary, &kcl, None)?;
-        exercise(&run, interrupted).await?;
+        let password = exercise(&run, interrupted).await?;
         if !interrupted {
-            application_deploy::exercise(&run, application_deploy::Case::Recovery).await?;
+            application_deploy::exercise(&run, application_deploy::Case::Recovery, &password)
+                .await?;
             if acceptance {
                 for case in [
                     application_deploy::Case::Application,
                     application_deploy::Case::SqlJob,
                     application_deploy::Case::Reset,
                 ] {
-                    application_deploy::exercise(&run, case).await?;
+                    application_deploy::exercise(&run, case, &password).await?;
                 }
             }
         }
@@ -419,7 +423,7 @@ async fn get(run: &Run, namespace: &str, kind: &str, name: &str) -> anyhow::Resu
     Ok(serde_json::from_slice(&output.stdout)?)
 }
 
-async fn exercise(run: &Run, interrupted: bool) -> anyhow::Result<()> {
+async fn exercise(run: &Run, interrupted: bool) -> anyhow::Result<String> {
     if interrupted {
         interrupt(run).await?;
     }
@@ -470,7 +474,7 @@ async fn exercise(run: &Run, interrupted: bool) -> anyhow::Result<()> {
             }),
         "deployment created a generic completion ConfigMap"
     );
-    Ok(())
+    Ok(password)
 }
 
 async fn database_state(run: &Run) -> anyhow::Result<Value> {
@@ -545,29 +549,15 @@ async fn database_state(run: &Run) -> anyhow::Result<Value> {
     Ok(state)
 }
 
-async fn sign_in(run: &Run, password: &str, enroll: bool) -> anyhow::Result<()> {
-    let forward = resources::port_forward(&run.target, "identity", "service/identity", 443).await?;
-    let tls = get(run, "identity", "secret", "identity-tls").await?;
-    let ca = base64::engine::general_purpose::STANDARD
-        .decode(tls["data"]["ca.crt"].as_str().context("identity CA")?)?;
-    let host = "identity.identity.svc.cluster.local";
-    let client = reqwest::Client::builder()
-        .no_proxy()
-        .redirect(reqwest::redirect::Policy::none())
-        .timeout(Duration::from_secs(15))
-        .add_root_certificate(reqwest::Certificate::from_pem(&ca)?)
-        .resolve(host, SocketAddr::from((Ipv4Addr::LOCALHOST, forward.port)))
-        .build()?;
-    let endpoint = format!("https://{host}:{}", forward.port);
-    ensure!(
-        client
-            .get(format!("{endpoint}/healthz"))
-            .send()
-            .await?
-            .status()
-            .is_success(),
-        "identity health refused"
-    );
+// Enrollment runs only for an owner without a password credential. Later focused
+// runs receive the same password from the caller, not from a completion file.
+async fn owner_session(
+    run: &Run,
+    client: &reqwest::Client,
+    endpoint: &str,
+    password: &str,
+    enroll: bool,
+) -> anyhow::Result<Value> {
     if enroll {
         let mail = success(kubectl(run).args([
             "-n",
@@ -613,7 +603,33 @@ async fn sign_in(run: &Run, password: &str, enroll: bool) -> anyhow::Result<()> 
         "owner login returned {}",
         response.status()
     );
-    let login: Value = response.json().await?;
+    Ok(response.json().await?)
+}
+
+async fn sign_in(run: &Run, password: &str, enroll: bool) -> anyhow::Result<()> {
+    let forward = resources::port_forward(&run.target, "identity", "service/identity", 443).await?;
+    let tls = get(run, "identity", "secret", "identity-tls").await?;
+    let ca = base64::engine::general_purpose::STANDARD
+        .decode(tls["data"]["ca.crt"].as_str().context("identity CA")?)?;
+    let host = "identity.identity.svc.cluster.local";
+    let client = reqwest::Client::builder()
+        .no_proxy()
+        .redirect(reqwest::redirect::Policy::none())
+        .timeout(Duration::from_secs(15))
+        .add_root_certificate(reqwest::Certificate::from_pem(&ca)?)
+        .resolve(host, SocketAddr::from((Ipv4Addr::LOCALHOST, forward.port)))
+        .build()?;
+    let endpoint = format!("https://{host}:{}", forward.port);
+    ensure!(
+        client
+            .get(format!("{endpoint}/healthz"))
+            .send()
+            .await?
+            .status()
+            .is_success(),
+        "identity health refused"
+    );
+    let login = owner_session(run, &client, &endpoint, password, enroll).await?;
     let token = login["access_token"]
         .as_str()
         .context("identity access token")?;
