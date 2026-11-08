@@ -73,7 +73,7 @@ This section records the current code. It replaces the historical list of earlie
 | Application publication | `crates/control/release/src/application.rs` publishes from package artifacts without installing them in a target database. Source deployment and `wamn schema publish` use the same owner. |
 | Schema mode | `schema.mode` is in the Rust and KCL environment document. An omitted mode resolves from `registry.project_envs.disposable`. |
 | Schema records | `catalog.packages` keeps one row per package: an immutable baseline fingerprint, the current fingerprint, and the current schema source. `catalog.package_migrations` keeps checksums per package, not per code version. |
-| Schema commands | `wamn schema publish`, `wamn schema diff`, and `wamn schema apply` exist. `wamn status` reports schema state. `schema diff` also reads an unpublished source directory. Section 4 replaces that path for deployed targets. |
+| Schema commands | `wamn schema publish`, `wamn schema diff`, and `wamn schema apply` exist. `wamn status` reports schema state. `schema diff` also reads an unpublished source directory. That read-only path stays. Section 4 requires published bytes for deployed SQL execution. |
 | Environment fingerprint | `apply_package/package_version.rs::environment_fingerprint` hashes the project baseline and each package identifier with its physical-schema hash. It excludes code versions and release digests. |
 | Reset preparation | `environment/sql/reset.rs` authorizes, resolves every schema input, and records the inputs in `registry.project_envs.pending_database`. It also reserves a fresh instance suffix. Section 4 keeps the inputs and replaces the new suffix with a same-name reset. |
 | Publisher identity | `wamn deploy --package` and `wamn schema publish` take `--verified-publisher-principal` from the caller. Section 3 replaces this with an identity from authenticated credentials. |
@@ -208,23 +208,35 @@ A deployed reset is environment-wide. It replaces the whole project-environment 
 
 The reset runs these steps in order:
 
-1. List every affected application, including stopped applications whose installed schemas the environment keeps.
-2. Resolve the complete SQL and permissions for the project substrate and every installed application. Unchanged applications use their recorded schema sources, even when their running code selects an older release. The project substrate comes from the installed platform artifact set, independently of the invoking CLI version. If an input is missing, stop before any change.
-3. Record the resolved inputs on the environment's system registry record, outside the project database. Step 5 destroys the project database and its `catalog.packages` records, so a retry must read its inputs from the registry record.
-4. Hold the environment lock so that no application deployment runs at the same time.
+1. List every affected application, including stopped applications whose installed schemas the environment keeps. This preview is read-only.
+2. Acquire the existing environment `LifecycleLock` in exclusive mode. Application deployments hold it in shared mode, so alpha and beta still deploy concurrently with each other. The reset waits until running deployments release it, and no new deployment starts while the reset holds it.
+3. Under the lock, do the final input validation. Resolve the complete SQL and permissions for the project substrate and every installed application. Unchanged applications use their recorded schema sources, even when their running code selects an older release. The project substrate comes from the installed platform artifact set, independently of the invoking CLI version. If an input is missing, an installed application is omitted, or two schema definitions conflict, stop before any change.
+4. Pin the validated inputs and a new initialization identity in `registry.project_envs.pending_database`, outside the project database. Step 7 destroys the project database and its `catalog.packages` records, so a retry reads its inputs from this record.
 5. Stop the affected application workloads and the event processing that writes to the database.
 6. Ensure the Database `absent`, and wait for CNPG to complete the deletion. Removing a retaining Database resource alone does not delete its database, so the reset uses the `ensure` field, not resource deletion.
 7. Ensure the Database `present` under the same name, and wait for CNPG to complete the creation.
-8. Restore the complete SQL and permissions through the existing SQL Job, from the recorded inputs.
+8. Restore the complete SQL and permissions through the existing SQL Job, from the pinned inputs. The first initialization transaction writes the pinned initialization identity into the recreated database.
 9. Rebuild the required bindings, caches, and CDC state through their existing owners. Do not copy arbitrary old rows, and do not reconstruct manually created workflows without an existing source.
-10. Discard only this environment's obsolete queued events through the existing broker owner. An old database event must not create a run against the recreated database.
-11. Resume the workloads with their unchanged release selections. Both alpha and beta can restart, but beta's selected executable stays unchanged when only alpha requests a release change.
+10. Discard only this environment's obsolete queued events through the existing broker owner, while every writer is still stopped. An old database event must not create a run against the recreated database.
+11. Clear the pending record. The reset is complete at this point.
+12. Resume the workloads with their unchanged release selections, through the ordinary reapply of each selection. Both alpha and beta can restart, but beta's selected executable stays unchanged when only alpha requests a release change.
 
-The reset keeps every application's release selection. It records a fresh database initialization identity, so that status and later decisions can tell the new database from the old one.
+The reset keeps every application's release selection. The initialization identity lets status and later decisions tell the recreated database from the old one.
 
-The command states the downtime and the data loss before it starts. All affected applications stop until step 11. The data loss cannot be reversed: every application row, workflow definition created by hand, queued run, and other database-local state is gone. The command reports these losses. Authored seeds run only when the initialization recipe explicitly includes them.
+The command states the downtime and the data loss before it starts. All affected applications stop from step 5 until step 12. The data loss cannot be reversed: every application row, workflow definition created by hand, queued run, and other database-local state is gone. The command reports these losses. Authored seeds run only when the initialization recipe explicitly includes them.
 
-If the reset fails before step 6, the old database and the running applications stay usable. If it fails after step 6, the old data is already gone. The command reports the completed steps and the applications that did not resume. A retry reads the recorded inputs and runs the remaining steps on the same database name. It does not create another candidate, and it does not rotate any application's `previous` selection.
+### Reset recovery
+
+Recovery uses only three facts: the pinned inputs, the initialization identity, and the existing resource and SQL state. There is no per-step progress store, no generic retry engine, and no background controller. A retry is the same `wamn schema reset` or schema-changing deploy, run again by the developer. It acquires the lock of step 2 and reads the pending record.
+
+- If the reset fails before step 4, nothing changed. The applications keep running on the old database.
+- If it fails at step 4 or step 5, the old database and its data are intact. The applications that step 5 stopped do not serve requests. The command names them. A retry continues the reset from the pinned inputs.
+- If it fails at step 6 or later, before the recreated database carries the pinned initialization identity, the old data is already gone and no restored data exists. A retry repeats the reset from step 6.
+- If the recreated database carries the pinned initialization identity, a retry does not run step 6 or step 7 again. It continues at step 8, which recognizes committed SQL, and then runs steps 9 to 11. Restored data is never destroyed by a retry.
+- Step 10 runs only while the pending record exists and every writer is stopped. Writers produce new events only after step 11 clears the record. So no retry discards a newly produced event.
+- If step 12 fails for an application, the reset is already complete. The command names the application. Its recovery is the ordinary reapply of its unchanged selection, which runs no reset.
+
+A retry does not create another candidate, and it does not rotate any application's `previous` selection. A later schema-changing deploy compares fingerprints as usual. After a completed reset, the installed fingerprints match the candidate, so it does not reset again.
 
 ### Reconciliation with the committed replacement-instance code
 
@@ -233,16 +245,16 @@ DEP3-04 (`8b7758c72`) implemented reset preparation for a fresh replacement inst
 | Committed part | Disposition | Reason |
 |---|---|---|
 | Authorization against `registry.project_envs.disposable` | Keep | The rule is unchanged. |
-| Candidate resolution and validation (`schema::reset_candidates`, `validate_candidates`) | Keep | Step 2 needs every input before any change. |
-| Check that the SQL image matches the installed project substrate | Keep | Step 2 takes the substrate from the installed platform artifact set. |
-| `registry.project_envs.pending_database` with the resolved inputs | Keep, and change its meaning | Step 3 needs the inputs outside the project database for a retry. It holds the reset inputs and the fresh initialization identity, not a new instance name. |
+| Candidate resolution and validation (`schema::reset_candidates`, `validate_candidates`) | Keep | Step 3 needs every input before any change. |
+| Check that the SQL image matches the installed project substrate | Keep | Step 3 takes the substrate from the installed platform artifact set. |
+| `registry.project_envs.pending_database` with the resolved inputs | Keep, and change its meaning | Step 4 pins the inputs outside the project database for a retry. It holds the reset inputs and the new initialization identity, not a new instance name. |
 | Reservation of a new instance suffix (`reserve_database`) | Delete | The database name does not change. |
 | Rendering of a second candidate Database resource | Delete | CNPG `ensure` on the existing resource replaces it. |
 | Active-instance checks that compare the pending and the active suffix | Delete | There is one database name. |
 | `reset::initialize` through the SQL Job | Keep, and target the same name | Step 8 uses it with the recorded inputs. |
 | Retired-instance cleanup (planned, not committed) | Not built | No old instance remains. |
 
-The trade-off is explicit. A replacement instance kept the old database usable until the switch. The same-name reset loses the old data at step 6 and has a longer interruption. Steps 2 and 3 move every refusal before step 6, which keeps the data while an input is missing. If kind measurements show the interruption to be unworkable, reconsider the implementation without changing developer-facing mode semantics.
+The trade-off is explicit. A replacement instance kept the old database usable until the switch. The same-name reset loses the old data at step 6 and has a longer interruption. Steps 2 and 3 move every refusal before any change, which keeps the data while an input is missing. If kind measurements show the interruption to be unworkable, reconsider the implementation without changing developer-facing mode semantics.
 
 Other-application isolation applies to code-only deployment. It does not apply to a shared-database reset, which affects every application in the environment by design.
 
@@ -258,7 +270,7 @@ Do not reset the WAMN system database during an application reset. A disposable 
 
 ### SQL execution
 
-Package migrations and their checksums are part of the immutable package artifacts. Schema operations default to the configured application release. An explicit `--release` selects another published release for the schema operation without changing the code selection. Source convenience commands publish first. Deployed execution then uses those exact published bytes. Disposable `wamn dev` keeps direct source iteration.
+Package migrations and their checksums are part of the immutable package artifacts. Schema operations default to the configured application release. An explicit `--release` selects another published release for the schema operation without changing the code selection. A read-only `wamn schema diff` can read a source directory, because it writes nothing. Deployed SQL execution requires published bytes. A source convenience command that executes SQL publishes first, and the deployed execution then uses those exact published bytes. Disposable `wamn dev` keeps direct source iteration.
 
 CloudNativePG owns the database, not application SQL. In deployed kind/GCP environments, **a Kubernetes Job running the WAMN SQL executor is the default**; no developer laptop port-forward is required. `wamn dev` may connect directly to its local database. Record applied SQL only after actual completion; recognize identical retries; report real SQL errors. Handle PostgreSQL statements that cannot run transactionally as separate, explicitly reported work. No Atlas operator or additional SQL controller is required.
 
@@ -635,6 +647,7 @@ Kind acceptance runs at epic close, separately from cheap owner-level tests.
 6. Deploy from a stale checkout and roll back. The rollback target is the last successfully applied release.
 
 Missing schema inputs, an omitted installed application, and conflicting definitions stop the reset before the database changes.
+Rollback handling, publisher verification, and schema validation stay in their existing owners: the selection document and application lock, the publication owner, and `validate_candidates`. Each gets focused tests at the lowest tier. No new broad acceptance cycle runs until the implementation settles.
 Transactional failure, edited checksums, and nontransactional uncertainty belong in the lowest tests that observe those contracts.
 Add deployed cases only for boundaries that those tests cannot observe.
 General platform SQL upgrades, browser tests, and registry-archive tests are outside Epic 3 acceptance.
