@@ -754,7 +754,7 @@ CREATE TABLE registry.project_envs (
     secret_name      text NOT NULL,
     secret_namespace text,
     instance_suffix  text NOT NULL,
-    -- DEP3 scope section 7: pending instance and immutable reconstruction inputs.
+    -- Reset inputs and fresh initialization identity, retained outside the recreated database.
     pending_database jsonb,
     disposable       boolean NOT NULL DEFAULT false,
     status           text NOT NULL DEFAULT 'active',

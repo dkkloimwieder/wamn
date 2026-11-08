@@ -11,7 +11,7 @@ use tokio::{
     time::timeout,
 };
 use wamn_control_registry::Triple;
-use wamn_environment_control::environment::lock::{DEPLOYMENT_IN_PROGRESS, LifecycleLock};
+use wamn_environment_control::environment::lock::LifecycleLock;
 
 #[tokio::test]
 async fn a_second_verb_refuses_until_the_holder_is_gone() {
@@ -20,12 +20,15 @@ async fn a_second_verb_refuses_until_the_holder_is_gone() {
     let prod = Triple::new("acme", "wms", "prod");
 
     LifecycleLock::hold(url, &prod, async |_| {
-        let refused = timeout(Duration::from_secs(7), LifecycleLock::acquire(url, &prod))
-            .await?
-            .expect_err("a live holder survives the idle timeout and refuses a second verb");
         assert!(
-            refused.to_string().starts_with(DEPLOYMENT_IN_PROGRESS),
-            "{refused:#}"
+            timeout(Duration::from_secs(7), LifecycleLock::acquire(url, &prod))
+                .await?
+                .is_err()
+        );
+        assert!(
+            LifecycleLock::acquire_application(url, &prod, "orders")
+                .await
+                .is_err()
         );
         let other = LifecycleLock::acquire(url, &Triple::new("acme", "wms", "dev")).await?;
         other.release().await;
@@ -33,25 +36,22 @@ async fn a_second_verb_refuses_until_the_holder_is_gone() {
     })
     .await
     .unwrap();
-    let held = LifecycleLock::acquire(url, &prod).await.unwrap();
-
     let orders = LifecycleLock::acquire_application(url, &prod, "orders")
         .await
         .unwrap();
-    let refused = timeout(
-        Duration::from_secs(7),
-        LifecycleLock::acquire_application(url, &prod, "orders"),
-    )
-    .await
-    .unwrap()
-    .expect_err("a live application holder survives the idle timeout");
     assert!(
-        refused.to_string().starts_with(DEPLOYMENT_IN_PROGRESS),
-        "{refused:#}"
+        timeout(
+            Duration::from_secs(7),
+            LifecycleLock::acquire_application(url, &prod, "orders"),
+        )
+        .await
+        .unwrap()
+        .is_err()
     );
     let receiving = LifecycleLock::acquire_application(url, &prod, "receiving")
         .await
         .unwrap();
+    assert!(LifecycleLock::acquire(url, &prod).await.is_err());
     orders.release().await;
     let retry = LifecycleLock::acquire_application(url, &prod, "orders")
         .await
@@ -59,9 +59,22 @@ async fn a_second_verb_refuses_until_the_holder_is_gone() {
     retry.release().await;
     receiving.release().await;
 
-    drop(held);
-    LifecycleLock::acquire(url, &prod)
+    // A SQL Job keeps its own shared session after the CLI session disappears.
+    let cli = LifecycleLock::acquire_shared(url, &prod).await.unwrap();
+    let job = LifecycleLock::acquire_shared(url, &prod).await.unwrap();
+    drop(cli);
+    assert!(LifecycleLock::acquire(url, &prod).await.is_err());
+    let waiting = LifecycleLock::acquire_wait(url, &prod);
+    tokio::pin!(waiting);
+    assert!(
+        timeout(Duration::from_millis(200), &mut waiting)
+            .await
+            .is_err()
+    );
+    job.release().await;
+    timeout(Duration::from_secs(2), waiting)
         .await
+        .unwrap()
         .unwrap()
         .release()
         .await;

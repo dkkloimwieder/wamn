@@ -122,8 +122,8 @@ pub use pat_secrets::{
     IssuedPatSecret, mint_management_author_pat, parse_pat_prefix, revoke_provisioning_pat,
 };
 pub use registry::{
-    claim_environment_instance, project_env_key_environment, read_project_env_instance,
-    read_project_env_policy, resolve_cluster,
+    claim_environment_instance, finish_database, project_env_key_environment,
+    read_project_env_instance, read_project_env_policy, require_connected, resolve_cluster,
 };
 pub use workload::{run_org_workload_action, run_workload_action};
 

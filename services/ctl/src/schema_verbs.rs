@@ -16,6 +16,14 @@ pub enum SchemaCommand {
     Apply(SchemaArgs),
     /// Build and publish a candidate without installing it in the target database.
     Publish(PublishArgs),
+    /// Replace the recorded disposable environment database and reconnect its users.
+    Reset(EnvironmentArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct EnvironmentArgs {
+    #[arg(long)]
+    pub env: PathBuf,
 }
 
 #[derive(Debug, Args)]
@@ -42,6 +50,15 @@ pub struct PublishArgs {
 pub async fn run(command: SchemaCommand) -> anyhow::Result<()> {
     let (args, apply) = match command {
         SchemaCommand::Publish(args) => return publish(args).await,
+        SchemaCommand::Reset(args) => {
+            let platform = Platform::apply_from_env()?;
+            let result = Box::pin(environment::sql::reset::reset_deployed(
+                &platform, &args.env, None,
+            ))
+            .await?;
+            println!("{}", serde_json::to_string_pretty(&result)?);
+            return Ok(());
+        }
         SchemaCommand::Diff(args) => (args, false),
         SchemaCommand::Apply(args) => (args, true),
     };
@@ -102,7 +119,16 @@ pub async fn run(command: SchemaCommand) -> anyhow::Result<()> {
             .release
             .as_deref()
             .context("schema apply needs a published release")?;
-        environment::sql::apply_deployed(&platform, &document, &application, release).await?;
+        if diff.requires_reset() {
+            Box::pin(environment::sql::reset::reset_deployed(
+                &platform,
+                &args.env,
+                Some((&application, release)),
+            ))
+            .await?;
+        } else {
+            environment::sql::apply_deployed(&platform, &document, &application, release).await?;
+        }
     }
     Ok(())
 }

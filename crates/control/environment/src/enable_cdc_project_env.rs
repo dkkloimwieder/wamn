@@ -340,6 +340,109 @@ pub async fn record_event_reader(
     result
 }
 
+/// Stop this environment's CDC publication before acquiring reset exclusion.
+/// A reader checks this registration while holding the shared lifecycle key.
+pub async fn pause_event_reader(system_url: &str, triple: &Triple) -> anyhow::Result<()> {
+    let mut client = wamn_package_control::database::connect(system_url).await?;
+    let tx = crate::provision_project_env::provisioning_transaction(&mut client).await?;
+    tx.execute(
+        "UPDATE registry.event_readers SET enabled=false WHERE org=$1 AND project=$2 AND env=$3",
+        &[&triple.org, &triple.project, &triple.env.as_str()],
+    )
+    .await?;
+    tx.commit().await?;
+    Ok(())
+}
+
+/// Render the existing CDC reader binary with this environment's owned credentials.
+pub fn reader_deployment(
+    triple: &Triple,
+    namespace: &str,
+    image: &str,
+    replicas: usize,
+    duplicate_window_secs: u64,
+) -> serde_json::Value {
+    use serde_json::json;
+    use wamn_control_provision::WorkloadRoleFamily;
+    let name = project_env_cdc_secret_name(&triple.org, &triple.project, &triple.env);
+    let env_key =
+        wamn_control_provision::project_env_key(&triple.org, &triple.project, &triple.env);
+    let labels =
+        json!({"app.kubernetes.io/name":"wamn-cdc-reader", "app.kubernetes.io/instance":env_key});
+    json!({
+        "apiVersion":"apps/v1", "kind":"Deployment",
+        "metadata":{"name":name,"namespace":namespace,"annotations":{"wamn.environment":triple.to_string()}},
+        "spec":{"replicas":1,"strategy":{"type":"Recreate"},"selector":{"matchLabels":labels},
+            "template":{"metadata":{"labels":labels},"spec":{
+                "automountServiceAccountToken":false,
+                "containers":[{"name":"reader","image":image,"command":["/usr/local/bin/wamn-cdc-reader"],
+                    "args":["--org",triple.org,"--project",triple.project,"--env",triple.env,
+                        "--stream-replicas",replicas.to_string(),"--dup-window-secs",duplicate_window_secs.to_string()],
+                    "env":[
+                        {"name":"WAMN_SYSTEM_URL","valueFrom":{"secretKeyRef":{"name":wamn_control_provision::workload_secret_name(WorkloadRoleFamily::RegistryReader,&triple.org,&triple.project,&triple.env),"key":"url"}}},
+                        {"name":"WAMN_CDC_URL","valueFrom":{"secretKeyRef":{"name":name,"key":"url"}}},
+                        {"name":"WAMN_NATS_URL","value":crate::platform::identity::NATS_URL},
+                        {"name":"WAMN_NATS_TLS_CA","value":"/etc/wamn/nats/ca.crt"},
+                        {"name":"WAMN_NATS_TLS_CERT","value":"/etc/wamn/nats/tls.crt"},
+                        {"name":"WAMN_NATS_TLS_KEY","value":"/etc/wamn/nats/tls.key"}
+                    ],"volumeMounts":[{"name":"nats","mountPath":"/etc/wamn/nats","readOnly":true}]
+                }],"volumes":[{"name":"nats","secret":{"secretName":"wamn-cdc-reader-nats"}}]
+            }}
+        }
+    })
+}
+
+/// Stop the target reader without touching another environment's process or broker state.
+pub(crate) async fn stop_reader(
+    platform: &crate::environment::Platform,
+    triple: &Triple,
+) -> anyhow::Result<()> {
+    use crate::environment::ensure::kubectl;
+    let name = project_env_cdc_secret_name(&triple.org, &triple.project, &triple.env);
+    let deployment: Option<serde_json::Value> = crate::kubectl::get(
+        &platform.target.kubeconfig,
+        &platform.target.context,
+        &platform.target.namespace,
+        "deployment",
+        &name,
+    )
+    .await?;
+    if deployment.is_none() {
+        return Ok(());
+    }
+    kubectl(
+        platform,
+        &platform.target.namespace,
+        &["scale", "deployment", &name, "--replicas=0"],
+        None,
+    )
+    .await?;
+    let env_key =
+        wamn_control_provision::project_env_key(&triple.org, &triple.project, &triple.env);
+    let selector =
+        format!("app.kubernetes.io/name=wamn-cdc-reader,app.kubernetes.io/instance={env_key}");
+    tokio::time::timeout(Duration::from_secs(120), async {
+        loop {
+            let pods: serde_json::Value = serde_json::from_str(
+                &kubectl(
+                    platform,
+                    &platform.target.namespace,
+                    &["get", "pods", "-l", &selector, "-o", "json"],
+                    None,
+                )
+                .await?,
+            )?;
+            if pods["items"].as_array().context("reader pods")?.is_empty() {
+                break Ok::<_, anyhow::Error>(());
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+    })
+    .await
+    .context("wait for the old CDC reader to stop")??;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

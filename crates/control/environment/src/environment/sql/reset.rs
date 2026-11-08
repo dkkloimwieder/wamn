@@ -1,4 +1,4 @@
-//! Prepare a retained CNPG replacement without changing the serving database.
+//! Reconstruct a disposable environment under its existing CNPG database name.
 
 use std::collections::BTreeMap;
 
@@ -22,22 +22,11 @@ struct Inputs {
 /// The registry retains this identity across SQL failures and retries.
 #[derive(Debug, Serialize, Deserialize)]
 struct Pending {
-    instance_suffix: String,
+    initialization_identity: String,
     inputs: Inputs,
 }
 
-impl Pending {
-    fn database(&self, document: &EnvironmentDocument) -> String {
-        wamn_control_provision::project_env_database_name(
-            &document.org,
-            &document.project,
-            &document.env,
-            &self.instance_suffix,
-        )
-    }
-}
-
-/// Resolve every retained schema and running release before reserving a target.
+/// Resolve every retained schema and running release before recording reset inputs.
 /// The caller holds the environment lifecycle lock.
 pub async fn prepare(
     platform: &Platform,
@@ -62,12 +51,87 @@ pub async fn prepare(
         "SQL image differs from installed project substrate"
     );
     let candidates = schema::reset_candidates(platform, &diff, selected).await?;
-    validate_candidates(document, &candidates, &diff.reset_sources)?;
+    prepare_inputs(
+        platform,
+        document,
+        candidates,
+        Inputs {
+            project_baseline: baseline,
+            sources: diff.reset_sources,
+        },
+        diff.database_instance.as_deref(),
+        admin_url,
+    )
+    .await
+}
+
+/// Reconstruct retained installed SQL even when every application is stopped.
+pub async fn prepare_retained(
+    platform: &Platform,
+    document: &EnvironmentDocument,
+    admin_url: &str,
+) -> anyhow::Result<Value> {
+    let state = schema::state(platform, document).await?;
+    ensure!(
+        state.disposable == Some(true),
+        "environment is not recorded as disposable"
+    );
+    let baseline = state
+        .project_baseline
+        .context("installed project substrate is unknown")?;
+    ensure!(
+        state.unknowns.is_empty(),
+        "installed schema is unknown: {}",
+        state.unknowns.join("; ")
+    );
+    let sources = state
+        .packages
+        .into_iter()
+        .map(|(id, package)| {
+            (
+                id,
+                SchemaSource {
+                    version: package.coordinate.package_version().to_owned(),
+                    artifact: package.artifact_digest,
+                    fingerprint: package.physical_schema_fingerprint,
+                },
+            )
+        })
+        .collect::<BTreeMap<_, _>>();
+    let mut candidates = Vec::new();
+    for (id, source) in &sources {
+        candidates
+            .push(schema::open(platform, id, &source.version, source.artifact.as_deref()).await?);
+    }
+    prepare_inputs(
+        platform,
+        document,
+        candidates,
+        Inputs {
+            project_baseline: baseline,
+            sources,
+        },
+        state.database_instance.as_deref(),
+        admin_url,
+    )
+    .await
+}
+
+async fn prepare_inputs(
+    platform: &Platform,
+    document: &EnvironmentDocument,
+    candidates: Vec<Candidate>,
+    inputs: Inputs,
+    expected: Option<&str>,
+    admin_url: &str,
+) -> anyhow::Result<Value> {
+    ensure!(
+        inputs.project_baseline == wamn_control_provision::schema_baseline::project_sha256(),
+        "SQL image differs from installed project substrate"
+    );
+    validate_candidates(document, &candidates, &inputs.sources)?;
     resolve_releases(platform, document).await?;
-    let inputs = serde_json::to_value(Inputs {
-        project_baseline: baseline,
-        sources: diff.reset_sources,
-    })?;
+    let inputs = serde_json::to_value(inputs)?;
     let mut system = connect(&platform.system_database_url).await?;
     let active = crate::provision_project_env::read_project_env_instance(
         &platform.system_database_url,
@@ -75,26 +139,17 @@ pub async fn prepare(
     )
     .await?;
     ensure!(
-        Some(database(document, &active).as_str()) == diff.database_instance.as_deref(),
+        Some(database(document, &active).as_str()) == expected,
         "active database changed during input resolution"
     );
     let pending: Pending = serde_json::from_value(
-        registry::reserve_database(&mut system, &document.triple(), &active, &inputs).await?,
+        registry::record_reset(&mut system, &document.triple(), &active, &inputs).await?,
     )?;
     connect(admin_url)
         .await?
         .batch_execute(&crate::provision_project_env::role_posture_sql())
         .await?;
-    let cluster = recorded_cluster(platform, document).await?;
-    Ok(
-        wamn_control_provision::database::render_project_env_database(
-            &document.triple(),
-            &pending.instance_suffix,
-            &cluster,
-            &platform.database_namespace,
-            None,
-        ),
-    )
+    Ok(serde_json::to_value(pending)?)
 }
 
 fn database(document: &EnvironmentDocument, instance: &str) -> String {
@@ -106,7 +161,7 @@ fn database(document: &EnvironmentDocument, instance: &str) -> String {
     )
 }
 
-async fn recorded_cluster(
+pub(in crate::environment) async fn recorded_cluster(
     platform: &Platform,
     document: &EnvironmentDocument,
 ) -> anyhow::Result<String> {
@@ -137,16 +192,6 @@ async fn read_pending(
             .await?
             .context("no pending database")?,
     )?;
-    wamn_control_provision::validate_instance_suffix(&pending.instance_suffix)?;
-    ensure!(
-        pending.instance_suffix != row.instance_suffix,
-        "pending database is active"
-    );
-    ensure!(
-        pending.inputs.project_baseline
-            == wamn_control_provision::schema_baseline::project_sha256(),
-        "SQL image differs from installed project substrate"
-    );
     Ok(pending)
 }
 
@@ -157,6 +202,7 @@ fn validate_candidates(
 ) -> anyhow::Result<(Vec<PackageManifest>, Vec<usize>)> {
     let mut packages = Vec::new();
     let mut found = std::collections::BTreeSet::new();
+    let mut objects = std::collections::BTreeSet::new();
     for candidate in candidates {
         let manifest = PackageManifest::from_slice(&candidate.directory.manifest_bytes)?;
         let id = &manifest.package.id;
@@ -188,6 +234,17 @@ fn validate_candidates(
                 && source.fingerprint == candidate.fingerprint,
             "reset package {id} differs from its immutable source"
         );
+        for model in manifest.models.values() {
+            ensure!(
+                objects.insert((
+                    model.schema.as_str().to_owned(),
+                    model.table.as_str().to_owned()
+                )),
+                "conflicting reset definitions for {}.{}",
+                model.schema,
+                model.table
+            );
+        }
         // Includes filename/checksum validation before mutation. Ownership remains with apply-package.
         wamn_schema_control::plan_package_migrations(&candidate.directory, None)?;
         packages.push(manifest);
@@ -247,7 +304,7 @@ async fn resolve_releases(
     Ok(releases)
 }
 
-/// Initialize only the recorded candidate after CNPG reports success.
+/// Restore the same database from pinned inputs after CNPG reports success.
 /// Package SQL and execution records commit together through apply-package.
 pub async fn initialize(
     platform: &Platform,
@@ -255,6 +312,16 @@ pub async fn initialize(
     admin_url: &str,
 ) -> anyhow::Result<Value> {
     let pending = read_pending(platform, document).await?;
+    ensure!(
+        pending.inputs.project_baseline
+            == wamn_control_provision::schema_baseline::project_sha256(),
+        "SQL image differs from installed project substrate"
+    );
+    let instance = crate::provision_project_env::read_project_env_instance(
+        &platform.system_database_url,
+        &document.triple(),
+    )
+    .await?;
     let mut candidates = Vec::new();
     for (id, source) in &pending.inputs.sources {
         candidates
@@ -262,24 +329,38 @@ pub async fn initialize(
     }
     let (packages, order) = validate_candidates(document, &candidates, &pending.inputs.sources)?;
     let releases = resolve_releases(platform, document).await?;
-    let database = pending.database(document);
+    let database = database(document, &instance);
     let mut project_url = url::Url::parse(&platform.system_database_url)?;
     project_url.set_path(&database);
     let project_url = project_url.to_string();
+    let mut target_admin = url::Url::parse(admin_url)?;
+    target_admin.set_path(&database);
+    let target = connect(target_admin.as_str()).await?;
+    if target
+        .query_one(
+            "SELECT to_regclass('platform.schema_baseline') IS NOT NULL",
+            &[],
+        )
+        .await?
+        .get::<_, bool>(0)
+    {
+        let identity: String = target
+            .query_one(
+                "SELECT installed_at::text FROM platform.schema_baseline WHERE singleton",
+                &[],
+            )
+            .await?
+            .get(0);
+        ensure!(
+            identity == pending.initialization_identity,
+            "database has not been recreated for this reset"
+        );
+    }
     let admin = connect(admin_url).await?;
     admin
         .batch_execute(&crate::provision_project_env::privilege_sql(&database))
         .await?;
-    let project_admin = ensure::ensure_database_at(
-        platform,
-        document,
-        &packages,
-        &admin,
-        admin_url,
-        &project_url,
-        true,
-    )
-    .await?;
+    ensure::ensure_project_database(platform, document, &packages, &admin, admin_url).await?;
     let changes = platform.auth_changes().await?;
     let drops = super::super::bindings::project_authority(
         &platform.system_database_url,
@@ -350,113 +431,478 @@ pub async fn initialize(
         )
         .await?;
     }
-    let schemas = packages
-        .iter()
-        .flat_map(|package| package.models.values().map(|model| model.schema.clone()))
-        .collect::<std::collections::BTreeSet<_>>()
-        .into_iter()
-        .collect::<Vec<_>>();
+    Ok(
+        serde_json::json!({"database":database, "initialization_identity":pending.initialization_identity}),
+    )
+}
+
+/// Resolve through the installed SQL image before stopping any workload.
+async fn prepare_deployed(
+    platform: &Platform,
+    document: &EnvironmentDocument,
+    candidate: Option<(&str, &str)>,
+) -> anyhow::Result<Pending> {
+    let system = connect(&platform.system_database_url).await?;
+    if registry::pending_database(&system, &document.triple())
+        .await?
+        .is_none()
+    {
+        let private = ensure::PrivateDirectory::create()?;
+        let chart = crate::platform::artifact_plan::select(&platform.chart)?;
+        let cluster = recorded_cluster(platform, document).await?;
+        super::run_deployed(
+            platform,
+            document,
+            super::Operation::Reset { candidate },
+            chart.image("ctl")?,
+            &cluster,
+            &private.path("reset-inputs"),
+        )
+        .await?;
+    }
+    let pending = read_pending(platform, document).await?;
+    Ok(pending)
+}
+
+async fn match_candidate(
+    platform: &Platform,
+    document: &EnvironmentDocument,
+    candidate: Option<(&str, &str)>,
+    pending: &Pending,
+) -> anyhow::Result<()> {
+    if let Some((application, release)) = candidate {
+        let (_, candidates) =
+            schema::release_candidates(platform, document, application, Some(release)).await?;
+        for candidate in candidates {
+            let manifest = PackageManifest::from_slice(&candidate.directory.manifest_bytes)?;
+            let source = pending
+                .inputs
+                .sources
+                .get(&manifest.package.id)
+                .context("pending schema source")?;
+            ensure!(
+                source.fingerprint == candidate.fingerprint
+                    && source.artifact == candidate.root.artifact_digest,
+                "finish the pending reset before applying different schema inputs"
+            );
+        }
+    }
+    Ok(())
+}
+
+/// Recreate the existing CNPG database, then restore its recorded inputs and users.
+pub async fn reset_deployed(
+    platform: &Platform,
+    file: &std::path::Path,
+    candidate: Option<(&str, &str)>,
+) -> anyhow::Result<Value> {
+    let document = EnvironmentDocument::compile(file)?;
+    let private = ensure::PrivateDirectory::create()?;
+    let mut platform = platform.clone();
+    super::super::runtime::resolve_target(&mut platform, &document, &private.path(".")).await?;
+    eprintln!(
+        "Reset stops all applications until reconnection. Data loss is irreversible: application rows, manually created workflow definitions, queued runs, and queued events are deleted. Affected applications: {}",
+        document
+            .applications
+            .keys()
+            .map(String::as_str)
+            .collect::<Vec<_>>()
+            .join(", ")
+    );
+    let pending = prepare_deployed(&platform, &document, candidate).await?;
+    let mut completed = Vec::new();
+    let result = async {
+        let lock = super::super::lock::LifecycleLock::acquire_wait(
+            &platform.system_database_url,
+            &document.triple(),
+        )
+        .await?;
+        let current = EnvironmentDocument::compile(file)?;
+        ensure!(
+            current == document,
+            "environment document changed during reset"
+        );
+        ensure!(
+            serde_json::to_value(read_pending(&platform, &document).await?)?
+                == serde_json::to_value(&pending)?,
+            "reset inputs changed"
+        );
+        match_candidate(&platform, &document, candidate, &pending).await?;
+        let mut candidates = Vec::new();
+        for (id, source) in &pending.inputs.sources {
+            candidates.push(
+                schema::open(&platform, id, &source.version, source.artifact.as_deref()).await?,
+            );
+        }
+        validate_candidates(&document, &candidates, &pending.inputs.sources)?;
+        resolve_releases(&platform, &document).await?;
+        crate::enable_cdc_project_env::pause_event_reader(
+            &platform.system_database_url,
+            &document.triple(),
+        )
+        .await?;
+        stop_users(&platform, &document).await?;
+        completed.push("workloads stopped");
+        if needs_recreation(&platform, &document).await? {
+            recreate(&platform, &document, &mut completed).await?;
+        } else {
+            completed.push("pinned initialization retained");
+        }
+        lock.release().await;
+        let chart = crate::platform::artifact_plan::select(&platform.chart)?;
+        let cluster = recorded_cluster(&platform, &document).await?;
+        super::run_deployed(
+            &platform,
+            &document,
+            super::Operation::Reset { candidate: None },
+            chart.image("ctl")?,
+            &cluster,
+            &private.path("reset-sql"),
+        )
+        .await?;
+        completed.push("SQL restored");
+        let lock = super::super::lock::LifecycleLock::acquire_wait(
+            &platform.system_database_url,
+            &document.triple(),
+        )
+        .await?;
+        let state = schema::state(&platform, &document).await?;
+        ensure!(
+            state.initialization_identity.as_deref() == Some(&pending.initialization_identity),
+            "database initialization changed before reconnect"
+        );
+        let result = reconnect(&platform, &document, &mut completed).await;
+        lock.release().await;
+        result
+    }
+    .await;
+    result.with_context(|| {
+        format!(
+            "reset outcome; completed: {}; resume an incomplete reset only while pending_database exists",
+            completed.join(", ")
+        )
+    })
+}
+
+async fn stop_users(platform: &Platform, document: &EnvironmentDocument) -> anyhow::Result<()> {
+    crate::enable_cdc_project_env::stop_reader(platform, &document.triple()).await?;
+    let shared = ensure::environment_host_name(&document.org, &document.project, &document.env)?;
+    let mut groups = std::collections::BTreeSet::from([shared.clone()]);
+    for application in document.applications.keys() {
+        groups.insert(analyse::application_release_name(document, application)?);
+    }
+    for name in &groups {
+        stop_group(platform, name).await?;
+    }
+    ensure::kubectl(
+        platform,
+        &platform.target.namespace,
+        &[
+            "delete",
+            "workloaddeployment",
+            &format!("{shared}-materializer"),
+            "--ignore-not-found",
+            "--wait=true",
+            "--timeout=120s",
+        ],
+        None,
+    )
+    .await?;
+    Ok(())
+}
+
+/// A matching durable initialization identity forbids another destructive recreation.
+pub async fn needs_recreation(
+    platform: &Platform,
+    document: &EnvironmentDocument,
+) -> anyhow::Result<bool> {
+    let pending = read_pending(platform, document).await?;
+    let project_url = ensure::project_url(platform, &document.triple()).await?;
+    let name = url::Url::parse(&project_url)?
+        .path()
+        .trim_start_matches('/')
+        .to_owned();
+    let system = connect(&platform.system_database_url).await?;
+    // An interrupted absent operation leaves the owned database closed to connections.
+    let database = system
+        .query_opt(
+            "SELECT datallowconn FROM pg_database WHERE datname=$1",
+            &[&name],
+        )
+        .await?;
+    if database.is_none_or(|row| !row.get::<_, bool>(0)) {
+        return Ok(true);
+    }
+    let project = connect(&project_url).await?;
+    if !project
+        .query_one(
+            "SELECT to_regclass('platform.schema_baseline') IS NOT NULL",
+            &[],
+        )
+        .await?
+        .get::<_, bool>(0)
+    {
+        return Ok(true);
+    }
+    let identity: String = project
+        .query_one(
+            "SELECT installed_at::text FROM platform.schema_baseline WHERE singleton",
+            &[],
+        )
+        .await?
+        .get(0);
+    Ok(identity != pending.initialization_identity)
+}
+
+async fn recreate(
+    platform: &Platform,
+    document: &EnvironmentDocument,
+    completed: &mut Vec<&str>,
+) -> anyhow::Result<()> {
+    let instance = crate::provision_project_env::read_project_env_instance(
+        &platform.system_database_url,
+        &document.triple(),
+    )
+    .await?;
+    let name = database(document, &instance);
+    let cluster = recorded_cluster(platform, document).await?;
+    let resource: Value = crate::kubectl::get(
+        &platform.target.kubeconfig,
+        &platform.target.context,
+        &platform.database_namespace,
+        "database",
+        &name,
+    )
+    .await?
+    .context("existing CNPG Database")?;
+    ensure!(
+        resource["spec"]["name"] == name
+            && resource["spec"]["cluster"]["name"] == cluster
+            && resource["metadata"]["annotations"]["wamn.environment"]
+                == document.triple().to_string(),
+        "Database resource has different ownership"
+    );
+    let admin_url = std::env::var("WAMN_SYSTEM_ADMIN_URL").context("reset administrator URL")?;
+    let mut postgres = url::Url::parse(&admin_url)?;
+    postgres.set_path("postgres");
+    let admin = connect(postgres.as_str()).await?;
     let capture = wamn_control_provision::cdc_object_name(
         &document.org,
         &document.project,
         &document.env,
-        &pending.instance_suffix,
+        &instance,
     );
-    if !schemas.is_empty() {
-        // The candidate role is not published to serving workloads during preparation.
-        admin
-            .batch_execute(&wamn_control_provision::sql::ensure_replication_role_sql(
-                &capture,
-                &ensure::random_password()?,
-            ))
-            .await?;
-        let project = connect(&project_admin).await?;
-        for package in &packages {
-            for model in package.models.values() {
-                project
-                    .batch_execute(&wamn_schema_control::alter_replica_identity_sql(
-                        &model.schema,
-                        &model.table,
-                        wamn_schema_control::ReplicaIdentity::Full,
-                    ))
-                    .await?;
-            }
-        }
-        project
-            .batch_execute(&crate::enable_cdc_project_env::cdc_sql_bundle(
-                &schemas, &capture, &database,
-            ))
-            .await?;
-    }
-    Ok(
-        serde_json::json!({"database":database, "instance_suffix":pending.instance_suffix, "schemas":schemas, "capture":capture}),
-    )
-}
-
-/// Prepare through the installed SQL image, then wait for CNPG's observed result.
-pub async fn prepare_deployed(
-    platform: &Platform,
-    document: &EnvironmentDocument,
-    application: &str,
-    release: &str,
-) -> anyhow::Result<Value> {
-    let private = ensure::PrivateDirectory::create()?;
-    let chart = crate::platform::artifact_plan::select(&platform.chart)?;
-    let cluster = recorded_cluster(platform, document).await?;
-    let cr = super::run_deployed(
+    ensure::kubectl(
         platform,
-        document,
-        super::Operation::PrepareReset {
-            application,
-            release,
-        },
-        chart.image("ctl")?,
-        &cluster,
-        &private.path("prepare"),
-    )
-    .await?
-    .context("missing candidate Database")?;
-    crate::kubectl::apply(
-        &platform.target.kubeconfig,
-        &platform.target.context,
         &platform.database_namespace,
-        &cr,
+        &[
+            "patch",
+            "database",
+            &name,
+            "--type",
+            "merge",
+            "-p",
+            r#"{"spec":{"allowConnections":false}}"#,
+        ],
+        None,
     )
     .await?;
-    let name = cr["metadata"]["name"]
-        .as_str()
-        .context("candidate database name")?;
-    ensure::wait_applied(platform, "database", name).await?;
-    let result = super::run_deployed(
-        platform,
-        document,
-        super::Operation::InitializeReset,
-        chart.image("ctl")?,
-        &cluster,
-        &private.path("initialize"),
-    )
-    .await?
-    .context("missing candidate initialization result")?;
-    let schemas: Vec<String> = serde_json::from_value(result["schemas"].clone())?;
-    if !schemas.is_empty() {
-        let publication = wamn_control_provision::database::render_project_env_publication(
-            &document.triple(),
-            result["instance_suffix"]
-                .as_str()
-                .context("candidate instance")?,
-            &cluster,
+    if admin
+        .query_one(
+            "SELECT EXISTS(SELECT FROM pg_database WHERE datname=$1)",
+            &[&name],
+        )
+        .await?
+        .get::<_, bool>(0)
+    {
+        admin
+            .batch_execute(&format!(
+                "ALTER DATABASE {} ALLOW_CONNECTIONS false",
+                wamn_pg_core::quote_ident(&name)
+            ))
+            .await?;
+    }
+    admin.query("SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname=$1 AND pid<>pg_backend_pid()", &[&name]).await?;
+    admin.query("SELECT pg_drop_replication_slot(slot_name) FROM pg_replication_slots WHERE slot_name=$1", &[&capture]).await?;
+    for (desired, exists) in [("absent", false), ("present", true)] {
+        let patch =
+            serde_json::json!({"spec":{"ensure":desired,"allowConnections":exists}}).to_string();
+        ensure::kubectl(
+            platform,
             &platform.database_namespace,
-            result["capture"].as_str().context("candidate capture")?,
-            &schemas,
-        );
-        crate::kubectl::apply(
-            &platform.target.kubeconfig,
-            &platform.target.context,
-            &platform.database_namespace,
-            &publication,
+            &["patch", "database", &name, "--type", "merge", "-p", &patch],
+            None,
         )
         .await?;
-        ensure::wait_applied(platform, "publication", name).await?;
+        ensure::wait_applied(platform, "database", &name).await?;
+        tokio::time::timeout(std::time::Duration::from_secs(120), async {
+            loop {
+                let found: bool = admin
+                    .query_one(
+                        "SELECT EXISTS(SELECT FROM pg_database WHERE datname=$1)",
+                        &[&name],
+                    )
+                    .await?
+                    .get(0);
+                if found == exists {
+                    break Ok::<_, anyhow::Error>(());
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            }
+        })
+        .await
+        .context("wait for CNPG database operation")??;
+        completed.push(if exists {
+            "database present"
+        } else {
+            "database absent: old data destroyed"
+        });
     }
-    Ok(result)
+    Ok(())
+}
+
+async fn reconnect(
+    platform: &Platform,
+    document: &EnvironmentDocument,
+    completed: &mut Vec<&str>,
+) -> anyhow::Result<Value> {
+    let pending = read_pending(platform, document).await?;
+    let pending_value = serde_json::to_value(&pending)?;
+    let instance = crate::provision_project_env::read_project_env_instance(
+        &platform.system_database_url,
+        &document.triple(),
+    )
+    .await?;
+    let name = database(document, &instance);
+    let mut system = connect(&platform.system_database_url).await?;
+    let admin_url = std::env::var("WAMN_SYSTEM_ADMIN_URL").context("reset administrator URL")?;
+    let mut project_admin = url::Url::parse(&admin_url)?;
+    project_admin.set_path(&name);
+    ensure::prepare_cdc(
+        platform,
+        document,
+        &connect(&admin_url).await?,
+        project_admin.as_str(),
+    )
+    .await?;
+    if system
+        .query_opt(
+            wamn_control_registry::sql::select_capture_gap_sql(),
+            &[&document.org, &document.project, &document.env],
+        )
+        .await?
+        .is_some_and(|row| !row.get::<_, bool>(1))
+    {
+        crate::capture_gap::close_capture_gap(&crate::capture_gap::CloseCaptureGapRequest {
+            org: document.org.clone(),
+            project: document.project.clone(),
+            env: document.env.clone(),
+            system_database_url: platform.system_database_url.clone(),
+        })
+        .await?;
+    }
+    ensure::ensure_cdc(platform, document).await?;
+    completed.push("CDC rebuilt");
+    let broker = platform
+        .events
+        .as_ref()
+        .context("reset requires the environment event broker")?;
+    let broker = async_nats::jetstream::new(broker.nats.connect().await?);
+    crate::event_streams::discard(&broker, &document.triple()).await?;
+    completed.push("old event backlog discarded");
+    registry::finish_database(&mut system, &document.triple(), &pending_value).await?;
+    completed.push("reset complete");
+    ensure::ensure_cdc(platform, document)
+        .await
+        .context("reset complete; reapply the unchanged selections to resume event processing")?;
+    resume_users(platform, document)
+        .await
+        .context("reset complete; reapply the named unchanged selections, without another reset")?;
+    completed.push("workloads resumed");
+    Ok(serde_json::json!({"database":name,"pending_database":null,
+            "initialization_identity":pending.initialization_identity,
+            "data_loss":"The reset deletes old rows, queued runs, manually authored workflow definitions, and queued events.",
+            "result":"reset"}))
+}
+
+async fn resume_users(platform: &Platform, document: &EnvironmentDocument) -> anyhow::Result<()> {
+    use super::super::{readiness, write};
+    // The reset is complete. Name each failure for ordinary application reapply.
+    let mut failures = Vec::new();
+    for (application, selection) in &document.applications {
+        if matches!(
+            selection.current,
+            super::super::document::DeclaredRelease::None
+        ) {
+            continue;
+        }
+        let result = async {
+            let analysis = analyse::analyse(platform, document, Some(application)).await?;
+            let release = analysis
+                .authorities
+                .release
+                .as_ref()
+                .context("application release")?;
+            let prepared = write::prepare(platform, document, &analysis, release).await?;
+            let written = write::write(platform, &analysis, prepared, false).await?;
+            readiness::wait(platform, &written).await
+        }
+        .await;
+        if let Err(error) = result {
+            failures.push(format!("{application}: {error:#}"));
+        }
+    }
+    ensure!(
+        failures.is_empty(),
+        "application reconnection failed: {}",
+        failures.join("; ")
+    );
+    ensure::provision_materializer(platform, document).await?;
+    Ok(())
+}
+
+async fn stop_group(platform: &Platform, name: &str) -> anyhow::Result<()> {
+    use wamn_release_control::release_chart;
+    if analyse::release_present(platform, name).await? {
+        let bytes = crate::platform::resources::helm(
+            &platform.target,
+            &[
+                "get".as_ref(),
+                "values".as_ref(),
+                name.as_ref(),
+                "-n".as_ref(),
+                platform.target.namespace.as_ref(),
+                "-o".as_ref(),
+                "json".as_ref(),
+            ],
+        )
+        .await?;
+        let mut values: Value = serde_json::from_slice(&bytes)?;
+        for group in values["runtime-operator"]["runtime"]["hostGroups"]
+            .as_array_mut()
+            .context("host groups")?
+        {
+            group["replicas"] = 0.into();
+        }
+        let private = ensure::PrivateDirectory::create()?;
+        let path = private.path("stopped.yaml");
+        std::fs::write(&path, serde_yaml::to_string(&values)?)?;
+        release_chart::recover_pending(&platform.target, name).await?;
+        release_chart::upgrade(
+            &platform.target,
+            &platform.chart,
+            name,
+            &path,
+            std::time::Duration::from_secs(120),
+            "database reset",
+        )
+        .await?;
+    }
+    ensure!(
+        super::super::drain::wait(platform, name, None)
+            .await?
+            .is_empty(),
+        "database user {name} is still running"
+    );
+    Ok(())
 }

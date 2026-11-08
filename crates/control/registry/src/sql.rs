@@ -304,3 +304,10 @@ pub fn delete_environment_connections_sql() -> &'static str {
      SELECT k.store, k.ref, k.version, t.type FROM identity.credential k \
      JOIN removed r ON r.id = k.connection_id JOIN registry.target t ON t.id = r.target_id"
 }
+/// Environment exclusion key shared by lifecycle operations and CDC publication.
+/// Acquire this key before an application key or a database mutation lock.
+pub const ENVIRONMENT_LOCK_SQL: &str =
+    "SELECT pg_try_advisory_lock(hashtextextended('wamn-env/' || $1 || '/' || $2 || '/' || $3, 0))";
+
+/// Independent applications and SQL Jobs exclude shared database replacement.
+pub const ENVIRONMENT_SHARED_LOCK_SQL: &str = "SELECT pg_try_advisory_lock_shared(hashtextextended('wamn-env/' || $1 || '/' || $2 || '/' || $3, 0))";

@@ -122,6 +122,7 @@ fn platform_users() -> Vec<Account> {
         "$JS.API.STREAM.CREATE.*",
         "$JS.API.STREAM.UPDATE.*",
         "$JS.API.STREAM.DELETE.*",
+        "$JS.API.STREAM.PURGE.*",
         "$JS.API.CONSUMER.INFO.>",
         "$JS.API.CONSUMER.CREATE.>",
         "$JS.API.CONSUMER.DURABLE.CREATE.>",
@@ -131,7 +132,7 @@ fn platform_users() -> Vec<Account> {
     // stream. The memory buckets stay identity's.
     let manager = |name: &str| {
         let mut account = user(name, &manage, &["_INBOX.>"]);
-        for operation in ["CREATE", "UPDATE", "DELETE"] {
+        for operation in ["CREATE", "UPDATE", "DELETE", "PURGE"] {
             for bucket in ["wamn-auth", "wamn-connection"] {
                 account
                     .permissions

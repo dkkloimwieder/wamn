@@ -6,6 +6,7 @@ use std::path::Path;
 use std::time::Instant;
 use wamn_control_provision::WorkloadRoleFamily;
 use wamn_control_registry::Triple;
+use wamn_environment_control::enable_cdc_project_env::reader_deployment;
 use wamn_environment_control::environment::document::EnvironmentDocument;
 #[path = "support/release_documents.rs"]
 pub mod release_documents;
@@ -588,4 +589,49 @@ async fn unavailable_authorities_preserve_authored_selections_and_report_unknown
     }
     assert_eq!(std::fs::read(&file)?, original);
     Ok(())
+}
+
+#[test]
+fn reader_uses_the_environments_owned_credentials() {
+    let scope = Triple::new("acme", "apps", "dev");
+    let image = format!("registry/host@sha256:{}", "a".repeat(64));
+    let first = reader_deployment(&scope, "hosts", &image, 1, 120);
+    let pod = &first["spec"]["template"]["spec"];
+    assert_eq!(pod["containers"][0]["image"], image);
+    let variables = pod["containers"][0]["env"].as_array().unwrap();
+    for (variable, secret) in [
+        (
+            "WAMN_CDC_URL",
+            wamn_control_provision::project_env_cdc_secret_name(
+                &scope.org,
+                &scope.project,
+                &scope.env,
+            ),
+        ),
+        (
+            "WAMN_SYSTEM_URL",
+            wamn_control_provision::workload_secret_name(
+                wamn_control_provision::WorkloadRoleFamily::RegistryReader,
+                &scope.org,
+                &scope.project,
+                &scope.env,
+            ),
+        ),
+    ] {
+        let binding = variables
+            .iter()
+            .find(|entry| entry["name"] == variable)
+            .unwrap();
+        assert_eq!(binding["valueFrom"]["secretKeyRef"]["name"], secret);
+        assert!(binding.get("value").is_none());
+    }
+    let other = reader_deployment(
+        &Triple::new("acme", "apps", "other"),
+        "hosts",
+        &image,
+        1,
+        120,
+    );
+    assert_ne!(first["metadata"]["name"], other["metadata"]["name"]);
+    assert_ne!(first["spec"]["selector"], other["spec"]["selector"]);
 }

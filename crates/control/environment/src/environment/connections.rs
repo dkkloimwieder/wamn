@@ -25,6 +25,11 @@ pub async fn write(
     document: &EnvironmentDocument,
     documents: &Path,
 ) -> anyhow::Result<Vec<String>> {
+    let lock =
+        super::lock::LifecycleLock::acquire(&platform.system_database_url, &document.triple())
+            .await?;
+    crate::provision_project_env::registry::require_connected(lock.client(), &document.triple())
+        .await?;
     let mut client = wamn_package_control::database::connect(&platform.system_database_url).await?;
     let tx = client
         .transaction()

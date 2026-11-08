@@ -41,6 +41,23 @@ pub async fn last_published_sequence(
         .last_sequence)
 }
 
+/// Discard only the stopped environment's backlog, retaining its stream declarations.
+/// The caller excludes writers and waits for CDC publishers before this operation.
+pub async fn discard(context: &Context, scope: &Triple) -> anyhow::Result<()> {
+    let source = wamn_control_provision::event_stream_name(&scope.org, &scope.project, &scope.env);
+    for name in [wamn_event_wire::delivery_advisory_stream(&source), source] {
+        let stream = context
+            .get_stream(&name)
+            .await
+            .context("read the environment stream before reset")?;
+        stream
+            .purge()
+            .await
+            .with_context(|| format!("discard backlog of {name}"))?;
+    }
+    Ok(())
+}
+
 /// Create missing broker objects with the caller's provisioning credential.
 /// Existing objects must match the fields their declaration owns before attachment.
 pub async fn provision(

@@ -13,6 +13,69 @@ use super::document::{DeclaredRelease, EnvironmentDocument};
 use super::{Platform, analyse, ensure, stage};
 use crate::platform::{bootstrap, identity, job};
 
+/// Database identities resolved before a Job starts, compared under its own lock.
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+pub struct ExpectedDatabase {
+    active: Option<String>,
+    pub pending: Option<String>,
+}
+
+impl ExpectedDatabase {
+    pub async fn read(platform: &Platform, document: &EnvironmentDocument) -> anyhow::Result<Self> {
+        let client = wamn_package_control::database::connect(&platform.system_database_url).await?;
+        let row = client.query_opt(
+            "SELECT instance_suffix, pending_database->>'initialization_identity' FROM registry.project_envs \
+             WHERE org=$1 AND project=$2 AND env=$3",
+            &[&document.org, &document.project, &document.env],
+        ).await?;
+        Ok(match row {
+            Some(row) => Self {
+                active: Some(row.get(0)),
+                pending: row.get(1),
+            },
+            None => Self {
+                active: None,
+                pending: None,
+            },
+        })
+    }
+
+    /// The Job owns this session until SQL finishes. An expired CLI cannot release it.
+    pub async fn lock(
+        &self,
+        platform: &Platform,
+        document: &EnvironmentDocument,
+        exclusive: bool,
+    ) -> anyhow::Result<super::lock::LifecycleLock> {
+        let lock = if exclusive {
+            super::lock::LifecycleLock::acquire_wait(
+                &platform.system_database_url,
+                &document.triple(),
+            )
+            .await?
+        } else {
+            super::lock::LifecycleLock::acquire_shared(
+                &platform.system_database_url,
+                &document.triple(),
+            )
+            .await?
+        };
+        let actual = Self::read(platform, document).await?;
+        ensure!(
+            actual.active == self.active && actual.pending == self.pending,
+            "SQL Job database instance changed before execution"
+        );
+        if !exclusive {
+            crate::provision_project_env::registry::require_connected(
+                lock.client(),
+                &document.triple(),
+            )
+            .await?;
+        }
+        Ok(lock)
+    }
+}
+
 /// Report whether a selected application has any absent package baseline.
 /// Version and schema differences never authorize SQL during code deployment.
 pub async fn needs_initialization(
@@ -79,12 +142,7 @@ pub async fn apply_deployed(
 ) -> anyhow::Result<()> {
     let directory = ensure::PrivateDirectory::create()?;
     let chart = crate::platform::artifact_plan::select(&platform.chart)?;
-    let cluster = crate::provision_project_env::resolve_cluster(
-        &platform.system_database_url,
-        &document.org,
-        &document.policy,
-    )
-    .await?;
+    let cluster = reset::recorded_cluster(platform, document).await?;
     run_deployed(
         platform,
         document,
@@ -105,13 +163,10 @@ pub async fn apply_deployed(
 pub enum Operation<'a> {
     /// Record the environment and return its CNPG Database resource.
     Provision,
-    /// Reserve a replacement and return its CNPG Database.
-    PrepareReset {
-        application: &'a str,
-        release: &'a str,
+    /// Resolve reset inputs, or restore the recorded inputs after CNPG recreation.
+    Reset {
+        candidate: Option<(&'a str, &'a str)>,
     },
-    /// Reconstruct the pending database without changing the active selection.
-    InitializeReset,
     /// Initialize the selected application's absent baselines after CNPG is ready.
     Initialize,
     /// Advance explicitly selected SQL without activating application code.
@@ -140,13 +195,12 @@ pub async fn run_deployed(
     }
     let verb = match operation {
         Operation::Provision => "provision",
-        Operation::PrepareReset { .. } => "schema-prepare",
-        Operation::InitializeReset => "schema-initialize",
+        Operation::Reset { .. } => "reset",
         Operation::Initialize => "initialize",
         Operation::ApplySchema { .. } => "schema-apply",
     };
     let coordinate = match operation {
-        Operation::Provision | Operation::PrepareReset { .. } | Operation::InitializeReset => {
+        Operation::Provision | Operation::Reset { .. } => {
             wamn_control_provision::environment_state::environment_resource_name(
                 &document.org,
                 &document.project,
@@ -166,19 +220,24 @@ pub async fn run_deployed(
         )?,
     };
     let name = format!("{coordinate}-{verb}");
-    let mut arguments = vec!["env", verb, "/inputs/environment.json"];
+    let mut arguments = vec![
+        "env",
+        verb,
+        "/inputs/environment.json",
+        "/inputs/database.json",
+    ];
     if matches!(operation, Operation::Provision) {
         arguments.extend(["--emit-secret", "/out/secret.json"]);
     }
-    if let Operation::ApplySchema {
-        application,
-        release,
-    }
-    | Operation::PrepareReset {
-        application,
-        release,
-    } = operation
-    {
+    let candidate = match operation {
+        Operation::ApplySchema {
+            application,
+            release,
+        } => Some((application, release)),
+        Operation::Reset { candidate } => candidate,
+        _ => None,
+    };
+    if let Some((application, release)) = candidate {
         arguments.extend(["--application", application, "--release", release]);
     }
     let mut job = job::manifest(&name, image, &["/usr/local/bin/wamn-ctl"], &arguments);
@@ -186,6 +245,10 @@ pub async fn run_deployed(
         "environment.json".into(),
         String::from_utf8(document.canonical_json()?)?,
     )]);
+    files.insert(
+        "database.json".into(),
+        serde_json::to_string(&ExpectedDatabase::read(platform, document).await?)?,
+    );
     let mut secrets = Vec::new();
     let admin: bootstrap::SecretData = crate::kubectl::get(
         &platform.target.kubeconfig,
@@ -305,9 +368,9 @@ pub async fn run_deployed(
     }
     let output = job::run(&platform.target, directory, &mut job, &mut secrets).await?;
     match operation {
-        Operation::Provision | Operation::PrepareReset { .. } | Operation::InitializeReset => Ok(
-            Some(serde_json::from_str(&output).context("read the provisioned Database resource")?),
-        ),
+        Operation::Provision | Operation::Reset { .. } => Ok(Some(
+            serde_json::from_str(&output).context("read the provisioned Database resource")?,
+        )),
         Operation::ApplySchema { .. } => {
             print!("{output}");
             Ok(None)

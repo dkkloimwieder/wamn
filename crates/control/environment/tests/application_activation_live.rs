@@ -12,6 +12,7 @@ use wamn_catalog::{ComponentDescriptor, PackageCoordinate, ServingComponent, Ser
 use wamn_environment_control::environment::{
     Platform, document::EnvironmentDocument, ensure, expand, sql,
 };
+use wamn_environment_control::provision_project_env::{finish_database, require_connected};
 use wamn_package_artifact::sha256_digest;
 use wamn_test_infrastructure::scratch::ScratchRoot;
 
@@ -1071,7 +1072,14 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
         .is_err()
     );
     assert!(admin.query_one("SELECT pending_database IS NULL FROM registry.project_envs WHERE org='acme' AND project='apps' AND env='dev'", &[]).await?.get::<_, bool>(0));
-    let cr = sql::reset::prepare(
+    let mut omitted = document.clone();
+    omitted.applications.remove("b");
+    assert!(
+        sql::reset::prepare_retained(&platform, &omitted, system.url())
+            .await
+            .is_err()
+    );
+    let pending = sql::reset::prepare(
         &platform,
         &document,
         "a",
@@ -1089,36 +1097,45 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
         system.url(),
     )
     .await?;
-    assert_eq!(cr["spec"]["name"], retried["spec"]["name"]);
-    assert_eq!(retried["spec"]["cluster"]["name"], provisioned.cluster);
-    let replacement = cr["spec"]["name"].as_str().unwrap();
-    assert_ne!(replacement, database_name);
-    // Only CNPG's database creation is represented here. DEP3-11 observes CNPG itself.
+    assert_eq!(pending, retried);
+    let installed_before = sql::schema::state(&platform, &document).await?;
+    let old_identity = installed_before.initialization_identity;
+    let expected_packages = installed_before
+        .packages
+        .into_keys()
+        .collect::<BTreeSet<_>>();
+    let expected = sql::ExpectedDatabase::read(&platform, &document).await?;
+    assert!(
+        sql::reset::initialize(&platform, &document, system.url())
+            .await
+            .is_err()
+    );
+    assert!(sql::reset::needs_recreation(&platform, &document).await?);
+    // PostgreSQL observes reconstruction. DEP3-11 observes CNPG absent/present itself.
+    drop(project);
+    drop(observer);
+    admin
+        .batch_execute(&format!(
+            "DROP DATABASE {} WITH (FORCE)",
+            wamn_pg_core::quote_ident(&database_name),
+        ))
+        .await?;
     admin
         .batch_execute(&format!(
             "CREATE DATABASE {} OWNER wamn_db_owner",
-            wamn_pg_core::quote_ident(replacement)
+            wamn_pg_core::quote_ident(&database_name)
         ))
         .await?;
-    let mut replacement_url = url::Url::parse(system.url())?;
-    replacement_url.set_path(replacement);
-    let candidate_admin = connect(replacement_url.as_str()).await?;
+    let mut project_admin_url = url::Url::parse(system.url())?;
+    project_admin_url.set_path(&database_name);
+    let candidate_admin = connect(project_admin_url.as_str()).await?;
     candidate_admin.batch_execute("CREATE FUNCTION public.interrupt_beta() RETURNS event_trigger LANGUAGE plpgsql AS $$ BEGIN IF EXISTS (SELECT FROM pg_event_trigger_ddl_commands() WHERE object_identity='b.data' AND command_tag='CREATE TABLE') THEN RAISE EXCEPTION 'beta initialization interrupted'; END IF; END $$; CREATE EVENT TRIGGER interrupt_beta ON ddl_command_end EXECUTE FUNCTION public.interrupt_beta()").await?;
     assert!(
         sql::reset::initialize(&platform, &document, system.url())
             .await
             .is_err()
     );
-    assert_eq!(before_sql, rows(&observer, &stable_sql).await?);
-    assert_eq!(before_schema, rows(&observer, schema_query).await?);
-    assert_eq!(
-        wamn_environment_control::provision_project_env::read_project_env_instance(
-            &platform.system_database_url,
-            &document.triple()
-        )
-        .await?,
-        provisioned.instance
-    );
+    assert!(!sql::reset::needs_recreation(&platform, &document).await?);
     // A committed earlier package survives retry, including rows inserted after it committed.
     candidate_admin.batch_execute("DROP EVENT TRIGGER interrupt_beta; INSERT INTO a.data(id,value) VALUES (123,'committed-before-retry')").await?;
     let first = sql::reset::initialize(&platform, &document, system.url()).await?;
@@ -1140,36 +1157,62 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
         .into_iter()
         .map(|row| row.get::<_, String>(0))
         .collect::<BTreeSet<_>>();
-    let active_installed = sql::schema::state(&platform, &document)
-        .await?
-        .packages
-        .into_keys()
-        .collect::<BTreeSet<_>>();
-    assert_eq!(installed, active_installed);
+    assert_eq!(installed, expected_packages);
+    let state = sql::schema::state(&platform, &document).await?;
     assert_eq!(
-        wamn_environment_control::provision_project_env::read_project_env_instance(
-            &platform.system_database_url,
-            &document.triple()
-        )
-        .await?,
-        provisioned.instance
+        state.database_instance.as_deref(),
+        Some(database_name.as_str())
     );
-    assert_eq!(before_sql, rows(&observer, &stable_sql).await?);
-    let capture = first["capture"].as_str().unwrap();
-    candidate_admin.query("SELECT pg_drop_replication_slot(slot_name) FROM pg_replication_slots WHERE slot_name=$1", &[&capture]).await?;
+    assert_ne!(state.initialization_identity, old_identity);
+    assert_eq!(
+        state.initialization_identity.as_deref(),
+        pending["initialization_identity"].as_str()
+    );
+    let mut system_writer = connect(system.url()).await?;
+    assert!(
+        require_connected(&system_writer, &document.triple())
+            .await
+            .is_err()
+    );
+    assert!(expected.lock(&platform, &document, false).await.is_err());
+    assert_eq!(
+        sql::schema::status(&platform, &document)
+            .await?
+            .pending_database
+            .as_ref(),
+        Some(&pending)
+    );
+    let mut superseded = pending.clone();
+    superseded["initialization_identity"] = "stale".into();
+    assert!(
+        finish_database(&mut system_writer, &document.triple(), &superseded)
+            .await
+            .is_err()
+    );
+    finish_database(&mut system_writer, &document.triple(), &pending).await?;
+    assert!(expected.lock(&platform, &document, true).await.is_err());
+    require_connected(&system_writer, &document.triple()).await?;
+    assert!(
+        sql::schema::status(&platform, &document)
+            .await?
+            .pending_database
+            .is_none()
+    );
+    let mut stopped = document.clone();
+    for selection in stopped.applications.values_mut() {
+        selection.current = wamn_environment_control::environment::document::DeclaredRelease::None;
+    }
+    let retained = sql::reset::prepare_retained(&platform, &stopped, system.url()).await?;
+    assert_ne!(
+        retained["initialization_identity"],
+        pending["initialization_identity"]
+    );
+    assert_eq!(retained["inputs"], pending["inputs"]);
     drop(candidate_admin);
     admin
         .batch_execute(&format!(
             "DROP DATABASE {} WITH (FORCE)",
-            wamn_pg_core::quote_ident(replacement)
-        ))
-        .await?;
-    drop(project);
-    drop(observer);
-    admin
-        .batch_execute(&format!(
-            "DROP DATABASE {} WITH (FORCE)",
-            wamn_pg_core::quote_ident(&database_name)
+            wamn_pg_core::quote_ident(&database_name),
         ))
         .await?;
     Ok(())

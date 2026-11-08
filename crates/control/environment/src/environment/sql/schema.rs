@@ -99,6 +99,7 @@ impl Diff {
 pub struct State {
     pub disposable: Option<bool>,
     pub database_instance: Option<String>,
+    pub initialization_identity: Option<String>,
     pub project_baseline: Option<String>,
     pub installed_environment: Option<String>,
     pub packages: BTreeMap<String, AppliedPackage>,
@@ -136,13 +137,14 @@ pub async fn state(platform: &Platform, document: &EnvironmentDocument) -> anyho
         );
         tx.query_one("SELECT set_config('app.env_key', $1, true)", &[&env_key])
             .await?;
-        let baseline: String = tx
+        let baseline = tx
             .query_one(
-                "SELECT sha256 FROM platform.schema_baseline WHERE singleton",
+                "SELECT sha256, installed_at::text FROM platform.schema_baseline WHERE singleton",
                 &[],
             )
-            .await?
-            .get(0);
+            .await?;
+        let initialization_identity: String = baseline.get(1);
+        let baseline: String = baseline.get(0);
         let mut packages = BTreeMap::new();
         for row in tx
             .query(
@@ -159,12 +161,13 @@ pub async fn state(platform: &Platform, document: &EnvironmentDocument) -> anyho
         }
         let fingerprint = apply_package::installed_environment_fingerprint(&tx, &env_key).await?;
         tx.commit().await?;
-        Ok::<_, anyhow::Error>((baseline, packages, fingerprint))
+        Ok::<_, anyhow::Error>((baseline, packages, fingerprint, initialization_identity))
     }
     .await;
     match read {
-        Ok((baseline, packages, fingerprint)) => {
+        Ok((baseline, packages, fingerprint, initialization_identity)) => {
             state.project_baseline = Some(baseline);
+            state.initialization_identity = Some(initialization_identity);
             state.packages = packages;
             state.installed_environment = Some(fingerprint);
         }
@@ -534,6 +537,8 @@ pub struct Status {
     pub mode: SchemaMode,
     pub disposable: Option<bool>,
     pub database_instance: Option<String>,
+    pub initialization_identity: Option<String>,
+    pub pending_database: Option<serde_json::Value>,
     pub installed_environment: Option<String>,
     pub installed: BTreeMap<String, SchemaSource>,
     pub applications: BTreeMap<String, Diff>,
@@ -559,9 +564,19 @@ pub async fn status(platform: &Platform, document: &EnvironmentDocument) -> anyh
         }
     }
     Ok(Status {
+        pending_database: if state.disposable.is_some() {
+            crate::provision_project_env::registry::pending_database(
+                &wamn_package_control::database::connect(&platform.system_database_url).await?,
+                &document.triple(),
+            )
+            .await?
+        } else {
+            None
+        },
         mode: document.schema_mode(state.disposable),
         disposable: state.disposable,
         database_instance: state.database_instance,
+        initialization_identity: state.initialization_identity,
         installed_environment: state.installed_environment,
         installed: state
             .packages

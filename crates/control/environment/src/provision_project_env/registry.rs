@@ -423,8 +423,8 @@ pub(crate) async fn pending_database(
     Ok(row.get(0))
 }
 
-/// Allocate once after every reconstruction input resolves. Retries retain the target.
-pub(crate) async fn reserve_database(
+/// Record immutable reset inputs outside the database that CNPG will recreate.
+pub(crate) async fn record_reset(
     client: &mut tokio_postgres::Client,
     triple: &Triple,
     active: &str,
@@ -453,19 +453,13 @@ pub(crate) async fn reserve_database(
             pending["inputs"] == *inputs,
             "pending database has different immutable inputs"
         );
-        let suffix = pending["instance_suffix"]
-            .as_str()
-            .context("pending instance suffix")?;
-        validate_instance_suffix(suffix)?;
-        anyhow::ensure!(suffix != active, "pending database is active");
         pending
     } else {
-        let instance = mint_instance_suffix()?;
-        anyhow::ensure!(
-            instance != active,
-            "replacement instance collides with active instance"
-        );
-        let pending = serde_json::json!({"instance_suffix":instance, "inputs":inputs});
+        let identity: String = tx
+            .query_one("SELECT clock_timestamp()::text", &[])
+            .await?
+            .get(0);
+        let pending = serde_json::json!({"initialization_identity":identity, "inputs":inputs});
         tx.execute(
             "UPDATE registry.project_envs SET pending_database=$4 WHERE org=$1 AND project=$2 AND env=$3",
             &[&triple.org, &triple.project, &triple.env.as_str(), &pending],
@@ -474,4 +468,48 @@ pub(crate) async fn reserve_database(
     };
     tx.commit().await?;
     Ok(pending)
+}
+
+/// Complete the reset after SQL, CDC and event disposal, before writers resume.
+pub async fn finish_database(
+    client: &mut tokio_postgres::Client,
+    triple: &Triple,
+    pending: &serde_json::Value,
+) -> anyhow::Result<()> {
+    let tx = super::provisioning_transaction(client).await?;
+    let changed = tx.execute(
+        "UPDATE registry.project_envs SET pending_database=NULL WHERE org=$1 AND project=$2 AND env=$3 \
+         AND disposable AND pending_database=$4",
+        &[&triple.org, &triple.project, &triple.env.as_str(), &pending],
+    ).await?;
+    anyhow::ensure!(
+        changed == 1,
+        "active or pending database changed during reconnect"
+    );
+    tx.commit().await?;
+    Ok(())
+}
+
+/// A partially reconnected environment admits no new deployment or SQL operation.
+pub async fn require_connected(
+    client: &impl tokio_postgres::GenericClient,
+    triple: &Triple,
+) -> anyhow::Result<()> {
+    require_no_reset(client, triple).await
+}
+
+/// Once reset inputs are pinned, deployment waits for the reset to finish.
+pub(crate) async fn require_no_reset(
+    client: &impl tokio_postgres::GenericClient,
+    triple: &Triple,
+) -> anyhow::Result<()> {
+    let row = client.query_opt(
+        "SELECT pending_database IS NULL FROM registry.project_envs WHERE org=$1 AND project=$2 AND env=$3",
+        &[&triple.org, &triple.project, &triple.env.as_str()],
+    ).await?;
+    anyhow::ensure!(
+        row.is_none_or(|row| row.get::<_, bool>(0)),
+        "database reset is pending; retry wamn schema reset"
+    );
+    Ok(())
 }

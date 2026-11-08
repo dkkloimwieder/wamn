@@ -227,3 +227,54 @@ mod event_batch {
             .unwrap();
     }
 }
+
+#[tokio::test]
+#[ignore = "requires: env:WAMN_NATS_URL, env:WAMN_NATS_TLS_CA, env:WAMN_NATS_TLS_CERT, env:WAMN_NATS_TLS_KEY"]
+async fn reset_discards_only_the_named_environments_backlog() -> anyhow::Result<()> {
+    use wamn_control_provision::events::{advisory_stream_config, source_stream_config};
+    use wamn_environment_control::event_streams;
+    wamn_test_postgres::require_ignored_prerequisites(
+        "requires: env:WAMN_NATS_URL, env:WAMN_NATS_TLS_CA, env:WAMN_NATS_TLS_CERT, env:WAMN_NATS_TLS_KEY",
+    );
+    let client = wamn_platform_identity::nats::PlatformNats::from_env()?
+        .connect()
+        .await?;
+    let broker = async_nats::jetstream::new(client);
+    let project = format!("p{}", &uuid::Uuid::new_v4().simple().to_string()[..12]);
+    let target = Triple::new("reset", &project, "dev");
+    let other = Triple::new("reset", &project, "other");
+    let mut streams = Vec::new();
+    for scope in [&target, &other] {
+        event_streams::provision(&broker, scope, 1, Duration::from_secs(120), &[]).await?;
+        for config in [
+            source_stream_config(scope, 1, Duration::from_secs(120)),
+            advisory_stream_config(scope, 1),
+        ] {
+            let subject = config.subjects[0]
+                .replace('>', "widget.insert")
+                .replace('*', "message");
+            broker.publish(subject, "old event".into()).await?.await?;
+            streams.push((scope == &target, config));
+        }
+    }
+    let result = async {
+        event_streams::discard(&broker, &target).await?;
+        for (target, config) in &streams {
+            let mut stream = broker.get_stream(&config.name).await?;
+            let actual = stream.info().await?;
+            assert!(wamn_control_provision::events::stream_config_matches(
+                config,
+                &actual.config
+            ));
+            assert_eq!(actual.state.messages, u64::from(!target));
+        }
+        // A retry retains the declarations and leaves the other environment alone.
+        event_streams::discard(&broker, &target).await?;
+        Ok::<_, anyhow::Error>(())
+    }
+    .await;
+    for (_, config) in streams {
+        broker.delete_stream(&config.name).await?;
+    }
+    result
+}

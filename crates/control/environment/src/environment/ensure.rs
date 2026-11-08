@@ -372,7 +372,7 @@ pub fn materializer_workload(
     Ok(workload)
 }
 
-async fn provision_materializer(
+pub(super) async fn provision_materializer(
     platform: &Platform,
     document: &EnvironmentDocument,
 ) -> anyhow::Result<()> {
@@ -500,30 +500,8 @@ pub async fn ensure_project_database(
     admin_url: &str,
 ) -> anyhow::Result<String> {
     let project_url = project_url(platform, &document.triple()).await?;
-    ensure_database_at(
-        platform,
-        document,
-        packages,
-        admin,
-        admin_url,
-        &project_url,
-        false,
-    )
-    .await
-}
-
-/// Reuse the project initializer for an explicitly resolved database target.
-pub(super) async fn ensure_database_at(
-    platform: &Platform,
-    document: &EnvironmentDocument,
-    packages: &[wamn_catalog::manifest::PackageManifest],
-    admin: &tokio_postgres::Client,
-    admin_url: &str,
-    project_url: &str,
-    pending: bool,
-) -> anyhow::Result<String> {
     let mut project_admin = url::Url::parse(admin_url)?;
-    project_admin.set_path(url::Url::parse(project_url)?.path());
+    project_admin.set_path(url::Url::parse(&project_url)?.path());
     let project_admin = project_admin.to_string();
     connect(&project_admin)
         .await?
@@ -534,7 +512,7 @@ pub(super) async fn ensure_database_at(
         .await?;
     admin.batch_execute(&format!(
         "GRANT CONNECT ON DATABASE {} TO wamn_apply; GRANT wamn_platform TO wamn_db_owner WITH INHERIT TRUE, SET FALSE;",
-        wamn_pg_core::quote_ident(url::Url::parse(project_url)?.path().trim_start_matches('/')),
+        wamn_pg_core::quote_ident(url::Url::parse(&project_url)?.path().trim_start_matches('/')),
     )).await?;
     for package in packages {
         admin
@@ -561,17 +539,14 @@ pub(super) async fn ensure_database_at(
         dry_run: false,
         changes: platform.auth_changes().await?,
     };
-    if pending {
-        crate::reconcile_run_plane::reconcile_pending_run_plane(request).await
-    } else {
-        crate::reconcile_run_plane::reconcile_run_plane(request).await
-    }
-    .context("reconcile the run plane")?;
+    crate::reconcile_run_plane::reconcile_run_plane(request)
+        .await
+        .context("reconcile the run plane")?;
     Ok(project_admin)
 }
 
 /// Prepare replication authority before the admin connection leaves ensure.
-async fn prepare_cdc(
+pub(super) async fn prepare_cdc(
     platform: &Platform,
     document: &EnvironmentDocument,
     admin: &tokio_postgres::Client,
@@ -631,12 +606,7 @@ async fn prepare_cdc(
             &role,
         ))
         .await?;
-    let cluster = resolve_cluster(
-        &platform.system_database_url,
-        &document.org,
-        &document.policy,
-    )
-    .await?;
+    let cluster = super::sql::reset::recorded_cluster(platform, document).await?;
     let database = wamn_control_provision::project_env_database_name(
         &document.org,
         &document.project,
@@ -756,7 +726,57 @@ pub async fn ensure_cdc(platform: &Platform, document: &EnvironmentDocument) -> 
         Some(namespace),
     )
     .await
-    .context("record the CDC reader")
+    .context("record the CDC reader")?;
+    let events = platform
+        .events
+        .as_ref()
+        .context("environment event broker")?;
+    let image = wamn_release_control::release_chart::image_set(&platform.chart)
+        .await?
+        .host;
+    let mut deployment = crate::enable_cdc_project_env::reader_deployment(
+        &triple,
+        namespace,
+        &image,
+        events.stream_replicas,
+        events.dup_window_secs,
+    );
+    if crate::provision_project_env::registry::pending_database(
+        &connect(&platform.system_database_url).await?,
+        &triple,
+    )
+    .await?
+    .is_some()
+    {
+        crate::enable_cdc_project_env::pause_event_reader(&platform.system_database_url, &triple)
+            .await?;
+        deployment["spec"]["replicas"] = 0.into();
+    }
+    crate::kubectl::apply(
+        &platform.target.kubeconfig,
+        &platform.target.context,
+        namespace,
+        &deployment,
+    )
+    .await?;
+    kubectl(
+        platform,
+        namespace,
+        &[
+            "rollout",
+            "status",
+            &format!(
+                "deployment/{}",
+                deployment["metadata"]["name"]
+                    .as_str()
+                    .context("CDC reader name")?
+            ),
+            "--timeout=120s",
+        ],
+        None,
+    )
+    .await?;
+    Ok(())
 }
 
 /// Provision the environment's source and advisory streams, with the same
@@ -806,12 +826,7 @@ async fn enable_cdc(
         "the environment captures application models and has no event broker; \
          set WAMN_NATS_URL and its WAMN_NATS_TLS_* certificate",
     )?;
-    let cluster = resolve_cluster(
-        &platform.system_database_url,
-        &document.org,
-        &document.policy,
-    )
-    .await?;
+    let cluster = super::sql::reset::recorded_cluster(platform, document).await?;
     let database = wamn_control_provision::project_env_database_name(
         &document.org,
         &document.project,
@@ -930,7 +945,7 @@ pub(super) async fn wait_applied(
 }
 
 /// Run `kubectl` against the platform's cluster in `namespace`.
-pub(super) async fn kubectl(
+pub(crate) async fn kubectl(
     platform: &Platform,
     namespace: &str,
     arguments: &[&str],

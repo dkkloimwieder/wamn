@@ -343,6 +343,8 @@ pub(super) async fn apply_selection(
     )
     .await?;
     let result = async {
+        crate::provision_project_env::registry::require_no_reset(lock.client(), &before.triple())
+            .await?;
         let private = ensure::PrivateDirectory::create()?;
         let mut platform = platform.clone();
         let control = runtime::resolve_platform(&mut platform, &document.org).await?;
@@ -426,12 +428,7 @@ async fn initialize_selection(
         return ensure::ensure_cdc(platform, &selected).await;
     }
     let chart = crate::platform::artifact_plan::select(&platform.chart)?;
-    let cluster = crate::provision_project_env::resolve_cluster(
-        &platform.system_database_url,
-        &document.org,
-        &document.policy,
-    )
-    .await?;
+    let cluster = sql::reset::recorded_cluster(platform, document).await?;
     sql::run_deployed(
         platform,
         &selected,

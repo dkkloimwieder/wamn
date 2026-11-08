@@ -1145,6 +1145,16 @@ pub async fn run_with_shutdown(
         if token.is_cancelled() {
             return Ok(());
         }
+        let observed = read_registration(&args).await?;
+        if !observed.enabled {
+            tokio::select! {
+                () = token.cancelled() => return Ok(()),
+                () = tokio::time::sleep(Duration::from_millis(100)) => {},
+            }
+            continue;
+        }
+        check_registration(&args, &observed)?;
+        reg = observed;
         // An open gap row or an absent/invalidated slot = the capture-gap
         // incident, a drifted publication or slot = refusal — checked before
         // EVERY session, so a substrate changed mid-life is caught on the
@@ -1163,11 +1173,10 @@ pub async fn run_with_shutdown(
                     Arc::clone(&last_lsn_advance_ms),
                 );
             }
-            reg = resumed;
             continue;
         }
 
-        let mut stream = match open_session(&args, &reg, token.clone()).await {
+        let mut stream = match open_session(&args, &reg, token.child_token()).await {
             Ok(s) => s,
             Err(e) => match classify(&e) {
                 SessionFate::Cancelled => return Ok(()),
@@ -1190,7 +1199,20 @@ pub async fn run_with_shutdown(
             "walsender session open; draining"
         );
 
-        match drain(&mut stream, &args, &token, &js, &last_lsn_advance_ms).await {
+        match drain(
+            &mut stream,
+            &args,
+            &reg.slot,
+            &token,
+            &js,
+            &last_lsn_advance_ms,
+        )
+        .await
+        {
+            DrainOutcome::Reconfigure(summary) => {
+                log_drain_summary(&summary, "database reset");
+                let _ = stream.shutdown().await;
+            }
             DrainOutcome::Shutdown(summary) => {
                 log_drain_summary(&summary, "shutdown");
                 let _ = stream.shutdown().await;
@@ -1210,6 +1232,10 @@ pub async fn run_with_shutdown(
                 let _ = stream.shutdown().await;
                 if cancellation_requested {
                     return Ok(());
+                }
+                let observed = read_registration(&args).await?;
+                if !observed.enabled || observed.slot != reg.slot {
+                    continue;
                 }
                 match classify(&e) {
                     SessionFate::Cancelled => return Ok(()),
@@ -1321,6 +1347,7 @@ fn log_drain_summary(summary: &DrainSummary, ending: &str) {
 /// the caller always knows whether the ended session was productive.
 enum DrainOutcome {
     Shutdown(DrainSummary),
+    Reconfigure(DrainSummary),
     Severed(ReplicationError, DrainSummary),
 }
 
@@ -1336,6 +1363,7 @@ enum DrainOutcome {
 async fn drain(
     stream: &mut EventStream,
     args: &EventReaderArgs,
+    expected_slot: &str,
     token: &CancellationToken,
     js: &jetstream::Context,
     last_lsn_advance_ms: &AtomicI64,
@@ -1374,6 +1402,42 @@ async fn drain(
                 continue;
             }
             EventType::Commit { end_lsn, .. } => {
+                // Hold the same shared environment exclusion as SQL Jobs until
+                // broker acknowledgments settle. Reset waits before purging.
+                let publication = async {
+                    let client = connect_system(args).await?;
+                    let held: bool = client
+                        .query_one(
+                            wamn_control_registry::sql::ENVIRONMENT_SHARED_LOCK_SQL,
+                            &[&args.org, &args.project, &args.env],
+                        )
+                        .await?
+                        .get(0);
+                    if !held {
+                        return Ok::<_, anyhow::Error>(None);
+                    }
+                    let row = client
+                        .query_one(
+                            select_event_reader_sql(),
+                            &[&args.org, &args.project, &args.env],
+                        )
+                        .await?;
+                    if !row.get::<_, bool>(5) || row.get::<_, String>(1) != expected_slot {
+                        return Ok(None);
+                    }
+                    Ok(Some(client))
+                }
+                .await;
+                let _publication = match publication {
+                    Ok(Some(client)) => client,
+                    Ok(None) => return DrainOutcome::Reconfigure(summary),
+                    Err(error) => {
+                        return DrainOutcome::Severed(
+                            ReplicationError::Config(error.to_string()),
+                            summary,
+                        );
+                    }
+                };
                 let Some(frame) = txn.take() else {
                     return DrainOutcome::Severed(
                         ReplicationError::Protocol("Commit outside a Begin frame".into()),

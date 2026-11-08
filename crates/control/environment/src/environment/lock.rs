@@ -11,9 +11,9 @@ use wamn_control_registry::Triple;
 /// The refusal when another verb holds the lock.
 pub const DEPLOYMENT_IN_PROGRESS: &str = "deployment in progress";
 
-/// The lock: `pg_try_advisory_lock` on the coordinate's key.
-const TRY_LOCK_SQL: &str =
-    "SELECT pg_try_advisory_lock(hashtextextended('wamn-env/' || $1 || '/' || $2 || '/' || $3, 0))";
+use wamn_control_registry::sql::{
+    ENVIRONMENT_LOCK_SQL as TRY_LOCK_SQL, ENVIRONMENT_SHARED_LOCK_SQL as TRY_SHARED_LOCK_SQL,
+};
 
 /// A held lifecycle lock. A one-second heartbeat keeps the session alive.
 /// PostgreSQL expires an idle session after five seconds, even behind a port forward.
@@ -49,13 +49,27 @@ impl LifecycleLock {
         Ok(lock)
     }
 
+    /// Wait for active deployments before taking exclusive environment ownership.
+    pub async fn acquire_wait(system_url: &str, triple: &Triple) -> anyhow::Result<Self> {
+        let lock = Self::connect(system_url).await?;
+        while !lock
+            .try_acquire(
+                TRY_LOCK_SQL,
+                &[&triple.org, &triple.project, &triple.env.as_str()],
+            )
+            .await?
+        {}
+        Ok(lock)
+    }
+
     /// Serialize operations on one application without blocking another application's rollout.
     pub async fn acquire_application(
         system_url: &str,
         triple: &Triple,
         application: &str,
     ) -> anyhow::Result<Self> {
-        let lock = Self::connect(system_url).await?;
+        // Fixed order: environment exclusion, then the application key.
+        let lock = Self::acquire_shared(system_url, triple).await?;
         let key = serde_json::to_string(&(
             &triple.org,
             &triple.project,
@@ -70,6 +84,22 @@ impl LifecycleLock {
             .await?;
         if !held {
             bail!("{DEPLOYMENT_IN_PROGRESS}: application {application} in {triple}");
+        }
+        Ok(lock)
+    }
+
+    /// Exclude database replacement while allowing independent application operations.
+    /// SQL Jobs hold this guard in their own process, even after their caller exits.
+    pub async fn acquire_shared(system_url: &str, triple: &Triple) -> anyhow::Result<Self> {
+        let lock = Self::connect(system_url).await?;
+        let held = lock
+            .try_acquire(
+                TRY_SHARED_LOCK_SQL,
+                &[&triple.org, &triple.project, &triple.env.as_str()],
+            )
+            .await?;
+        if !held {
+            bail!("{DEPLOYMENT_IN_PROGRESS}: environment {triple}");
         }
         Ok(lock)
     }
