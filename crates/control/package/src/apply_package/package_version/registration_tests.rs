@@ -188,19 +188,13 @@ async fn explicit_sql_advances_across_versions_without_selecting_code() {
             .changed
     );
 
-    // A later failing statement rolls back DDL, checksums, and current state.
+    // A failing statement rolls back its file and record together.
     manifest["package"]["version"] = "4.0.0".into();
     std::fs::write(&manifest_path, serde_json::to_vec(&manifest).unwrap()).unwrap();
     std::fs::write(
         next.join("migrations/0003_candidate.sql"),
-        "ALTER TABLE inventory.dock ADD COLUMN failed text;",
-    )
-    .unwrap();
-    std::fs::write(
-        next.join("migrations/0004_failure.sql"),
-        "ALTER TABLE inventory.dock ADD COLUMN failed text;",
-    )
-    .unwrap();
+        "ALTER TABLE inventory.dock ADD COLUMN failed text; ALTER TABLE inventory.dock ADD COLUMN failed text;",
+    ).unwrap();
     assert!(
         apply_package_schema(request(&next, database.url()), None)
             .await
@@ -211,7 +205,6 @@ async fn explicit_sql_advances_across_versions_without_selecting_code() {
 
     // Reconstruct the retained SQL source, even after older code was selected.
     std::fs::remove_file(next.join("migrations/0003_candidate.sql")).unwrap();
-    std::fs::remove_file(next.join("migrations/0004_failure.sql")).unwrap();
     manifest["package"]["version"] = "3.0.0".into();
     std::fs::write(&manifest_path, serde_json::to_vec(&manifest).unwrap()).unwrap();
     let fresh = wamn_project_state::test_database::tenant_platform();
@@ -250,6 +243,9 @@ async fn nontransactional_files_keep_committed_work_and_require_explicit_resolut
         .await
         .unwrap();
     tokio::spawn(connection);
+    crate::schema_baseline::record_project(&client)
+        .await
+        .unwrap();
     let scratch = wamn_test_infrastructure::scratch::ScratchRoot::create().unwrap();
     let root = scratch.path().join("candidate");
     crate::test_support::copy_schema_fixture(&root);
@@ -287,7 +283,7 @@ async fn nontransactional_files_keep_committed_work_and_require_explicit_resolut
         complete
             .pending
             .iter()
-            .take_while(|file| file.ordinal <= 2)
+            .take_while(|file| file.ordinal <= 3)
             .map(|file| file.relative_path.as_str())
             .collect::<Vec<_>>()
     );
@@ -303,7 +299,7 @@ async fn nontransactional_files_keep_committed_work_and_require_explicit_resolut
             .unwrap()
             .get::<_, bool>(0)
     );
-    assert!(!client.query_one("SELECT EXISTS (SELECT FROM information_schema.columns WHERE table_schema='inventory' AND table_name='dock' AND column_name='note')", &[]).await.unwrap().get::<_, bool>(0));
+    assert!(client.query_one("SELECT EXISTS (SELECT FROM information_schema.columns WHERE table_schema='inventory' AND table_name='dock' AND column_name='note')", &[]).await.unwrap().get::<_, bool>(0));
     let first_index: u32 = client
         .query_one("SELECT 'inventory.dock_code_idx'::regclass::oid", &[])
         .await
@@ -313,7 +309,7 @@ async fn nontransactional_files_keep_committed_work_and_require_explicit_resolut
     let result = apply_package_schema(request(&root, database.url()), None)
         .await
         .unwrap();
-    assert_eq!(result.migrations_applied, 1);
+    assert_eq!(result.migrations_applied, 0);
     assert_eq!(
         client
             .query_one("SELECT 'inventory.dock_code_idx'::regclass::oid", &[])
@@ -344,6 +340,32 @@ async fn nontransactional_files_keep_committed_work_and_require_explicit_resolut
             .is_err()
     );
     client.batch_execute("DROP TRIGGER fail_migration_completion ON catalog.package_migrations; DROP FUNCTION public.fail_migration_completion()").await.unwrap();
+    assert!(
+        installed_environment_fingerprint(&client, ENV_KEY)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    let initialization: String = client
+        .query_one(
+            "SELECT installed_at::text FROM platform.schema_baseline WHERE singleton",
+            &[],
+        )
+        .await
+        .unwrap()
+        .get(0);
+    let source = request(&root, database.url()).package;
+    assert!(
+        crate::apply_package::adopt_package_schemas(
+            database.url(),
+            ENV_KEY,
+            &initialization,
+            &[&source],
+            None
+        )
+        .await
+        .is_err()
+    );
     let uncertain = state(&mut client).await;
     assert_eq!(
         uncertain.physical_schema_fingerprint,
@@ -366,13 +388,19 @@ async fn nontransactional_files_keep_committed_work_and_require_explicit_resolut
     assert!(
         apply_package_schema(
             request(&root, database.url()),
-            Some(&format!("{uncertain_path}=applied").parse().unwrap())
+            Some(
+                &format!("wamn_inventory:{uncertain_path}=applied")
+                    .parse()
+                    .unwrap()
+            )
         )
         .await
         .is_err()
     );
     std::fs::write(root.join(uncertain_path), uncertain_sql).unwrap();
-    let applied: MigrationResolution = format!("{uncertain_path}=applied").parse().unwrap();
+    let applied: MigrationResolution = format!("wamn_inventory:{uncertain_path}=applied")
+        .parse()
+        .unwrap();
     let result = apply_package_schema(request(&root, database.url()), Some(&applied))
         .await
         .unwrap();
@@ -419,7 +447,9 @@ async fn nontransactional_files_keep_committed_work_and_require_explicit_resolut
             .await
             .is_err()
     );
-    let retry: MigrationResolution = format!("{retry_path}=retry").parse().unwrap();
+    let retry: MigrationResolution = format!("wamn_inventory:{retry_path}=retry")
+        .parse()
+        .unwrap();
     assert_eq!(
         apply_package_schema(request(&root, database.url()), Some(&retry))
             .await
@@ -728,4 +758,87 @@ async fn adoption_establishes_a_missing_baseline_without_running_ddl() {
             .unwrap()
             .get::<_, bool>(0)
     );
+}
+
+#[tokio::test]
+async fn resolution_selects_one_package_with_a_shared_migration_path() {
+    use crate::apply_package::{read_package_migrations, resolution_package};
+    use wamn_schema_control::MigrationOutcome;
+    let _lock = wamn_test_postgres::lock();
+    let database = wamn_project_state::test_database::tenant_platform();
+    database.execute(&[
+        include_str!("../../../../../../deploy/sql/app-schema-baseline.sql"),
+        wamn_control_provision::sql::ensure_db_owner_role_sql(),
+        "DO $grant$ BEGIN EXECUTE format('GRANT CREATE ON DATABASE %I TO wamn_db_owner', current_database()); END $grant$;",
+    ]).unwrap();
+    let client = crate::database::connect(database.url()).await.unwrap();
+    let scratch = wamn_test_infrastructure::scratch::ScratchRoot::create().unwrap();
+    let path = "migrations/0002_index.sql";
+    for name in ["alpha", "beta"] {
+        let root = scratch.path().join(name);
+        crate::test_support::copy_schema_fixture(&root);
+        for file in ["wamn.json", "migrations/0001_initial.sql"] {
+            let bytes = std::fs::read_to_string(root.join(file))
+                .unwrap()
+                .replace("inventory", name);
+            std::fs::write(root.join(file), bytes).unwrap();
+        }
+        std::fs::write(root.join(path), format!("-- wamn:no-transaction\nCREATE INDEX CONCURRENTLY missing_idx ON {name}.dock (missing);")).unwrap();
+        assert!(
+            apply_package_schema(request(&root, database.url()), None)
+                .await
+                .is_err()
+        );
+    }
+    let alpha = read_package_migrations(&client, ENV_KEY, "wamn_alpha")
+        .await
+        .unwrap();
+    let beta = read_package_migrations(&client, ENV_KEY, "wamn_beta")
+        .await
+        .unwrap();
+    assert_eq!(alpha.last().unwrap().outcome, MigrationOutcome::Started);
+    assert_eq!(beta.last().unwrap().outcome, MigrationOutcome::Started);
+    let resolution = format!("wamn_beta:{path}=retry").parse().unwrap();
+    let selected = resolution_package(
+        Some(&resolution),
+        [
+            ("wamn_alpha", alpha.as_slice()),
+            ("wamn_beta", beta.as_slice()),
+        ],
+    )
+    .unwrap();
+    assert_eq!(selected, Some("wamn_beta"));
+    assert!(
+        apply_package_schema(
+            request(&scratch.path().join("alpha"), database.url()),
+            Some(&resolution)
+        )
+        .await
+        .is_err()
+    );
+    client
+        .batch_execute("ALTER TABLE beta.dock ADD COLUMN missing text")
+        .await
+        .unwrap();
+    assert_eq!(
+        apply_package_schema(
+            request(&scratch.path().join("beta"), database.url()),
+            Some(&resolution)
+        )
+        .await
+        .unwrap()
+        .migrations_applied,
+        1
+    );
+    assert_eq!(
+        read_package_migrations(&client, ENV_KEY, "wamn_alpha")
+            .await
+            .unwrap(),
+        alpha
+    );
+    let after = read_package_migrations(&client, ENV_KEY, "wamn_beta")
+        .await
+        .unwrap();
+    assert_eq!(after.last().unwrap().outcome, MigrationOutcome::Applied);
+    assert_eq!(after.last().unwrap().sha256, beta.last().unwrap().sha256);
 }

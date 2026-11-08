@@ -44,7 +44,7 @@ pub struct SchemaArgs {
 pub struct ApplyArgs {
     #[command(flatten)]
     pub schema: SchemaArgs,
-    /// Resolve one uncertain file as applied, or explicitly retry it.
+    /// Resolve one uncertain file: <package>:<relative_path>=applied|retry.
     #[arg(long)]
     pub resolve: Option<wamn_package_control::apply_package::MigrationResolution>,
 }
@@ -156,7 +156,7 @@ pub async fn run(command: SchemaCommand) -> anyhow::Result<()> {
     let state = schema::state(&platform, &document).await?;
     let diff = schema::plan(&document, &application, release, &candidates, &state)?;
     println!("{}", serde_json::to_string_pretty(&diff)?);
-    if diff.requires_reset() && diff.disposable == Some(true) {
+    if resolution.is_none() && diff.requires_reset() && diff.disposable == Some(true) {
         // Resolve the complete retained set before a future reset can mutate the target.
         schema::reset_candidates(&platform, &diff, candidates).await?;
     }
@@ -171,11 +171,7 @@ pub async fn run(command: SchemaCommand) -> anyhow::Result<()> {
                 .keys()
                 .map(|id| (id.as_str(), state.migration_records(id))),
         )?;
-        if diff.requires_reset() {
-            ensure!(
-                resolution.is_none(),
-                "resolve uncertain SQL in migrate mode before a reset"
-            );
+        if resolution.is_none() && diff.requires_reset() {
             Box::pin(environment::sql::reset::reset_deployed(
                 &platform,
                 &args.env,

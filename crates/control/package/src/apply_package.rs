@@ -333,17 +333,20 @@ async fn apply(
     let plan = plan_package_migrations(directory, applied.as_ref(), &recorded)?;
     if let Some(resolution) = resolution {
         ensure!(
-            recorded
-                .iter()
-                .any(|file| file.relative_path == resolution.path),
+            resolution.package == package_id
+                && recorded
+                    .iter()
+                    .any(|file| file.relative_path == resolution.path),
             "resolution names no recorded migration: {}",
             resolution.path
         );
     }
     for file in plan.pending.iter().filter(|file| file.started) {
         ensure!(
-            resolution.is_some_and(|choice| choice.path == file.relative_path),
-            "package {package_id}: migration {} has an uncertain outcome; inspect its effects and use --resolve {}=applied|retry",
+            resolution.is_some_and(
+                |choice| choice.package == package_id && choice.path == file.relative_path
+            ),
+            "package {package_id}: migration {} has an uncertain outcome; inspect its effects and use --resolve {package_id}:{}=applied|retry",
             file.relative_path,
             file.relative_path
         );
@@ -434,7 +437,7 @@ async fn apply(
             tx.commit().await.context("commit nontransactional start")?;
             if !accept {
                 roles::execute_migration(client, manifest, sql, false).await
-                    .with_context(|| format!("migration {} has an uncertain outcome; inspect its effects and use --resolve {}=applied|retry", file.relative_path, file.relative_path))?;
+                    .with_context(|| format!("migration {} has an uncertain outcome; inspect its effects and use --resolve {package_id}:{}=applied|retry", file.relative_path, file.relative_path))?;
                 executed += 1;
             }
             tx = migration::begin(client, env_key).await?;
@@ -449,12 +452,8 @@ async fn apply(
             &file_mutations,
         )
         .await?;
-        if !file.transactional {
-            tx.commit()
-                .await
-                .context("commit nontransactional completion")?;
-            tx = migration::begin(client, env_key).await?;
-        }
+        tx.commit().await.context("commit migration completion")?;
+        tx = migration::begin(client, env_key).await?;
     }
     assert_host_role(&tx).await?;
     let history_changed = create_history_tables(&tx, manifest).await?;

@@ -253,7 +253,7 @@ mod tests {
                 "--env",
                 "environment.k",
                 "--resolve",
-                "migrations/0002_index.sql=retry",
+                "inventory:migrations/0002_index.sql=retry",
             ])
             .unwrap()
             .command
@@ -261,6 +261,7 @@ mod tests {
             panic!("schema apply")
         };
         let resolution = args.resolve.unwrap();
+        assert_eq!(resolution.package, "inventory");
         assert_eq!(resolution.path, "migrations/0002_index.sql");
         assert_eq!(
             resolution.action,

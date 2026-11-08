@@ -131,7 +131,13 @@ pub async fn read_package_migrations(
 pub async fn installed_environment_fingerprint(
     tx: &impl GenericClient,
     env_key: &str,
-) -> anyhow::Result<String> {
+) -> anyhow::Result<Option<String>> {
+    if tx.query_one(
+        "SELECT EXISTS (SELECT FROM catalog.package_migrations m WHERE m.env_key=$1 AND (m.outcome='started' OR NOT EXISTS (SELECT FROM catalog.packages p WHERE p.env_key=m.env_key AND p.package_id=m.package_id)))",
+        &[&env_key],
+    ).await.context("read unfinished package SQL")?.get::<_, bool>(0) {
+        return Ok(None);
+    }
     let project: String = tx
         .query_one(
             "SELECT sha256 FROM platform.schema_baseline WHERE singleton",
@@ -147,7 +153,7 @@ pub async fn installed_environment_fingerprint(
         .iter()
         .map(|row| (row.get::<_, &str>(0), row.get::<_, &str>(1)))
         .collect();
-    Ok(environment_fingerprint(&project, &packages))
+    Ok(Some(environment_fingerprint(&project, &packages)))
 }
 
 /// Derive an environment recipe identity from its project and package SQL records.

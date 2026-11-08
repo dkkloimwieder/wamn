@@ -239,14 +239,11 @@ pub async fn schema_operation(
             .map(|id| (id.as_str(), initial_state.migration_records(id))),
     )?;
 
-    if diffs
-        .iter()
-        .any(wamn_environment_control::environment::sql::schema::Diff::requires_reset)
+    if resolution.is_none()
+        && diffs
+            .iter()
+            .any(wamn_environment_control::environment::sql::schema::Diff::requires_reset)
     {
-        ensure!(
-            resolution.is_none(),
-            "resolve uncertain SQL in migrate mode before a reset"
-        );
         let output = wamn_schema_generator::build::default_output_root(root);
         for diff in &diffs {
             for (id, source) in &diff.reset_sources {
@@ -343,6 +340,11 @@ pub async fn schema_operation(
     )?;
     let mut roots = roots.into_iter().map(Some).collect::<Vec<_>>();
     for index in order {
+        // A resolution changes only the named package, even if another is uncertain.
+        if resolution.is_some() && resolution_id != Some(manifests[index].package.id.as_str()) {
+            continue;
+        }
+
         apply_package::apply_local_package_schema(
             ApplyPackageRequest {
                 component_source: apply_package::component_source_from_env(None)?,
@@ -365,9 +367,19 @@ pub async fn schema_operation(
         .into_iter()
         .map(|candidate| candidate.root.path)
         .collect::<Vec<_>>();
-    let mut grant_roots = roots.clone();
+    let current = wamn_environment_control::environment::sql::schema::database_state(
+        config.target_database_url(),
+        &identity.env_key(),
+    )
+    .await?;
+    let mut grant_roots = roots
+        .iter()
+        .zip(&manifests)
+        .filter(|(_, manifest)| current.packages.contains_key(&manifest.package.id))
+        .map(|(root, _)| root.clone())
+        .collect::<Vec<_>>();
     let output = wamn_schema_generator::build::default_output_root(root);
-    for (id, installed) in &state.packages {
+    for (id, installed) in &current.packages {
         if manifests.iter().any(|manifest| manifest.package.id == *id) {
             continue;
         }

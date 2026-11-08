@@ -5,6 +5,7 @@ use wamn_schema_control::RecordedMigration;
 /// The developer's explicit decision about one uncertain file.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MigrationResolution {
+    pub package: String,
     pub path: String,
     pub action: Resolution,
 }
@@ -19,7 +20,8 @@ impl std::fmt::Display for MigrationResolution {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "{}={}",
+            "{}:{}={}",
+            self.package,
             self.path,
             match self.action {
                 Resolution::Applied => "applied",
@@ -35,14 +37,21 @@ impl std::str::FromStr for MigrationResolution {
     fn from_str(value: &str) -> Result<Self, Self::Err> {
         let (path, action) = value
             .split_once('=')
-            .context("resolution must be <relative_path>=applied|retry")?;
-        ensure!(!path.is_empty(), "resolution requires a migration path");
+            .context("resolution must be <package>:<relative_path>=applied|retry")?;
+        let (package, path) = path
+            .split_once(':')
+            .context("resolution requires a package and migration path")?;
+        ensure!(
+            !package.is_empty() && !path.is_empty(),
+            "resolution requires a package and migration path"
+        );
         let action = match action {
             "applied" => Resolution::Applied,
             "retry" => Resolution::Retry,
-            _ => anyhow::bail!("resolution must be <relative_path>=applied|retry"),
+            _ => anyhow::bail!("resolution must be <package>:<relative_path>=applied|retry"),
         };
         Ok(Self {
+            package: package.into(),
             path: path.into(),
             action,
         })
@@ -63,21 +72,16 @@ pub fn resolution_package<'a>(
                 && resolution.is_none()
             {
                 anyhow::bail!(
-                    "package {id}: migration {} has an uncertain outcome; inspect its effects and use --resolve {}=applied|retry",
+                    "package {id}: migration {} has an uncertain outcome; inspect its effects and use --resolve {id}:{}=applied|retry",
                     file.relative_path,
                     file.relative_path
                 );
             }
-            if resolution.is_some_and(|choice| choice.path == file.relative_path) {
+            if resolution
+                .is_some_and(|choice| choice.package == id && choice.path == file.relative_path)
+            {
                 recorded = true;
-                if file.outcome == wamn_schema_control::MigrationOutcome::Started {
-                    ensure!(
-                        matched.is_none(),
-                        "resolution path {} is uncertain in multiple selected packages",
-                        file.relative_path
-                    );
-                    matched = Some(id);
-                }
+                matched = Some(id);
             }
         }
     }

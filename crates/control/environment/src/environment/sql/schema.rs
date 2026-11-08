@@ -205,7 +205,7 @@ pub async fn database_state(database_url: &str, env_key: &str) -> anyhow::Result
             .iter()
             .filter(|file| file.outcome == wamn_schema_control::MigrationOutcome::Started)
         {
-            unknowns.push(format!("package {id}: migration {} has an uncertain outcome; inspect its effects and use --resolve {}=applied|retry", file.relative_path, file.relative_path));
+            unknowns.push(format!("package {id}: migration {} has an uncertain outcome; inspect its effects and use --resolve {id}:{}=applied|retry", file.relative_path, file.relative_path));
         }
     }
     for id in incomplete.keys() {
@@ -218,7 +218,7 @@ pub async fn database_state(database_url: &str, env_key: &str) -> anyhow::Result
         packages,
         incomplete,
         unknowns,
-        installed_environment: Some(fingerprint),
+        installed_environment: fingerprint,
         initialization_identity: Some(initialization_identity),
         database_instance: Some(database_instance),
         ..State::default()
@@ -404,7 +404,14 @@ pub fn plan(
         disposable: state.disposable,
         database_instance: state.database_instance.clone(),
         initialization_identity: state.initialization_identity.clone(),
-        installed_environment: state.installed_environment.clone(),
+        installed_environment: state.installed_environment.clone().filter(|_| {
+            !state
+                .packages
+                .values()
+                .flat_map(|package| &package.migrations)
+                .chain(state.incomplete.values().flatten())
+                .any(|file| file.outcome == wamn_schema_control::MigrationOutcome::Started)
+        }),
         candidate_environment,
         packages,
         reset_sources,
@@ -436,7 +443,12 @@ fn package_diff(
     let pending = complete
         .pending
         .iter()
-        .filter(|file| !recorded.iter().any(|record| record.ordinal == file.ordinal))
+        .filter(|file| {
+            !recorded.iter().any(|record| {
+                record.ordinal == file.ordinal
+                    && record.outcome != wamn_schema_control::MigrationOutcome::Started
+            })
+        })
         .map(|file| file.relative_path.clone())
         .collect();
     let migration_error = plan_package_migrations(&candidate.directory, applied, recorded)
@@ -444,7 +456,13 @@ fn package_diff(
         .map(|error| error.to_string());
     PackageDiff {
         baseline: applied.map(|applied| applied.baseline_fingerprint.clone()),
-        installed: applied.map(|applied| applied.physical_schema_fingerprint.clone()),
+        installed: applied
+            .filter(|_| {
+                !recorded
+                    .iter()
+                    .any(|file| file.outcome == wamn_schema_control::MigrationOutcome::Started)
+            })
+            .map(|applied| applied.physical_schema_fingerprint.clone()),
         candidate: candidate.fingerprint.clone(),
         source_artifact: candidate.root.artifact_digest.clone(),
         pending,
@@ -656,11 +674,13 @@ pub async fn apply(
         diff.database_instance,
         state.unknowns.join("; ")
     );
-    if diff.requires_reset() {
-        ensure!(
-            resolution.is_none(),
-            "resolve uncertain SQL in migrate mode before a reset"
-        );
+    let resolution_id = apply_package::resolution_package(
+        resolution,
+        diff.packages
+            .keys()
+            .map(|id| (id.as_str(), state.migration_records(id))),
+    )?;
+    if resolution.is_none() && diff.requires_reset() {
         ensure!(
             diff.disposable == Some(true),
             "database {:?} is not recorded as disposable",
@@ -711,15 +731,6 @@ pub async fn apply(
             == state.database_instance.as_deref().unwrap_or_default(),
         "environment database changed during schema preparation"
     );
-    let resolution_id = apply_package::resolution_package(
-        resolution,
-        manifests.iter().map(|manifest| {
-            (
-                manifest.package.id.as_str(),
-                state.migration_records(&manifest.package.id),
-            )
-        }),
-    )?;
     if manifests
         .iter()
         .any(|manifest| !state.packages.contains_key(&manifest.package.id))
@@ -755,6 +766,11 @@ pub async fn apply(
     let publisher = platform.auth_changes().await?;
     let mut candidates = candidates.into_iter().map(Some).collect::<Vec<_>>();
     for index in order {
+        // A resolution changes only the named package, even if another is uncertain.
+        if resolution.is_some() && resolution_id != Some(manifests[index].package.id.as_str()) {
+            continue;
+        }
+
         let candidate = candidates[index].take().expect("each package applies once");
         let package = &diff.packages[&manifests[index].package.id];
         if package.installed.as_ref() == Some(&package.candidate) && package.pending.is_empty() {
@@ -846,6 +862,12 @@ pub async fn status(platform: &Platform, document: &EnvironmentDocument) -> anyh
         installed: state
             .packages
             .into_iter()
+            .filter(|(_, package)| {
+                !package
+                    .migrations
+                    .iter()
+                    .any(|file| file.outcome == wamn_schema_control::MigrationOutcome::Started)
+            })
             .map(|(id, applied)| {
                 (
                     id,
@@ -936,7 +958,14 @@ mod tests {
             incomplete: BTreeMap::from([("alpha".into(), records)]),
             ..State::default()
         };
-        let diff = plan(&document(), "alpha", None, &[candidate], &state).unwrap();
+        let diff = plan(
+            &document(),
+            "alpha",
+            None,
+            std::slice::from_ref(&candidate),
+            &state,
+        )
+        .unwrap();
         let package = &diff.packages["alpha"];
         assert!(package.installed.is_none());
         assert!(package.migration_error.is_none());
@@ -947,6 +976,24 @@ mod tests {
         assert!(
             apply_package::resolution_package(None, [("alpha", state.migration_records("alpha"))])
                 .is_err()
+        );
+        assert_eq!(
+            package.pending,
+            vec![state.migration_records("alpha")[0].relative_path.clone()]
+        );
+        let mut installed = applied(&candidate);
+        installed.migrations = state.migration_records("alpha").to_vec();
+        let state = State {
+            installed_environment: Some("previous-complete-state".into()),
+            packages: BTreeMap::from([("alpha".into(), installed)]),
+            ..State::default()
+        };
+        let diff = plan(&document(), "alpha", None, &[candidate], &state).unwrap();
+        assert!(diff.installed_environment.is_none());
+        assert!(diff.packages["alpha"].installed.is_none());
+        assert_eq!(
+            diff.packages["alpha"].pending,
+            vec![state.migration_records("alpha")[0].relative_path.clone()]
         );
     }
 

@@ -802,7 +802,7 @@ async fn write_identity(client: &Client) -> Vec<String> {
 }
 
 #[tokio::test]
-async fn exact_runner_commits_once_refuses_drift_and_rolls_back_a_failing_suffix() {
+async fn exact_runner_commits_once_refuses_drift_and_rolls_back_a_failing_file() {
     let url = locked_database::database(wamn_test_postgres::database);
     let client = connect(&url).await;
     let package = fixture_root();
@@ -1431,7 +1431,7 @@ async fn exact_runner_commits_once_refuses_drift_and_rolls_back_a_failing_suffix
 
     // Changed bytes are another artifact, which the digest refuses first. The
     // steps below keep the installed digest, so the planner's own byte checks,
-    // and the suffix rollback answer.
+    // and the file rollback answer.
     let installed = wamn_test_infrastructure::fixture_digest::fixture_artifact_digest(&package)
         .expect("read the fixture package root");
     let migration = package.join("migrations/0001_initial.sql");
@@ -1459,21 +1459,12 @@ async fn exact_runner_commits_once_refuses_drift_and_rolls_back_a_failing_suffix
 
     std::fs::write(
         package.join("migrations/0002_candidate.sql"),
-        "ALTER TABLE inventory.rack \
-           ADD COLUMN rollback_probe text NOT NULL DEFAULT 'not_required';",
-    )
-    .expect("write the first pending migration");
-    write_build_record(&package);
-    std::fs::write(
-        package.join("migrations/0003_failure.sql"),
-        "ALTER TABLE inventory.rack \
-           ADD COLUMN rollback_probe text NOT NULL DEFAULT 'not_required';",
-    )
-    .expect("write the server-refused migration after it");
+        "ALTER TABLE inventory.rack ADD COLUMN rollback_probe text; ALTER TABLE inventory.rack ADD COLUMN rollback_probe text;",
+    ).expect("write a file with a server-refused second statement");
     write_build_record(&package);
     apply_as(&url, &package, &installed)
         .await
-        .expect_err("a failing later statement must roll back the whole suffix");
+        .expect_err("a failing statement must roll back its file");
     assert!(
         !client
             .query_one(
@@ -1502,9 +1493,6 @@ async fn exact_runner_commits_once_refuses_drift_and_rolls_back_a_failing_suffix
 
     std::fs::remove_file(package.join("migrations/0002_candidate.sql"))
         .expect("remove rolled-back candidate migration");
-    write_build_record(&package);
-    std::fs::remove_file(package.join("migrations/0003_failure.sql"))
-        .expect("remove server-refused migration");
     write_build_record(&package);
     client
         .batch_execute(
