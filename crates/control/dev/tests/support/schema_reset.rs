@@ -17,8 +17,6 @@ use super::{
     version,
 };
 
-const SEED: &str = "00000000-0000-4000-8000-000000000001";
-
 pub(super) async fn changes(
     journey: &Journey<'_>,
     root: &Path,
@@ -88,9 +86,7 @@ pub(super) async fn changes(
             true,
             "1.0.1",
             "1.0.2",
-            format!(
-                "\nCREATE INDEX widget_note_idx ON alpha_data.widget (note);\nINSERT INTO alpha_data.widget (id,code,note) VALUES ('{SEED}','priority','reset-seed');\n"
-            ),
+            "\nCREATE INDEX widget_note_idx ON alpha_data.widget (note);\n".to_owned(),
         ),
         (
             false,
@@ -138,8 +134,14 @@ pub(super) async fn changes(
         );
         removed(&database, rows).await?;
         ensure!(
-            seed(&database).await?.is_some(),
-            "reset omitted its authored initialization seed"
+            database
+                .query_one(
+                    "SELECT EXISTS(SELECT FROM pg_index WHERE indexrelid=to_regclass('alpha_data.widget_note_idx') AND indisvalid)",
+                    &[],
+                )
+                .await?
+                .get::<_, bool>(0),
+            "reset omitted its selected index"
         );
         let status = journey.status().await?;
         ensure!(
@@ -248,15 +250,55 @@ async fn removed(
     Ok(())
 }
 
-async fn seed(database: &tokio_postgres::Client) -> anyhow::Result<Option<Value>> {
+// The baseline alone precedes application SQL. Every pinned package must commit
+// its recipe before the restored schema is an interruption point.
+async fn restored_schema(
+    database: &tokio_postgres::Client,
+    pending: &Value,
+) -> anyhow::Result<Option<Value>> {
     if !database
-        .query_one("SELECT to_regclass('alpha_data.widget') IS NOT NULL", &[])
+        .query_one(
+            "SELECT to_regclass('platform.schema_baseline') IS NOT NULL \
+             AND to_regclass('catalog.packages') IS NOT NULL \
+             AND to_regclass('alpha_data.widget_note_idx') IS NOT NULL",
+            &[],
+        )
         .await?
         .get::<_, bool>(0)
     {
         return Ok(None);
     }
-    Ok(database.query_opt("SELECT jsonb_build_array(id,code,note,created_at) FROM alpha_data.widget WHERE id=$1::text::uuid", &[&SEED]).await?.map(|row| row.get(0)))
+    let Some(row) = database
+        .query_opt(
+            "SELECT jsonb_build_object(\
+                'initialization',installed_at::text,\
+                'index_oid',(SELECT indexrelid::bigint FROM pg_index \
+                    WHERE indexrelid=to_regclass('alpha_data.widget_note_idx') AND indisvalid),\
+                'packages',(SELECT coalesce(jsonb_object_agg(package_id,physical_schema_fingerprint),'{}'::jsonb) FROM catalog.packages)\
+             ) FROM platform.schema_baseline WHERE singleton",
+            &[],
+        )
+        .await?
+    else {
+        return Ok(None);
+    };
+    let observed: Value = row.get(0);
+    let sources = pending["inputs"]["sources"]
+        .as_object()
+        .context("pinned schema sources")?;
+    let installed = observed["packages"]
+        .as_object()
+        .context("installed package fingerprints")?;
+    if observed["initialization"] != pending["initialization_identity"]
+        || observed["index_oid"].is_null()
+        || installed.len() != sources.len()
+        || sources
+            .iter()
+            .any(|(id, source)| installed.get(id) != source.get("fingerprint"))
+    {
+        return Ok(None);
+    }
+    Ok(Some(observed))
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -333,14 +375,11 @@ async fn attempt(
             }
             if !pending.is_null() && present && stop == Stop::Restored
                 && let Ok(database) = observer(journey).await
-                && let Ok(Some(row)) = seed(&database).await
+                && let Some(schema) = restored_schema(&database, &pending).await?
             {
-                let initialization: String = database.query_one("SELECT installed_at::text FROM platform.schema_baseline WHERE singleton", &[]).await?.get(0);
-                if pending["initialization_identity"] == initialization {
-                    eprintln!("{label} restored seed: {row}, initialization: {initialization}");
-                    stopped(journey, &before).await?;
-                    break Ok(pending);
-                }
+                eprintln!("{label} restored schema: {schema}");
+                stopped(journey, &before).await?;
+                break Ok(pending);
             }
             tokio::time::sleep(Duration::from_millis(20)).await;
         }
@@ -536,6 +575,7 @@ pub(super) async fn recovery(
         missing.kind() == async_nats::jetstream::stream::RawMessageErrorKind::NoMessageFound,
         "old-event observation failed for a reason other than disposal: {missing}"
     );
+    refill(journey, rows).await?;
     let mut reset = journey.command(&["schema", "reset", "--env"]);
     reset.arg(&journey.file);
     let pending = attempt(
@@ -548,7 +588,10 @@ pub(super) async fn recovery(
     .await?;
     let database = observer(journey).await?;
     let restored = stored(journey, &database).await?;
-    let restored_seed = seed(&database).await?.context("committed reset seed")?;
+    let restored_sql = restored_schema(&database, &pending)
+        .await?
+        .context("committed reset schema")?;
+    removed(&database, rows).await?;
     ensure!(
         journey.status().await?["schema"]["pending_database"] == pending,
         "missed the interruption window: reset completed before the process stopped"
@@ -573,9 +616,10 @@ pub(super) async fn recovery(
     same_database(&restored, &completed)?;
     ensure!(
         completed["fingerprint"] == before["fingerprint"]
-            && seed(&database).await? == Some(restored_seed),
-        "retry omitted installed SQL or destroyed the committed seed"
+            && restored_schema(&database, &pending).await? == Some(restored_sql),
+        "retry omitted installed SQL or replaced the committed schema"
     );
+    removed(&database, rows).await?;
     let status = journey.status().await?;
     ensure!(
         status["schema"]["pending_database"].is_null(),
