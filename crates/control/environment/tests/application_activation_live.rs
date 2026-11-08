@@ -460,6 +460,8 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
         sql::schema::state(&platform, &document).await?.packages,
         state.packages
     );
+    // Published SQL remains executable after its source directory disappears.
+    std::fs::remove_dir_all(scratch.path().join("b"))?;
     sql::schema::apply(
         &platform,
         &document,
@@ -471,6 +473,10 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
     .await?;
     let installed = sql::schema::state(&platform, &document).await?;
     for (id, package) in &diff.packages {
+        assert_eq!(
+            installed.packages[id].artifact_digest,
+            package.source_artifact
+        );
         assert_eq!(
             installed.packages[id].physical_schema_fingerprint,
             package.candidate

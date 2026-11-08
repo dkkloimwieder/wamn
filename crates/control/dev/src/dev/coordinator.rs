@@ -794,8 +794,7 @@ impl ProductionDevStageRunner {
         .map_err(|source| {
             ProductionDevStageError::owner("reconcile generated package data access", source)
         })?;
-        // The cluster runs `reconcile-replica-identity` after `apply-package`
-        // (deployment.md), and a recreated target loses the identities.
+        // A recreated local target loses its replica identities.
         let packages = self
             .package_inputs()?
             .into_iter()

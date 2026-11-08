@@ -74,7 +74,7 @@ The move's row event starts the [label workflow](publication/wirings/inventory_m
 packaging update → shape (jsonata) → label-render → blob-put
 ```
 
-The condition reads the old row, so the `packaging` table needs REPLICA IDENTITY FULL. The `reconcile-replica-identity` verb sets it.
+The condition reads the old row, so the `packaging` table needs REPLICA IDENTITY FULL. The environment capture owner sets it.
 The `shape` node turns the update into one `packaging` label item.
 The label key is `{packaging_id}/{row_version}`, and the object path is `wms/{key}`, so a redelivered event overwrites the same object.
 One move stores one label. The move response carries the committed move only.

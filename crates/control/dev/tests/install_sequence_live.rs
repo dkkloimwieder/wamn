@@ -269,15 +269,6 @@ async fn step_4_13_package_job(project_url: &str, package: &PackageRoot) -> anyh
     )
     .await
     .context("4.13 package Job reconciles data access as postgres")?;
-    wamn_environment_control::reconcile_replica_identity::reconcile_package_replica_identity(
-        wamn_environment_control::reconcile_replica_identity::ReconcileReplicaIdentityRequest {
-            admin_database_url: project_url.into(),
-            package: package.path.clone(),
-            dry_run: false,
-        },
-    )
-    .await
-    .context("4.13 package Job reconciles replica identity as postgres")?;
     Ok(())
 }
 

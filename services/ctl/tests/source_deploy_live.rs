@@ -73,9 +73,14 @@ async fn source_builds_only_selected_outputs_and_keeps_selection_on_failure() ->
     }))?)?;
     std::fs::write(&file, document.to_kcl())?;
     let before = std::fs::read(&file)?;
-    let deploy = |root: &Path| -> anyhow::Result<()> {
-        let output = Command::new(env!("CARGO_BIN_EXE_wamn"))
-            .arg("deploy")
+    let deploy = |root: &Path, schema: bool| -> anyhow::Result<()> {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_wamn"));
+        if schema {
+            command.args(["schema", "apply"]);
+        } else {
+            command.arg("deploy");
+        }
+        let output = command
             .arg(root)
             .arg("--env")
             .arg(&file)
@@ -104,17 +109,17 @@ async fn source_builds_only_selected_outputs_and_keeps_selection_on_failure() ->
         Ok(())
     };
     let b = package(scratch.path(), "appb", "1.0.0")?;
-    deploy(&b)?;
+    deploy(&b, false)?;
     let b_output = wamn_schema_generator::output_root(&b);
     let b_record = std::fs::read(b_output.join(build_record::BUILD_RECORD_FILE))?;
     // B's source is unavailable while A builds.
     std::fs::remove_dir_all(&b)?;
     let a = package(scratch.path(), "appa", "1.0.0")?;
-    deploy(&a)?;
+    deploy(&a, false)?;
     let output = wamn_schema_generator::output_root(&a);
     let a_record = std::fs::read(output.join(build_record::BUILD_RECORD_FILE))?;
     package(scratch.path(), "appa", "2.0.0")?;
-    deploy(&a)?;
+    deploy(&a, false)?;
     assert_ne!(
         std::fs::read(output.join(build_record::BUILD_RECORD_FILE))?,
         a_record
@@ -125,9 +130,15 @@ async fn source_builds_only_selected_outputs_and_keeps_selection_on_failure() ->
     );
     // Generation succeeds, but publication refuses the absent component.
     build_record::read_current(&a, &output)?;
+    // Source schema apply uses the same builder before publication can fail.
+    let schema_version = "3.0.0";
+    package(scratch.path(), "appa", schema_version)?;
+    deploy(&a, true)?;
+    let schema_build = build_record::read_current(&a, &output)?;
+    assert_eq!(schema_build.package.version, schema_version);
     let last_build = std::fs::read(output.join(build_record::BUILD_RECORD_FILE))?;
     std::fs::write(a.join("migrations/0001_initial.sql"), "INVALID SQL")?;
-    deploy(&a)?;
+    deploy(&a, false)?;
     assert_eq!(
         std::fs::read(output.join(build_record::BUILD_RECORD_FILE))?,
         last_build

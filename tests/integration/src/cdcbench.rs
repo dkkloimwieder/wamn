@@ -24,8 +24,7 @@
 //!                (`pg_current_wal_insert_lsn`, VACUUM+CHECKPOINT normalize)
 //!                over narrow (`suppliers`) and wide/TOASTy (`users`) shapes,
 //!                measured at DEFAULT then FULL — flipped by the REAL
-//!                l5i9.31/l5i9.61 reconcile driven by seeded delete
-//!                registrations, not a hand ALTER. Includes the wide
+//!                replica-identity owner for captured models. Includes the wide
 //!                non-TOAST-column update (the l5i9.63 probe: FULL flattens
 //!                the unchanged 6 KiB old image into WAL). C-WAL-0 (DEFAULT @
 //!                `wal_level=replica`) is the historical denominator; the
@@ -54,7 +53,6 @@ use clap::{Args, ValueEnum};
 use tokio_postgres::{Client, NoTls};
 
 use crate::cdc_reader_process::{ReaderArgs, ReaderProcess};
-use crate::ctl_process;
 use crate::measurement_schema;
 use wamn_control_provision::{
     CredentialGeneration, WorkloadRoleFamily, WorkloadRoleScope, cdc_object_name,
@@ -1212,34 +1210,21 @@ async fn ri_mode(args: &CdcBenchArgs, admin_url: &str, pass: &mut bool) -> anyho
     );
     let d = ri_leg(&db, &app, "default-logical", n, args.wide_bytes, &mut csv).await?;
 
-    // The REAL reconcile (l5i9.31/l5i9.61) — the delete registrations demand
-    // FULL for these two tables; capture also requires FULL for every model.
-    let package =
-        std::env::temp_dir().join(format!("wamn-cdcbench-package-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&package);
-    measurement_schema::write_package_directory(&package, "app")
-        .context("write RI package fixture")?;
-    let reconcile =
-        ctl_process::reconcile_replica_identity(&swap_db(admin_url, DB), &package).await;
-    let cleanup = std::fs::remove_dir_all(&package).context("remove RI package fixture");
-    let reconcile = match (reconcile, cleanup) {
-        (Ok(reconcile), Ok(())) => reconcile,
-        (Err(error), _) | (Ok(_), Err(error)) => return Err(error),
-    };
-    let reconcile = String::from_utf8(reconcile.stdout).context("RI output is UTF-8")?;
-    let flips = reconcile
-        .lines()
-        .filter(|line| line.starts_with("flipped "))
-        .count();
-    check(
-        pass,
-        &format!("ri: reconcile flipped every captured model to FULL ({reconcile:?})"),
-        flips == measurement_schema::model_tables().count()
-            && reconcile.contains("flipped suppliers (")
-            && reconcile.contains("flipped users (")
-            && relreplident(&db, "suppliers").await? == "f"
-            && relreplident(&db, "users").await? == "f",
-    );
+    let models = measurement_schema::model_tables()
+        .map(|(model_id, table)| wamn_schema_control::ManagedModel {
+            model_id: model_id.into(),
+            schema: "app".into(),
+            table: table.into(),
+        })
+        .collect::<Vec<_>>();
+    wamn_environment_control::reconcile_replica_identity::reconcile(&db, &models, true).await?;
+    for model in &models {
+        check(
+            pass,
+            &format!("ri: {} uses FULL", model.table),
+            relreplident(&db, &model.table).await? == "f",
+        );
+    }
 
     let f = ri_leg(&db, &app, "full-logical", n, args.wide_bytes, &mut csv).await?;
 

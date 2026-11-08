@@ -456,7 +456,7 @@ After issue 1, the confirmed position can sit past the last commit, so `start_at
 
 Two verbs write the row with the control credential:
 
-- `wamn-ctl recover-capture-gap --org --project --env` drops the lost slot and creates it again under the same name, `cdc_object_name(org, project, env, instance)`. The publication and the replication role keep that name and stay untouched. The verb writes the row with its end position. It reads the last CDC event with the observer credential, through the three NATS flags of `enable-cdc-project-env`. It takes `--system-database-url` as `enable-cdc-project-env` does, and `--admin-database-url` as `reconcile-replica-identity` does. It refuses a healthy slot, an active slot, and a connection to any database other than the project-env database.
+- `wamn-ctl recover-capture-gap --org --project --env` drops the lost slot and creates it again under the same name, `cdc_object_name(org, project, env, instance)`. The publication and the replication role keep that name and stay untouched. The verb writes the row with its end position. It reads the last CDC event with the observer credential, through the three NATS flags of `enable-cdc-project-env`. It takes `--system-database-url` as `enable-cdc-project-env` does, and `--admin-database-url` for the project database owner. It refuses a healthy slot, an active slot, and a connection to any database other than the project-env database.
 - `wamn-ctl close-capture-gap --org --project --env` sets `resync_at` on the newest row. It refuses when no row exists and when the newest row already has `resync_at`. Until the resync exists, the operator runs it on the owner's word.
 
 - A lost slot is not recoverable. A new slot starts at the current WAL position, and the WAL between the old confirmed position and that point is removed. The rows written in that interval produce no events.
@@ -481,7 +481,7 @@ A true gap has one of three causes: a slot limit passed, a slot dropped by hand,
 
 - The keepalive confirm is split (2026-09-29). The fork returns a keepalive from `next_event` as an event with its `wal_end`, and nothing more. The reader applies the confirm rule. The new fork rev is pinned in `Cargo.toml`. A reader that raises its flushed position while idle and relies on the library's cap is out.
 
-- The verbs (2026-09-29). `start_lsn` and `start_at` come from the newest CDC event, and a `derived:<hash>` event is skipped. The verb reads the stream with the observer credential, because reading a stream is the observer's job. Provisioning gets no new permission. The flag and variable names follow `enable-cdc-project-env` and `reconcile-replica-identity`. An active slot means a reader that still streams, because a reader stopped on a gap holds no session. Each refusal names its reason on one line.
+- The verbs (2026-09-29). `start_lsn` and `start_at` come from the newest CDC event, and a `derived:<hash>` event is skipped. The verb reads the stream with the observer credential, because reading a stream is the observer's job. Provisioning gets no new permission. The flag and variable names follow `enable-cdc-project-env`. An active slot means a reader that still streams, because a reader stopped on a gap holds no session. Each refusal names its reason on one line.
 
 ### 5.8 Benchmark
 

@@ -97,8 +97,6 @@ enum Command {
     PublishRelease(release_verbs::PublishReleaseArgs),
     /// Print the SQL that creates the platform principal rows of one tenant.
     PrintPlatformPrincipals(print_platform_principals::PrintPlatformPrincipalsArgs),
-    /// Detect or repair REPLICA IDENTITY drift on captured models.
-    ReconcileReplicaIdentity(package_verbs::ReconcileReplicaIdentityArgs),
     /// Author, enable, disable and list workflows, and start, park, release and list runs.
     #[command(subcommand)]
     Workflow(workflow_verbs::WorkflowCommand),
@@ -161,9 +159,6 @@ async fn main() -> anyhow::Result<()> {
         Command::PublishRelease(args) => release_verbs::publish(args).await,
 
         Command::PrintPlatformPrincipals(args) => print_platform_principals::run(&args),
-        Command::ReconcileReplicaIdentity(args) => {
-            package_verbs::reconcile_replica_identity(args).await
-        }
         Command::Workflow(command) => workflow_verbs::run(command).await,
         Command::Env(command) => Box::pin(env_verbs::run(command)).await,
         Command::Platform(command) => platform_verbs::run(command, std::io::stdout().lock()).await,

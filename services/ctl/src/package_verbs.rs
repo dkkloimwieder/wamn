@@ -1,5 +1,5 @@
 //! Arguments and output of the `apply-package`, `push-package`,
-//! `reconcile-package-data-access`, and `reconcile-replica-identity` verbs.
+//! and `reconcile-package-data-access` verbs.
 
 use std::path::PathBuf;
 
@@ -8,15 +8,11 @@ use clap::Args;
 use wamn_environment_control::reconcile_package_data_access::{
     self, ReconcilePackageDataAccessRequest,
 };
-use wamn_environment_control::reconcile_replica_identity::{
-    ReconcileReplicaIdentityRequest, reconcile_package_replica_identity,
-};
 use wamn_package_control::apply_package::{self, ApplyOutcome, ApplyPackageRequest, PackageRoot};
 use wamn_package_control::package_artifact::{
     self, OpenedPackage, PackagePushDisposition, PackageRegistry, PackageSource, PushPackageRequest,
 };
 use wamn_runtime::component_artifact_source::OCI_CA_PATHS_ENV;
-use wamn_schema_control::{ReplicaIdentity, ReplicaIdentityPlan};
 
 /// Apply the immutable pending suffix from one package artifact.
 ///
@@ -186,22 +182,6 @@ pub struct ReconcilePackageDataAccessArgs {
     pub environment: String,
 }
 
-/// Replica identity reconciliation arguments.
-#[derive(Debug, Args)]
-pub struct ReconcileReplicaIdentityArgs {
-    /// Superuser connection to the project database.
-    #[arg(long, env = "WAMN_PG_ADMIN_URL", hide_env_values = true)]
-    pub admin_database_url: String,
-
-    /// Package root whose strict manifest maps model keys to physical tables.
-    #[arg(long)]
-    pub package: PathBuf,
-
-    /// Print the plan without applying it.
-    #[arg(long)]
-    pub dry_run: bool,
-}
-
 /// Apply one package artifact and print the applied line.
 pub async fn apply(args: ApplyPackageArgs) -> anyhow::Result<()> {
     let registry = args.registry.registry();
@@ -274,46 +254,4 @@ pub async fn reconcile_data_access(args: ReconcilePackageDataAccessArgs) -> anyh
         }
     );
     Ok(())
-}
-
-/// Reconcile the replica identity of one package's models and print the plan lines.
-pub async fn reconcile_replica_identity(args: ReconcileReplicaIdentityArgs) -> anyhow::Result<()> {
-    let plan = reconcile_package_replica_identity(ReconcileReplicaIdentityRequest {
-        admin_database_url: args.admin_database_url,
-        package: args.package,
-        dry_run: args.dry_run,
-    })
-    .await?;
-    print_replica_identity_plan(&plan, args.dry_run);
-    Ok(())
-}
-
-fn identity_keyword(identity: ReplicaIdentity) -> &'static str {
-    match identity {
-        ReplicaIdentity::Full => "FULL",
-        ReplicaIdentity::Default => "DEFAULT",
-    }
-}
-
-fn print_replica_identity_plan(plan: &ReplicaIdentityPlan, dry_run: bool) {
-    let verb = if dry_run { "would flip" } else { "flipped" };
-    if plan.flips.is_empty() {
-        println!(
-            "replica identity already reconciled: {} model(s) at target",
-            plan.unchanged.len()
-        );
-    }
-    for flip in &plan.flips {
-        println!(
-            "{verb} {}.{} ({}): {} -> {}",
-            flip.schema,
-            flip.table,
-            flip.model_id,
-            identity_keyword(flip.from),
-            identity_keyword(flip.to)
-        );
-    }
-    for table in &plan.skipped_absent {
-        println!("[skip] {table} is absent; apply the package before reconciling");
-    }
 }

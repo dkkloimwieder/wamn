@@ -44,7 +44,7 @@ pub async fn deploy(args: DeployArgs) -> anyhow::Result<()> {
             let database_url = std::env::var("DATABASE_URL").context(
                 "set DATABASE_URL to the PostgreSQL server for disposable build databases",
             )?;
-            wamn_dev_control::source_deploy::publish(&platform, document, &package, &database_url)
+            wamn_dev_control::source_deploy::publish(&platform, &document, &package, &database_url)
                 .await?
                 .1
                 .to_string()

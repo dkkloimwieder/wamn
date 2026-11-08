@@ -112,33 +112,43 @@ pub async fn run(command: SchemaCommand) -> anyhow::Result<()> {
     } else {
         Platform::from_env()?
     };
-    environment::runtime::resolve_platform(&mut platform, &document.org).await?;
-    let (application, release, candidates) = if document
-        .applications
-        .contains_key(&args.application)
+    let (application, release) = if apply && !document.applications.contains_key(&args.application)
     {
-        let (release, candidates) = schema::release_candidates(
+        ensure!(
+            args.release.is_none(),
+            "a source schema operation does not select --release"
+        );
+        let database_url = std::env::var("DATABASE_URL")
+            .context("set DATABASE_URL for disposable build databases")?;
+        let (application, digest) = wamn_dev_control::source_deploy::publish(
             &platform,
             &document,
-            &args.application,
-            args.release.as_deref(),
+            std::path::Path::new(&args.application),
+            &database_url,
         )
         .await?;
-        (args.application, Some(release), candidates)
+        (application, Some(digest.to_string()))
+    } else {
+        (args.application, args.release)
+    };
+    environment::runtime::resolve_platform(&mut platform, &document.org).await?;
+    let (application, release, candidates) = if document.applications.contains_key(&application) {
+        let (release, candidates) =
+            schema::release_candidates(&platform, &document, &application, release.as_deref())
+                .await?;
+        (application, Some(release), candidates)
     } else {
         ensure!(
-            !apply && args.release.is_none(),
-            "application {} is not declared; publish a source candidate with wamn schema publish before applying it",
-            args.application
+            release.is_none(),
+            "a source schema diff does not select --release"
         );
         ensure!(
-            std::path::Path::new(&args.application).is_dir(),
-            "application {} is not declared and its source package directory is missing",
-            args.application
+            std::path::Path::new(&application).is_dir(),
+            "application {application} is not declared and its source package directory is missing"
         );
         let (application, roots) = wamn_dev_control::source_deploy::sources(
             &document,
-            std::path::Path::new(&args.application),
+            std::path::Path::new(&application),
         )?;
         let candidates = roots
             .into_iter()
@@ -195,9 +205,13 @@ async fn publish(args: PublishArgs) -> anyhow::Result<()> {
     let platform = Platform::apply_from_env()?;
     let database_url =
         std::env::var("DATABASE_URL").context("set DATABASE_URL for disposable build databases")?;
-    let (application, digest) =
-        wamn_dev_control::source_deploy::publish(&platform, document, &args.package, &database_url)
-            .await?;
+    let (application, digest) = wamn_dev_control::source_deploy::publish(
+        &platform,
+        &document,
+        &args.package,
+        &database_url,
+    )
+    .await?;
     println!(
         "{}",
         serde_json::json!({"application": application, "release": digest.as_str()})

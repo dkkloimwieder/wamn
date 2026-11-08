@@ -307,16 +307,9 @@ wamn-ctl env apply <document>
 `wamn-ctl env apply` serializes deployment under the lifecycle lock of the environment.
 A CI completion order does not set deployment precedence.
 
-If a package declares a registration condition that reads the old row, run `reconcile-replica-identity` after the package is applied.
-The verb sets REPLICA IDENTITY FULL on each table that such a registration names. WMS needs it for `wms.packaging`:
-
-```bash
-wamn-ctl reconcile-replica-identity --admin-database-url "$PG_ADMIN_URL" --package apps/wamn_wms
-```
-
-The development loop applies this rule itself. After the package data access, it reconciles the replica identity of every package on each activation.
-
-Without it, the old row carries only the key, so the condition cannot compare the old location.
+The deployed capture owner sets replica identity from the installed published package artifacts.
+The development loop reconciles it directly from local source on each activation.
+Captured tables use REPLICA IDENTITY FULL so that events include the old row.
 
 Provisioning owns database schema, privileges, environment bindings, and broker stream configuration.
 Runtime uses credentials scoped to that environment.

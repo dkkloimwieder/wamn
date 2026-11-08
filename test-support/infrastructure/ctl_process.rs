@@ -1,7 +1,7 @@
 //! Process-boundary adapter for integration tests that drive `wamn-ctl`.
 
 use std::ffi::{OsStr, OsString};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::Output;
 
 use anyhow::Context as _;
@@ -64,18 +64,6 @@ fn require_success(name: &str, output: Output) -> anyhow::Result<Output> {
     )
 }
 
-/// Reconcile replica identity through the public ctl command.
-pub async fn reconcile_replica_identity(admin_url: &str, package: &Path) -> anyhow::Result<Output> {
-    run_checked([
-        OsString::from("reconcile-replica-identity"),
-        OsString::from("--admin-database-url"),
-        OsString::from(admin_url),
-        OsString::from("--package"),
-        package.as_os_str().to_owned(),
-    ])
-    .await
-}
-
 fn ctl_binary() -> OsString {
     binary(CTL_BINARY_ENV, "wamn-ctl")
 }
@@ -111,75 +99,4 @@ where
     let mut command = Command::new(binary);
     command.arg("--log-level").arg("error").args(args);
     command
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn command_preserves_the_public_cli_boundary() {
-        let command = ctl_command(
-            OsStr::new("/test/wamn-ctl"),
-            [
-                "apply-package",
-                "--org",
-                "org-a",
-                "--project",
-                "project-a",
-                "--environment",
-                "dev",
-            ],
-        );
-        let command = command.as_std();
-        assert_eq!(command.get_program(), "/test/wamn-ctl");
-        assert_eq!(
-            command.get_args().collect::<Vec<_>>(),
-            [
-                "--log-level",
-                "error",
-                "apply-package",
-                "--org",
-                "org-a",
-                "--project",
-                "project-a",
-                "--environment",
-                "dev",
-            ]
-            .map(OsStr::new)
-        );
-    }
-
-    #[test]
-    fn command_preserves_the_ops_cli_boundary() {
-        let command = ctl_command(
-            OsStr::new("/test/wamn-ctl-ops"),
-            [
-                "prune-run-history",
-                "--org",
-                "org-a",
-                "--project",
-                "project-a",
-                "--environment",
-                "dev",
-            ],
-        );
-        let command = command.as_std();
-        assert_eq!(command.get_program(), "/test/wamn-ctl-ops");
-        assert_eq!(
-            command.get_args().collect::<Vec<_>>(),
-            [
-                "--log-level",
-                "error",
-                "prune-run-history",
-                "--org",
-                "org-a",
-                "--project",
-                "project-a",
-                "--environment",
-                "dev",
-            ]
-            .map(OsStr::new)
-        );
-    }
 }

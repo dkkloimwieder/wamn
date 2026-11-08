@@ -21,11 +21,11 @@ use crate::dev::config::read_package_manifest;
 /// The build uses private databases. This operation never writes the environment file.
 pub async fn publish(
     platform: &Platform,
-    mut document: EnvironmentDocument,
+    document: &EnvironmentDocument,
     root: &Path,
     database_url: &str,
 ) -> anyhow::Result<(String, ManifestDigest)> {
-    let (application, roots) = sources(&document, root)?;
+    let (application, roots) = sources(document, root)?;
     let mut packages = Vec::with_capacity(roots.len());
     for root in &roots {
         // build_package owns current_build/current_generation and builds only stale inputs.
@@ -72,15 +72,22 @@ pub async fn publish(
     );
     let selection = document
         .applications
-        .remove(&application)
+        .get(&application)
         .expect("source resolution selected an existing application");
     let digest = publish_release(
         PublishReleaseRequest {
-            applications: [(application.clone(), selection.into())].into(),
+            applications: [(
+                application.clone(),
+                wamn_catalog::ApplicationDefinition {
+                    packages: selection.packages.clone(),
+                    connections: selection.connections.clone(),
+                },
+            )]
+            .into(),
             application: None,
-            org: document.org,
-            project: document.project,
-            environment: document.env,
+            org: document.org.clone(),
+            project: document.project.clone(),
+            environment: document.env.clone(),
             packages,
         },
         &publication.registry,

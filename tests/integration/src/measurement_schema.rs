@@ -4,10 +4,6 @@
 //! Keeping their DDL beside the campaigns avoids retaining the superseded
 //! catalog-model/compiler solely to mint benchmark setup.
 
-use std::path::Path;
-
-pub const PACKAGE_ID: &str = "poc_material_receiving";
-
 const MODEL_TABLES: [(&str, &str); 9] = [
     ("users", "users"),
     ("sites", "sites"),
@@ -34,41 +30,6 @@ pub fn floor_sql(schema: &str) -> String {
         "measurement schema must be a lowercase identifier"
     );
     FLOOR_SQL_TEMPLATE.replace("__SCHEMA__", schema)
-}
-
-/// Write the strict package directory consumed by the real RI CLI.
-pub fn write_package_directory(root: &Path, schema: &str) -> anyhow::Result<()> {
-    let models = model_tables()
-        .map(|(model_id, table)| {
-            (
-                model_id.to_owned(),
-                serde_json::json!({
-                    "schema": schema,
-                    "table": table,
-                    "owner": PACKAGE_ID,
-                    "audit_log": {"columns": [], "retention": "none"},
-                    "operations": {}
-                }),
-            )
-        })
-        .collect::<serde_json::Map<_, _>>();
-    let manifest = serde_json::json!({
-        "package": {"id": PACKAGE_ID, "version": "1.0.0"},
-        "required_platform_policy_contract": {
-            "id": "measurement_data_access",
-            "state": "unsatisfied"
-        },
-        "models": models,
-        "connections": [],
-        "components": {}
-    });
-    std::fs::create_dir_all(root.join("migrations"))?;
-    std::fs::write(
-        root.join("wamn.json"),
-        serde_json::to_vec_pretty(&manifest)?,
-    )?;
-    std::fs::write(root.join("migrations/0001_initial.sql"), floor_sql(schema))?;
-    Ok(())
 }
 
 const FLOOR_SQL_TEMPLATE: &str = r"
