@@ -524,13 +524,6 @@ pub async fn reset_deployed(
 async fn stop_users(platform: &Platform, document: &EnvironmentDocument) -> anyhow::Result<()> {
     crate::enable_cdc_project_env::stop_reader(platform, &document.triple()).await?;
     let shared = ensure::environment_host_name(&document.org, &document.project, &document.env)?;
-    let mut groups = std::collections::BTreeSet::from([shared.clone()]);
-    for application in document.applications.keys() {
-        groups.insert(analyse::application_release_name(document, application)?);
-    }
-    for name in &groups {
-        stop_group(platform, name).await?;
-    }
     ensure::kubectl(
         platform,
         &platform.target.namespace,
@@ -545,6 +538,13 @@ async fn stop_users(platform: &Platform, document: &EnvironmentDocument) -> anyh
         None,
     )
     .await?;
+    let mut groups = std::collections::BTreeSet::from([shared]);
+    for application in document.applications.keys() {
+        groups.insert(analyse::application_release_name(document, application)?);
+    }
+    for name in &groups {
+        stop_group(platform, name).await?;
+    }
     Ok(())
 }
 
@@ -815,12 +815,7 @@ async fn stop_group(platform: &Platform, name: &str) -> anyhow::Result<()> {
         )
         .await?;
         let mut values: Value = serde_json::from_slice(&bytes)?;
-        for group in values["runtime-operator"]["runtime"]["hostGroups"]
-            .as_array_mut()
-            .context("host groups")?
-        {
-            group["replicas"] = 0.into();
-        }
+        stop_values(&mut values)?;
         let private = ensure::PrivateDirectory::create()?;
         let path = private.path("stopped.yaml");
         std::fs::write(&path, serde_yaml::to_string(&values)?)?;
@@ -841,5 +836,18 @@ async fn stop_group(platform: &Platform, name: &str) -> anyhow::Result<()> {
             .is_empty(),
         "database user {name} is still running"
     );
+    Ok(())
+}
+
+/// Remove chart-owned workloads and stop their hosts using existing chart values.
+/// Ordinary reapply derives the roles and host replicas from the selected release again.
+pub fn stop_values(values: &mut Value) -> anyhow::Result<()> {
+    values["roles"] = serde_json::json!([]);
+    for group in values["runtime-operator"]["runtime"]["hostGroups"]
+        .as_array_mut()
+        .context("host groups")?
+    {
+        group["replicas"] = 0.into();
+    }
     Ok(())
 }

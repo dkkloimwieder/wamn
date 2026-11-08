@@ -216,6 +216,118 @@ fn changing_one_application_selection_leaves_the_other_release_unchanged() -> an
     Ok(())
 }
 
+#[test]
+fn reset_stops_workloads_and_reapply_restores_them() -> anyhow::Result<()> {
+    use wamn_environment_control::environment::{ensure, sql::reset, write};
+    let mut release = manifest(&fixture_releases()?[2])?;
+    let component = release.components.iter().next().unwrap();
+    let member = wamn_catalog::ServingEntryMember {
+        package_id: component.package_id.clone(),
+        component: component.descriptor.component.clone(),
+        digest: component.descriptor.component_digest.clone(),
+    };
+    release.composed_entry = Some(wamn_catalog::ServingComposedEntry {
+        reference: format!("entries@{}", member.digest),
+        route_digest: member.digest.clone(),
+        application: member.clone(),
+        members: [member].into(),
+    });
+    let document = fixture_document("dev", "orders.example", release.digest().as_str());
+    let application = document.applications.keys().next().unwrap();
+    let scratch = ScratchRoot::create()?;
+    let group = scratch.path().join("host.yaml");
+    std::fs::write(
+        &group,
+        serde_yaml::to_string(&fixture_host_group(&document, "registry.invalid"))?,
+    )?;
+    let reapply = || -> anyhow::Result<_> {
+        let (values, _) = write::release_values(
+            &document,
+            application,
+            &release,
+            release.digest().as_str(),
+            "registry.invalid/releases",
+            70,
+            "reset-render",
+            Some(&group),
+        )?;
+        Ok(values)
+    };
+    let mut stopped = serde_json::to_value(reapply()?)?;
+    reset::stop_values(&mut stopped)?;
+    let stopped = template(&serde_yaml::to_value(&stopped)?, NAMESPACE)?;
+    assert!(
+        stopped
+            .iter()
+            .all(|object| object["kind"] != "WorkloadDeployment")
+    );
+    let hosts = stopped
+        .iter()
+        .filter(|object| object["kind"] == "Deployment")
+        .collect::<Vec<_>>();
+    assert!(!hosts.is_empty());
+    assert!(hosts.iter().all(|host| host["spec"]["replicas"] == 0));
+    let resumed = template(&reapply()?, NAMESPACE)?;
+    let workloads = resumed
+        .iter()
+        .filter(|object| object["kind"] == "WorkloadDeployment")
+        .collect::<Vec<_>>();
+    assert!(!workloads.is_empty());
+    assert!(
+        workloads
+            .iter()
+            .all(|workload| workload["spec"]["replicas"] == 1)
+    );
+    assert!(
+        resumed
+            .iter()
+            .filter(|object| object["kind"] == "Deployment")
+            .all(|host| host["spec"]["replicas"]
+                .as_u64()
+                .is_some_and(|replicas| replicas > 0))
+    );
+
+    // The separate materializer is deleted before its host is stopped, then
+    // ordinary provisioning renders it again with its running replica count.
+    let mut shared = ensure::materializer_host_values(&document, 70, 1, 120, Some(&group), false)?;
+    reset::stop_values(&mut shared)?;
+    let shared = template(&serde_yaml::to_value(&shared)?, NAMESPACE)?;
+    assert!(
+        shared
+            .iter()
+            .all(|object| object["kind"] != "WorkloadDeployment")
+    );
+    assert!(
+        shared
+            .iter()
+            .filter(|object| object["kind"] == "Deployment")
+            .all(|host| host["spec"]["replicas"] == 0)
+    );
+    let shared = template(
+        &serde_yaml::to_value(ensure::materializer_host_values(
+            &document,
+            70,
+            1,
+            120,
+            Some(&group),
+            false,
+        )?)?,
+        NAMESPACE,
+    )?;
+    assert!(
+        shared
+            .iter()
+            .filter(|object| object["kind"] == "Deployment")
+            .all(|host| host["spec"]["replicas"]
+                .as_u64()
+                .is_some_and(|replicas| replicas > 0))
+    );
+    let image = format!("registry.invalid/materializer@sha256:{}", "a".repeat(64));
+    let materializer = ensure::materializer_workload(&document, NAMESPACE, &image, false)?;
+    assert_eq!(materializer["spec"]["replicas"], 1);
+    Ok(())
+}
+
 fn fixture_secrets(document: &EnvironmentDocument) -> Vec<Value> {
     let mut secrets = credential_secrets(&document.triple(), NAMESPACE);
     secrets.extend(operator_prerequisites(NAMESPACE));
