@@ -879,3 +879,61 @@ ALTER TABLE inventory.widget ADD CONSTRAINT widget_description_check
     validate_migration_file(artifact.path(), "inventory")
         .expect("ordinary migrations admit named checks");
 }
+
+#[test]
+fn exact_marker_admits_one_concurrent_index_on_an_owned_table() {
+    use wamn_schema_introspection::migration_policy::{
+        inspect_migration_definition_mutations, validate_migration_bytes_for_schemas,
+    };
+    let earlier = inspect_migration_definition_mutations(
+        "0001_initial.sql",
+        b"CREATE TABLE receiving.receipt (id uuid);",
+        &["receiving"],
+    )
+    .unwrap();
+    let earlier = earlier.iter().collect::<Vec<_>>();
+    let statement = "CREATE INDEX CONCURRENTLY receipt_id_idx ON receiving.receipt (id);";
+    assert!(
+        validate_migration_bytes_for_schemas(
+            "0002_index.sql",
+            format!("-- wamn:no-transaction\n{statement}").as_bytes(),
+            &["receiving"],
+            &earlier
+        )
+        .is_ok()
+    );
+    for prefix in [
+        "",
+        " -- wamn:no-transaction\n",
+        "-- wamn:no-transaction \n",
+        "-- wamn:no-transaction\r\n",
+        "\n-- wamn:no-transaction\n",
+    ] {
+        assert!(
+            validate_migration_bytes_for_schemas(
+                "0002_index.sql",
+                format!("{prefix}{statement}").as_bytes(),
+                &["receiving"],
+                &earlier
+            )
+            .is_err()
+        );
+    }
+    for sql in [
+        format!("-- wamn:no-transaction\n{statement}{statement}"),
+        "-- wamn:no-transaction\nCREATE INDEX CONCURRENTLY user_id_idx ON platform.user (id);"
+            .into(),
+        "-- wamn:no-transaction\nSET ROLE postgres;".into(),
+        "-- wamn:no-transaction\nGRANT ALL ON receiving.receipt TO PUBLIC;".into(),
+    ] {
+        assert!(
+            validate_migration_bytes_for_schemas(
+                "0002_index.sql",
+                sql.as_bytes(),
+                &["receiving"],
+                &earlier
+            )
+            .is_err()
+        );
+    }
+}

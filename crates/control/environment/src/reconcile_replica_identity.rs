@@ -29,7 +29,7 @@ pub async fn reconcile_package_replica_identity(
 ) -> anyhow::Result<ReplicaIdentityPlan> {
     let directory = wamn_package_control::apply_package::read_package_directory(&request.package)?;
     let package =
-        plan_package_migrations(&directory, None).context("derive package model mapping")?;
+        plan_package_migrations(&directory, None, &[]).context("derive package model mapping")?;
 
     let (client, connection) = tokio_postgres::connect(&request.admin_database_url, NoTls)
         .await

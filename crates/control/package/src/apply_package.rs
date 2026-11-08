@@ -26,6 +26,8 @@ mod definition_ownership;
 mod entity_maps;
 mod error;
 mod local_target;
+mod migration;
+pub use migration::{MigrationResolution, Resolution, resolution_package};
 mod operation_grants;
 mod package_version;
 mod record_history;
@@ -42,7 +44,8 @@ pub use error::{
 pub use local_target::{manifest_digest, record_manifest};
 pub use package_version::{
     LOCK_PACKAGE_SQL, PackageRoot, environment_fingerprint, installed_environment_fingerprint,
-    load_applied_package, read_applied_package, read_package_directory, read_package_root,
+    load_applied_package, read_applied_package, read_package_directory, read_package_migrations,
+    read_package_root,
 };
 
 pub const LOCK_SQL: &str = "SELECT pg_advisory_xact_lock(hashtextextended(\
@@ -156,12 +159,15 @@ pub(crate) fn prepare_package(root: &PackageRoot) -> anyhow::Result<PreparedPack
 
 /// Initialize an absent package. Existing packages retain their installed SQL.
 pub async fn apply_package(request: ApplyPackageRequest) -> anyhow::Result<ApplyOutcome> {
-    apply_request(request, None, false).await
+    apply_request(request, None, false, None).await
 }
 
 /// Explicitly advance package SQL without selecting or caching executable releases.
-pub async fn apply_package_schema(request: ApplyPackageRequest) -> anyhow::Result<ApplyOutcome> {
-    apply_request(request, None, true).await
+pub async fn apply_package_schema(
+    request: ApplyPackageRequest,
+    resolution: Option<&MigrationResolution>,
+) -> anyhow::Result<ApplyOutcome> {
+    apply_request(request, None, true, resolution).await
 }
 
 /// Initialize missing local SQL without advancing an installed schema from the watcher.
@@ -169,21 +175,23 @@ pub async fn apply_local_package(
     request: ApplyPackageRequest,
     environment: &str,
 ) -> anyhow::Result<ApplyOutcome> {
-    require_local_package(request, environment, false).await
+    require_local_package(request, environment, false, None).await
 }
 
 /// Explicitly apply local SQL without publishing or activating application code.
 pub async fn apply_local_package_schema(
     request: ApplyPackageRequest,
     environment: &str,
+    resolution: Option<&MigrationResolution>,
 ) -> anyhow::Result<ApplyOutcome> {
-    require_local_package(request, environment, true).await
+    require_local_package(request, environment, true, resolution).await
 }
 
 async fn require_local_package(
     request: ApplyPackageRequest,
     environment: &str,
     advance_schema: bool,
+    resolution: Option<&MigrationResolution>,
 ) -> anyhow::Result<ApplyOutcome> {
     wamn_runtime::local_application::require_local_target(
         &request.database_url,
@@ -191,13 +199,14 @@ async fn require_local_package(
         environment,
     )
     .await?;
-    apply_request(request, Some(environment), advance_schema).await
+    apply_request(request, Some(environment), advance_schema, resolution).await
 }
 
 async fn apply_request(
     request: ApplyPackageRequest,
     local_environment: Option<&str>,
     advance_schema: bool,
+    resolution: Option<&MigrationResolution>,
 ) -> anyhow::Result<ApplyOutcome> {
     ensure!(
         ![&request.org, &request.project, &request.environment]
@@ -226,6 +235,7 @@ async fn apply_request(
         &package,
         local_environment,
         advance_schema,
+        resolution,
     )
     .await;
     if let Ok(outcome) = &result {
@@ -249,36 +259,26 @@ async fn apply(
     package: &PreparedPackage,
     local_environment: Option<&str>,
     advance_schema: bool,
+    resolution: Option<&MigrationResolution>,
 ) -> anyhow::Result<ApplyOutcome> {
-    let presented = plan_package_migrations(&package.directory, None)?;
-    let tx = client.transaction().await.context("begin package apply")?;
-    tx.query_one(CLAIM_ENV_KEY_SQL, &[&env_key])
+    let presented = plan_package_migrations(&package.directory, None, &[])?;
+    // Match the transaction lock keys, but retain exclusion across file commits.
+    // apply_request closes this dedicated connection on every result.
+    client
+        .query_one(
+            &LOCK_SQL.replace("pg_advisory_xact_lock", "pg_advisory_lock"),
+            &[],
+        )
         .await
-        .context("claim package tenant")?;
-    bind_apply_package_principal(&tx).await?;
-    // Keep the same lock order as reconciliation and release selection:
-    // data access, package lineage, then the selected release head.
-    tx.query_one(LOCK_SQL, &[])
+        .context("lock data access for package SQL")?;
+    client
+        .query_one(
+            &LOCK_PACKAGE_SQL.replace("pg_advisory_xact_lock", "pg_advisory_lock"),
+            &[&env_key, &presented.coordinate.package_id()],
+        )
         .await
-        .context("lock data access before package application")?;
-    tx.query_one(
-        LOCK_PACKAGE_SQL,
-        &[&env_key, &presented.coordinate.package_id()],
-    )
-    .await
-    .context("lock package family")?;
-    let outcome = apply_prepared(&tx, env_key, package, local_environment, advance_schema).await?;
-    tx.commit().await.context("commit whole package suffix")?;
-    Ok(outcome)
-}
-
-async fn apply_prepared(
-    tx: &Transaction<'_>,
-    env_key: &str,
-    package: &PreparedPackage,
-    local_environment: Option<&str>,
-    advance_schema: bool,
-) -> anyhow::Result<ApplyOutcome> {
+        .context("lock package family")?;
+    let mut tx = migration::begin(client, env_key).await?;
     let package_root = &package.root;
     let directory = &package.directory;
     let manifest = &package.manifest;
@@ -286,15 +286,13 @@ async fn apply_prepared(
         mutations,
         deferred,
     } = &package.policy;
-    let presented =
-        plan_package_migrations(directory, None).context("validate package directory")?;
     let package_id = presented.coordinate.package_id().to_owned();
     let package_version = presented.coordinate.package_version().to_owned();
     let coordinate_label = format!("{package_id}@{package_version}");
     let coordinate_text = coordinate_label.as_str();
     let mut local_comment = match local_environment {
         Some(environment) => Some(
-            wamn_runtime::local_application::read_local_target_comment(tx, env_key, environment)
+            wamn_runtime::local_application::read_local_target_comment(&tx, env_key, environment)
                 .await?,
         ),
         None => None,
@@ -312,7 +310,7 @@ async fn apply_prepared(
                 .ok_or_else(|| ApplyPackageError::artifact_required(coordinate_text))?,
         )
     };
-    let applied = load_applied_package(tx, env_key, &package_id).await?;
+    let applied = load_applied_package(&tx, env_key, &package_id).await?;
     // Executable selection, reapply, and rollback never advance SQL, even if
     // the selected artifact carries older or edited migration inputs.
     if !advance_schema && let Some(installed) = &applied {
@@ -329,10 +327,28 @@ async fn apply_prepared(
             drops: wamn_platform_identity::auth_changes::AuthDrops::default(),
         });
     }
-    let plan = plan_package_migrations(directory, applied.as_ref())?;
+    let recorded = read_package_migrations(&tx, env_key, &package_id).await?;
+    let plan = plan_package_migrations(directory, applied.as_ref(), &recorded)?;
+    if let Some(resolution) = resolution {
+        ensure!(
+            recorded
+                .iter()
+                .any(|file| file.relative_path == resolution.path),
+            "resolution names no recorded migration: {}",
+            resolution.path
+        );
+    }
+    for file in plan.pending.iter().filter(|file| file.started) {
+        ensure!(
+            resolution.is_some_and(|choice| choice.path == file.relative_path),
+            "package {package_id}: migration {} has an uncertain outcome; inspect its effects and use --resolve {}=applied|retry",
+            file.relative_path,
+            file.relative_path
+        );
+    }
     let requirements_written = if applied.is_none() {
         crate::connection_requirement::install(
-            tx,
+            &tx,
             env_key,
             package_root,
             manifest,
@@ -342,28 +358,26 @@ async fn apply_prepared(
     } else {
         0
     };
-    let applied_count = plan.pending.len();
     let migration_changed = !plan.is_noop();
-    let pending_paths = plan
-        .pending
-        .iter()
-        .map(|migration| migration.relative_path.as_str())
-        .collect::<BTreeSet<_>>();
-    let pending_mutations = mutations
-        .iter()
-        .filter(|planned| pending_paths.contains(planned.relative_path.as_ref()))
-        .collect::<Vec<_>>();
-
-    validate_definition_ownership_before_apply(
-        tx,
-        env_key,
-        coordinate_text,
-        &package_id,
-        manifest,
-        &pending_mutations,
-    )
-    .await?;
     if let Some(deferred) = deferred {
+        let paths = plan
+            .pending
+            .iter()
+            .map(|file| file.relative_path.as_str())
+            .collect::<BTreeSet<_>>();
+        let pending_mutations = mutations
+            .iter()
+            .filter(|mutation| paths.contains(mutation.relative_path.as_ref()))
+            .collect::<Vec<_>>();
+        validate_definition_ownership_before_apply(
+            &tx,
+            env_key,
+            coordinate_text,
+            &package_id,
+            manifest,
+            &pending_mutations,
+        )
+        .await?;
         let refusal = validate_migration_policy(package_root, directory, &plan)?
             .deferred
             .expect("the package retains its policy refusal")
@@ -383,34 +397,71 @@ async fn apply_prepared(
 
     // Provision package authority before any authored DDL. The migration
     // runner selects the owning role after the policy refuses role changes.
-    ensure_model_schemas(tx, &plan, manifest).await?;
-    for statement in &plan.statements {
-        // The planner carries exact package bytes as its parameter-free batch
-        // statements; every host-authored record statement has binds.
-        if statement.params.is_empty() {
-            roles::execute_migration(tx, manifest, statement).await?;
+    ensure_model_schemas(&tx, &plan, manifest).await?;
+    let mut ownership_changed = false;
+    let mut executed = 0;
+    for (file, [sql, record]) in plan.pending.iter().zip(plan.statements.as_chunks::<2>().0) {
+        let file_mutations = mutations
+            .iter()
+            .filter(|mutation| mutation.relative_path.as_ref() == file.relative_path)
+            .collect::<Vec<_>>();
+        let accept =
+            file.started && resolution.is_some_and(|choice| choice.action == Resolution::Applied);
+        validate_definition_ownership_before_apply(
+            &tx,
+            env_key,
+            coordinate_text,
+            &package_id,
+            manifest,
+            if accept { &[] } else { &file_mutations },
+        )
+        .await?;
+        if file.transactional {
+            roles::execute_migration(&tx, manifest, sql, true).await?;
+            execute(&tx, record).await?;
+            executed += 1;
         } else {
-            assert_host_role(tx).await?;
-            execute(tx, statement).await?;
+            // Earlier transactional work commits before the durable started record.
+            tx.commit()
+                .await
+                .context("commit package migration batch")?;
+            tx = migration::begin(client, env_key).await?;
+            if !file.started {
+                execute(&tx, record).await?;
+            }
+            tx.commit().await.context("commit nontransactional start")?;
+            if !accept {
+                roles::execute_migration(client, manifest, sql, false).await
+                    .with_context(|| format!("migration {} has an uncertain outcome; inspect its effects and use --resolve {}=applied|retry", file.relative_path, file.relative_path))?;
+                executed += 1;
+            }
+            tx = migration::begin(client, env_key).await?;
+            migration::complete(&tx, env_key, &package_id, &file.relative_path).await?;
+        }
+        ownership_changed |= reconcile_definition_ownership(
+            &tx,
+            env_key,
+            coordinate_text,
+            &package_id,
+            manifest,
+            &file_mutations,
+        )
+        .await?;
+        if !file.transactional {
+            tx.commit()
+                .await
+                .context("commit nontransactional completion")?;
+            tx = migration::begin(client, env_key).await?;
         }
     }
-    assert_host_role(tx).await?;
-    let ownership_changed = reconcile_definition_ownership(
-        tx,
-        env_key,
-        coordinate_text,
-        &package_id,
-        manifest,
-        &pending_mutations,
-    )
-    .await?;
-    let history_changed = create_history_tables(tx, manifest).await?;
-    reconcile_entity_maps(tx, &plan, manifest).await?;
-    let triggers_changed = reconcile_record_history_triggers(tx, manifest).await?;
+    assert_host_role(&tx).await?;
+    let history_changed = create_history_tables(&tx, manifest).await?;
+    reconcile_entity_maps(&tx, &plan, manifest).await?;
+    let triggers_changed = reconcile_record_history_triggers(&tx, manifest).await?;
     let physical_schema_fingerprint =
-        installed_physical_fingerprint(tx, directory, manifest).await?;
+        installed_physical_fingerprint(&tx, directory, manifest).await?;
     let schema_recorded = record_package_schema(
-        tx,
+        &tx,
         env_key,
         &plan.coordinate,
         artifact_digest,
@@ -420,14 +471,14 @@ async fn apply_prepared(
     .context("record the completed package schema")?;
     let mut drops = wamn_platform_identity::auth_changes::AuthDrops::default();
     let admin_role_changed = if applied.is_none() {
-        ensure_admin_role(tx, env_key, &mut drops).await?
+        ensure_admin_role(&tx, env_key, &mut drops).await?
     } else {
         false
     };
     let comment_changed = match local_comment.as_mut() {
         Some(comment) => {
             local_target::record_manifest(
-                tx,
+                &tx,
                 comment,
                 coordinate_text,
                 &local_target::manifest_digest(directory),
@@ -436,11 +487,14 @@ async fn apply_prepared(
         }
         None => false,
     };
+    tx.commit()
+        .await
+        .context("commit completed package schema")?;
     Ok(ApplyOutcome {
         drops,
         package_id,
         package_version,
-        migrations_applied: applied_count,
+        migrations_applied: executed,
         changed: requirements_written != 0
             || schema_recorded
             || migration_changed

@@ -13,7 +13,7 @@ pub fn select_package_snapshot_sql() -> &'static str {
 
 /// Read the complete immutable migration records in authored order.
 pub fn select_package_migrations_sql() -> &'static str {
-    "SELECT ordinal, relative_path, sha256 FROM catalog.package_migrations \
+    "SELECT ordinal, relative_path, sha256, outcome FROM catalog.package_migrations \
      WHERE env_key = $1 AND package_id = $2 \
      ORDER BY ordinal"
 }

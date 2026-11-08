@@ -151,6 +151,7 @@ pub async fn schema_operation(
     environment: &Path,
     root: &Path,
     apply: bool,
+    resolution: Option<&wamn_package_control::apply_package::MigrationResolution>,
 ) -> anyhow::Result<Vec<wamn_environment_control::environment::sql::schema::Diff>> {
     use anyhow::{Context as _, ensure};
     use wamn_package_control::apply_package::{self, ApplyPackageRequest, PackageRoot};
@@ -159,16 +160,34 @@ pub async fn schema_operation(
     let (_, mut roots) = crate::source_deploy::sources(&document, root)?;
     let diffs = schema_changes(&config, &document, &roots).await?;
     if !apply {
+        ensure!(resolution.is_none(), "resolution requires schema apply");
         return Ok(diffs);
     }
     let changes =
         wamn_platform_identity::auth_changes::AuthChanges::new(config.nats().connect().await?);
     let lease = acquire(&config).await?;
     lease.instance(&config).await?;
+    let initial_state = wamn_environment_control::environment::sql::schema::database_state(
+        config.target_database_url(),
+        &config.activation_identity().env_key(),
+    )
+    .await?;
+    apply_package::resolution_package(
+        resolution,
+        diffs
+            .iter()
+            .flat_map(|diff| diff.packages.keys())
+            .map(|id| (id.as_str(), initial_state.migration_records(id))),
+    )?;
+
     if diffs
         .iter()
         .any(wamn_environment_control::environment::sql::schema::Diff::requires_reset)
     {
+        ensure!(
+            resolution.is_none(),
+            "resolve uncertain SQL in migrate mode before a reset"
+        );
         let output = wamn_schema_generator::build::default_output_root(root);
         for diff in &diffs {
             for (id, source) in &diff.reset_sources {
@@ -249,6 +268,20 @@ pub async fn schema_operation(
             })
             .collect::<Vec<_>>(),
     )?;
+    let state = wamn_environment_control::environment::sql::schema::database_state(
+        config.target_database_url(),
+        &identity.env_key(),
+    )
+    .await?;
+    let resolution_id = apply_package::resolution_package(
+        resolution,
+        manifests.iter().map(|manifest| {
+            (
+                manifest.package.id.as_str(),
+                state.migration_records(&manifest.package.id),
+            )
+        }),
+    )?;
     let mut roots = roots.into_iter().map(Some).collect::<Vec<_>>();
     for index in order {
         apply_package::apply_local_package_schema(
@@ -265,6 +298,7 @@ pub async fn schema_operation(
                 environment: identity.environment.clone(),
             },
             &identity.environment,
+            resolution.filter(|_| resolution_id == Some(manifests[index].package.id.as_str())),
         )
         .await?;
     }
@@ -272,6 +306,34 @@ pub async fn schema_operation(
         .into_iter()
         .map(|candidate| candidate.root.path)
         .collect::<Vec<_>>();
+    let mut grant_roots = roots.clone();
+    let output = wamn_schema_generator::build::default_output_root(root);
+    for (id, installed) in &state.packages {
+        if manifests.iter().any(|manifest| manifest.package.id == *id) {
+            continue;
+        }
+        let retained = wamn_schema_generator::build_record::source_root(&output.join(id))?;
+        let candidate =
+            wamn_environment_control::environment::sql::schema::Candidate::source(PackageRoot {
+                path: retained.clone(),
+                artifact_digest: None,
+            })?;
+        ensure!(
+            candidate.fingerprint == installed.physical_schema_fingerprint,
+            "retained package {id} differs from its installed local schema source"
+        );
+        grant_roots.push(retained);
+    }
+    let grants =
+        wamn_environment_control::reconcile_package_data_access::prepare_local(&grant_roots)?;
+    wamn_environment_control::reconcile_package_data_access::reconcile_local(
+        &grants,
+        config.target_database_url(),
+        &identity.env_key(),
+        &identity.environment,
+        true,
+    )
+    .await?;
     schema_changes(&config, &document, &roots).await
 }
 
@@ -1006,6 +1068,7 @@ mod tests {
                 environment: "fixture-dev".into(),
             },
             "fixture-dev",
+            None,
         )
         .await?;
         target_client

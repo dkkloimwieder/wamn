@@ -13,7 +13,7 @@ pub enum SchemaCommand {
     /// Compare selected SQL with records without writing or activating code.
     Diff(SchemaArgs),
     /// Apply selected published SQL through the existing in-cluster Job.
-    Apply(SchemaArgs),
+    Apply(ApplyArgs),
     /// Build and publish a candidate without installing it in the target database.
     Publish(PublishArgs),
     /// Replace the recorded disposable environment database and reconnect its users.
@@ -39,6 +39,15 @@ pub struct SchemaArgs {
 }
 
 #[derive(Debug, Args)]
+pub struct ApplyArgs {
+    #[command(flatten)]
+    pub schema: SchemaArgs,
+    /// Resolve one uncertain file as applied, or explicitly retry it.
+    #[arg(long)]
+    pub resolve: Option<wamn_package_control::apply_package::MigrationResolution>,
+}
+
+#[derive(Debug, Args)]
 pub struct PublishArgs {
     pub package: PathBuf,
     #[arg(long)]
@@ -48,7 +57,7 @@ pub struct PublishArgs {
 }
 
 pub async fn run(command: SchemaCommand) -> anyhow::Result<()> {
-    let (args, apply) = match command {
+    let (args, apply, resolution) = match command {
         SchemaCommand::Publish(args) => return publish(args).await,
         SchemaCommand::Reset(args) => {
             let platform = Platform::apply_from_env()?;
@@ -59,8 +68,8 @@ pub async fn run(command: SchemaCommand) -> anyhow::Result<()> {
             println!("{}", serde_json::to_string_pretty(&result)?);
             return Ok(());
         }
-        SchemaCommand::Diff(args) => (args, false),
-        SchemaCommand::Apply(args) => (args, true),
+        SchemaCommand::Diff(args) => (args, false, None),
+        SchemaCommand::Apply(args) => (args.schema, true, args.resolve),
     };
     let local_config = args.env.with_file_name("dev.json");
     if local_config.is_file() && std::path::Path::new(&args.application).is_dir() {
@@ -73,6 +82,7 @@ pub async fn run(command: SchemaCommand) -> anyhow::Result<()> {
             &args.env,
             std::path::Path::new(&args.application),
             apply,
+            resolution.as_ref(),
         )
         .await?;
         println!("{}", serde_json::to_string_pretty(&diffs)?);
@@ -135,7 +145,17 @@ pub async fn run(command: SchemaCommand) -> anyhow::Result<()> {
             .release
             .as_deref()
             .context("schema apply needs a published release")?;
+        wamn_package_control::apply_package::resolution_package(
+            resolution.as_ref(),
+            diff.packages
+                .keys()
+                .map(|id| (id.as_str(), state.migration_records(id))),
+        )?;
         if diff.requires_reset() {
+            ensure!(
+                resolution.is_none(),
+                "resolve uncertain SQL in migrate mode before a reset"
+            );
             Box::pin(environment::sql::reset::reset_deployed(
                 &platform,
                 &args.env,
@@ -143,7 +163,14 @@ pub async fn run(command: SchemaCommand) -> anyhow::Result<()> {
             ))
             .await?;
         } else {
-            environment::sql::apply_deployed(&platform, &document, &application, release).await?;
+            environment::sql::apply_deployed(
+                &platform,
+                &document,
+                &application,
+                release,
+                resolution.as_ref(),
+            )
+            .await?;
         }
     }
     Ok(())

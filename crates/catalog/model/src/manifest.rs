@@ -12,6 +12,11 @@ use crate::manifest_error::{ManifestError, ManifestErrorType};
 
 pub const CONTROL_OWNED_RELATION_TABLES: [&str; 2] = ["wamn_entities", "wamn_cdc_exclusions"];
 
+/// Only an exact first-line marker opts a migration out of a transaction.
+pub fn migration_is_transactional(bytes: &[u8]) -> bool {
+    bytes.split(|byte| *byte == b'\n').next() != Some(b"-- wamn:no-transaction".as_slice())
+}
+
 /// Strict package-owned behavior declaration parsed from `wamn.json`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

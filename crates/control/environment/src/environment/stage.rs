@@ -121,6 +121,19 @@ pub async fn initialize(
     .await
     .context("create the number sequences of the release's packages")?;
 
+    reconcile_installed_sql_grants(platform, document, project_url).await?;
+    Ok(packages
+        .into_iter()
+        .map(|(_, _, _, package_manifest)| package_manifest)
+        .collect())
+}
+
+/// Converge shared SQL grants from the complete installed schema sources.
+pub(super) async fn reconcile_installed_sql_grants(
+    platform: &Platform,
+    document: &EnvironmentDocument,
+    project_url: &str,
+) -> anyhow::Result<()> {
     // Shared SQL grants require the complete installed set, including other applications.
     let installed = installed(platform, document).await?;
     let mut grant_packages = Vec::new();
@@ -143,10 +156,7 @@ pub async fn initialize(
         .await
         .context("reconcile installed SQL grants")?;
     }
-    Ok(packages
-        .into_iter()
-        .map(|(_, _, _, package_manifest)| package_manifest)
-        .collect())
+    Ok(())
 }
 
 /// Create each integration application principal and its declared dependency role.

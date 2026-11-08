@@ -139,6 +139,7 @@ pub async fn apply_deployed(
     document: &EnvironmentDocument,
     application: &str,
     release: &str,
+    resolution: Option<&wamn_package_control::apply_package::MigrationResolution>,
 ) -> anyhow::Result<()> {
     let directory = ensure::PrivateDirectory::create()?;
     let chart = crate::platform::artifact_plan::select(&platform.chart)?;
@@ -149,6 +150,7 @@ pub async fn apply_deployed(
         Operation::ApplySchema {
             application,
             release,
+            resolution,
         },
         chart.image("ctl")?,
         &cluster,
@@ -173,6 +175,7 @@ pub enum Operation<'a> {
     ApplySchema {
         application: &'a str,
         release: &'a str,
+        resolution: Option<&'a wamn_package_control::apply_package::MigrationResolution>,
     },
 }
 
@@ -233,12 +236,23 @@ pub async fn run_deployed(
         Operation::ApplySchema {
             application,
             release,
+            ..
         } => Some((application, release)),
         Operation::Reset { candidate } => candidate,
         _ => None,
     };
     if let Some((application, release)) = candidate {
         arguments.extend(["--application", application, "--release", release]);
+    }
+    let resolution = match operation {
+        Operation::ApplySchema {
+            resolution: Some(choice),
+            ..
+        } => Some(choice.to_string()),
+        _ => None,
+    };
+    if let Some(resolution) = &resolution {
+        arguments.extend(["--resolve", resolution]);
     }
     let mut job = job::manifest(&name, image, &["/usr/local/bin/wamn-ctl"], &arguments);
     let mut files = BTreeMap::from([(

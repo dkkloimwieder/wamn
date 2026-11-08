@@ -719,7 +719,7 @@ fn verify_package(root: &Path) -> anyhow::Result<VerifiedPackage> {
     );
     crate::component_admission::physical_schema(root)?;
     let directory = crate::apply_package::read_package_directory(root)?;
-    wamn_schema_control::plan_package_migrations(&directory, None)
+    wamn_schema_control::plan_package_migrations(&directory, None, &[])
         .context("plan the package migrations")?;
 
     let base_digests = authored_base_digests(root).context("read the authored base digests")?;

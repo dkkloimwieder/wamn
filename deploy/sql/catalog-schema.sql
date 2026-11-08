@@ -67,7 +67,8 @@ CREATE TABLE catalog.package_migrations (
     ordinal         int         NOT NULL CHECK (ordinal > 0),
     relative_path   text        NOT NULL CHECK (relative_path ~ '^migrations/[0-9]{4}_[a-z0-9_]+\.sql$'),
     sha256          text        NOT NULL CHECK (sha256 ~ '^sha256:[0-9a-f]{64}$'),
-    applied_at      timestamptz NOT NULL DEFAULT now(),
+    outcome         text        NOT NULL CHECK (outcome IN ('applied', 'started')),
+    applied_at      timestamptz,
     created_at      timestamptz NOT NULL,
     created_by      uuid        NOT NULL,
     updated_at      timestamptz NOT NULL,
@@ -76,11 +77,32 @@ CREATE TABLE catalog.package_migrations (
         PRIMARY KEY (env_key, package_id, ordinal),
     CONSTRAINT package_migrations_path_key
         UNIQUE (env_key, package_id, relative_path),
-    CONSTRAINT package_migrations_package_fkey
-        FOREIGN KEY (env_key, package_id)
-        REFERENCES catalog.packages (env_key, package_id)
-        DEFERRABLE INITIALLY DEFERRED
+    CONSTRAINT package_migrations_completion_check
+        CHECK ((outcome = 'applied') = (applied_at IS NOT NULL))
 );
+
+-- A first installation can commit files before its completed package record.
+-- File identity stays immutable. Only a started outcome can become applied.
+CREATE FUNCTION catalog.guard_migration_outcome()
+RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    IF ROW(NEW.env_key, NEW.package_id, NEW.package_version, NEW.ordinal,
+           NEW.relative_path, NEW.sha256)
+       IS DISTINCT FROM
+       ROW(OLD.env_key, OLD.package_id, OLD.package_version, OLD.ordinal,
+           OLD.relative_path, OLD.sha256)
+       OR OLD.outcome <> 'started' OR NEW.outcome <> 'applied' THEN
+        RAISE EXCEPTION USING ERRCODE = '55000', MESSAGE = 'package-migration-immutable';
+    END IF;
+    RETURN NEW;
+END
+$$;
+CREATE TRIGGER package_migrations_outcome_guard
+    BEFORE UPDATE ON catalog.package_migrations
+    FOR EACH ROW EXECUTE FUNCTION catalog.guard_migration_outcome();
+CREATE TRIGGER package_migrations_delete_immutable
+    BEFORE DELETE ON catalog.package_migrations
+    FOR EACH ROW EXECUTE FUNCTION catalog.reject_immutable_row_change();
 
 CREATE TRIGGER wamn_record_history_stamp
     BEFORE INSERT OR UPDATE ON catalog.package_migrations
@@ -366,7 +388,7 @@ DECLARE
     relation_name text;
 BEGIN
     FOREACH relation_name IN ARRAY ARRAY[
-        'package_migrations', 'package_definition_owners',
+        'package_definition_owners',
         'releases',
         'connection_requirement',
         'wiring_tombstones'

@@ -629,19 +629,22 @@ async fn apply_as(
     package: &Path,
     digest: &str,
 ) -> anyhow::Result<apply_package::ApplyOutcome> {
-    apply_package::apply_package_schema(ApplyPackageRequest {
-        component_source: wamn_package_control::apply_package::component_source_from_env(None)
-            .unwrap(),
-        changes: wamn_platform_identity::auth_changes::AuthChanges::default(),
-        package: apply_package::PackageRoot {
-            path: package.to_path_buf(),
-            artifact_digest: Some(digest.to_owned()),
+    apply_package::apply_package_schema(
+        ApplyPackageRequest {
+            component_source: wamn_package_control::apply_package::component_source_from_env(None)
+                .unwrap(),
+            changes: wamn_platform_identity::auth_changes::AuthChanges::default(),
+            package: apply_package::PackageRoot {
+                path: package.to_path_buf(),
+                artifact_digest: Some(digest.to_owned()),
+            },
+            database_url: url.to_owned(),
+            org: "package-runner-live".into(),
+            project: "fixture".into(),
+            environment: "dev".into(),
         },
-        database_url: url.to_owned(),
-        org: "package-runner-live".into(),
-        project: "fixture".into(),
-        environment: "dev".into(),
-    })
+        None,
+    )
     .await
 }
 
@@ -652,21 +655,24 @@ async fn apply_for_env_key(
 ) -> anyhow::Result<apply_package::ApplyOutcome> {
     // A release apply takes a verified artifact. The fixture tree stands in
     // for one under a digest of its own bytes.
-    apply_package::apply_package_schema(ApplyPackageRequest {
-        component_source: wamn_package_control::apply_package::component_source_from_env(None)
-            .unwrap(),
-        changes: wamn_platform_identity::auth_changes::AuthChanges::default(),
-        package: wamn_package_control::apply_package::PackageRoot {
-            path: package.to_path_buf(),
-            artifact_digest: Some(
-                wamn_test_infrastructure::fixture_digest::fixture_artifact_digest(package)?,
-            ),
+    apply_package::apply_package_schema(
+        ApplyPackageRequest {
+            component_source: wamn_package_control::apply_package::component_source_from_env(None)
+                .unwrap(),
+            changes: wamn_platform_identity::auth_changes::AuthChanges::default(),
+            package: wamn_package_control::apply_package::PackageRoot {
+                path: package.to_path_buf(),
+                artifact_digest: Some(
+                    wamn_test_infrastructure::fixture_digest::fixture_artifact_digest(package)?,
+                ),
+            },
+            database_url: url.to_owned(),
+            org: env_key.split("--").next().expect("fixture org").to_owned(),
+            project: "fixture".into(),
+            environment: "dev".into(),
         },
-        database_url: url.to_owned(),
-        org: env_key.split("--").next().expect("fixture org").to_owned(),
-        project: "fixture".into(),
-        environment: "dev".into(),
-    })
+        None,
+    )
     .await
 }
 
@@ -1542,6 +1548,7 @@ async fn apply_history_configuration(url: &str, package: &Path) -> anyhow::Resul
             environment: "dev".into(),
         },
         "dev",
+        None,
     )
     .await?;
     Ok(())
@@ -2101,7 +2108,8 @@ async fn explicit_local_schema_applies_pending_sql_and_records_its_source() {
         project: "fixture".into(),
         environment: "dev".into(),
     };
-    let apply_local = || apply_package::apply_local_package_schema(local_request(), ENVIRONMENT);
+    let apply_local =
+        || apply_package::apply_local_package_schema(local_request(), ENVIRONMENT, None);
     let recorded_comment = |hash: &str| {
         let mut comment = wamn_runtime::local_application::parse_local_target_comment(&marker)
             .expect("parse the marker");

@@ -262,7 +262,7 @@ pub fn physical_schema(
 pub fn admit_component(args: AdmitComponentRequest) -> anyhow::Result<ComponentAdmission> {
     physical_schema(&args.package)?;
     let directory = crate::apply_package::read_package_directory(&args.package)?;
-    let package = plan_package_migrations(&directory, None)
+    let package = plan_package_migrations(&directory, None, &[])
         .context("validate strict package directory before component publication")?;
     let package_manifest =
         wamn_catalog::manifest::PackageManifest::from_slice(&directory.manifest_bytes)

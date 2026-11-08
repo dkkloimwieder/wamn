@@ -1945,7 +1945,7 @@ async fn reconcile_local_replica_identity(
     let result = async {
         for root in packages {
             let directory = apply_package::read_package_directory(root)?;
-            let package = wamn_schema_control::plan_package_migrations(&directory, None)
+            let package = wamn_schema_control::plan_package_migrations(&directory, None, &[])
                 .context("derive package model mapping")?;
             let package_id = package.coordinate.package_id();
             let plan = wamn_environment_control::reconcile_replica_identity::reconcile(

@@ -65,6 +65,8 @@ pub struct SchemaApplyArgs {
     pub application: String,
     #[arg(long)]
     pub release: String,
+    #[arg(long)]
+    pub resolve: Option<wamn_package_control::apply_package::MigrationResolution>,
 }
 
 #[derive(Debug, Args)]
@@ -195,6 +197,7 @@ pub async fn run(command: EnvCommand) -> anyhow::Result<()> {
                 &args.application,
                 &args.release,
                 &admin,
+                args.resolve.as_ref(),
             )
             .await?;
             lock.release().await;

@@ -2,7 +2,9 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context as _, ensure};
 use tokio_postgres::{GenericClient, Transaction};
-use wamn_schema_control::{AppliedPackage, MigrationSource, PackageDirectory, RecordedMigration};
+use wamn_schema_control::{
+    AppliedPackage, MigrationOutcome, MigrationSource, PackageDirectory, RecordedMigration,
+};
 
 pub const LOCK_PACKAGE_SQL: &str = "SELECT pg_advisory_xact_lock(hashtextextended(\
      'wamn.package.lineage:' || $1 || ':' || $2, 0))";
@@ -85,7 +87,24 @@ async fn read_package(
     else {
         return Ok(None);
     };
-    let migrations = tx
+    let migrations = read_package_migrations(tx, env_key, package_id).await?;
+    Ok(Some(AppliedPackage {
+        coordinate: wamn_catalog::PackageCoordinate::new(package_id, package.get::<_, &str>(1))
+            .expect("stored package coordinates passed database checks"),
+        artifact_digest: package.get(0),
+        baseline_fingerprint: package.get(3),
+        physical_schema_fingerprint: package.get(2),
+        migrations,
+    }))
+}
+
+/// Read committed files even when the first package installation is unfinished.
+pub async fn read_package_migrations(
+    tx: &impl GenericClient,
+    env_key: &str,
+    package_id: &str,
+) -> anyhow::Result<Vec<RecordedMigration>> {
+    Ok(tx
         .query(
             wamn_schema_control::sql::select_package_migrations_sql(),
             &[&env_key, &package_id],
@@ -98,16 +117,13 @@ async fn read_package(
                 .expect("package migration ordinals are positive integers"),
             relative_path: row.get(1),
             sha256: row.get(2),
+            outcome: match row.get::<_, &str>(3) {
+                "applied" => MigrationOutcome::Applied,
+                "started" => MigrationOutcome::Started,
+                value => unreachable!("database constrains migration outcome: {value}"),
+            },
         })
-        .collect();
-    Ok(Some(AppliedPackage {
-        coordinate: wamn_catalog::PackageCoordinate::new(package_id, package.get::<_, &str>(1))
-            .expect("stored package coordinates passed database checks"),
-        artifact_digest: package.get(0),
-        baseline_fingerprint: package.get(3),
-        physical_schema_fingerprint: package.get(2),
-        migrations,
-    }))
+        .collect())
 }
 
 /// Derive installed SQL identity from this database's project baseline and current package records.

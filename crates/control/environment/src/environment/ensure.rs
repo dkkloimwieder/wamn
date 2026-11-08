@@ -514,6 +514,28 @@ pub async fn ensure_project_database(
         "GRANT CONNECT ON DATABASE {} TO wamn_apply; GRANT wamn_platform TO wamn_db_owner WITH INHERIT TRUE, SET FALSE;",
         wamn_pg_core::quote_ident(url::Url::parse(&project_url)?.path().trim_start_matches('/')),
     )).await?;
+    ensure_package_roles(admin, packages).await?;
+    let request = crate::reconcile_run_plane::ReconcileRunPlaneRequest {
+        system_database_url: platform.system_database_url.clone(),
+        admin_database_url: project_admin.clone(),
+        org: document.org.clone(),
+        project: document.project.clone(),
+        env: document.env.clone(),
+        schema: RUN_SCHEMA.to_owned(),
+        dry_run: false,
+        changes: platform.auth_changes().await?,
+    };
+    crate::reconcile_run_plane::reconcile_run_plane(request)
+        .await
+        .context("reconcile the run plane")?;
+    Ok(project_admin)
+}
+
+/// Prepare only the selected packages' roles through the administrator.
+pub(super) async fn ensure_package_roles(
+    admin: &tokio_postgres::Client,
+    packages: &[wamn_catalog::manifest::PackageManifest],
+) -> anyhow::Result<()> {
     for package in packages {
         admin
             .batch_execute(&wamn_control_provision::sql::ensure_package_owner_role_sql(
@@ -529,20 +551,7 @@ pub async fn ensure_project_database(
             ))
             .await?;
     }
-    let request = crate::reconcile_run_plane::ReconcileRunPlaneRequest {
-        system_database_url: platform.system_database_url.clone(),
-        admin_database_url: project_admin.clone(),
-        org: document.org.clone(),
-        project: document.project.clone(),
-        env: document.env.clone(),
-        schema: RUN_SCHEMA.to_owned(),
-        dry_run: false,
-        changes: platform.auth_changes().await?,
-    };
-    crate::reconcile_run_plane::reconcile_run_plane(request)
-        .await
-        .context("reconcile the run plane")?;
-    Ok(project_admin)
+    Ok(())
 }
 
 /// Prepare replication authority before the admin connection leaves ensure.

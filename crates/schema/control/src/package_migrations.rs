@@ -3,7 +3,7 @@
 //! The effect shell supplies the exact `wamn.json` bytes, every file under the
 //! package-owned `migrations/` directory, and the immutable rows already stored
 //! for the installed package schema. This module validates the complete prefix and
-//! returns one ordered transaction body; it performs no filesystem or database
+//! returns ordered files and their completion records; it performs no filesystem or database
 //! I/O.
 
 use std::collections::BTreeSet;
@@ -36,6 +36,14 @@ pub struct RecordedMigration {
     pub ordinal: u32,
     pub relative_path: String,
     pub sha256: String,
+    pub outcome: MigrationOutcome,
+}
+
+/// Persisted completion state of one immutable migration file.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MigrationOutcome {
+    Applied,
+    Started,
 }
 
 /// Recorded SQL state, independent of the selected executable release.
@@ -86,9 +94,11 @@ pub struct PendingMigration {
     pub ordinal: u32,
     pub relative_path: String,
     pub sha256: String,
+    pub transactional: bool,
+    pub started: bool,
 }
 
-/// Ordered migration statements after registration in the same database transaction.
+/// Ordered pending files and statements for the SQL executor.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PackageMigrationPlan {
     pub coordinate: PackageCoordinate,
@@ -310,6 +320,7 @@ pub fn validate_package_schema_source(
 pub fn plan_package_migrations(
     directory: &PackageDirectory,
     applied: Option<&AppliedPackage>,
+    recorded: &[RecordedMigration],
 ) -> Result<PackageMigrationPlan, PackageMigrationError> {
     let manifest = PackageManifest::from_slice(&directory.manifest_bytes).map_err(|source| {
         PackageMigrationError::with_source(
@@ -348,7 +359,6 @@ pub fn plan_package_migrations(
     } else {
         normalized_migrations(&directory.migrations)?
     };
-    let recorded = applied.map_or(&[][..], |state| state.migrations.as_slice());
     validate_recorded_prefix(&coordinate, recorded, &migrations)?;
 
     let mut models = Vec::with_capacity(manifest.models.len());
@@ -393,13 +403,23 @@ pub fn plan_package_migrations(
         })
         .chain(history_exclusions)
         .collect();
-    let pending_sources = &migrations[recorded.len()..];
+    let completed = recorded
+        .iter()
+        .take_while(|row| row.outcome == MigrationOutcome::Applied)
+        .count();
+    let pending_sources = &migrations[completed..];
     let pending = pending_sources
         .iter()
         .map(|migration| PendingMigration {
             ordinal: migration.ordinal,
             relative_path: migration.source.relative_path.clone(),
             sha256: migration.sha256.clone(),
+            transactional: wamn_catalog::manifest::migration_is_transactional(
+                &migration.source.bytes,
+            ),
+            started: recorded.iter().any(|row| {
+                row.ordinal == migration.ordinal && row.outcome == MigrationOutcome::Started
+            }),
         })
         .collect::<Vec<_>>();
     let statements = transaction_statements(&coordinate, pending_sources)?;
@@ -518,6 +538,13 @@ fn validate_recorded_prefix(
 ) -> Result<(), PackageMigrationError> {
     let mut paths = BTreeSet::new();
     for (index, row) in recorded.iter().enumerate() {
+        if row.outcome == MigrationOutcome::Started && index + 1 != recorded.len() {
+            return Err(PackageMigrationError::new(
+                PackageMigrationErrorType::InvalidDirectory,
+                "an unfinished migration must be the last recorded file",
+            )
+            .at_path(&row.relative_path));
+        }
         if !paths.insert(row.relative_path.as_str())
             || (index > 0 && recorded[index - 1].ordinal == row.ordinal)
         {
@@ -567,6 +594,15 @@ fn validate_recorded_prefix(
                 &migration.sha256,
             ));
         }
+        if row.outcome == MigrationOutcome::Started
+            && wamn_catalog::manifest::migration_is_transactional(&migration.source.bytes)
+        {
+            return Err(PackageMigrationError::new(
+                PackageMigrationErrorType::InvalidDirectory,
+                "a transactional migration cannot have a started outcome",
+            )
+            .at_path(&row.relative_path));
+        }
     }
     Ok(())
 }
@@ -602,8 +638,9 @@ fn record_migration_statement(
     Ok(SqlStatement {
         summary: format!("record {}", migration.source.relative_path),
         sql: "INSERT INTO catalog.package_migrations \
-              (env_key, package_id, package_version, ordinal, relative_path, sha256) \
-              VALUES (NULLIF(current_setting('app.env_key', true), ''), $1, $2, $3, $4, $5)"
+              (env_key, package_id, package_version, ordinal, relative_path, sha256, outcome, applied_at) \
+              VALUES (NULLIF(current_setting('app.env_key', true), ''), $1, $2, $3, $4, $5, $6, \
+                      CASE WHEN $6 = 'applied' THEN now() END)"
             .into(),
         params: vec![
             Value::Text(coordinate.package_id().into()),
@@ -618,6 +655,7 @@ fn record_migration_statement(
             })?),
             Value::Text(migration.source.relative_path.clone()),
             Value::Text(migration.sha256.clone()),
+            Value::Text(if wamn_catalog::manifest::migration_is_transactional(&migration.source.bytes) { "applied" } else { "started" }.into()),
         ],
     })
 }
@@ -693,7 +731,7 @@ mod tests {
             migrations: vec![source("migrations/0001_initial.sql", PINNED_MIGRATION)],
             artifact_digest: Some(ARTIFACT.into()),
         };
-        let plan = plan_package_migrations(&pinned, None).unwrap();
+        let plan = plan_package_migrations(&pinned, None, &[]).unwrap();
 
         assert_eq!(plan.artifact_digest.as_deref(), Some(ARTIFACT));
         assert_eq!(
@@ -704,7 +742,7 @@ mod tests {
 
     #[test]
     fn directory_order_is_derived_and_second_convergence_is_noop() {
-        let first = plan_package_migrations(&directory(), None).unwrap();
+        let first = plan_package_migrations(&directory(), None, &[]).unwrap();
         assert_eq!(
             first.pending[0].relative_path,
             "migrations/0001_initial.sql"
@@ -728,29 +766,32 @@ mod tests {
                     ordinal: migration.ordinal,
                     relative_path: migration.relative_path.clone(),
                     sha256: migration.sha256.clone(),
+                    outcome: MigrationOutcome::Applied,
                 })
                 .collect(),
         };
-        let again = plan_package_migrations(&directory(), Some(&applied)).unwrap();
+        let again =
+            plan_package_migrations(&directory(), Some(&applied), &applied.migrations).unwrap();
         assert!(again.is_noop());
         assert!(again.statements.is_empty());
         let mut executable = directory();
         executable.manifest_bytes = manifest("2.0.0");
         executable.artifact_digest = Some("sha256:another-artifact".into());
         assert!(
-            plan_package_migrations(&executable, Some(&applied))
+            plan_package_migrations(&executable, Some(&applied), &applied.migrations)
                 .unwrap()
                 .is_noop()
         );
         executable
             .migrations
             .push(source("migrations/0003_pending.sql", "SELECT 3;"));
-        let next = plan_package_migrations(&executable, Some(&applied)).unwrap();
+        let next =
+            plan_package_migrations(&executable, Some(&applied), &applied.migrations).unwrap();
         assert_eq!(next.pending.len(), 1);
         assert_eq!(next.pending[0].relative_path, "migrations/0003_pending.sql");
         executable.migrations[1].bytes.push(b' ');
         assert_eq!(
-            plan_package_migrations(&executable, Some(&applied))
+            plan_package_migrations(&executable, Some(&applied), &applied.migrations)
                 .unwrap_err()
                 .error_type(),
             PackageMigrationErrorType::MigrationDrift
@@ -774,7 +815,7 @@ mod tests {
         });
         directory.manifest_bytes = serde_json::to_vec(&manifest).expect("serialize manifest");
 
-        let error = plan_package_migrations(&directory, None)
+        let error = plan_package_migrations(&directory, None, &[])
             .expect_err("package application admitted a private permission");
         assert_eq!(
             error.error_type(),
@@ -785,7 +826,7 @@ mod tests {
 
     #[test]
     fn same_coordinate_other_artifact_is_a_content_conflict_naming_both_digests() {
-        let first = plan_package_migrations(&directory(), None).unwrap();
+        let first = plan_package_migrations(&directory(), None, &[]).unwrap();
         let applied = AppliedPackage {
             coordinate: first.coordinate,
             artifact_digest: Some("sha256:recorded".into()),
@@ -793,7 +834,8 @@ mod tests {
             physical_schema_fingerprint: "sha256:baseline".into(),
             migrations: Vec::new(),
         };
-        let error = plan_package_migrations(&directory(), Some(&applied)).unwrap_err();
+        let error =
+            plan_package_migrations(&directory(), Some(&applied), &applied.migrations).unwrap_err();
         assert_eq!(
             error.error_type(),
             PackageMigrationErrorType::CoordinateContentConflict
@@ -808,7 +850,9 @@ mod tests {
             artifact_digest: None,
             ..applied
         };
-        let error = plan_package_migrations(&directory(), Some(&working_tree)).unwrap_err();
+        let error =
+            plan_package_migrations(&directory(), Some(&working_tree), &working_tree.migrations)
+                .unwrap_err();
         assert_eq!(
             error.error_type(),
             PackageMigrationErrorType::CoordinateWithoutArtifact
@@ -826,7 +870,7 @@ mod tests {
         gap.migrations
             .retain(|migration| migration.relative_path == "migrations/0002_add_tag.sql");
         assert_eq!(
-            plan_package_migrations(&gap, None)
+            plan_package_migrations(&gap, None, &[])
                 .unwrap_err()
                 .error_type(),
             PackageMigrationErrorType::Gap
@@ -837,13 +881,13 @@ mod tests {
             .migrations
             .push(source("migrations/0001_other.sql", "SELECT 3;"));
         assert_eq!(
-            plan_package_migrations(&duplicate, None)
+            plan_package_migrations(&duplicate, None, &[])
                 .unwrap_err()
                 .error_type(),
             PackageMigrationErrorType::Duplicate
         );
 
-        let first = plan_package_migrations(&directory(), None).unwrap();
+        let first = plan_package_migrations(&directory(), None, &[]).unwrap();
         let applied = AppliedPackage {
             coordinate: first.coordinate,
             artifact_digest: first.artifact_digest,
@@ -853,9 +897,11 @@ mod tests {
                 ordinal: 1,
                 relative_path: "migrations/0001_initial.sql".into(),
                 sha256: "sha256:changed".into(),
+                outcome: MigrationOutcome::Applied,
             }],
         };
-        let error = plan_package_migrations(&directory(), Some(&applied)).unwrap_err();
+        let error =
+            plan_package_migrations(&directory(), Some(&applied), &applied.migrations).unwrap_err();
         assert_eq!(
             error.error_type(),
             PackageMigrationErrorType::MigrationDrift
@@ -864,7 +910,7 @@ mod tests {
         assert_eq!(error.recorded_hash(), Some("sha256:changed"));
         assert!(error.actual_hash().unwrap().starts_with("sha256:"));
 
-        let first = plan_package_migrations(&directory(), None).unwrap();
+        let first = plan_package_migrations(&directory(), None, &[]).unwrap();
         for (migrations, expected) in [
             (
                 vec![
@@ -872,11 +918,13 @@ mod tests {
                         ordinal: 1,
                         relative_path: "migrations/0001_initial.sql".into(),
                         sha256: first.pending[0].sha256.clone(),
+                        outcome: MigrationOutcome::Applied,
                     },
                     RecordedMigration {
                         ordinal: 1,
                         relative_path: "migrations/0002_add_tag.sql".into(),
                         sha256: first.pending[1].sha256.clone(),
+                        outcome: MigrationOutcome::Applied,
                     },
                 ],
                 PackageMigrationErrorType::Duplicate,
@@ -886,6 +934,7 @@ mod tests {
                     ordinal: 2,
                     relative_path: "migrations/0002_add_tag.sql".into(),
                     sha256: first.pending[1].sha256.clone(),
+                    outcome: MigrationOutcome::Applied,
                 }],
                 PackageMigrationErrorType::Gap,
             ),
@@ -898,7 +947,7 @@ mod tests {
                 migrations,
             };
             assert_eq!(
-                plan_package_migrations(&directory(), Some(&applied))
+                plan_package_migrations(&directory(), Some(&applied), &applied.migrations)
                     .unwrap_err()
                     .error_type(),
                 expected
@@ -909,7 +958,7 @@ mod tests {
     /// Spec test 13: a logged relation derives the CDC exclusion of its history table.
     #[test]
     fn a_logged_relation_derives_the_cdc_exclusion_of_its_history_table() {
-        let unlogged = plan_package_migrations(&directory(), None).unwrap();
+        let unlogged = plan_package_migrations(&directory(), None, &[]).unwrap();
         assert_eq!(unlogged.cdc_excluded_relations, Vec::new());
 
         let mut logged = directory();
@@ -917,7 +966,7 @@ mod tests {
         logged.manifest_bytes = manifest
             .replacen(r#""retention":"none""#, r#""retention":"P30D""#, 1)
             .into_bytes();
-        let plan = plan_package_migrations(&logged, None).unwrap();
+        let plan = plan_package_migrations(&logged, None, &[]).unwrap();
         assert_eq!(
             plan.cdc_excluded_relations,
             [CdcExcludedRelation {
@@ -939,7 +988,7 @@ mod tests {
             let manifest = String::from_utf8(refused.manifest_bytes).expect("manifest is UTF-8");
             refused.manifest_bytes = manifest.replacen(valid, invalid, 1).into_bytes();
 
-            let error = plan_package_migrations(&refused, None)
+            let error = plan_package_migrations(&refused, None, &[])
                 .expect_err("noncanonical model relation identity refuses");
             assert_eq!(
                 error.error_type(),

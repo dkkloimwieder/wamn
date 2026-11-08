@@ -460,7 +460,15 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
         sql::schema::state(&platform, &document).await?.packages,
         state.packages
     );
-    sql::schema::apply(&platform, &document, "b", b.digest().as_str(), system.url()).await?;
+    sql::schema::apply(
+        &platform,
+        &document,
+        "b",
+        b.digest().as_str(),
+        system.url(),
+        None,
+    )
+    .await?;
     let installed = sql::schema::state(&platform, &document).await?;
     for (id, package) in &diff.packages {
         assert_eq!(
@@ -474,6 +482,22 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
     let mut observer_url = admin_url;
     observer_url.set_path(&database_name);
     let observer = connect(observer_url.as_str()).await?;
+    // Explicit SQL application grants the new package and retains the existing one.
+    for package in [&old_package, &b_package] {
+        for model in package.models.values() {
+            let relation = format!("{}.{}", model.schema, model.table);
+            assert!(
+                observer
+                    .query_one(
+                        "SELECT has_column_privilege('wamn_app', $1, 'value', 'SELECT')",
+                        &[&relation],
+                    )
+                    .await?
+                    .get::<_, bool>(0)
+            );
+        }
+    }
+
     observer
         .batch_execute(&wamn_control_provision::sql::ensure_workload_acl_role_sql(
             wamn_control_provision::WorkloadRoleFamily::ExecutorPlatform,

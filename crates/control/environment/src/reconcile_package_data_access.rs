@@ -280,7 +280,7 @@ fn read_presented_packages(roots: &[PackageRoot]) -> anyhow::Result<Vec<Presente
     let mut package_ids = BTreeSet::new();
     for package_root in roots {
         let directory = wamn_package_control::apply_package::read_package_root(package_root)?;
-        let plan = plan_package_migrations(&directory, None)
+        let plan = plan_package_migrations(&directory, None, &[])
             .context("validate package directory before data-access reconciliation")?;
         let schemas = data_access_schemas(&directory.manifest_bytes)
             .context("derive package data-access schema set")?;
@@ -839,7 +839,7 @@ mod tests {
         assert_eq!(selected.overlay.canonical_bytes(), overlay_bytes);
         validate_data_access_contribution(&selected.overlay, &selected.directory.manifest_bytes)
             .unwrap();
-        plan_package_migrations(&selected.directory, None).unwrap();
+        plan_package_migrations(&selected.directory, None, &[]).unwrap();
     }
 
     #[test]

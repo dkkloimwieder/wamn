@@ -7,8 +7,8 @@ INSERT INTO platform."user" (id, type, email, display_name) VALUES
 INSERT INTO catalog.packages (physical_schema_fingerprint, env_key, package_id, package_version)
 VALUES ('sha256:' || repeat('c', 64), 'history', 'fixture', '1');
 INSERT INTO catalog.package_migrations
-    (env_key, package_id, package_version, ordinal, relative_path, sha256)
-VALUES ('history', 'fixture', '1', 1, 'migrations/0001_initial.sql', 'sha256:' || repeat('a', 64));
+    (env_key, package_id, package_version, ordinal, relative_path, sha256, outcome, applied_at)
+VALUES ('history', 'fixture', '1', 1, 'migrations/0001_initial.sql', 'sha256:' || repeat('a', 64), 'applied', now());
 INSERT INTO catalog.package_definition_owners
     (env_key, schema_name, relation_name, definition_type, definition_name, owner_package_id)
 VALUES ('history', 'fixture', 'item', 'relation', 'item', 'fixture');

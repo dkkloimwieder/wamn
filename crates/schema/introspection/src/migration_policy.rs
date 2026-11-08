@@ -208,8 +208,33 @@ pub fn validate_migration_bytes_for_schemas(
 ) -> Result<(), MigrationPolicyError> {
     let path = path.as_ref();
     let statements = artifact_statements(path, bytes, configured_schemas)?;
+    let transactional = wamn_catalog::manifest::migration_is_transactional(bytes);
+    if !transactional && statements.len() != 1 {
+        return Err(policy_error(
+            MigrationPolicyErrorType::NontransactionalOperation,
+            path,
+            None,
+            "a nontransactional file must contain exactly one SQL statement",
+        ));
+    }
 
     for (index, tokens) in statements.iter().enumerate() {
+        if !transactional && words(tokens, 0, &["create", "index", "concurrently"]) {
+            let plain = tokens[..2]
+                .iter()
+                .chain(&tokens[3..])
+                .copied()
+                .collect::<Vec<_>>();
+            validate_create_index(
+                &plain,
+                &statements[..index],
+                earlier,
+                configured_schemas,
+                path,
+                index + 1,
+            )?;
+            continue;
+        }
         validate_statement(
             tokens,
             &statements[..index],

@@ -315,9 +315,8 @@ pub(super) async fn validate_definition_ownership_before_apply(
     mutations: &[&PlannedDefinitionMutation],
 ) -> anyhow::Result<()> {
     validate_manifest_definition_owners(manifest)?;
-    // One apply runs every pending migration in one transaction and records the
-    // definition owners after them. A stream that creates a relation and then
-    // adds to it therefore reads the owner this apply is about to record.
+    // A file can create a relation and then add to it before its owners are
+    // recorded. Later files read the owners already recorded by earlier files.
     let mut created = Vec::new();
     for planned in mutations {
         let mutation = &planned.mutation;

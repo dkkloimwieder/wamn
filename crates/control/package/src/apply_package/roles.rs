@@ -2,7 +2,7 @@ pub(super) mod plan;
 use plan::foreign_key_tables;
 
 use anyhow::{Context as _, ensure};
-use tokio_postgres::Transaction;
+use tokio_postgres::{GenericClient, Transaction};
 use wamn_control_provision::package_owner_role;
 
 const SELECT_ROLE_CONTEXT_SQL: &str = "SELECT current_user::text, session_user::text";
@@ -17,14 +17,14 @@ pub(super) async fn set_package_owner_role(
         .with_context(|| format!("select owner role of package {package}"))
 }
 
-pub(super) async fn reset_host_role(tx: &Transaction<'_>) -> anyhow::Result<()> {
+pub(super) async fn reset_host_role(tx: &impl GenericClient) -> anyhow::Result<()> {
     tx.batch_execute("RESET ROLE")
         .await
         .context("reset package migration authority before trusted writes")?;
     assert_host_role(tx).await
 }
 
-pub(super) async fn assert_host_role(tx: &Transaction<'_>) -> anyhow::Result<()> {
+pub(super) async fn assert_host_role(tx: &impl GenericClient) -> anyhow::Result<()> {
     let row = tx
         .query_one(SELECT_ROLE_CONTEXT_SQL, &[])
         .await
@@ -42,13 +42,19 @@ pub(super) async fn assert_host_role(tx: &Transaction<'_>) -> anyhow::Result<()>
 /// a base relation only after the migration policy checks its field ownership.
 /// Exact byte slices retain the authored statement and its literals.
 pub(super) async fn execute_migration(
-    tx: &Transaction<'_>,
+    tx: &impl GenericClient,
     manifest: &wamn_catalog::manifest::PackageManifest,
     statement: &wamn_schema_control::SqlStatement,
+    transactional: bool,
 ) -> anyhow::Result<()> {
     let parsed = pg_query::parse(&statement.sql).context("parse admitted package migration")?;
     for raw in &parsed.protobuf.stmts {
         let owner = wamn_schema_control::physical_schema::migration_owner(manifest, raw);
+        ensure!(
+            transactional || owner == manifest.package.id,
+            "nontransactional SQL must execute as its own package: {}",
+            manifest.package.id
+        );
         // REFERENCES is needed only while an admitted foreign key is created.
         // Keep existing grants and remove each temporary grant before commit.
         let mut references = std::collections::BTreeSet::new();
@@ -65,6 +71,10 @@ pub(super) async fn execute_migration(
                 .await?
                 .get::<_, bool>(0);
         if provenance_usage {
+            ensure!(
+                transactional,
+                "nontransactional SQL cannot borrow platform REFERENCES privileges"
+            );
             tx.batch_execute(&format!(
                 "GRANT USAGE ON SCHEMA platform TO {}",
                 wamn_pg_core::quote_ident(&role)
@@ -77,6 +87,10 @@ pub(super) async fn execute_migration(
                 &[&role, &table],
             ).await?.get(0);
             if !allowed {
+                ensure!(
+                    transactional,
+                    "nontransactional SQL cannot borrow REFERENCES privileges on {table}"
+                );
                 tx.batch_execute(&format!(
                     "GRANT REFERENCES ON TABLE {table} TO {}",
                     wamn_pg_core::quote_ident(&role)
@@ -85,31 +99,42 @@ pub(super) async fn execute_migration(
                 granted.push(table);
             }
         }
-        set_package_owner_role(tx, owner).await?;
+        let quoted_role = wamn_pg_core::quote_ident(&role);
+        let scope = if transactional { "LOCAL " } else { "" };
+        tx.batch_execute(&format!("SET {scope}ROLE {quoted_role}"))
+            .await
+            .with_context(|| format!("select owner role of package {owner}"))?;
         let start = usize::try_from(raw.stmt_location)?;
         let end = if raw.stmt_len == 0 {
             statement.sql.len()
         } else {
             start + usize::try_from(raw.stmt_len)?
         };
-        tx.batch_execute(&statement.sql[start..end])
+        let result = tx
+            .batch_execute(&statement.sql[start..end])
             .await
-            .with_context(|| format!("apply {} as package {owner}", statement.summary))?;
-        reset_host_role(tx).await?;
-        if provenance_usage {
-            tx.batch_execute(&format!(
-                "REVOKE USAGE ON SCHEMA platform FROM {}",
-                wamn_pg_core::quote_ident(&role)
-            ))
-            .await?;
+            .with_context(|| format!("apply {} as package {owner}", statement.summary));
+        let cleanup = async {
+            reset_host_role(tx).await?;
+            if provenance_usage {
+                tx.batch_execute(&format!(
+                    "REVOKE USAGE ON SCHEMA platform FROM {}",
+                    wamn_pg_core::quote_ident(&role)
+                ))
+                .await?;
+            }
+            for table in granted {
+                tx.batch_execute(&format!(
+                    "REVOKE REFERENCES ON TABLE {table} FROM {}",
+                    wamn_pg_core::quote_ident(&role)
+                ))
+                .await?;
+            }
+            Ok::<_, anyhow::Error>(())
         }
-        for table in granted {
-            tx.batch_execute(&format!(
-                "REVOKE REFERENCES ON TABLE {table} FROM {}",
-                wamn_pg_core::quote_ident(&role)
-            ))
-            .await?;
-        }
+        .await;
+        result?;
+        cleanup?;
     }
     Ok(())
 }

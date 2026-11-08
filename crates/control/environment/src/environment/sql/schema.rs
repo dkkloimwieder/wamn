@@ -57,6 +57,7 @@ pub struct PackageDiff {
     pub pending: Vec<String>,
     pub edited_applied: Vec<EditedMigration>,
     pub migration_error: Option<String>,
+    pub uncertain: Option<String>,
 }
 
 /// Exact schema sources required to reconstruct the complete environment.
@@ -104,7 +105,18 @@ pub struct State {
     pub project_baseline: Option<String>,
     pub installed_environment: Option<String>,
     pub packages: BTreeMap<String, AppliedPackage>,
+    pub incomplete: BTreeMap<String, Vec<wamn_schema_control::RecordedMigration>>,
     pub unknowns: Vec<String>,
+}
+
+impl State {
+    pub fn migration_records(&self, package: &str) -> &[wamn_schema_control::RecordedMigration] {
+        self.packages
+            .get(package)
+            .map(|state| state.migrations.as_slice())
+            .or_else(|| self.incomplete.get(package).map(Vec::as_slice))
+            .unwrap_or_default()
+    }
 }
 
 /// Read records without provisioning an absent target or writing schema state.
@@ -131,6 +143,8 @@ pub async fn state(platform: &Platform, document: &EnvironmentDocument) -> anyho
             state.project_baseline = records.project_baseline;
             state.initialization_identity = records.initialization_identity;
             state.packages = records.packages;
+            state.incomplete = records.incomplete;
+            state.unknowns = records.unknowns;
             state.installed_environment = records.installed_environment;
         }
         Err(error) => state
@@ -161,24 +175,47 @@ pub async fn database_state(database_url: &str, env_key: &str) -> anyhow::Result
     let database_instance: String = baseline.get(2);
     let baseline: String = baseline.get(0);
     let mut packages = BTreeMap::new();
+    let mut incomplete = BTreeMap::new();
     for row in tx
         .query(
-            "SELECT package_id FROM catalog.packages WHERE env_key=$1",
+            "SELECT package_id FROM catalog.packages WHERE env_key=$1 UNION SELECT package_id FROM catalog.package_migrations WHERE env_key=$1",
             &[&env_key],
         )
         .await?
     {
         let id: String = row.get(0);
-        let applied = apply_package::read_applied_package(&tx, env_key, &id)
-            .await?
-            .context("installed schema record disappeared")?;
-        packages.insert(id, applied);
+        if let Some(applied) = apply_package::read_applied_package(&tx, env_key, &id).await? {
+            packages.insert(id, applied);
+        } else {
+            let records = apply_package::read_package_migrations(&tx, env_key, &id).await?;
+            incomplete.insert(id, records);
+        }
     }
     let fingerprint = apply_package::installed_environment_fingerprint(&tx, env_key).await?;
     tx.commit().await?;
+    let mut unknowns = Vec::new();
+    for (id, files) in packages
+        .iter()
+        .map(|(id, state)| (id, &state.migrations))
+        .chain(incomplete.iter())
+    {
+        for file in files
+            .iter()
+            .filter(|file| file.outcome == wamn_schema_control::MigrationOutcome::Started)
+        {
+            unknowns.push(format!("package {id}: migration {} has an uncertain outcome; inspect its effects and use --resolve {}=applied|retry", file.relative_path, file.relative_path));
+        }
+    }
+    for id in incomplete.keys() {
+        unknowns.push(format!(
+            "package {id} has an unfinished schema installation"
+        ));
+    }
     Ok(State {
         project_baseline: Some(baseline),
         packages,
+        incomplete,
+        unknowns,
         installed_environment: Some(fingerprint),
         initialization_identity: Some(initialization_identity),
         database_instance: Some(database_instance),
@@ -280,14 +317,17 @@ pub fn plan(
         })
         .collect::<BTreeMap<_, _>>();
     for candidate in candidates {
-        let complete = plan_package_migrations(&candidate.directory, None)?;
+        let complete = plan_package_migrations(&candidate.directory, None, &[])?;
         let id = complete.coordinate.package_id();
         ensure!(
             !packages.contains_key(id),
             "schema candidate repeats package {id}"
         );
         let applied = state.packages.get(id);
-        packages.insert(id.to_owned(), package_diff(candidate, applied, &complete));
+        packages.insert(
+            id.to_owned(),
+            package_diff(candidate, applied, state.migration_records(id), &complete),
+        );
         reset_sources.insert(
             id.to_owned(),
             SchemaSource {
@@ -302,6 +342,13 @@ pub fn plan(
     ensure!(refusals.is_empty(), "{}", refusals.join("; "));
     let mut affected_applications = BTreeSet::from([application.to_owned()]);
     let mut missing_reset_sources = BTreeSet::new();
+    missing_reset_sources.extend(
+        state
+            .incomplete
+            .keys()
+            .filter(|id| !packages.contains_key(*id))
+            .cloned(),
+    );
     for (owner, selection) in &document.applications {
         if selection.current != DeclaredRelease::None {
             affected_applications.insert(owner.clone());
@@ -315,6 +362,9 @@ pub fn plan(
         }
     }
     let mut unknowns = state.unknowns.clone();
+    if packages.values().any(|package| !package.pending.is_empty()) {
+        unknowns.push(format!("pending authored SQL for {application} can affect its consumers; running code compatibility is not inspected"));
+    }
     for id in reset_sources.keys() {
         let owners = document
             .applications
@@ -364,9 +414,9 @@ pub fn plan(
 fn package_diff(
     candidate: &Candidate,
     applied: Option<&AppliedPackage>,
+    recorded: &[wamn_schema_control::RecordedMigration],
     complete: &wamn_schema_control::PackageMigrationPlan,
 ) -> PackageDiff {
-    let recorded = applied.map_or(&[][..], |applied| applied.migrations.as_slice());
     let mut edited_applied = Vec::new();
     for file in recorded {
         let presented = complete.pending.iter().find(|presented| {
@@ -386,7 +436,7 @@ fn package_diff(
         .filter(|file| !recorded.iter().any(|record| record.ordinal == file.ordinal))
         .map(|file| file.relative_path.clone())
         .collect();
-    let migration_error = plan_package_migrations(&candidate.directory, applied)
+    let migration_error = plan_package_migrations(&candidate.directory, applied, recorded)
         .err()
         .map(|error| error.to_string());
     PackageDiff {
@@ -397,6 +447,10 @@ fn package_diff(
         pending,
         edited_applied,
         migration_error,
+        uncertain: recorded
+            .iter()
+            .find(|file| file.outcome == wamn_schema_control::MigrationOutcome::Started)
+            .map(|file| file.relative_path.clone()),
     }
 }
 
@@ -481,7 +535,7 @@ pub fn validate_candidates(
             );
         }
         // Includes filename/checksum validation before mutation. Ownership remains with apply-package.
-        wamn_schema_control::plan_package_migrations(&candidate.directory, None)?;
+        wamn_schema_control::plan_package_migrations(&candidate.directory, None, &[])?;
         packages.push(manifest);
     }
     ensure!(
@@ -512,6 +566,7 @@ pub async fn apply(
     application: &str,
     release: &str,
     admin_url: &str,
+    resolution: Option<&apply_package::MigrationResolution>,
 ) -> anyhow::Result<()> {
     let (release, candidates) =
         release_candidates(platform, document, application, Some(release)).await?;
@@ -524,6 +579,10 @@ pub async fn apply(
         state.unknowns.join("; ")
     );
     if diff.requires_reset() {
+        ensure!(
+            resolution.is_none(),
+            "resolve uncertain SQL in migrate mode before a reset"
+        );
         ensure!(
             diff.disposable == Some(true),
             "database {:?} is not recorded as disposable",
@@ -574,23 +633,46 @@ pub async fn apply(
             == state.database_instance.as_deref().unwrap_or_default(),
         "environment database changed during schema preparation"
     );
-    if diff
-        .packages
-        .values()
-        .any(|package| package.installed.is_none())
+    let resolution_id = apply_package::resolution_package(
+        resolution,
+        manifests.iter().map(|manifest| {
+            (
+                manifest.package.id.as_str(),
+                state.migration_records(&manifest.package.id),
+            )
+        }),
+    )?;
+    if manifests
+        .iter()
+        .any(|manifest| !state.packages.contains_key(&manifest.package.id))
     {
-        let mut initialization = analyse::select_application(document, Some(application))?;
-        initialization
-            .applications
-            .get_mut(application)
-            .expect("selected application")
-            .current = DeclaredRelease::Digest(
-            diff.release
-                .as_ref()
-                .expect("selected schema release")
-                .clone(),
+        let admin = wamn_package_control::database::connect(admin_url).await?;
+        super::super::ensure::ensure_package_roles(&admin, &manifests).await?;
+        let selected = analyse::select_application(document, Some(application))?;
+        let release = analyse::pull_release_manifest(
+            platform,
+            diff.release.as_deref().expect("selected schema release"),
+        )
+        .await?;
+        let env_key = wamn_control_provision::project_env_key(
+            &document.org,
+            &document.project,
+            &document.env,
         );
-        super::initialize(platform, &initialization, admin_url, Some(application)).await?;
+        stage::materialize_application_principals(
+            &platform.system_database_url,
+            &url,
+            &env_key,
+            &release,
+            &manifests,
+            &platform.auth_changes().await?,
+        )
+        .await?;
+        stage::create_number_sequences(
+            &url,
+            &stage::sequence_defaults(&selected.membership(), manifests.iter())?,
+        )
+        .await?;
     }
     let publisher = platform.auth_changes().await?;
     let mut candidates = candidates.into_iter().map(Some).collect::<Vec<_>>();
@@ -600,17 +682,21 @@ pub async fn apply(
         if package.installed.as_ref() == Some(&package.candidate) && package.pending.is_empty() {
             continue;
         }
-        apply_package::apply_package_schema(apply_package::ApplyPackageRequest {
-            component_source: platform.component_source()?,
-            package: candidate.root,
-            changes: publisher.clone(),
-            database_url: url.clone(),
-            org: document.org.clone(),
-            project: document.project.clone(),
-            environment: document.env.clone(),
-        })
+        apply_package::apply_package_schema(
+            apply_package::ApplyPackageRequest {
+                component_source: platform.component_source()?,
+                package: candidate.root,
+                changes: publisher.clone(),
+                database_url: url.clone(),
+                org: document.org.clone(),
+                project: document.project.clone(),
+                environment: document.env.clone(),
+            },
+            resolution.filter(|_| resolution_id == Some(manifests[index].package.id.as_str())),
+        )
         .await?;
     }
+    stage::reconcile_installed_sql_grants(platform, document, &url).await?;
     Ok(())
 }
 
@@ -711,7 +797,7 @@ mod tests {
     }
 
     fn applied(candidate: &Candidate) -> AppliedPackage {
-        let plan = plan_package_migrations(&candidate.directory, None).unwrap();
+        let plan = plan_package_migrations(&candidate.directory, None, &[]).unwrap();
         AppliedPackage {
             coordinate: plan.coordinate,
             artifact_digest: plan.artifact_digest,
@@ -724,6 +810,7 @@ mod tests {
                     ordinal: file.ordinal,
                     relative_path: file.relative_path,
                     sha256: file.sha256,
+                    outcome: wamn_schema_control::MigrationOutcome::Applied,
                 })
                 .collect(),
         }
@@ -741,6 +828,30 @@ mod tests {
         }"#,
         )
         .unwrap()
+    }
+
+    #[test]
+    fn unfinished_first_installation_reports_its_uncertain_file() {
+        let mut candidate = candidate("alpha", "1.0.0");
+        candidate.directory.migrations[0].bytes = b"-- wamn:no-transaction\nSELECT 1;".to_vec();
+        let mut records = applied(&candidate).migrations;
+        records[0].outcome = wamn_schema_control::MigrationOutcome::Started;
+        let state = State {
+            incomplete: BTreeMap::from([("alpha".into(), records)]),
+            ..State::default()
+        };
+        let diff = plan(&document(), "alpha", None, &[candidate], &state).unwrap();
+        let package = &diff.packages["alpha"];
+        assert!(package.installed.is_none());
+        assert!(package.migration_error.is_none());
+        assert_eq!(
+            package.uncertain.as_deref(),
+            Some(state.migration_records("alpha")[0].relative_path.as_str())
+        );
+        assert!(
+            apply_package::resolution_package(None, [("alpha", state.migration_records("alpha"))])
+                .is_err()
+        );
     }
 
     #[test]
@@ -910,8 +1021,8 @@ mod tests {
             relative_path: "migrations/0002_data.sql".into(),
             bytes: b"SELECT 2;".to_vec(),
         });
-        let complete = plan_package_migrations(&next.directory, None).unwrap();
-        let diff = package_diff(&next, Some(&installed), &complete);
+        let complete = plan_package_migrations(&next.directory, None, &[]).unwrap();
+        let diff = package_diff(&next, Some(&installed), &installed.migrations, &complete);
         assert_eq!(
             diff.pending,
             complete.pending[installed.migrations.len()..]

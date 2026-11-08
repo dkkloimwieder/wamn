@@ -230,10 +230,10 @@ mod tests {
             let Command::Schema(command) = command else {
                 panic!("schema")
             };
-            let (wamn_ctl::schema_verbs::SchemaCommand::Diff(args)
-            | wamn_ctl::schema_verbs::SchemaCommand::Apply(args)) = command
-            else {
-                panic!("schema input");
+            let args = match command {
+                wamn_ctl::schema_verbs::SchemaCommand::Diff(args) => args,
+                wamn_ctl::schema_verbs::SchemaCommand::Apply(args) => args.schema,
+                _ => panic!("schema input"),
             };
             assert_eq!(args.application, "orders");
             assert_eq!(args.env, std::path::Path::new("environment.k"));
@@ -244,6 +244,28 @@ mod tests {
                     .is_ok()
             );
         }
+        let Command::Schema(wamn_ctl::schema_verbs::SchemaCommand::Apply(args)) =
+            Cli::try_parse_from([
+                "wamn",
+                "schema",
+                "apply",
+                "orders",
+                "--env",
+                "environment.k",
+                "--resolve",
+                "migrations/0002_index.sql=retry",
+            ])
+            .unwrap()
+            .command
+        else {
+            panic!("schema apply")
+        };
+        let resolution = args.resolve.unwrap();
+        assert_eq!(resolution.path, "migrations/0002_index.sql");
+        assert_eq!(
+            resolution.action,
+            wamn_package_control::apply_package::Resolution::Retry
+        );
         let Command::Schema(wamn_ctl::schema_verbs::SchemaCommand::Publish(args)) =
             Cli::try_parse_from([
                 "wamn",

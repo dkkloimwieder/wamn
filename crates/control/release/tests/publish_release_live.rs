@@ -6,8 +6,8 @@ use wamn_test_infrastructure::locked_database;
 const ENV_KEY: &str = "publish-release-live";
 const INSERT_MIGRATION_SQL: &str = "\
 INSERT INTO catalog.package_migrations (\
-       env_key, package_id, package_version, ordinal, relative_path, sha256\
-     ) VALUES ($1, $2, $3, $4, $5, $6)";
+       env_key, package_id, package_version, ordinal, relative_path, sha256, outcome, applied_at\
+     ) VALUES ($1, $2, $3, $4, $5, $6, 'applied', now())";
 async fn connect(url: &str) -> Client {
     let (client, connection) = tokio_postgres::connect(url, NoTls)
         .await
