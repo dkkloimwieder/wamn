@@ -1301,6 +1301,22 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
     candidate_admin.batch_execute("DROP EVENT TRIGGER interrupt_beta; INSERT INTO a.data(id,value) VALUES (123,'committed-before-retry')").await?;
     sql::reset::initialize(&platform, &document, system.url()).await?;
     sql::reset::initialize(&platform, &document, system.url()).await?;
+    // SQL restoration uses the installed substrate image. Credential grants
+    // belong to reconnect and cannot depend on that image's control code.
+    for (url, _, _) in &credential_checks {
+        let error = connect(url)
+            .await
+            .err()
+            .context("credential still needs reconnection")?;
+        assert_eq!(
+            error
+                .downcast_ref::<tokio_postgres::Error>()
+                .and_then(tokio_postgres::Error::code),
+            Some(&tokio_postgres::error::SqlState::INSUFFICIENT_PRIVILEGE)
+        );
+    }
+    ensure::restore_project_database_access(&platform, &document, project_admin_url.as_str())
+        .await?;
     for (url, family, expected_grants) in &credential_checks {
         let workload = connect(url).await?;
         assert!(

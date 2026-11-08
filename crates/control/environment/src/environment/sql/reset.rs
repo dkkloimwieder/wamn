@@ -366,7 +366,6 @@ pub async fn initialize(
         )
         .await?;
     }
-    ensure::restore_project_database_access(platform, document, target_admin.as_str()).await?;
     Ok(())
 }
 
@@ -729,6 +728,9 @@ async fn reconnect(
     let admin_url = std::env::var("WAMN_SYSTEM_ADMIN_URL").context("reset administrator URL")?;
     let mut project_admin = url::Url::parse(&admin_url)?;
     project_admin.set_path(&name);
+    // The installed SQL image owns the substrate. Reconnect uses the current
+    // credential owner even when that image predates credential restoration.
+    ensure::restore_project_database_access(platform, document, project_admin.as_str()).await?;
     ensure::prepare_cdc(
         platform,
         document,

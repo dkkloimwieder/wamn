@@ -545,7 +545,7 @@ pub async fn ensure_project_database(
 /// # Errors
 ///
 /// Returns an error if a credential has drifted or a grant cannot be restored.
-pub(super) async fn restore_project_database_access(
+pub async fn restore_project_database_access(
     platform: &Platform,
     document: &EnvironmentDocument,
     project_admin: &str,
