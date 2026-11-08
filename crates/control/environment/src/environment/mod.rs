@@ -361,16 +361,23 @@ async fn apply_selection(
         }
         document.select_release(application, change, &applied)?;
         if let document::SelectionChange::Deploy(release) = change {
-            let pending = crate::provision_project_env::registry::pending_database(
-                lock.client(),
-                &before.triple(),
-            )
-            .await?;
-            let reset = if pending.is_some() {
-                // The project database can be absent during a retry. Its pinned inputs own recovery.
-                let disposable = analyse::read_row(lock.client(), &before)
+            let row = analyse::read_row(lock.client(), &before).await?;
+            let pending = match &row {
+                // A first install has no recorded environment and nothing to reset.
+                None => None,
+                Some(_) => {
+                    crate::provision_project_env::registry::pending_database(
+                        lock.client(),
+                        &before.triple(),
+                    )
                     .await?
-                    .map(|row| row.disposable);
+                }
+            };
+            let reset = if row.is_none() {
+                false
+            } else if pending.is_some() {
+                // The project database can be absent during a retry. Its pinned inputs own recovery.
+                let disposable = row.as_ref().map(|row| row.disposable);
                 document.schema_mode(disposable) == document::SchemaMode::Reset
                     && disposable == Some(true)
             } else {
