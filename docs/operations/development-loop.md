@@ -2,7 +2,7 @@
 
 The local developer loop builds components and loads them from files.
 It keeps the application database for most saved changes.
-When the package structure changes, it recreates that database.
+In `reset` mode, a changed SQL recipe recreates the recorded disposable database.
 Local saves do not publish components or release manifests to a registry.
 [Building](building.md) gives the required build commands.
 
@@ -230,14 +230,15 @@ The test also rejects duplicate environment names and unused exceptions. It cont
 
 The running loop holds a lease, an exclusive claim on its application database.
 A second loop or reset command cannot take that target while the lease remains active.
-The first run creates the target from the environment template.
-After each successful introspection, the loop records the schema digests and introspected catalogs beside its local artifacts.
-The schema digest covers generation inputs except the package-local `query/` tree ([building](building.md#wamn-build)).
-A restarted developer process keeps the target, unless a change below recreates it.
-It also reuses the catalogs when the recorded schema digests match the current schema inputs.
+The loop starts from the target that `dev up` stamps.
+After successful introspection, the loop caches the physical fingerprints and catalogs beside its local artifacts.
+The loop compares the physical SQL fingerprint with the installed package records.
+The fingerprint identifies the complete SQL recipe, including generated definitions and their execution owners.
+Code, query, web, and package-version changes preserve rows when the SQL recipe stays unchanged.
+A missing local catalog cache causes another database read, without authorizing a reset.
+The loop reads `schema.mode` from the existing `environment.k` beside `dev.json`.
+An omitted mode selects `reset` only when the registry records the environment as disposable.
 
-A change to schema inputs runs Migrate, Introspect and Generate again on the kept target.
-An edit under `query/` runs Generate and keeps Migrate and existing introspection results.
 Cargo controls which selected components need compilation.
 Generate runs the generation steps of [`wamn build`](building.md#wamn-build) for each changed package, with base packages first.
 Each build describes its statements against its own fresh database on the server of the target database, and it writes `build.json` into the build output.
@@ -255,7 +256,6 @@ The generation digest excludes only package-local `component/`, `data/`, and `we
 It retains the manifest, SQL, migrations, shared WIT, platform trees, lock file, and generator identity.
 Migrate reuses results when schema inputs match, and Introspect reuses existing catalogs.
 Generate, ACL, and SQLx preparation reuse results when generation inputs match.
-The schema digest also covers the generator identity and fingerprint.
 The build record stores no schema digest.
 Source edits in the excluded trees run Build for that package and its dependent overlays.
 Build refreshes the full digest in the same `build.json`.
@@ -263,26 +263,38 @@ Admission and publication still refuse a build record whose full digest differs 
 A missing or invalid `build.json` prevents reuse.
 Receiving and Acme use the shared SQLx CLI 0.9.0 commands and their existing verifier targets.
 
-The loop stops the host before it recreates the target or applies any pending migration file.
-Other changes keep the host running until activation.
+In `reset` mode, a changed SQL recipe resets the owned disposable database through its existing template.
+The loop uses the same schema planner and installed records as deployment.
+It refuses a reset when the registry does not authorize data loss or a required schema source is missing.
+The loop builds the candidate before it stops the previous application for a reset.
+The reset discards all application rows and gives the database a new creation identity.
 
-Every change keeps the target database and the rows it holds, except the changes below.
-The loop applies a kept change, for example a migration file appended after the last applied migration, to the kept target and reads its catalogs again.
+In `migrate` mode, the watcher reports pending SQL and keeps the installed SQL records unchanged.
+It initializes missing packages but never appends migrations to an installed package.
+Generated schema changes also require an explicit schema operation.
+A mode edit alone preserves data.
 
-These changes recreate the target database:
+For local SQL, use a built source directory and the local environment file:
 
-- an applied migration that the directory edits, removes, or reorders
-- a retention change that removes a history table that holds rows
+```bash
+wamn schema diff apps/wamn_receiving --env "$WAMN_DEV_ENV_DIR/environment.k"
+wamn schema apply apps/wamn_receiving --env "$WAMN_DEV_ENV_DIR/environment.k"
+```
 
-Before it recreates the target, the loop prints the reason.
-The new database receives a new target instance, the identity of one database creation.
+The adjacent `dev.json` identifies the local database and credentials.
+Before you apply local SQL, stop the application loop.
+The command requires the exclusive target lease, which prevents concurrent replacement or SQL application.
+The operation preserves application release selections.
+In `reset` mode, it reconstructs retained packages from their recorded local sources before discarding data.
+A changed or missing retained source stops preparation.
+Deployed SQL operations continue to use published artifacts and Kubernetes Jobs.
 
 Control store rows keyed by a non-empty target instance accumulate only within one `wamn dev up` standup.
 Nothing deletes them one at a time, and the immutability trigger stays unconditional.
 The control store reset of `wamn dev up` is the retention step, outside the recreate path.
 A disposable projection made by hand with `wamn-ctl provision-project-env --disposable` against a durable control store has no such bound.
 
-For changes without target recreation or pending migrations, the previous application remains available during candidate preparation.
+The previous application remains available during candidate preparation until an authorized schema reset requires an interruption.
 A failure during preparation keeps that application running.
 A failed stage prints its top context first and every cause under it.
 The printed line names the refusal that stopped the stage.

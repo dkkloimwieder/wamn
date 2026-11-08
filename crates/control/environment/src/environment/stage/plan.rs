@@ -45,7 +45,7 @@ pub fn sequence_defaults<'a>(
 /// # Errors
 ///
 /// When the packages extend one another in a cycle.
-pub(crate) fn apply_order(packages: &[(&str, Vec<&str>)]) -> anyhow::Result<Vec<usize>> {
+pub fn apply_order(packages: &[(&str, Vec<&str>)]) -> anyhow::Result<Vec<usize>> {
     let mut order = Vec::with_capacity(packages.len());
     while order.len() < packages.len() {
         let ready = (0..packages.len())

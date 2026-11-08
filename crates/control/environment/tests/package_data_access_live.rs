@@ -912,7 +912,6 @@ async fn the_local_grant_reconcile_records_the_presented_manifest_hash() {
                 ENV_KEY,
                 ENVIRONMENT,
                 apply,
-                &wamn_platform_identity::auth_changes::AuthChanges::default(),
             )
             .await
         }

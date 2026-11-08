@@ -4,6 +4,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use anyhow::{Context as _, ensure};
 use serde::{Deserialize, Serialize};
+use wamn_catalog::manifest::PackageManifest;
 use wamn_package_control::apply_package::{self, PackageRoot};
 use wamn_schema_control::{AppliedPackage, PackageDirectory, plan_package_migrations};
 
@@ -122,60 +123,67 @@ pub async fn state(platform: &Platform, document: &EnvironmentDocument) -> anyho
         database_instance: Some(instance),
         ..State::default()
     };
-    let read = async {
-        let mut client = analyse::connect_project(&url).await?;
-        let tx = client
-            .build_transaction()
-            .read_only(true)
-            .isolation_level(tokio_postgres::IsolationLevel::RepeatableRead)
-            .start()
-            .await?;
-        let env_key = wamn_control_provision::project_env_key(
-            &document.org,
-            &document.project,
-            &document.env,
-        );
-        tx.query_one("SELECT set_config('app.env_key', $1, true)", &[&env_key])
-            .await?;
-        let baseline = tx
-            .query_one(
-                "SELECT sha256, installed_at::text FROM platform.schema_baseline WHERE singleton",
-                &[],
-            )
-            .await?;
-        let initialization_identity: String = baseline.get(1);
-        let baseline: String = baseline.get(0);
-        let mut packages = BTreeMap::new();
-        for row in tx
-            .query(
-                "SELECT package_id FROM catalog.packages WHERE env_key=$1",
-                &[&env_key],
-            )
-            .await?
-        {
-            let id: String = row.get(0);
-            let applied = apply_package::read_applied_package(&tx, &env_key, &id)
-                .await?
-                .context("installed schema record disappeared")?;
-            packages.insert(id, applied);
-        }
-        let fingerprint = apply_package::installed_environment_fingerprint(&tx, &env_key).await?;
-        tx.commit().await?;
-        Ok::<_, anyhow::Error>((baseline, packages, fingerprint, initialization_identity))
-    }
-    .await;
+    let env_key =
+        wamn_control_provision::project_env_key(&document.org, &document.project, &document.env);
+    let read = database_state(&url, &env_key).await;
     match read {
-        Ok((baseline, packages, fingerprint, initialization_identity)) => {
-            state.project_baseline = Some(baseline);
-            state.initialization_identity = Some(initialization_identity);
-            state.packages = packages;
-            state.installed_environment = Some(fingerprint);
+        Ok(records) => {
+            state.project_baseline = records.project_baseline;
+            state.initialization_identity = records.initialization_identity;
+            state.packages = records.packages;
+            state.installed_environment = records.installed_environment;
         }
         Err(error) => state
             .unknowns
             .push(format!("database records unknown: {error:#}")),
     }
     Ok(state)
+}
+
+/// Read the same installed SQL records through a local or deployed connection.
+pub async fn database_state(database_url: &str, env_key: &str) -> anyhow::Result<State> {
+    let mut client = analyse::connect_project(database_url).await?;
+    let tx = client
+        .build_transaction()
+        .read_only(true)
+        .isolation_level(tokio_postgres::IsolationLevel::RepeatableRead)
+        .start()
+        .await?;
+    tx.query_one("SELECT set_config('app.env_key', $1, true)", &[&env_key])
+        .await?;
+    let baseline = tx
+        .query_one(
+            "SELECT sha256, installed_at::text, (SELECT oid::text FROM pg_catalog.pg_database WHERE datname=current_database()) FROM platform.schema_baseline WHERE singleton",
+            &[],
+        )
+        .await?;
+    let initialization_identity: String = baseline.get(1);
+    let database_instance: String = baseline.get(2);
+    let baseline: String = baseline.get(0);
+    let mut packages = BTreeMap::new();
+    for row in tx
+        .query(
+            "SELECT package_id FROM catalog.packages WHERE env_key=$1",
+            &[&env_key],
+        )
+        .await?
+    {
+        let id: String = row.get(0);
+        let applied = apply_package::read_applied_package(&tx, env_key, &id)
+            .await?
+            .context("installed schema record disappeared")?;
+        packages.insert(id, applied);
+    }
+    let fingerprint = apply_package::installed_environment_fingerprint(&tx, env_key).await?;
+    tx.commit().await?;
+    Ok(State {
+        project_baseline: Some(baseline),
+        packages,
+        installed_environment: Some(fingerprint),
+        initialization_identity: Some(initialization_identity),
+        database_instance: Some(database_instance),
+        ..State::default()
+    })
 }
 
 /// Resolve an explicit schema release without editing the application's code selection.
@@ -422,6 +430,81 @@ pub async fn reset_candidates(
     Ok(selected)
 }
 
+/// Validate complete reconstruction inputs before either reset adapter changes a database.
+pub fn validate_candidates(
+    document: &EnvironmentDocument,
+    candidates: &[Candidate],
+    sources: &BTreeMap<String, SchemaSource>,
+) -> anyhow::Result<(Vec<PackageManifest>, Vec<usize>)> {
+    let mut packages = Vec::new();
+    let mut found = std::collections::BTreeSet::new();
+    let mut objects = std::collections::BTreeSet::new();
+    for candidate in candidates {
+        let manifest = PackageManifest::from_slice(&candidate.directory.manifest_bytes)?;
+        let id = &manifest.package.id;
+        ensure!(
+            found.insert(id.as_str().to_owned()),
+            "duplicate reset package {id}"
+        );
+        ensure!(
+            document
+                .applications
+                .values()
+                .any(|application| application.packages.contains(id)),
+            "reset package {id} has no declared application"
+        );
+        for dependency in manifest.base_dependencies.values() {
+            ensure!(
+                sources.contains_key(&dependency.package),
+                "reset package {id} is missing dependency {}",
+                dependency.package
+            );
+        }
+        let source = sources
+            .get(id)
+            .with_context(|| format!("unexpected reset package {id}"))?;
+        ensure!(
+            manifest.package.version == source.version
+                && source.artifact == candidate.root.artifact_digest
+                && source.fingerprint == candidate.fingerprint,
+            "reset package {id} differs from its selected source"
+        );
+        for model in manifest.models.values().filter(|model| model.owner == *id) {
+            ensure!(
+                objects.insert((
+                    model.schema.as_str().to_owned(),
+                    model.table.as_str().to_owned()
+                )),
+                "conflicting reset definitions for {}.{}",
+                model.schema,
+                model.table
+            );
+        }
+        // Includes filename/checksum validation before mutation. Ownership remains with apply-package.
+        wamn_schema_control::plan_package_migrations(&candidate.directory, None)?;
+        packages.push(manifest);
+    }
+    ensure!(
+        found.len() == sources.len(),
+        "incomplete reset package inputs"
+    );
+    let order = stage::apply_order(
+        &packages
+            .iter()
+            .map(|p| {
+                (
+                    p.package.id.as_str(),
+                    p.base_dependencies
+                        .values()
+                        .map(|d| d.package.as_str())
+                        .collect(),
+                )
+            })
+            .collect::<Vec<_>>(),
+    )?;
+    Ok((packages, order))
+}
+
 /// Apply selected SQL through the package owner without caching or activating code.
 pub async fn apply(
     platform: &Platform,
@@ -658,6 +741,45 @@ mod tests {
         }"#,
         )
         .unwrap()
+    }
+
+    #[test]
+    fn reconstruction_accepts_inherited_models_and_refuses_competing_owners() {
+        let mut candidates = [candidate("alpha", "1.0.0"), candidate("beta", "1.0.0")];
+        let sources = candidates
+            .iter()
+            .map(|candidate| {
+                let manifest =
+                    PackageManifest::from_slice(&candidate.directory.manifest_bytes).unwrap();
+                (
+                    manifest.package.id,
+                    SchemaSource {
+                        version: manifest.package.version,
+                        artifact: candidate.root.artifact_digest.clone(),
+                        fingerprint: candidate.fingerprint.clone(),
+                    },
+                )
+            })
+            .collect();
+        let document = document();
+        assert!(validate_candidates(&document, &candidates, &sources).is_err());
+        let mut overlay =
+            PackageManifest::from_slice(&candidates[1].directory.manifest_bytes).unwrap();
+        for model in overlay.models.values_mut() {
+            model.owner = "alpha".into();
+            model.audit_log = None;
+        }
+        overlay.base_dependencies.insert(
+            "base".into(),
+            wamn_catalog::manifest::BaseDependencyRequirement {
+                package: "alpha".into(),
+                version: "1.0.0".into(),
+                digest: candidates[0].root.artifact_digest.as_ref().unwrap().clone(),
+                operations: vec!["item.get".into()],
+            },
+        );
+        candidates[1].directory.manifest_bytes = serde_json::to_vec(&overlay).unwrap();
+        validate_candidates(&document, &candidates, &sources).unwrap();
     }
 
     #[test]

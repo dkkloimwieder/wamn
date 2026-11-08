@@ -1,7 +1,6 @@
 //! Exclusive ownership and explicit recreation of disposable development targets.
 //!
-//! Local sessions retain the target until its structure or an applied migration
-//! changes, also across restarts of the developer process. Recreation clones
+//! Local sessions use the shared schema decision, also across process restarts. Recreation clones
 //! the stamped template and restores its captured database ACL. The lease
 //! prevents another session or reset command from replacing a serving target.
 
@@ -26,6 +25,256 @@ const SCHEMA_RECORD_FILE: &str = "target-schema.json";
 const STALE_STANDUP_REMEDY: &str =
     "run wamn dev up to provision the environment and emit its privilege SQL";
 
+async fn recorded_disposable(
+    config: &DevConfig,
+    document: &wamn_environment_control::environment::document::EnvironmentDocument,
+) -> anyhow::Result<Option<bool>> {
+    let identity = config.activation_identity();
+    anyhow::ensure!(
+        document.org == identity.org
+            && document.project == identity.project
+            && document.env == identity.environment,
+        "local environment differs from dev.json identity"
+    );
+    let system = wamn_package_control::database::connect(config.system_database_url()).await?;
+    Ok(system
+        .query_opt(
+            "SELECT disposable FROM registry.project_envs WHERE org=$1 AND project=$2 AND env=$3",
+            &[&document.org, &document.project, &document.env],
+        )
+        .await?
+        .map(|row| row.get(0)))
+}
+
+/// Compare local source recipes with the same records and decision used by deployment.
+pub async fn schema_changes(
+    config: &DevConfig,
+    document: &wamn_environment_control::environment::document::EnvironmentDocument,
+    roots: &[std::path::PathBuf],
+) -> anyhow::Result<Vec<wamn_environment_control::environment::sql::schema::Diff>> {
+    use anyhow::ensure;
+    use wamn_environment_control::environment::sql::schema;
+    use wamn_package_control::apply_package::PackageRoot;
+
+    let identity = config.activation_identity();
+    let disposable = recorded_disposable(config, document).await?;
+    let mut state =
+        schema::database_state(config.target_database_url(), &identity.env_key()).await?;
+    state.disposable = disposable;
+    let candidates = roots
+        .iter()
+        .map(|root| {
+            schema::Candidate::source(PackageRoot {
+                path: root.to_owned(),
+                artifact_digest: None,
+            })
+        })
+        .collect::<anyhow::Result<Vec<_>>>()?;
+    let mut remaining = candidates;
+    let mut diffs = Vec::new();
+    for (application, selection) in &document.applications {
+        let (selected, rest): (Vec<_>, Vec<_>) = remaining.into_iter().partition(|candidate| {
+            wamn_catalog::manifest::PackageManifest::from_slice(&candidate.directory.manifest_bytes)
+                .is_ok_and(|manifest| selection.packages.contains(&manifest.package.id))
+        });
+        remaining = rest;
+        if selected.is_empty() {
+            continue;
+        }
+        diffs.push(schema::plan(
+            document,
+            application,
+            None,
+            &selected,
+            &state,
+        )?);
+    }
+    ensure!(
+        remaining.is_empty(),
+        "local schema source has no declared application"
+    );
+    Ok(diffs)
+}
+
+/// Refuse incomplete reconstruction before the coordinator stops a serving application.
+pub(crate) fn validate_schema_reset(
+    document: &wamn_environment_control::environment::document::EnvironmentDocument,
+    roots: &[std::path::PathBuf],
+    diffs: &[wamn_environment_control::environment::sql::schema::Diff],
+) -> anyhow::Result<()> {
+    use anyhow::{Context as _, ensure};
+    use wamn_environment_control::environment::sql::schema;
+    ensure!(
+        diffs.iter().all(|diff| diff.disposable == Some(true)),
+        "local environment is not recorded as disposable"
+    );
+    let all = roots
+        .iter()
+        .map(|root| {
+            schema::Candidate::source(wamn_package_control::apply_package::PackageRoot {
+                path: root.to_owned(),
+                artifact_digest: None,
+            })
+        })
+        .collect::<anyhow::Result<Vec<_>>>()?;
+    let mut sources = diffs
+        .first()
+        .context("local reset has no schema candidate")?
+        .reset_sources
+        .clone();
+    for candidate in &all {
+        let manifest = wamn_catalog::manifest::PackageManifest::from_slice(
+            &candidate.directory.manifest_bytes,
+        )?;
+        let source = sources
+            .get_mut(&manifest.package.id)
+            .context("local schema source is missing")?;
+        source.version = manifest.package.version;
+        source.artifact = None;
+        source.fingerprint.clone_from(&candidate.fingerprint);
+    }
+    ensure!(
+        diffs
+            .iter()
+            .flat_map(|diff| &diff.missing_reset_sources)
+            .all(|id| sources.contains_key(id)),
+        "local reset is missing an application's schema source"
+    );
+    schema::validate_candidates(document, &all, &sources)?;
+    Ok(())
+}
+
+/// Inspect or explicitly apply local source SQL without selecting application code.
+#[cfg(target_os = "linux")]
+pub async fn schema_operation(
+    configuration: &Path,
+    environment: &Path,
+    root: &Path,
+    apply: bool,
+) -> anyhow::Result<Vec<wamn_environment_control::environment::sql::schema::Diff>> {
+    use anyhow::{Context as _, ensure};
+    use wamn_package_control::apply_package::{self, ApplyPackageRequest, PackageRoot};
+    let config = super::config::parse_config(&std::fs::read(configuration)?)?;
+    let document = super::session::read_environment(environment)?;
+    let (_, mut roots) = crate::source_deploy::sources(&document, root)?;
+    let diffs = schema_changes(&config, &document, &roots).await?;
+    if !apply {
+        return Ok(diffs);
+    }
+    let changes =
+        wamn_platform_identity::auth_changes::AuthChanges::new(config.nats().connect().await?);
+    let lease = acquire(&config).await?;
+    lease.instance(&config).await?;
+    if diffs
+        .iter()
+        .any(wamn_environment_control::environment::sql::schema::Diff::requires_reset)
+    {
+        let output = wamn_schema_generator::build::default_output_root(root);
+        for diff in &diffs {
+            for (id, source) in &diff.reset_sources {
+                if diff.packages.contains_key(id) {
+                    continue;
+                }
+                let root = wamn_schema_generator::build_record::source_root(&output.join(id))?;
+                let candidate =
+                    wamn_environment_control::environment::sql::schema::Candidate::source(
+                        PackageRoot {
+                            path: root.clone(),
+                            artifact_digest: None,
+                        },
+                    )?;
+                ensure!(
+                    candidate.fingerprint == source.fingerprint,
+                    "retained package {id} differs from its installed local schema source"
+                );
+                roots.push(root);
+            }
+        }
+        let diffs = schema_changes(&config, &document, &roots).await?;
+        validate_schema_reset(&document, &roots, &diffs)?;
+        tracing::warn!(affected = ?diffs.iter().flat_map(|diff| &diff.affected_applications).collect::<std::collections::BTreeSet<_>>(),
+            "reset development database; all application data is discarded");
+        let instance = lease.recreate(&config).await?;
+        super::coordinator::claim_environment_instance(
+            config.system_database_url(),
+            &config.activation_identity().env_key(),
+            &instance,
+        )
+        .await?;
+    } else {
+        for diff in &diffs {
+            for (id, package) in &diff.packages {
+                ensure!(
+                    package.edited_applied.is_empty(),
+                    "package {id} edits applied SQL: {:?}",
+                    package.edited_applied
+                );
+                ensure!(
+                    package.migration_error.is_none(),
+                    "package {id}: {:?}",
+                    package.migration_error
+                );
+            }
+        }
+    }
+    let identity = config.activation_identity();
+    // Resolve dependency order through the same validator used for reconstruction.
+    let candidates = roots
+        .iter()
+        .map(|path| {
+            wamn_environment_control::environment::sql::schema::Candidate::source(PackageRoot {
+                path: path.clone(),
+                artifact_digest: None,
+            })
+        })
+        .collect::<anyhow::Result<Vec<_>>>()?;
+    let manifests = candidates
+        .iter()
+        .map(|candidate| {
+            wamn_catalog::manifest::PackageManifest::from_slice(&candidate.directory.manifest_bytes)
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let order = wamn_environment_control::environment::stage::apply_order(
+        &manifests
+            .iter()
+            .map(|manifest| {
+                (
+                    manifest.package.id.as_str(),
+                    manifest
+                        .base_dependencies
+                        .values()
+                        .map(|base| base.package.as_str())
+                        .collect(),
+                )
+            })
+            .collect::<Vec<_>>(),
+    )?;
+    let mut roots = roots.into_iter().map(Some).collect::<Vec<_>>();
+    for index in order {
+        apply_package::apply_local_package_schema(
+            ApplyPackageRequest {
+                component_source: apply_package::component_source_from_env(None)?,
+                package: PackageRoot {
+                    path: roots[index].take().context("package applied twice")?,
+                    artifact_digest: None,
+                },
+                database_url: config.target_database_url().to_owned(),
+                changes: changes.clone(),
+                org: identity.org.clone(),
+                project: identity.project.clone(),
+                environment: identity.environment.clone(),
+            },
+            &identity.environment,
+        )
+        .await?;
+    }
+    let roots = candidates
+        .into_iter()
+        .map(|candidate| candidate.root.path)
+        .collect::<Vec<_>>();
+    schema_changes(&config, &document, &roots).await
+}
+
 /// Rotate an idle owned target and its environment instance together.
 #[cfg(target_os = "linux")]
 pub async fn reset(configuration: &Path) -> anyhow::Result<String> {
@@ -34,7 +283,14 @@ pub async fn reset(configuration: &Path) -> anyhow::Result<String> {
     let bytes = std::fs::read(configuration).context("read development reset configuration")?;
     let config =
         super::config::parse_config(&bytes).context("validate development reset configuration")?;
+    let document =
+        super::session::read_environment(&configuration.with_file_name("environment.k"))?;
+    anyhow::ensure!(
+        recorded_disposable(&config, &document).await? == Some(true),
+        "local environment is not recorded as disposable"
+    );
     let lease = acquire(&config).await?;
+    lease.instance(&config).await?;
     let instance = lease.recreate(&config).await?;
     super::coordinator::claim_environment_instance(
         config.system_database_url(),
@@ -242,6 +498,13 @@ pub(crate) fn record_target_schema(
     .context("record the target schema")
 }
 
+#[derive(Debug)]
+pub(crate) struct ResetInputs {
+    template: Identifier,
+    fingerprint: String,
+    acl: String,
+}
+
 /// Exclusive ownership held while a development session can serve this target.
 pub struct TargetLease {
     client: Client,
@@ -327,12 +590,32 @@ impl TargetLease {
         Ok(())
     }
 
+    /// Read the owned database identity independently of the optional catalog cache.
+    pub(crate) async fn instance(&self, config: &DevConfig) -> anyhow::Result<String> {
+        let identity = config.activation_identity();
+        wamn_runtime::local_application::require_local_target(
+            config.target_database_url(),
+            &identity.env_key(),
+            &identity.environment,
+        )
+        .await?;
+        let instance: u32 = self
+            .client
+            .query_one(
+                "SELECT oid FROM pg_catalog.pg_database WHERE datname=$1",
+                &[&self.spec.database.as_str()],
+            )
+            .await?
+            .get(0);
+        Ok(instance.to_string())
+    }
+
     /// The instance of this target, its recorded build inputs, and its saved
     /// catalogs.
     ///
     /// Returns `None` when the record is absent or unreadable, holds no
     /// catalogs, names another creation of the database, or when the local
-    /// target marker no longer matches. The caller then recreates the target.
+    /// target marker no longer matches. The caller then reads the catalogs again.
     pub(crate) async fn retained_target(
         &self,
         config: &DevConfig,
@@ -366,8 +649,11 @@ impl TargetLease {
         Some((instance, build_inputs, catalogs))
     }
 
-    /// Recreate only the target named by this still-held lease.
-    pub async fn recreate(&self, config: &DevConfig) -> Result<String, TargetDatabaseError> {
+    /// Resolve and validate template inputs before interrupting a serving application.
+    pub(crate) async fn prepare_reset(
+        &self,
+        config: &DevConfig,
+    ) -> Result<ResetInputs, TargetDatabaseError> {
         let selected = TargetSpec::from_config(config)?;
         if selected.database != self.spec.database {
             return Err(TargetDatabaseError::new(
@@ -396,8 +682,32 @@ impl TargetLease {
             &system_database,
             config.activation_identity(),
         );
+        validate_template(&self.client, &template, &fingerprint).await?;
+        Ok(ResetInputs {
+            template,
+            fingerprint,
+            acl,
+        })
+    }
+
+    /// Recreate only the target named by this still-held lease.
+    pub async fn recreate(&self, config: &DevConfig) -> Result<String, TargetDatabaseError> {
+        let inputs = self.prepare_reset(config).await?;
+        self.recreate_prepared(config, &inputs).await
+    }
+
+    pub(crate) async fn recreate_prepared(
+        &self,
+        config: &DevConfig,
+        inputs: &ResetInputs,
+    ) -> Result<String, TargetDatabaseError> {
+        let ResetInputs {
+            template,
+            fingerprint,
+            acl,
+        } = inputs;
         let instance =
-            replace_database(&self.client, &self.spec, &template, &fingerprint, &acl).await?;
+            replace_database(&self.client, &self.spec, template, fingerprint, acl).await?;
         let identity = config.activation_identity();
         let marker = wamn_runtime::local_application::local_target_marker(
             &identity.env_key(),
@@ -459,25 +769,11 @@ pub async fn acquire(config: &DevConfig) -> Result<TargetLease, TargetDatabaseEr
     Ok(lease)
 }
 
-/// Reset an idle owned target, refusing a target held by a serving session.
-pub async fn recreate(config: &DevConfig) -> Result<String, TargetDatabaseError> {
-    acquire(config).await?.recreate(config).await
-}
-
-/// Returns the INSTANCE identity of the database this call created.
-///
-/// A recreated database is a different target, and anything the control plane
-/// keys to this environment has to say which creation it means (wamn-10yt.51).
-/// PostgreSQL already mints exactly that: `CREATE DATABASE` assigns a fresh oid,
-/// so the server is the authority and nothing here invents a value. A timestamp
-/// would have been a guess about identity; this is the identity itself.
-async fn replace_database(
+async fn validate_template(
     client: &Client,
-    spec: &TargetSpec,
     template: &Identifier,
     fingerprint: &str,
-    acl: &str,
-) -> Result<String, TargetDatabaseError> {
+) -> Result<(), TargetDatabaseError> {
     // A missing template is a stale standup and not a lifecycle failure. It is
     // checked before the drop, so a run that cannot restore the database never
     // destroys it.
@@ -520,6 +816,25 @@ async fn replace_database(
             STALE_STANDUP_REMEDY,
         ));
     }
+
+    Ok(())
+}
+
+/// Returns the INSTANCE identity of the database this call created.
+///
+/// A recreated database is a different target, and anything the control plane
+/// keys to this environment has to say which creation it means (wamn-10yt.51).
+/// PostgreSQL already mints exactly that: `CREATE DATABASE` assigns a fresh oid,
+/// so the server is the authority and nothing here invents a value. A timestamp
+/// would have been a guess about identity; this is the identity itself.
+async fn replace_database(
+    client: &Client,
+    spec: &TargetSpec,
+    template: &Identifier,
+    fingerprint: &str,
+    acl: &str,
+) -> Result<String, TargetDatabaseError> {
+    validate_template(client, template, fingerprint).await?;
 
     // A replication slot blocks the drop, and the loop makes a new slot on
     // the new database. Its CDC reader stopped before this point.
@@ -599,84 +914,158 @@ async fn replace_database(
 mod tests {
     use super::*;
     use serde_json::json;
-    use wamn_catalog::schema::{ColumnType, ForeignKeyColumn};
-    use wamn_schema_introspection::ir::{
-        Column, ColumnDefault, ColumnGeneration, Constraint, Exclusion, ExclusionAccessMethod,
-        ExclusionElement, ExclusionKey, ForeignKeyAction, IdentityMode, Index, IndexColumn,
-        IndexDirection, Table,
-    };
-
-    /// Catalogs that hold every tagged and flattened IR shape the record carries.
-    fn record_catalogs() -> anyhow::Result<BTreeMap<String, CatalogIr>> {
-        let order = Table::new(
-            "inventory",
-            "panel",
-            vec![
-                Column::new(
-                    "id",
-                    ColumnType::Uuid,
-                    false,
-                    Some(ColumnDefault::GenRandomUuid),
-                    None,
+    #[tokio::test]
+    async fn local_schema_reads_shared_records_and_preserves_code_query_and_mode_edits()
+    -> anyhow::Result<()> {
+        use wamn_environment_control::environment::document::{EnvironmentDocument, SchemaMode};
+        use wamn_package_control::apply_package::{self, ApplyPackageRequest, PackageRoot};
+        use wamn_test_infrastructure::{fixture_digest, scratch::ScratchRoot};
+        let _lock = wamn_test_postgres::lock();
+        let system = wamn_control_provision::test_database::system();
+        let target = wamn_catalog::test_database::tenant();
+        let system_client = wamn_package_control::database::connect(system.url()).await?;
+        system_client
+            .batch_execute(&format!(
+                "{} UPDATE registry.project_envs SET disposable=true;",
+                wamn_control_provision::test_database::seed_org_project_env_sql(
+                    "acme",
+                    "fixture",
+                    "fixture-dev"
                 ),
-                Column::new(
-                    "number",
-                    ColumnType::Int64,
-                    false,
-                    None,
-                    Some(ColumnGeneration::Identity {
-                        mode: IdentityMode::Always,
-                    }),
-                ),
-                Column::new(
-                    "status",
-                    ColumnType::Text,
-                    false,
-                    Some(ColumnDefault::text("open")),
-                    None,
-                ),
-                Column::new("starts_at", ColumnType::Timestamptz, true, None, None),
-                Column::new("ends_at", ColumnType::Timestamptz, true, None, None),
-            ],
-            vec![
-                Constraint::primary_key("panel_id_pkey", ["id"])?,
-                Constraint::check("panel_status_check", "status <> ''")?,
-            ],
-            vec![Index::new(
-                "panel_code_idx",
-                vec![IndexColumn::new("number", IndexDirection::Desc)],
-            )?],
-        )
-        .with_exclusions(vec![Exclusion::new(
-            "panel_no_overlap",
-            ExclusionAccessMethod::Gist,
-            vec![
-                ExclusionKey::new(ExclusionElement::column("id"), "="),
-                ExclusionKey::new(
-                    ExclusionElement::expression("tstzrange(starts_at, ends_at)"),
-                    "&&",
-                ),
-            ],
-            ["id", "starts_at", "ends_at"],
-        )?]);
-        let line = Table::new(
-            "inventory",
-            "panel_line",
-            vec![Column::new("order_id", ColumnType::Uuid, false, None, None)],
-            vec![Constraint::foreign_key(
-                "panel_line_order_id_fkey",
-                vec![ForeignKeyColumn::new("order_id", "id")],
-                "inventory",
-                "panel",
-                ForeignKeyAction::NoAction,
-                ForeignKeyAction::Cascade,
-            )?],
-            Vec::new(),
+            ))
+            .await?;
+        let target_client = wamn_package_control::database::connect(target.url()).await?;
+        target_client
+            .batch_execute(wamn_control_provision::APP_SCHEMA_SQL)
+            .await?;
+        wamn_package_control::schema_baseline::record_project(&target_client).await?;
+        target_client
+            .batch_execute(wamn_control_provision::sql::ensure_db_owner_role_sql())
+            .await?;
+        target_client
+            .batch_execute(&format!(
+                "GRANT CREATE ON DATABASE {} TO wamn_db_owner",
+                Identifier::new(target.name())?.quoted()
+            ))
+            .await?;
+        let endpoint = url::Url::parse(target.url())?.socket_addrs(|| None)?[0];
+        let mut config = crate::dev::config::tests::complete_document(&[endpoint; 10]);
+        config["target_database_url"] = json!(target.url());
+        config["system_database_url"] = json!(system.url());
+        let config = super::super::config::parse_config(&serde_json::to_vec(&config)?)?;
+        let instance: u32 = target_client
+            .query_one(
+                "SELECT oid FROM pg_catalog.pg_database WHERE datname=current_database()",
+                &[],
+            )
+            .await?
+            .get(0);
+        let marker = wamn_runtime::local_application::local_target_marker(
+            &config.activation_identity().env_key(),
+            "fixture-dev",
+            instance,
         );
-        Ok(BTreeMap::from([(
-            "wamn-fixture".to_owned(),
-            CatalogIr::new(vec![order, line]),
-        )]))
+        target_client
+            .batch_execute(&format!(
+                "COMMENT ON DATABASE {} IS {}",
+                Identifier::new(target.name())?.quoted(),
+                wamn_pg_core::quote_literal(&marker)
+            ))
+            .await?;
+        let scratch = ScratchRoot::create()?;
+        let root = scratch.path().join("package");
+        std::fs::create_dir_all(root.join("migrations"))?;
+        let source = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../package/tests/fixtures/component_package");
+        std::fs::copy(source.join("wamn.json"), root.join("wamn.json"))?;
+        std::fs::write(
+            root.join("migrations/0001_item.sql"),
+            "CREATE TABLE inventory.item (id uuid NOT NULL, CONSTRAINT item_pkey PRIMARY KEY (id));",
+        )?;
+        let columns = BTreeMap::from([(
+            "item".into(),
+            vec![wamn_schema_control::physical_schema::RelationColumn {
+                name: "id".into(),
+                primary_key: true,
+                timestamptz: false,
+            }],
+        )]);
+        fixture_digest::write_physical_schema(&root, columns)?;
+        fixture_digest::write_build_record(&root);
+        apply_package::apply_local_package_schema(
+            ApplyPackageRequest {
+                component_source: None,
+                changes: wamn_platform_identity::auth_changes::AuthChanges::default(),
+                package: PackageRoot {
+                    path: root.clone(),
+                    artifact_digest: None,
+                },
+                database_url: target.url().to_owned(),
+                org: "acme".into(),
+                project: "fixture".into(),
+                environment: "fixture-dev".into(),
+            },
+            "fixture-dev",
+        )
+        .await?;
+        target_client
+            .batch_execute(
+                "INSERT INTO inventory.item VALUES ('00000000-0000-4000-8000-000000000001')",
+            )
+            .await?;
+        let mut document = EnvironmentDocument::from_json(br#"{
+            "org":"acme","project":"fixture","env":"fixture-dev","target":"cloud","policy":"dev",
+            "applications":{"alpha":{"current":"none","hostname":"alpha.invalid","packages":["source_fixture"]}}
+        }"#)?;
+        let roots = [root.clone()];
+        assert!(!schema_changes(&config, &document, &roots).await?[0].requires_reset());
+        for file in ["component.rs", "query.sql"] {
+            std::fs::write(root.join(file), "changed")?;
+            fixture_digest::write_build_record(&root);
+            assert!(!schema_changes(&config, &document, &roots).await?[0].requires_reset());
+        }
+        let manifest = std::fs::read_to_string(root.join("wamn.json"))?.replace("1.0.0", "9.0.0");
+        std::fs::write(root.join("wamn.json"), manifest)?;
+        fixture_digest::write_build_record(&root);
+        assert!(!schema_changes(&config, &document, &roots).await?[0].requires_reset());
+        document.schema.mode = Some(SchemaMode::Migrate);
+        assert!(!schema_changes(&config, &document, &roots).await?[0].requires_reset());
+        document.schema.mode = Some(SchemaMode::Reset);
+        assert!(!schema_changes(&config, &document, &roots).await?[0].requires_reset());
+        std::fs::write(
+            root.join("migrations/0002_note.sql"),
+            "ALTER TABLE inventory.item ADD COLUMN note text;",
+        )?;
+        let physical: wamn_schema_control::physical_schema::PhysicalSchema =
+            serde_json::from_slice(&std::fs::read(
+                wamn_schema_generator::output_root(&root).join("physical-schema.json"),
+            )?)?;
+        fixture_digest::write_physical_schema(&root, physical.columns)?;
+        fixture_digest::write_build_record(&root);
+        let changed = schema_changes(&config, &document, &roots).await?;
+        assert!(changed[0].requires_reset());
+        validate_schema_reset(&document, &roots, &changed)?;
+        document.schema.mode = Some(SchemaMode::Migrate);
+        assert!(!schema_changes(&config, &document, &roots).await?[0].requires_reset());
+        document.schema.mode = Some(SchemaMode::Reset);
+        system_client
+            .batch_execute(&format!(
+                "BEGIN; {} UPDATE registry.project_envs SET disposable=false; COMMIT;",
+                wamn_control_provision::bind_platform_principal_sql(
+                    wamn_control_provision::PlatformComponent::Provisioning
+                ),
+            ))
+            .await?;
+        let durable = schema_changes(&config, &document, &roots).await?;
+        assert!(validate_schema_reset(&document, &roots, &durable).is_err());
+        assert_eq!(
+            target_client
+                .query_one("SELECT id::text FROM inventory.item", &[])
+                .await?
+                .get::<_, String>(0),
+            "00000000-0000-4000-8000-000000000001"
+        );
+        Ok(())
     }
 
     #[tokio::test]
@@ -757,10 +1146,6 @@ mod tests {
                 .await?
                 .get::<_, String>(0),
             "retained"
-        );
-        assert_eq!(
-            recreate(&config).await.unwrap_err().error_type(),
-            TargetDatabaseErrorType::LeaseUnavailable
         );
         std::fs::write(&acl, "REVOKE ALL ON DATABASE target FROM PUBLIC;")?;
         let prepared_configuration = prepare_configuration(&config)?;
@@ -868,35 +1253,8 @@ JOIN platform.external_system AS external ON external.id = integration.external_
         drop(target);
         driver.await??;
 
-        // A restarted session keeps the target, its build inputs, and the
-        // catalogs its last Introspect recorded.
-        let inputs = vec!["sha256:inputs-one".to_owned()];
-        std::fs::write(
-            directory.join(SCHEMA_RECORD_FILE),
-            serde_json::to_vec(&json!({
-                "database-instance": first,
-                "build-inputs": inputs,
-            }))?,
-        )?;
-        assert_eq!(
-            lease.retained_target(&config).await,
-            None,
-            "a record that holds no catalogs recreates the target"
-        );
-        let catalogs = record_catalogs()?;
-        record_target_schema(&config, &first, &inputs, &catalogs)?;
-        assert_eq!(
-            lease.retained_target(&config).await,
-            Some((first.clone(), inputs, catalogs))
-        );
-
         let second = lease.recreate(&config).await?;
         assert_ne!(first, second);
-        assert_eq!(
-            lease.retained_target(&config).await,
-            None,
-            "a record of the previous creation matches no later one"
-        );
         let (target, driver) = tokio_postgres::connect(target_database.url(), NoTls).await?;
         let driver = tokio::spawn(driver);
         assert_eq!(

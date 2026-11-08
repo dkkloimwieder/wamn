@@ -73,7 +73,6 @@ async fn main() -> anyhow::Result<()> {
         ENV_KEY,
         ENVIRONMENT,
         true,
-        &wamn_platform_identity::auth_changes::AuthChanges::default(),
     )
     .await?;
     Ok(())

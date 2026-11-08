@@ -212,8 +212,8 @@ pub struct ProductionDevStageRunner {
     build_inputs: Option<Vec<String>>,
     /// The schema digest of each package that this run reads, bases first.
     schema_inputs: Option<Vec<String>>,
-    /// The schema inputs that Migrate last applied to the target.
-    migrated_inputs: Option<Vec<String>>,
+    /// The candidate schema inputs last compared with installed SQL.
+    prepared_schema_inputs: Option<Vec<String>>,
     /// Packages whose generation still needs component compilation.
     pending_builds: BTreeSet<String>,
     composed_entry: Option<publish_release::ComposedApplication>,
@@ -291,7 +291,7 @@ impl ProductionDevStageRunner {
             cdc_reader: None,
             build_inputs: None,
             schema_inputs: None,
-            migrated_inputs: None,
+            prepared_schema_inputs: None,
             pending_builds: BTreeSet::new(),
             composed_entry: None,
             sqlx_metadata_inputs: BTreeMap::new(),
@@ -436,7 +436,7 @@ impl ProductionDevStageRunner {
             tracing::info!(package = %outcome.package_id, version = %outcome.package_version, migrations = outcome.migrations_applied, changed = outcome.changed, "applied development package");
         }
         self.grant_operator_admin_role().await?;
-        self.migrated_inputs.clone_from(&self.schema_inputs);
+        self.prepared_schema_inputs.clone_from(&self.schema_inputs);
         Ok(())
     }
 
@@ -480,7 +480,7 @@ impl ProductionDevStageRunner {
             self.target_instance
                 .as_deref()
                 .expect("prepare_run claimed the target instance"),
-            self.migrated_inputs
+            self.prepared_schema_inputs
                 .as_deref()
                 .expect("Migrate recorded the schema inputs"),
             &self.catalogs,
@@ -789,11 +789,6 @@ impl ProductionDevStageRunner {
             &self.config.activation_identity().env_key(),
             &self.config.activation_identity().environment,
             apply,
-            &wamn_platform_identity::auth_changes::AuthChanges::new(
-                self.config.nats().connect().await.map_err(|source| {
-                    ProductionDevStageError::owner("connect auth changes", source)
-                })?,
-            ),
         )
         .await
         .map_err(|source| {
@@ -1444,8 +1439,8 @@ impl DevStageRunner for ProductionDevStageRunner {
             DevStage::Migrate => {
                 // Generation can change package registration without changing physical SQL.
                 return Ok(self.pending_builds.is_empty()
-                    && self.migrated_inputs.is_some()
-                    && self.migrated_inputs == self.schema_inputs);
+                    && self.prepared_schema_inputs.is_some()
+                    && self.prepared_schema_inputs == self.schema_inputs);
             }
             DevStage::Introspect => {
                 return Ok(self.catalogs.len() == self.package_inputs()?.len());
@@ -1534,74 +1529,102 @@ impl DevStageRunner for ProductionDevStageRunner {
         // Build in disposable databases before comparing the selected physical SQL.
         self.prepare_generation().await?;
         let schema_inputs = schema_inputs(&packages)?;
-        if self.migrated_inputs.as_ref() != Some(&schema_inputs) {
-            // A target keeps its data unless the kept-target check below
-            // refuses it. The first run of a session takes the target that a
-            // previous session recorded, and it also keeps the catalogs of
-            // unchanged schema inputs.
-            let kept = match &self.target_instance {
-                None => self
-                    .target_lease
-                    .as_ref()
-                    .expect("lease acquired")
-                    .retained_target(&self.config)
-                    .await
-                    .map(|(instance, recorded, catalogs)| {
-                        (instance, (recorded == schema_inputs).then_some(catalogs))
-                    }),
-                Some(instance) => Some((instance.clone(), None)),
-            };
-            let mut stop_before_migrate = kept.is_none();
-            let kept = match kept {
-                Some(kept) => {
-                    let roots = packages
-                        .iter()
-                        .map(|package| package.root.clone())
-                        .collect::<Vec<_>>();
-                    let changes = apply_package::local_target_changes(
-                        self.config.target_database_url(),
-                        &self.config.activation_identity().env_key(),
-                        &roots,
-                    )
-                    .await
-                    .map_err(|source| {
-                        ProductionDevStageError::owner("check the kept local target", source)
-                    })?;
-                    stop_before_migrate = changes.requires_stop();
-                    if let Some(reason) = &changes.recreate_reason {
-                        tracing::info!(%reason, "recreate development target");
-                    }
-                    changes.recreate_reason.is_none().then_some(kept)
+        let roots = packages
+            .iter()
+            .map(|package| package.root.clone())
+            .collect::<Vec<_>>();
+        let diffs = target_database::schema_changes(&self.config, &self.environment, &roots)
+            .await
+            .map_err(|source| ProductionDevStageError::owner("plan local schema", source))?;
+        for diff in &diffs {
+            for (package, change) in &diff.packages {
+                if change.installed.as_ref() != Some(&change.candidate) {
+                    tracing::warn!(%package, mode = ?diff.mode, pending = ?change.pending,
+                        edited = ?change.edited_applied,
+                        "local schema differs; use wamn schema apply with the source directory and --env for explicit SQL");
                 }
-                None => None,
-            };
-            if stop_before_migrate {
-                self.shutdown().await?;
             }
-            self.migrated_inputs = None;
-            self.acl_inputs = None;
-            self.local_grants = None;
-            self.catalogs.clear();
-            let lease = self.target_lease.as_ref().expect("lease acquired");
-            let instance = match kept {
-                Some((instance, Some(catalogs))) => {
-                    self.migrated_inputs = Some(schema_inputs.clone());
-                    self.catalogs = catalogs;
-                    instance
-                }
-                Some((instance, None)) => instance,
-                None => lease.recreate(&self.config).await.map_err(|source| {
+        }
+        // A configuration-only watch event is a reapply, not a schema-bearing deploy.
+        let schema_deploy = self.schema_inputs.as_ref() != Some(&schema_inputs);
+        let reset = schema_deploy
+            && diffs
+                .iter()
+                .any(wamn_environment_control::environment::sql::schema::Diff::requires_reset);
+        let matches_installed = diffs.iter().all(|diff| {
+            diff.packages
+                .values()
+                .all(|package| package.installed.as_ref() == Some(&package.candidate))
+        });
+        let instance = self
+            .target_lease
+            .as_ref()
+            .expect("lease acquired")
+            .instance(&self.config)
+            .await
+            .map_err(|source| {
+                ProductionDevStageError::owner("read the owned local target", source)
+            })?;
+        if reset {
+            target_database::validate_schema_reset(&self.environment, &roots, &diffs).map_err(
+                |source| ProductionDevStageError::owner("validate local reset inputs", source),
+            )?;
+            let reset_inputs = self
+                .target_lease
+                .as_ref()
+                .expect("lease acquired")
+                .prepare_reset(&self.config)
+                .await
+                .map_err(|source| {
+                    ProductionDevStageError::owner("prepare local template reset", source.into())
+                })?;
+            // Compile the candidate before interrupting the last working application.
+            self.build().await?;
+            self.shutdown().await?;
+            tracing::warn!(affected = ?diffs.iter().flat_map(|diff| &diff.affected_applications).collect::<BTreeSet<_>>(),
+                "reset development database; all application data is discarded");
+            let instance = self
+                .target_lease
+                .as_ref()
+                .expect("lease acquired")
+                .recreate_prepared(&self.config, &reset_inputs)
+                .await
+                .map_err(|source| {
                     ProductionDevStageError::owner("recreate local schema target", source.into())
-                })?,
-            };
-            claim_environment_instance(
-                self.config.system_database_url(),
-                &self.config.activation_identity().env_key(),
-                &instance,
-            )
-            .await?;
+                })?;
+            self.target_instance = Some(instance);
+            self.prepared_schema_inputs = None;
+            self.catalogs.clear();
+        } else {
+            if self.target_instance.as_ref() != Some(&instance)
+                || self.prepared_schema_inputs.as_ref() != Some(&schema_inputs)
+                || !matches_installed
+            {
+                self.prepared_schema_inputs = None;
+                self.catalogs.clear();
+                if matches_installed
+                    && let Some((_, recorded, catalogs)) = self
+                        .target_lease
+                        .as_ref()
+                        .expect("lease acquired")
+                        .retained_target(&self.config)
+                        .await
+                    && recorded == schema_inputs
+                {
+                    self.prepared_schema_inputs = Some(schema_inputs.clone());
+                    self.catalogs = catalogs;
+                }
+            }
             self.target_instance = Some(instance);
         }
+        claim_environment_instance(
+            self.config.system_database_url(),
+            &self.config.activation_identity().env_key(),
+            self.target_instance
+                .as_deref()
+                .expect("owned target instance"),
+        )
+        .await?;
         self.build_inputs = Some(inputs);
         self.schema_inputs = Some(schema_inputs);
         Ok(())

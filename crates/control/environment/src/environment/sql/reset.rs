@@ -200,74 +200,11 @@ fn validate_candidates(
     candidates: &[Candidate],
     sources: &BTreeMap<String, SchemaSource>,
 ) -> anyhow::Result<(Vec<PackageManifest>, Vec<usize>)> {
-    let mut packages = Vec::new();
-    let mut found = std::collections::BTreeSet::new();
-    let mut objects = std::collections::BTreeSet::new();
-    for candidate in candidates {
-        let manifest = PackageManifest::from_slice(&candidate.directory.manifest_bytes)?;
-        let id = &manifest.package.id;
-        ensure!(
-            found.insert(id.as_str().to_owned()),
-            "duplicate reset package {id}"
-        );
-        ensure!(
-            document
-                .applications
-                .values()
-                .any(|application| application.packages.contains(id)),
-            "reset package {id} has no declared application"
-        );
-        for dependency in manifest.base_dependencies.values() {
-            ensure!(
-                sources.contains_key(&dependency.package),
-                "reset package {id} is missing dependency {}",
-                dependency.package
-            );
-        }
-        let source = sources
-            .get(id)
-            .with_context(|| format!("unexpected reset package {id}"))?;
-        ensure!(
-            manifest.package.version == source.version
-                && source.artifact.is_some()
-                && source.artifact == candidate.root.artifact_digest
-                && source.fingerprint == candidate.fingerprint,
-            "reset package {id} differs from its immutable source"
-        );
-        for model in manifest.models.values() {
-            ensure!(
-                objects.insert((
-                    model.schema.as_str().to_owned(),
-                    model.table.as_str().to_owned()
-                )),
-                "conflicting reset definitions for {}.{}",
-                model.schema,
-                model.table
-            );
-        }
-        // Includes filename/checksum validation before mutation. Ownership remains with apply-package.
-        wamn_schema_control::plan_package_migrations(&candidate.directory, None)?;
-        packages.push(manifest);
-    }
     ensure!(
-        found.len() == sources.len(),
-        "incomplete reset package inputs"
+        sources.values().all(|source| source.artifact.is_some()),
+        "deployed reset requires published schema sources"
     );
-    let order = stage::apply_order(
-        &packages
-            .iter()
-            .map(|p| {
-                (
-                    p.package.id.as_str(),
-                    p.base_dependencies
-                        .values()
-                        .map(|d| d.package.as_str())
-                        .collect(),
-                )
-            })
-            .collect::<Vec<_>>(),
-    )?;
-    Ok((packages, order))
+    schema::validate_candidates(document, candidates, sources)
 }
 
 async fn resolve_releases(

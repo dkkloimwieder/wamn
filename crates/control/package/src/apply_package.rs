@@ -11,9 +11,7 @@ use anyhow::{Context as _, ensure};
 use tokio_postgres::{NoTls, Transaction};
 use wamn_catalog::manifest::PackageManifest;
 use wamn_control_provision::{PlatformComponent, bind_platform_principal_sql};
-use wamn_schema_control::{
-    PackageDirectory, RecordedMigration, SqlStatement, plan_package_migrations,
-};
+use wamn_schema_control::{PackageDirectory, SqlStatement, plan_package_migrations};
 
 use definition_ownership::{
     reconcile_definition_ownership, validate_definition_ownership_before_apply,
@@ -41,8 +39,7 @@ pub use error::{
     DEFINITION_OWNER_CONFLICT_REFUSAL, DEFINITION_OWNER_DECLARATION_MISSING_REFUSAL,
     PACKAGE_ARTIFACT_REQUIRED_REFUSAL, RELATION_NOT_CLIENT_EXTENSIBLE_REFUSAL,
 };
-pub use local_target::{applied_migration_drift, local_target_recreate_reason};
-pub use local_target::{local_target_changes, manifest_digest, record_manifest};
+pub use local_target::{manifest_digest, record_manifest};
 pub use package_version::{
     LOCK_PACKAGE_SQL, PackageRoot, environment_fingerprint, installed_environment_fingerprint,
     load_applied_package, read_applied_package, read_package_directory, read_package_root,
@@ -167,16 +164,26 @@ pub async fn apply_package_schema(request: ApplyPackageRequest) -> anyhow::Resul
     apply_request(request, None, true).await
 }
 
-/// Apply one package directory to a local target that wamn dev created.
-///
-/// The target also takes a changed tree at an applied coordinate, and a
-/// migration appended after release membership, while every applied migration
-/// stays byte-identical. The target records no artifact digest: its
-/// schema source holds NULL, and the database comment records the
-/// digest of the current `wamn.json`.
+/// Initialize missing local SQL without advancing an installed schema from the watcher.
 pub async fn apply_local_package(
     request: ApplyPackageRequest,
     environment: &str,
+) -> anyhow::Result<ApplyOutcome> {
+    require_local_package(request, environment, false).await
+}
+
+/// Explicitly apply local SQL without publishing or activating application code.
+pub async fn apply_local_package_schema(
+    request: ApplyPackageRequest,
+    environment: &str,
+) -> anyhow::Result<ApplyOutcome> {
+    require_local_package(request, environment, true).await
+}
+
+async fn require_local_package(
+    request: ApplyPackageRequest,
+    environment: &str,
+    advance_schema: bool,
 ) -> anyhow::Result<ApplyOutcome> {
     wamn_runtime::local_application::require_local_target(
         &request.database_url,
@@ -184,7 +191,7 @@ pub async fn apply_local_package(
         environment,
     )
     .await?;
-    apply_request(request, Some(environment), true).await
+    apply_request(request, Some(environment), advance_schema).await
 }
 
 async fn apply_request(
@@ -466,42 +473,6 @@ async fn installed_physical_fingerprint(
         statements,
     }
     .fingerprint())
-}
-
-/// Reconcile mutable local configuration only after confirming the installed schema.
-pub async fn reconcile_local_package_configuration(
-    tx: &Transaction<'_>,
-    env_key: &str,
-    directory: &PackageDirectory,
-    drops: &mut wamn_platform_identity::auth_changes::AuthDrops,
-) -> anyhow::Result<()> {
-    bind_apply_package_principal(tx).await?;
-    let plan = plan_package_migrations(directory, None)?;
-    let installed = load_applied_package(tx, env_key, plan.coordinate.package_id())
-        .await?
-        .context("local configuration requires an applied package schema")?;
-    let expected = plan
-        .pending
-        .iter()
-        .map(|migration| RecordedMigration {
-            ordinal: migration.ordinal,
-            relative_path: migration.relative_path.clone(),
-            sha256: migration.sha256.clone(),
-        })
-        .collect::<Vec<_>>();
-    ensure!(
-        installed.migrations == expected,
-        "local schema inputs changed; recreate the owned disposable target"
-    );
-    // The relation classification check of apply refuses a manifest that drops
-    // a model whose relation the installed migrations create.
-    validate_migration_policy(Path::new(""), directory, &plan)?;
-    let manifest = PackageManifest::from_slice(&directory.manifest_bytes)?;
-    create_history_tables(tx, &manifest).await?;
-    reconcile_entity_maps(tx, &plan, &manifest).await?;
-    reconcile_record_history_triggers(tx, &manifest).await?;
-    ensure_admin_role(tx, env_key, drops).await?;
-    Ok(())
 }
 
 /// Bind `wamn:apply-package` as the actor and the operation of the

@@ -1516,19 +1516,34 @@ async fn exact_runner_commits_once_refuses_drift_and_rolls_back_a_failing_suffix
     }
 }
 
-/// Spec test 13: the declaration is the trigger.
-async fn reconcile_history_configuration(url: &str, package: &Path) -> anyhow::Result<()> {
-    let mut client = connect(url).await;
-    let tx = client.transaction().await?;
-    let directory = apply_package::read_package_directory(package)?;
-    apply_package::reconcile_local_package_configuration(
-        &tx,
-        ENV_KEY,
-        &directory,
-        &mut wamn_platform_identity::auth_changes::AuthDrops::default(),
+/// Apply generated history changes only through the explicit SQL owner.
+async fn apply_history_configuration(url: &str, package: &Path) -> anyhow::Result<()> {
+    let client = connect(url).await;
+    let instance: u32 = client
+        .query_one(
+            "SELECT oid FROM pg_catalog.pg_database WHERE datname = current_database()",
+            &[],
+        )
+        .await?
+        .get(0);
+    let marker = wamn_runtime::local_application::local_target_marker(ENV_KEY, "dev", instance);
+    set_database_comment(&client, Some(&marker)).await;
+    apply_package::apply_local_package_schema(
+        ApplyPackageRequest {
+            component_source: apply_package::component_source_from_env(None)?,
+            changes: wamn_platform_identity::auth_changes::AuthChanges::default(),
+            package: apply_package::PackageRoot {
+                path: package.to_owned(),
+                artifact_digest: None,
+            },
+            database_url: url.to_owned(),
+            org: "package-runner-live".into(),
+            project: "fixture".into(),
+            environment: "dev".into(),
+        },
+        "dev",
     )
     .await?;
-    tx.commit().await?;
     Ok(())
 }
 
@@ -1545,7 +1560,7 @@ async fn record_history_triggers_follow_the_declaration() {
     set_audit_log_columns(&package, "panel", &["updated_at", "created_at"]);
     set_audit_log_columns(&package, "rack", &[]);
 
-    apply(&url, &package)
+    apply_history_configuration(&url, &package)
         .await
         .expect("apply a declaration that selects stamp columns");
     let installed = inventory_triggers(&client).await;
@@ -1587,16 +1602,16 @@ async fn record_history_triggers_follow_the_declaration() {
         grant_stamps.get::<_, i64>(0) == 1 && grant_stamps.get::<_, i64>(1) == 1,
         "the admin role row must stamp wamn:apply-package"
     );
-    reconcile_history_configuration(&url, &package)
+    apply_history_configuration(&url, &package)
         .await
         .expect("an exact replay keeps the installed trigger");
     assert_eq!(inventory_triggers(&client).await, installed);
 
     set_audit_log_columns(&package, "panel", &[]);
     set_audit_log_columns(&package, "rack", &["created_at"]);
-    reconcile_history_configuration(&url, &package)
+    apply_history_configuration(&url, &package)
         .await
-        .expect("local configuration moves the trigger with its declaration");
+        .expect("explicit SQL moves the trigger with its declaration");
     assert_eq!(
         trigger_definitions(&inventory_triggers(&client).await),
         [
@@ -1642,7 +1657,7 @@ async fn record_history_triggers_follow_the_declaration() {
         )
         .await
         .expect("install a trigger outside the platform shape");
-    let refused = reconcile_history_configuration(&url, &package)
+    let refused = apply_history_configuration(&url, &package)
         .await
         .expect_err("apply-package refuses a trigger that the declarations do not derive");
     assert!(
@@ -1776,7 +1791,7 @@ async fn record_history_log_follows_the_declaration() {
     set_audit_log_retention(&package, "panel", "unlimited");
     set_audit_log_retention(&package, "panel_line", "P30D");
 
-    apply(&url, &package)
+    apply_history_configuration(&url, &package)
         .await
         .expect("apply declarations that keep a log");
     assert_eq!(
@@ -1853,7 +1868,7 @@ async fn record_history_log_follows_the_declaration() {
     );
 
     let installed = inventory_triggers(&client).await;
-    reconcile_history_configuration(&url, &package)
+    apply_history_configuration(&url, &package)
         .await
         .expect("an exact replay keeps the log triggers and the history tables");
     assert_eq!(inventory_triggers(&client).await, installed);
@@ -1861,7 +1876,7 @@ async fn record_history_log_follows_the_declaration() {
     // Spec test 14: a retention of none removes the trigger and keeps the table.
     set_audit_log_retention(&package, "panel", "P90D");
     set_audit_log_retention(&package, "panel_line", "none");
-    reconcile_history_configuration(&url, &package)
+    apply_history_configuration(&url, &package)
         .await
         .expect("local configuration moves the log triggers with the declarations");
     assert_eq!(
@@ -1907,7 +1922,7 @@ async fn record_history_log_follows_the_declaration() {
         )
         .await
         .expect("change the installed retention outside apply-package");
-    reconcile_history_configuration(&url, &package)
+    apply_history_configuration(&url, &package)
         .await
         .expect("a replay repairs the installed retention");
     assert_eq!(
@@ -1927,7 +1942,7 @@ async fn record_history_log_follows_the_declaration() {
         )
         .await
         .expect("widen the audit retention grants outside apply-package");
-    reconcile_history_configuration(&url, &package)
+    apply_history_configuration(&url, &package)
         .await
         .expect("a replay repairs the audit retention grants");
     assert_eq!(
@@ -1937,7 +1952,7 @@ async fn record_history_log_follows_the_declaration() {
 
     // P90D to unlimited revokes.
     set_audit_log_retention(&package, "panel", "unlimited");
-    reconcile_history_configuration(&url, &package)
+    apply_history_configuration(&url, &package)
         .await
         .expect("local unlimited retention revokes the retention grants");
     assert_eq!(
@@ -2055,7 +2070,7 @@ async fn inventory_column_present(client: &Client, table: &str, column: &str) ->
 /// It records no artifact digest, and its comment
 /// records the digest of the current wamn.json.
 #[tokio::test]
-async fn a_local_target_takes_an_appended_migration_and_a_changed_manifest() {
+async fn explicit_local_schema_applies_pending_sql_and_records_its_source() {
     const ENVIRONMENT: &str = "development";
     let url = locked_database::database(wamn_test_postgres::database);
     let client = connect(&url).await;
@@ -2074,26 +2089,19 @@ async fn a_local_target_takes_an_appended_migration_and_a_changed_manifest() {
     let marker =
         wamn_runtime::local_application::local_target_marker(ENV_KEY, ENVIRONMENT, instance);
     set_database_comment(&client, Some(&marker)).await;
-    let apply_local = || {
-        apply_package::apply_local_package(
-            ApplyPackageRequest {
-                component_source: wamn_package_control::apply_package::component_source_from_env(
-                    None,
-                )
-                .unwrap(),
-                changes: wamn_platform_identity::auth_changes::AuthChanges::default(),
-                package: apply_package::PackageRoot {
-                    path: package.clone(),
-                    artifact_digest: None,
-                },
-                database_url: url.to_string(),
-                org: "package-runner-live".into(),
-                project: "fixture".into(),
-                environment: "dev".into(),
-            },
-            ENVIRONMENT,
-        )
+    let local_request = || ApplyPackageRequest {
+        component_source: apply_package::component_source_from_env(None).unwrap(),
+        changes: wamn_platform_identity::auth_changes::AuthChanges::default(),
+        package: apply_package::PackageRoot {
+            path: package.clone(),
+            artifact_digest: None,
+        },
+        database_url: url.to_string(),
+        org: "package-runner-live".into(),
+        project: "fixture".into(),
+        environment: "dev".into(),
     };
+    let apply_local = || apply_package::apply_local_package_schema(local_request(), ENVIRONMENT);
     let recorded_comment = |hash: &str| {
         let mut comment = wamn_runtime::local_application::parse_local_target_comment(&marker)
             .expect("parse the marker");
@@ -2126,6 +2134,35 @@ async fn a_local_target_takes_an_appended_migration_and_a_changed_manifest() {
     assert_eq!(
         package_migration_error(&refused),
         wamn_schema_control::PackageMigrationErrorType::CoordinateWithoutArtifact
+    );
+    client
+        .batch_execute(&format!(
+            "BEGIN; SELECT set_config('app.user_id', '{FIXTURE_PRINCIPAL}', true), \
+            set_config('app.operation', 'admin:seed-local-row', true); \
+         INSERT INTO inventory.dock (dock_code) VALUES ('kept'); COMMIT;"
+        ))
+        .await
+        .unwrap();
+    let installed: String = client.query_one(
+        "SELECT physical_schema_fingerprint FROM catalog.packages WHERE env_key=$1 AND package_id='wamn_inventory'",
+        &[&ENV_KEY],
+    ).await.unwrap().get(0);
+    let watched = apply_package::apply_local_package(local_request(), ENVIRONMENT)
+        .await
+        .unwrap();
+    assert_eq!(watched.migrations_applied, 0);
+    assert!(!inventory_column_present(&client, "dock", "description").await);
+    assert_eq!(client.query_one(
+        "SELECT physical_schema_fingerprint FROM catalog.packages WHERE env_key=$1 AND package_id='wamn_inventory'",
+        &[&ENV_KEY],
+    ).await.unwrap().get::<_, String>(0), installed);
+    assert_eq!(
+        client
+            .query_one("SELECT dock_code FROM inventory.dock", &[])
+            .await
+            .unwrap()
+            .get::<_, String>(0),
+        "kept"
     );
     let outcome = apply_local()
         .await
@@ -2254,92 +2291,6 @@ async fn a_local_target_takes_an_appended_migration_and_a_changed_manifest() {
         .await
         .expect("clean local target schemas");
     std::fs::remove_dir_all(package).expect("remove local target package fixture");
-}
-
-/// Owner rulings 3 and 6 of wamn-ri4b: a kept local target is recreated only
-/// for a changed applied migration or a history table with rows whose model no
-/// longer keeps a log.
-#[tokio::test]
-async fn a_local_target_recreates_for_a_changed_migration_or_a_history_table_with_rows() {
-    let url = locked_database::database(wamn_test_postgres::database);
-    let client = connect(&url).await;
-    install(&client).await;
-    let package = fixture_root().with_file_name(format!(
-        "apply-package-local-target-reuse-{}",
-        std::process::id()
-    ));
-    copy_base_fixture(&package);
-    set_audit_log_retention(&package, "ingot", "unlimited");
-    set_audit_log_retention(&package, "dock", "unlimited");
-    apply(&url, &package)
-        .await
-        .expect("apply declarations that keep a log");
-    let reason = || {
-        apply_package::local_target_recreate_reason(&url, ENV_KEY, std::slice::from_ref(&package))
-    };
-    assert_eq!(reason().await.expect("check the applied package"), None);
-
-    client
-        .batch_execute(&format!(
-            "BEGIN; \
-             SELECT set_config('app.user_id', '{FIXTURE_PRINCIPAL}', true), \
-                    set_config('app.operation', 'admin:seed-history-fixture', true); \
-             INSERT INTO inventory.dock (id, dock_code) \
-               VALUES ('00000000-0000-4000-8000-00000000b001', 'DOCK-1'); \
-             COMMIT;"
-        ))
-        .await
-        .expect("write a logged dock row as the fixture principal");
-    set_audit_log_retention(&package, "ingot", "none");
-    assert_eq!(
-        reason().await.expect("check an empty history table"),
-        None,
-        "an empty history table whose model keeps no log keeps the target"
-    );
-    set_audit_log_retention(&package, "dock", "none");
-    let history = reason()
-        .await
-        .expect("check a history table with rows")
-        .expect("a history table with rows whose model keeps no log recreates the target");
-    assert!(history.contains("inventory.dock_history"), "{history}");
-    set_audit_log_retention(&package, "dock", "unlimited");
-
-    std::fs::write(
-        package.join("migrations/0002_dock_note.sql"),
-        "ALTER TABLE inventory.dock ADD COLUMN note text NOT NULL DEFAULT 'not_required';",
-    )
-    .expect("append a migration");
-    write_build_record(&package);
-    assert_eq!(
-        reason().await.expect("check an appended migration"),
-        None,
-        "an appended migration keeps the target"
-    );
-    let migration = package.join("migrations/0001_initial.sql");
-    let mut edited = std::fs::read(&migration).expect("read the applied migration");
-    edited.extend_from_slice(b"\n");
-    std::fs::write(&migration, edited).expect("edit the applied migration");
-    write_build_record(&package);
-    let drift = reason()
-        .await
-        .expect("check an edited migration")
-        .expect("an edited applied migration recreates the target");
-    assert!(
-        drift.contains(wamn_schema_control::PACKAGE_MIGRATION_DRIFT_REFUSAL),
-        "{drift}"
-    );
-
-    client
-        .batch_execute(
-            "DROP SCHEMA IF EXISTS inventory CASCADE; \
-             DROP SCHEMA IF EXISTS platform CASCADE; \
-             DROP SCHEMA IF EXISTS catalog CASCADE; \
-             DROP SCHEMA IF EXISTS wamn_authority CASCADE; \
-             DROP SCHEMA IF EXISTS wamn_history CASCADE;",
-        )
-        .await
-        .expect("clean local target reuse schemas");
-    std::fs::remove_dir_all(package).expect("remove local target reuse package fixture");
 }
 
 /// One apply takes a stream that creates a relation and then adds a column to

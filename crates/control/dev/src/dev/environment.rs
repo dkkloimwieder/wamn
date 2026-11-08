@@ -592,6 +592,26 @@ pub async fn prepare_target_template(
         ))
         .await
         .context("stamp the template with its standup fingerprint")?;
+    let instance: u32 = admin
+        .query_one(
+            "SELECT oid FROM pg_catalog.pg_database WHERE datname=$1",
+            &[&target],
+        )
+        .await?
+        .get(0);
+    let marker = wamn_runtime::local_application::local_target_marker(
+        &identity.env_key(),
+        &identity.environment,
+        instance,
+    );
+    admin
+        .batch_execute(&format!(
+            "COMMENT ON DATABASE {} IS {}",
+            Identifier::new(target)?.quoted(),
+            wamn_pg_core::quote_literal(&marker),
+        ))
+        .await
+        .context("stamp the provisioned local target")?;
     Ok(template)
 }
 

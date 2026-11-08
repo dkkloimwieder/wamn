@@ -11,7 +11,6 @@ use std::path::PathBuf;
 
 use anyhow::{Context as _, bail, ensure};
 use tokio_postgres::{Client, NoTls, Transaction};
-use wamn_platform_identity::auth_changes::{AuthChanges, AuthDrops};
 use wamn_schema_control::plan_package_migrations;
 
 use wamn_package_control::apply_package::{LOCK_SQL, PackageRoot};
@@ -238,7 +237,6 @@ pub async fn reconcile_package_data_access(
         &packages,
         ReconcileMode::Production,
         true,
-        &AuthChanges::default(),
     )
     .await
 }
@@ -262,7 +260,6 @@ pub async fn reconcile_local(
     env_key: &str,
     environment: &str,
     apply: bool,
-    changes: &AuthChanges,
 ) -> anyhow::Result<DataAccessReconcileResult> {
     wamn_runtime::local_application::require_local_target(database_url, env_key, environment)
         .await?;
@@ -272,7 +269,6 @@ pub async fn reconcile_local(
         &prepared.0,
         ReconcileMode::Local(environment),
         apply,
-        changes,
     )
     .await
 }
@@ -335,7 +331,6 @@ async fn execute_prepared(
     packages: &[PresentedPackage],
     mode: ReconcileMode<'_>,
     apply: bool,
-    changes: &AuthChanges,
 ) -> anyhow::Result<DataAccessReconcileResult> {
     ensure!(
         !env_key.is_empty(),
@@ -345,7 +340,7 @@ async fn execute_prepared(
         .await
         .context("connect to project environment")?;
     let connection_task = tokio::spawn(connection);
-    let result = reconcile_mode(&mut client, env_key, packages, mode, apply, changes).await;
+    let result = reconcile_mode(&mut client, env_key, packages, mode, apply).await;
     drop(client);
     if result.is_err() {
         connection_task.abort();
@@ -364,19 +359,16 @@ async fn reconcile_mode(
     packages: &[PresentedPackage],
     mode: ReconcileMode<'_>,
     apply: bool,
-    changes: &AuthChanges,
 ) -> anyhow::Result<DataAccessReconcileResult> {
     let tx = client
         .transaction()
         .await
         .context("begin package data-access reconciliation")?;
-    let mut drops = AuthDrops::default();
-    let result = reconcile_in_transaction(&tx, env_key, packages, mode, apply, &mut drops).await?;
+    let result = reconcile_in_transaction(&tx, env_key, packages, mode, apply).await?;
     if apply {
         tx.commit()
             .await
             .context("commit package data-access reconciliation")?;
-        changes.publish(drops).await;
     } else {
         tx.rollback()
             .await
@@ -392,7 +384,6 @@ async fn reconcile_in_transaction(
     packages: &[PresentedPackage],
     mode: ReconcileMode<'_>,
     apply: bool,
-    drops: &mut AuthDrops,
 ) -> anyhow::Result<DataAccessReconcileResult> {
     let local = match mode {
         ReconcileMode::Local(environment) => Some(environment),
@@ -404,17 +395,6 @@ async fn reconcile_in_transaction(
     tx.query_one(LOCK_SQL, &[])
         .await
         .context("lock project data-access carrier")?;
-    if local.is_some() {
-        for package in packages {
-            wamn_package_control::apply_package::reconcile_local_package_configuration(
-                tx,
-                env_key,
-                &package.directory,
-                drops,
-            )
-            .await?;
-        }
-    }
     validate_installed_set(tx, env_key, packages, local.is_some()).await?;
     let schemas = packages
         .iter()
@@ -751,8 +731,8 @@ async fn validate_installed_set(
         })
         .collect::<CoordinateHashes>();
     validate_package_set(&installed, &presented)?;
-    // Published SQL sources retain their exact artifacts. Local configuration
-    // already checked the installed migration prefix, independently of code version.
+    // Published SQL sources retain their exact artifacts. Local code selection
+    // does not advance the installed SQL records.
     if !local {
         validate_recorded_manifests(&installed, &presented)?;
     }

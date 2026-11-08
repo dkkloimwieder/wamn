@@ -1,8 +1,7 @@
 //! Application baseline initialization and immutable release caching.
 
 pub(super) mod plan;
-pub(crate) use plan::apply_order;
-pub use plan::sequence_defaults;
+pub use plan::{apply_order, sequence_defaults};
 
 use std::collections::BTreeMap;
 

@@ -28,7 +28,7 @@ pub struct EnvironmentArgs {
 
 #[derive(Debug, Args)]
 pub struct SchemaArgs {
-    /// The declared application, or an already built source directory for diff.
+    /// The declared application, or a built local source directory.
     pub application: String,
     /// The shared environment.k file.
     #[arg(long)]
@@ -62,6 +62,22 @@ pub async fn run(command: SchemaCommand) -> anyhow::Result<()> {
         SchemaCommand::Diff(args) => (args, false),
         SchemaCommand::Apply(args) => (args, true),
     };
+    let local_config = args.env.with_file_name("dev.json");
+    if local_config.is_file() && std::path::Path::new(&args.application).is_dir() {
+        ensure!(
+            args.release.is_none(),
+            "local source SQL does not select a published release"
+        );
+        let diffs = wamn_dev_control::dev::target_database::schema_operation(
+            &local_config,
+            &args.env,
+            std::path::Path::new(&args.application),
+            apply,
+        )
+        .await?;
+        println!("{}", serde_json::to_string_pretty(&diffs)?);
+        return Ok(());
+    }
     let document = EnvironmentDocument::compile(&args.env)?;
     let mut platform = if apply {
         Platform::apply_from_env()?

@@ -676,16 +676,14 @@ impl DevConfig {
             .map_or("<not-an-endpoint>", |probe| &probe.sanitized_endpoint)
     }
 
-    /// Target PostgreSQL URL. In a development loop this database is
-    /// disposable: the loop drops and recreates it before every Apply.
+    /// Target PostgreSQL URL. The shared schema mode controls automatic resets.
     pub fn target_database_url(&self) -> &str {
         &self.target_database_url
     }
 
     /// Privilege SQL `wamn dev up` emitted for the target database.
     ///
-    /// The loop recreates the target database per run, which drops every
-    /// per-database privilege with it. Roles are cluster-level and survive, so
+    /// A schema reset drops the target's per-database privileges. Roles are cluster-level and survive, so
     /// this file is what has to be replayed. It is read, never re-derived: a
     /// privilege set the loop computed itself would not be the one the
     /// environment was provisioned with.
