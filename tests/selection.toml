@@ -60,7 +60,7 @@ targets = [
   { workspace="root", package="wamn-environment-control", target="test:application_activation_live", tier="live-postgres" },
   { workspace="root", package="wamn-release-control", target="test:application_composition", tier="contract" },
   { workspace="root", package="wamn-environment-control", target="test:apply_package_live", tier="live-postgres" },
-  { workspace="root", package="wamn-environment-control", target="test:capture_gap_live", tier="live-postgres" },
+  { workspace="root", package="wamn-environment-control", target="test:capture_gap_live", tier="live-nats" },
   { workspace="root", package="wamn-environment-control", target="test:connection_binding_live", tier="live-postgres" },
   { workspace="root", package="wamn-environment-control", target="test:control_generation_live", tier="live-postgres" },
   { workspace="root", package="wamn-environment-control", target="test:create_user_live", tier="live-postgres" },

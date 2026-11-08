@@ -1,11 +1,11 @@
 //! Live test of `recover-capture-gap` and `close-capture-gap` (`wamn-59z6`,
 //! docs/operations/gcp.md#57-cdc-slot-lost).
 //!
-//! The test starts its own PostgreSQL 18 server with `wal_level=logical`. Set
-//! `WAMN_READER_NATS_URL` to a throwaway JetStream-enabled NATS, the broker of
-//! the reader's live test. It records a missing slot, an invalidated slot, and a
-//! stream with no CDC event, and it drives every refusal except the active
-//! slot, which needs a streaming reader.
+//! The test starts its own PostgreSQL 18 server with `wal_level=logical`.
+//! Configure a private JetStream-enabled TLS broker through `WAMN_NATS_URL`,
+//! `WAMN_NATS_TLS_CA`, `WAMN_NATS_TLS_CERT`, and `WAMN_NATS_TLS_KEY`.
+//! It records a missing slot, an invalidated slot, and a stream with no CDC event.
+//! It drives every refusal except the active slot, which needs a streaming reader.
 
 use std::os::unix::fs::{DirBuilderExt as _, PermissionsExt as _};
 
@@ -65,10 +65,12 @@ fn refusal(result: anyhow::Result<impl std::fmt::Debug>) -> String {
 }
 
 #[tokio::test]
-#[ignore = "requires: env:WAMN_READER_NATS_URL"]
+#[ignore = "requires: env:WAMN_NATS_URL, env:WAMN_NATS_TLS_CA, env:WAMN_NATS_TLS_CERT, env:WAMN_NATS_TLS_KEY"]
 async fn recover_and_close_record_each_capture_gap() {
-    wamn_test_postgres::require_ignored_prerequisites("requires: env:WAMN_READER_NATS_URL");
-    let nats_url = std::env::var("WAMN_READER_NATS_URL").expect("WAMN_READER_NATS_URL");
+    wamn_test_postgres::require_ignored_prerequisites(
+        "requires: env:WAMN_NATS_URL, env:WAMN_NATS_TLS_CA, env:WAMN_NATS_TLS_CERT, env:WAMN_NATS_TLS_KEY",
+    );
+    let nats = wamn_platform_identity::nats::PlatformNats::from_env().unwrap();
     validate_project_env_cdc(ORG, PROJECT, ENV).expect("valid names");
     let postgres = wamn_test_postgres::start(&[("wal_level", "logical")])
         .expect("start a PostgreSQL 18 server with wal_level=logical");
@@ -185,7 +187,7 @@ async fn recover_and_close_record_each_capture_gap() {
         .expect("the healthy slot");
 
     // The source stream: one CDC event, then a newer derived event.
-    let js = jetstream::new(async_nats::connect(&nats_url).await.expect("connect NATS"));
+    let js = jetstream::new(nats.connect().await.expect("connect NATS"));
     let _ = js.delete_stream(&stream).await;
     js.create_stream(jetstream::stream::Config {
         name: stream.clone(),
@@ -233,7 +235,7 @@ async fn recover_and_close_record_each_capture_gap() {
         env: ENV.to_owned(),
         system_database_url: system_url.clone(),
         admin_database_url: admin.to_owned(),
-        nats: wamn_platform_identity::nats::PlatformNats::from_env().unwrap(),
+        nats: nats.clone(),
     };
     let close = CloseCaptureGapRequest {
         org: ORG.to_owned(),
