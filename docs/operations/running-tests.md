@@ -45,7 +45,9 @@ The root step then runs ignored cases whose `requires:` reasons name only availa
 Their package and target must have a tier row that matches the selected tiers and is not `kind`.
 An `env:NAME` prerequisite needs a nonempty variable after input preparation.
 A `bin:PROGRAM` prerequisite needs an executable file on `PATH` or at the named absolute path.
-The step runs each eligible case by its exact name in its own package and target.
+The step runs each eligible case by its exact name from the test executable that Cargo already built.
+It preserves the complete feature selection of that build and starts no second Cargo build.
+A selected ignored suite owns its named cases or filter, so the root step leaves those cases to that suite.
 Other ignored cases stay ignored.
 An explicit `--tier` filters executable targets within each selected package.
 Without `--tier`, the tool selects unit, contract, live-postgres, and live-nats.
@@ -63,8 +65,11 @@ Generator changes select `package_digest` in `wamn-package-control`.
 Platform fixture and catalog changes select `wamn-control-provision`.
 SQL changes select `wamn-ctl` with `ops`, including `protected_relations_live`.
 Control and platform deployment changes select the exact native host case.
-Every change outside documentation selects the prekind suite, which runs `environment_render` and `platform_render` in `wamn-environment-control`.
+Every change outside documentation selects `environment_render` and `platform_render` in `wamn-environment-control` through prekind or Cargo selection.
 The release-chart-render suite runs the ignored Helm cases in `release_chart_render`.
+Path rules add to the selected targets and cases.
+The runner combines feature requirements for targets that both Cargo paths and suites select.
+A target runs through Cargo selection or its suite once for each execution mode: ordinary or ignored.
 These contract targets compile separately from the kind cases.
 Web changes select repository web lint, runtime tests, and platform UI checks, tests, and build.
 Every change outside documentation selects `tools/repo-lint run`, including root formatting and Clippy for every target.
@@ -173,6 +178,9 @@ Its preparation step builds the platform fixture and supplies the schema path.
 
 `tools/test-changes --tier kind` selects the kind targets of affected packages.
 It runs ignored cases one at a time.
+When an exact kind suite selects the aggregate journey, that suite owns the target and the root command omits it.
+A name filter that selects focused cases instead omits the aggregate suite.
+The selection runs the aggregate journey or its focused cases once.
 The generated exclusion tests in `apps/Cargo.toml` need PostgreSQL diagnostics, so each runs through its own example.
 The `exclusion_diagnostics` example of `wamn-test-infrastructure` runs the platform fixture test, and the `exclusion_diagnostics` example of `wamn-receiving-tests` runs the Receiving test.
 [Ignored tests](#ignored-tests) gives the commands.

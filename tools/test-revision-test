@@ -98,8 +98,7 @@ elif [[ $1 == test ]]; then
   fi
   if [[ $* == *prekind_host::* ]]; then
     [[ $WAMN_HOST_BINARY == "$CARGO_TARGET_DIR/debug/wamn-host" ]]
-    [[ $WAMN_FLOW_HTTP_COMPONENT == "$CARGO_TARGET_DIR/apps/wasm32-wasip2/release/http_route.wasm" ]]
-    [[ $WAMN_MATERIALIZER_COMPONENT == "$CARGO_TARGET_DIR/apps/wasm32-wasip2/debug/materializer.wasm" ]]
+    [[ $WAMN_FLOW_HTTP_COMPONENT == "$CARGO_TARGET_DIR/wasm32-wasip2/release/http_route.wasm" ]]
     [[ -f $CARGO_TARGET_DIR/wasm32-wasip2/debug/http_request.wasm ]]
   fi
   [[ ${FAKE_CARGO_FAIL_TEST:-false} != true ]] || exit 27
@@ -163,20 +162,21 @@ run_case deploy/sql/catalog.sql
 grep -q '^suites:.*ctl-ops' "$fixture/output"
 grep -q '^root (full: "deploy/sql/catalog.sql").*--features wamn-environment-control/ops' "$fixture/output"
 run_case deploy/platform/release/values.yaml
-grep -q '^prekind:.*--test environment_render --test platform_render --features ops$' "$fixture/output"
+! grep -q '^prekind:' "$fixture/output"
+grep -q '^root (full:.*--features wamn-environment-control/ops' "$fixture/output"
 grep -q '^native host:.*--exact --test-threads=1 --ignored$' "$fixture/output"
 ! grep -q -- '--skip' "$fixture/output"
-grep -q 'target/no-std' "$fixture/output"
-grep -q 'target/apps' "$fixture/output"
+grep -q -- '--manifest-path apps/platform/no-std/Cargo.toml' "$fixture/output"
+grep -q -- '--manifest-path apps/Cargo.toml' "$fixture/output"
 printf 'path rules, render targets, isolated guest paths: PASS\n'
 
 export FAKE_FAIL_INPUT=true
 if run_case crates/control/environment/src/change.rs run; then exit 1; fi
 ! grep '^cargo test ' "$fixture/calls" | grep -qv -- '--list'
 unset FAKE_FAIL_INPUT
-mkdir -p "$fixture/target/no-std/wasm32-wasip2/debug"
+mkdir -p "$fixture/target/wasm32-wasip2/debug"
 for guest in transform http_request http_page; do
-  : > "$fixture/target/no-std/wasm32-wasip2/debug/$guest.wasm"
+  : > "$fixture/target/wasm32-wasip2/debug/$guest.wasm"
 done
 run_case crates/platform/runtime/src/change.rs run
 kill -0 "$(cat "$fixture/nats-pid")" 2>/dev/null && exit 1
@@ -194,7 +194,7 @@ grep -q 'set WAMN_NATIVE_C_NATS_BIN' "$fixture/output"
 mv "$fixture/nats-server" "$fixture/bin/nats-server"
 printf 'absent NATS on PATH stops before every test: PASS\n'
 run_case deploy/platform/release/values.yaml run
-grep -q 'cargo test .*--features ops.*prekind' "$fixture/calls"
+grep -q 'cargo test .*--workspace --features wamn-environment-control/ops' "$fixture/calls"
 export FAKE_CARGO_FAIL_TEST=true
 if run_case crates/platform/runtime/src/change.rs run; then exit 1; fi
 kill -0 "$(cat "$fixture/nats-pid")" 2>/dev/null && exit 1

@@ -358,7 +358,6 @@ if [[ "$(jq '.tests // false' <<<"$WAMN_ROWS")" == true && ",$WAMN_TIERS," == *,
   ! jq -e '.workspaces[] | select(.[0] == 0) | .[3] | split(" ") | index("wamn-conformance-tests")' <<<"$WAMN_DISCOVERY" >/dev/null; then
   WAMN_PLAN+="${WAMN_PLAN:+$'\n'}"$'0\tfalse\tnull\twamn-conformance-tests\t \ttest:test_changes test:test_tiers'
 fi
-readonly WAMN_PLAN
 
 printf 'working-directory: %q\n' "$WAMN_REPOSITORY_ROOT"
 printf 'base: %s\n' "$WAMN_BASE"
@@ -402,15 +401,101 @@ WAMN_SUITES="$(jq -r --argjson paths "$WAMN_RELEVANT" --argjson selected "$WAMN_
       or any($selected[].packages[]; IN($suite.select_packages[]?))
       or (.execution == "docker-guests" and any($selected[] | select(.index == 1) | .packages[]; IN($guests[]))))
   end | .id' <<<"$WAMN_POLICY")" || wamn_fail 65 'cannot select suites'
-declare -a WAMN_SELECTED_PACKAGES=()
-mapfile -t WAMN_SELECTED_PACKAGES < <(awk -F '\t' '$1 == 0 {print $4}' <<<"$WAMN_PLAN" | tr ' ' '\n')
-wamn_package_selected() {
-  local package
-  for package in "${WAMN_SELECTED_PACKAGES[@]}"; do
-    [[ "$package" != "$1" ]] || return 0
-  done
-  return 1
-}
+# Fold path-selected suites into the target selection. Features belong to the
+# selected build, not to the path that selected it. An ignored suite owns its
+# cases; the root's prerequisite pass must leave those cases to that suite.
+WAMN_TARGET_SELECTION="$(printf '%s\n' "${WAMN_METADATA[@]}" | jq -cs . | python3 -c '
+import json
+import sys
+
+policy = json.loads(sys.argv[1])
+suites = [suite for suite in policy["suites"] if suite["id"] in sys.argv[3].splitlines()]
+metadata = json.load(sys.stdin)
+plans = [row.split("\t") for row in sys.argv[2].splitlines()]
+workspaces = ["root", "apps", "no-std"]
+name, tiers = sys.argv[4:6]
+kind = "kind" in tiers.split(",")
+
+def targets(suite):
+    if suite["target"]:
+        return suite["target"]
+    md = metadata[workspaces.index(suite["workspace"])]
+    package = next(p for p in md["packages"] if p["name"] == suite["package"])
+    return [t["kind"][0] + ":" + t["name"] for t in package["targets"] if t.get("test", True)]
+
+coverage = set()
+for plan in plans:
+    index = int(plan[0])
+    packages = plan[3].split()
+    features = plan[4].split()
+    if plan[1] == "true" and index == 0:
+        features = policy["root_features"] + [
+            package + "/" + feature
+            for step in policy["preparation"] for package in step.get("packages", [])
+            if package in packages for feature in step.get("features", [])
+        ] + [feature for feature in features if feature.endswith("/cluster")]
+    selected = plan[5].split() if len(plan) > 5 else []
+    for suite in suites:
+        if (suite["execution"] == "libtest" and suite["workspace"] == workspaces[index]
+                and suite["package"] in packages
+                and (not selected or set(targets(suite)) & set(selected))):
+            features += [suite["package"] + "/" + feature for feature in suite["features"]]
+    plan[4] = " ".join(dict.fromkeys(features)) or " "
+    for package in metadata[index]["packages"]:
+        if package["name"] not in packages:
+            continue
+        for target in package["targets"]:
+            key = target["kind"][0] + ":" + target["name"]
+            if target.get("test", True) and (not selected or key in selected):
+                coverage.add((workspaces[index], package["name"], key))
+
+# Exact kind suites select the aggregate journey. A name that selects focused
+# cases instead keeps the target in the root command and omits that suite.
+kind_owned = set()
+for suite in suites:
+    if suite["execution"] == "libtest" and suite["tier"] == "kind" and suite["tests"]:
+        suite["tests"] = [test for test in suite["tests"] if name in test]
+        if suite["tests"]:
+            kind_owned.update((suite["workspace"], suite["package"], target) for target in targets(suite))
+
+run_suites = []
+for suite in suites:
+    if suite["execution"] == "libtest":
+        if suite["tier"] == "kind" and not suite["tests"] and name:
+            continue
+        root_covers_mode = (suite.get("ignored", False) and kind) or (not suite.get("ignored", False) and tiers != "kind")
+        if root_covers_mode and not name and suite["tier"] != "kind":
+            remaining = [target for target in targets(suite)
+                         if (suite["workspace"], suite["package"], target) not in coverage]
+            if not remaining:
+                continue
+            suite["target"] = remaining
+    run_suites.append(suite)
+
+if kind:
+    remaining_plans = []
+    for plan in plans:
+        index = int(plan[0])
+        if not any(workspace == workspaces[index] and owner in plan[3].split()
+                   for workspace, owner, target in kind_owned):
+            remaining_plans.append(plan)
+            continue
+        for package in plan[3].split():
+            selected = plan[5].split() if len(plan) > 5 else []
+            if not selected:
+                md_package = next(p for p in metadata[index]["packages"] if p["name"] == package)
+                selected = [t["kind"][0] + ":" + t["name"] for t in md_package["targets"] if t.get("test", True)]
+            selected = [target for target in selected
+                        if (workspaces[index], package, target) not in kind_owned]
+            if selected:
+                remaining_plans.append([plan[0], "false", plan[2], package, plan[4], " ".join(selected)])
+    plans = remaining_plans
+print(json.dumps({"plan": "\n".join("\t".join(plan) for plan in plans), "suites": run_suites}))
+' "$WAMN_POLICY" "$WAMN_PLAN" "$WAMN_SUITES" "$WAMN_NAME" "$WAMN_TIERS")" ||
+  wamn_fail 65 "cannot combine target and suite selection"
+WAMN_PLAN="$(jq -r .plan <<<"$WAMN_TARGET_SELECTION")"
+WAMN_RUN_SUITES="$(jq -c .suites <<<"$WAMN_TARGET_SELECTION")"
+readonly WAMN_PLAN WAMN_RUN_SUITES
 printf 'suites: %s\n' "$(paste -sd ' ' <<<"$WAMN_SUITES")"
 
 failed=0
@@ -643,8 +728,6 @@ wamn_run_suite() {
       done < <(jq -c '.commands[]' <<<"$suite")
       ;;
     libtest)
-      if [[ "$(jq -r '.covered_by_package // false' <<<"$suite")" == true ]] &&
-        wamn_package_selected "$(jq -r '.package' <<<"$suite")"; then return 0; fi
       wamn_suite_arguments "$suite"
       filter="$(jq -r '.filter // ""' <<<"$suite")"
       if [[ "$(jq '.tests | length' <<<"$suite")" == 0 ]]; then
@@ -673,40 +756,25 @@ wamn_run_suite() {
 }
 
 while IFS= read -r suite; do wamn_run_suite "$suite"; done < <(
-  jq -c --arg suites "$WAMN_SUITES" '.suites[] | select(.mode == "always")
-    | select(.id | IN($suites | split("\n") | .[]))' <<<"$WAMN_POLICY"
+  jq -c '.[] | select(.mode == "always")' <<<"$WAMN_RUN_SUITES"
 )
 
 wamn_root_test() {
-  local result exit_code=0 manifest kind target name package feature
-  local -a ignored_argv=() ignored_features=()
+  local result exit_code=0 manifest kind target name package executable
   result=$(mktemp "${TMPDIR:-/tmp}/wamn-root-test.XXXXXXXX")
   "$WAMN_CARGO" "$@" --message-format=json-render-diagnostics >"$result" 2>&1 || exit_code=$?
   sed '/^{.*"reason":"\(compiler-artifact\|build-script-executed\|build-finished\)"/d' "$result"
-  while IFS=$'\t' read -r manifest kind target name; do
+  while IFS=$'\t' read -r manifest kind target name executable; do
     package="$(jq -r --arg manifest "$manifest" '.packages[]
       | select(.manifest_path == $manifest) | .name' <<<"${WAMN_METADATA[0]}")"
     jq -e --arg package "$package" --arg target "$kind:$target" --arg tiers "$WAMN_TIERS" '
       any(.targets[]; .workspace == "root" and .package == $package and .target == $target
         and .tier != "kind" and (.tier | IN($tiers | split(",") | .[])))' \
       <<<"$WAMN_POLICY" >/dev/null || continue
-    ignored_argv=(--manifest-path "$manifest" -p "$package")
-    ignored_features=()
-    for feature in $features; do
-      [[ "$feature" != "$package/"* ]] || ignored_features+=("$feature")
-    done
-    if ((${#ignored_features[@]} > 0)); then
-      ignored_argv+=(--features "$(IFS=,; echo "${ignored_features[*]}")")
-    fi
-    case "$kind" in
-      lib | cdylib | staticlib | rlib | dylib) ignored_argv+=(--lib) ;;
-      test | bin | example | bench) ignored_argv+=("--$kind" "$target") ;;
-      *) continue ;;
-    esac
-    wamn_test "root ignored $name" --expected-test "$name" --each-target \
-      "${ignored_argv[@]}" "$name" -- --ignored --exact --test-threads=1 |
+    wamn_step "root ignored $name" "$WAMN_TOOL_DIRECTORY/require-test-result" \
+      --expected-test "$name" "$executable" "$name" --ignored --exact --test-threads=1 |
       tee -a "$result" || exit_code=1
-  done < <(python3 - "$result" <<'PYTHON'
+  done < <(python3 - "$result" "$WAMN_RUN_SUITES" <(jq '[.packages[] | {manifest_path, name}]' <<<"${WAMN_METADATA[0]}") <<'PYTHON'
 import json
 import os
 import re
@@ -728,6 +796,9 @@ def supplied(item):
             return True
     return False
 
+suites = json.loads(sys.argv[2])
+with open(sys.argv[3], encoding="utf-8") as source:
+    packages = {p["manifest_path"]: p["name"] for p in json.load(source)}
 artifacts = {}
 current = None
 with open(sys.argv[1], encoding="utf-8") as source:
@@ -751,11 +822,32 @@ for line in lines:
     ignored = re.fullmatch(r"test (.+) \.\.\. ignored, requires: (.+)", line)
     if current and ignored and all(supplied(item) for item in ignored[2].split(", ")):
         target = current["target"]
-        print("\t".join((current["manifest_path"], target["kind"][0], target["name"], ignored[1])))
+        key = target["kind"][0] + ":" + target["name"]
+        # Match by manifest, not package name, across equal test names.
+        owned = any(
+            suite["execution"] == "libtest" and suite["workspace"] == "root"
+            and suite.get("ignored", False)
+            and (not suite["target"] or key in suite["target"])
+            and (ignored[1] in suite["tests"] if suite["tests"]
+                 else suite.get("filter", "") in ignored[1])
+            and suite["package"] == packages[current["manifest_path"]]
+            for suite in suites
+        )
+        if not owned:
+            print("\t".join((current["manifest_path"], target["kind"][0], target["name"], ignored[1], current["executable"])))
 PYTHON
   )
   if ((exit_code == 0)); then
     "$WAMN_TOOL_DIRECTORY/require-test-result" cat "$result" >/dev/null || exit_code=$?
+    while IFS= read -r name; do
+      "$WAMN_TOOL_DIRECTORY/require-test-result" --expected-test "$name" cat "$result" >/dev/null || exit_code=1
+    done < <(jq -r --arg selected "$WAMN_SUITES" --argjson active "$WAMN_RUN_SUITES" \
+      --arg packages "$packages" --arg targets "$targets" '
+      .suites[] | select(.id | IN($selected | split("\n") | .[]))
+      | select(.execution == "libtest" and .workspace == "root" and (.ignored // false | not))
+      | select(.package | IN($packages | split(" ") | .[]))
+      | select($targets == "" or any(.target[]; IN($targets | split(" ") | .[])))
+      | select(.id as $id | all($active[]; .id != $id)) | .tests[]' <<<"$WAMN_POLICY")
   fi
   rm -f -- "$result"
   return "$exit_code"
@@ -769,19 +861,6 @@ while IFS=$'\t' read -r index full trigger packages features targets; do
   if [[ "$full" == true ]]; then
     label="$label (full: $trigger)"
     argv+=(--workspace)
-    if ((index == 0)); then
-      cluster_features=''
-      for feature in $features; do
-        [[ "$feature" != */cluster ]] || cluster_features+=" $feature"
-      done
-      features="$(jq -r --arg packages "$packages" '
-        [.root_features[], (.preparation[] | . as $step | .packages[]?
-          | select(IN($packages | split(" ") | .[])) | . as $package
-          | $step.features[]? | "\($package)/\(.)")]
-        | reduce .[] as $feature ([];
-            if index($feature) == null then . + [$feature] else . end)
-        | join(" ")' <<<"$WAMN_POLICY")$cluster_features"
-    fi
   else
     for package in $packages; do
       argv+=(-p "$package")
@@ -873,7 +952,6 @@ if wamn_prerequisite private-nats; then
 fi
 
 while IFS= read -r suite; do wamn_run_suite "$suite"; done < <(
-  jq -c --arg suites "$WAMN_SUITES" '.suites[] | select(.mode == "local")
-    | select(.id | IN($suites | split("\n") | .[]))' <<<"$WAMN_POLICY"
+  jq -c '.[] | select(.mode == "local")' <<<"$WAMN_RUN_SUITES"
 )
 ((failed == 0))

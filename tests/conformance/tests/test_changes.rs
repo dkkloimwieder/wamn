@@ -82,6 +82,7 @@ fi
 if [[ " $* " == *' --message-format=json-render-diagnostics '* && -n "${WAMN_FAKE_ROOT_OUTPUT:-}" ]]; then
   cat "$WAMN_FAKE_ROOT_OUTPUT"
 fi
+if ((passed > 0)) && [[ " $* " != *' --exact '* ]]; then printf 'test fixture::case ... ok\n'; fi
 printf 'test result: ok. %s passed; 0 failed; 0 ignored; 0 measured;\n' "$passed"
 if [[ "${WAMN_FAKE_EMPTY_TARGET:-false}" == true ]]; then
   printf 'test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured;\n'
@@ -413,7 +414,7 @@ impl Fixture {
             .expect("run test-changes")
     }
 
-    /// Run the tool and return each recorded Cargo test command without `test`.
+    /// Run the tool and return the Cargo arguments or built executable commands.
     fn selected(&self, arguments: &[&str]) -> Vec<Vec<String>> {
         let _ = fs::remove_file(self.directory.join("cargo calls"));
         let _ = fs::remove_file(self.directory.join("cargo calls.count"));
@@ -440,7 +441,7 @@ impl Fixture {
             .split(|field| field == "CALL")
             .filter(|call| !call.is_empty())
             .map(|call| {
-                assert_eq!(call[0], "test");
+                assert!(["test", "artifact"].contains(&call[0].as_str()));
                 call[1..].to_vec()
             })
             .collect()
@@ -516,14 +517,25 @@ impl Fixture {
         target: &str,
         cases: &[(&str, &str)],
     ) -> String {
-        let executable = self.directory.join(format!("{target}-fixture"));
+        let built_executable = self.directory.join(format!("{target}-fixture"));
+        executable(
+            &built_executable,
+            r#"#!/usr/bin/env bash
+set -euo pipefail
+{
+  printf 'CALL\0artifact\0%s\0' "$0"
+  printf '%s\0' "$@"
+} >> "$WAMN_FAKE_CARGO_LOG"
+printf 'test %s ... ok\ntest result: ok. 1 passed; 0 failed; 0 ignored;\n' "$1"
+"#,
+        );
         let artifact = json!({
             "reason": "compiler-artifact",
             "manifest_path": self.root.join(format!("crates/{package}/Cargo.toml")),
-            "executable": executable,
+            "executable": built_executable,
             "target": {"kind": [kind], "name": target},
         });
-        let executable = executable.display();
+        let executable = built_executable.display();
         let mut output = format!(
             "{artifact}\n     Running tests/{target}.rs (kache test-runner \"{executable}\")\n"
         );
@@ -1192,13 +1204,13 @@ fn an_exact_suite_refuses_zero_executed_cases() {
     fixture.add_suite(EXACT_SUITE);
     fixture.write("crates/core/src/lib.rs", "changed\n");
     let output = fixture
-        .tool_command(&["run"])
+        .tool_command(&["--suite", "fixture-exact", "run"])
         .env("WAMN_FAKE_EXACT_PASSED", "0")
         .output()
         .unwrap();
     assert_eq!(output.status.code(), Some(1));
     assert!(String::from_utf8_lossy(&output.stderr).contains("no executed passing cases"));
-    assert_eq!(fixture.calls().len(), 2);
+    assert_eq!(fixture.calls().len(), 1);
 }
 
 #[test]
@@ -1207,7 +1219,7 @@ fn an_exact_suite_requires_its_named_case_to_pass() {
     fixture.add_suite(EXACT_SUITE);
     fixture.write("crates/core/src/lib.rs", "changed\n");
     let output = fixture
-        .tool_command(&["run"])
+        .tool_command(&["--suite", "fixture-exact", "run"])
         .env("WAMN_FAKE_EXECUTED_TEST", "fixture::different_case")
         .output()
         .unwrap();
@@ -1224,7 +1236,7 @@ fn a_selected_target_refuses_an_empty_result_beside_a_passing_result() {
     fixture.add_suite(&EXACT_SUITE.replace("tests = [\"fixture::case\"]", "tests = []"));
     fixture.write("crates/core/src/lib.rs", "changed\n");
     let output = fixture
-        .tool_command(&["run"])
+        .tool_command(&["--suite", "fixture-exact", "run"])
         .env("WAMN_FAKE_EMPTY_TARGET", "true")
         .output()
         .unwrap();
@@ -1768,19 +1780,21 @@ fn the_root_runs_control_route_cases_after_the_nats_input() {
         .collect::<Vec<_>>();
     assert_eq!(ignored.len(), cases.len(), "{calls:?}");
     for (call, (name, _)) in ignored.iter().zip(cases) {
-        assert!(call.contains(&"--lib".into()), "{call:?}");
-        assert!(
-            call.windows(2).any(|pair| pair == ["-p", "core"]),
-            "{call:?}"
+        assert_eq!(
+            call[0],
+            fixture.directory.join("core-fixture").display().to_string()
         );
         assert!(call.contains(&name.to_owned()), "{call:?}");
         assert!(call.contains(&"--exact".into()), "{call:?}");
-        assert!(
-            call.windows(2)
-                .any(|pair| pair == ["--features", "core/test-util"]),
-            "{call:?}"
-        );
+        assert!(!call.contains(&"--features".into()), "{call:?}");
     }
+    assert_eq!(calls.len(), cases.len() + 1, "{calls:?}");
+    assert!(
+        calls[0]
+            .windows(2)
+            .any(|pair| pair == ["--features", "core/test-util,user/ops"]),
+        "{calls:?}"
+    );
     fixture.write("Cargo.lock", "changed\n");
     let output = fixture.tool(&["dry-run"]);
     assert!(
@@ -1846,15 +1860,15 @@ fn the_root_runs_generated_schema_after_its_output_is_exported() {
         .iter()
         .find(|call| call.contains(&name.to_owned()))
         .unwrap();
-    assert!(
-        call.windows(2).any(|pair| pair == ["--test", "user_live"]),
-        "{call:?}"
+    assert_eq!(
+        call[0],
+        fixture
+            .directory
+            .join("user_live-fixture")
+            .display()
+            .to_string()
     );
-    assert!(
-        call.windows(2)
-            .any(|pair| pair == ["--features", "user/ops"]),
-        "{call:?}"
-    );
+    assert!(!call.contains(&"--features".into()), "{call:?}");
 }
 
 #[test]
@@ -1943,11 +1957,10 @@ fn equal_names_run_only_in_the_target_with_supplied_prerequisites() {
         .filter(|call| call.contains(&"--ignored".into()))
         .collect::<Vec<_>>();
     assert_eq!(ignored.len(), 1, "{calls:?}");
-    assert!(
-        ignored[0].windows(2).any(|pair| pair == ["-p", "core"]),
-        "{calls:?}"
+    assert_eq!(
+        ignored[0][0],
+        fixture.directory.join("core-fixture").display().to_string()
     );
-    assert!(ignored[0].contains(&"--lib".into()), "{calls:?}");
     assert!(ignored[0].contains(&name.to_owned()), "{calls:?}");
 }
 
@@ -2038,5 +2051,117 @@ fn a_full_root_keeps_cases_without_a_tier_row_ignored() {
     assert!(
         !calls.iter().any(|call| call.contains(&"--ignored".into())),
         "{calls:?}"
+    );
+}
+
+#[test]
+fn a_path_suite_adds_features_without_repeating_a_selected_target() {
+    let fixture = Fixture::new();
+    fixture.add_suite(
+        &EXACT_SUITE
+            .replace("tests = [\"fixture::case\"]", "tests = []")
+            .replace("features = []", "features = [\"ops\"]"),
+    );
+    fixture.write("crates/core/src/lib.rs", "changed\n");
+    let calls = fixture.selected(&[]);
+    assert_eq!(calls.len(), 1, "{calls:?}");
+    assert!(
+        calls[0]
+            .windows(2)
+            .any(|pair| pair == ["--features", "user/ops,core/ops"]),
+        "{calls:?}"
+    );
+}
+
+#[test]
+fn an_ignored_suite_owns_only_its_selected_target_and_case() {
+    let fixture = Fixture::new();
+    fixture.add_suite(&EXACT_SUITE.replace(
+        "tests = [\"fixture::case\"]",
+        "tests = [\"fixture::case\"]\nignored = true",
+    ));
+    let name = "fixture::case";
+    let transcript = fixture.directory.join("root output");
+    let mut output =
+        fixture.ignored_target("core", "lib", "core", &[(name, "requires: bin:/bin/sh")]);
+    output.push_str(&fixture.ignored_target(
+        "user",
+        "test",
+        "user_live",
+        &[(name, "requires: bin:/bin/sh")],
+    ));
+    fs::write(&transcript, output).unwrap();
+    fixture.write("crates/core/src/lib.rs", "changed\n");
+    let output = fixture
+        .tool_command(&[])
+        .env("WAMN_FAKE_ROOT_OUTPUT", transcript)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let calls = fixture.calls();
+    let owners = calls
+        .iter()
+        .filter(|call| call.contains(&name.to_owned()))
+        .collect::<Vec<_>>();
+    assert_eq!(owners.len(), 2, "{calls:?}");
+    assert!(
+        owners.iter().any(|call| call[0]
+            == fixture
+                .directory
+                .join("user_live-fixture")
+                .display()
+                .to_string()),
+        "{calls:?}"
+    );
+    assert!(
+        owners
+            .iter()
+            .any(|call| call.windows(2).any(|pair| pair == ["-p", "core"])),
+        "{calls:?}"
+    );
+}
+
+#[test]
+fn a_kind_target_runs_its_exact_suite_or_its_focused_filter() {
+    let fixture = Fixture::new();
+    fixture.kind_targets();
+    fixture.add_suite(
+        &EXACT_SUITE
+            .replace("tier = \"contract\"", "tier = \"kind\"")
+            .replace(
+                "tests = [\"fixture::case\"]",
+                "tests = [\"fixture::case\"]\nignored = true",
+            ),
+    );
+    fixture.write("crates/core/src/lib.rs", "changed\n");
+    let calls = fixture.selected(&["--tier", "kind"]);
+    let owners = calls
+        .iter()
+        .filter(|call| call.windows(2).any(|pair| pair == ["-p", "core"]))
+        .collect::<Vec<_>>();
+    assert_eq!(owners.len(), 1, "{calls:?}");
+    assert!(owners[0].contains(&"--exact".into()), "{calls:?}");
+    let output = fixture.tool(&["--tier", "kind", "--name", "focused", "dry-run"]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(
+        !stdout
+            .lines()
+            .any(|line| line.starts_with("fixture-exact:")),
+        "{stdout}"
+    );
+    assert!(
+        stdout.lines().any(|line| line.starts_with("root:")
+            && line.contains("-p core")
+            && line.contains(" focused ")),
+        "{stdout}"
     );
 }
