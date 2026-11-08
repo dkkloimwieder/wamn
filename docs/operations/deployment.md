@@ -7,7 +7,7 @@ It does not compile source, build JavaScript, publish packages, or select applic
 A fresh platform contains zero application environments and zero application releases.
 
 [Building](building.md#local-platform-artifacts) owns artifact production.
-[The deployment plan](../plan/deploy.md) owns the next application and GCP work.
+[The deployment plan](../plan/deploy.md) owns application schema rules and the deferred GCP work.
 [Google Cloud prerequisites](gcp.md#cloud-credentials-and-prerequisites) remain external inputs. GCP deployment integration is unfinished.
 
 ## Local platform
@@ -60,6 +60,9 @@ Kubernetes and its operators own running resources. Helm owns release revisions.
 WAMN stores no generic installation-completion ConfigMaps and has no numbered resume steps.
 The database determines whether system initialization completed.
 A repeat preserves initialized system data. Incomplete initialization reports a repair action and does not reset the database.
+If the system baseline is missing from existing state, restore a trusted system database backup before repeating initialization.
+If the baseline differs, use the matching system artifact. Do not replay bootstrap SQL against that database.
+For a disposable local platform, use the separate cluster rebuild procedure under [cleanup](#cleanup).
 
 ### Local access and owner invitation
 
@@ -109,27 +112,138 @@ Keep the shared registry container and its volume for later builds.
 kind delete cluster --name wamn-local
 ```
 
+To rebuild a disposable local platform, delete `wamn-local` with the command above.
+This removes its system database, every project database, and all cluster-local application state.
+Keep the shared registry and prepare current artifacts through [building](building.md#local-platform-artifacts).
+Run `wamn platform deploy deploy/kind/cluster.k --chart /tmp/wamn-platform-chart` again.
+The new platform starts with zero applications. Redeploy each required application through `wamn deploy`.
+This procedure does not upgrade a persistent system database.
+
 Remove only the private access files and deployment work directory that this run created.
 The deployment output names its work directory. Keep it while the cluster exists because kind can mount files from it.
 
-## Application deployment boundary
+## Application and schema operations
 
-Application deployment remains separate from the local platform journey.
-The existing application commands below do not establish completion of the next deployment epic.
-That epic must provide these operations:
+Use direct kubeconfig and database access for trusted development and bootstrap.
+Authenticated WAMN control routes are the product target for both the CLI and UI.
+That target shares the operation owners below. This document does not claim that deployment control routes are complete.
+GCP coverage and upgrades of persistent system databases remain outside this rebuild.
 
-- Select a release from source or an already published environment release.
-- Create project-environment databases through CloudNativePG `Database` resources.
-- Run application SQL independently from code activation.
-- Activate the selected release against the prepared database.
-- Write the release pin to `environment.k` before activation, without a Git commit.
-- Roll back by selecting the prior release and updating its pin, without reversing SQL.
+Prepare the platform first, as [building](building.md#local-platform-artifacts) describes.
+Use the selected kubeconfig and its current context.
+Supply the existing application inputs before these commands:
 
-The local milestone omits GCP integration, public ingress, web uploads, and optional telemetry.
-It also omits SQL migration modes, application compatibility warnings, and production operations policies.
-The plan defines later `reset` and `migrate` modes, system schema upgrades, and PostgreSQL engine upgrades.
-These are unfinished work, not behavior of `wamn platform deploy`.
-[Retained application-test adapters](running-tests.md#retained-application-test-adapters) remain outside this platform journey.
+- Set `WAMN_APPLY_DATABASE_URL` for restricted system access during mutations.
+- Set `WAMN_CONTROL_DATABASE_URL` for read-only schema inspection and status.
+- Set `WAMN_SYSTEM_ADMIN_URL` for provisioning, status, and SQL Jobs.
+- Set `WAMN_RELEASE_CHART`, `WAMN_RELEASE_ARTIFACT_BASE`, `WAMN_PACKAGE_ARTIFACT_BASE`, and `WAMN_COMPONENT_ARTIFACT_BASE` to the prepared artifacts.
+- Set `WAMN_REGISTRY_AUTH_FILE` and the existing certificate and broker inputs for that platform.
+- Set `DATABASE_URL` to a separate disposable PostgreSQL server when building source.
+
+`environment.k` declares each application's package membership, hostname, and `current` and `previous` release selections.
+Use a source package directory for source deployment. Use an application release digest for deployment without source:
+
+```bash
+wamn deploy apps/sample_app --env environments/dev/environment.k
+wamn deploy --release sha256:<release-digest> --env environments/dev/environment.k
+wamn rollback sample_app --env environments/dev/environment.k
+wamn rollback sample_app --release sha256:<release-digest> --env environments/dev/environment.k
+wamn status --env environments/dev/environment.k
+```
+
+Publication needs no destination database. Initial deployment provisions the environment and initializes missing SQL through a Kubernetes Job.
+Each application owns its Helm release, host group, workloads, Services, and route ConfigMaps.
+The route ConfigMaps carry `wamn.route=true`. The edge reads that label.
+Code-only deploy, reapply, and rollback preserve installed SQL and other applications' data, permissions, routes, and workloads.
+Under the application lock, selection derives `previous` from the last successful Helm apply.
+An explicit rollback release resolves an ambiguous prior selection. Rollback never reverses SQL.
+
+Deployment prepares bindings and grants before Helm changes the application.
+Readiness precedes a bounded drain wait, which lets old hosts finish their work.
+The policy's `drain_bound_seconds` supplies the pod termination grace period. Observation allows another 15 seconds for pod removal.
+If old hosts remain or pinned work still needs a binding, WAMN retains the binding and its required grants.
+If observation fails, WAMN retains those facts. Retry the same selection after repairing the reported failure.
+
+### Select SQL independently
+
+A schema fingerprint identifies the complete physical SQL, including authored and generated definitions.
+It excludes code versions, release digests, ordinary queries, and web files.
+`schema.mode` accepts `reset` and `migrate`.
+If omitted, the mode is `reset` only when `registry.project_envs.disposable` is true. Otherwise, it is `migrate`.
+An environment name or explicit `reset` mode grants no authority to discard data.
+Editing the mode alone executes no SQL and changes no application selection.
+
+```bash
+wamn schema publish apps/sample_app --env environments/dev/environment.k
+wamn schema diff sample_app --env environments/dev/environment.k
+wamn schema apply sample_app --env environments/dev/environment.k
+wamn schema apply sample_app --env environments/dev/environment.k --release sha256:<release-digest>
+wamn schema diff apps/sample_app --env environments/dev/environment.k
+wamn schema apply apps/sample_app --env environments/dev/environment.k
+wamn schema adopt --env environments/dev/environment.k
+wamn schema reset --env environments/dev/environment.k
+```
+
+An application name selects its configured `current` release. `--release` selects another application release for SQL without selecting its code.
+A source diff requires current build output and performs no publication or mutation.
+A deployed source apply builds and publishes first, then executes those immutable bytes through the same SQL Job.
+`schema publish` prints the application release digest without installing SQL or selecting code.
+For adjacent `dev.json` and a source directory, diff and apply use the local connection described in [development loop](development-loop.md).
+
+In `migrate`, explicit apply executes pending files in dependency order and preserves existing rows.
+The watcher and code deployment initialize absent packages but do not advance installed SQL.
+An ordinary migration file and its completion record commit together.
+`catalog.packages` stores each package's baseline, current fingerprint, version, and artifact source.
+`catalog.package_migrations` stores ordered paths, checksums, outcomes, and completion timestamps across code versions.
+`platform.schema_baseline` records the project substrate and initialization identity.
+Status reports unreadable state as unknown. An adopted record does not prove that SQL ran.
+
+`schema adopt` asserts the configured sources without executing SQL or selecting code.
+Matching records remain unchanged. New or changed asserted files receive `adopted` with no `applied_at` timestamp.
+Resolve an uncertain `started` record before adoption.
+
+### Reset scope and recovery
+
+If selected physical SQL changes in authorized `reset` mode, deploy or schema apply replaces the whole project-environment database.
+Every application in that database loses its data, including stopped applications with retained schemas.
+Manual workflow definitions, queued runs, and other database-local state also disappear.
+An explicit schema reset performs that replacement even when the fingerprints match.
+Neither operation resets `wamn_system` or changes another environment's database.
+
+Before stopping writers, WAMN resolves every retained schema, permission, and required published artifact.
+Missing sources, omitted installed applications, or conflicting definitions stop preparation before destruction.
+The environment lock excludes application deployment during reset.
+`registry.project_envs.pending_database` pins the complete inputs and a new initialization identity outside the database being replaced.
+CNPG sets the existing Database to `ensure: absent`, waits, then sets `ensure: present` under the same name and waits again.
+The SQL Job restores the pinned schema. Existing owners restore grants, bindings, release caches, and CDC.
+The broker discards only that environment's obsolete events while writers remain stopped.
+WAMN clears the pending record before resuming unchanged application selections.
+
+After an interruption, repeat the same reset or schema-changing deploy.
+Before the recreated database carries the pinned initialization identity, retry can repeat deletion and creation.
+After that identity exists, retry preserves the recreated database and resumes SQL restoration and cleanup.
+If workload resume fails after the pending record clears, reapply the affected application's release.
+Inspect SQL records and the named failed resource before retrying. Do not clear pending inputs or manually drop application tables.
+Stale-event admission remains untested under `wamn-alrvy.19`.
+
+### Nontransactional SQL repair
+
+A file whose first line is exactly `-- wamn:no-transaction` must contain one standalone statement.
+The checksum includes the marker. WAMN commits `started`, executes outside a transaction, then records `applied` after success.
+This sequence provides neither atomicity nor exactly-once execution.
+An uncertain `started` record blocks silent replay. Inspect the actual database effect first.
+Use the package and relative path in the explicit resolution:
+
+```bash
+wamn schema apply sample_app --env environments/dev/environment.k --resolve sample_pkg:migrations/0002_index.sql=applied
+wamn schema apply sample_app --env environments/dev/environment.k --resolve sample_pkg:migrations/0002_index.sql=retry
+```
+
+`applied` asserts completed execution and skips the statement.
+`retry` permits the same checksummed bytes after manual repair, such as removing an invalid concurrent index.
+Changed bytes refuse resolution. WAMN performs no automatic repair.
+Execution and resolution share session advisory locks across commits, so resolution cannot race a worker that still runs.
+Committed SQL stays after a failed rollout or executable rollback.
 
 ## Existing application operations
 
@@ -281,12 +395,9 @@ Deploy the platform before using the separate application commands.
 Platform deployment owns system initialization, the initial organization, and the identity issuer.
 Do not repeat the removed numbered installer or its initial application pass.
 
-The existing application path still requires an environment before release publication.
-This dependency remains part of the next application epic.
-`env apply` creates the environment row, its `Database`, its roles, its run plane, and its credential Secrets.
-In this existing application path, the first apply names `release = "none"` because publication needs the environment database.
-Platform deployment never performs this application pass.
-A later apply names the release digest and installs the release chart.
+Application publication is independent of the destination database.
+`wamn deploy` provisions missing shared resources, initializes absent application SQL, and then applies the targeted application release.
+Platform deployment performs no application pass.
 
 The optional `client` field pins an application web artifact: `client = {package = "wamn_receiving", web = "<full web digest>"}`.
 The web digest is `sha256:` and 64 lowercase hexadecimal digits, as `wamn web push` prints it.
@@ -299,12 +410,13 @@ The same immutable web artifact can serve more than one environment.
 The verb reads its platform inputs from environment variables (see the selected command's `--help` for its required inputs):
 
 ```bash
-wamn-ctl env apply <document> --dry-run
-wamn-ctl env apply <document>
+wamn-ctl env apply <document> --application <application> --dry-run
+wamn-ctl env apply <document> --application <application>
 ```
 
 `--dry-run` prints the plan and changes nothing.
-`wamn-ctl env apply` serializes deployment under the lifecycle lock of the environment.
+`wamn-ctl env apply` holds the targeted application's lock and a shared environment lock.
+Different applications can deploy concurrently. A whole-environment reset takes the exclusive environment lock.
 A CI completion order does not set deployment precedence.
 
 The deployed capture owner sets replica identity from the installed published package artifacts.
@@ -317,7 +429,7 @@ Declare stream replicas and the duplicate window in the environment configuratio
 Activation compares declared configuration with the provisioned resources and refuses disagreement.
 It does not grant runtime credentials permission to reconfigure streams.
 
-A package schema change requires a new release and a reset of the application tables.
+A physical schema change follows the selected mode and recorded disposable authorization described above.
 
 Read each command's current required arguments with `--help`.
 
@@ -339,14 +451,11 @@ For an overlay, repeat `--package` for the exact selected package set.
 The document supplies the organization, project, and environment.
 A map with one application needs no `--application` selector.
 For a map with multiple applications, pass the application name through `--application`.
-Add one `--wiring` argument for each wiring that the release keeps. Receiving has none, because every Receiving attachment targets a route.
+Publication derives the selected application closure from the declared package membership and verified package artifacts.
 
 ```bash
-ENV_KEY=dkk--receiving--dev
 WAMN_RELEASE_ARTIFACT_BASE="$RELEASE_BASE" wamn-ctl publish-release \
-  deploy/gcp/environments/"$ENV_KEY".k \
-  --database-url "$OWNER_URL" --control-database-url "$CONTROL_URL" \
-  --run-schema "$RUN_SCHEMA" \
+  environments/dev/environment.k \
   --package "$PACKAGE_ID@$PACKAGE_VERSION" \
   --artifact-base "$PACKAGE_BASE" --registry-auth-file "$PUSH_DOCKERCONFIG"
 
@@ -375,10 +484,10 @@ The separate `environment` field keeps the short name.
 The release also names no route host.
 The route host is only the `host` of the http workload config. The router matches routes under it.
 `publish-release` takes the same `--oci-ca-path` input as `push-package`.
-[Qualify the release](delivery.md#release-qualification) from the repository checkout before deployment.
+[Release qualification](delivery.md#release-qualification) remains a separate optional operation.
 Each package selects its cases through its own `tests/qualification.json` declaration.
-`qualify-release` pushes the qualification artifact beside the release only when every case passes, and `env apply` reads it from the registry.
-Name the release digest in the environment document, and run `env apply` of it ([deployment ordering](#deployment-ordering)).
+`qualify-release` pushes the qualification artifact after its cases pass. Deployment reports missing qualification as a warning.
+Use `wamn deploy --release` to select the published application.
 
 ## Web client files
 
@@ -602,10 +711,10 @@ Application package migrations retain their own streams.
 
 ## Rollback and maintenance
 
-Run `wamn-ctl env rollback <coordinate> --reason <text>` to restore the previous intended release and client pin.
-Rollback selects the newest successful revision whose release digest or client pin differs from the current pair.
-It restores both fields from that revision. If the revision has no client, rollback clears the client.
-A web-only rollback restores the previous web digest with the same release digest and leaves host pods untouched.
+Run `wamn rollback <application> --env <environment.k>` to restore the prior application release.
+If the prior selection is ambiguous, select the target with `--release <digest>`.
+The low-level form is `wamn-ctl env rollback <environment.k> --application <application> [--release <digest>]`.
+Both forms use the same selection and application deployment owner.
 
 A release digest selects exact bytes, but a mutable image tag does not.
 The installed package and its committed migrations remain in place.

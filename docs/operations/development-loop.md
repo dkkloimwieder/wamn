@@ -186,7 +186,7 @@ Then run the loop with Receiving as the overlay:
   --overlay-root "$PWD/apps/wamn_receiving" --watch
 ```
 
-This loop migrates, generates, builds, and releases only the Receiving package.
+This loop initializes missing SQL, generates, builds, and releases only the Receiving package closure.
 
 Add `--hold` to keep the activation alive until interruption.
 
@@ -264,7 +264,11 @@ A missing or invalid `build.json` prevents reuse.
 Receiving and Acme use the shared SQLx CLI 0.9.0 commands and their existing verifier targets.
 
 In `reset` mode, a changed SQL recipe resets the owned disposable database through its existing template.
-The loop uses the same schema planner and installed records as deployment.
+The loop uses `environment::sql::schema::plan` and `Diff::requires_reset`, as deployment does.
+It prepares current generated output before that decision.
+Both paths read package bytes through `apply_package::read_package_root` and execute SQL through the same package owner.
+The local path opens `target_database_url` directly. The deployed path runs that owner in a Kubernetes SQL Job.
+Local source access bypasses publication, but it does not bypass generated-output freshness or create another SQL executor.
 It refuses a reset when the registry does not authorize data loss or a required schema source is missing.
 The loop builds the candidate before it stops the previous application for a reset.
 The reset discards all application rows and gives the database a new creation identity.
@@ -287,7 +291,11 @@ The command requires the exclusive target lease, which prevents concurrent repla
 The operation preserves application release selections.
 In `reset` mode, it reconstructs retained packages from their recorded local sources before discarding data.
 A changed or missing retained source stops preparation.
-Deployed SQL operations continue to use published artifacts and Kubernetes Jobs.
+Deployed SQL operations use published artifacts and Kubernetes Jobs.
+An application name selects its configured current release. `--release` selects another published release without selecting its code.
+For local source operations, do not pass `--release`.
+`wamn schema adopt --env "$WAMN_DEV_ENV_DIR/environment.k"` asserts the configured local sources without executing SQL.
+Resolve any uncertain nontransactional file before adoption, as [deployment](deployment.md#nontransactional-sql-repair) describes.
 
 Control store rows keyed by a non-empty target instance accumulate only within one `wamn dev up` standup.
 Nothing deletes them one at a time, and the immutability trigger stays unconditional.

@@ -10,32 +10,39 @@ use wamn_environment_control::environment::{
 
 #[derive(Debug, Subcommand)]
 pub enum SchemaCommand {
-    /// Compare selected SQL with records without writing or activating code.
+    /// Compare published SQL or built source with records without changing code or data.
     Diff(SchemaArgs),
-    /// Apply selected published SQL through the existing in-cluster Job.
+    /// Apply SQL without selecting code. Publish deployed source before the SQL Job.
+    #[command(
+        long_about = "Apply SQL without selecting application code. An application name uses its configured current release unless --release selects another published release. A source directory publishes first for deployed execution. With an adjacent dev.json, source SQL uses the local database directly. Migrate mode applies pending SQL. Reset mode replaces the whole shared database only when the target is recorded as disposable and its physical schema changes."
+    )]
     Apply(ApplyArgs),
     /// Build and publish a candidate without installing it in the target database.
     Publish(PublishArgs),
-    /// Replace the recorded disposable environment database and reconnect its users.
+    /// Discard all application data in the recorded disposable environment database.
+    #[command(
+        long_about = "Replace the whole recorded disposable project-environment database under the same name, even when schema fingerprints match. This discards every application's data and database-local state. WAMN resolves retained sources before stopping writers. The SQL Job restores the inputs. Workloads resume with unchanged release selections. Repeat this command after interruption. The system database is outside this reset."
+    )]
     Reset(EnvironmentArgs),
-    /// Assert the selected schema as a starting point without executing SQL.
+    /// Assert configured schema sources without executing SQL or selecting code.
     Adopt(EnvironmentArgs),
 }
 
 #[derive(Debug, Args)]
 pub struct EnvironmentArgs {
+    /// The shared environment.k file. An adjacent dev.json selects local adoption.
     #[arg(long)]
     pub env: PathBuf,
 }
 
 #[derive(Debug, Args)]
 pub struct SchemaArgs {
-    /// The declared application, or a built local source directory.
+    /// The declared application or source directory. Source diff needs current build output.
     pub application: String,
     /// The shared environment.k file.
     #[arg(long)]
     pub env: PathBuf,
-    /// An application release whose code does not need to be selected or installed.
+    /// Select published application SQL instead of the configured current release. Conflicts with source input.
     #[arg(long)]
     pub release: Option<String>,
 }
@@ -44,13 +51,15 @@ pub struct SchemaArgs {
 pub struct ApplyArgs {
     #[command(flatten)]
     pub schema: SchemaArgs,
-    /// Resolve one uncertain file: <package>:<relative_path>=applied|retry.
+    /// Resolve one uncertain file after inspection: <package>:<relative_path>=applied|retry.
+    /// Applied skips SQL. Retry runs identical bytes after manual repair. No automatic repair occurs.
     #[arg(long)]
     pub resolve: Option<wamn_package_control::apply_package::MigrationResolution>,
 }
 
 #[derive(Debug, Args)]
 pub struct PublishArgs {
+    /// The source package to build and publish without installing SQL or selecting code.
     pub package: PathBuf,
     #[arg(long)]
     pub env: PathBuf,
@@ -165,7 +174,7 @@ pub async fn run(command: SchemaCommand) -> anyhow::Result<()> {
     let diff = schema::plan(&document, &application, release, &candidates, &state)?;
     println!("{}", serde_json::to_string_pretty(&diff)?);
     if resolution.is_none() && diff.requires_reset() && diff.disposable == Some(true) {
-        // Resolve the complete retained set before a future reset can mutate the target.
+        // Resolve the complete retained set before reset can mutate the target.
         schema::reset_candidates(&platform, &diff, candidates).await?;
     }
     if apply {

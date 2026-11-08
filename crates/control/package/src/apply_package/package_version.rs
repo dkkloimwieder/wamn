@@ -201,15 +201,6 @@ pub fn read_package_directory(root: &Path) -> anyhow::Result<PackageDirectory> {
     read_migrations(root, manifest_bytes, artifact_digest)
 }
 
-/// Read authored inputs and migrations without consuming generated output.
-pub(crate) fn read_source_package_directory(root: &Path) -> anyhow::Result<PackageDirectory> {
-    if !wamn_schema_generator::is_authored(root) {
-        return read_package_directory(root);
-    }
-    let manifest_bytes = wamn_schema_generator::compile_manifest(root)?;
-    read_migrations(root, manifest_bytes, None)
-}
-
 fn read_migrations(
     root: &Path,
     manifest_bytes: Vec<u8>,

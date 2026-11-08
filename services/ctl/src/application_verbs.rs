@@ -13,7 +13,7 @@ pub struct DeployArgs {
     /// The published application release digest.
     #[arg(long)]
     pub release: Option<String>,
-    /// The shared environment.k file, including schema.mode and application selections.
+    /// The shared environment.k file. Changed physical SQL in authorized reset mode discards all application data.
     #[arg(long)]
     pub env: PathBuf,
 }

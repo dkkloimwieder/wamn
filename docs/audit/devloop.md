@@ -24,17 +24,18 @@ The schema stays `wamn.build/v1`.
 
 - `inputs.digest` covers all build inputs. Admission and publication use it.
 - `inputs.generation_digest` excludes `component/`, `data/`, and `web/`. Generate, ACL, and SQLx preparation use it.
-- `build_record::schema_digest` also excludes `query/`. Migrate uses it. The build record does not store it.
+- The former `build_record::schema_digest` excluded `query/`. DEP3-12 removes this unused helper and its dedicated test. Current decisions use the physical SQL fingerprint.
 
 The web build and client materialization moved from Generate to Build.
 
-The loop stops the host before Migrate when it recreates the target or when a migration is pending.
-All other changes stop the host at activation.
+This section records the earlier audit. Epic 3 replaces its pending-migration and reset decisions.
+The current loop builds candidates before stopping the host for an authorized reset.
+Pending migrations in migrate mode require explicit schema apply. Other changes stop the host at activation.
 
 The owner retired `wamn-ri4b` ruling 5 for the dev loop on 2026-11-01.
-The loop recreates the target only for an edited applied migration or for a history table with rows.
-A stale `field_owners` edit keeps its data in development.
-The baseline hash guards the deployed path.
+That earlier reset policy is superseded by [the shared schema rule](../plan/deploy.md#the-one-reset-rule).
+Local and deployed operations compare physical SQL fingerprints and require recorded disposable authorization for destruction.
+[Development loop](../operations/development-loop.md) describes current commands and connection ownership.
 
 ## Regressions found by the saved-edit case
 

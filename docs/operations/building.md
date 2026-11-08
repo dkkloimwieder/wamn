@@ -436,9 +436,9 @@ A digest identifies content through its SHA-256 hash.
 `inputs.digest` covers all build inputs.
 `inputs.generation_digest` excludes only the package-local `component/`, `data/`, and `web/` trees.
 Both digests cover the manifest, authored SQL, migrations, generator identity, and every other build input.
-Migrate uses a separate schema digest from `build_record::schema_digest`, which excludes package-local `query/` files from generation inputs.
-The schema digest also covers the generator identity and fingerprint.
-The build record stores no schema digest.
+The development loop reads the physical SQL fingerprint from `physical-schema.json` after preparing generation.
+It uses the same schema planner and installed SQL records as deployment.
+The build record stores no installed schema identity.
 A query edit reruns Generate and keeps Migrate and existing introspection results.
 The input files include the package's own files and `apps/Cargo.lock`.
 They also include `apps/platform/data`, `apps/platform/execution/contract`, and `apps/platform/execution/jsonata`.

@@ -2,8 +2,8 @@
 
 ## Release qualification
 
-A package schema change requires a new release and a reset of the application tables.
-The [owner ruling](../audit/README.md) defines this baseline policy.
+[Deployment](deployment.md#select-sql-independently) owns reset and migrate behavior.
+Release qualification is optional guidance. It grants no authority to discard data.
 
 Publish the release first with `publish-release`, as [deployment](deployment.md#publish-a-release) shows.
 It pushes the release manifest to the repository that `WAMN_RELEASE_ARTIFACT_BASE` names, and it prints the release digest.
@@ -106,7 +106,7 @@ A new release digest, a new host digest or a new role component digest gives a n
 
 ## Deployment
 
-`wamn-ctl env apply` deploys a release: the environment document names its digest.
-`apply` derives the qualification tag from the release digest and the image set of the release chart, and reads the artifact from the registry.
-If the tag does not exist, `apply` refuses and names the tag.
+`wamn deploy --release <digest> --env <environment.k>` deploys one published application release.
+Deployment reads qualification for the release digest and the selected platform images.
+Missing qualification produces a warning. It does not prevent deployment.
 See [deployment](deployment.md) for the environment verbs.

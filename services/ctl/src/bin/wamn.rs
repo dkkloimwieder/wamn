@@ -22,7 +22,7 @@ struct Cli {
 enum Command {
     /// Build source or select published bytes, then deploy one application release.
     Deploy(wamn_ctl::application_verbs::DeployArgs),
-    /// Apply one application's previous authored release.
+    /// Restore one application's last successful release, or an explicit target, without reversing SQL.
     Rollback(wamn_ctl::application_verbs::RollbackArgs),
     /// Show authored selections and observed application state.
     Status(wamn_ctl::application_verbs::StatusArgs),

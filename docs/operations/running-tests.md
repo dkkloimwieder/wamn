@@ -640,8 +640,10 @@ It supplies the service coordinates that the case declares.
 For direct fixture commands, set the artifact overrides from the table above.
 The case starts its own PostgreSQL server, because the development environment resets the control store of the whole server.
 The case requires authenticated application results after code, SQL, and schema edits.
-It also requires retained data for compatible edits and for an appended migration.
-It requires refusal of invalid SQL, and a new database after an edit of an applied migration.
+It requires retained data after code and query edits.
+In reset mode, a changed physical SQL fingerprint recreates the whole recorded disposable target.
+In migrate mode, the watcher reports pending SQL. Explicit schema apply owns migration effects and records.
+Invalid SQL refuses preparation before replacement.
 Require one executed passing case, successful resource cleanup, and restored source before reporting success.
 This correctness case does not report performance measurements.
 
@@ -682,6 +684,11 @@ They retain application environments until the disposable platform is deleted.
 Platform and application recovery checks run only in the platform tests.
 Stale-event admission has no test because deployed environments have no workflow authoring operation (`wamn-alrvy.19`).
 Reset still asserts old-event disposal and environment isolation.
+`wamn-alrvy.20` (temporary directory leak) and `wamn-alrvy.22` (uncovered lint requirements) remain open.
+The accepted Epic 2 items `wamn-xy404`, `wamn-1riwn`, and `wamn-c361p` remain open.
+`wamn-azv06` remains not reproduced. `wamn-fszfy`, `wamn-m4wnp`, and `wamn-ib8ej` also remain open.
+These test descriptions do not claim persistent system database upgrades or GCP coverage.
+
 
 All tests require Docker, kind, Helm, kubectl, OpenSSL, and a prepared KCL compiler selected by `WAMN_KCL`.
 Build the native `wamn` and `wamn-ctl` binaries beside the test executable in `$CARGO_TARGET_DIR/debug`.
@@ -1274,7 +1281,7 @@ cargo test --locked --offline -p wamn-workflow --lib queue::automation_live:: --
 ```
 
 For production authorization, component execution, and database behavior, run the [local application business tests](#local-application-business-tests).
-DEP2-13 owns product-command coverage for deployed application startup, readiness, authenticated requests, and cleanup.
+The focused `platform_apply_kind` cases own product-command observations of deployed startup, readiness, authenticated requests, and cleanup.
 
 ### Workflow schedules
 

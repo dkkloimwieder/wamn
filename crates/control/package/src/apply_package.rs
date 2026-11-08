@@ -1,8 +1,6 @@
 //! Initialize or explicitly advance package SQL from verified files.
 
-pub(super) mod plan;
 use package_version::record_package_schema;
-use plan::prepare_directory;
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -156,7 +154,20 @@ pub(crate) struct PreparedPackage {
 /// Validate one package directory before opening an application transaction.
 pub(crate) fn prepare_package(root: &PackageRoot) -> anyhow::Result<PreparedPackage> {
     let directory = read_package_root(root)?;
-    prepare_directory(root, directory)
+    let presented = plan_package_migrations(&directory, None, &[])
+        .context("validate package directory before database work")?;
+    let manifest = PackageManifest::from_slice(&directory.manifest_bytes)
+        .context("parse strict package manifest for definition ownership")?;
+    wamn_catalog::manifest::validate_operation_vocabulary(&manifest)
+        .context("validate package manifest for registration projection")?;
+    let policy = validate_migration_policy(&root.path, &directory, &presented)?;
+    Ok(PreparedPackage {
+        component_source: None,
+        root: root.path.clone(),
+        directory,
+        manifest,
+        policy,
+    })
 }
 
 /// Validate the complete migration policy before reconstructing a database.
@@ -243,14 +254,7 @@ async fn apply_request(
             .any(|part| part.is_empty()),
         "org, project and environment must not be empty"
     );
-    let mut package = if local_environment.is_some() {
-        prepare_directory(
-            &request.package,
-            package_version::read_source_package_directory(&request.package.path)?,
-        )?
-    } else {
-        prepare_package(&request.package)?
-    };
+    let mut package = prepare_package(&request.package)?;
     package
         .component_source
         .clone_from(&request.component_source);

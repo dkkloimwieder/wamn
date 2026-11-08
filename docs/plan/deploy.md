@@ -1,8 +1,8 @@
 # WAMN — Deployment and Upgrade Simplification
 
-Status: Epics 1 and 2 are complete. Epic 3 is in progress on `worktree-dep3`. Section 2 lists what runs today. Every other command form is a proposal.
+Status: Epics 1 and 2 are complete. Epic 3 runs on `worktree-dep3`. Section 2 records current ownership and the remaining gaps.
 
-Decisions of 2026-11-07 control this revision: selection, environment-wide reset, SQL artifacts and fingerprints, and authorization. Section 2 records the code that each decision replaces.
+Decisions of 2026-11-07 control this revision: selection, environment-wide reset, SQL artifacts and fingerprints, and authorization. Section 2 records the implementation of these decisions.
 
 ## 1. Primary decision: remove WAMN's deployment controller
 
@@ -67,35 +67,41 @@ This section records the current code. It replaces the historical list of earlie
 | Platform observation | `platform/status.rs` reports observed resources and SQL state without creating a cluster. |
 | Installation state | The numbered installer, steps, environment-first pass, broad installer lock, and completion ConfigMaps are deleted. `platform/job.rs` keeps bounded initialization Jobs. |
 | Initial system SQL | `provision_system::install_control_store` commits the control store and baseline together. Existing state determines completion. |
-| Application selection | `environment/document.rs` stores `current` and `previous` per application and rotates them from the file contents. It merges concurrent changes to different applications. Section 3 replaces the rotation rule. |
-| Application deployment | `environment/mod.rs`, `expand.rs`, and `write.rs` prepare targeted control facts and apply one application's Helm release. Rollback reads `previous` from the file. |
+| Application selection | `environment/document.rs` merges per-application selections. Under the application lock, `environment/mod.rs` derives `previous` from successful Helm history and preserves it on retry. |
+| Application deployment | `environment/mod.rs`, `expand.rs`, and `write.rs` prepare targeted control facts and apply one application's Helm release. `rollback.rs` supports an explicit target and refuses ambiguous history. |
 | Routes and drain | The application release renders its route ConfigMaps with `wamn.route=true`. `environment/drain.rs` waits up to the policy drain bound and keeps bindings that live pods or pinned work still need. |
 | Application publication | `crates/control/release/src/application.rs` publishes from package artifacts without installing them in a target database. Source deployment and `wamn schema publish` use the same owner. |
 | Schema mode | `schema.mode` is in the Rust and KCL environment document. An omitted mode resolves from `registry.project_envs.disposable`. |
 | Schema records | `catalog.packages` keeps one row per package: an immutable baseline fingerprint, the current fingerprint, and the current schema source. `catalog.package_migrations` keeps checksums per package, not per code version. |
 | Schema commands | `wamn schema publish`, `wamn schema diff`, and `wamn schema apply` exist. `wamn status` reports schema state. `schema diff` also reads an unpublished source directory. That read-only path stays. Section 4 requires published bytes for deployed SQL execution. |
 | Environment fingerprint | `apply_package/package_version.rs::environment_fingerprint` hashes the project baseline and each package identifier with its physical-schema hash. It excludes code versions and release digests. |
-| Reset preparation | `environment/sql/reset.rs` authorizes, resolves every schema input, and records the inputs in `registry.project_envs.pending_database`. It also reserves a fresh instance suffix. Section 4 keeps the inputs and replaces the new suffix with a same-name reset. |
+| Reset preparation | `environment/sql/reset.rs` pins validated inputs and initialization identity in `registry.project_envs.pending_database`. It stops writers and uses CNPG absent then present under the same database name. Retry recognizes restored SQL. |
 | Publisher identity | No command accepts a caller-supplied publisher string. Publication records no publisher. The `catalog.releases` row of an applied release carries the record-history stamp of the authenticated deploy actor. |
-| Development loop | `wamn dev` watches selected sources and keeps running code after a failed candidate. Its reset decisions still need the common mode rule. |
+| Development loop | `wamn dev` prepares generation before the shared `schema::plan` decision. Its template reset and direct connection retain the same package SQL executor and records as deployed Jobs. |
 | Platform UI | Local kind deployment does not select the UI. The separate upload path still consumes a local bundle matching its stamped chart. |
 
 The accepted Epic 2 record leaves `wamn-xy404`, `wamn-1riwn`, and `wamn-c361p` open.
 It records `wamn-azv06` as not reproduced, not fixed.
+The open Epic 3 gaps are `wamn-alrvy.19` (stale-event admission), `wamn-alrvy.20` (temporary directory leak), and `wamn-alrvy.22` (uncovered lint requirements).
+`wamn-fszfy`, `wamn-m4wnp`, and `wamn-ib8ej` also remain open.
+This documentation pass does not fix or close those items.
 General platform SQL upgrades, platform UI artifact publication, and GCP deployment remain outside Epic 3.
 
 ## 3. Small deployment commands, not a scripted runbook
 
-The following forms describe the intended developer experience. Schema commands and platform SQL upgrades remain proposals. Section 2 names the implemented paths. `--env` takes an environment file path.
+The application and schema forms below are implemented. `--env` takes an environment file path.
+Platform SQL upgrade commands in section 5.3 remain proposals.
+[Deployment](../operations/deployment.md#application-and-schema-operations) owns the operational prerequisites, repair, and cleanup commands.
 
 | Command | Responsibility |
 |---|---|
-| `wamn platform deploy deploy/kind/cluster.k` | Render/apply selected platform resources and report readiness. Zero applications required. |
+| `wamn platform deploy deploy/kind/cluster.k --chart /tmp/wamn-platform-chart` | Render/apply selected platform resources and report readiness. Zero applications required. |
 | `wamn deploy sample_app --env environments/dev/environment.k` | Build and publish the selected application. Initialize its empty target if needed, then apply only its Helm release. |
 | `wamn deploy --release sha256:... --env environments/dev/environment.k` | Select a published application release without a local source build. Resolve its application from the declared membership. |
 | `wamn schema apply sample_app --env environments/dev/environment.k --release <digest>` | Apply SQL from the chosen published release without activating its code. An omitted release uses the configured application release. |
 | `wamn schema diff sample_app --env environments/dev/environment.k --release <digest>` | Read and report schema differences without mutation. |
-| `wamn platform schema apply --scope system` | Apply selected WAMN system SQL; independent from platform image deployment. A project schema operation selects project environments explicitly. |
+| `wamn schema publish apps/sample_app --env environments/dev/environment.k` | Build and publish an application release without installing SQL or selecting code. |
+| `wamn schema apply apps/sample_app --env environments/dev/environment.k` | Publish source first, then apply those immutable SQL bytes. An adjacent `dev.json` selects direct local source execution. |
 | `wamn schema reset --env environments/dev/environment.k` | Explicitly reset the whole disposable project-environment database. List affected applications and state the downtime and data loss. |
 | `wamn schema adopt --env environments/dev/environment.k` | Start migration tracking from an existing selected schema state. |
 | `wamn rollback sample_app --env environments/dev/environment.k [--release <digest>]` | Select the release that ran before the last successful apply. Persist it and apply only that application's Helm release. Require `--release` when the previous release is ambiguous. Never reverse SQL. |
@@ -180,7 +186,7 @@ Otherwise:
 
 This rule is **identical for source-based deploy and `--release` deploy**. A source-build path must not have special authority to reset. Published release artifacts must carry the information needed to compute the same decision. If required package SQL or a selected dependency is unavailable, refuse the reset *before* touching the existing database.
 
-**Physical fingerprint:** Calculate each package fingerprint from the complete physical schema SQL selected for installation, both authored and generated definitions. Calculate the environment fingerprint from every installed application's package identifiers and physical-schema hashes, plus WAMN's project schema. For a decision, substitute the targeted schema candidate for the targeted application's installed entries. Exclude code versions and release digests. Do not use `build_record::schema_digest` as the database identity, because that build-input digest includes generator and shared interface inputs unrelated to the physical database. Changes to code, web files, ordinary queries, or SemVer alone must not reset data.
+**Physical fingerprint:** Calculate each package fingerprint from the complete physical schema SQL selected for installation, both authored and generated definitions. Calculate the environment fingerprint from every installed application's package identifiers and physical-schema hashes, plus WAMN's project schema. For a decision, substitute the targeted schema candidate for the targeted application's installed entries. Exclude code versions and release digests. The unused `build_record::schema_digest` helper is removed. Build-input digests do not identify installed SQL. Changes to code, web files, ordinary queries, or SemVer alone must not reset data.
 
 Before any destructive execution, the command detects these conditions and refuses:
 
@@ -200,7 +206,10 @@ Adding one in `reset` changes the complete schema set and follows the authorized
 ### Reset implementation
 
 Local `wamn dev` reuses its disposable target and template-based database reset.
-Replace its narrower triggers with the common physical-schema rule.
+It calls the common physical-schema planner and `Diff::requires_reset`, with a direct local database connection.
+Deployed operations call that planner and use the existing Kubernetes SQL Job.
+Both paths call `apply_package` for initialization and its schema variant for explicit SQL.
+Those entry points share one preparation path, migration executor, and completion records.
 Code and query changes without schema changes preserve data.
 Disposable `wamn dev` keeps direct source iteration.
 
@@ -238,27 +247,20 @@ Recovery uses only three facts: the pinned inputs, the initialization identity, 
 
 A retry does not create another candidate, and it does not rotate any application's `previous` selection. A later schema-changing deploy compares fingerprints as usual. After a completed reset, the installed fingerprints match the candidate, so it does not reset again.
 
-### Reconciliation with the committed replacement-instance code
+### Completed same-name replacement
 
-DEP3-04 (`8b7758c72`) implemented reset preparation for a fresh replacement instance. The same-name decision changes the target of the reset, not its inputs. The committed code is kept, changed, or deleted as follows:
+DEP3-04 originally prepared a replacement database instance.
+The current reset keeps authorization, complete candidate resolution, substrate identity comparison, and pinned inputs.
+It removes suffix reservation, the second Database resource, and pending-versus-active suffix comparisons.
+`pending_database` holds the inputs and initialization identity, not a replacement name.
+`reset::initialize` restores those inputs through the SQL Job against the existing name.
+No retired database remains for a separate cleanup operation.
 
-| Committed part | Disposition | Reason |
-|---|---|---|
-| Authorization against `registry.project_envs.disposable` | Keep | The rule is unchanged. |
-| Candidate resolution and validation (`schema::reset_candidates`, `validate_candidates`) | Keep | Step 3 needs every input before any change. |
-| Check that the SQL image matches the installed project substrate | Keep | Step 3 takes the substrate from the installed platform artifact set. |
-| `registry.project_envs.pending_database` with the resolved inputs | Keep, and change its meaning | Step 4 pins the inputs outside the project database for a retry. It holds the reset inputs and the new initialization identity, not a new instance name. |
-| Reservation of a new instance suffix (`reserve_database`) | Delete | The database name does not change. |
-| Rendering of a second candidate Database resource | Delete | CNPG `ensure` on the existing resource replaces it. |
-| Active-instance checks that compare the pending and the active suffix | Delete | There is one database name. |
-| `reset::initialize` through the SQL Job | Keep, and target the same name | Step 8 uses it with the recorded inputs. |
-| Retired-instance cleanup (planned, not committed) | Not built | No old instance remains. |
-
-The trade-off is explicit. A replacement instance kept the old database usable until the switch. The same-name reset loses the old data at step 6 and has a longer interruption. Steps 2 and 3 move every refusal before any change, which keeps the data while an input is missing. If kind measurements show the interruption to be unworkable, reconsider the implementation without changing developer-facing mode semantics.
-
-Other-application isolation applies to code-only deployment. It does not apply to a shared-database reset, which affects every application in the environment by design.
-
-Do not reset the WAMN system database during an application reset. A disposable platform reset remains a separate explicit operation.
+Deletion loses the old data and interrupts every application until restoration completes.
+Input preparation precedes that deletion. Code-only deployments retain their separate application isolation contract.
+An application reset never resets `wamn_system`.
+To rebuild a disposable platform, explicitly delete its kind cluster and deploy current prepared artifacts again.
+[Deployment cleanup](../operations/deployment.md#cleanup) owns those commands and their data-loss scope.
 
 ### Switching modes
 
@@ -283,7 +285,8 @@ Stopped applications retain their installed schema sources.
 
 Package migrations and their checksums are part of the immutable package artifacts. Schema operations default to the configured application release. An explicit `--release` selects another published release for the schema operation without changing the code selection. A read-only `wamn schema diff` can read a source directory, because it writes nothing. Deployed SQL execution requires published bytes. A source convenience command that executes SQL publishes first, and the deployed execution then uses those exact published bytes. Disposable `wamn dev` keeps direct source iteration.
 
-CloudNativePG owns the database, not application SQL. In deployed kind/GCP environments, **a Kubernetes Job running the WAMN SQL executor is the default**; no developer laptop port-forward is required. `wamn dev` may connect directly to its local database. Record applied SQL only after actual completion; recognize identical retries; report real SQL errors.
+CloudNativePG owns the database, not application SQL. Deployed kind operations run the WAMN SQL executor through a Kubernetes Job. SQL execution needs no laptop port-forward.
+`wamn dev` connects directly to its local database. GCP integration remains outside this acceptance scope. Record applied SQL only after actual completion; recognize identical retries; report real SQL errors.
 
 Ordinary migration files are transactional: each file commits with its record. A PostgreSQL statement that cannot run in a transaction goes in its own migration file, whose first line is exactly `-- wamn:no-transaction` and which holds exactly one standalone statement. The marker is part of the checksummed bytes.
 
@@ -308,7 +311,7 @@ The system database's initial setup is a separate SQL operation. `provision_syst
 
 ## 5. Concrete deployment and upgrade use cases
 
-These scenarios are part of the implementation specification, not short examples. They define user intent, work performed, work not performed, warnings, and recovery. Commands are **proposed syntax**. They do not imply a WAMN deployment controller or a fixed sequence for future upgrades.
+These scenarios are part of the implementation specification, not short examples. They define user intent, work performed, work not performed, warnings, and recovery. Application and schema commands follow the implemented syntax. Platform upgrade examples remain proposed syntax. They do not imply a WAMN deployment controller or a fixed sequence for future upgrades.
 
 **Common execution model:** A CLI command selects artifacts and configuration, invokes Helm or the Kubernetes API for long-lived resources, and reports running state. Kubernetes, the wasmCloud operator, and CloudNativePG continue managing the resources after the command exits. WAMN SQL is a distinct operation executed by a short-lived Job in deployed environments. The friendly CLI can combine the minimum operations needed to initialize an empty application, but it does not store progress through a general installation process.
 
@@ -406,6 +409,9 @@ Warnings identify schema differences, deprecated interfaces, and missing optiona
 
 ### 5.3 Platform upgrades: behavior, WAMN SQL, and infrastructure
 
+This section defines later work. The current CLI supplies no `platform schema` or `platform deploy --only` command.
+Persistent system database upgrades are unsupported in this rebuild.
+
 **Intent:** Update one part of the platform without repeating initial installation or changing unrelated applications. Implement against an already running kind platform before introducing GCP-specific actions.
 
 | Change | Owner and operation | Must not change implicitly |
@@ -466,7 +472,11 @@ PostgreSQL engine changes belong to CloudNativePG. Operator and CRD changes belo
 
 ### 5.4 Application schema change, including rolling SQL and code changes
 
-**Intent:** Apply selected application SQL without rebuilding or redeploying the application. Support multi-step changes chosen by the developer instead of creating an automatic SQL/application upgrade process.
+Apply selected published SQL without rebuilding or redeploying the application.
+A source convenience apply builds and publishes first. An application name defaults to its configured current release.
+`--release` selects another published application release without changing the code selection.
+A read-only source diff needs current build output. Local source execution requires the adjacent `dev.json`.
+Developers choose the SQL and code sequence.
 
 ```bash
 wamn schema diff sample_app --env environments/dev/environment.k
@@ -477,7 +487,7 @@ wamn schema apply sample_app --env environments/dev/environment.k
 
 1. Identify the selected application SQL and target database. Read the per-package baseline and already-applied SQL records; package SemVer is not the database-state authority.
 2. Display pending statements and evidence-backed warnings, such as a removed column referenced in a generated query. Do not insist on a complete field dependency analysis.
-3. Execute pending migration statements in the appropriate order through the WAMN SQL Job. Each ordinary migration file and its completion record commit in one transaction. Nontransactional SQL retains the `-- wamn:no-transaction` marker, `--resolve applied|retry`, and advisory locks.
+3. Execute pending migration statements in the appropriate order through the WAMN SQL Job. Each ordinary migration file and its completion record commit in one transaction. Nontransactional SQL retains the `-- wamn:no-transaction` marker, `--resolve <package>:<relative_path>=applied|retry`, and advisory locks.
 4. Leave selected and running application releases unchanged. There is no automatic rebuild, host restart, backfill, SQL contraction, or application release selection.
 5. Retry recognizes committed migration IDs. If a previously applied file has different bytes, report the discrepancy; do not silently run it again under the same ID. The developer can issue a new corrective migration.
 
@@ -655,13 +665,14 @@ Optional targeted tests, SQL previews, deeper diff analysis, and team deployment
 
 Epics 1 and 2 are complete as section 2 describes.
 Their deleted modules are not future implementation tasks.
-Epic 3 extends the existing resource and SQL owners with these operations:
+Epic 3 implements the following operations through the existing resource and SQL owners.
+The remaining items listed in section 2 limit the evidence. GCP integration remains later work:
 
 | Order | Implement | Replace or remove | Completion condition |
 |---|---|---|---|
-| Schema configuration | Shared mode and recorded disposable defaults | Conflicting reset rules and stale implementation tasks | Selection writes preserve mode and other applications |
+| Schema configuration | Shared mode and recorded disposable defaults | Removed conflicting reset rules | Selection writes preserve mode and other applications |
 | Schema records and decisions | Installed schema sources, checksums, explicit schema input, and mode decisions | Immutable-root assumptions that prevent independent schema changes | Code selection and installed SQL advance independently |
-| Disposable reset | Environment-wide reset with CNPG ensure absent then present under the same name, writer stop and resume, CDC rebuild, and old-event disposal | New instance-name reservation, a second candidate Database, retired-instance cleanup, and local reset decisions based only on edited migration history | Schema-changing deploy resets the whole authorized database |
+| Disposable reset | Environment-wide reset with CNPG ensure absent then present under the same name, writer stop and resume, CDC rebuild, and old-event disposal | Removed instance-name reservation, the second Database, and local reset decisions based on migration history | Schema-changing deploy resets the whole authorized database |
 | Migration and adoption | Cross-version SQL application, nontransactional outcomes, and reversible mode switches | Implicit SQL during code activation | Explicit SQL preserves application selection and supports retries |
 | Selection and identity | `previous` from the last successful apply under the application lock, explicit rollback target, publisher identity from credentials | File-only rotation and caller-supplied publisher strings | A stale checkout cannot lose a rollback target |
 | Recovery and acceptance | Same-name reset retry and focused product-command journeys | Duplicate installers or test-owned deployment steps | Reset, migrate, and code-only behavior work through product commands |
@@ -671,6 +682,8 @@ Epic 3 extends the existing resource and SQL owners with these operations:
 
 Epics 1 and 2 already supply the platform command and independent application deployment commands.
 Epic 3 tests these product operations through focused journeys, without reinstating deleted cluster suites.
+DEP3-12 uses only focused unit tests for deleted code, formatting, and Clippy for touched packages.
+It runs no selection tool, live tests, kind tests, or other application tests.
 Kind acceptance runs at epic close, separately from cheap owner-level tests.
 
 1. Deploy, reapply, and roll back a code-only alpha update. Preserve both applications' rows and the database instance. Preserve beta's selection, Helm revision, and pod identity.
