@@ -11,7 +11,9 @@
 //! one additive client column, or one named client check
 //! constraint. An added column is either nullable with a modeled type and no
 //! default, or one of the two demanded non-null default forms; every shape that
-//! rewrites existing rows stays refused. Views admit creation, replacement, and
+//! rewrites existing rows stays refused. Explicit `UPDATE`, `INSERT`, and `DELETE`
+//! statements can change data in tables created by this package's migrations.
+//! Views admit creation, replacement, and
 //! drops without CASCADE. PostgreSQL remains responsible
 //! for parsing definitions, while post-apply catalog introspection validates
 //! their resulting objects. This layer refuses statement operations that the
@@ -549,11 +551,39 @@ fn validate_statement(
             statement_index,
         );
     }
+    let data_target = if word(tokens, 0, "update") {
+        Some(1)
+    } else if words(tokens, 0, &["insert", "into"]) || words(tokens, 0, &["delete", "from"]) {
+        Some(2)
+    } else {
+        None
+    };
+    if let Some(target) = data_target {
+        validate_view_target(
+            tokens,
+            target,
+            "data migration",
+            configured_schemas,
+            path,
+            statement_index,
+        )?;
+        if let (Token::Word(schema), Token::Word(table)) = (tokens[target], tokens[target + 2])
+            && package_created_table(previous, earlier, schema, table)
+        {
+            return Ok(());
+        }
+        return refuse_statement(
+            MigrationPolicyErrorType::UnsupportedStatement,
+            path,
+            statement_index,
+            "data migrations require a table created earlier in this package's migrations",
+        );
+    }
     refuse_statement(
         MigrationPolicyErrorType::UnsupportedStatement,
         path,
         statement_index,
-        "only demanded schema-qualified additive table DDL and view DDL are admitted",
+        "only demanded schema-qualified additive table DDL, view DDL, and package-owned data migrations are admitted",
     )
 }
 
@@ -755,14 +785,7 @@ fn validate_create_index(
                 matches!(token, Token::Symbol(b','))
             }
         })
-        && (previous.iter().any(|statement| {
-            words(statement, 0, &["create", "table", schema]) && word(statement, 4, table)
-        }) || earlier.iter().any(|definition| {
-            definition.action() == DefinitionAction::Create
-                && definition.definition_type() == DefinitionType::Relation
-                && definition.schema() == *schema
-                && definition.relation() == *table
-        }))
+        && package_created_table(previous, earlier, schema, table)
     {
         // The earlier CREATE TABLE carries the package's ownership check.
         // Catalog introspection owns index names, columns, and key ordering.
@@ -774,6 +797,22 @@ fn validate_create_index(
         statement_index,
         "CREATE INDEX requires plain columns on a table created earlier in this package's migrations",
     )
+}
+
+fn package_created_table(
+    previous: &[Vec<Token<'_>>],
+    earlier: &[&DefinitionMutation],
+    schema: &str,
+    table: &str,
+) -> bool {
+    previous.iter().any(|statement| {
+        words(statement, 0, &["create", "table", schema]) && word(statement, 4, table)
+    }) || earlier.iter().any(|definition| {
+        definition.action() == DefinitionAction::Create
+            && definition.definition_type() == DefinitionType::Relation
+            && definition.schema() == schema
+            && definition.relation() == table
+    })
 }
 
 fn validate_alter_table(
@@ -1502,9 +1541,79 @@ fn is_word_continue(byte: u8) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        inspect_migration_definition_mutations, validate_migration_bytes,
+        MigrationPolicyErrorType, inspect_migration_definition_mutations, validate_migration_bytes,
         validate_migration_bytes_for_schemas,
     };
+
+    #[test]
+    fn data_migrations_admit_tables_created_by_the_package() {
+        let create = "CREATE TABLE receiving.receipt (label text);";
+        let definitions = inspect_migration_definition_mutations(
+            "0001_initial.sql",
+            create.as_bytes(),
+            &["receiving"],
+        )
+        .unwrap();
+        let earlier = definitions.iter().collect::<Vec<_>>();
+        for sql in [
+            "UPDATE receiving.receipt SET label = label || '-migrated';",
+            "INSERT INTO receiving.receipt (label) VALUES ('new');",
+            "DELETE FROM receiving.receipt WHERE label = 'old';",
+        ] {
+            validate_migration_bytes_for_schemas(
+                "0002_data.sql",
+                sql.as_bytes(),
+                &["receiving"],
+                &earlier,
+            )
+            .unwrap();
+            validate_migration_bytes(
+                "0001_initial.sql",
+                format!("{create} {sql}").as_bytes(),
+                "receiving",
+            )
+            .unwrap();
+        }
+    }
+
+    #[test]
+    fn data_migrations_refuse_tables_the_package_does_not_own() {
+        let definitions = inspect_migration_definition_mutations(
+            "0001_initial.sql",
+            b"CREATE TABLE receiving.receipt (label text);",
+            &["receiving"],
+        )
+        .unwrap();
+        let earlier = definitions.iter().collect::<Vec<_>>();
+        for target in [
+            "receiving.other",
+            "other.receipt",
+            "receipt",
+            "\"receiving\".receipt",
+        ] {
+            for sql in [
+                format!("UPDATE {target} SET label = 'changed';"),
+                format!("INSERT INTO {target} (label) VALUES ('new');"),
+                format!("DELETE FROM {target};"),
+            ] {
+                let error = validate_migration_bytes_for_schemas(
+                    "0002_data.sql",
+                    sql.as_bytes(),
+                    &["receiving"],
+                    &earlier,
+                )
+                .unwrap_err();
+                assert_eq!(
+                    error.error_type(),
+                    if target == "receiving.other" {
+                        MigrationPolicyErrorType::UnsupportedStatement
+                    } else {
+                        MigrationPolicyErrorType::CrossSchemaMutation
+                    },
+                );
+            }
+        }
+    }
 
     #[test]
     fn plain_index_uses_the_table_created_in_the_same_migration() {

@@ -1,8 +1,6 @@
 pub(super) mod plan;
 pub(super) use plan::{definition_error, model_for_relation, validate_migration_policy};
-use plan::{
-    definition_error_for_parts, explicit_definition_owner, validate_manifest_definition_owners,
-};
+use plan::{definition_error_for_parts, explicit_definition_owner};
 
 use std::collections::BTreeSet;
 use std::path::Path;
@@ -314,7 +312,6 @@ pub(super) async fn validate_definition_ownership_before_apply(
     manifest: &PackageManifest,
     mutations: &[&PlannedDefinitionMutation],
 ) -> anyhow::Result<()> {
-    validate_manifest_definition_owners(manifest)?;
     // A file can create a relation and then add to it before its owners are
     // recorded. Later files read the owners already recorded by earlier files.
     let mut created = Vec::new();
@@ -322,8 +319,7 @@ pub(super) async fn validate_definition_ownership_before_apply(
         let mutation = &planned.mutation;
         match mutation.action() {
             DefinitionAction::Create => {
-                preflight_create_relation(tx, env_key, coordinate, package_id, manifest, planned)
-                    .await?;
+                preflight_create_relation(tx, env_key, coordinate, package_id, planned).await?;
                 created.push((mutation.schema(), mutation.relation()));
             }
             DefinitionAction::Add => {
@@ -354,7 +350,6 @@ async fn preflight_create_relation(
     env_key: &str,
     coordinate: &str,
     package_id: &str,
-    manifest: &PackageManifest,
     planned: &PlannedDefinitionMutation,
 ) -> anyhow::Result<()> {
     let mutation = &planned.mutation;
@@ -397,18 +392,6 @@ async fn preflight_create_relation(
             planned,
             None,
             "the live relation has no durable definition owner",
-        )
-        .into());
-    }
-    if let Some(model) = model_for_relation(manifest, mutation.schema(), mutation.relation())
-        && model.owner != package_id
-    {
-        return Err(definition_error(
-            ApplyPackageErrorType::DefinitionOwnerDeclarationMissing,
-            coordinate,
-            planned,
-            Some(model.owner.as_str()),
-            "a package may create only a relation it declares as its own",
         )
         .into());
     }
@@ -495,18 +478,6 @@ async fn preflight_add_definition(
             )
             .into());
         }
-    } else if let Some(model) = model_for_relation(manifest, mutation.schema(), mutation.relation())
-        && explicit_definition_owner(model, mutation.definition_type(), mutation.definition())
-            .is_some_and(|owner| owner != package_id)
-    {
-        return Err(definition_error(
-            ApplyPackageErrorType::DefinitionOwnerDeclarationMissing,
-            coordinate,
-            planned,
-            explicit_definition_owner(model, mutation.definition_type(), mutation.definition()),
-            "a package cannot add a definition declared as another package's property",
-        )
-        .into());
     }
 
     if let Some(owner) = load_definition_owner(
@@ -601,50 +572,4 @@ async fn preflight_existing_definition_mutation(
         .into());
     }
     Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn definition_owners_must_name_the_package_or_a_declared_base() {
-        let mut manifest = PackageManifest::from_slice(include_bytes!(
-            "../../tests/fixtures/observer_package/wamn.json"
-        ))
-        .unwrap();
-        let model = manifest.models.get_mut("item").unwrap();
-        model
-            .field_owners
-            .insert("note".into(), "source_fixture".into());
-        model
-            .constraint_owners
-            .insert("item_note_key".into(), "source_fixture".into());
-        validate_manifest_definition_owners(&manifest).unwrap();
-        for definition in ["relation", "field", "constraint"] {
-            let mut manifest = manifest.clone();
-            let model = manifest.models.get_mut("item").unwrap();
-            match definition {
-                "relation" => model.owner = "undeclared".into(),
-                "field" => {
-                    model
-                        .field_owners
-                        .insert("note".into(), "undeclared".into());
-                }
-                "constraint" => {
-                    model
-                        .constraint_owners
-                        .insert("item_note_key".into(), "undeclared".into());
-                }
-                _ => unreachable!(),
-            }
-            let error = validate_manifest_definition_owners(&manifest).unwrap_err();
-            assert!(
-                error
-                    .to_string()
-                    .starts_with("definition-owner-undeclared:"),
-                "{error}"
-            );
-        }
-    }
 }

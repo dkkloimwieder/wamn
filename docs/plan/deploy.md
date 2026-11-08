@@ -477,9 +477,13 @@ wamn schema apply sample_app --env environments/dev/environment.k
 
 1. Identify the selected application SQL and target database. Read the per-package baseline and already-applied SQL records; package SemVer is not the database-state authority.
 2. Display pending statements and evidence-backed warnings, such as a removed column referenced in a generated query. Do not insist on a complete field dependency analysis.
-3. Execute pending migration statements in the appropriate order through the WAMN SQL Job. Transactional changes should commit their result record together with the actual SQL where possible. Nontransactional SQL must report its distinct outcome.
+3. Execute pending migration statements in the appropriate order through the WAMN SQL Job. Each ordinary migration file and its completion record commit in one transaction. Nontransactional SQL retains the `-- wamn:no-transaction` marker, `--resolve applied|retry`, and advisory locks.
 4. Leave selected and running application releases unchanged. There is no automatic rebuild, host restart, backfill, SQL contraction, or application release selection.
 5. Retry recognizes committed migration IDs. If a previously applied file has different bytes, report the discrepancy; do not silently run it again under the same ID. The developer can issue a new corrective migration.
+
+Explicit data migrations admit `UPDATE`, `INSERT`, and `DELETE` on schema-qualified tables that the package owns. Existing authorization boundaries remain. Role switches, grants, role operations, and every other existing refusal remain forbidden.
+
+Publication uses the same migration validator as apply to refuse statically established SQL and ownership violations without a destination database. Target database checks stay at apply. Compatibility uncertainty remains an advisory warning.
 
 **Example: renaming a field while old and new application instances may coexist**
 

@@ -807,7 +807,6 @@ fn refuses_every_statement_outside_the_demanded_migration_grammar() {
     for sql in [
         "CREATE SCHEMA inventory;",
         "ALTER TABLE inventory.item DROP COLUMN note;",
-        "INSERT INTO inventory.item (item_number) VALUES ('x');",
         "CREATE TEMP TABLE inventory.temporary_item (id uuid);",
         "CREATE TABLE inventory.copy (LIKE inventory.item INCLUDING ALL);",
         "CREATE TABLE inventory.stored (id uuid) TABLESPACE fast;",

@@ -108,7 +108,7 @@ async fn explicit_sql_advances_across_versions_without_selecting_code() {
     std::fs::write(&manifest_path, serde_json::to_vec(&manifest).unwrap()).unwrap();
     std::fs::write(
         next.join("migrations/0002_dock_note.sql"),
-        "ALTER TABLE inventory.dock ADD COLUMN note text;",
+        "ALTER TABLE inventory.dock ADD COLUMN note text; UPDATE inventory.dock SET dock_code = dock_code || '-migrated';",
     )
     .unwrap();
     let result = apply_package_schema(request(&next, database.url()), None)
@@ -151,7 +151,19 @@ async fn explicit_sql_advances_across_versions_without_selecting_code() {
             .await
             .unwrap()
             .get::<_, String>(0),
-        "retained"
+        "retained-migrated"
+    );
+    assert!(
+        client
+            .query_one(
+                "SELECT dock.xmin = migration.xmin FROM inventory.dock AS dock \
+         CROSS JOIN catalog.package_migrations AS migration \
+         WHERE migration.relative_path = 'migrations/0002_dock_note.sql'",
+                &[],
+            )
+            .await
+            .unwrap()
+            .get::<_, bool>(0)
     );
     assert_eq!(
         client
@@ -187,13 +199,42 @@ async fn explicit_sql_advances_across_versions_without_selecting_code() {
             .unwrap()
             .changed
     );
+    assert_eq!(
+        client
+            .query_one("SELECT dock_code FROM inventory.dock", &[])
+            .await
+            .unwrap()
+            .get::<_, String>(0),
+        "retained-migrated"
+    );
+    let data_path = next.join("migrations/0002_dock_note.sql");
+    let data_sql = std::fs::read_to_string(&data_path).unwrap();
+    std::fs::write(
+        &data_path,
+        format!("{data_sql}\n-- changed committed file\n"),
+    )
+    .unwrap();
+    assert!(
+        apply_package_schema(request(&next, database.url()), None)
+            .await
+            .is_err()
+    );
+    assert_eq!(
+        client
+            .query_one("SELECT dock_code FROM inventory.dock", &[])
+            .await
+            .unwrap()
+            .get::<_, String>(0),
+        "retained-migrated"
+    );
+    std::fs::write(data_path, data_sql).unwrap();
 
     // A failing statement rolls back its file and record together.
     manifest["package"]["version"] = "4.0.0".into();
     std::fs::write(&manifest_path, serde_json::to_vec(&manifest).unwrap()).unwrap();
     std::fs::write(
         next.join("migrations/0003_candidate.sql"),
-        "ALTER TABLE inventory.dock ADD COLUMN failed text; ALTER TABLE inventory.dock ADD COLUMN failed text;",
+        "UPDATE inventory.dock SET dock_code = dock_code || '-failed'; ALTER TABLE inventory.dock ADD COLUMN failed text; ALTER TABLE inventory.dock ADD COLUMN failed text;",
     ).unwrap();
     assert!(
         apply_package_schema(request(&next, database.url()), None)
@@ -201,6 +242,14 @@ async fn explicit_sql_advances_across_versions_without_selecting_code() {
             .is_err()
     );
     assert_eq!(state(&mut client).await, installed);
+    assert_eq!(
+        client
+            .query_one("SELECT dock_code FROM inventory.dock", &[])
+            .await
+            .unwrap()
+            .get::<_, String>(0),
+        "retained-migrated"
+    );
     assert!(!client.query_one("SELECT EXISTS (SELECT FROM information_schema.columns WHERE table_schema='inventory' AND table_name='dock' AND column_name='failed')", &[]).await.unwrap().get::<_, bool>(0));
 
     // Reconstruct the retained SQL source, even after older code was selected.
