@@ -114,7 +114,6 @@ PURE_MODULES = {
         "component_admission::declared_sql",
         "web_scope",
         "apply_package::definition_ownership::plan",
-        "apply_package::local_target::plan",
         "apply_package::plan",
         "apply_package::roles::plan",
         "component_admission::plan",
