@@ -89,14 +89,14 @@ pub(super) async fn changes(
             "1.0.1",
             "1.0.2",
             format!(
-                "\nCREATE INDEX counter_label_reset_idx ON alpha_data.counter (label);\nINSERT INTO alpha_data.widget (id,code,note) VALUES ('{SEED}','priority','reset-seed');\n"
+                "\nCREATE INDEX widget_note_idx ON alpha_data.widget (note);\nINSERT INTO alpha_data.widget (id,code,note) VALUES ('{SEED}','priority','reset-seed');\n"
             ),
         ),
         (
             false,
             "1.0.2",
             "1.0.3",
-            "\nCREATE INDEX counter_version_reset_idx ON alpha_data.counter (edit_version);\n"
+            "\nCREATE INDEX counter_edit_version_idx ON alpha_data.counter (edit_version);\n"
                 .to_owned(),
         ),
     ] {
