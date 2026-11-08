@@ -14,8 +14,9 @@ pub(super) async fn exercise(
         .apply("install-selected-code", &mut journey.deploy(starting))
         .await?;
     let row = journey
-        .route(
+        .route_at(
             "alpha",
+            "probe",
             "counter/create",
             &json!([{
                 "request_id": uuid::Uuid::new_v4().to_string(),
@@ -40,7 +41,7 @@ pub(super) async fn exercise(
     let after = stored(journey, &database).await?;
     same_database(&before, &after)?;
     let found = journey
-        .route("alpha", "counter/get", &json!([{"id": row["id"]}]))
+        .route_at("alpha", "probe", "counter/get", &json!([{"id": row["id"]}]))
         .await?;
     let mut expected = row;
     expected["label"] = "before-migrated".into();

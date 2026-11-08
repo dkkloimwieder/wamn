@@ -743,7 +743,7 @@ Focused application bodies and fresh-platform acceptance also require `script` f
 Build the native `wamn` and `wamn-ctl` binaries beside the test executable in `$CARGO_TARGET_DIR/debug`.
 Use prepared artifacts from [local platform production](building.md#local-platform-artifacts).
 Keep the complete prepared chart directory and its pinned images unchanged after installation.
-Artifact preparation builds scratch copies of `apps/platform_fixture` through product commands.
+Artifact preparation builds authored scratch packages from `apps/platform_fixture` and the minimal probe fixture through product commands.
 The SQL artifact contains only its counter model and generated create/get operations.
 Focused application bodies and aggregate acceptance also require these publication inputs:
 

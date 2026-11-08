@@ -122,10 +122,23 @@ impl Journey<'_> {
     }
 
     async fn route(&self, app: &str, route: &str, body: &Value) -> anyhow::Result<Value> {
+        self.route_at(app, app, route, body).await
+    }
+
+    async fn route_at(
+        &self,
+        app: &str,
+        prefix: &str,
+        route: &str,
+        body: &Value,
+    ) -> anyhow::Result<Value> {
         let document = EnvironmentDocument::compile(&self.file)?;
         let mut base = url::Url::parse(self.edge)?;
         base.set_host(Some(&document.applications[app].hostname))?;
-        let endpoint = format!("{}/api/{app}/{route}", base.as_str().trim_end_matches('/'));
+        let endpoint = format!(
+            "{}/api/{prefix}/{route}",
+            base.as_str().trim_end_matches('/')
+        );
         let request = if route.ends_with("/create") {
             self.client.post(endpoint).json(body)
         } else {
@@ -480,10 +493,11 @@ async fn prepare_artifacts(
         )?;
         let root = &sources["probe"];
         artifacts.insert("sql0", journey.publish("probe", "1.0.0", root).await?);
-        let manifest = root.join("wamn.json");
-        let mut value: Value = serde_json::from_slice(&std::fs::read(&manifest)?)?;
-        value["package"]["version"] = "1.1.0".into();
-        std::fs::write(manifest, serde_json::to_vec_pretty(&value)?)?;
+        let manifest = root.join("wamn.k");
+        std::fs::write(
+            &manifest,
+            std::fs::read_to_string(&manifest)?.replace("version = \"1.0.0", "version = \"1.1.0"),
+        )?;
         std::fs::write(
             root.join("migrations/0002_counter_data.sql"),
             "UPDATE probe_data.counter SET label = label || '-migrated';\n",
@@ -1021,17 +1035,25 @@ async fn sources(
         roots.insert("probe", apps.join("probe"));
     }
     for (&app, root) in &roots {
-        copy_source(&apps.join("platform_fixture"), root, app)?;
+        let source = if app == "probe" {
+            checkout.join("crates/control/dev/tests/support/probe")
+        } else {
+            apps.join("platform_fixture")
+        };
+        copy_source(&source, root, app)?;
         let manifest = root.join("wamn.k");
-        let text = std::fs::read_to_string(&manifest)?
-            .replace(
-                "version = \"2.1.1\"",
-                &format!("version = \"1.0.0-test-{id}\""),
-            )
-            .replace(
-                "routes = {",
-                &format!("routes = {{path_prefix = \"/{app}\", "),
-            );
+        let text = std::fs::read_to_string(&manifest)?.replace(
+            "version = \"2.1.1\"",
+            &format!("version = \"1.0.0-test-{id}\""),
+        );
+        if app == "probe" {
+            std::fs::write(manifest, text)?;
+            continue;
+        }
+        let text = text.replace(
+            "routes = {",
+            &format!("routes = {{path_prefix = \"/{app}\", "),
+        );
         std::fs::write(manifest, text)?;
         let file = root.join("publication/attachments.json");
         let mut attachments: BTreeMap<String, Value> =
@@ -1053,9 +1075,6 @@ async fn sources(
                 "to_jsonb(widget) || '{\"behavior\":\"v0\"}'::jsonb",
             ),
         )?;
-        if app == "probe" {
-            counter_only(root)?;
-        }
     }
     let manifest = apps.join("Cargo.toml");
     let mut members = String::new();
@@ -1076,43 +1095,6 @@ async fn sources(
     )
     .await?;
     Ok(roots)
-}
-
-fn counter_only(root: &Path) -> anyhow::Result<()> {
-    let mut manifest: Value =
-        serde_json::from_slice(&wamn_schema_generator::compile_manifest(root)?)?;
-    manifest["models"]
-        .as_object_mut()
-        .context("models")?
-        .retain(|name, _| name == "counter");
-    manifest["models"]["counter"]["operations"]
-        .as_object_mut()
-        .context("counter operations")?
-        .retain(|name, _| matches!(name.as_str(), "create" | "get"));
-    manifest["routes"]["path_prefix"] = "/alpha".into();
-    manifest["custom_operations"] = json!({});
-    manifest["sequences"] = json!({});
-    std::fs::remove_file(root.join("wamn.k"))?;
-    std::fs::write(
-        root.join("wamn.json"),
-        serde_json::to_vec_pretty(&manifest)?,
-    )?;
-    let migration = root.join("migrations/0001_initial.sql");
-    let sql = std::fs::read_to_string(&migration)?;
-    let start = sql
-        .find("CREATE TABLE probe_data.counter (")
-        .context("counter SQL")?;
-    std::fs::write(migration, &sql[start..])?;
-    std::fs::write(root.join("publication/attachments.json"), "{}\n")?;
-    let declaration = root.join("publication/components/probe.json.in");
-    let mut value: Value = serde_json::from_slice(&std::fs::read(&declaration)?)?;
-    value["operations"] = json!({});
-    std::fs::write(declaration, serde_json::to_vec_pretty(&value)?)?;
-    std::fs::write(
-        root.join("component/src/lib.rs"),
-        include_str!("counter_component.rs"),
-    )?;
-    Ok(())
 }
 
 fn copy_source(source: &Path, target: &Path, app: &str) -> anyhow::Result<()> {

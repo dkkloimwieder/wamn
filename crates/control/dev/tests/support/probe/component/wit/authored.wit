@@ -1,0 +1,5 @@
+package probe:component@0.1.0;
+
+world fixture {
+  include probe:generated/generated;
+}

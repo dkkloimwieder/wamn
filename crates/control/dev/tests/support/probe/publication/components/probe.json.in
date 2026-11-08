@@ -1,0 +1,10 @@
+{
+  "scope": {
+    "env_key": "__ENV_KEY__",
+    "package-id": "probe"
+  },
+  "component": "probe",
+  "interface-version": "0.1.0",
+  "operations": {},
+  "connections": []
+}
