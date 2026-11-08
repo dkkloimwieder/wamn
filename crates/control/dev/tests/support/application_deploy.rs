@@ -311,15 +311,16 @@ pub(super) async fn exercise(run: &Run, password: &str) -> anyhow::Result<()> {
     let a1 = journey.publish("alpha", "1.0.1", &sources[0]).await?;
     let b1 = journey.publish("beta", "1.0.1", &sources[1]).await?;
     super::database_state(run).await?;
-    let output = first_install(&journey, &b0).await?;
-    ensure!(output.status.success(), "initial beta deployment failed");
     let login: Value = identity_client.post(format!("{endpoint}/password/session"))
         .json(&json!({"email":run.document.owner_email,"password":password,"aud":format!("urn:wamn:control:{}",run.document.org)}))
         .send().await?.error_for_status()?.json().await?;
     let access = login["access_token"]
         .as_str()
         .context("refreshed owner session")?;
-    // B creates the destination. Control routes then prepare A's external connection.
+    let output = first_install(&journey, &b0).await?;
+    ensure!(output.status.success(), "initial beta deployment failed");
+    // No delay or retry after install-beta: the control host must already read
+    // the new administration login when integration/write prepares A's connection.
     for (route, value) in [
         (
             "integration/write",

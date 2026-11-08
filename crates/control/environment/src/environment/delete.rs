@@ -140,7 +140,7 @@ async fn delete_locked(
         .context("SET ROLE wamn_system")?;
     let Some(row) = system
         .query_opt(
-            "SELECT instance_suffix FROM registry.project_envs \
+            "SELECT instance_suffix, policy_name FROM registry.project_envs \
               WHERE org = $1 AND project = $2 AND env = $3",
             &[&org, &project, &env],
         )
@@ -299,6 +299,14 @@ async fn delete_locked(
         )
         .await
         .with_context(|| format!("remove the environment's key of Secret {control}"))?;
+        let policy = super::analyse::read_policy(&system, org, row.get(1)).await?;
+        crate::platform::control::wait_administration(
+            &platform.target,
+            triple,
+            false,
+            std::time::Duration::from_secs(u64::try_from(policy.readiness_budget_seconds)?),
+        )
+        .await?;
         lines.push(format!("removed the environment's key of Secret {control}"));
     }
 

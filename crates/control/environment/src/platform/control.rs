@@ -16,6 +16,80 @@ use super::document::{ClusterDocument, Provider};
 const REGISTRY_PULL: &str = "wamn-registry-pull";
 const REGISTRY_AUTH_FILE: &str = "/etc/wamn/registry/config.json";
 
+/// Wait until every control host observes the environment's administration login change.
+pub(crate) async fn wait_administration(
+    target: &Target,
+    triple: &wamn_control_registry::Triple,
+    present: bool,
+    budget: std::time::Duration,
+) -> anyhow::Result<()> {
+    tokio::time::timeout(budget, async {
+        let name = wamn_control_provision::control_administration_secret_name(&triple.org);
+        let Some(secret) = kubectl::get::<SecretData>(
+            &target.kubeconfig,
+            &target.context,
+            &target.namespace,
+            "secret",
+            &name,
+        )
+        .await?
+        else {
+            return Ok(());
+        };
+        let key = wamn_control_provision::control_administration_key(
+            &triple.project,
+            triple.env.as_str(),
+        );
+        let login = present.then(|| secret_text(&secret, &key)).transpose()?;
+        let path = format!("/etc/wamn/control-administration/{key}");
+        let selector = format!("wasmcloud.com/hostgroup=c-{}", triple.org);
+        let script = if present {
+            r#"test -r "$1" && cmp -s "$1" -"#
+        } else {
+            r#"test ! -e "$1""#
+        };
+        loop {
+            let output = kubectl::kubectl(
+                &target.kubeconfig,
+                &target.context,
+                &target.namespace,
+                &["get", "pods", "-l", &selector, "-o", "json"],
+                None,
+            )
+            .await?;
+            let pods: Value = serde_json::from_str(&output).context("decode control host pods")?;
+            let pods = pods["items"].as_array().context("control host pod list")?;
+            let mut projected = !present || !pods.is_empty();
+            for pod in pods {
+                let pod = pod["metadata"]["name"]
+                    .as_str()
+                    .context("control host pod name")?;
+                projected &= kubectl::kubectl(
+                    &target.kubeconfig,
+                    &target.context,
+                    &target.namespace,
+                    &[
+                        "exec", "-i", pod, "-c", "host", "--", "sh", "-c", script, "--", &path,
+                    ],
+                    Some(login.as_deref().unwrap_or_default().as_bytes()),
+                )
+                .await
+                .is_ok();
+            }
+            if projected {
+                return Ok::<_, anyhow::Error>(());
+            }
+            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+        }
+    })
+    .await
+    .with_context(|| {
+        format!(
+            "control administration login projection for {triple} exceeded the readiness budget"
+        )
+    })?
+}
+
 /// Render the platform registry credential for hosts using the local registry Service.
 pub fn registry_pull_secret(document: &ClusterDocument, auth_file: &Path) -> anyhow::Result<Value> {
     let authority = document.registry.split('/').next().unwrap_or_default();

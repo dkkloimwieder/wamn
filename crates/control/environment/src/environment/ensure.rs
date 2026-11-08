@@ -136,6 +136,14 @@ pub async fn provision_resources(
 
     // The rows of the current org and project administrators.
     let mut client = connect(&platform.system_database_url).await?;
+    let policy = super::analyse::read_policy(&client, &document.org, &document.policy).await?;
+    crate::platform::control::wait_administration(
+        &platform.target,
+        &triple,
+        true,
+        std::time::Duration::from_secs(u64::try_from(policy.readiness_budget_seconds)?),
+    )
+    .await?;
     let transaction = provisioning_transaction(&mut client).await?;
     wamn_platform_identity::org::materialize_admin_grants(
         &transaction,
