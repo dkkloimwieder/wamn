@@ -569,6 +569,47 @@ async fn read_revision_in(
     target: &release_chart::Target,
     release_name: &str,
 ) -> anyhow::Result<Option<Revision>> {
+    let history = read_history(target, release_name).await?;
+    match newest_successful(&history) {
+        Some(entry) => read_history_revision(target, release_name, entry)
+            .await
+            .map(Some),
+        None => Ok(None),
+    }
+}
+
+/// Read successful selections while the caller holds the application's lifecycle lock.
+pub(super) async fn read_applied_releases(
+    platform: &Platform,
+    release_name: &str,
+) -> anyhow::Result<super::document::AppliedReleases> {
+    let mut history = read_history(&platform.target, release_name).await?;
+    let mut applied = super::document::AppliedReleases::default();
+    while let Some(entry) = newest_successful(&history) {
+        let revision = read_history_revision(&platform.target, release_name, entry).await?;
+        let digest = revision.manifest_digest().with_context(|| {
+            format!(
+                "Helm release {release_name} revision {} has no application release digest",
+                revision.number
+            )
+        })?;
+        if applied.record(digest)? {
+            break;
+        }
+        let number = revision.number;
+        history.retain(|entry| {
+            entry["revision"]
+                .as_u64()
+                .is_some_and(|n| n < u64::from(number))
+        });
+    }
+    Ok(applied)
+}
+
+async fn read_history(
+    target: &release_chart::Target,
+    release_name: &str,
+) -> anyhow::Result<Vec<Value>> {
     let output = helm_in(
         target,
         &["history", release_name, "--max", "50", "-o", "json"],
@@ -581,13 +622,16 @@ async fn read_revision_in(
             "helm history {release_name} exited {}: {stderr}",
             output.status
         );
-        return Ok(None);
+        return Ok(Vec::new());
     }
-    let history: Vec<Value> =
-        serde_json::from_slice(&output.stdout).context("decode helm history")?;
-    let Some(entry) = newest_successful(&history) else {
-        return Ok(None);
-    };
+    serde_json::from_slice(&output.stdout).context("decode helm history")
+}
+
+async fn read_history_revision(
+    target: &release_chart::Target,
+    release_name: &str,
+    entry: &Value,
+) -> anyhow::Result<Revision> {
     let number = entry["revision"]
         .as_u64()
         .and_then(|number| u32::try_from(number).ok())
@@ -612,11 +656,11 @@ async fn read_revision_in(
         output.status,
         String::from_utf8_lossy(&output.stderr)
     );
-    Ok(Some(Revision {
+    Ok(Revision {
         number,
         chart: entry["chart"].as_str().unwrap_or_default().to_owned(),
         values: serde_json::from_slice(&output.stdout).context("decode helm values")?,
-    }))
+    })
 }
 
 /// Discover application Helm releases in every status before status or environment deletion.

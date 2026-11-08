@@ -40,42 +40,95 @@ impl EnvironmentDocument {
 
 /// A requested change to one application's authored selection.
 #[derive(Debug, Clone, Copy)]
-pub enum SelectionChange<'a> {
+pub(super) enum SelectionChange<'a> {
     Deploy(&'a str),
     Reapply,
-    Rollback,
+    Rollback(Option<&'a str>),
+}
+
+/// Distinct release selections from successful operations in application Helm history.
+#[derive(Debug, Default)]
+pub(super) struct AppliedReleases {
+    pub current: Option<String>,
+    pub previous: Option<String>,
+}
+
+impl AppliedReleases {
+    /// Consume successful revisions newest first, stopping at the preceding distinct release.
+    pub fn record(&mut self, digest: &str) -> anyhow::Result<bool> {
+        wamn_package_artifact::ensure_digest(digest)?;
+        match &self.current {
+            None => self.current = Some(digest.to_owned()),
+            Some(current) if current != digest => {
+                self.previous = Some(digest.to_owned());
+                return Ok(true);
+            }
+            Some(_) => {}
+        }
+        Ok(false)
+    }
+}
+
+pub(super) fn selection_warning(
+    application: &str,
+    current: &DeclaredRelease,
+    applied: Option<&str>,
+) -> Option<String> {
+    let requested = match current {
+        DeclaredRelease::None => None,
+        DeclaredRelease::Digest(digest) => Some(digest.as_str()),
+    };
+    (requested != applied).then(|| {
+        format!(
+            "application {application}: environment.k requests {}, last successful Helm apply is {}; inspect wamn status --env <environment.k>",
+            requested.unwrap_or("none"),
+            applied.unwrap_or("none"),
+        )
+    })
 }
 
 impl EnvironmentDocument {
     /// Change one release pair without changing shared configuration or other applications.
-    pub fn select_release(
+    pub(super) fn select_release(
         &mut self,
         application: &str,
         change: SelectionChange<'_>,
+        applied: &AppliedReleases,
     ) -> anyhow::Result<()> {
         let selection = self
             .applications
             .get_mut(application)
             .with_context(|| format!("application {application} is not declared"))?;
         let next = match change {
-            SelectionChange::Reapply => return Ok(()),
-            SelectionChange::Deploy(digest) => {
-                wamn_package_artifact::ensure_digest(digest)?;
-                if matches!(&selection.current, DeclaredRelease::Digest(current) if current == digest)
-                {
-                    return Ok(());
-                }
-                digest.to_owned()
+            SelectionChange::Reapply => match &selection.current {
+                DeclaredRelease::None => return Ok(()),
+                DeclaredRelease::Digest(current) => current.as_str(),
+            },
+            SelectionChange::Deploy(digest) | SelectionChange::Rollback(Some(digest)) => digest,
+            SelectionChange::Rollback(None) => {
+                ensure!(
+                    matches!(&selection.current, DeclaredRelease::Digest(current) if Some(current) == applied.current.as_ref())
+                        && selection.previous == applied.previous
+                        && applied.previous.is_some(),
+                    "application {application}: rollback target is ambiguous; use wamn rollback {application} --env <environment.k> --release <digest>"
+                );
+                applied.previous.as_deref().expect("prior release exists")
             }
-            SelectionChange::Rollback => selection.previous.clone().with_context(|| {
-                format!("application {application}: no retained prior release; nothing was written")
-            })?,
         };
-        selection.previous =
-            match std::mem::replace(&mut selection.current, DeclaredRelease::Digest(next)) {
-                DeclaredRelease::None => None,
-                DeclaredRelease::Digest(current) => Some(current),
-            };
+        wamn_package_artifact::ensure_digest(next)?;
+        if applied.current.as_deref() == Some(next)
+            && matches!(&selection.current, DeclaredRelease::Digest(current) if current == next)
+        {
+            return Ok(());
+        }
+        let previous = if applied.current.as_deref() == Some(next) {
+            &applied.previous
+        } else {
+            &applied.current
+        };
+        let next = next.to_owned();
+        selection.previous.clone_from(previous);
+        selection.current = DeclaredRelease::Digest(next);
         Ok(())
     }
 }
@@ -164,59 +217,147 @@ mod tests {
     }
 
     #[test]
-    fn replacement_retry_and_rollback_change_only_the_target_selection() {
-        let digest = |byte: char| format!("sha256:{}", byte.to_string().repeat(64));
-        let (a0, a1, b0, b1) = (digest('a'), digest('b'), digest('c'), digest('d'));
-        let mut document = EnvironmentDocument::from_json(
-            &serde_json::to_vec(&serde_json::json!({
-                "org": "acme", "project": "apps", "env": "dev",
-                "target": "cloud", "policy": "dev",
-                "schema": {"mode": "migrate"},
-                "applications": {
-                    "a": {"current": a0, "hostname": "a.example", "packages": ["a"]},
-                    "b": {"current": b0, "hostname": "b.example", "packages": ["b"]}
-                }
-            }))
-            .unwrap(),
+    fn stale_checkout_and_failed_deploy_retries_use_applied_releases() {
+        let mut document =
+            EnvironmentDocument::from_json(document().to_string().as_bytes()).unwrap();
+        let a0 = document.applications["wms"].current.to_string();
+        let a1 = format!("sha256:{}", "e".repeat(64));
+        let a2 = format!("sha256:{}", "f".repeat(64));
+        let mut applied = AppliedReleases::default();
+        // A successful reapply of A1 does not replace A0 as the prior release.
+        for digest in [&a1, &a1, &a0] {
+            applied.record(digest).unwrap();
+        }
+        let before = document.clone();
+        let warning = selection_warning(
+            "wms",
+            &document.applications["wms"].current,
+            applied.current.as_deref(),
         )
         .unwrap();
-        let mut expected = document.clone();
-        for (application, change, current, previous) in [
-            ("a", SelectionChange::Deploy(&a1), &a1, Some(&a0)),
-            // Retry a pending selection after a failed apply without rotating its predecessor.
-            ("a", SelectionChange::Reapply, &a1, Some(&a0)),
-            ("a", SelectionChange::Deploy(&a1), &a1, Some(&a0)),
-            ("b", SelectionChange::Deploy(&b1), &b1, Some(&b0)),
-            ("a", SelectionChange::Rollback, &a0, Some(&a1)),
-        ] {
-            document.select_release(application, change).unwrap();
-            let target = expected.applications.get_mut(application).unwrap();
-            target.current = DeclaredRelease::Digest(current.to_owned());
-            target.previous = previous.cloned();
+        assert!(warning.contains(&document.applications["wms"].current.to_string()));
+        assert!(warning.contains(&a1));
+        document
+            .select_release("wms", SelectionChange::Deploy(&a2), &applied)
+            .unwrap();
+        let mut expected = before;
+        let target = expected.applications.get_mut("wms").unwrap();
+        target.current = DeclaredRelease::Digest(a2.clone());
+        target.previous = Some(a1.clone());
+        assert_eq!(document, expected);
+        for change in [SelectionChange::Reapply, SelectionChange::Deploy(&a2)] {
+            document.select_release("wms", change, &applied).unwrap();
             assert_eq!(document, expected);
         }
-        for (application, change) in [
-            ("a", SelectionChange::Deploy("latest")),
-            ("absent", SelectionChange::Deploy(&a1)),
-        ] {
-            assert!(document.select_release(application, change).is_err());
-            assert_eq!(document, expected);
-        }
-        document.applications.get_mut("a").unwrap().current = DeclaredRelease::None;
-        document.applications.get_mut("a").unwrap().previous = None;
+        let applied = AppliedReleases {
+            current: Some(a2),
+            previous: Some(a1),
+        };
+        document
+            .select_release("wms", SelectionChange::Reapply, &applied)
+            .unwrap();
+        assert_eq!(document, expected);
         assert!(
-            document
-                .select_release("a", SelectionChange::Rollback)
-                .is_err()
+            selection_warning(
+                "wms",
+                &document.applications["wms"].current,
+                applied.current.as_deref()
+            )
+            .is_none()
         );
         document
-            .select_release("a", SelectionChange::Deploy(&a0))
+            .select_release("wms", SelectionChange::Rollback(None), &applied)
+            .unwrap();
+        let target = expected.applications.get_mut("wms").unwrap();
+        target.current = DeclaredRelease::Digest(applied.previous.unwrap());
+        target.previous = applied.current;
+        assert_eq!(document, expected);
+    }
+
+    #[test]
+    fn ambiguous_rollback_requires_an_explicit_valid_release() {
+        let mut initial =
+            EnvironmentDocument::from_json(document().to_string().as_bytes()).unwrap();
+        let a0 = initial.applications["wms"].current.to_string();
+        let a1 = format!("sha256:{}", "e".repeat(64));
+        let a2 = format!("sha256:{}", "f".repeat(64));
+        initial.applications.get_mut("wms").unwrap().previous = Some(a1.clone());
+        for applied in [
+            AppliedReleases {
+                current: Some(a0),
+                previous: Some(a2.clone()),
+            },
+            AppliedReleases {
+                current: Some(a1),
+                previous: Some(a2.clone()),
+            },
+            AppliedReleases::default(),
+        ] {
+            let mut document = initial.clone();
+            assert!(
+                document
+                    .select_release("wms", SelectionChange::Rollback(None), &applied)
+                    .is_err()
+            );
+            assert_eq!(document, initial);
+            assert!(
+                document
+                    .select_release("wms", SelectionChange::Rollback(Some("latest")), &applied)
+                    .is_err()
+            );
+            assert_eq!(document, initial);
+            document
+                .select_release("wms", SelectionChange::Rollback(Some(&a2)), &applied)
+                .unwrap();
+            let mut expected = initial.clone();
+            let target = expected.applications.get_mut("wms").unwrap();
+            target.current = DeclaredRelease::Digest(a2.clone());
+            target.previous = applied.current;
+            assert_eq!(document, expected);
+        }
+    }
+
+    #[test]
+    fn first_install_and_reselecting_the_applied_release_do_not_rotate_the_file() {
+        let mut document =
+            EnvironmentDocument::from_json(document().to_string().as_bytes()).unwrap();
+        let a0 = document.applications["wms"].current.to_string();
+        let a1 = format!("sha256:{}", "e".repeat(64));
+        document
+            .select_release(
+                "wms",
+                SelectionChange::Deploy(&a1),
+                &AppliedReleases::default(),
+            )
+            .unwrap();
+        assert!(document.applications["wms"].previous.is_none());
+        let applied = AppliedReleases {
+            current: Some(a0),
+            previous: Some(a1),
+        };
+        document
+            .select_release(
+                "wms",
+                SelectionChange::Deploy(applied.current.as_deref().unwrap()),
+                &applied,
+            )
             .unwrap();
         assert_eq!(
-            document.applications["a"].current,
-            DeclaredRelease::Digest(a0)
+            document.applications["wms"].current.to_string(),
+            applied.current.unwrap()
         );
-        assert!(document.applications["a"].previous.is_none());
+        assert_eq!(document.applications["wms"].previous, applied.previous);
+        let before = document.clone();
+        assert!(
+            document
+                .select_release(
+                    "absent",
+                    SelectionChange::Reapply,
+                    &AppliedReleases::default()
+                )
+                .is_err()
+        );
+        assert_eq!(document, before);
     }
 
     #[test]
@@ -226,9 +367,16 @@ mod tests {
         let initial = EnvironmentDocument::from_json(document().to_string().as_bytes()).unwrap();
         std::fs::write(&file, initial.to_kcl()).unwrap();
         let mut prepared = initial.clone();
-        let selection = prepared.applications.get_mut("wms").unwrap();
-        selection.previous = Some(selection.current.to_string());
-        selection.current = DeclaredRelease::Digest(format!("sha256:{}", "e".repeat(64)));
+        prepared
+            .select_release(
+                "wms",
+                SelectionChange::Deploy(&format!("sha256:{}", "e".repeat(64))),
+                &AppliedReleases {
+                    current: Some(format!("sha256:{}", "f".repeat(64))),
+                    previous: None,
+                },
+            )
+            .unwrap();
         persist_selection(&file, &initial, &prepared, "wms").unwrap();
         // A failed rollout leaves the prepared selection on disk for the next invocation.
         let pending = EnvironmentDocument::compile(&file).unwrap();
@@ -257,11 +405,25 @@ mod tests {
         let a1 = format!("sha256:{}", "e".repeat(64));
         let b1 = format!("sha256:{}", "f".repeat(64));
         let mut a = before.clone();
-        a.select_release("wms", SelectionChange::Deploy(&a1))
-            .unwrap();
+        a.select_release(
+            "wms",
+            SelectionChange::Deploy(&a1),
+            &AppliedReleases {
+                current: Some(before.applications["wms"].current.to_string()),
+                previous: None,
+            },
+        )
+        .unwrap();
         let mut b = before.clone();
-        b.select_release("receiving", SelectionChange::Deploy(&b1))
-            .unwrap();
+        b.select_release(
+            "receiving",
+            SelectionChange::Deploy(&b1),
+            &AppliedReleases {
+                current: Some(before.applications["receiving"].current.to_string()),
+                previous: before.applications["receiving"].previous.clone(),
+            },
+        )
+        .unwrap();
         let barrier = std::sync::Barrier::new(2);
         std::thread::scope(|scope| {
             let first = scope.spawn(|| {

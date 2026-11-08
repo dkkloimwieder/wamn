@@ -111,6 +111,9 @@ pub struct ConnectionsArgs {
 
 #[derive(Debug, Args)]
 pub struct RollbackArgs {
+    /// The published target release, required when the prior selection is ambiguous.
+    #[arg(long)]
+    pub release: Option<String>,
     /// The authored environment.k file.
     pub file: PathBuf,
     /// The application whose previous release to apply.
@@ -260,8 +263,13 @@ pub async fn run(command: EnvCommand) -> anyhow::Result<()> {
             }
         }
         EnvCommand::Rollback(args) => {
-            let analysis =
-                environment::rollback::rollback(&platform, &args.file, &args.application).await?;
+            let analysis = environment::rollback::rollback(
+                &platform,
+                &args.file,
+                &args.application,
+                args.release.as_deref(),
+            )
+            .await?;
             for line in &analysis.plan {
                 println!("{line}");
             }

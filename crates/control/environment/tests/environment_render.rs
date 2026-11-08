@@ -68,7 +68,7 @@ fn manifest(bytes: &[u8]) -> anyhow::Result<wamn_catalog::ServingManifest> {
 #[test]
 fn changing_one_application_selection_leaves_the_other_release_unchanged() -> anyhow::Result<()> {
     use std::collections::BTreeMap;
-    use wamn_environment_control::environment::{document::SelectionChange, write};
+    use wamn_environment_control::environment::{document::DeclaredRelease, write};
 
     let work = ScratchRoot::create()?;
     let mut releases = BTreeMap::new();
@@ -189,13 +189,13 @@ fn changing_one_application_selection_leaves_the_other_release_unchanged() -> an
         .iter()
         .map(|(name, release)| Ok((*name, render(&document, name, release)?)))
         .collect::<anyhow::Result<BTreeMap<_, _>>>()?;
-    let original = releases["orders"].clone();
     let release = releases.get_mut("orders").unwrap();
     release.composed_entry.as_mut().unwrap().reference = format!(
         "entries@{}",
         wamn_execution_contract::bytes_sha256(b"updated entry")
     );
-    document.select_release("orders", SelectionChange::Deploy(release.digest().as_str()))?;
+    document.applications.get_mut("orders").unwrap().current =
+        DeclaredRelease::Digest(release.digest().to_string());
     for (application, release) in &releases {
         let after = render(&document, application, release)?;
         if *application == "orders" {
@@ -212,14 +212,6 @@ fn changing_one_application_selection_leaves_the_other_release_unchanged() -> an
         } else {
             assert_eq!(before[application], after);
         }
-    }
-    document.select_release("orders", SelectionChange::Rollback)?;
-    releases.insert("orders", original);
-    for (application, release) in &releases {
-        assert_eq!(
-            before[application],
-            render(&document, application, release)?
-        );
     }
     Ok(())
 }

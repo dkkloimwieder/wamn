@@ -28,6 +28,9 @@ pub struct DeployArgs {
 #[derive(Debug, Args)]
 pub struct RollbackArgs {
     pub application: String,
+    /// The published target release, required when the prior selection is ambiguous.
+    #[arg(long)]
+    pub release: Option<String>,
     /// The shared environment.k file. Rollback preserves schema.mode and other applications.
     #[arg(long)]
     pub env: PathBuf,
@@ -72,7 +75,15 @@ pub async fn deploy(args: DeployArgs) -> anyhow::Result<()> {
 pub async fn rollback(args: RollbackArgs) -> anyhow::Result<()> {
     environment::document::EnvironmentDocument::compile(&args.env)?;
     let platform = Platform::apply_from_env()?;
-    print_analysis(environment::rollback::rollback(&platform, &args.env, &args.application).await?)
+    print_analysis(
+        environment::rollback::rollback(
+            &platform,
+            &args.env,
+            &args.application,
+            args.release.as_deref(),
+        )
+        .await?,
+    )
 }
 
 pub async fn status(args: StatusArgs) -> anyhow::Result<()> {

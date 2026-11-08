@@ -327,15 +327,19 @@ pub async fn deploy(platform: &Platform, file: &Path, digest: &str) -> anyhow::R
 }
 
 /// Prepare schema first, then persist and apply one selection under its application lock.
-pub(super) async fn apply_selection(
+async fn apply_selection(
     platform: &Platform,
     file: &Path,
     application: &str,
     change: document::SelectionChange<'_>,
 ) -> anyhow::Result<Analysis> {
     let before = EnvironmentDocument::compile(file)?;
+    let before_selection = before
+        .applications
+        .get(application)
+        .with_context(|| format!("application {application} is not declared"))?;
     let mut document = before.clone();
-    document.select_release(application, change)?;
+    let release_name = analyse::application_release_name(&before, application)?;
     let private = ensure::PrivateDirectory::create()?;
     let mut platform = platform.clone();
     let control = runtime::resolve_platform(&mut platform, &document.org).await?;
@@ -347,6 +351,15 @@ pub(super) async fn apply_selection(
             application,
         )
         .await?;
+        let applied = analyse::read_applied_releases(&platform, &release_name).await?;
+        if let Some(warning) = document::selection_warning(
+            application,
+            &before_selection.current,
+            applied.current.as_deref(),
+        ) {
+            eprintln!("WARN {warning}");
+        }
+        document.select_release(application, change, &applied)?;
         if let document::SelectionChange::Deploy(release) = change {
             let pending = crate::provision_project_env::registry::pending_database(
                 lock.client(),
@@ -439,7 +452,7 @@ pub(super) async fn apply_selection(
                 &platform,
                 &analysis,
                 prepared,
-                matches!(change, document::SelectionChange::Rollback),
+                matches!(change, document::SelectionChange::Rollback(_)),
             )
             .await
             .context("write the application release chart")?;

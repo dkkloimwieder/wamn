@@ -163,6 +163,22 @@ mod tests {
         };
         assert_eq!(rollback.application, "orders");
         assert_eq!(rollback.env, deploy.env);
+        assert!(rollback.release.is_none());
+        let Command::Rollback(rollback) = Cli::try_parse_from([
+            "wamn",
+            "rollback",
+            "orders",
+            "--env",
+            "environment.k",
+            "--release",
+            &digest,
+        ])
+        .unwrap()
+        .command
+        else {
+            panic!("rollback with explicit release");
+        };
+        assert_eq!(rollback.release.as_deref(), Some(digest.as_str()));
         let Command::Status(status) =
             Cli::try_parse_from(["wamn", "status", "--env", "environment.k"])
                 .unwrap()

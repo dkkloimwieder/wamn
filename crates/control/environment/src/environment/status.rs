@@ -124,6 +124,15 @@ pub async fn status(
                     number: revision.number,
                     chart: revision.chart,
                 });
+            if let Some(warning) = super::document::selection_warning(
+                application,
+                &selection.current,
+                revision
+                    .as_ref()
+                    .and_then(|revision| revision.manifest_digest.as_deref()),
+            ) {
+                warnings.push(warning);
+            }
             let namespace = platform.target.namespace.as_str();
             let observed = observe(namespace, &release_name, |path| async move {
                 let body = kubectl(platform, namespace, &["get", "--raw", &path], None).await?;
