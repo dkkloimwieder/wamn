@@ -25,6 +25,7 @@ readonly WAMN_REPOSITORY_ROOT="$(
 )"
 readonly WAMN_CARGO="${CARGO:-cargo}"
 readonly WAMN_DOCKER="${DOCKER:-docker}"
+source "$WAMN_TOOL_DIRECTORY/require-test-result"
 
 # The three Cargo workspaces, in run order: label and manifest.
 readonly -a WAMN_WORKSPACES=(root apps no-std)
@@ -139,8 +140,8 @@ for suite in policy["suites"]:
         sys.exit(f"suite {identifier}: invalid execution policy")
     if suite["mode"] not in ("always", "local"):
         sys.exit(f"suite {identifier}: invalid mode")
-    if suite["timeout"] != 1800 or not isinstance(suite["resource_lock"], str):
-        sys.exit(f"suite {identifier}: use the shared 30-minute silent-stage limit and a resource lock string")
+    if not isinstance(suite["resource_lock"], str):
+        sys.exit(f"suite {identifier}: use a resource lock string")
 def shared_header(text, policy):
     # TOML drops comments. Keep comments outside suite tables and inline rows.
     comments = []
@@ -223,7 +224,7 @@ fi
 
 declare -a WAMN_METADATA=()
 for manifest in "${WAMN_MANIFESTS[@]}"; do
-  metadata="$("$WAMN_CARGO" metadata --manifest-path "$WAMN_REPOSITORY_ROOT/$manifest" \
+  metadata="$(wamn_run_child "metadata $manifest" "$WAMN_CARGO" metadata --manifest-path "$WAMN_REPOSITORY_ROOT/$manifest" \
     --locked --offline --format-version 1)" || wamn_fail 65 "locked Cargo metadata failed for $manifest"
   WAMN_METADATA+=("$metadata")
 done
@@ -511,7 +512,7 @@ wamn_step() {
   fi
   printf 'test-changes: %s\n' "$label" >&2
   local exit_code=0
-  "$@" </dev/null || exit_code=$?
+  wamn_run_child "$label" "$@" || exit_code=$?
   if ((exit_code == 0)); then
     printf 'test-changes: PASS: %s\n' "$label" >&2
   else
@@ -699,7 +700,7 @@ if [[ "$WAMN_COMMAND" != dry-run ]]; then
     while IFS= read -r name; do
       list_argv=("${suite_argv[@]}" "$name" -- --exact --list --format terse)
       if [[ "$(jq -r '.ignored // false' <<<"$suite")" == true ]]; then list_argv+=(--ignored); fi
-      listed="$("$WAMN_CARGO" test --locked --offline "${list_argv[@]}" </dev/null)" ||
+      listed="$(wamn_run_child "list $name" "$WAMN_CARGO" test --locked --offline "${list_argv[@]}" | tee /dev/stderr)" ||
         wamn_fail 65 "cannot list exact selector $name"
       grep -qxF -- "$name: test" <<<"$listed" ||
         wamn_fail 65 "suite $(jq -r '.id' <<<"$suite"): missing exact test $name"
@@ -761,8 +762,9 @@ while IFS= read -r suite; do wamn_run_suite "$suite"; done < <(
 wamn_root_test() {
   local result exit_code=0 manifest kind target name package executable
   result=$(mktemp "${TMPDIR:-/tmp}/wamn-root-test.XXXXXXXX")
-  "$WAMN_CARGO" "$@" --message-format=json-render-diagnostics >"$result" 2>&1 || exit_code=$?
-  sed '/^{.*"reason":"\(compiler-artifact\|build-script-executed\|build-finished\)"/d' "$result"
+  wamn_run_child "$label" "$WAMN_CARGO" "$@" --message-format=json-render-diagnostics 2>&1 |
+    tee "$result" |
+    sed -u '/^{.*"reason":"\(compiler-artifact\|build-script-executed\|build-finished\)"/d' || exit_code=$?
   while IFS=$'\t' read -r manifest kind target name executable; do
     package="$(jq -r --arg manifest "$manifest" '.packages[]
       | select(.manifest_path == $manifest) | .name' <<<"${WAMN_METADATA[0]}")"
@@ -893,7 +895,7 @@ while IFS=$'\t' read -r index full trigger packages features targets; do
   fi
   if [[ -n "$WAMN_NAME" ]]; then
     # Libtest lists each matching ignored test as `name: test`.
-    listed="$("$WAMN_CARGO" "${argv[@]}" --list --format terse </dev/null)" ||
+    listed="$(wamn_run_child "list $label" "$WAMN_CARGO" "${argv[@]}" --list --format terse | tee /dev/stderr)" ||
       wamn_fail 1 "cannot list the ignored tests of $label"
     grep -q ': test$' <<<"$listed" ||
       wamn_fail 1 "no ignored test in the selected packages matches the name filter '$WAMN_NAME'"
@@ -903,7 +905,7 @@ while IFS=$'\t' read -r index full trigger packages features targets; do
   if ((index == 0)) && [[ "$WAMN_KIND" == false ]]; then
     wamn_root_test "${argv[@]}" </dev/null || exit_code=$?
   else
-    "$WAMN_TOOL_DIRECTORY/require-test-result" "$WAMN_CARGO" "${argv[@]}" </dev/null || exit_code=$?
+    wamn_run_child "$label" "$WAMN_TOOL_DIRECTORY/require-test-result" "$WAMN_CARGO" "${argv[@]}" || exit_code=$?
   fi
   if ((exit_code == 0)); then
     printf 'test-changes: PASS: %s\n' "$label" >&2

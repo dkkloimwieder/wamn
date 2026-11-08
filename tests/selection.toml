@@ -1,7 +1,6 @@
 # Suites record id, tier, workspace, package, target, tests, features,
-# prerequisites, inputs (path regexes), execution, resource_lock, and timeout.
+# prerequisites, inputs (path regexes), execution, and resource_lock.
 # Empty package means a tool command. Empty target means package defaults.
-# Timeout is the shared silent-stage kill limit in seconds, never a suite estimate.
 # Rules describe non-Cargo readers. Cargo still discovers package dependencies.
 version = 1
 exclusions = [
@@ -638,7 +637,6 @@ mode = "always"
 always = false
 commands = [["repo-lint", "tools/repo-lint", "run"]]
 resource_lock = ""
-timeout = 1800
 
 [[suites]]
 id = "packages-alone"
@@ -654,7 +652,6 @@ execution = "commands"
 mode = "local"
 commands = [["packages alone", "tools/check-packages-alone"]]
 resource_lock = ""
-timeout = 1800
 
 [[suites]]
 id = "package-digest"
@@ -669,7 +666,6 @@ inputs = ["^crates/schema/generator/", "^deploy/gcp/environments/"]
 execution = "libtest"
 mode = "local"
 resource_lock = ""
-timeout = 1800
 
 [[suites]]
 id = "provision"
@@ -684,7 +680,6 @@ inputs = ["^(apps/platform_fixture(_overlay)?/|crates/catalog/|deploy/sql/)"]
 execution = "libtest"
 mode = "local"
 resource_lock = ""
-timeout = 1800
 
 [[suites]]
 id = "ctl-ops"
@@ -699,7 +694,6 @@ inputs = ["^deploy/sql/"]
 execution = "libtest"
 mode = "local"
 resource_lock = ""
-timeout = 1800
 
 [[suites]]
 id = "prekind"
@@ -715,7 +709,6 @@ execution = "libtest"
 mode = "local"
 always = true
 resource_lock = ""
-timeout = 1800
 
 [[suites]]
 id = "release-chart-render"
@@ -731,7 +724,6 @@ execution = "libtest"
 mode = "local"
 ignored = true
 resource_lock = ""
-timeout = 1800
 
 [[suites]]
 id = "native-host"
@@ -749,7 +741,6 @@ mode = "local"
 select_packages = ["wamn-runtime", "wamn-execution-host", "wamn-host"]
 ignored = true
 resource_lock = "native-host"
-timeout = 1800
 
 [[suites]]
 id = "jetstream"
@@ -766,7 +757,6 @@ mode = "local"
 select_packages = ["wamn-runtime"]
 ignored = true
 resource_lock = "private-nats"
-timeout = 1800
 
 [[suites]]
 id = "web"
@@ -789,7 +779,6 @@ commands = [
   ["platform UI build", "pnpm", "--filter", "@wamn/platform-ui", "build"],
 ]
 resource_lock = ""
-timeout = 1800
 
 [[suites]]
 id = "docker-guests"
@@ -807,7 +796,6 @@ mode = "local"
 dockerfile = "Dockerfile"
 stage = "component-builder"
 resource_lock = "docker"
-timeout = 1800
 
 [[suites]]
 id = "platform-kind"
@@ -824,7 +812,6 @@ mode = "local"
 select_packages = ["wamn-release-control", "wamn-environment-control", "wamn-dev-control"]
 ignored = true
 resource_lock = ""
-timeout = 1800
 
 [[suites]]
 id = "registry-image-kind"
@@ -841,7 +828,6 @@ mode = "local"
 select_packages = ["wamn-conformance-tests"]
 ignored = true
 resource_lock = ""
-timeout = 1800
 
 [[suites]]
 id = "receiving-business"
@@ -859,7 +845,6 @@ mode = "local"
 select_packages = ["wamn-receiving-tests"]
 ignored = true
 resource_lock = ""
-timeout = 1800
 
 [[suites]]
 id = "wms-local"
@@ -877,7 +862,6 @@ mode = "local"
 select_packages = ["wamn-wms-tests"]
 ignored = true
 resource_lock = ""
-timeout = 1800
 
 [[suites]]
 id = "migration-policy"
@@ -893,7 +877,6 @@ execution = "libtest"
 mode = "local"
 always = false
 resource_lock = ""
-timeout = 1800
 
 [[suites]]
 id = "package-executor"
@@ -909,4 +892,3 @@ execution = "libtest"
 mode = "local"
 always = false
 resource_lock = ""
-timeout = 1800

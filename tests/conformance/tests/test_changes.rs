@@ -30,7 +30,6 @@ inputs = ["^crates/core/"]
 execution = "libtest"
 mode = "local"
 resource_lock = ""
-timeout = 1800
 "#;
 
 static NEXT_DIRECTORY: AtomicU64 = AtomicU64::new(0);

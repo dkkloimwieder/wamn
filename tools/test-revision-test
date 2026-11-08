@@ -8,6 +8,79 @@ mkdir -p "$fixture/bin" "$fixture/repo/tools" "$fixture/target/debug" \
   "$fixture/repo/deploy/gcp/environments" "$fixture/repo/apps"
 cp "$tools/test-changes" "$tools/require-test-result" \
   "$tools/test-revision" "$fixture/repo/tools/"
+# Exercise the real process boundary with children, without Cargo or services.
+python3 - "$tools/require-test-result" "$fixture" <<'PYTHON'
+import os
+from pathlib import Path
+import selectors
+import subprocess
+import sys
+import time
+
+tool, directory = sys.argv[1:]
+environment = dict(os.environ, WAMN_TEST_SILENCE_SECONDS="1")
+
+def command(stage, body):
+    path = Path(directory, stage)
+    path.write_text(body)
+    return [tool, sys.executable, "-u", str(path)]
+
+exited = Path(directory, "steady-exited")
+steady = command("steady-stage", f"""
+from pathlib import Path
+import sys, time
+print('first', flush=True)
+for _ in range(25):
+    time.sleep(0.1)
+    sys.stderr.write('.')
+    sys.stderr.flush()
+Path({str(exited)!r}).touch()
+print('\\ntest result: ok. 1 passed; 0 failed;')
+""")
+start = time.monotonic()
+with subprocess.Popen(steady, env=environment, stdout=subprocess.PIPE,
+                      stderr=subprocess.STDOUT) as child:
+    with selectors.DefaultSelector() as selector:
+        selector.register(child.stdout, selectors.EVENT_READ)
+        if not selector.select(3):
+            child.kill()
+            raise AssertionError("no output before the child exits")
+        first = os.read(child.stdout.fileno(), 4096)
+    assert b"first" in first and child.poll() is None and not exited.exists(), first
+    first_at = time.monotonic() - start
+    rest, _ = child.communicate(timeout=5)
+    assert child.returncode == 0, first + rest
+    assert time.monotonic() - start > 1
+print(f"process boundary: steady exit 0; first output at {first_at:.3f}s while child runs", flush=True)
+
+silent = command("silent-stage", """
+import os, signal, subprocess, sys, time
+signal.signal(signal.SIGTERM, signal.SIG_IGN)
+descendant = subprocess.Popen([sys.executable, '-c',
+    'import signal,time; signal.signal(signal.SIGTERM, signal.SIG_IGN); time.sleep(60)'])
+print(os.getpid(), descendant.pid, flush=True)
+time.sleep(60)
+""")
+result = subprocess.run(silent, env=environment, stdout=subprocess.PIPE,
+                        stderr=subprocess.STDOUT, timeout=5)
+assert result.returncode == 124, result.stdout
+assert b"silent-stage" in result.stdout, result.stdout
+for pid in map(int, result.stdout.splitlines()[0].split()):
+    status = Path(f"/proc/{pid}/stat")
+    assert not status.exists() or status.read_text().rsplit(")", 1)[1].split()[0] == "Z", pid
+print("process boundary: silent-stage exit 124; child and descendant stopped", flush=True)
+
+for stage, body, expected in [
+    ("nonzero-stage", "print('test result: ok. 1 passed; 0 failed;')\nraise SystemExit(23)\n", 23),
+    ("zero-stage", "print('test result: ok. 0 passed; 0 failed;')\n", 1),
+]:
+    result = subprocess.run(command(stage, body), env=environment,
+                            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=5)
+    assert result.returncode == expected, result.stdout
+    if stage == "zero-stage":
+        assert b"no executed passing cases" in result.stdout, result.stdout
+    print(f"process boundary: {stage} exit {expected}", flush=True)
+PYTHON
 mkdir -p "$fixture/repo/tests"
 cp "$tools/../tests/selection.toml" "$fixture/repo/tests/"
 # This fixture tests the default tiers and supplies no cluster packages.

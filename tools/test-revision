@@ -11,6 +11,7 @@ if (($# == 3)); then
   base=$3
 fi
 readonly tools="$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
+source "$tools/require-test-result"
 readonly repository="$(git -C "$tools/.." rev-parse --show-toplevel)"
 ref=$(git -C "$repository" rev-parse --verify "$ref^{commit}") || wamn_fail 'REF is not a commit'
 if [[ -z $base ]]; then
@@ -33,7 +34,7 @@ step() {
   shift
   start=$(date -u +%Y-%m-%dT%H:%M:%SZ)
   printf 'test-revision: %s start %s\n' "$label" "$start"
-  "$@" </dev/null 2>&1 | tee "$state/$label.log" || status=$?
+  wamn_run_child "$label" "$@" 2>&1 | tee "$state/$label.log" || status=$?
   end=$(date -u +%Y-%m-%dT%H:%M:%SZ)
   if ((status == 0)); then
     rows+=("$(printf '%-12s PASS  %s %s' "$label" "$start" "$end")")
@@ -71,9 +72,8 @@ cd -- "$worktree"
 export CARGO_TARGET_DIR="$HOME/.cache/wamn-target/revision"
 export CARGO_NET_OFFLINE=true
 step submodules git submodule update --init --recursive
-select_suites() { tools/test-changes dry-run --base "$base" > "$state/selection.log"; }
-step select select_suites
-cat "$state/selection.log"
+step select tools/test-changes dry-run --base "$base"
+cp "$state/select.log" "$state/selection.log"
 if grep -qxF 'selected: nothing' "$state/selection.log"; then exit 0; fi
 if grep -qE '^suites:.*(^| )web( |$)' "$state/selection.log"; then
   step web-install pnpm install --offline
