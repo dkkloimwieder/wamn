@@ -159,6 +159,33 @@ pub(crate) fn prepare_package(root: &PackageRoot) -> anyhow::Result<PreparedPack
     prepare_directory(root, directory)
 }
 
+/// Validate the complete migration policy before reconstructing a database.
+/// Refusals deferred for application ownership checks also prevent reconstruction.
+pub fn validate_package_migration_policy(
+    root: &Path,
+    directory: &PackageDirectory,
+) -> anyhow::Result<()> {
+    let plan = plan_package_migrations(directory, None, &[])?;
+    let policy = validate_migration_policy(root, directory, &plan).with_context(|| {
+        format!(
+            "package {}@{} migration policy",
+            plan.coordinate.package_id(),
+            plan.coordinate.package_version()
+        )
+    })?;
+    if let Some(refusal) = policy.deferred {
+        return Err(refusal.source).with_context(|| {
+            format!(
+                "package {}@{} migration policy in {}",
+                plan.coordinate.package_id(),
+                plan.coordinate.package_version(),
+                refusal.relative_path
+            )
+        });
+    }
+    Ok(())
+}
+
 /// Initialize an absent package. Existing packages retain their installed SQL.
 pub async fn apply_package(request: ApplyPackageRequest) -> anyhow::Result<ApplyOutcome> {
     apply_request(request, None, false, None).await

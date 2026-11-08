@@ -560,8 +560,11 @@ pub fn validate_candidates(
                 model.table
             );
         }
-        // Includes filename/checksum validation before mutation. Ownership remains with apply-package.
-        wamn_schema_control::plan_package_migrations(&candidate.directory, None, &[])?;
+        // The package owner validates the complete policy, including deferred refusals.
+        apply_package::validate_package_migration_policy(
+            &candidate.root.path,
+            &candidate.directory,
+        )?;
         packages.push(manifest);
     }
     ensure!(
@@ -1000,6 +1003,22 @@ mod tests {
     #[test]
     fn reconstruction_accepts_inherited_models_and_refuses_competing_owners() {
         let mut candidates = [candidate("alpha", "1.0.0"), candidate("beta", "1.0.0")];
+        for candidate in &mut candidates {
+            let manifest =
+                PackageManifest::from_slice(&candidate.directory.manifest_bytes).unwrap();
+            candidate.directory.migrations[0].bytes = manifest
+                .models
+                .values()
+                .map(|model| {
+                    format!(
+                        "CREATE TABLE {}.{} (id integer CONSTRAINT item_id_pkey PRIMARY KEY);",
+                        model.schema, model.table
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join("\n")
+                .into_bytes();
+        }
         let sources = candidates
             .iter()
             .map(|candidate| {
@@ -1033,6 +1052,7 @@ mod tests {
             },
         );
         candidates[1].directory.manifest_bytes = serde_json::to_vec(&overlay).unwrap();
+        candidates[1].directory.migrations.clear();
         validate_candidates(&document, &candidates, &sources).unwrap();
     }
 
