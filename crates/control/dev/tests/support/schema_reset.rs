@@ -1,4 +1,8 @@
 //! Observe shared reset through the existing provisioning and schema commands.
+//!
+//! Stale-event admission after a schema change has no test: deployed environments
+//! have no workflow authoring operation (wamn-alrvy.19). Event disposal and isolation
+//! remain observable through the deployed broker.
 
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -38,9 +42,9 @@ pub(super) async fn changes(
                         "--org",
                         &journey.run.document.org,
                         "--project",
-                        "journey",
+                        journey.project,
                         "--env",
-                        "dev",
+                        journey.environment,
                         "--target",
                         "cloud",
                         "--disposable",
@@ -211,7 +215,7 @@ async fn refill(
     journey: &Journey<'_>,
     rows: &mut BTreeMap<&str, (Value, Value)>,
 ) -> anyhow::Result<()> {
-    for app in ["alpha", "beta"] {
+    for (app, row) in rows.iter_mut() {
         let counter = journey
             .route(
                 app,
@@ -227,7 +231,7 @@ async fn refill(
             "idempotency_key":uuid::Uuid::new_v4().to_string(),
             "id":uuid::Uuid::new_v4().to_string(), "code":"standard", "maker_id":null,"note":app
         }])).await?;
-        rows.insert(app, (counter, widget));
+        *row = (counter, widget);
     }
     Ok(())
 }
@@ -368,7 +372,7 @@ async fn attempt(
                 eprintln!("{label} CNPG present: {found}");
                 present = true;
             }
-            pending = system.query_one("SELECT pending_database FROM registry.project_envs WHERE org=$1 AND project='journey' AND env='dev'", &[&journey.run.document.org]).await?.get::<_, Option<Value>>(0).unwrap_or(Value::Null);
+            pending = system.query_one("SELECT pending_database FROM registry.project_envs WHERE org=$1 AND project=$2 AND env=$3", &[&journey.run.document.org, &journey.project, &journey.environment]).await?.get::<_, Option<Value>>(0).unwrap_or(Value::Null);
             if !pending.is_null() && stop == Stop::Pinned {
                 eprintln!("{label} pinned reset: {pending}");
                 break Ok(pending);
@@ -449,7 +453,7 @@ pub(super) async fn recovery(
         "scenario 5: reset interruption before recreation and after restored SQL; isolate a non-disposable environment"
     );
     let mut document = EnvironmentDocument::compile(&journey.file)?;
-    document.env = "prod".into();
+    document.env = format!("isolated-{}", journey.environment);
     document.schema.mode = Some(SchemaMode::Migrate);
     document.integrations.clear();
     document.applications.retain(|name, _| name == "beta");
@@ -459,12 +463,15 @@ pub(super) async fn recovery(
         .context("isolated beta")?;
     beta.current = DeclaredRelease::None;
     beta.previous = None;
-    beta.hostname = "isolated.wamn.localhost".into();
+    beta.hostname = journey.isolated_host.into();
     let file = journey.run.directory.join("environments/isolation.k");
     std::fs::write(&file, document.to_kcl())?;
     let other = Journey {
         run: journey.run,
         file,
+        project: journey.project,
+        environment: &document.env,
+        isolated_host: journey.isolated_host,
         variables: journey.variables,
         token: journey.token,
         client: journey.client,
@@ -556,7 +563,11 @@ pub(super) async fn recovery(
         after["initialization"] == pending["initialization_identity"],
         "reset retry changed its pinned initialization"
     );
-    for app in ["alpha", "beta"] {
+    for app in selections["applications"]
+        .as_object()
+        .context("selected applications")?
+        .keys()
+    {
         let status = journey.status().await?;
         ensure!(
             status["applications"][app]["current"] == selections["applications"][app]["current"]
@@ -625,7 +636,11 @@ pub(super) async fn recovery(
         status["schema"]["pending_database"].is_null(),
         "reset retry left pinned work unfinished"
     );
-    for app in ["alpha", "beta"] {
+    for app in selections["applications"]
+        .as_object()
+        .context("selected applications")?
+        .keys()
+    {
         ensure!(
             status["applications"][app]["current"] == selections["applications"][app]["current"]
                 && status["applications"][app]["previous"]
@@ -657,9 +672,6 @@ pub(super) async fn recovery(
     );
     refill(journey, rows).await?;
     event(journey, &broker, "new-after-reset").await?;
-    eprintln!(
-        "item 5 event-run boundary stopped: workflow author requires a green gate report; deployed env apply provisions no authoring service or CLI gate operation"
-    );
     Ok(())
 }
 

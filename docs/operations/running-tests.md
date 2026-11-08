@@ -663,83 +663,96 @@ These cases test connection reuse and authority isolation without measuring thro
 
 ### Platform and environment apply on kind
 
-The platform journey exercises `wamn platform deploy` and `wamn platform status` with zero applications.
-It uses prepared artifacts from [local platform production](building.md#local-platform-artifacts).
-It requires Docker, kind, Helm, kubectl, OpenSSL, the pinned KCL compiler, and the selected `wamn` and `wamn-ctl` binaries.
-The application phase builds two scratch copies of `apps/platform_fixture` through `wamn build`.
-It requires no local UI bundle, GCP credentials, bucket, or public DNS.
-Public infrastructure images and the pinned platform artifacts must be reachable.
+These tests drive product commands and observe the deployed cluster.
+Select each test by its exact name in the `platform_apply_kind` Cargo target:
 
-The test owns an isolated cluster name and uses the selected registry and prepared chart.
-It invokes the product command for installation and reads the resulting resources and endpoints.
-It does not install a second copy of the platform through test helpers.
-The acceptance boundary covers these behaviors:
+| Test | Coverage | Platform |
+| --- | --- | --- |
+| `platform_install_recovery_kind` | Install, sign-in, reapply, pod recovery, release repair, interrupted application installation and replacement recovery | Creates one fresh kind cluster |
+| `application_deploy_kind` | Source and published code updates, reapply, rollback, missing artifacts, stale checkout, retained data, and independent applications | Attaches to an existing disposable kind platform |
+| `sql_job_kind` | SQL before and after code, migration checksums, retry without repeated data effects, both mode transitions, and matching adoption | Attaches to an existing disposable kind platform |
+| `same_name_reset_kind` | Source and published schema reset, unchanged input, interruption before and after recreation, same-name retry, durable refusal, and environment isolation | Attaches to an existing disposable kind platform |
+| `platform_apply_kind` | Fresh-platform acceptance: normal installation and interrupted installation once each, plus all focused bodies on the normal platform | Creates two fresh kind clusters |
 
-- Fresh deployment creates no application environments or releases.
-- A repeat preserves system data and uses the same resource owners.
-- The owner accepts a local invitation and signs in through identity's password endpoints.
-- An authorized control query succeeds and an unauthorized query returns HTTP 401.
-- An interrupted deployment reports its actual state, and a retry completes.
-- Deployment uses no GCP commands or generic installation-completion ConfigMaps.
+The focused application and schema tests never install or rebuild the platform.
+Each invocation creates unique project, environment, hostname, and package-version names.
+These tests can run in any order on the same platform.
+They retain application environments until the disposable platform is deleted.
+Platform and application recovery checks run only in the platform tests.
+Stale-event admission has no test because deployed environments have no workflow authoring operation (`wamn-alrvy.19`).
+Reset still asserts old-event disposal and environment isolation.
 
-After the zero-application assertion, the normal cluster also runs the application journey.
-The journey publishes A0, A1, B0, and B1 before it creates the destination database.
-B0 creates the shared environment through `wamn deploy --release`.
+All tests require Docker, kind, Helm, kubectl, OpenSSL, and a prepared KCL compiler selected by `WAMN_KCL`.
+Build the native `wamn` and `wamn-ctl` binaries beside the test executable in `$CARGO_TARGET_DIR/debug`.
+Use prepared artifacts from [local platform production](building.md#local-platform-artifacts).
+Keep the complete prepared chart directory and its pinned images unchanged after installation.
+The application bodies build scratch copies of `apps/platform_fixture` through product commands.
+All tests therefore also require these publication inputs:
 
-The journey kills that process group when the environment row first appears, before provisioning reaches the shared materializer.
-It requires that no application SQL Job exists at that point.
-The same deploy retries provisioning and initializes SQL.
-The journey kills this attempt after Helm records `pending-install`, before any B0 pod becomes ready.
-This Helm record follows successful SQL initialization through the product command.
-The test fails if either interruption window passes before it can observe and interrupt the command.
+- Set `DATABASE_URL` to a separate disposable PostgreSQL 18 server with permission to create and drop databases.
+- Set `WAMN_FLOW_HTTP_COMPONENT` to the raw pinned `http_route.wasm`.
+- Set `WAMN_PACKAGE_ARTIFACT_BASE`, `WAMN_COMPONENT_ARTIFACT_BASE`, and `WAMN_RELEASE_ARTIFACT_BASE` under the selected kind registry.
+- Set `WAMN_REGISTRY_AUTH_FILE` to the registry's protected `.dockerconfigjson` file.
 
-Another identical deploy must complete and serve B0 through its widget route.
-The retry must preserve the environment instance and the installed schema, sequences, and data.
-It must also preserve the baseline records and their PostgreSQL transaction identities, which detect rewrites even when row values stay unchanged.
-Both interruption points retain observed product metadata beside the command logs.
+The registry authority must match `cluster.k`, normally `localhost:5001`.
+Tests read product-created credentials from Secrets and issue an owner PAT (personal access token) through identity's operator endpoint.
+Focused tests do not consume the initial invitation or need the owner's password.
 
-Control routes then configure A's HTTP connection before A0 deploys.
-A declares `upstream` through a platform `http-request` wiring, as `rest_connector` does.
-The journey compares its installed release binding across deployments.
-The owner uses identity endpoints for authentication and a personal access token.
-Project creation and environment provisioning give that owner the application permissions.
-
-The journey creates counter and widget rows through both applications.
-It deploys A1 from source, deploys B1 by release, reapplies A, and rolls A back to A0.
-After each operation, it compares the other application's selection, Helm revision, workloads, Service, pod identities, bindings, and effective SQL permissions.
-A read-only database connection compares installed ownership, schema definitions, initialization records, sequence state, and application rows.
-The observed relations come from installed ownership and the built package manifests.
-
-A temporary pod quota prevents A's replacement from becoming ready while its old pod remains available.
-The journey requires command failure, a retained pending selection, and usable routes with the old binding and permissions.
-It interrupts a targeted retry after Helm records a pending revision, removes the quota, and reapplies the persisted selection.
-It then rolls A back again and requires A0 and B1 to serve their retained data.
-Missing registry artifacts must fail without changing either application.
-An absent qualification produces a notice, and each product command records its duration.
-The test asserts no performance threshold.
-
-Set `DATABASE_URL` to a separate disposable PostgreSQL 18 server.
-The build command requires permission to create and drop databases.
-Set `WAMN_FLOW_HTTP_COMPONENT` to the raw pinned `http_route.wasm`.
-Set `WAMN_PACKAGE_ARTIFACT_BASE`, `WAMN_COMPONENT_ARTIFACT_BASE`, and `WAMN_RELEASE_ARTIFACT_BASE` to repositories under the selected kind registry.
-Set `WAMN_REGISTRY_AUTH_FILE` to its protected `.dockerconfigjson` file.
-The registry must use the `localhost:5001` authority from `cluster.k`.
-The test reads database and NATS credentials from Secrets that the product created and forwards their Services for native commands.
-The selected ctl image must include the same deployment implementation as the native CLI binaries.
-No gates image or synthetic application chart is required.
-
-From a shell with `WAMN_RELEASE_CHART` set to the prepared chart, select the debug binaries and run the case:
+Install once with the product command from a shell with the prepared chart and publication inputs:
 
 ```bash
 export PATH="$CARGO_TARGET_DIR/debug:$PATH"
+export WAMN_KCL="$(tools/install-kcl)"
+export WAMN_RELEASE_CHART=/var/tmp/wamn-platform-chart
 cargo build --locked --offline -p wamn-ctl --bin wamn --bin wamn-ctl
+mkdir -p /var/tmp/wamn-kind-dep3
+sed 's/cluster_name = "wamn-local"/cluster_name = "wamn-test-dep3"/' \
+  deploy/kind/cluster.k > /var/tmp/wamn-kind-dep3/cluster.k
+wamn platform deploy /var/tmp/wamn-kind-dep3/cluster.k --chart "$WAMN_RELEASE_CHART"
+kind export kubeconfig --name wamn-test-dep3 --kubeconfig /var/tmp/wamn-kind-dep3/kubeconfig
+kubectl --kubeconfig /var/tmp/wamn-kind-dep3/kubeconfig --context kind-wamn-test-dep3 \
+  annotate namespace platform wamn.dev/disposable=true
+```
+
+The namespace annotation records consent to use this platform as disposable.
+Focused tests refuse an absent or false annotation before any platform mutation.
+`WAMN_TEST_CLUSTER` is the single target input authorized by `wamn-alrvy.18`.
+The cluster document supplies the name for the existing provider's kubeconfig export and the product's `Target`.
+Helm's `platform/chart` value supplies the installed chart path, regardless of the caller's `WAMN_RELEASE_CHART`.
+
+Run one focused SQL test against that platform:
+
+```bash
+WAMN_TEST_CLUSTER=/var/tmp/wamn-kind-dep3/cluster.k \
+  cargo test --locked --offline -p wamn-dev-control --test platform_apply_kind sql_job_kind -- --ignored --exact --nocapture
+```
+
+Select `application_deploy_kind` or `same_name_reset_kind` in the same command for the other focused tests.
+Run fresh-platform acceptance with the prepared chart selected by `WAMN_RELEASE_CHART`:
+
+```bash
 cargo test --locked --offline -p wamn-dev-control --test platform_apply_kind platform_apply_kind -- --ignored --exact --nocapture
 ```
 
-A failed platform run retains its cluster for inspection and prints its cleanup command.
-Use that command for the resources owned by the run.
-The platform journey has no numbered steps, saved completion state, or step-resume command.
-To retry deployment, invoke `wamn platform deploy` with the same cluster document and prepared chart.
+A CLI-only change rebuilds the native binaries and the affected test executable.
+It reuses the installed platform and its prepared chart and images.
+An in-cluster deployment change requires a new ctl image.
+Host, identity, and role-component changes require their affected images.
+Produce those artifacts with `build-platform`, then install another disposable platform through the product command.
+Never overwrite the prepared chart of an existing platform.
+A fixture change rebuilds the affected application artifacts through the test's product publication path.
+
+Fresh-platform tests delete their clusters after success.
+Failed runs retain private inputs and logs and print cleanup commands.
+Focused tests never delete the attached platform.
+After its focused runs finish, delete the reusable platform:
+
+```bash
+kind delete cluster --name wamn-test-dep3
+```
+
+The journeys have no saved completion state or resume system.
+Retry product deployment with the same cluster document and prepared chart.
 
 ### Removed application cluster coverage
 
@@ -761,8 +774,8 @@ The database tests in `install_sequence_live.rs` retain restricted SQL roles, pa
 
 ### Environment deployment coverage
 
-`platform_apply_kind` now contains the DEP2-13 application journey.
-It asserts fresh installation, independent updates, reapply, rollback, failed replacement, recovery, and data preservation through product commands.
+The focused tests above split the DEP2-13 application journey by contract.
+Fresh-platform acceptance calls those same bodies and keeps platform recovery separate from schema tests.
 DEP2-09 already removed `environment_reapply.rs`, its synthetic chart, and its direct Helm write and interruption helpers.
 The old connector, file, drain, deletion, and schedule combinations have no replacement in this epic.
 Product rendering tests and the retained native host, file fixture, and database tests remain at their existing tiers.

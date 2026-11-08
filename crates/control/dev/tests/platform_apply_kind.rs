@@ -13,7 +13,11 @@ use serde::Deserialize as _;
 use serde_json::{Value, json};
 use tokio::process::Command;
 use wamn_dev_control::owned_command;
-use wamn_environment_control::platform::{artifact_plan, document::ClusterDocument, resources};
+use wamn_environment_control::platform::{
+    artifact_plan,
+    document::{ClusterDocument, Provider},
+    provider, resources,
+};
 use wamn_release_control::release_chart::Target;
 
 #[path = "../../environment/tests/support/platform_images.rs"]
@@ -34,6 +38,7 @@ struct Run {
     binary: PathBuf,
     chart: PathBuf,
     kcl: PathBuf,
+    owns_cluster: bool,
     cleaned: bool,
 }
 
@@ -44,7 +49,9 @@ impl Drop for Run {
                 "Retained private inputs and logs: {}",
                 self.directory.display()
             );
-            eprintln!("kind delete cluster --name {}", self.document.cluster_name);
+            if self.owns_cluster {
+                eprintln!("kind delete cluster --name {}", self.document.cluster_name);
+            }
             if self.checkout.exists() {
                 eprintln!(
                     "git -c core.hooksPath=/dev/null -C '{}' worktree remove --force '{}'",
@@ -57,20 +64,58 @@ impl Drop for Run {
     }
 }
 
+// The cluster document is the one target input authorized by wamn-alrvy.18.
+// The namespace annotation records consent to use the platform as disposable.
+#[tokio::test]
+#[ignore = "requires: bin:kind, bin:docker, bin:kubectl, bin:helm, bin:openssl"]
+async fn application_deploy_kind() -> anyhow::Result<()> {
+    wamn_test_postgres::require_ignored_prerequisites(
+        "requires: bin:kind, bin:docker, bin:kubectl, bin:helm, bin:openssl",
+    );
+    focused(application_deploy::Case::Application).await
+}
+
+#[tokio::test]
+#[ignore = "requires: bin:kind, bin:docker, bin:kubectl, bin:helm, bin:openssl"]
+async fn sql_job_kind() -> anyhow::Result<()> {
+    wamn_test_postgres::require_ignored_prerequisites(
+        "requires: bin:kind, bin:docker, bin:kubectl, bin:helm, bin:openssl",
+    );
+    focused(application_deploy::Case::SqlJob).await
+}
+
+#[tokio::test]
+#[ignore = "requires: bin:kind, bin:docker, bin:kubectl, bin:helm, bin:openssl"]
+async fn same_name_reset_kind() -> anyhow::Result<()> {
+    wamn_test_postgres::require_ignored_prerequisites(
+        "requires: bin:kind, bin:docker, bin:kubectl, bin:helm, bin:openssl",
+    );
+    focused(application_deploy::Case::Reset).await
+}
+
+#[tokio::test]
+#[ignore = "requires: bin:kind, bin:docker, bin:kubectl, bin:helm, bin:openssl"]
+async fn platform_install_recovery_kind() -> anyhow::Result<()> {
+    wamn_test_postgres::require_ignored_prerequisites(
+        "requires: bin:kind, bin:docker, bin:kubectl, bin:helm, bin:openssl",
+    );
+    fresh(false).await
+}
+
+/// Fresh-platform acceptance includes each platform case and each focused body once.
 #[tokio::test]
 #[ignore = "requires: bin:kind, bin:docker, bin:kubectl, bin:helm, bin:openssl"]
 async fn platform_apply_kind() -> anyhow::Result<()> {
     wamn_test_postgres::require_ignored_prerequisites(
         "requires: bin:kind, bin:docker, bin:kubectl, bin:helm, bin:openssl",
     );
+    fresh(true).await
+}
+
+fn inputs() -> anyhow::Result<(PathBuf, PathBuf, PathBuf)> {
     let repository = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../..")
         .canonicalize()?;
-    let chart = platform_images::source_chart(&repository, &repository)?;
-    let selected = artifact_plan::select(&chart)?;
-    eprintln!("Selected chart: {}", chart.display());
-    eprintln!("Selected host: {}", selected.image("host")?);
-    report_images(&selected.values()["platform"]);
     let binary = std::env::current_exe()?
         .parent()
         .context("test directory")?
@@ -81,21 +126,97 @@ async fn platform_apply_kind() -> anyhow::Result<()> {
         binary.is_file() && binary.with_file_name("wamn-ctl").is_file(),
         "build wamn-ctl --bin wamn --bin wamn-ctl first"
     );
+    let kcl = PathBuf::from(
+        std::env::var_os("WAMN_KCL").context("set WAMN_KCL to the prepared compiler")?,
+    )
+    .canonicalize()?;
     eprintln!("Selected CLI: {}", binary.display());
-    let kcl = match std::env::var_os("WAMN_KCL") {
-        Some(path) => PathBuf::from(path).canonicalize()?,
-        None => PathBuf::from(
-            String::from_utf8(
-                success(&mut Command::new(repository.join("tools/install-kcl")))
-                    .await?
-                    .stdout,
-            )?
-            .trim(),
-        ),
-    };
-    for interrupted in [false, true] {
-        let mut run = prepare(&repository, &chart, &binary, &kcl)?;
+    Ok((repository, binary, kcl))
+}
+
+async fn focused(case: application_deploy::Case) -> anyhow::Result<()> {
+    let (repository, binary, kcl) = inputs()?;
+    let file = PathBuf::from(
+        std::env::var_os("WAMN_TEST_CLUSTER")
+            .context("set WAMN_TEST_CLUSTER to the disposable platform cluster.k")?,
+    )
+    .canonicalize()?;
+    let document = ClusterDocument::compile(&file)?;
+    ensure!(
+        document.provider == Provider::Kind,
+        "focused tests require kind"
+    );
+    let mut run = prepare(&repository, Path::new(""), &binary, &kcl, Some(document))?;
+    run.target.context =
+        provider::existing_kubeconfig(&run.document, &run.target.kubeconfig).await?;
+    let namespace = get(&run, "", "namespace", "platform").await?;
+    ensure!(
+        namespace["metadata"]["annotations"]["wamn.dev/disposable"] == "true",
+        "platform is not recorded as disposable: annotate namespace platform wamn.dev/disposable=true"
+    );
+    // Helm records the exact prepared chart that the product installed.
+    let values = success(
+        Command::new("helm")
+            .arg("--kubeconfig")
+            .arg(&run.target.kubeconfig)
+            .args([
+                "--kube-context",
+                &run.target.context,
+                "get",
+                "values",
+                "wamn",
+                "-n",
+                "platform",
+                "-o",
+                "json",
+            ]),
+    )
+    .await?;
+    let values: Value = serde_json::from_slice(&values.stdout)?;
+    run.chart = PathBuf::from(
+        values["platform"]["chart"]
+            .as_str()
+            .context("installed platform chart")?,
+    )
+    .canonicalize()?;
+    let selected = artifact_plan::select(&run.chart)?;
+    report_images(&selected.values()["platform"]);
+    application_deploy::exercise(&run, case).await?;
+    cleanup(&mut run).await
+}
+
+async fn fresh(acceptance: bool) -> anyhow::Result<()> {
+    let (repository, binary, kcl) = inputs()?;
+    let chart = platform_images::source_chart(&repository, &repository)?;
+    let selected = artifact_plan::select(&chart)?;
+    eprintln!("Selected chart: {}", chart.display());
+    eprintln!("Selected host: {}", selected.image("host")?);
+    report_images(&selected.values()["platform"]);
+    for interrupted in [false, true]
+        .into_iter()
+        .take(if acceptance { 2 } else { 1 })
+    {
+        let mut run = prepare(&repository, &chart, &binary, &kcl, None)?;
         exercise(&run, interrupted).await?;
+        if !interrupted {
+            application_deploy::exercise(&run, application_deploy::Case::Recovery).await?;
+            if acceptance {
+                for case in [
+                    application_deploy::Case::Application,
+                    application_deploy::Case::SqlJob,
+                    application_deploy::Case::Reset,
+                ] {
+                    application_deploy::exercise(&run, case).await?;
+                }
+            }
+        }
+        cleanup(&mut run).await?;
+    }
+    Ok(())
+}
+
+async fn cleanup(run: &mut Run) -> anyhow::Result<()> {
+    if run.owns_cluster {
         success(Command::new("kind").args([
             "delete",
             "cluster",
@@ -103,20 +224,20 @@ async fn platform_apply_kind() -> anyhow::Result<()> {
             &run.document.cluster_name,
         ]))
         .await?;
-        if run.checkout.exists() {
-            success(
-                Command::new("git")
-                    .args(["-c", "core.hooksPath=/dev/null"])
-                    .arg("-C")
-                    .arg(&run.repository)
-                    .args(["worktree", "remove", "--force"])
-                    .arg(&run.checkout),
-            )
-            .await?;
-        }
-        std::fs::remove_dir_all(&run.directory)?;
-        run.cleaned = true;
     }
+    if run.checkout.exists() {
+        success(
+            Command::new("git")
+                .args(["-c", "core.hooksPath=/dev/null"])
+                .arg("-C")
+                .arg(&run.repository)
+                .args(["worktree", "remove", "--force"])
+                .arg(&run.checkout),
+        )
+        .await?;
+    }
+    std::fs::remove_dir_all(&run.directory)?;
+    run.cleaned = true;
     Ok(())
 }
 
@@ -138,7 +259,13 @@ fn report_images(value: &Value) {
     }
 }
 
-fn prepare(repository: &Path, chart: &Path, binary: &Path, kcl: &Path) -> anyhow::Result<Run> {
+fn prepare(
+    repository: &Path,
+    chart: &Path,
+    binary: &Path,
+    kcl: &Path,
+    document: Option<ClusterDocument>,
+) -> anyhow::Result<Run> {
     let name = format!(
         "wamn-test-{}",
         &uuid::Uuid::new_v4().simple().to_string()[..16]
@@ -147,19 +274,26 @@ fn prepare(repository: &Path, chart: &Path, binary: &Path, kcl: &Path) -> anyhow
     std::fs::DirBuilder::new().mode(0o700).create(&directory)?;
     std::fs::create_dir(directory.join("environments"))?;
     std::fs::create_dir(directory.join("bin"))?;
-    let original = std::fs::read_to_string(repository.join("deploy/kind/cluster.k"))?;
-    std::fs::write(
-        directory.join("cluster.k"),
-        original.replace(
-            "cluster_name = \"wamn-local\"",
-            &format!("cluster_name = \"{name}\""),
-        ),
-    )?;
-    let document = ClusterDocument::compile(&directory.join("cluster.k"))?;
-    ensure!(
-        document.cluster_name == name,
-        "the copied document must use the owned cluster name"
-    );
+    let owns_cluster = document.is_none();
+    let document = if let Some(document) = document {
+        document
+    } else {
+        let original = std::fs::read_to_string(repository.join("deploy/kind/cluster.k"))?;
+        std::fs::write(
+            directory.join("cluster.k"),
+            original.replace(
+                "cluster_name = \"wamn-local\"",
+                &format!("cluster_name = \"{name}\""),
+            ),
+        )?;
+        let document = ClusterDocument::compile(&directory.join("cluster.k"))?;
+        ensure!(
+            document.cluster_name == name,
+            "the copied document must use the owned cluster name"
+        );
+        document
+    };
+    std::fs::write(directory.join("cluster.k"), document.to_kcl())?;
     // Only deployment tools are visible. Cloud, package and build executables are absent.
     let path = std::env::var_os("PATH").context("PATH is required")?;
     for tool in ["kind", "docker", "kubectl", "helm", "openssl"] {
@@ -174,7 +308,7 @@ fn prepare(repository: &Path, chart: &Path, binary: &Path, kcl: &Path) -> anyhow
         checkout: directory.join("checkout"),
         target: Target {
             kubeconfig: directory.join("kubeconfig"),
-            context: format!("kind-{name}"),
+            context: format!("kind-{}", document.cluster_name),
             namespace: "platform".into(),
         },
         directory,
@@ -182,6 +316,7 @@ fn prepare(repository: &Path, chart: &Path, binary: &Path, kcl: &Path) -> anyhow
         binary: binary.into(),
         chart: chart.into(),
         kcl: kcl.into(),
+        owns_cluster,
         cleaned: false,
     })
 }
@@ -321,9 +456,6 @@ async fn exercise(run: &Run, interrupted: bool) -> anyhow::Result<()> {
             "repair changed baseline or stored data"
         );
         sign_in(run, &password, false).await?;
-    }
-    if !interrupted {
-        application_deploy::exercise(run, &password).await?;
     }
     let maps = get(run, "", "configmaps", "--all-namespaces").await?;
     ensure!(

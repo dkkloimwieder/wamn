@@ -19,9 +19,23 @@ use super::{POLL_LIMIT, ProcessGroup, Run, execute, get, kubectl, success};
 #[path = "schema_reset.rs"]
 mod schema_reset;
 
+#[path = "schema_job.rs"]
+mod schema_job;
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum Case {
+    Application,
+    SqlJob,
+    Reset,
+    Recovery,
+}
+
 struct Journey<'a> {
     run: &'a Run,
     file: PathBuf,
+    project: &'a str,
+    environment: &'a str,
+    isolated_host: &'a str,
     variables: &'a BTreeMap<String, String>,
     token: &'a str,
     client: &'a reqwest::Client,
@@ -155,8 +169,28 @@ impl Journey<'_> {
     }
 }
 
-pub(super) async fn exercise(run: &Run, password: &str) -> anyhow::Result<()> {
-    let sources = sources(&run.repository, &run.checkout).await?;
+pub(super) async fn exercise(run: &Run, case: Case) -> anyhow::Result<()> {
+    exercise_inner(run, case).await?;
+    success(
+        Command::new("git")
+            .args(["-c", "core.hooksPath=/dev/null"])
+            .arg("-C")
+            .arg(&run.repository)
+            .args(["worktree", "remove", "--force"])
+            .arg(&run.checkout),
+    )
+    .await?;
+    Ok(())
+}
+
+async fn exercise_inner(run: &Run, case: Case) -> anyhow::Result<()> {
+    let id = uuid::Uuid::new_v4().simple().to_string();
+    let project = format!("journey-{}", &id[..12]);
+    let environment = format!("test-{}", &id[..12]);
+    let alpha_host = format!("alpha-{}.wamn.localhost", &id[..12]);
+    let beta_host = format!("beta-{}.wamn.localhost", &id[..12]);
+    let isolated_host = format!("isolated-{}.wamn.localhost", &id[..12]);
+    let sources = sources(&run.repository, &run.checkout, &id).await?;
     let postgres =
         resources::port_forward(&run.target, "platform", "service/wamn-pg-rw", 5432).await?;
     let nats = resources::port_forward(&run.target, "platform", "service/wamn-nats", 4222).await?;
@@ -192,42 +226,6 @@ pub(super) async fn exercise(run: &Run, password: &str) -> anyhow::Result<()> {
         .resolve(identity_host, ([127, 0, 0, 1], identity.port).into())
         .build()?;
     let endpoint = format!("https://{identity_host}:{}", identity.port);
-    let login: Value = identity_client.post(format!("{endpoint}/password/session"))
-        .json(&json!({"email":run.document.owner_email,"password":password,"aud":format!("urn:wamn:control:{}",run.document.org)}))
-        .send().await?.error_for_status()?.json().await?;
-    let access = login["access_token"].as_str().context("owner session")?;
-    let claims: Value = serde_json::from_slice(
-        &base64::engine::general_purpose::URL_SAFE_NO_PAD
-            .decode(access.split('.').nth(1).context("session claims")?)?,
-    )?;
-    let principal = claims["sub"]
-        .as_str()
-        .context("owner principal")?
-        .to_owned();
-    let issued: Value = identity_client.post(format!("{endpoint}/pats"))
-        .json(&json!({"principal_id":principal,"label":"deployment journey","lifetime_seconds":14400}))
-        .send().await?.error_for_status()?.json().await?;
-    let token = issued["token"].as_str().context("owner PAT")?.to_owned();
-    let created: Value = identity_client
-        .post(format!(
-            "http://127.0.0.1:{}/wamn_control/project/create",
-            control.port
-        ))
-        .header(reqwest::header::HOST, &run.document.route_hosts.control)
-        .bearer_auth(access)
-        .json(
-            &json!([{"request_id":uuid::Uuid::new_v4().to_string(),"value":{"project":"journey"}}]),
-        )
-        .send()
-        .await?
-        .error_for_status()?
-        .json()
-        .await?;
-    ensure!(
-        created[0].get("value").is_some(),
-        "project creation refused: {created}"
-    );
-
     let apply = get(run, "platform", "secret", "wamn-apply").await?;
     let admin = get(run, "platform", "secret", "wamn-pg-superuser").await?;
     let apply_url = forwarded(&String::from_utf8(secret(&apply, "url")?)?, postgres.port)?;
@@ -270,13 +268,48 @@ pub(super) async fn exercise(run: &Run, password: &str) -> anyhow::Result<()> {
         std::fs::write(&path, secret(&certificate, key)?)?;
         variables.insert(name.into(), path.to_string_lossy().into_owned());
     }
+    let system =
+        wamn_package_control::database::connect(&variables["WAMN_SYSTEM_ADMIN_URL"]).await?;
+    system
+        .batch_execute("SET default_transaction_read_only = on")
+        .await?;
+    let principal: String = system
+        .query_one(
+            "SELECT id::text FROM identity.principals WHERE email=$1",
+            &[&run.document.owner_email],
+        )
+        .await?
+        .get(0);
+    drop(system);
+    let issued: Value = identity_client.post(format!("{endpoint}/pats"))
+        .json(&json!({"principal_id":principal,"label":"deployment journey","lifetime_seconds":14400}))
+        .send().await?.error_for_status()?.json().await?;
+    let token = issued["token"].as_str().context("owner PAT")?.to_owned();
+    let created: Value = identity_client
+        .post(format!(
+            "http://127.0.0.1:{}/wamn_control/project/create",
+            control.port
+        ))
+        .header(reqwest::header::HOST, &run.document.route_hosts.control)
+        .bearer_auth(&token)
+        .json(&json!([{"request_id":uuid::Uuid::new_v4().to_string(),"value":{"project":project}}]))
+        .send()
+        .await?
+        .error_for_status()?
+        .json()
+        .await?;
+    ensure!(
+        created[0].get("value").is_some(),
+        "project creation refused: {created}"
+    );
+
     let file = run.directory.join("environments/environment.k");
     let document = EnvironmentDocument::from_json(&serde_json::to_vec(&json!({
-        "org":run.document.org,"project":"journey","env":"dev","target":"cloud","policy":"dev",
+        "org":run.document.org,"project":project,"env":environment,"target":"cloud","policy":"dev",
         "integrations":{"probe":{"version":1}},
         "applications":{
-            "alpha":{"current":"none","hostname":"alpha.wamn.localhost","packages":["alpha"],"connections":{"upstream":"probe"}},
-            "beta":{"current":"none","hostname":"beta.wamn.localhost","packages":["beta"]}
+            "alpha":{"current":"none","hostname":alpha_host,"packages":["alpha"],"connections":{"upstream":"probe"}},
+            "beta":{"current":"none","hostname":beta_host,"packages":["beta"]}
         }
     }))?)?;
     std::fs::write(&file, document.to_kcl())?;
@@ -287,17 +320,17 @@ pub(super) async fn exercise(run: &Run, password: &str) -> anyhow::Result<()> {
         .add_root_certificate(reqwest::Certificate::from_pem(&secret(
             &edge_tls, "ca.crt",
         )?)?)
-        .resolve("alpha.wamn.localhost", ([127, 0, 0, 1], edge.port).into())
-        .resolve("beta.wamn.localhost", ([127, 0, 0, 1], edge.port).into())
-        .resolve(
-            "isolated.wamn.localhost",
-            ([127, 0, 0, 1], edge.port).into(),
-        )
+        .resolve(&alpha_host, ([127, 0, 0, 1], edge.port).into())
+        .resolve(&beta_host, ([127, 0, 0, 1], edge.port).into())
+        .resolve(&isolated_host, ([127, 0, 0, 1], edge.port).into())
         .build()?;
-    let edge_url = format!("https://alpha.wamn.localhost:{}", edge.port);
+    let edge_url = format!("https://{alpha_host}:{}", edge.port);
     let journey = Journey {
         run,
         file,
+        project: &project,
+        environment: &environment,
+        isolated_host: &isolated_host,
         variables: &variables,
         token: &token,
         client: &client,
@@ -310,29 +343,42 @@ pub(super) async fn exercise(run: &Run, password: &str) -> anyhow::Result<()> {
     version(&sources[1], "1.0.0", "1.0.1")?;
     let a1 = journey.publish("alpha", "1.0.1", &sources[0]).await?;
     let b1 = journey.publish("beta", "1.0.1", &sources[1]).await?;
-    super::database_state(run).await?;
-    let login: Value = identity_client.post(format!("{endpoint}/password/session"))
-        .json(&json!({"email":run.document.owner_email,"password":password,"aud":format!("urn:wamn:control:{}",run.document.org)}))
-        .send().await?.error_for_status()?.json().await?;
-    let access = login["access_token"]
-        .as_str()
-        .context("refreshed owner session")?;
-    let output = first_install(&journey, &b0).await?;
-    ensure!(output.status.success(), "initial beta deployment failed");
+    if case == Case::Recovery {
+        first_install(&journey, &b0).await?;
+    } else {
+        let system =
+            wamn_package_control::database::connect(&variables["WAMN_SYSTEM_ADMIN_URL"]).await?;
+        system
+            .batch_execute("SET default_transaction_read_only = on")
+            .await?;
+        ensure!(
+            system
+                .query_opt(
+                    "SELECT 1 FROM registry.project_envs WHERE org=$1 AND project=$2 AND env=$3",
+                    &[&run.document.org, &journey.project, &journey.environment],
+                )
+                .await?
+                .is_none(),
+            "publication created the destination environment"
+        );
+        journey
+            .apply("install-beta", &mut journey.deploy(&b0))
+            .await?;
+    }
     // No delay or retry after install-beta: the control host must already read
     // the new administration login when integration/write prepares A's connection.
     for (route, value) in [
         (
             "integration/write",
-            json!({"project":"journey","name":"probe","integration_type":"http","auth_type":"none","external_system":null}),
+            json!({"project":project,"name":"probe","integration_type":"http","auth_type":"none","external_system":null}),
         ),
         (
             "connection/write",
-            json!({"project":"journey","env":"dev","name":"probe","parameters":{"primary-authority":format!("http://c-{}-http.hosts.svc.cluster.local",run.document.org),"tls-verification":"disabled"}}),
+            json!({"project":project,"env":environment,"name":"probe","parameters":{"primary-authority":format!("http://c-{}-http.hosts.svc.cluster.local",run.document.org),"tls-verification":"disabled"}}),
         ),
         (
             "connection/enable",
-            json!({"project":"journey","env":"dev","name":"probe"}),
+            json!({"project":project,"env":environment,"name":"probe"}),
         ),
     ] {
         let answer: Value = journey
@@ -342,7 +388,7 @@ pub(super) async fn exercise(run: &Run, password: &str) -> anyhow::Result<()> {
                 control.port
             ))
             .header(reqwest::header::HOST, &run.document.route_hosts.control)
-            .bearer_auth(access)
+            .bearer_auth(&token)
             .json(&json!([{"request_id":uuid::Uuid::new_v4().to_string(),"value":value}]))
             .send()
             .await?
@@ -358,7 +404,15 @@ pub(super) async fn exercise(run: &Run, password: &str) -> anyhow::Result<()> {
         .apply("install-alpha", &mut journey.deploy(&a0))
         .await?;
     let mut rows = BTreeMap::new();
-    for app in ["alpha", "beta"] {
+    if matches!(case, Case::SqlJob | Case::Reset) {
+        journey
+            .apply("prepare-alpha-v1", &mut journey.deploy(&a1))
+            .await?;
+        journey
+            .apply("prepare-beta-v1", &mut journey.deploy(&b1))
+            .await?;
+    }
+    for app in document.applications.keys().map(String::as_str) {
         let counter = journey
             .route(
                 app,
@@ -370,6 +424,34 @@ pub(super) async fn exercise(run: &Run, password: &str) -> anyhow::Result<()> {
         rows.insert(app, (counter, widget));
     }
     let database = observer(&journey).await?;
+    match case {
+        Case::SqlJob => {
+            return schema_job::exercise(&journey, &sources[0], &database, &mut rows, &a1, &b1)
+                .await;
+        }
+        Case::Reset => {
+            schema_reset::changes(&journey, &sources[0], &b1, &mut rows).await?;
+            return schema_reset::recovery(&journey, &sources[1], &mut rows).await;
+        }
+        Case::Recovery => {
+            let baseline = stored(&journey, &database).await?;
+            let before = runtime(&journey, "beta").await?;
+            recovery(&journey, &a1, &a0, &database, &baseline).await?;
+            ensure!(
+                runtime(&journey, "beta").await? == before,
+                "recovery changed beta"
+            );
+            return state(
+                &journey,
+                &database,
+                &baseline,
+                &rows,
+                [(&a0, "v0"), (&b0, "v0")],
+            )
+            .await;
+        }
+        Case::Application => {}
+    }
     eprintln!(
         "scenario 1: code-only source deploy, published deploy, reapply and rollback preserve rows and beta"
     );
@@ -479,11 +561,6 @@ pub(super) async fn exercise(run: &Run, password: &str) -> anyhow::Result<()> {
         runtime(&journey, "beta").await? == before,
         "missing artifact changed beta"
     );
-    recovery(&journey, &a1, &a0, &database, &baseline).await?;
-    ensure!(
-        runtime(&journey, "beta").await? == before,
-        "recovery changed beta"
-    );
     state(
         &journey,
         &database,
@@ -492,213 +569,20 @@ pub(super) async fn exercise(run: &Run, password: &str) -> anyhow::Result<()> {
         [(&a0, "v0"), (&b1, "v1")],
     )
     .await?;
-    let current = schema_reset::changes(&journey, &sources[0], &b1, &mut rows).await?;
-    let database = observer(&journey).await?;
-    schema_workflow(&journey, &sources[0], &database, &mut rows, &current, &b1).await?;
-    schema_reset::recovery(&journey, &sources[1], &mut rows).await?;
-    let database = observer(&journey).await?;
-    stale_checkout(&journey, &database, &rows, &a0, &a1, &b1).await?;
-    anyhow::bail!(
-        "DEP3-11 item 5 remains incomplete: workflow author requires a green gate report, but deployed env apply supplies no authoring endpoint or wamn gate command; event-run admission was not fabricated"
-    )
-}
-
-// These observations are limited to the SQL Job and the installed cluster state.
-async fn schema_workflow(
-    journey: &Journey<'_>,
-    root: &Path,
-    database: &tokio_postgres::Client,
-    rows: &mut BTreeMap<&str, (Value, Value)>,
-    a0: &str,
-    beta: &str,
-) -> anyhow::Result<()> {
-    eprintln!("scenario 3: SQL before code, then SQL after code through the deployed Job");
-    mode(journey, SchemaMode::Migrate)?;
-    version(root, "1.0.3", "1.1.0")?;
-    std::fs::write(
-        root.join("migrations/0002_counter_label.sql"),
-        "CREATE INDEX counter_label_idx ON alpha_data.counter (label);\n",
-    )?;
-    let a2 = journey.publish("alpha", "1.1.0", root).await?;
-    let identity = stored(journey, database).await?;
-    let alpha = runtime(journey, "alpha").await?;
-    let other = runtime(journey, "beta").await?;
+    version(&sources[0], "1.0.1", "1.0.2")?;
+    let a2 = journey.publish("alpha", "1.0.2", &sources[0]).await?;
     journey
-        .apply(
-            "diff-before-code",
-            &mut schema_command(journey, "diff", Some(&a2)),
-        )
+        .apply("prepare-stale-selection", &mut journey.deploy(&a2))
         .await?;
     state(
-        journey,
-        database,
-        &identity,
-        rows,
-        [(a0, "v1"), (beta, "v1")],
+        &journey,
+        &database,
+        &baseline,
+        &rows,
+        [(&a2, "v1"), (&b1, "v1")],
     )
     .await?;
-    journey
-        .apply(
-            "sql-before-code",
-            &mut schema_command(journey, "apply", Some(&a2)),
-        )
-        .await?;
-    ensure!(query(database, "SELECT to_jsonb(i.indisvalid) FROM pg_index i WHERE i.indexrelid='alpha_data.counter_label_idx'::regclass").await? == true,
-        "SQL Job did not install the selected index");
-    ensure!(
-        runtime(journey, "alpha").await? == alpha && runtime(journey, "beta").await? == other,
-        "SQL-only apply changed an application workload or selection"
-    );
-    let installed = stored(journey, database).await?;
-    same_database(&identity, &installed)?;
-    ensure!(
-        installed["fingerprint"] != identity["fingerprint"],
-        "SQL Job did not advance schema identity"
-    );
-    state(
-        journey,
-        database,
-        &installed,
-        rows,
-        [(a0, "v1"), (beta, "v1")],
-    )
-    .await?;
-    journey
-        .apply("code-after-sql", &mut journey.deploy(&a2))
-        .await?;
-    ensure!(
-        runtime(journey, "beta").await? == other,
-        "code after SQL changed beta"
-    );
-    state(
-        journey,
-        database,
-        &installed,
-        rows,
-        [(&a2, "v1"), (beta, "v1")],
-    )
-    .await?;
-
-    version(root, "1.1.0", "1.1.1")?;
-    std::fs::write(
-        root.join("migrations/0003_counter_data.sql"),
-        "UPDATE alpha_data.counter SET label = label || '-migrated';\n",
-    )?;
-    let a3 = journey.publish("alpha", "1.1.1", root).await?;
-    let alpha = runtime(journey, "alpha").await?;
-    journey
-        .apply(
-            "diff-after-code",
-            &mut schema_command(journey, "diff", Some(&a3)),
-        )
-        .await?;
-    state(
-        journey,
-        database,
-        &installed,
-        rows,
-        [(&a2, "v1"), (beta, "v1")],
-    )
-    .await?;
-    journey
-        .apply(
-            "sql-after-code",
-            &mut schema_command(journey, "apply", Some(&a3)),
-        )
-        .await?;
-    let counter = &mut rows.get_mut("alpha").context("alpha row")?.0;
-    counter["label"] = format!(
-        "{}-migrated",
-        counter["label"].as_str().context("counter label")?
-    )
-    .into();
-    let migrated = stored(journey, database).await?;
-    same_database(&identity, &migrated)?;
-    let records = migration_records(database).await?;
-    journey
-        .apply(
-            "repeat-sql",
-            &mut schema_command(journey, "apply", Some(&a3)),
-        )
-        .await?;
-    ensure!(
-        migration_records(database).await? == records,
-        "SQL retry changed committed checksums or outcomes"
-    );
-    ensure!(
-        runtime(journey, "alpha").await? == alpha && runtime(journey, "beta").await? == other,
-        "SQL after code changed serving applications"
-    );
-    state(
-        journey,
-        database,
-        &migrated,
-        rows,
-        [(&a2, "v1"), (beta, "v1")],
-    )
-    .await?;
-
-    eprintln!("scenario 4: repeated mode edits, matching adoption, durable reset refusal");
-    // Select the installed schema source before matching adoption. Adoption itself
-    // must preserve the running selection and the already executed data effect.
-    journey
-        .apply("select-installed-schema", &mut journey.deploy(&a3))
-        .await?;
-    let alpha = runtime(journey, "alpha").await?;
-    for (iteration, selected) in [
-        SchemaMode::Reset,
-        SchemaMode::Migrate,
-        SchemaMode::Reset,
-        SchemaMode::Migrate,
-    ]
-    .into_iter()
-    .enumerate()
-    {
-        mode(journey, selected)?;
-        journey
-            .apply(
-                &format!("mode-diff-{iteration}"),
-                &mut schema_command(journey, "diff", None),
-            )
-            .await?;
-        state(
-            journey,
-            database,
-            &migrated,
-            rows,
-            [(&a3, "v1"), (beta, "v1")],
-        )
-        .await?;
-        ensure!(
-            runtime(journey, "alpha").await? == alpha && runtime(journey, "beta").await? == other,
-            "configuration edit or diff changed an application workload"
-        );
-        if selected == SchemaMode::Migrate {
-            journey
-                .apply(
-                    &format!("matching-adopt-{iteration}"),
-                    journey
-                        .command(&["schema", "adopt", "--env"])
-                        .arg(&journey.file),
-                )
-                .await?;
-            ensure!(
-                migration_records(database).await? == records,
-                "matching adoption changed execution checksums or outcomes"
-            );
-            state(
-                journey,
-                database,
-                &migrated,
-                rows,
-                [(&a3, "v1"), (beta, "v1")],
-            )
-            .await?;
-        }
-    }
-    // The durable refusal uses the isolation environment created only for item 5.
-    mode(journey, SchemaMode::Migrate)?;
-    Ok(())
+    stale_checkout(&journey, &database, &rows, &a0, &a1, &b1).await
 }
 
 fn mode(journey: &Journey<'_>, selected: SchemaMode) -> anyhow::Result<()> {
@@ -801,17 +685,28 @@ async fn first_install(
     system
         .batch_execute("SET default_transaction_read_only = on")
         .await?;
-    let environment_sql = "SELECT jsonb_build_object('instance_suffix',instance_suffix,'created_at',created_at) FROM registry.project_envs WHERE org=$1 AND project='journey' AND env='dev'";
+    let environment_sql = "SELECT jsonb_build_object('instance_suffix',instance_suffix,'created_at',created_at) FROM registry.project_envs WHERE org=$1 AND project=$2 AND env=$3";
     let org = &journey.run.document.org;
     ensure!(
-        system.query_opt(environment_sql, &[org]).await?.is_none(),
+        system
+            .query_opt(
+                environment_sql,
+                &[org, &journey.project, &journey.environment]
+            )
+            .await?
+            .is_none(),
         "interrupted first install requires an absent environment"
     );
     let name = wamn_control_provision::environment_state::application_release_name(
-        org, "journey", "dev", "beta",
+        org,
+        journey.project,
+        journey.environment,
+        "beta",
     )?;
     let shared = wamn_control_provision::environment_state::environment_resource_name(
-        org, "journey", "dev",
+        org,
+        journey.project,
+        journey.environment,
     )?;
     let mut environment = Value::Null;
     for after_sql in [false, true] {
@@ -859,7 +754,13 @@ async fn first_install(
                     {
                         break Ok::<_, anyhow::Error>(release["metadata"].clone());
                     }
-                } else if let Some(row) = system.query_opt(environment_sql, &[org]).await? {
+                } else if let Some(row) = system
+                    .query_opt(
+                        environment_sql,
+                        &[org, &journey.project, &journey.environment],
+                    )
+                    .await?
+                {
                     break Ok(row.get::<_, Value>(0));
                 }
                 tokio::time::sleep(Duration::from_millis(100)).await;
@@ -938,7 +839,10 @@ async fn first_install(
     );
     ensure!(
         system
-            .query_one(environment_sql, &[org])
+            .query_one(
+                environment_sql,
+                &[org, &journey.project, &journey.environment]
+            )
             .await?
             .get::<_, Value>(0)
             == environment,
@@ -986,7 +890,7 @@ fn forwarded(value: &str, port: u16) -> anyhow::Result<String> {
     Ok(url.to_string())
 }
 
-async fn sources(repository: &Path, checkout: &Path) -> anyhow::Result<[PathBuf; 2]> {
+async fn sources(repository: &Path, checkout: &Path, id: &str) -> anyhow::Result<[PathBuf; 2]> {
     let head = success(
         Command::new("git")
             .args(["-c", "core.hooksPath=/dev/null"])
@@ -1020,7 +924,10 @@ async fn sources(repository: &Path, checkout: &Path) -> anyhow::Result<[PathBuf;
         copy_source(&apps.join("platform_fixture"), root, app)?;
         let manifest = root.join("wamn.k");
         let text = std::fs::read_to_string(&manifest)?
-            .replace("version = \"2.1.1\"", "version = \"1.0.0\"")
+            .replace(
+                "version = \"2.1.1\"",
+                &format!("version = \"1.0.0-test-{id}\""),
+            )
             .replace(
                 "routes = {",
                 &format!("routes = {{path_prefix = \"/{app}\", "),
@@ -1142,8 +1049,8 @@ fn version(root: &Path, previous: &str, next: &str) -> anyhow::Result<()> {
     std::fs::write(
         &file,
         std::fs::read_to_string(&file)?.replace(
-            &format!("version = \"{previous}\""),
-            &format!("version = \"{next}\""),
+            &format!("version = \"{previous}"),
+            &format!("version = \"{next}"),
         ),
     )?;
     let query = root.join("query/widget_list.sql");
@@ -1344,7 +1251,7 @@ async fn recovery(
         "hosts",
         "create",
         "quota",
-        "journey-readiness",
+        journey.project,
         "--hard",
         &format!("pods={count}"),
     ]))
@@ -1459,7 +1366,7 @@ async fn recovery(
     }
     .await;
     let cleanup =
-        success(kubectl(journey.run).args(["-n", "hosts", "delete", "quota", "journey-readiness"]))
+        success(kubectl(journey.run).args(["-n", "hosts", "delete", "quota", journey.project]))
             .await;
     result?;
     cleanup?;
