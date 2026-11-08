@@ -151,6 +151,17 @@ impl WorkloadRoleState {
     }
 
     pub(super) fn has_active_shape_for(&self, database: &str) -> bool {
+        self.has_active_attributes() && self.connect_databases == [database]
+    }
+
+    pub(super) fn lost_database_access(&self, family: WorkloadRoleFamily) -> bool {
+        self.has_active_attributes()
+            && self.memberships == [family.acl_role()]
+            && self.membership_options_exact
+            && self.connect_databases.is_empty()
+    }
+
+    fn has_active_attributes(&self) -> bool {
         self.login
             && self.restrictive_attributes()
             && self.inherit
@@ -158,7 +169,6 @@ impl WorkloadRoleState {
             && self.valid_until_finite
             && self.member_roles.is_empty()
             && self.member_options_exact
-            && self.connect_databases == [database]
             && self.owned_objects == 0
     }
 

@@ -9,8 +9,12 @@ use serde_json::json;
 use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
 use wamn_catalog::manifest::PackageManifest;
 use wamn_catalog::{ComponentDescriptor, PackageCoordinate, ServingComponent, ServingManifest};
+use wamn_control_provision::{CredentialGeneration, WorkloadRoleFamily, WorkloadRoleScopeKind};
 use wamn_environment_control::environment::{
     Platform, document::EnvironmentDocument, ensure, expand, sql,
+};
+use wamn_environment_control::provision_project_env::{
+    WorkloadActionRequest, WorkloadActionVerb, WorkloadGenerationAction, run_workload_action,
 };
 use wamn_environment_control::provision_project_env::{finish_database, require_connected};
 use wamn_package_artifact::sha256_digest;
@@ -1194,6 +1198,74 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
         .into_keys()
         .collect::<BTreeSet<_>>();
     let expected = sql::ExpectedDatabase::read(&platform, &document).await?;
+    // Keep the product-issued credentials across CNPG's same-name recreation.
+    let grant = |row: tokio_postgres::Row| -> (String, String, String, String) {
+        (
+            row.get("object_type"),
+            row.get("schema_name"),
+            row.get("object_name"),
+            row.get("privilege_type"),
+        )
+    };
+    let mut credential_checks = Vec::new();
+    for family in WorkloadRoleFamily::project_env_families()
+        .filter(|family| family.scope_kind() != WorkloadRoleScopeKind::Control)
+    {
+        let mut project_admin = url::Url::parse(system.url())?;
+        project_admin.set_path(&database_name);
+        let request = WorkloadActionRequest {
+            org: document.org.clone(),
+            project: document.project.clone(),
+            env: document.env.clone(),
+            system_database_url: Some(system.url().into()),
+            target_admin_database_url: Some(project_admin.to_string()),
+            namespace: platform.target.namespace.clone(),
+            cluster: None,
+            cluster_namespace: platform.database_namespace.clone(),
+            db_host: project_admin.host_str().map(str::to_owned),
+            db_port: project_admin.port().unwrap(),
+            action: WorkloadGenerationAction {
+                family,
+                verb: WorkloadActionVerb::Prepare,
+                generation: CredentialGeneration::A,
+            },
+            secret: Some(scratch.path().join(format!("{}.json", family.label()))),
+            emit_role_sql: None,
+            control_administration_patch: (family == WorkloadRoleFamily::Administration)
+                .then(|| scratch.path().join("administration-patch.json")),
+        };
+        run_workload_action(&request).await?;
+        let secret: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(request.secret.unwrap())?)?;
+        let credential_url = match family.secret_body_kind() {
+            wamn_control_provision::WorkloadSecretBodyKind::SessionTarget => {
+                wamn_control_provision::session_target::SessionTarget::from_json(
+                    secret["stringData"]
+                        [wamn_control_provision::session_target::SESSION_TARGET_KEY]
+                        .as_str()
+                        .context("session target")?
+                        .as_bytes(),
+                )?
+                .connection()
+                .url()
+                .to_owned()
+            }
+            _ => secret["stringData"]["url"]
+                .as_str()
+                .context("workload URL")?
+                .to_owned(),
+        };
+        let grants = observer
+            .query(
+                wamn_control_provision::sql::role_database_grants_sql(),
+                &[&family.acl_role()],
+            )
+            .await?
+            .into_iter()
+            .map(grant)
+            .collect::<BTreeSet<_>>();
+        credential_checks.push((credential_url, family, grants));
+    }
     assert!(
         sql::reset::initialize(&platform, &document, system.url())
             .await
@@ -1229,6 +1301,28 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
     candidate_admin.batch_execute("DROP EVENT TRIGGER interrupt_beta; INSERT INTO a.data(id,value) VALUES (123,'committed-before-retry')").await?;
     sql::reset::initialize(&platform, &document, system.url()).await?;
     sql::reset::initialize(&platform, &document, system.url()).await?;
+    for (url, family, expected_grants) in &credential_checks {
+        let workload = connect(url).await?;
+        assert!(
+            !workload
+                .query_one(
+                    "SELECT rolsuper FROM pg_roles WHERE rolname=current_user",
+                    &[]
+                )
+                .await?
+                .get::<_, bool>(0)
+        );
+        let grants = workload
+            .query(
+                wamn_control_provision::sql::role_database_grants_sql(),
+                &[&family.acl_role()],
+            )
+            .await?
+            .into_iter()
+            .map(grant)
+            .collect::<BTreeSet<_>>();
+        assert_eq!(&grants, expected_grants);
+    }
     assert_eq!(
         candidate_admin
             .query_one("SELECT value FROM a.data WHERE id=123", &[])

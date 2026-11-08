@@ -103,6 +103,67 @@ impl<'a> WorkloadLifecycle<'a> {
 
 pub(super) use plan::WorkloadActionIdentity;
 
+/// Restore database-local grants without changing an existing credential.
+pub(crate) async fn restore_database_access(
+    system_url: &str,
+    admin_url: &str,
+    triple: &Triple,
+) -> anyhow::Result<()> {
+    let instance = read_project_env_instance(system_url, triple).await?;
+    let database = project_env_database_name(&triple.org, &triple.project, &triple.env, &instance);
+    let admin_config = exact_project_database_config(admin_url, &database)?;
+    let (mut admin, _task) =
+        connect_config(&admin_config, "restore workload database access").await?;
+    let passwords =
+        GenerationPasswords::connect(&named_database_config(system_url, "system database")?)
+            .await?;
+    let env_key = wamn_control_registry::project_env_key(&triple.org, &triple.project, &triple.env);
+    for family in WorkloadRoleFamily::project_env_families()
+        .filter(|family| family.scope_kind() != WorkloadRoleScopeKind::Control)
+    {
+        let lifecycle = workload_lifecycle(
+            family,
+            WorkloadActionIdentity {
+                org: &triple.org,
+                project: &triple.project,
+                environment: &triple.env,
+            },
+            &env_key,
+            &database,
+        );
+        lock_workload_family(&admin, lifecycle).await?;
+        let transaction = super::provisioning_transaction(&mut admin).await?;
+        for generation in [CredentialGeneration::A, CredentialGeneration::B] {
+            let role = lifecycle.role(generation);
+            let Some(state) =
+                read_workload_role_state(&transaction, &passwords, &role, &lifecycle.label())
+                    .await?
+            else {
+                continue;
+            };
+            if state.is_inactive() {
+                continue;
+            }
+            anyhow::ensure!(
+                state.is_active_for(family, &database) || state.lost_database_access(family),
+                "refuse to restore database access for malformed workload credential {role}"
+            );
+            if let Some(surface) = sql::stable_surface_sql(family) {
+                transaction.batch_execute(&surface).await?;
+            }
+            transaction
+                .batch_execute(&format!(
+                    "GRANT CONNECT ON DATABASE {} TO {}",
+                    wamn_pg_core::quote_ident(&database),
+                    wamn_pg_core::quote_ident(&role)
+                ))
+                .await?;
+        }
+        transaction.commit().await?;
+    }
+    Ok(())
+}
+
 async fn converge_workload_generation_state(
     client: &(impl GenericClient + Sync),
     passwords: &mut GenerationPasswords,

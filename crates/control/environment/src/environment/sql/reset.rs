@@ -366,6 +366,7 @@ pub async fn initialize(
         )
         .await?;
     }
+    ensure::restore_project_database_access(platform, document, target_admin.as_str()).await?;
     Ok(())
 }
 
@@ -762,8 +763,7 @@ async fn reconnect(
 
 async fn resume_users(platform: &Platform, document: &EnvironmentDocument) -> anyhow::Result<()> {
     use super::super::{readiness, write};
-    // The reset is complete. Name each failure for ordinary application reapply.
-    let mut failures = Vec::new();
+    // The reset is complete. Name the first failure for ordinary application reapply.
     for (application, selection) in &document.applications {
         if matches!(
             selection.current,
@@ -771,8 +771,11 @@ async fn resume_users(platform: &Platform, document: &EnvironmentDocument) -> an
         ) {
             continue;
         }
-        let result = async {
-            let analysis = analyse::analyse(platform, document, Some(application)).await?;
+        let analysis = analyse::analyse(platform, document, Some(application)).await?;
+        let budget = std::time::Duration::from_secs(u64::try_from(
+            analysis.authorities.policy.readiness_budget_seconds,
+        )?);
+        tokio::time::timeout(budget, async {
             let release = analysis
                 .authorities
                 .release
@@ -781,17 +784,11 @@ async fn resume_users(platform: &Platform, document: &EnvironmentDocument) -> an
             let prepared = write::prepare(platform, document, &analysis, release).await?;
             let written = write::write(platform, &analysis, prepared, false).await?;
             readiness::wait(platform, &written).await
-        }
-        .await;
-        if let Err(error) = result {
-            failures.push(format!("{application}: {error:#}"));
-        }
+        })
+        .await
+        .with_context(|| format!("resume application {application}: readiness budget expired"))?
+        .with_context(|| format!("resume application {application}"))?;
     }
-    ensure!(
-        failures.is_empty(),
-        "application reconnection failed: {}",
-        failures.join("; ")
-    );
     ensure::provision_materializer(platform, document).await?;
     Ok(())
 }

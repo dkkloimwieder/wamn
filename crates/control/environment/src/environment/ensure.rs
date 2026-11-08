@@ -94,6 +94,7 @@ pub async fn provision_resources(
     // The run plane: the run schema the credentials are granted on.
     let project_admin =
         ensure_project_database(platform, document, packages, &admin, admin_url).await?;
+    restore_project_database_access(platform, document, &project_admin).await?;
 
     // Generation a of each credential, only where its Secret is absent.
     for credential in HOST_CREDENTIALS {
@@ -531,6 +532,25 @@ pub async fn ensure_project_database(
     Ok(project_admin)
 }
 
+/// Restore the existing workload credentials' database-local grants.
+///
+/// # Errors
+///
+/// Returns an error if a credential has drifted or a grant cannot be restored.
+pub(super) async fn restore_project_database_access(
+    platform: &Platform,
+    document: &EnvironmentDocument,
+    project_admin: &str,
+) -> anyhow::Result<()> {
+    crate::provision_project_env::workload::restore_database_access(
+        &platform.system_database_url,
+        project_admin,
+        &document.triple(),
+    )
+    .await
+    .context("restore workload database access")
+}
+
 /// Prepare only the selected packages' roles through the administrator.
 pub(super) async fn ensure_package_roles(
     admin: &tokio_postgres::Client,
@@ -871,14 +891,41 @@ async fn enable_cdc(
         &capture,
         schemas,
     );
-    kubectl(
-        platform,
-        &platform.database_namespace,
-        &["apply", "-f", "-"],
-        Some(&serde_json::to_vec(&publication)?),
-    )
-    .await?;
-    wait_applied(platform, "publication", &database).await
+    tokio::time::timeout(std::time::Duration::from_secs(120), async {
+        // The database probe found missing or changed capture. A retained CR can
+        // still report applied for the destroyed database, so replace its status.
+        kubectl(
+            platform,
+            &platform.database_namespace,
+            &[
+                "delete",
+                "publication",
+                &database,
+                "--ignore-not-found",
+                "--wait=true",
+                APPLIED_TIMEOUT,
+            ],
+            None,
+        )
+        .await?;
+        kubectl(
+            platform,
+            &platform.database_namespace,
+            &["apply", "-f", "-"],
+            Some(&serde_json::to_vec(&publication)?),
+        )
+        .await?;
+        wait_applied(platform, "publication", &database).await?;
+        let project =
+            super::analyse::connect_project(&project_url(platform, &document.triple()).await?)
+                .await?;
+        while !cdc_in_place(&project, &capture, schemas).await? {
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        }
+        Ok::<_, anyhow::Error>(())
+    })
+    .await
+    .with_context(|| format!("rebuild publication {capture} in database {database}"))?
 }
 
 /// Whether the environment's CDC is in place, judged by what it observes: the
