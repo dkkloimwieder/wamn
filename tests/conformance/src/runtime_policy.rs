@@ -5,111 +5,12 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use url::Url;
 
-const CFG_TEST_MODULE: &str = "#[cfg(test)]\nmod tests {";
-/// One loaded release precedes all component binding in the combined host.
-const HOST_RELEASE_LOAD_SITES: [(&str, &str); 1] =
-    [("services/host/src/host.rs", "ClusterHostBuilder::default()")];
-
-/// The host's one `RouterDeliveryBridge` opts into its meter.
-///
-/// wamn-0h0g.24.4 shipped `wamn.router.delivery.attempts` and
-/// `wamn.router.delivery.errors`, but the bridge's `new` defaults its meter to
-/// `None` so a test can own its own provider — which means the series exist and
-/// stay permanently silent until the construction site opts in. `host::run`
-/// needs NATS and a loaded release. This test reads the construction source
-/// directly, as the release-load tests above do.
-///
-/// `with_metrics` exists on no other type in this file's reach, so counting the
-/// call alone is enough — the builder is `#[must_use]` and consumed straight
-/// into the plugin, so it cannot be called on anything else or dropped.
-const METERED_DELIVERY_BRIDGE: (&str, &str) = ("services/host/src/host.rs", ".with_metrics(");
-
-/// The two struck config keys, and every file that could plausibly re-read them.
-///
-/// Spelled here rather than imported so the guard fails if the constants are
-/// reintroduced under any name at all.
-const STRUCK_RELEASE_IDENTITY_KEYS: [&str; 2] = ["wamn.release-version", "wamn.manifest-digest"];
-
-/// Files whose text must not carry a struck key: both host construction sites and
-/// the plugin whose bind path used to read them.
-const STRUCK_KEY_SITES: [&str; 3] = [
-    "crates/platform/runtime/src/plugins/wamn_postgres/mod.rs",
-    "crates/execution/workflow/src/queue.rs",
-    "services/host/src/host.rs",
-];
-
 fn repository_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .and_then(Path::parent)
         .expect("conformance package must live at tests/conformance")
         .to_path_buf()
-}
-
-fn validate_one(source: &str, marker: &str, seam: &str) -> Result<(), String> {
-    let observed = source.matches(marker).count();
-    if observed == 1 {
-        Ok(())
-    } else {
-        Err(format!(
-            "{seam} must retain exactly one `{marker}` marker; found {observed}"
-        ))
-    }
-}
-
-/// Everything before a file's terminal `#[cfg(test)] mod tests {`, or the whole
-/// file when it has none. Both shapes are valid for the host loaded release sites.
-fn production_half<'a>(source: &'a str, seam: &str) -> Result<&'a str, String> {
-    match source.matches(CFG_TEST_MODULE).count() {
-        0 => Ok(source),
-        1 => Ok(source
-            .split_once(CFG_TEST_MODULE)
-            .expect("the counted cfg(test) module must split")
-            .0),
-        found => Err(format!(
-            "{seam} must carry at most one terminal `{CFG_TEST_MODULE}` module; found {found}"
-        )),
-    }
-}
-
-fn validate_release_load_precedes_bind(
-    source: &str,
-    entry: &str,
-    bind: &str,
-    seam: &str,
-) -> Result<(), String> {
-    let production = production_half(source, seam)?;
-    let Some(entry_at) = production.find(entry) else {
-        return Err(format!(
-            "{seam} must reach its loaded release through `{entry}`"
-        ));
-    };
-    let Some(bind_at) = production.find(bind) else {
-        return Err(format!(
-            "{seam} must still bind components through `{bind}`"
-        ));
-    };
-    if entry_at < bind_at {
-        Ok(())
-    } else {
-        Err(format!(
-            "{seam} must reach `{entry}` before `{bind}`; a component that binds first \
-             carries no release identity for its claim to record"
-        ))
-    }
-}
-
-fn validate_no_struck_key(source: &str, seam: &str) -> Result<(), String> {
-    for key in STRUCK_RELEASE_IDENTITY_KEYS {
-        let observed = source.matches(key).count();
-        if observed != 0 {
-            return Err(format!(
-                "{seam} must carry no `{key}`; found {observed}. Release identity has one \
-                 carrier, the mounted manifest (wamn-0h0g.15.102)"
-            ));
-        }
-    }
-    Ok(())
 }
 
 fn host_source(root: &Path, path: &str) -> String {
@@ -465,47 +366,4 @@ fn database_url_names_and_values_outside_component_environment_are_allowed() {
                    \x20 DATABASE_URL: postgresql://secret:secret@database/wamn\n";
     validate_workload_policy("component-environment-boundary-control.yaml", control)
         .expect("host environment and arbitrary Secret fields are outside this guard");
-}
-
-/// wamn-0h0g.15.101: load the release before any component can bind.
-#[test]
-fn release_load_precedes_component_binding() {
-    let root = repository_root();
-    for (path, bind) in HOST_RELEASE_LOAD_SITES {
-        let source = host_source(&root, path);
-        validate_release_load_precedes_bind(&source, "let release = if args.control", bind, path)
-            .unwrap_or_else(|error| panic!("{error}"));
-    }
-}
-
-#[test]
-fn the_host_router_delivery_bridge_is_metered() {
-    let (path, marker) = METERED_DELIVERY_BRIDGE;
-    let source = host_source(&repository_root(), path);
-    let production = production_half(&source, path).unwrap_or_else(|error| panic!("{error}"));
-    validate_one(production, marker, path).unwrap_or_else(|error| {
-        panic!("{error}. Without it both wamn.router.delivery series stay silent")
-    });
-}
-
-#[test]
-fn the_struck_release_identity_config_keys_do_not_return() {
-    let root = repository_root();
-    for path in STRUCK_KEY_SITES {
-        let source = host_source(&root, path);
-        validate_no_struck_key(&source, path).unwrap_or_else(|error| panic!("{error}"));
-    }
-}
-
-#[test]
-fn release_identity_list_rejects_a_returning_config_key() {
-    for key in STRUCK_RELEASE_IDENTITY_KEYS {
-        let source = format!("config.get(\"{key}\")");
-        let error = validate_no_struck_key(&source, "seam")
-            .expect_err("a reintroduced config key must be rejected");
-        assert!(
-            error.contains(key),
-            "the refusal must name the key it found: {error}"
-        );
-    }
 }

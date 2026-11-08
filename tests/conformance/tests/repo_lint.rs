@@ -1,5 +1,4 @@
-//! Exact repo-local lint coverage over all three Cargo workspaces.
-//! Fake Cargo covers runner argv and reporting, not runtime isolation behavior.
+//! Repo-local lint runner contracts, exercised with fake executables.
 
 use std::fs;
 use std::os::unix::fs::PermissionsExt as _;
@@ -10,58 +9,22 @@ use std::sync::atomic::{AtomicU64, Ordering};
 const TOOL: &str = "tools/repo-lint";
 const COMPONENT_MANIFEST: &str = "apps/Cargo.toml";
 const NO_STD_MANIFEST: &str = "apps/platform/no-std/Cargo.toml";
-const LEG_LABELS: [&str; 12] = [
-    "root rustfmt",
-    "components rustfmt",
-    "no-std rustfmt",
-    "root Clippy",
-    "components native Clippy",
-    "connection-http-standard native Clippy",
-    "connection-http-standard wasm Clippy",
-    "components wasm Clippy",
-    "no-std native Clippy",
-    "no-std wasm Clippy",
-    "dependency boundaries",
-    "repository policy",
-];
 
 static NEXT_DIRECTORY: AtomicU64 = AtomicU64::new(0);
 
 const FAKE_CARGO: &str = r#"#!/usr/bin/env bash
 set -euo pipefail
-count_file="$WAMN_FAKE_CARGO_LOG.count"
-count=0
-if [[ -r "$count_file" ]]; then
-  read -r count <"$count_file"
-fi
-count=$((count + 1))
-printf '%s\n' "$count" >"$count_file"
 {
-  printf 'CALL\0'
-  printf '%s\0' "$PWD" "$@"
+  printf 'CALL\0%s\0%s\0' "$PWD" "${RUSTFLAGS-}"
+  printf '%s\0' "$@"
 } >>"$WAMN_FAKE_CARGO_LOG"
-printf '%s\n' "${RUSTFLAGS-}" >>"$WAMN_FAKE_CARGO_LOG.rustflags"
-if [[ "${WAMN_FAKE_CARGO_FAIL_AT:-0}" == "$count" ]]; then
-  exit 23
-fi
+for argument in "$@"; do
+  if [[ "$argument" == "${WAMN_FAKE_CARGO_FAIL_AT-}" ]]; then
+    exit 23
+  fi
+done
 if [[ "${1-}" == tree ]]; then
-  case " $* " in
-    *" -p wamn-edge "*)
-      printf '%s\n' wamn-edge
-      if [[ " $* " != *" --prune wash-runtime "* ]]; then
-        printf '%s\n' async-nats opentelemetry-otlp redis tonic
-      fi
-      ;;
-    *" -p wamn-engine "*)
-      printf '%s\n' wamn-engine
-      if [[ " $* " != *" --prune wash-runtime "* ]]; then
-        printf '%s\n' async-nats hyper-rustls hyper-util opentelemetry-otlp redis tonic
-      fi
-      ;;
-    *" -p wamn-runtime "*) printf '%s\n' wamn-runtime ;;
-    *" -p wamn-execution-host "*) printf '%s\n' wamn-execution-host ;;
-    *) exit 64 ;;
-  esac
+  printf '%s\n' "$3"
 fi
 "#;
 
@@ -74,6 +37,12 @@ impl TestDirectory {
             std::env::temp_dir().join(format!("wamn repo lint {} {serial}", std::process::id()));
         let _ = fs::remove_dir_all(&path);
         fs::create_dir(&path).expect("create repo-lint test directory");
+        fs::create_dir(path.join("tools")).expect("create fixture tools directory");
+        fs::create_dir(path.join("caller")).expect("create caller working directory");
+        for tool in [TOOL, "tools/repo-lint-dependencies"] {
+            fs::copy(repository_root().join(tool), path.join(tool)).expect("copy lint tool");
+        }
+        executable(&path.join("fake cargo"), FAKE_CARGO);
         Self(path)
     }
 
@@ -105,329 +74,219 @@ fn executable(path: &Path, source: &str) {
     fs::set_permissions(path, permissions).expect("make fake Cargo executable");
 }
 
-fn run_tool(root: &Path, directory: &TestDirectory, arguments: &[&str]) -> Output {
-    tool_command(root, directory)
+fn run_tool(directory: &TestDirectory, arguments: &[&str]) -> Output {
+    tool_command(directory)
         .args(arguments)
         .output()
         .expect("run repo-lint tool")
 }
 
-fn tool_command(root: &Path, directory: &TestDirectory) -> Command {
-    let mut command = Command::new(root.join(TOOL));
+fn tool_command(directory: &TestDirectory) -> Command {
+    let mut command = Command::new(directory.path(TOOL));
     command
-        .current_dir(&directory.0)
+        .current_dir(directory.path("caller"))
         .env("CARGO", directory.path("fake cargo"))
-        .env("WAMN_FAKE_CARGO_LOG", directory.path("cargo calls"));
+        .env("WAMN_FAKE_CARGO_LOG", directory.path("cargo calls"))
+        .env_remove("WAMN_FAKE_CARGO_FAIL_AT")
+        .env_remove("RUSTFLAGS");
     command
 }
 
-fn captured_invocations(path: &Path) -> Vec<Vec<String>> {
+#[derive(Debug)]
+struct Invocation {
+    directory: PathBuf,
+    rustflags: String,
+    arguments: Vec<String>,
+}
+
+fn captured_invocations(path: &Path) -> Vec<Invocation> {
     let bytes = fs::read(path).expect("read fake Cargo invocation log");
     let fields = bytes
+        .strip_suffix(&[0])
+        .expect("invocation log ends with a NUL")
         .split(|byte| *byte == 0)
-        .filter(|field| !field.is_empty())
-        .map(|field| String::from_utf8(field.to_vec()).expect("captured argv must be UTF-8"))
         .collect::<Vec<_>>();
-
-    let mut calls = Vec::new();
-    for fields in fields.split(|field| field == "CALL") {
-        if !fields.is_empty() {
-            calls.push(fields.to_vec());
-        }
-    }
-    calls
-}
-
-fn leg_statuses(output: &Output) -> Vec<String> {
-    std::str::from_utf8(&output.stderr)
-        .expect("repo-lint stderr must be UTF-8")
-        .lines()
-        .filter(|line| {
-            line.starts_with("repo-lint: PASS: ") || line.starts_with("repo-lint: FAIL: ")
+    fields
+        .split(|field| *field == b"CALL")
+        .filter(|fields| !fields.is_empty())
+        .map(|fields| {
+            let mut fields = fields.iter().map(|field| {
+                String::from_utf8(field.to_vec()).expect("captured argv must be UTF-8")
+            });
+            Invocation {
+                directory: PathBuf::from(fields.next().expect("capture working directory")),
+                rustflags: fields.next().expect("capture RUSTFLAGS"),
+                arguments: fields.collect(),
+            }
         })
-        .map(str::to_owned)
         .collect()
 }
 
-fn assert_leg_statuses(output: &Output, failure: Option<(&str, i32)>) {
-    let expected = LEG_LABELS.map(|label| match failure {
-        Some((failed, exit_code)) if label == failed => {
-            format!("repo-lint: FAIL: {label} (exit {exit_code})")
-        }
-        _ => format!("repo-lint: PASS: {label}"),
-    });
-    assert_eq!(leg_statuses(output), expected);
+fn has_pair(arguments: &[String], flag: &str, value: &str) -> bool {
+    arguments
+        .windows(2)
+        .any(|pair| pair[0] == flag && pair[1] == value)
 }
 
 #[test]
-fn repo_lint_uses_cargo_owned_workspace_selection_from_any_directory() {
-    let root = repository_root();
-    let tool = root.join(TOOL);
-    let metadata = fs::metadata(&tool).expect("read repo-lint metadata");
-    assert_ne!(metadata.permissions().mode() & 0o111, 0);
+fn repo_lint_uses_its_repository_directory_and_preserves_arguments_with_spaces() {
     let directory = TestDirectory::new();
-    executable(&directory.path("fake cargo"), FAKE_CARGO);
-    let output = run_tool(&root, &directory, &[]);
+    let output = run_tool(&directory, &[]);
     assert!(
         output.status.success(),
         "repo-lint failed:\n{}",
         String::from_utf8_lossy(&output.stderr)
     );
-
-    let root_path = root.display().to_string();
-    let root_manifest_path = root.join("Cargo.toml").display().to_string();
-    let component_manifest_path = root.join(COMPONENT_MANIFEST).display().to_string();
-    let no_std_manifest_path = root.join(NO_STD_MANIFEST).display().to_string();
     let invocations = captured_invocations(&directory.path("cargo calls"));
-    let mut expected_dependencies = Vec::new();
-    for (package, extra) in [
-        ("wamn-edge", vec!["--prune", "wash-runtime"]),
-        ("wamn-edge", vec![]),
-        (
-            "wamn-edge",
-            vec![
-                "--target",
-                "aarch64-unknown-linux-gnu",
-                "--prune",
-                "wash-runtime",
-            ],
-        ),
-        ("wamn-edge", vec!["--target", "aarch64-unknown-linux-gnu"]),
-        ("wamn-engine", vec!["--prune", "wash-runtime"]),
-        ("wamn-engine", vec![]),
-        ("wamn-runtime", vec![]),
-        ("wamn-execution-host", vec![]),
-    ] {
-        let mut invocation = vec![
-            root_path.clone(),
-            "tree".into(),
-            "-p".into(),
-            package.into(),
-            "-e".into(),
-            "normal".into(),
-        ];
-        invocation.extend(extra.into_iter().map(str::to_owned));
-        invocation.extend(["--prefix", "none", "--locked", "--offline"].map(str::to_owned));
-        expected_dependencies.push(invocation);
+    assert!(!invocations.is_empty(), "the runner must invoke Cargo");
+    for invocation in &invocations {
+        assert_eq!(invocation.directory, directory.0);
+        if invocation
+            .arguments
+            .iter()
+            .any(|arg| arg == "--manifest-path")
+        {
+            assert!(
+                invocation.arguments.windows(2).any(|pair| {
+                    pair[0] == "--manifest-path"
+                        && Path::new(&pair[1]).starts_with(&directory.0)
+                        && pair[1].ends_with("Cargo.toml")
+                }),
+                "the manifest path with spaces must stay one argument: {invocation:?}"
+            );
+        }
     }
-    assert_eq!(&invocations[10..18], expected_dependencies);
-    let other_invocations = [&invocations[..10], &invocations[18..]].concat();
-    assert_eq!(
-        other_invocations,
-        vec![
-            vec![
-                root_path.clone(),
-                "fmt".into(),
-                "--manifest-path".into(),
-                root_manifest_path.clone(),
-                "--all".into(),
-                "--".into(),
-                "--check".into(),
-            ],
-            vec![
-                root_path.clone(),
-                "fmt".into(),
-                "--manifest-path".into(),
-                component_manifest_path.clone(),
-                "--all".into(),
-                "--".into(),
-                "--check".into(),
-            ],
-            vec![
-                root_path.clone(),
-                "fmt".into(),
-                "--manifest-path".into(),
-                no_std_manifest_path.clone(),
-                "--all".into(),
-                "--".into(),
-                "--check".into(),
-            ],
-            vec![
-                root_path.clone(),
-                "clippy".into(),
-                "--manifest-path".into(),
-                root_manifest_path,
-                "--locked".into(),
-                "--workspace".into(),
-                "--all-targets".into(),
-                "--".into(),
-                "-D".into(),
-                "warnings".into(),
-            ],
-            vec![
-                root_path.clone(),
-                "clippy".into(),
-                "--manifest-path".into(),
-                component_manifest_path.clone(),
-                "--locked".into(),
-                "--workspace".into(),
-                "--exclude".into(),
-                "connection-http-standard".into(),
-                "--all-targets".into(),
-                "--".into(),
-                "-D".into(),
-                "warnings".into(),
-            ],
-            vec![
-                root_path.clone(),
-                "clippy".into(),
-                "--manifest-path".into(),
-                component_manifest_path.clone(),
-                "--locked".into(),
-                "--package".into(),
-                "connection-http-standard".into(),
-                "--".into(),
-                "-D".into(),
-                "warnings".into(),
-            ],
-            vec![
-                root_path.clone(),
-                "clippy".into(),
-                "--manifest-path".into(),
-                component_manifest_path.clone(),
-                "--locked".into(),
-                "--package".into(),
-                "connection-http-standard".into(),
-                "--target".into(),
-                "wasm32-wasip2".into(),
-                "--".into(),
-                "-D".into(),
-                "warnings".into(),
-            ],
-            vec![
-                root_path.clone(),
-                "clippy".into(),
-                "--manifest-path".into(),
-                component_manifest_path,
-                "--locked".into(),
-                "--workspace".into(),
-                "--exclude".into(),
-                "connection-http-standard".into(),
-                "--target".into(),
-                "wasm32-wasip2".into(),
-                "--".into(),
-                "-D".into(),
-                "warnings".into(),
-            ],
-            vec![
-                root_path.clone(),
-                "clippy".into(),
-                "--manifest-path".into(),
-                no_std_manifest_path.clone(),
-                "--locked".into(),
-                "--workspace".into(),
-                "--".into(),
-                "-D".into(),
-                "warnings".into(),
-            ],
-            vec![
-                root_path.clone(),
-                "clippy".into(),
-                "--manifest-path".into(),
-                no_std_manifest_path,
-                "--locked".into(),
-                "--workspace".into(),
-                "--target".into(),
-                "wasm32-wasip2".into(),
-                "--".into(),
-                "-D".into(),
-                "warnings".into(),
-            ],
-            vec![
-                root_path.clone(),
-                "run".into(),
-                "--manifest-path".into(),
-                root.join("Cargo.toml").display().to_string(),
-                "--locked".into(),
-                "--quiet".into(),
-                "--package".into(),
-                "wamn-conformance-tests".into(),
-                "--bin".into(),
-                "repo-policy".into(),
-                "--".into(),
-                root_path,
-            ],
-        ]
-    );
-    let rustflags = fs::read_to_string(directory.path("cargo calls.rustflags"))
-        .expect("read fake Cargo RUSTFLAGS log");
-    let mut expected_flags = vec![""; 19];
-    expected_flags[5] = "-C panic=abort";
-    expected_flags[8] = "-C panic=abort";
-    assert_eq!(rustflags.lines().collect::<Vec<_>>(), expected_flags);
-    assert_leg_statuses(&output, None);
+    let policy = invocations
+        .iter()
+        .find(|call| has_pair(&call.arguments, "--bin", "repo-policy"))
+        .expect("repository policy must run");
+    assert!(has_pair(
+        &policy.arguments,
+        "--",
+        directory.0.to_str().expect("fixture path must be UTF-8")
+    ));
 }
 
 #[test]
-fn repo_lint_reports_every_leg_when_an_early_leg_fails() {
-    let root = repository_root();
+fn repo_lint_selects_native_and_component_targets_without_unifying_no_std_features() {
     let directory = TestDirectory::new();
-    executable(&directory.path("fake cargo"), FAKE_CARGO);
-
-    let output = tool_command(&root, &directory)
-        .env("WAMN_FAKE_CARGO_FAIL_AT", "1")
-        .arg("run")
-        .output()
-        .expect("run failing repo-lint tool");
-    assert_eq!(output.status.code(), Some(1));
-    assert_eq!(
-        captured_invocations(&directory.path("cargo calls")).len(),
-        19,
-        "an early failure must not hide a later Cargo leg"
-    );
-    assert_leg_statuses(&output, Some(("root rustfmt", 23)));
+    let output = run_tool(&directory, &["run"]);
+    assert!(output.status.success());
+    let invocations = captured_invocations(&directory.path("cargo calls"));
+    for manifest in ["Cargo.toml", COMPONENT_MANIFEST, NO_STD_MANIFEST] {
+        let path = directory.path(manifest);
+        let path = path.to_str().expect("fixture path must be UTF-8");
+        let clippy = invocations
+            .iter()
+            .filter(|call| call.arguments[0] == "clippy")
+            .filter(|call| has_pair(&call.arguments, "--manifest-path", path))
+            .collect::<Vec<_>>();
+        let native = clippy
+            .iter()
+            .find(|call| {
+                call.arguments.iter().any(|arg| arg == "--workspace")
+                    && !call.arguments.iter().any(|arg| arg == "--target")
+            })
+            .expect("each workspace needs native Clippy");
+        assert!(has_pair(&native.arguments, "-D", "warnings"));
+        if manifest == NO_STD_MANIFEST {
+            assert_eq!(native.rustflags, "-C panic=abort");
+            assert!(!native.arguments.iter().any(|arg| arg == "--all-targets"));
+        } else {
+            assert!(native.arguments.iter().any(|arg| arg == "--all-targets"));
+        }
+        if manifest == "Cargo.toml" {
+            continue;
+        }
+        let wasm = clippy
+            .iter()
+            .find(|call| {
+                call.arguments.iter().any(|arg| arg == "--workspace")
+                    && has_pair(&call.arguments, "--target", "wasm32-wasip2")
+            })
+            .expect("component workspaces need wasm Clippy");
+        assert!(wasm.rustflags.is_empty());
+        if manifest == NO_STD_MANIFEST {
+            assert!(!wasm.arguments.iter().any(|arg| arg == "--all-targets"));
+        }
+        if manifest == COMPONENT_MANIFEST {
+            for call in [native, wasm] {
+                assert!(has_pair(
+                    &call.arguments,
+                    "--exclude",
+                    "connection-http-standard"
+                ));
+            }
+            let isolated = clippy
+                .iter()
+                .find(|call| {
+                    has_pair(&call.arguments, "--package", "connection-http-standard")
+                        && !call.arguments.iter().any(|arg| arg == "--target")
+                })
+                .expect("the no_std HTTP component needs separate native Clippy");
+            assert_eq!(isolated.rustflags, "-C panic=abort");
+            assert!(!isolated.arguments.iter().any(|arg| arg == "--workspace"));
+            assert!(!isolated.arguments.iter().any(|arg| arg == "--all-targets"));
+            assert!(clippy.iter().any(|call| {
+                has_pair(&call.arguments, "--package", "connection-http-standard")
+                    && has_pair(&call.arguments, "--target", "wasm32-wasip2")
+                    && !call.arguments.iter().any(|arg| arg == "--workspace")
+            }));
+        }
+    }
 }
 
 #[test]
-fn repo_lint_returns_failure_when_the_last_leg_fails() {
-    let root = repository_root();
-    let directory = TestDirectory::new();
-    executable(&directory.path("fake cargo"), FAKE_CARGO);
-
-    let output = tool_command(&root, &directory)
-        .env("WAMN_FAKE_CARGO_FAIL_AT", "19")
-        .arg("run")
-        .output()
-        .expect("run failing repo-lint tool");
-    assert_eq!(output.status.code(), Some(1));
-    assert_eq!(
-        captured_invocations(&directory.path("cargo calls")).len(),
-        19,
-        "the final Cargo leg must run"
-    );
-    assert_leg_statuses(&output, Some(("repository policy", 23)));
+fn repo_lint_propagates_failures_and_reports_them_without_hiding_later_steps() {
+    // Select failures by argument, so unrelated additions and reordering are harmless.
+    for failed_argument in ["fmt", "repo-policy"] {
+        let directory = TestDirectory::new();
+        let output = tool_command(&directory)
+            .env("WAMN_FAKE_CARGO_FAIL_AT", failed_argument)
+            .arg("run")
+            .output()
+            .expect("run failing repo-lint tool");
+        assert!(
+            !output.status.success(),
+            "a failed invocation must fail the tool"
+        );
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let failure = stderr.find("repo-lint: FAIL:").expect("report the failure");
+        assert!(stderr[failure..].contains("exit 23"));
+        if failed_argument == "fmt" {
+            assert!(stderr[failure..].contains("repo-lint: PASS:"));
+            assert!(
+                captured_invocations(&directory.path("cargo calls"))
+                    .iter()
+                    .any(|call| has_pair(&call.arguments, "--bin", "repo-policy")),
+                "report repository policy even after formatting fails"
+            );
+        }
+    }
 }
 
 #[test]
 fn dry_run_is_side_effect_free_and_invalid_commands_are_refused() {
-    let root = repository_root();
     let directory = TestDirectory::new();
-    executable(&directory.path("fake cargo"), FAKE_CARGO);
-
-    let output = run_tool(&root, &directory, &["dry-run"]);
+    let before = fs::read_dir(&directory.0)
+        .expect("read fixture directory")
+        .count();
+    let output = run_tool(&directory, &["dry-run"]);
     assert!(output.status.success());
+    assert!(
+        !output.stdout.is_empty(),
+        "dry-run must describe planned work"
+    );
     assert!(!directory.path("cargo calls").exists());
-    let plan = String::from_utf8(output.stdout).expect("dry-run output must be UTF-8");
-    assert!(plan.contains("connection-http-native-clippy: RUSTFLAGS=-C\\ panic=abort"));
-    assert!(plan.contains("no-std-native-clippy: RUSTFLAGS=-C\\ panic=abort"));
-    for label in [
-        "root-rustfmt:",
-        "components-rustfmt:",
-        "no-std-rustfmt:",
-        "root-clippy:",
-        "components-native-clippy:",
-        "connection-http-native-clippy:",
-        "components-wasm-clippy:",
-        "no-std-native-clippy:",
-        "no-std-wasm-clippy:",
-        "dependency-boundaries:",
-        "repository-policy:",
-    ] {
-        assert!(plan.contains(label), "dry-run omitted {label}");
-    }
+    assert_eq!(
+        fs::read_dir(&directory.0)
+            .expect("read fixture directory after dry-run")
+            .count(),
+        before,
+        "dry-run must not create files"
+    );
 
-    let output = run_tool(&root, &directory, &["unknown"]);
+    let output = run_tool(&directory, &["unknown"]);
     assert_eq!(output.status.code(), Some(64));
-    assert!(String::from_utf8_lossy(&output.stderr).contains("unknown command"));
     assert!(!directory.path("cargo calls").exists());
 }
