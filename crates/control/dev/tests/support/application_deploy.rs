@@ -186,8 +186,9 @@ pub(super) async fn exercise(run: &Run, case: Case, password: &str) -> anyhow::R
 
 async fn exercise_inner(run: &Run, case: Case, password: &str) -> anyhow::Result<()> {
     let id = uuid::Uuid::new_v4().simple().to_string();
-    let project = format!("journey-{}", &id[..12]);
-    let environment = format!("test-{}", &id[..12]);
+    // The unique project keeps every environment fresh within the 63-byte name limit.
+    let project = format!("journey-{}", &id[..8]);
+    let environment = "dev".to_owned();
     let alpha_host = format!("alpha-{}.wamn.localhost", &id[..12]);
     let beta_host = format!("beta-{}.wamn.localhost", &id[..12]);
     let isolated_host = format!("isolated-{}.wamn.localhost", &id[..12]);
