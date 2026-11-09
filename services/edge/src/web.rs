@@ -417,6 +417,12 @@ async fn respond(
     ))
 }
 
+fn proxy_client() -> Client<HttpConnector, hyper::body::Incoming> {
+    let mut connector = HttpConnector::new();
+    connector.set_connect_timeout(Some(Duration::from_secs(10)));
+    Client::builder(TokioExecutor::new()).build(connector)
+}
+
 /// Run the cluster web server until interrupted. The box's `serve` mode is separate.
 ///
 /// # Errors
@@ -442,9 +448,7 @@ pub async fn serve(path: &Path) -> anyhow::Result<()> {
         files: RwLock::new(BTreeMap::new()),
     });
     let releases = Arc::new(Releases::in_cluster()?);
-    let mut connector = HttpConnector::new();
-    connector.set_connect_timeout(Some(Duration::from_secs(10)));
-    let proxy = Client::builder(TokioExecutor::new()).build(connector);
+    let proxy = proxy_client();
     let listener = TcpListener::bind(config.listen).await?;
     let mut tasks = tokio::task::JoinSet::new();
     loop {
@@ -513,6 +517,9 @@ pub async fn check(path: &Path) -> anyhow::Result<()> {
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod drain_tests;
 
 #[cfg(test)]
 mod tests {

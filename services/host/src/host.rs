@@ -2240,7 +2240,10 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
         let had_ingress = ingress_handler.is_some();
         let draining_connections = ingress_connections.clone();
         let stop_ingress = async move {
-            // Keep control reachable for operator stops before ingress closes.
+            if let Some(handler) = ingress_handler {
+                handler.stop().await.context("stop HTTP admission")?;
+            }
+            // Keep control reachable while operator stops drain workloads.
             // Component replies report Stopping until HTTP drains (R20).
             // Past the operator wait bound, the host drain goes on.
             if let Err(error) = workload_drain
@@ -2252,9 +2255,6 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
                 .await
             {
                 tracing::warn!(%error, "workload drain");
-            }
-            if let Some(handler) = ingress_handler {
-                handler.stop().await.context("stop HTTP admission")?;
             }
             workload_drain
                 .stop_components(&native_host, async {

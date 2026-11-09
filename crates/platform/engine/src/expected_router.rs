@@ -4,7 +4,7 @@
 //! is its one owner (R2); a host routes by it once the workload binds. The
 //! edge creates its own ingress workload from its configured route host, so it
 //! names that host here, and it reports unavailable until the workload binds.
-//! Shutdown refuses further requests, including on existing connections.
+//! The shutdown gate refuses new requests. Ingress stop retires connections.
 //! Native parsing, workload selection, and outgoing policy remain unchanged.
 //! Operator-created aliases and wildcard expansion are outside this projection.
 //! A selected workload without an ingress handle still receives native 404.
@@ -248,17 +248,16 @@ mod tests {
             3,
             "shutdown gate refuses before bound service dispatch"
         );
+        ingress.stop().await.expect("stop native ingress");
+        tokio::time::timeout(Duration::from_secs(5), ingress.connection_limit().drained())
+            .await
+            .expect("stopped ingress retires its connections");
         ingress
             .on_service_http_unbind("replacement")
             .await
             .expect("unbind the service");
-        assert_eq!(request(&ingress, Some(HOST), "/").await.0, 503);
         assert_eq!(dispatched.load(Ordering::SeqCst), 3);
 
-        ingress.stop().await.expect("stop native ingress");
-        tokio::time::timeout(Duration::from_secs(5), ingress.stopped())
-            .await
-            .expect("ingress stops");
         drop(sender);
         handler.await.expect("application handler stops");
     }
