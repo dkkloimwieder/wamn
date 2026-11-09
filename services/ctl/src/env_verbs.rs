@@ -142,7 +142,7 @@ pub async fn run(command: EnvCommand) -> anyhow::Result<()> {
         print!("{}", environment::show::show(&args.file)?.to_kcl());
         return Ok(());
     }
-    let platform = match &command {
+    let mut platform = match &command {
         EnvCommand::Provision(_)
         | EnvCommand::Initialize(_)
         | EnvCommand::SchemaApply(_)
@@ -296,7 +296,7 @@ pub async fn run(command: EnvCommand) -> anyhow::Result<()> {
         EnvCommand::Status(args) => {
             let admin_url = std::env::var("WAMN_SYSTEM_ADMIN_URL")
                 .context("set WAMN_SYSTEM_ADMIN_URL for env status")?;
-            let status = environment::status::status(&platform, &args.file, &admin_url).await?;
+            let status = environment::status::status(&mut platform, &args.file, &admin_url).await?;
             println!("{}", serde_json::to_string_pretty(&status)?);
         }
     }

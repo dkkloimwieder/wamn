@@ -66,8 +66,20 @@ pub async fn resolve_platform(platform: &mut Platform, org: &str) -> anyhow::Res
             .as_str()
             .context("installed platform has no selected chart")?,
     ))?;
+    let control = resolve_registry(platform, org).await?;
+    platform.target.namespace = "hosts".into();
+    chart.directory().clone_into(&mut platform.chart);
+    platform.database_namespace = "platform".into();
+    Ok(control)
+}
+
+/// Read registry transport from the installed control host without resolving runtime inputs.
+///
+/// # Errors
+/// Returns an error when Helm values or the control host arguments are unavailable.
+pub(super) async fn resolve_registry(platform: &mut Platform, org: &str) -> anyhow::Result<Value> {
     let control = resources::helm(
-        target,
+        &platform.target,
         &[
             "get".as_ref(),
             "values".as_ref(),
@@ -78,13 +90,25 @@ pub async fn resolve_platform(platform: &mut Platform, org: &str) -> anyhow::Res
             "json".as_ref(),
         ],
     )
-    .await?;
-    let control: Value = serde_json::from_slice(&control)?;
-    platform.insecure_registry =
-        insecure_registry(&control["runtime-operator"]["runtime"]["hostGroups"][0]);
-    platform.target.namespace = "hosts".into();
-    chart.directory().clone_into(&mut platform.chart);
-    platform.database_namespace = "platform".into();
+    .await
+    .context("read installed host registry configuration")?;
+    let control: Value =
+        serde_json::from_slice(&control).context("decode installed host registry configuration")?;
+    let groups = control["runtime-operator"]["runtime"]["hostGroups"]
+        .as_array()
+        .context("installed host registry configuration has no host groups")?;
+    let [group] = groups.as_slice() else {
+        anyhow::bail!("installed host registry configuration requires one control host");
+    };
+    ensure!(group.is_object(), "installed control host is not an object");
+    if let Some(args) = group.get("extraArgs") {
+        ensure!(
+            args.as_array()
+                .is_some_and(|args| args.iter().all(Value::is_string)),
+            "installed control host extraArgs must be an array of strings"
+        );
+    }
+    platform.insecure_registry = insecure_registry(group);
     Ok(control)
 }
 

@@ -399,7 +399,7 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
     )
     .await?;
     let secret: serde_json::Value = serde_json::from_slice(&std::fs::read(secret)?)?;
-    let platform = Platform {
+    let mut platform = Platform {
         system_database_url: secret["stringData"]["url"].as_str().unwrap().into(),
         target: wamn_release_control::release_chart::Target {
             kubeconfig: PathBuf::new(),
@@ -1516,7 +1516,7 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
     );
     assert!(expected.lock(&platform, &document, false).await.is_err());
     assert_eq!(
-        sql::schema::status(&platform, &document)
+        sql::schema::status(&mut platform, &document)
             .await?
             .pending_database
             .as_ref(),
@@ -1533,7 +1533,7 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
     assert!(expected.lock(&platform, &document, true).await.is_err());
     require_connected(&system_writer, &document.triple()).await?;
     assert!(
-        sql::schema::status(&platform, &document)
+        sql::schema::status(&mut platform, &document)
             .await?
             .pending_database
             .is_none()

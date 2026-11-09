@@ -688,7 +688,7 @@ async fn unavailable_authorities_preserve_authored_selections_and_report_unknown
     let original = std::fs::read(&file)?;
     let kubeconfig = scratch.path().join("invalid-kubeconfig");
     std::fs::write(&kubeconfig, "invalid configuration")?;
-    let platform = Platform {
+    let mut platform = Platform {
         system_database_url: "invalid database URL".into(),
         target: wamn_release_control::release_chart::Target {
             kubeconfig,
@@ -716,9 +716,9 @@ async fn unavailable_authorities_preserve_authored_selections_and_report_unknown
             .is_err()
     );
     assert_eq!(std::fs::read(&file)?, original);
-    let status = environment::status::status(&platform, &file, "invalid database URL").await?;
+    let status = environment::status::status(&mut platform, &file, "invalid database URL").await?;
     assert!(status.installed.is_none());
-    assert!(!status.warnings.is_empty());
+    assert!(!status.schema.as_ref().unwrap().unknowns.is_empty());
     for (name, selection) in &document.applications {
         let reported = &status.applications[name];
         assert_eq!(reported.current, selection.current);

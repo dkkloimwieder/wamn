@@ -813,11 +813,28 @@ pub struct Status {
 }
 
 /// Read every selected candidate and retain causes for unknown observations.
-pub async fn status(platform: &Platform, document: &EnvironmentDocument) -> anyhow::Result<Status> {
-    let state = state(platform, document).await?;
+pub async fn status(
+    platform: &mut Platform,
+    document: &EnvironmentDocument,
+) -> anyhow::Result<Status> {
+    let registry = super::super::runtime::resolve_registry(platform, &document.org)
+        .await
+        .map(|_| ());
+    let state = state(platform, document)
+        .await
+        .unwrap_or_else(|error| State {
+            unknowns: vec![format!("database state unknown: {error:#}")],
+            ..State::default()
+        });
     let mut unknowns = state.unknowns.clone();
     let mut applications = BTreeMap::new();
     for application in document.applications.keys() {
+        if let Err(error) = &registry {
+            unknowns.push(format!(
+                "application {application} candidate unknown: {error:#}"
+            ));
+            continue;
+        }
         match release_candidates(platform, document, application, None).await {
             Ok((release, candidates)) => {
                 applications.insert(

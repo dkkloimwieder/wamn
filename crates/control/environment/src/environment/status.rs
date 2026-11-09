@@ -65,7 +65,7 @@ pub struct RevisionStatus {
 
 /// Read authored selections even when runtime or database state is unavailable.
 pub async fn status(
-    platform: &Platform,
+    platform: &mut Platform,
     file: &std::path::Path,
     admin_url: &str,
 ) -> anyhow::Result<Status> {
@@ -79,6 +79,7 @@ pub async fn status(
             None
         }
     };
+    let platform: &Platform = platform;
     let installed = schema
         .as_ref()
         .filter(|schema| schema.installed_environment.is_some())

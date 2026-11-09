@@ -72,13 +72,13 @@ pub async fn rollback(args: RollbackArgs) -> anyhow::Result<()> {
 
 pub async fn status(args: StatusArgs) -> anyhow::Result<()> {
     environment::document::EnvironmentDocument::compile(&args.env)?;
-    let platform = Platform::from_env()?;
+    let mut platform = Platform::from_env()?;
     let admin_url =
         std::env::var("WAMN_SYSTEM_ADMIN_URL").context("set WAMN_SYSTEM_ADMIN_URL for status")?;
     println!(
         "{}",
         serde_json::to_string_pretty(
-            &environment::status::status(&platform, &args.env, &admin_url).await?
+            &environment::status::status(&mut platform, &args.env, &admin_url).await?
         )?
     );
     Ok(())
