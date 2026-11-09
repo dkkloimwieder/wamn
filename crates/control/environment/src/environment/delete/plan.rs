@@ -81,7 +81,7 @@ pub fn instance_roles(
     Ok(roles)
 }
 
-/// The credential files to destroy after the commit, from the removed
+/// The credential files to destroy before the commit, from the removed
 /// credentials' `ref, version, target_type`. A cloud target's credentials are
 /// in the Secret that the delete removes, whatever store a row names.
 pub(super) fn credential_files(

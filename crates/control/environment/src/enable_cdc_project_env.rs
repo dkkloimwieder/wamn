@@ -439,6 +439,15 @@ pub(crate) async fn stop_reader(
         None,
     )
     .await?;
+    wait_reader_stopped(platform, triple).await
+}
+
+/// Wait for reader pods, including pods left by an interrupted Deployment delete.
+pub(crate) async fn wait_reader_stopped(
+    platform: &crate::environment::Platform,
+    triple: &Triple,
+) -> anyhow::Result<()> {
+    use crate::environment::ensure::kubectl;
     let env_key =
         wamn_control_provision::project_env_key(&triple.org, &triple.project, &triple.env);
     let selector =

@@ -1,18 +1,16 @@
 //! `env delete <coordinate> [--data]`
 //! (docs/architecture/overview.md#environment-lifecycle).
 //!
-//! The one destructive verb, re-entrant: every step is "if present", so a run
-//! that fails at any boundary is resumed by running it again. Under the
-//! lifecycle lock, in order: uninstall the release chart, which starts the
-//! drain; wait for the live set to be empty; refuse on a run pinned to a
-//! release with no pod, unless `--data`; revoke the provisioning PATs; delete
-//! the credential Secrets the verb owns; remove the environment's key from the
-//! org's control administration Secret; delete the event streams; drop the
-//! replication slot; delete the `Database` CR and wait until it is gone; with
-//! `--data`, drop the instance's roles; delete the control rows of the tenant
-//! and the environment's connections, then the environment row; after that
-//! commit, delete the credential store Secret, its host account and the
-//! credential files. A retained database keeps its projected rows.
+//! Each step accepts absent resources so an interrupted delete can resume.
+//! Under the lifecycle lock, check ownership, uninstall application releases,
+//! drain their hosts, and refuse stranded runs unless `--data` is set.
+//! Delete and drain the CDC reader before removing credentials or replication.
+//! Remove the materializer, PATs, Secrets, control administration key, streams,
+//! event certificate, Publication CR, replication slot, and Database CR.
+//! Remove control logins and, with `--data`, the instance roles.
+//! Remove the credential store Secret and its account before the final transaction.
+//! That transaction retains connection references until credential files are gone.
+//! Delete the environment row last and commit. A retained database keeps its rows.
 //!
 //! The CR keeps `databaseReclaimPolicy: retain`, so the database and its data
 //! stay on the cluster, with the roles that own them, for manual recovery.
@@ -20,8 +18,12 @@
 //! drops the database before the CR is gone, and then the roles go.
 
 pub(super) mod plan;
-use plan::{credential_files, stream_not_found};
+mod resources;
+mod roles;
+mod rows;
+use plan::stream_not_found;
 pub use plan::{delete_control_rows_sql, instance_families, instance_roles};
+pub use rows::delete_registry_rows;
 
 use anyhow::{Context as _, bail};
 use async_nats::jetstream::context::GetStreamErrorKind;
@@ -97,6 +99,31 @@ async fn delete_locked(
         triple.env.as_str(),
     );
     let mut lines = Vec::new();
+    // A lifecycle verb: the provisioning credential, as the install Jobs use.
+    let mut system = connect(admin_url).await?;
+    system
+        .batch_execute("SET ROLE wamn_system")
+        .await
+        .context("SET ROLE wamn_system")?;
+    let Some(row) = system
+        .query_opt(
+            "SELECT instance_suffix, policy_name FROM registry.project_envs \
+              WHERE org = $1 AND project = $2 AND env = $3",
+            &[&org, &project, &env],
+        )
+        .await
+        .context("read the environment row")?
+    else {
+        lines.push(format!(
+            "{triple} has no environment row: nothing else to delete"
+        ));
+        return Ok(lines);
+    };
+    let instance: String = row.get(0);
+    let database = project_env_database_name(org, project, env, &instance);
+    let env_key = wamn_control_provision::project_env_key(org, project, env);
+
+    resources::check_ownership(platform, triple, &database).await?;
     let applications = application_releases(platform, triple).await?;
     for name in applications.values() {
         release_chart::uninstall(&platform.target, name).await?;
@@ -132,30 +159,6 @@ async fn delete_locked(
     }
     let live = std::collections::BTreeMap::new();
 
-    // A lifecycle verb: the provisioning credential, as the install Jobs use.
-    let mut system = connect(admin_url).await?;
-    system
-        .batch_execute("SET ROLE wamn_system")
-        .await
-        .context("SET ROLE wamn_system")?;
-    let Some(row) = system
-        .query_opt(
-            "SELECT instance_suffix, policy_name FROM registry.project_envs \
-              WHERE org = $1 AND project = $2 AND env = $3",
-            &[&org, &project, &env],
-        )
-        .await
-        .context("read the environment row")?
-    else {
-        lines.push(format!(
-            "{triple} has no environment row: nothing else to delete"
-        ));
-        return Ok(lines);
-    };
-    let instance: String = row.get(0);
-    let database = project_env_database_name(org, project, env, &instance);
-    let env_key = wamn_control_provision::project_env_key(org, project, env);
-
     // A run pinned to a release with no pod.
     let cr_present = !kubectl(
         platform,
@@ -189,6 +192,11 @@ async fn delete_locked(
             Err(error) => return Err(error),
         }
     }
+
+    resources::delete_reader(platform, triple).await?;
+    lines.push(format!(
+        "deleted the CDC reader of {triple} (or it was gone)"
+    ));
 
     // Shared event resources stop only after every application host drains.
     let shared = super::ensure::environment_host_name(org, project, env)?;
@@ -310,34 +318,30 @@ async fn delete_locked(
         lines.push(format!("removed the environment's key of Secret {control}"));
     }
 
-    // The event streams, when the environment captures events.
-    let reader = system
-        .query_opt(
-            "SELECT 1 FROM registry.event_readers WHERE org = $1 AND project = $2 AND env = $3",
-            &[&org, &project, &env],
-        )
-        .await
-        .context("read the registry.event_readers row")?
-        .is_some();
-    if reader {
-        let broker = platform.events.as_ref().context(
-            "the environment captures events; set WAMN_NATS_URL and its WAMN_NATS_TLS_* \
-             certificate to delete its streams",
-        )?;
-        let broker = jetstream::new(
-            broker
-                .nats
-                .connect()
-                .await
-                .context("connect the event provisioning credential")?,
-        );
-        let source = event_stream_name(org, project, env);
-        for stream in [delivery_advisory_stream(&source), source] {
-            if delete_stream(&broker, &stream).await? {
-                lines.push(format!("deleted stream {stream}"));
-            }
+    // Provisioning creates streams even before the reader is registered.
+    let broker = platform.events.as_ref().context(
+        "environment provisioning creates event streams; set WAMN_NATS_URL and its \
+         WAMN_NATS_TLS_* certificate to delete them",
+    )?;
+    let broker = jetstream::new(
+        broker
+            .nats
+            .connect()
+            .await
+            .context("connect the event provisioning credential")?,
+    );
+    let source = event_stream_name(org, project, env);
+    for stream in [delivery_advisory_stream(&source), source] {
+        if delete_stream(&broker, &stream).await? {
+            lines.push(format!("deleted stream {stream}"));
         }
     }
+    resources::delete_event_certificate(platform, &env_key).await?;
+    lines.push(format!(
+        "deleted the event certificate and Secret of {triple} (or they were gone)"
+    ));
+    resources::delete_publication(platform, &database).await?;
+    lines.push(format!("deleted publication {database} (or it was gone)"));
 
     // The replication slot, on the cluster's `postgres` database.
     let mut postgres_url = url::Url::parse(admin_url).context("parse the admin URL")?;
@@ -406,6 +410,8 @@ async fn delete_locked(
 
     // The roles, only with the database: a retained database keeps its
     // owner roles for manual recovery.
+    let mut removed_roles = roles::delete_control_roles(admin_url, triple).await?;
+    lines.push("deleted the environment's control logins (or they were gone)".into());
     if data {
         let roles = instance_roles(triple, &instance, &env_key)?;
         for role in &roles {
@@ -415,75 +421,20 @@ async fn delete_locked(
                 .with_context(|| format!("drop role {role}"))?;
         }
         lines.push(format!("dropped {} roles (or they were gone)", roles.len()));
+        removed_roles.extend(roles);
     }
-
-    // The control rows of the tenant, then the environment row, last.
-    let transaction = crate::provision_project_env::provisioning_transaction(&mut system)
-        .await
-        .context("begin the row delete")?;
-    transaction
-        .query_one("SELECT set_config('app.env_key', $1, true)", &[&env_key])
-        .await
-        .context("claim the tenant")?;
-    for (table, trigger) in CONTROL_TABLES {
-        for statement in delete_control_rows_sql(table, trigger, &env_key) {
-            transaction
-                .execute(statement.as_str(), &[])
-                .await
-                .with_context(|| format!("delete the control rows of {table}"))?;
-        }
-    }
-    let credentials = transaction
-        .query(
-            wamn_control_registry::sql::delete_environment_connections_sql(),
-            &[&org, &project, &env],
-        )
-        .await
-        .context("delete the environment's connections")?;
-    transaction
-        .execute(
-            "DELETE FROM registry.project_envs WHERE org = $1 AND project = $2 AND env = $3",
-            &[&org, &project, &env],
-        )
-        .await
-        .context("delete the registry.project_envs row")?;
-    let env_key_table: bool = transaction
-        .query_one(
-            "SELECT to_regclass('catalog.tenant_environments') IS NOT NULL",
-            &[],
-        )
-        .await
-        .context("probe catalog.tenant_environments")?
-        .get(0);
-    if env_key_table {
+    let transaction = crate::provision_project_env::provisioning_transaction(&mut system).await?;
+    for role in &removed_roles {
         transaction
             .execute(
-                "DELETE FROM catalog.tenant_environments \
-                  WHERE org = $1 AND project = $2 AND env = $3 AND instance_suffix = $4",
-                &[&org, &project, &env, &instance],
+                wamn_control_provision::sql::forget_generation_password_sql(),
+                &[role],
             )
-            .await
-            .context("delete the catalog.tenant_environments row")?;
+            .await?;
     }
-    transaction
-        .commit()
-        .await
-        .context("commit the row delete")?;
-    let mut drops = wamn_platform_identity::connection_changes::ConnectionDrops::default();
-    drops.env_key(&env_key);
-    wamn_platform_identity::connection_changes::ConnectionChanges::from(
-        &platform.auth_changes().await?,
-    )
-    .publish(drops)
-    .await;
-    lines.push(format!(
-        "deleted the control rows of tenant {env_key}, {} connection credentials and the \
-         environment row of {triple}",
-        credentials.len()
-    ));
+    transaction.commit().await?;
 
-    // The credential store, after the commit: the Secret and the host account
-    // that reads it, and the credential files of a file target.
+    // Keep the registry inputs until the credential store and its account are gone.
     let account = wamn_credential_store::kubernetes::service_account_name(org, project, env);
     let secret = wamn_credential_store::kubernetes::secret_name(org, project, env);
     for (resource, object) in [
@@ -503,22 +454,14 @@ async fn delete_locked(
             lines.push(deleted);
         }
     }
-    let files = credential_files(
-        credentials
-            .iter()
-            .map(|row| (row.get(1), row.get(2), row.get(3))),
-    );
-    if !files.is_empty() {
-        let store =
-            wamn_credential_store::open("file").context("open the file credential store")?;
-        for (reference, version) in &files {
-            store
-                .destroy(reference, version)
-                .await
-                .with_context(|| format!("destroy credential file {reference}"))?;
-        }
-        lines.push(format!("destroyed {} credential files", files.len()));
-    }
+    // Resolve the publisher before the final commit, while retry inputs remain.
+    let changes = platform.auth_changes().await?;
+    lines.extend(delete_registry_rows(&mut system, triple, &instance, None).await?);
+    let mut drops = wamn_platform_identity::connection_changes::ConnectionDrops::default();
+    drops.env_key(&env_key);
+    wamn_platform_identity::connection_changes::ConnectionChanges::from(&changes)
+        .publish(drops)
+        .await;
     Ok(lines)
 }
 
@@ -534,6 +477,7 @@ async fn delete_stream(broker: &jetstream::Context, name: &str) -> anyhow::Resul
 
 #[cfg(test)]
 mod tests {
+    use super::plan::credential_files;
     use super::*;
 
     #[test]
@@ -564,27 +508,5 @@ mod tests {
         assert_eq!(roles.len(), 1 + 10 * 2);
         assert_eq!(roles[0], "wamn_cdc_dkk__receiving__dev__zf7o454t");
         assert!(roles.iter().all(|role| role.len() <= 63));
-    }
-
-    #[test]
-    fn the_control_rows_go_with_the_trigger_off_for_one_delete() {
-        let statements = delete_control_rows_sql(
-            "catalog.authoring_command_audit",
-            Some("authoring_command_audit_immutable"),
-            "dev",
-        );
-        assert_eq!(statements.len(), 3);
-        assert_eq!(
-            statements[0],
-            "ALTER TABLE catalog.authoring_command_audit DISABLE TRIGGER \"authoring_command_audit_immutable\""
-        );
-        assert!(statements[1].starts_with("DELETE FROM catalog.authoring_command_audit "));
-        assert_eq!(
-            statements[2],
-            "ALTER TABLE catalog.authoring_command_audit ENABLE TRIGGER \"authoring_command_audit_immutable\""
-        );
-        let statements = delete_control_rows_sql("catalog.authoring_command_audit", None, "dev");
-        assert_eq!(statements.len(), 1);
-        assert!(statements[0].starts_with("DELETE FROM catalog.authoring_command_audit "));
     }
 }

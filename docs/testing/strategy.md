@@ -214,6 +214,11 @@ Inspect the actual assertions and setup, not the test's name.
 Reject unnecessary cluster dependencies, mandatory preceding scenarios, source-spelling assertions and duplicated expensive matrices.
 Preserve meaningful data and authorization checks; delete obsolete expectations rather than restoring removed product machinery.
 
+- For changes to input → producer → consumer or setup → operation → cleanup paths, review the complete path.
+- Before a long scenario, exercise the smallest affected boundary. Build and publish authored fixtures through the product. Run external commands against the pinned executable. Exercise lifecycle operations through minimal creation and deletion. Exercise runner changes with short real processes that establish the working directory, exit status and cancellation.
+- Compilation alone does not complete setup or cleanup work. Record demonstrated execution in the existing issue.
+- Replace misleading mocks or assertions about source structure instead of adding duplicate coverage.
+
 **Before cluster execution:** an approval request identifies the additional integration observation that cheaper checks cannot establish and the focused results already available.
 A failed cluster run alone does not justify another full replay.
 Diagnose the cause first, then choose the smallest relevant reproduction; genuine CNPG or Helm failures may need an approved focused kind case.
