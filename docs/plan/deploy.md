@@ -79,13 +79,15 @@ This section records the current code. It replaces the historical list of earlie
 | Publisher identity | No command accepts a caller-supplied publisher string. Publication records no publisher. The `catalog.releases` row of an applied release carries the record-history stamp of the authenticated deploy actor. |
 | Development loop | `wamn dev` prepares generation before the shared `schema::plan` decision. Its template reset and direct connection retain the same package SQL executor and records as deployed Jobs. |
 | Platform UI | Local kind deployment does not select the UI. The separate upload path still consumes a local bundle matching its stamped chart. |
+| Platform updates | `wamn platform deploy` has no target selection. Each run applies all infrastructure, runs `bootstrap::initialize`, and then applies identity, control, and edge in one pass. |
+| Host runtime selection | The operator release `wamn` records one platform-wide chart reference. `environment/runtime.rs` reads it, and `environment/write.rs` renders the host groups of each application release from that chart. |
 
 The accepted Epic 2 record leaves `wamn-xy404`, `wamn-1riwn`, and `wamn-c361p` open.
 It records `wamn-azv06` as not reproduced, not fixed.
-The open Epic 3 gaps are `wamn-alrvy.19` (stale-event admission), `wamn-alrvy.20` (temporary directory leak), and `wamn-alrvy.22` (uncovered lint requirements).
+Epic 3 (`wamn-alrvy`) is closed. Its open gaps are `wamn-alrvy.19` (stale-event admission), `wamn-alrvy.20` (temporary directory leak), and `wamn-alrvy.22` (uncovered lint requirements).
 `wamn-fszfy`, `wamn-m4wnp`, and `wamn-ib8ej` also remain open.
-This documentation pass does not fix or close those items.
-General platform SQL upgrades, platform UI artifact publication, and GCP deployment remain outside Epic 3.
+Epic 4 (section 7) implements section 5.3.1. Persistent platform SQL upgrades (section 5.3.2) are the following deployment epic.
+Platform UI artifact publication and GCP deployment remain later work.
 
 ## 3. Small deployment commands, not a scripted runbook
 
@@ -409,8 +411,9 @@ Warnings identify schema differences, deprecated interfaces, and missing optiona
 
 ### 5.3 Platform upgrades: behavior, WAMN SQL, and infrastructure
 
-This section defines later work. The current CLI supplies no `platform schema` or `platform deploy --only` command.
-Persistent system database upgrades are unsupported in this rebuild.
+Epic 4 (section 7) implements section 5.3.1. Sections 5.3.2 and 5.3.3 remain later work.
+The current CLI supplies no `platform schema` command and no target selection for `platform deploy`.
+Persistent system database upgrades are unsupported in this rebuild. Persistent platform SQL upgrades are the deployment epic after Epic 4.
 
 **Intent:** Update one part of the platform without repeating initial installation or changing unrelated applications. Implement against an already running kind platform before introducing GCP-specific actions.
 
@@ -424,6 +427,18 @@ Persistent system database upgrades are unsupported in this rebuild.
 | PostgreSQL engine/operator | CloudNativePG and the relevant infrastructure owner | Application migration files |
 
 #### 5.3.1 Behavior-only or configuration-only change
+
+Implementation status: no targeted update exists. Every `platform deploy` run applies infrastructure, runs bootstrap, and starts identity and control together (section 2).
+Epic 4 implements this section. DEP4-01 decides the selection syntax, so the commands below are illustrative.
+
+Three ownership rules apply:
+
+1. A platform upgrade does not select application code.
+2. An application code upgrade does not silently select a different platform runtime.
+3. The existing Helm releases remain the resource owners. A targeted update is not a temporary patch that the next application operation overwrites.
+
+Application deployment renders and reapplies its own Helm release, and it takes the host runtime from the platform-wide chart reference.
+Because of this, a host selection must persist where `environment/write.rs` reads it. DEP4-01 records that owner in this section before dependent issues start.
 
 ```bash
 # Illustrative selection of one platform component.
@@ -698,6 +713,59 @@ Rollback handling, publisher verification, and schema validation stay in their e
 Transactional failure, edited checksums, and nontransactional uncertainty belong in the lowest tests that observe those contracts.
 Add deployed cases only for boundaries that those tests cannot observe.
 General platform SQL upgrades, browser tests, and registry-archive tests are outside Epic 3 acceptance.
+
+### Epic 4: targeted platform code upgrades on kind
+
+Epic 4 implements section 5.3.1 on an already running kind platform.
+It updates behavior and configuration that are compatible with the installed schema. It does not claim universal upgrade compatibility.
+The issues run in this order:
+
+| Issue | Scope | Completion condition |
+|---|---|---|
+| DEP4-01 Explicit upgrade targets and artifact selection | Selection of control, identity, and named application or shared host groups from prepared immutable artifacts, in `platform_verbs.rs`, `platform/document.rs`, `platform/artifact_plan.rs`, and the existing resource owners | Section 5.3.1 records how each selection survives a later reapply. Changing one target does not replace the platform-wide chart reference. |
+| DEP4-02 Separate existing-platform updates from installation | `platform/deploy.rs` calls only the selected resource owner. Initial installation calls the same resource functions. | A targeted update creates no cluster, runs no bootstrap, reconciles no unrelated operator, rotates no credential, initializes no SQL, and installs no application. No second implementation and no installer-step skipping exist. |
+| DEP4-03 Independent control and identity updates | Separate resource application from initialization in `platform/control.rs` and `platform/identity.rs` | The selected service changes its executable or configuration. Credentials, signing keys, database state, application selections, and application workloads stay the same. Missing initialization is an explicit error. |
+| DEP4-04 Independent host-runtime updates | Selected host groups through their existing Helm and Kubernetes owners, with `environment/runtime.rs` and `environment/write.rs` | Application components, release digests, schema, and data stay the same. A later application deploy keeps the selected host runtime. Untargeted application workloads stay the same. No direct patch of operator-generated Deployments exists. |
+| DEP4-05 Status, failure, and reselection of earlier artifacts | Per-target report of the selected artifact and actual readiness. The same update operation selects an earlier compatible artifact. | No SQL reversal and no rollback or history subsystem exist. A retry does not repeat installation. Status works while the target service is unhealthy. |
+| DEP4-06 Focused upgrade verification | CLI and render tests for target selection and unchanged resources, then the changed external-command boundaries against the pinned tools | One owner-approved focused kind case passes with prepared artifacts and two applications (see the list below). |
+
+The focused kind case of DEP4-06 does these steps:
+
+1. Change control and identity independently.
+2. Change the host of one application, and make sure that the other application stays the same.
+3. Reapply the application code, and make sure that its host does not revert.
+4. Reselect the earlier runtime, and make sure that the data stays.
+
+Setup and cleanup of that case are validated independently first. It does not replay schema reset, migration, or aggregate acceptance.
+Implementation uses focused checks. Deployed verification waits for owner approval after the implementation and artifact inputs settle.
+Epic 4 is complete when a targeted upgrade leaves unrelated resources unchanged. A new selection argument alone does not complete it.
+
+Every Epic 4 issue follows [the testing strategy](../testing/strategy.md). The issue names the implementation that it replaces and the surviving owner.
+The same change deletes the superseded code, flags, assertions, registrations, and test support that only the old code used.
+Initial installation and targeted updates call the same resource functions. No issue adds a duplicate implementation or runs bootstrap behind a skip flag.
+
+Tests go through the lowest real interface and show these behaviors:
+
+1. Only the selected resources change.
+2. Application releases, data, and credentials stay the same.
+3. An application reapply keeps the chosen host runtime.
+4. A retry or a reselection runs no installation and no SQL.
+
+Source scanners, module-existence checks, helper-order assertions, and pinned command transcripts are not accepted. A deleted assertion is not copied into a new test.
+Before an expensive scenario, review and run the changed input, producer, and consumer boundaries, and the setup, operation, and cleanup boundaries. Use the authored artifacts and the pinned external tools where these boundaries matter.
+Reuse existing tests and preparation, and remove duplicated test matrices. The approved kind journey covers only deployed behavior that no lower test observes.
+
+An issue closes when its deletions are complete and focused execution shows the claimed behavior and the reduced coupling.
+Compilation, renamed tests, or passed historical expectations do not close an issue. The issue records each uncovered requirement.
+Obsolete code does not come back to clear a failure. A broad or cluster run needs a separate owner approval.
+
+Epic 4 excludes these items:
+
+1. Platform and system SQL migrations, and any change that needs new SQL.
+2. PostgreSQL, NATS, and operator upgrades.
+3. Platform UI publication and authenticated deployment routes.
+4. GCP integration and general project deletion.
+5. Unrelated testing follow-ups.
 
 ### GCP scope after local success
 
