@@ -442,7 +442,9 @@ Application deployment renders and reapplies its own Helm release, and it takes 
 Control selections persist as `platform.chart` in the `hosts/c-<org>` Helm release values.
 Identity selections persist as `platform.chart` in the `identity/identity` Helm release values.
 Each value names the prepared chart that supplies that service's artifacts and configuration.
-Platform reapply reads these selections before calling the existing service owners.
+A fresh installation uses the supplied chart for every target.
+A later `platform deploy` without `--only` keeps the recorded control and identity selections and the explicit host image overrides.
+It does not undo a targeted upgrade. Only an explicit target selection changes a target (owner decision 2026-11-09).
 
 Host runtime selections persist as `runtime-operator.runtime.hostGroups[].image` in the Helm release that owns the named group.
 The existing image override holds the selected immutable host image.
