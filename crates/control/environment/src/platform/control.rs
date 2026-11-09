@@ -282,6 +282,12 @@ pub(crate) fn release_values(
     desired["runtime-operator"]["runtime"]["image"] =
         chart["runtime-operator"]["runtime"]["image"].clone();
     let group = &mut desired["runtime-operator"]["runtime"]["hostGroups"][0];
+    if let Some(configuration) = chart["runtime-operator"]["runtime"]["hostGroups"]
+        .as_array()
+        .and_then(|groups| groups.iter().find(|entry| entry["name"] == group["name"]))
+    {
+        super::manifests::merge(group, configuration.clone());
+    }
     super::oauth::host_group(group, &super::oauth::configuration(document))?;
     if document.provider == Provider::Kind {
         let variables = group["env"].as_array_mut().expect("host environment");
@@ -328,7 +334,7 @@ fn identity_ca(ca: &str) -> Value {
 pub(super) fn resource_entry(
     document: &ClusterDocument,
     chart: &SelectedChart,
-    installed: Option<Value>,
+    installed: Option<&Value>,
 ) -> anyhow::Result<Value> {
     let build_record = chart
         .directory()
@@ -342,11 +348,23 @@ pub(super) fn resource_entry(
         Err(error) => return Err(error).context("read the selected platform build record"),
     };
     let mut desired = release_values(document, chart.values(), platform_ui)?;
-    if let Some(installed) = installed {
-        super::manifests::merge(&mut desired, installed);
+    if let Some(groups) = installed
+        .and_then(|values| values.pointer("/runtime-operator/runtime/hostGroups"))
+        .and_then(Value::as_array)
+    {
+        for group in desired["runtime-operator"]["runtime"]["hostGroups"]
+            .as_array_mut()
+            .expect("control host groups")
+        {
+            if let Some(image) = groups
+                .iter()
+                .find(|previous| previous["name"] == group["name"])
+                .and_then(|previous| previous.get("image"))
+            {
+                group["image"] = image.clone();
+            }
+        }
     }
-    desired["runtime-operator"]["runtime"]["image"] =
-        chart.values()["runtime-operator"]["runtime"]["image"].clone();
     desired["controlResources"] = service_objects(
         &chart.directory().join("platform/resources"),
         document,
@@ -408,7 +426,7 @@ mod tests {
         let image = json!({"registry":"previous.example", "repository":"host",
             "tag":format!("previous@sha256:{}", "b".repeat(64)), "pull_policy":"IfNotPresent"});
         installed["runtime-operator"]["runtime"]["hostGroups"][0]["image"] = image.clone();
-        let entry = resource_entry(&document, &selected, Some(installed))?;
+        let entry = resource_entry(&document, &selected, Some(&installed))?;
         let values = &entry["values"];
         assert_eq!(
             values["runtime-operator"]["runtime"]["hostGroups"][0]["image"],

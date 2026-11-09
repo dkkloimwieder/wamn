@@ -221,6 +221,24 @@ pub fn select(chart: &Path) -> anyhow::Result<SelectedChart> {
     })
 }
 
+pub(super) fn platform_chart(
+    operator: Option<&Value>,
+    supplied: &Path,
+) -> anyhow::Result<SelectedChart> {
+    let Some(operator) = operator else {
+        return select(supplied);
+    };
+    let path = operator["platform"]["chart"]
+        .as_str()
+        .filter(|path| !path.is_empty())
+        .context("platform/wamn has no platform.chart default. No resources changed.")?;
+    select(Path::new(path)).with_context(|| {
+        format!(
+            "recorded chart {path} for owner release platform/wamn is unavailable or invalid. Restore the prepared chart at that path. No resources changed."
+        )
+    })
+}
+
 pub(super) fn resolve_chart(
     document: &ClusterDocument,
     selection: &UpgradeTarget,
@@ -229,6 +247,9 @@ pub(super) fn resolve_chart(
     identity: Option<&Value>,
     supplied: &Path,
 ) -> anyhow::Result<SelectedChart> {
+    if operator.is_none() {
+        return select(supplied);
+    }
     let (installed, only) = match selection {
         UpgradeTarget::Control => (control, "control"),
         UpgradeTarget::Identity => (identity, "identity"),
@@ -240,13 +261,11 @@ pub(super) fn resolve_chart(
         .filter_map(|values| values["platform"]["chart"].as_str())
         .find(|chart| !chart.is_empty());
     let (name, namespace) = selection.owner(document);
-    let Some(path) = path else {
-        ensure!(
-            operator.is_none(),
+    let path = path.with_context(|| {
+        format!(
             "cannot resolve owner release {namespace}/{name}: platform/wamn has no platform.chart default. No resources changed."
-        );
-        return select(supplied);
-    };
+        )
+    })?;
     select(Path::new(path)).with_context(|| {
         format!(
             "recorded chart {path} for owner release {namespace}/{name} is unavailable or invalid. Restore the prepared chart at that path, or select a new one explicitly with --only {only}. No resources changed."
@@ -375,7 +394,7 @@ mod tests {
                 (Some(&operator), Some(&legacy), &default.0),
                 (Some(&operator), Some(&recorded), &own.0),
                 (Some(&unavailable_default), Some(&recorded), &own.0),
-                (None, Some(&recorded), &own.0),
+                (None, Some(&recorded), &supplied.0),
             ] {
                 let (control, identity) = match selection {
                     UpgradeTarget::Control => (installed, Some(&recorded)),
@@ -392,37 +411,6 @@ mod tests {
                 )?;
                 assert_eq!(selected.directory(), expected.canonicalize()?);
             }
-        }
-        Ok(())
-    }
-
-    #[test]
-    fn service_chart_retry_keeps_the_recorded_selection() -> anyhow::Result<()> {
-        let original = prepared_chart();
-        let supplied = prepared_chart();
-        let operator = json!({"platform":{"chart":original.0}});
-        let repository = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
-        let document = ClusterDocument::compile(&repository.join("deploy/kind/cluster.k"))?;
-        for selection in [UpgradeTarget::Control, UpgradeTarget::Identity] {
-            let first = resolve_chart(
-                &document,
-                &selection,
-                Some(&operator),
-                Some(&json!({})),
-                Some(&json!({})),
-                &supplied.0,
-            )?;
-            let recorded = first.selection_values(&document, &selection, json!({}))?;
-            let changed_default = json!({"platform":{"chart":supplied.0}});
-            let retry = resolve_chart(
-                &document,
-                &selection,
-                Some(&changed_default),
-                Some(&recorded),
-                Some(&recorded),
-                &supplied.0,
-            )?;
-            assert_eq!(retry.directory(), original.0.canonicalize()?);
         }
         Ok(())
     }

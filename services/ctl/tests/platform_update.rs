@@ -9,19 +9,21 @@ use wamn_environment_control::platform::artifact_plan::test_util::{Chart, prepar
 use wamn_environment_control::platform::document::{ClusterDocument, UpgradeTarget};
 use wamn_environment_control::platform::{artifact_plan, control, identity};
 
-const TOOL: &str = r"#!/usr/bin/python3
+const TOOL: &str = r#"#!/usr/bin/python3
 import base64, json, pathlib, re, subprocess, sys, yaml
 root = pathlib.Path(__file__).parent
 tool = pathlib.Path(sys.argv[0]).name
 args = sys.argv[1:]
 state = json.loads((root / 'state.json').read_text())
 call = {'tool': tool, 'args': args}
+if tool == 'kubectl' and args[6] in ['apply', 'create']:
+    call['object'] = json.load(sys.stdin)
 if tool == 'helm' and 'upgrade' in args:
     values = args[args.index('-f') + 1]
     call['values'] = yaml.safe_load(pathlib.Path(values).read_text())
     upgrade = args.index('upgrade')
     name = args[upgrade + 2]
-    chart = args[upgrade + 3]
+    chart = next(arg for arg in args[upgrade + 3:] if pathlib.Path(arg).is_dir() or arg.endswith('.tgz'))
     namespace = args[args.index('--namespace') + 1]
     rendered = subprocess.check_output([state['helm'], 'template', name, chart,
         '--namespace', namespace, '-f', values])
@@ -32,14 +34,17 @@ if tool == 'kind':
     if args[:2] == ['get', 'clusters']:
         print(state['cluster'])
         sys.exit(0)
+    if args[:2] == ['get', 'nodes']:
+        print('node')
+        sys.exit(0)
     if args[:2] == ['export', 'kubeconfig']:
         sys.exit(0)
 if tool == 'helm':
-    if args[0] in ['show', 'template']:
-        sys.exit(subprocess.run([state['helm']] + args, input=sys.stdin.buffer.read()).returncode)
     if args[0] == '--kubeconfig':
         args = args[4:]
-    namespace = args[args.index('--namespace') + 1]
+    if args[0] in ['show', 'template']:
+        sys.exit(subprocess.run([state['helm']] + args, input=sys.stdin.buffer.read()).returncode)
+    namespace = args[args.index('--namespace') + 1] if '--namespace' in args else args[args.index('-n') + 1]
     if args[0] == 'list':
         pattern = args[args.index('--filter') + 1]
         print(json.dumps([{'name': key.split('/')[1], 'status': 'deployed'} for key in state['owners']
@@ -49,22 +54,75 @@ if tool == 'helm':
         print(json.dumps(state['owners'][namespace + '/' + args[2]]))
         sys.exit(0)
     if args[0] == 'upgrade':
+        if state.get('stop_release') == namespace + '/' + args[2]:
+            sys.exit(1)
         state['owners'][namespace + '/' + args[2]] = call['values']
         (root / 'state.json').write_text(json.dumps(state))
         sys.exit(0)
+if tool == 'docker':
+    if args[0] == 'ps':
+        print('registry')
+    elif args[0] == 'inspect':
+        print(json.dumps([{'Id':'registry', 'Name':'/registry', 'State':{'Running':True},
+            'Config':{'Image':'registry:2'}, 'Mounts':[],
+            'NetworkSettings':{'Ports':{'5000/tcp':[{'HostIp':'127.0.0.1','HostPort':'5001'}]},
+                'Networks':{'kind':{'IPAddress':'172.18.0.2'}}}}]))
+    elif args[:2] == ['network', 'ls']:
+        print('kind')
+    sys.exit(0)
 if tool == 'kubectl':
     namespace = args[args.index('-n') + 1]
     args = args[6:]
+    if args[0] in ['wait', 'rollout', 'apply']:
+        sys.exit(0)
+    if args[0] == 'create':
+        obj = call['object']
+        obj['metadata']['uid'] = 'fixture-uid'
+        state.setdefault('objects', {})[namespace + '/' + obj['kind'].lower() + '/' + obj['metadata']['name']] = obj
+        (root / 'state.json').write_text(json.dumps(state))
+        print(json.dumps(obj))
+        sys.exit(0)
+    if args[0] == 'delete':
+        state.get('objects', {}).pop(namespace + '/' + args[1] + '/' + args[2], None)
+        (root / 'state.json').write_text(json.dumps(state))
+        sys.exit(0)
+    if args[0] == 'patch':
+        sys.exit(0)
+    if args[0] == 'logs':
+        name = args[1].removeprefix('job/')
+        if name == 'platform-session-key-state':
+            print(json.dumps({'active':state['active']}))
+        elif name == 'platform-identity-check':
+            print(json.dumps({'keys':[state['active']]}))
+        elif name == 'platform-owner-state-' + state['org']:
+            print('t')
+        elif name.startswith(('platform-identity-issuer', 'platform-control-credentials-')):
+            obj = state['objects'][namespace + '/job/' + name]
+            query = obj['spec']['template']['spec']['containers'][0]['args'][-1]
+            print('["active","inactive"]' if 'json_build_array' in query else 't')
+        sys.exit(0)
     if args[0] == 'get':
         resource = namespace + '/' + args[1]
+        if resource == state.get('fail_read'):
+            sys.exit(1)
+        if args[1].startswith('job/'):
+            obj = state.get('objects', {}).get(resource)
+            if obj:
+                obj['status'] = {'conditions':[{'type':'Complete','status':'True'}]}
+                print(json.dumps(obj))
+            sys.exit(0)
+        if state.get('reapply') and args[1] in ['secret/wamn-nats-authorization', 'secret/wamn-oauth']:
+            sys.exit(0)
         if resource == state.get('missing'):
             sys.exit(0)
         if args[1] == 'cluster.postgresql.cnpg.io/wamn-pg':
-            print(json.dumps({'status': {'currentPrimary': 'wamn-pg-1'}}))
+            print(json.dumps({'spec':{'imageName':'postgres:18'}, 'status': {'currentPrimary': 'wamn-pg-1'}}))
             sys.exit(0)
         if args[1].startswith(('secret/', 'configmap/')):
             data = {key: 'fixture' for key in ['url', 'ca.crt', 'tls.crt', 'tls.key',
-                'key', 'api-key', '.dockerconfigjson', 'target.json']}
+                'key', 'api-key', '.dockerconfigjson', 'target.json', 'password']}
+            if resource in state.get('credentials', {}):
+                data['url'] = state['credentials'][resource]
             if args[1].startswith('secret/'):
                 data = {key: base64.b64encode(value.encode()).decode() for key, value in data.items()}
             print(json.dumps({'data': data}))
@@ -73,7 +131,7 @@ if tool == 'kubectl':
         print(json.dumps({'active': state.get('active'), 'published': None}))
         sys.exit(0)
 sys.exit(1)
-";
+"#;
 
 struct Fixture {
     chart: Chart,
@@ -101,6 +159,11 @@ impl Fixture {
                     "registry.example/components/http",
                     "selected.example/components/http",
                 ),
+        )?;
+        let values = chart.0.join("platform/identity/values.yaml");
+        std::fs::write(
+            &values,
+            std::fs::read_to_string(&values)?.replace("memory: 512Mi", "memory: 1Gi"),
         )?;
         let bin = chart.0.join("commands");
         std::fs::create_dir(&bin)?;
@@ -143,9 +206,9 @@ impl Fixture {
             image: chart.image("identity")?,
             pull_policy: "Never",
             issuer: "https://identity.identity.svc.cluster.local",
-            database_secret: "retained-identity-db",
-            tls_secret: "retained-identity-tls",
-            operator_ca_secret: "retained-operator-ca",
+            database_secret: "wamn-identity-db",
+            tls_secret: "identity-tls",
+            operator_ca_secret: "identity-operator-ca",
             resend_secret: "",
             resend_from: "",
             invite_url: "",
@@ -155,6 +218,7 @@ impl Fixture {
             },
         })?;
         let mut identity = entry["values"].clone();
+        identity["resources"] = json!({"limits":{"memory":"256Mi"}});
         identity["platform"] = json!({"chart":self.previous.0});
         let mut owners = json!({"platform/wamn":{"platform":{"chart":self.previous.0}},
             "identity/identity":identity, "hosts/alpha":{"application":"retained"}});
@@ -170,22 +234,44 @@ impl Fixture {
         )
     }
 
-    fn run(&self, selection: &str, state: &Value) -> anyhow::Result<(Output, Vec<Value>, Value)> {
+    fn run(
+        &self,
+        selection: Option<&str>,
+        state: &Value,
+    ) -> anyhow::Result<(Output, Vec<Value>, Value)> {
         std::fs::write(self.bin.join("state.json"), serde_json::to_vec(state)?)?;
         std::fs::write(self.bin.join("calls.jsonl"), "")?;
-        let output = Command::new(env!("CARGO_BIN_EXE_wamn"))
+        let mut command = Command::new(env!("CARGO_BIN_EXE_wamn"));
+        command
             .args(["platform", "deploy"])
             .arg(&self.file)
             .arg("--chart")
             .arg(&self.chart.0)
-            .args(["--only", selection])
-            .env("PATH", &self.path)
-            .output()?;
+            .env("PATH", &self.path);
+        if let Some(selection) = selection {
+            command.args(["--only", selection]);
+        }
+        let auth = self.bin.join("auth.json");
+        std::fs::write(
+            &auth,
+            r#"{"auths":{"localhost:5001":{"username":"user","password":"pass"}}}"#,
+        )?;
+        let output = command.env("WAMN_REGISTRY_AUTH_FILE", auth).output()?;
         let calls = std::fs::read_to_string(self.bin.join("calls.jsonl"))?
             .lines()
             .map(serde_json::from_str)
             .collect::<Result<Vec<_>, _>>()?;
         let after = serde_json::from_slice(&std::fs::read(self.bin.join("state.json"))?)?;
+        if selection.is_none() {
+            // The fake kind nodes mount nothing, so their retained work directory is disposable.
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            if let Some(directory) = stdout
+                .lines()
+                .find_map(|line| line.strip_prefix("work directory: "))
+            {
+                std::fs::remove_dir_all(directory)?;
+            }
+        }
         Ok((output, calls, after))
     }
 }
@@ -219,6 +305,12 @@ fn assert_operations(calls: &[Value], owner: (&str, &str), allow_upgrade: bool) 
                     }
                     "upgrade" if allow_upgrade => {
                         upgrades.push(call);
+                        assert!(args.iter().any(|arg| arg == "--wait"), "{call}");
+                        assert!(
+                            args.iter().any(|arg| arg == "--rollback-on-failure"),
+                            "{call}"
+                        );
+                        assert!(!args.iter().any(|arg| arg == "--take-ownership"), "{call}");
                         args[2].as_str().unwrap()
                     }
                     _ => panic!("unexpected Helm operation: {call}"),
@@ -252,9 +344,15 @@ fn platform_service_updates_change_only_the_selected_release() -> anyhow::Result
             }
             // Explicit selection can replace an unavailable recorded chart.
             if recorded {
-                state["owners"][&owner]["platform"]["chart"] = "/unavailable/old-chart".into();
+                state["owners"][&owner]["platform"]["chart"] =
+                    json!(fixture.previous.0.join("absent"));
             }
-            let (output, calls, mut after) = fixture.run(selection, &state)?;
+            state["owners"]["platform/wamn"]["platform"]["chart"] =
+                json!(fixture.previous.0.join("absent-default"));
+            if selection == "control" {
+                state["active"] = Value::Null;
+            }
+            let (output, calls, mut after) = fixture.run(Some(selection), &state)?;
             assert!(
                 output.status.success(),
                 "{}",
@@ -268,8 +366,8 @@ fn platform_service_updates_change_only_the_selected_release() -> anyhow::Result
             );
             if selection == "control" {
                 assert_eq!(
-                    values["runtime-operator"]["runtime"]["hostGroups"],
-                    state["owners"][&owner]["runtime-operator"]["runtime"]["hostGroups"]
+                    values["runtime-operator"]["runtime"]["hostGroups"][0]["image"],
+                    state["owners"][&owner]["runtime-operator"]["runtime"]["hostGroups"][0]["image"]
                 );
                 let rendered = calls
                     .iter()
@@ -301,6 +399,18 @@ fn platform_service_updates_change_only_the_selected_release() -> anyhow::Result
                     artifact_plan::select(&fixture.chart.0)?.image("identity")?
                 );
                 assert_eq!(values["image"]["pullPolicy"], "IfNotPresent");
+                let deployment = calls
+                    .iter()
+                    .filter_map(|call| call["rendered"].as_array())
+                    .flatten()
+                    .find(|object| object["kind"] == "Deployment")
+                    .unwrap();
+                assert_eq!(
+                    deployment["spec"]["template"]["spec"]["containers"][0]["resources"]["limits"]
+                        ["memory"],
+                    "1Gi"
+                );
+                assert_eq!(values["sessionTargetSecrets"], json!([]));
             }
             after["owners"][&owner] = state["owners"][&owner].clone();
             assert_eq!(
@@ -320,11 +430,14 @@ fn platform_service_updates_refuse_missing_initialization_without_mutation() -> 
             "control",
             format!("hosts/secret/wamn-control-{}", fixture.document.org),
         ),
-        ("identity", "identity/secret/retained-identity-db".into()),
+        ("identity", "identity/secret/wamn-identity-db".into()),
     ] {
         let target: UpgradeTarget = selection.parse()?;
         let (name, namespace) = target.owner(&fixture.document);
-        for signing_key in [true, false] {
+        for signing_key in [true, false]
+            .into_iter()
+            .filter(|present| *present || selection == "identity")
+        {
             let mut state = fixture.state(&target)?;
             let expected = if signing_key {
                 state["missing"] = missing.clone().into();
@@ -337,7 +450,7 @@ fn platform_service_updates_refuse_missing_initialization_without_mutation() -> 
                 state["active"] = Value::Null;
                 "active identity signing key".into()
             };
-            let (output, calls, after) = fixture.run(selection, &state)?;
+            let (output, calls, after) = fixture.run(Some(selection), &state)?;
             let error = String::from_utf8(output.stderr)?;
             assert!(!output.status.success());
             assert!(error.contains(&expected), "{error}");
@@ -360,7 +473,7 @@ fn platform_updates_refuse_missing_owners_and_pending_hosts_without_mutation() -
             .as_object_mut()
             .unwrap()
             .remove(&format!("{namespace}/{name}"));
-        let (output, calls, after) = fixture.run(selection, &state)?;
+        let (output, calls, after) = fixture.run(Some(selection), &state)?;
         assert!(!output.status.success());
         assert!(
             String::from_utf8(output.stderr)?
@@ -374,7 +487,7 @@ fn platform_updates_refuse_missing_owners_and_pending_hosts_without_mutation() -
                 if !groups_present {
                     state["owners"][format!("{namespace}/{name}")] = json!({});
                 }
-                let (output, calls, after) = fixture.run(selection, &state)?;
+                let (output, calls, after) = fixture.run(Some(selection), &state)?;
                 assert!(!output.status.success());
                 let error = String::from_utf8(output.stderr)?;
                 assert!(
@@ -388,6 +501,117 @@ fn platform_updates_refuse_missing_owners_and_pending_hosts_without_mutation() -
                 assert_operations(&calls, (&name, namespace), false);
                 assert_eq!(after, state);
             }
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn interrupted_platform_reapply_retains_default_and_service_selections() -> anyhow::Result<()> {
+    use wamn_control_provision::identity_issuer::identity_issuer_generation_role;
+    use wamn_control_provision::{
+        CredentialGeneration, WorkloadRoleFamily, WorkloadRoleScope, workload_generation_role,
+    };
+
+    let fixture = Fixture::new()?;
+    let repository = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let service = prepared_chart(&repository)?;
+    let control = format!("hosts/c-{}", fixture.document.org);
+    // One service has its own selection. The other inherits the platform default.
+    for own in [&control, "identity/identity"] {
+        let mut state = fixture.state(&UpgradeTarget::Control)?;
+        for (owner, values) in state["owners"].as_object_mut().unwrap() {
+            if owner == own {
+                values["platform"]["chart"] = json!(service.0);
+            } else if owner != "platform/wamn" {
+                values.as_object_mut().unwrap().remove("platform");
+            }
+        }
+        state["reapply"] = true.into();
+        state["org"] = fixture.document.org.clone().into();
+        state["fail_read"] = "platform/secret/wamn-pg-superuser".into();
+        let (output, first_calls, mut interrupted) = fixture.run(None, &state)?;
+        assert!(!output.status.success());
+        assert!(String::from_utf8_lossy(&output.stderr).contains("wamn-pg-superuser"));
+        let operator = first_calls
+            .iter()
+            .find(|call| call["values"]["platform"]["chart"].is_string())
+            .unwrap();
+        assert_eq!(
+            operator["values"]["platform"]["chart"],
+            fixture.previous.0.to_str().unwrap()
+        );
+        assert_eq!(
+            interrupted["owners"]["platform/wamn"]["platform"]["chart"],
+            state["owners"]["platform/wamn"]["platform"]["chart"]
+        );
+        for owner in [&control, "identity/identity"] {
+            assert_eq!(interrupted["owners"][owner], state["owners"][owner]);
+        }
+        interrupted.as_object_mut().unwrap().remove("fail_read");
+        let control_role = workload_generation_role(
+            WorkloadRoleFamily::Control,
+            WorkloadRoleScope::Org {
+                org: &fixture.document.org,
+                database: "wamn_system",
+            },
+            CredentialGeneration::A,
+        )?;
+        let identity_role = identity_issuer_generation_role(
+            "https://identity.identity.svc.cluster.local",
+            CredentialGeneration::A,
+        )?;
+        interrupted["credentials"] = json!({
+            format!("hosts/secret/wamn-control-{}", fixture.document.org): format!("postgresql://{control_role}:fixture@wamn-pg-rw.platform.svc.cluster.local/wamn_system"),
+            "identity/secret/wamn-identity-db": format!("postgresql://{identity_role}:fixture@wamn-pg-rw.platform.svc.cluster.local/wamn_system")
+        });
+        // Stop after both services apply, before edge readiness and the HTTP probe.
+        interrupted["stop_release"] = "hosts/wamn-edge".into();
+        let (output, retry_calls, after) = fixture.run(None, &interrupted)?;
+        assert!(!output.status.success());
+        for owner in ["platform/wamn", &control, "identity/identity"] {
+            let expected = if owner == own {
+                &service.0
+            } else {
+                &fixture.previous.0
+            };
+            assert_eq!(
+                after["owners"][owner]["platform"]["chart"],
+                expected.to_str().unwrap(),
+                "{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+        for owner in [&control, "identity/identity"] {
+            let (namespace, name) = owner.split_once('/').unwrap();
+            let upgrade = retry_calls
+                .iter()
+                .find(|call| {
+                    let args = call["args"].as_array().unwrap_or_else(|| {
+                        panic!(
+                            "missing upgrade for {owner}: {}",
+                            String::from_utf8_lossy(&output.stderr)
+                        )
+                    });
+                    call["tool"] == "helm"
+                        && args[0] == "upgrade"
+                        && args[2] == name
+                        && args
+                            .windows(2)
+                            .any(|pair| pair == [json!("--namespace"), json!(namespace)])
+                })
+                .unwrap_or_else(|| {
+                    panic!(
+                        "missing upgrade for {owner}: {}",
+                        String::from_utf8_lossy(&output.stderr)
+                    )
+                });
+            assert!(
+                upgrade["args"]
+                    .as_array()
+                    .unwrap()
+                    .contains(&json!("--wait"))
+            );
         }
     }
     Ok(())

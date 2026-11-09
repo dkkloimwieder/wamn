@@ -79,7 +79,7 @@ This section records the current code. It replaces the historical list of earlie
 | Publisher identity | No command accepts a caller-supplied publisher string. Publication records no publisher. The `catalog.releases` row of an applied release carries the record-history stamp of the authenticated deploy actor. |
 | Development loop | `wamn dev` prepares generation before the shared `schema::plan` decision. Its template reset and direct connection retain the same package SQL executor and records as deployed Jobs. |
 | Platform UI | Local kind deployment does not select the UI. The separate upload path still consumes a local bundle matching its stamped chart. |
-| Platform updates | Control and identity updates apply only their selected Helm release. They retain credentials, signing keys, and control host image overrides. Missing initialization refuses before writes. Hosts still refuse under DEP4-04. Untargeted runs keep recorded service charts and host overrides. Services without chart metadata inherit the recorded operator default. Unavailable recorded charts give restoration instructions. Untargeted runs still apply infrastructure, bootstrap, and edge. |
+| Platform updates | Control and identity updates use the supplied chart and upgrade only the selected release with readiness waits. They keep host image overrides and leave credentials and signing keys unchanged. Only identity reads signing state. Missing initialization refuses before writes. Hosts still refuse under DEP4-04. Untargeted runs retain the recorded platform default, service charts, and host overrides. Services without chart metadata inherit that default. Untargeted runs still apply infrastructure, bootstrap, and edge. |
 | Host runtime selection | The operator release `wamn` records one platform-wide chart reference. `environment/runtime.rs` reads it, and `environment/write.rs` renders the host groups of each application release from that chart. |
 
 The accepted Epic 2 record leaves `wamn-xy404`, `wamn-1riwn`, and `wamn-c361p` open.
@@ -412,7 +412,7 @@ Warnings identify schema differences, deprecated interfaces, and missing optiona
 ### 5.3 Platform upgrades: behavior, WAMN SQL, and infrastructure
 
 Epic 4 (section 7) implements section 5.3.1. Sections 5.3.2 and 5.3.3 remain later work.
-The CLI parses platform deployment targets. Applying a target is not implemented, and no `platform schema` command exists.
+Control and identity targets apply their selected releases. Host targets remain unfinished. No `platform schema` command exists.
 Persistent system database upgrades are unsupported in this rebuild. Persistent platform SQL upgrades are the deployment epic after Epic 4.
 
 **Intent:** Update one part of the platform without repeating initial installation or changing unrelated applications. Implement against an already running kind platform before introducing GCP-specific actions.
@@ -446,26 +446,40 @@ Each value names the prepared chart that supplies that service's artifacts and c
 
 An existing service without its own `platform.chart` inherits the value from the `platform/wamn` operator release.
 Missing service metadata does not mean that initialization is missing.
-A fresh installation without an operator release uses the supplied chart for every target.
+
+An existing-platform reapply uses and retains the recorded platform-default chart alongside the service selections.
+Infrastructure and later application deployments use that same default.
+An interruption before service application does not change the selections of a retry.
+A fresh installation without an operator release uses the supplied chart.
+Changing the global default is separate later work.
 
 A later `platform deploy` without `--only` keeps the recorded control and identity selections and the explicit host image overrides.
 It does not undo a targeted upgrade. Only an explicit target selection changes a target (owner decision 2026-11-09).
-The command resolves service selections before any resource change.
+The command resolves the platform default and service selections before any resource change.
 
-If a recorded chart is unavailable or invalid, the command refuses before any resource change.
+If a recorded chart is unavailable or invalid, an untargeted reapply refuses before any resource change.
 The error names the owner release and the recorded path.
-Restore the prepared chart at that path, or select a new one explicitly with `--only <target>`.
-The command never substitutes the supplied chart or other artifacts for an unavailable recorded chart.
+Restore the prepared chart at that path.
+For a service, an explicit `--only <target>` update can select a new chart.
+An untargeted reapply never substitutes the supplied chart for an unavailable recorded chart.
 
 Targeted updates require an existing owner release and never run bootstrap.
 Control and identity updates use the supplied `--chart` and record it with `selection_values` in the selected release.
-They retain the installed credential references and control host image overrides.
+An explicit target update does not resolve or require the previous chart directory.
+
+Service configuration comes from the selected chart and cluster document.
+Only named host image overrides carry over from installed service values.
+Each service records its selected chart. No other installed configuration carries over.
+Credential Secrets and signing keys stay unchanged.
+
 Control's Helm release now owns its Service and HTTP workload.
-The update reads required Secrets, ConfigMaps, and the active signing state before any write.
+The update reads required Secrets and ConfigMaps before any write.
+Only an identity update reads the active signing state.
 A missing input gives an explicit error. It never triggers initialization.
-The signing query runs read-only through the existing PostgreSQL primary. It creates no Job.
+The read-only signing query uses the existing PostgreSQL primary without a Job.
+
 Both installation and updates call the same resource functions.
-Installation then initializes the services. Targeted updates run no initialization and write no credential Secret.
+Installation prepares control credentials before the control release waits for readiness. Targeted updates run no initialization and write no credential Secret.
 Hosts still refuse under DEP4-04.
 
 Host runtime selections persist as `runtime-operator.runtime.hostGroups[].image` in the Helm release that owns the named group.

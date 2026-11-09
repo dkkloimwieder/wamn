@@ -24,8 +24,10 @@ pub async fn deploy(
     directory: &Path,
     output: &mut impl Write,
 ) -> anyhow::Result<()> {
-    // Resolve both recorded selections before any resource mutation.
+    // Resolve the platform default and both service selections before any mutation.
     let operator_values = resources::release_values(target, "platform", "wamn").await?;
+    let platform_chart =
+        artifact_plan::platform_chart(operator_values.as_ref(), chart.directory())?;
     let control_values =
         resources::release_values(target, "hosts", &format!("c-{}", document.org)).await?;
     let identity_values = resources::release_values(target, "identity", "identity").await?;
@@ -45,14 +47,15 @@ pub async fn deploy(
         identity_values.as_ref(),
         chart.directory(),
     )?;
+    let chart = &platform_chart;
     infrastructure(document, chart, target, directory).await?;
     initialize(document, chart, target, directory, output).await?;
-    let entry = identity::resource_entry(document, &identity_chart, identity_values)?;
+    let entry = identity::resource_entry(document, &identity_chart)?;
     resources::apply_release(target, &entry, directory).await?;
     identity::initialize(target, document, &identity_chart, directory).await?;
-    let entry = control::resource_entry(document, &control_chart, control_values)?;
-    resources::apply_release(target, &entry, directory).await?;
     control::initialize(target, document).await?;
+    let entry = control::resource_entry(document, &control_chart, control_values.as_ref())?;
+    resources::apply_release(target, &entry, directory).await?;
     let payload = chart.directory().join("platform/resources");
     let certificates = edge::certificates(&payload, document)?;
     apply(target, &certificates).await?;
@@ -81,8 +84,8 @@ pub async fn update(
             )
         })?;
     let entry = match selection {
-        UpgradeTarget::Control => control::resource_entry(document, chart, Some(installed))?,
-        UpgradeTarget::Identity => identity::resource_entry(document, chart, Some(installed))?,
+        UpgradeTarget::Control => control::resource_entry(document, chart, Some(&installed))?,
+        UpgradeTarget::Identity => identity::resource_entry(document, chart)?,
         UpgradeTarget::Host { .. } => {
             chart.selection_values(document, selection, installed)?;
             anyhow::bail!(
@@ -91,7 +94,9 @@ pub async fn update(
         }
     };
     resources::require_inputs(target, &entry).await?;
-    identity::require_keys(target).await?;
+    if selection == &UpgradeTarget::Identity {
+        identity::require_keys(target).await?;
+    }
     resources::apply_release(target, &entry, directory).await
 }
 
@@ -317,79 +322,65 @@ mod tests {
     use serde_json::json;
 
     #[test]
-    fn service_updates_render_with_existing_credential_and_key_references() -> anyhow::Result<()> {
+    fn service_updates_render_selected_configuration_and_retain_selections() -> anyhow::Result<()> {
         let repository = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
         let document = ClusterDocument::compile(&repository.join("deploy/kind/cluster.k"))?;
         let previous = artifact_plan::test_util::prepared_chart(&repository)?;
         let incoming = artifact_plan::test_util::prepared_chart(&repository)?;
         let file = incoming.0.join("values.yaml");
         let mut defaults: Value = serde_yaml::from_slice(&std::fs::read(&file)?)?;
-        defaults["platform"]["identity"]["image"] =
-            json!(format!("next.example/identity@sha256:{}", "b".repeat(64)));
-        defaults["platform"]["roles"]["http"]["image"] =
-            json!(format!("next.example/http@sha256:{}", "b".repeat(64)));
-        defaults["runtime-operator"]["runtime"]["image"]["tag"] =
-            json!(format!("next@sha256:{}", "b".repeat(64)));
+        defaults["runtime-operator"]["runtime"]["hostGroups"] = json!([{
+            "name":format!("c-{}", document.org), "replicas":2,
+            "resources":{"limits":{"memory":"3Gi"}}
+        }]);
+        std::fs::write(file, serde_yaml::to_string(&defaults)?)?;
+        let file = incoming.0.join("platform/identity/values.yaml");
+        let mut defaults: Value = serde_yaml::from_slice(&std::fs::read(&file)?)?;
+        defaults["resources"]["limits"]["memory"] = "1Gi".into();
         std::fs::write(file, serde_yaml::to_string(&defaults)?)?;
         let previous = artifact_plan::select(&previous.0)?;
         let incoming = artifact_plan::select(&incoming.0)?;
-        for selection in [UpgradeTarget::Control, UpgradeTarget::Identity] {
-            let mut entry = match selection {
-                UpgradeTarget::Control => control::resource_entry(&document, &previous, None)?,
-                UpgradeTarget::Identity => identity::resource_entry(&document, &previous, None)?,
-                UpgradeTarget::Host { .. } => unreachable!(),
-            };
-            if selection == UpgradeTarget::Identity {
-                entry["values"]["databaseSecret"] = "retained-db".into();
-                entry["values"]["tlsSecret"] = "retained-tls".into();
-                entry["values"]["operatorCaSecret"] = "retained-operator-ca".into();
-                entry["values"]["sessionTargetSecrets"] = json!(["retained-target"]);
-            }
-            let before = resources::helm_template(&entry)?;
-            let updated = match selection {
-                UpgradeTarget::Control => {
-                    control::resource_entry(&document, &incoming, Some(entry["values"].take()))?
-                }
-                UpgradeTarget::Identity => {
-                    identity::resource_entry(&document, &incoming, Some(entry["values"].take()))?
-                }
-                UpgradeTarget::Host { .. } => unreachable!(),
-            };
-            let after = resources::helm_template(&updated)?;
-            for deployment in before
+        let mut installed = control::resource_entry(&document, &previous, None)?["values"].take();
+        let image = json!({"registry":"retained.example", "repository":"host",
+            "tag":"override", "pull_policy":"Never"});
+        installed["runtime-operator"]["runtime"]["hostGroups"][0]["image"] = image.clone();
+        installed["routeHost"] = "stale.example".into();
+        installed["platform"]["stale"] = true.into();
+        let control = control::resource_entry(&document, &incoming, Some(&installed))?;
+        let identity = identity::resource_entry(&document, &incoming)?;
+        for entry in [&control, &identity] {
+            assert_eq!(
+                entry["values"]["platform"]["chart"],
+                incoming.directory().to_str().unwrap()
+            );
+            assert!(entry["values"]["platform"].get("stale").is_none());
+            let objects = resources::helm_template(entry)?;
+            let deployment = objects
                 .iter()
-                .filter(|object| object["kind"] == "Deployment")
-            {
-                let updated = after
-                    .iter()
-                    .find(|object| {
-                        object["kind"] == deployment["kind"]
-                            && object["metadata"]["name"] == deployment["metadata"]["name"]
-                    })
-                    .unwrap();
-                let old = &deployment["spec"]["template"]["spec"];
-                let new = &updated["spec"]["template"]["spec"];
+                .find(|object| object["kind"] == "Deployment")
+                .unwrap();
+            let container = &deployment["spec"]["template"]["spec"]["containers"][0];
+            if entry["namespace"] == "hosts" {
+                assert_eq!(deployment["spec"]["replicas"], 2);
+                assert_eq!(container["resources"]["limits"]["memory"], "3Gi");
+                assert_eq!(container["image"], "retained.example/host:override");
+                assert_eq!(control["values"]["routeHost"], document.route_hosts.control);
                 assert_eq!(
-                    new["volumes"], old["volumes"],
-                    "credential and key mounts stay unchanged"
+                    control["values"]["runtime-operator"]["runtime"]["hostGroups"][0]["image"],
+                    image
                 );
-                for container in old["containers"].as_array().unwrap() {
-                    let updated = new["containers"]
+            } else {
+                assert_eq!(container["resources"]["limits"]["memory"], "1Gi");
+                assert!(
+                    container["env"]
                         .as_array()
                         .unwrap()
                         .iter()
-                        .find(|next| next["name"] == container["name"])
-                        .unwrap();
-                    assert_eq!(
-                        updated["env"], container["env"],
-                        "credential and issuer references stay unchanged"
-                    );
-                    assert_eq!(updated["volumeMounts"], container["volumeMounts"]);
-                    assert_ne!(updated["image"], container["image"]);
-                }
+                        .any(|env| env["valueFrom"]["secretKeyRef"]["name"] == "wamn-identity-db")
+                );
             }
             assert!(
-                !after
+                !objects
                     .iter()
                     .any(|object| object["kind"] == "Secret" || object["kind"] == "Job")
             );

@@ -370,18 +370,12 @@ pub(super) fn platform_chart_input(
 pub(super) fn resource_entry(
     document: &ClusterDocument,
     chart: &SelectedChart,
-    installed: Option<Value>,
 ) -> anyhow::Result<Value> {
     let mut entry = platform_chart_input(
         &chart.directory().join("platform/identity"),
         document,
         chart.image("identity")?,
     )?;
-    let image = entry["values"]["image"].take();
-    if let Some(installed) = installed {
-        super::manifests::merge(&mut entry["values"], installed);
-    }
-    entry["values"]["image"] = image;
     entry["values"] =
         chart.selection_values(document, &UpgradeTarget::Identity, entry["values"].take())?;
     Ok(entry)

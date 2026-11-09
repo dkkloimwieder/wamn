@@ -254,7 +254,7 @@ pub(crate) async fn helm(
     Ok(output.stdout)
 }
 
-/// Apply one service release before its separate initialization.
+/// Apply one service release and wait for readiness.
 pub(super) async fn apply_release(
     target: &Target,
     entry: &Value,
@@ -270,27 +270,24 @@ pub(super) async fn apply_release(
         ..target.clone()
     };
     wamn_release_control::release_chart::recover_pending(&owner, name).await?;
-    // Adopt the control objects that the installer previously applied directly.
-    // Initialization supplies credentials after resource application, so do not wait here.
-    helm(
-        target,
-        &[
-            "upgrade".as_ref(),
-            "--install".as_ref(),
-            name.as_ref(),
-            chart.as_ref(),
-            "--namespace".as_ref(),
-            namespace.as_ref(),
-            "-f".as_ref(),
-            values.as_os_str(),
-            "--take-ownership".as_ref(),
-            "--skip-crds".as_ref(),
-            "--history-max".as_ref(),
-            "50".as_ref(),
-        ],
+    let poller = (namespace == "hosts")
+        .then(|| crate::environment::host_report::Poller::start(&owner, name));
+    let upgraded = wamn_release_control::release_chart::upgrade(
+        &owner,
+        Path::new(chart),
+        name,
+        &values,
+        Duration::from_secs(600),
+        "platform service",
     )
-    .await?;
-    Ok(())
+    .await;
+    match poller {
+        Some(poller) => {
+            let report = poller.finish();
+            upgraded.map_err(|error| crate::environment::host_report::attach(&error, &report))
+        }
+        None => upgraded,
+    }
 }
 
 /// Require the references rendered by this release before changing any resource.
