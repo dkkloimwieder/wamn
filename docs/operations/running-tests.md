@@ -702,9 +702,10 @@ Select each test by its exact name in the `platform_apply_kind` Cargo target:
 | --- | --- | --- |
 | `platform_install_recovery_kind` | Interrupt platform installation after its first Kubernetes write, retry, status, and owner sign-in | Creates one fresh kind cluster |
 | `application_deploy_kind` | Source and published code updates, interrupted installation and replacement recovery, reapply, rollback, missing artifacts, stale checkout, retained data, and independent applications | Attaches to an existing disposable kind platform |
+| `platform_upgrade_kind` | Independent control and identity updates, one application host update, code reapply, earlier runtime selection, and retained data | Attaches to an existing disposable kind platform |
 | `sql_job_kind` | One published data migration through the SQL Job, unchanged serving code, and data read through the deployed host | Attaches to an existing disposable kind platform |
 | `same_name_reset_kind` | Two initial application releases, data, published schema-change reset, interrupted same-name CNPG reset, reconnection, durable refusal, and environment isolation | Attaches to an existing disposable kind platform |
-| `platform_apply_kind` | Fresh-platform acceptance: normal installation and interrupted installation once each, plus all focused bodies on the normal platform | Creates two fresh kind clusters |
+| `platform_apply_kind` | Fresh-platform acceptance: normal and interrupted installation, plus application, SQL, and reset bodies on the normal platform | Creates two fresh kind clusters |
 
 The focused application and schema tests never install or rebuild the platform.
 Each focused application invocation creates a unique project, hostnames, and package versions.
@@ -831,6 +832,65 @@ kind delete cluster --name wamn-test-dep3
 
 The journeys have no saved completion state or resume system.
 Retry product deployment with the same cluster document and prepared chart.
+
+#### Focused platform upgrade preparation
+
+DEP4-06 prepares `platform_upgrade_kind` in `crates/control/dev/tests/platform_apply_kind.rs`.
+Its body lives in `support/platform_upgrade.rs` beside the existing application journey.
+The test compiles separately from execution.
+The test stays ignored until its externally prepared cluster, second chart, and owner password are supplied.
+The setup, cleanup, and upgrade operations still need separate owner approval for cluster execution.
+Allow 20 to 30 minutes, including application preparation and service restoration.
+This duration is an estimate, not a measured result.
+
+Use the disposable platform and publication inputs described above.
+Keep its installed chart directory available.
+Set the existing `WAMN_RELEASE_CHART` variable to a second prepared chart.
+That chart must select distinct immutable HTTP, identity, and host images.
+Publish those images before the run.
+The test builds no container image and never replaces the installed default chart.
+
+The existing application journey prepares two immutable application releases before the upgrade body.
+It creates a unique project through the control route.
+It deploys beta and alpha through `wamn deploy --release`.
+It creates counter and widget rows through each application's routes.
+The upgrade body uses only the prepared charts and published release digests.
+It runs no reset, migration, recovery matrix, or aggregate acceptance case.
+
+Make sure that setup works independently before you approve the upgrade body.
+Run `wamn platform status "$WAMN_TEST_CLUSTER"` against the disposable platform.
+Make sure that the platform services report ready.
+Use `helm get values` to make sure that every recorded chart remains readable.
+Use the existing `wamn schema publish` producer to prepare the two scratch application releases.
+Deploy each published digest into a fresh environment with `wamn deploy --release DIGEST --env FILE`.
+Use `wamn status --env FILE` to observe distinct ready application releases.
+Create and read one counter and widget through each application's routes.
+Retain their identifiers for the cleanup observation.
+These operations show that setup works without a platform upgrade.
+
+Make sure that cleanup works on that environment before you approve the upgrade body.
+Run `wamn-ctl env delete ORG/PROJECT/ENV --data` in a terminal.
+Enter only the disposable environment's coordinate at its confirmation prompt.
+Observe that its Helm releases, CNPG Cluster, database, and roles disappear.
+Make sure that the other platform resources remain ready.
+The existing journey supplies the same terminal confirmation through `script`.
+The upgrade body restores its original control and identity charts before environment deletion.
+The test removes its scratch checkout and private directory after success.
+Failures retain resources, private inputs, and logs for diagnosis.
+The test never deletes the attached platform.
+Project deletion remains unsupported by the product.
+
+After setup and cleanup pass, obtain approval for this exact command:
+
+```bash
+CARGO_TARGET_DIR=/home/kaalin/.cache/wamn-target/dep4 \
+  cargo test --locked --offline -p wamn-dev-control --test platform_apply_kind platform_upgrade_kind -- --ignored --exact --nocapture
+```
+
+Supply `WAMN_TEST_CLUSTER`, `WAMN_TEST_OWNER_PASSWORD`, `WAMN_KCL`, and the publication inputs from the preceding instructions.
+Supply the second chart through `WAMN_RELEASE_CHART`.
+The case observes running image digests, Helm revisions, pods, credentials, signing rows, schema identity, and application data.
+It leaves setup, cleanup, readiness, and data retention unverified until their approved cluster runs pass.
 
 ### Removed application cluster coverage
 

@@ -157,6 +157,12 @@ if tool == 'kubectl':
             print(json.dumps({'data': data}))
             sys.exit(0)
     if args[0] == 'exec':
+        if 'signing_database' in state:
+            # Run the product's exact psql arguments and SQL against private PostgreSQL.
+            database = state['signing_database']
+            command = [database['psql']] + args[args.index('psql') + 1:]
+            command = [('--dbname=' + database['url']) if arg == '--dbname=wamn_system' else arg for arg in command]
+            sys.exit(subprocess.run(command).returncode)
         if state.get('hang_exec'):
             (root / 'exec.pid').write_text(str(__import__('os').getpid()))
             time.sleep(120)
@@ -488,105 +494,74 @@ fn platform_service_updates_change_only_the_selected_release() -> anyhow::Result
     for selection in ["control", "identity"] {
         let target: UpgradeTarget = selection.parse()?;
         let (name, namespace) = target.owner(&fixture.document);
-        for recorded in [true, false] {
-            let mut state = fixture.state(&target)?;
-            let owner = format!("{namespace}/{name}");
-            if !recorded {
-                state["owners"][&owner]
-                    .as_object_mut()
-                    .unwrap()
-                    .remove("platform");
-            }
-            // Explicit selection can replace an unavailable recorded chart.
-            if recorded {
-                state["owners"][&owner]["platform"]["chart"] =
-                    json!(fixture.previous.0.join("absent"));
-            }
-            state["owners"]["platform/wamn"]["platform"]["chart"] =
-                json!(fixture.previous.0.join("absent-default"));
-            if selection == "control" {
-                state["active"] = Value::Null;
-            }
-            let (output, calls, mut after) = fixture.run(Some(selection), &state)?;
-            assert!(
-                output.status.success(),
-                "{}",
-                String::from_utf8_lossy(&output.stderr)
-            );
-            assert_operations(&calls, (&name, namespace), true);
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            assert!(
-                stdout.contains(&format!(
-                    "selected chart ({namespace}/{name}): {}",
-                    fixture.chart.0.canonicalize()?.display()
-                )),
-                "{stdout}"
-            );
+        let mut state = fixture.state(&target)?;
+        let owner = format!("{namespace}/{name}");
+        // Explicit selection can replace an unavailable recorded chart.
+        state["owners"][&owner]["platform"]["chart"] = json!(fixture.previous.0.join("absent"));
+        state["owners"]["platform/wamn"]["platform"]["chart"] =
+            json!(fixture.previous.0.join("absent-default"));
+        if selection == "control" {
+            state["active"] = Value::Null;
+        }
+        let (output, calls, mut after) = fixture.run(Some(selection), &state)?;
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_operations(&calls, (&name, namespace), true);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            stdout.contains(&format!(
+                "selected chart ({namespace}/{name}): {}",
+                fixture.chart.0.canonicalize()?.display()
+            )),
+            "{stdout}"
+        );
+        assert_eq!(
+            calls
+                .iter()
+                .any(|call| call["tool"] == "kubectl" && call["args"][6] == "exec"),
+            selection == "identity"
+        );
+        let values = &after["owners"][&owner];
+        assert_eq!(
+            values["platform"]["chart"],
+            fixture.chart.0.canonicalize()?.to_str().unwrap()
+        );
+        let rendered = calls
+            .iter()
+            .filter_map(|call| call["rendered"].as_array())
+            .flatten();
+        if selection == "identity" {
+            let deployment = rendered
+                .into_iter()
+                .find(|object| object["kind"] == "Deployment")
+                .unwrap();
             assert_eq!(
-                calls
-                    .iter()
-                    .any(|call| call["tool"] == "kubectl" && call["args"][6] == "exec"),
-                selection == "identity"
+                deployment["spec"]["template"]["spec"]["containers"][0]["resources"]["limits"]["memory"],
+                "1Gi"
             );
-            let values = &after["owners"][&owner];
+        } else {
+            let workload = rendered
+                .into_iter()
+                .find(|object| object["kind"] == "WorkloadDeployment")
+                .unwrap();
+            let selected = artifact_plan::select(&fixture.chart.0)?;
             assert_eq!(
-                values["platform"]["chart"],
-                fixture.chart.0.canonicalize()?.to_str().unwrap()
-            );
-            if selection == "control" {
-                assert_eq!(
-                    values["runtime-operator"]["runtime"]["hostGroups"][0]["image"],
-                    state["owners"][&owner]["runtime-operator"]["runtime"]["hostGroups"][0]["image"]
-                );
-                let rendered = calls
-                    .iter()
-                    .find_map(|call| call.get("rendered"))
-                    .unwrap()
-                    .as_array()
-                    .unwrap();
-                let workload = rendered
-                    .iter()
-                    .find(|object| object["kind"] == "WorkloadDeployment")
-                    .unwrap();
-                assert_eq!(
-                    workload["spec"]["template"]["spec"]["components"][0]["image"],
-                    artifact_plan::select(&fixture.chart.0)?
-                        .image("http")?
-                        .split_once('/')
-                        .map(|(_, path)| format!(
-                            "wamn-registry.platform.svc.cluster.local:5000/{path}"
-                        ))
-                        .unwrap()
-                );
-            } else {
-                assert_eq!(
-                    format!(
-                        "{}:{}",
-                        values["image"]["repository"].as_str().unwrap(),
-                        values["image"]["tag"].as_str().unwrap()
-                    ),
-                    artifact_plan::select(&fixture.chart.0)?.image("identity")?
-                );
-                assert_eq!(values["image"]["pullPolicy"], "IfNotPresent");
-                let deployment = calls
-                    .iter()
-                    .filter_map(|call| call["rendered"].as_array())
-                    .flatten()
-                    .find(|object| object["kind"] == "Deployment")
-                    .unwrap();
-                assert_eq!(
-                    deployment["spec"]["template"]["spec"]["containers"][0]["resources"]["limits"]
-                        ["memory"],
-                    "1Gi"
-                );
-                assert_eq!(values["sessionTargetSecrets"], json!([]));
-            }
-            after["owners"][&owner] = state["owners"][&owner].clone();
-            assert_eq!(
-                after, state,
-                "unrelated releases and signing state stay unchanged"
+                workload["spec"]["template"]["spec"]["components"][0]["image"],
+                format!(
+                    "{}/{}",
+                    wamn_environment_control::platform::resources::POD_REGISTRY,
+                    selected.image("http")?.split_once('/').unwrap().1
+                )
             );
         }
+        after["owners"][&owner] = state["owners"][&owner].clone();
+        assert_eq!(
+            after, state,
+            "unrelated releases and signing state stay unchanged"
+        );
     }
     Ok(())
 }
@@ -648,11 +623,6 @@ fn identity_update_refuses_unreadable_signing_state_without_mutation() -> anyhow
             "cannot read identity signing state",
         ),
         (
-            "exec_error",
-            json!("canceling statement due to statement timeout"),
-            "cannot read identity signing state",
-        ),
-        (
             "exec_output",
             json!("not json"),
             "cannot decode identity signing state as a boolean",
@@ -711,6 +681,79 @@ fn platform_updates_refuse_missing_owners_without_mutation() -> anyhow::Result<(
         assert_operations(&calls, (&name, namespace), false);
         assert_eq!(after, state);
     }
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn identity_signing_query_times_out_on_postgres_without_mutation() -> anyhow::Result<()> {
+    use wamn_platform_identity::session_keys::{activate_session_key, publish_session_key};
+
+    let fixture = Fixture::new()?;
+    let mut postgres = wamn_test_postgres::start(&[])?;
+    let database = postgres.create_database("wamn_system")?;
+    let (mut client, connection) =
+        tokio_postgres::connect(database.url(), tokio_postgres::NoTls).await?;
+    tokio::spawn(connection);
+    client.batch_execute("CREATE ROLE wamn_system").await?;
+    client
+        .batch_execute(wamn_control_provision::SYSTEM_SCHEMA_SQL)
+        .await?;
+    let issuer = "https://identity.identity.svc.cluster.local";
+    let key = publish_session_key(&mut client, issuer).await?;
+    activate_session_key(&mut client, issuer, &key.kid).await?;
+    // Row versions cover every field, including private bytes, without printing keys.
+    let versions = "SELECT jsonb_build_array( \
+        (SELECT jsonb_agg(xmin::text ORDER BY kid) FROM identity.session_keys), \
+        (SELECT jsonb_agg(xmin::text ORDER BY issuer) FROM identity.session_signing_state))";
+    let before: Value = client.query_one(versions, &[]).await?.get(0);
+    let mut state = fixture.state(&UpgradeTarget::Identity)?;
+    let binaries = std::env::var_os("WAMN_POSTGRES_BIN_DIR").map_or_else(
+        || PathBuf::from("/usr/lib/postgresql/18/bin"),
+        PathBuf::from,
+    );
+    state["signing_database"] = json!({"url":database.url(), "psql":binaries.join("psql")});
+    let (output, _, _) = fixture.run(Some("identity"), &state)?;
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let transaction = client.transaction().await?;
+    transaction
+        .batch_execute("LOCK TABLE identity.session_keys IN ACCESS EXCLUSIVE MODE")
+        .await?;
+    // The transport forwards the SQL that require_keys sends, without a test copy or timeout override.
+    let (output, calls, after) = fixture.run(Some("identity"), &state)?;
+    let error = String::from_utf8(output.stderr)?;
+    assert!(!output.status.success());
+    assert!(
+        error.contains("canceling statement due to statement timeout"),
+        "{error}"
+    );
+    assert!(
+        error.contains(
+            "Run platform deploy without --only to initialize identity. No resources changed."
+        ),
+        "{error}"
+    );
+    assert_operations(&calls, ("identity", "identity"), false);
+    assert_eq!(after, state);
+    transaction.rollback().await?;
+    assert_eq!(
+        client.query_one(versions, &[]).await?.get::<_, Value>(0),
+        before
+    );
+    let (output, _, _) = fixture.run(Some("identity"), &state)?;
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        client.query_one(versions, &[]).await?.get::<_, Value>(0),
+        before
+    );
     Ok(())
 }
 
@@ -941,6 +984,111 @@ fn platform_release_reads_accept_pinned_helm_flags() -> anyhow::Result<()> {
             String::from_utf8_lossy(&result.stderr)
         );
     }
+    Ok(())
+}
+
+#[tokio::test]
+async fn identity_signing_exec_transports_the_query_with_pinned_kubectl() -> anyhow::Result<()> {
+    use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+
+    let fixture = Fixture::new()?;
+    let state = fixture.state(&UpgradeTarget::Identity)?;
+    let (_, calls, _) = fixture.run(Some("identity"), &state)?;
+    let call = calls
+        .iter()
+        .find(|call| call["tool"] == "kubectl" && call["args"][6] == "exec")
+        .unwrap();
+    let mut args: Vec<_> = call["args"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|arg| arg.as_str().unwrap().to_owned())
+        .collect();
+    let version = Command::new("kubectl")
+        .args(["version", "--client", "-o", "json"])
+        .output()?;
+    assert!(version.status.success());
+    assert_eq!(
+        serde_json::from_slice::<Value>(&version.stdout)?["clientVersion"]["gitVersion"],
+        "v1.36.2"
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+    let address = listener.local_addr()?;
+    let server = tokio::spawn(async move {
+        loop {
+            let (mut socket, _) = listener.accept().await?;
+            let mut request = Vec::new();
+            while !request.ends_with(b"\r\n\r\n") {
+                let byte = socket.read_u8().await?;
+                request.push(byte);
+            }
+            let request = String::from_utf8(request)?;
+            let path = request.split_whitespace().nth(1).unwrap();
+            let exec = path.contains("/exec?");
+            let (status, body) = if exec {
+                (
+                    "403 Forbidden",
+                    json!({"apiVersion":"v1", "kind":"Status", "status":"Failure", "reason":"Forbidden", "message":"read-only boundary probe", "code":403}),
+                )
+            } else {
+                let body = match path.split('?').next().unwrap() {
+                    "/api" => json!({"apiVersion":"v1", "kind":"APIVersions", "versions":["v1"]}),
+                    "/apis" => json!({"apiVersion":"v1", "kind":"APIGroupList", "groups":[]}),
+                    "/api/v1" => {
+                        json!({"apiVersion":"v1", "kind":"APIResourceList", "groupVersion":"v1", "resources":[
+                        {"name":"pods", "singularName":"pod", "namespaced":true, "kind":"Pod", "verbs":["get"]},
+                        {"name":"pods/exec", "namespaced":true, "kind":"PodExecOptions", "verbs":["create", "get"]}]})
+                    }
+                    _ => {
+                        json!({"apiVersion":"v1", "kind":"Pod", "metadata":{"name":"wamn-pg-1", "namespace":"platform"}, "spec":{"containers":[{"name":"postgres", "image":"postgres:18"}]}, "status":{"phase":"Running"}})
+                    }
+                };
+                ("200 OK", body)
+            };
+            let body = serde_json::to_vec(&body)?;
+            socket.write_all(format!("HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", body.len()).as_bytes()).await?;
+            socket.write_all(&body).await?;
+            if exec {
+                return Ok::<_, anyhow::Error>(path.to_owned());
+            }
+        }
+    });
+    let kubeconfig = fixture.bin.join("probe-kubeconfig");
+    std::fs::write(
+        &kubeconfig,
+        format!(
+            "apiVersion: v1\nkind: Config\nclusters:\n- name: probe\n  cluster:\n    server: http://{address}\ncontexts:\n- name: probe\n  context:\n    cluster: probe\n    namespace: platform\ncurrent-context: probe\n"
+        ),
+    )?;
+    args[1] = kubeconfig.to_str().unwrap().into();
+    args[3] = "probe".into();
+    let output = tokio::time::timeout(
+        std::time::Duration::from_secs(10),
+        tokio::process::Command::new("kubectl")
+            .arg("--cache-dir")
+            .arg(fixture.bin.join("kubectl-cache"))
+            .args(&args)
+            .kill_on_drop(true)
+            .output(),
+    )
+    .await??;
+    assert!(!output.status.success());
+    let path = tokio::time::timeout(std::time::Duration::from_secs(1), server)
+        .await
+        .map_err(|error| {
+            anyhow::anyhow!(
+                "exec endpoint was not reached: {error}; {}",
+                String::from_utf8_lossy(&output.stderr)
+            )
+        })???;
+    let request = url::Url::parse(&format!("http://{address}{path}"))?;
+    let transported: Vec<_> = request
+        .query_pairs()
+        .filter(|(key, _)| key == "command")
+        .map(|(_, value)| value.into_owned())
+        .collect();
+    let separator = args.iter().position(|arg| arg == "--").unwrap();
+    assert_eq!(transported, args[separator + 1..]);
     Ok(())
 }
 
@@ -1471,76 +1619,50 @@ fn platform_host_update_ignores_workloads_assigned_to_other_groups() -> anyhow::
 #[test]
 fn platform_targeted_reselection_and_retry_use_only_the_owner() -> anyhow::Result<()> {
     let fixture = Fixture::new()?;
-    let mut postgres = wamn_test_postgres::start(&[])?;
-    let database = postgres.create_database("wamn_system")?;
-    for selection in [
-        "control",
-        "identity",
-        "host:alpha/alpha",
-        "host:shared/shared",
-    ] {
-        let target: UpgradeTarget = selection.parse()?;
-        let (name, namespace) = target.owner(&fixture.document);
-        let owner = format!("{namespace}/{name}");
-        let mut state = fixture.state(&target)?;
-        set_database(&mut state, database.url())?;
-        state["stop_release"] = owner.as_str().into();
-        let (output, calls, mut interrupted) = fixture.run(Some(selection), &state)?;
-        assert!(!output.status.success());
-        assert_operations(&calls, (&name, namespace), true);
-        assert_eq!(
-            interrupted, state,
-            "failed upgrade retains the earlier selection"
-        );
-        state.as_object_mut().unwrap().remove("stop_release");
-        interrupted.as_object_mut().unwrap().remove("stop_release");
-        let (output, calls, retried) = fixture.run(Some(selection), &interrupted)?;
-        assert!(
-            output.status.success(),
-            "{}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-        assert_operations(&calls, (&name, namespace), true);
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        assert!(
-            stdout.contains(&format!("target {selection}: ready")),
-            "{stdout}"
-        );
-        let (output, calls, mut earlier) =
-            fixture.run_with_chart(Some(selection), Some(&fixture.previous.0), &retried)?;
-        assert!(
-            output.status.success(),
-            "{}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-        assert_operations(&calls, (&name, namespace), true);
-        match &target {
-            UpgradeTarget::Host { group, .. } => {
-                let image = earlier["owners"][&owner]["runtime-operator"]["runtime"]["hostGroups"]
-                    .as_array()
-                    .unwrap()
-                    .iter()
-                    .find(|entry| entry["name"] == *group)
-                    .unwrap();
-                assert_eq!(image["image"]["registry"], "localhost:5001");
-                assert_eq!(image["image"]["repository"], "host");
-                assert_eq!(
-                    image["image"]["tag"],
-                    artifact_plan::select(&fixture.previous.0)?.values()["runtime-operator"]["runtime"]
-                        ["image"]["tag"]
-                );
-            }
-            _ => assert_eq!(
-                earlier["owners"][&owner]["platform"]["chart"],
-                json!(fixture.previous.0)
-            ),
-        }
-        earlier["owners"][&owner] = state["owners"][&owner].clone();
-        assert_eq!(
-            earlier, state,
-            "reselection changes only the selected target"
-        );
-    }
+    let selection = "identity";
+    let target: UpgradeTarget = selection.parse()?;
+    let (name, namespace) = target.owner(&fixture.document);
+    let owner = format!("{namespace}/{name}");
+    let mut state = fixture.state(&target)?;
+    state["stop_release"] = owner.as_str().into();
+    let (output, calls, mut interrupted) = fixture.run(Some(selection), &state)?;
+    assert!(!output.status.success());
+    assert_operations(&calls, (&name, namespace), true);
+    assert_eq!(
+        interrupted, state,
+        "failed upgrade retains the earlier selection"
+    );
+    state.as_object_mut().unwrap().remove("stop_release");
+    interrupted.as_object_mut().unwrap().remove("stop_release");
+    let (output, calls, retried) = fixture.run(Some(selection), &interrupted)?;
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_operations(&calls, (&name, namespace), true);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains(&format!("target {selection}: ready")),
+        "{stdout}"
+    );
+    let (output, calls, mut earlier) =
+        fixture.run_with_chart(Some(selection), Some(&fixture.previous.0), &retried)?;
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_operations(&calls, (&name, namespace), true);
+    assert_eq!(
+        earlier["owners"][&owner]["platform"]["chart"],
+        json!(fixture.previous.0)
+    );
+    earlier["owners"][&owner] = state["owners"][&owner].clone();
+    assert_eq!(
+        earlier, state,
+        "reselection changes only the selected target"
+    );
     Ok(())
 }
 

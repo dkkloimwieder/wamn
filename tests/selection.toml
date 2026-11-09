@@ -820,6 +820,22 @@ ignored = true
 resource_lock = ""
 
 [[suites]]
+id = "platform-upgrade-kind"
+tier = "kind"
+workspace = "root"
+package = "wamn-dev-control"
+target = ["test:platform_apply_kind"]
+tests = ["platform_upgrade_kind"]
+features = []
+prerequisites = ["docker", "kind", "helm", "kubectl", "openssl", "script"]
+inputs = ["^crates/control/dev/tests/support/platform_upgrade\\.rs$"]
+execution = "libtest"
+mode = "local"
+select_packages = ["wamn-release-control", "wamn-environment-control", "wamn-dev-control"]
+ignored = true
+resource_lock = ""
+
+[[suites]]
 id = "registry-image-kind"
 tier = "kind"
 workspace = "root"

@@ -23,11 +23,15 @@ mod schema_reset;
 #[path = "schema_job.rs"]
 mod schema_job;
 
+#[path = "platform_upgrade.rs"]
+mod platform_upgrade;
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) enum Case {
     Application,
     SqlJob,
     Reset,
+    PlatformUpgrade,
 }
 
 struct Journey<'a> {
@@ -232,6 +236,9 @@ pub(super) async fn exercise(run: &Run, cases: &[Case], password: &str) -> anyho
 }
 
 async fn exercise_inner(run: &Run, cases: &[Case], password: &str) -> anyhow::Result<()> {
+    if cases.contains(&Case::PlatformUpgrade) {
+        platform_upgrade::inputs(run)?;
+    }
     success(Command::new("script").arg("--version")).await?;
     let id = uuid::Uuid::new_v4().simple().to_string();
     // The unique project keeps every environment fresh within the 63-byte name limit.
@@ -401,6 +408,7 @@ async fn exercise_inner(run: &Run, cases: &[Case], password: &str) -> anyhow::Re
             }
             Case::Reset => reset(&journey, &artifacts).await,
             Case::Application => application(&journey, &sources["alpha"], &artifacts).await,
+            Case::PlatformUpgrade => platform_upgrade::exercise(&journey, &artifacts).await,
         };
         result?;
         journey.delete_environment().await?;
