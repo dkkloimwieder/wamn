@@ -1496,6 +1496,89 @@ fn platform_targeted_update_reports_only_affected_readiness() -> anyhow::Result<
 }
 
 #[test]
+fn platform_targeted_update_separates_draining_pods_from_readiness() -> anyhow::Result<()> {
+    let fixture = Fixture::new()?;
+    let mut postgres = wamn_test_postgres::start(&[])?;
+    let database = postgres.create_database("wamn_system")?;
+    for selection in ["control", "identity", "host:alpha/alpha"] {
+        let target: UpgradeTarget = selection.parse()?;
+        let (name, namespace) = target.owner(&fixture.document);
+        let selector = match &target {
+            UpgradeTarget::Identity => "app.kubernetes.io/name=wamn-identity".to_owned(),
+            UpgradeTarget::Control => format!("wasmcloud.com/hostgroup={name}"),
+            UpgradeTarget::Host { group, .. } => format!("wasmcloud.com/hostgroup={group}"),
+        };
+        let key = format!("{namespace}/{selector}");
+        for condition in ["ready", "missing", "unready"] {
+            let mut state = fixture.state(&target)?;
+            set_database(&mut state, database.url())?;
+            let pods = state["pods"][&key].as_array_mut().unwrap();
+            pods.push(json!({"kind":"Pod",
+                "metadata":{"name":"draining-old","deletionTimestamp":"2026-11-09T18:05:00Z"},
+                "spec":{"containers":[{"name":"main","image":"registry/host:old"}]},
+                "status":{"phase":"Running","containerStatuses":[{
+                    "name":"main","imageID":"sha256:old","state":{"running":{}}}]}
+            }));
+            match condition {
+                "missing" => {
+                    pods.remove(0);
+                }
+                "unready" => pods[0]["status"]["conditions"][0]["status"] = json!("False"),
+                _ => {}
+            }
+            let (output, _, mut after) = fixture.run(Some(selection), &state)?;
+            let stdout = String::from_utf8(output.stdout)?;
+            assert_eq!(
+                output.status.success(),
+                condition == "ready",
+                "{selection} {condition}: {stdout}\n{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            let category = if condition == "ready" {
+                "ready"
+            } else {
+                "incomplete"
+            };
+            assert!(
+                stdout.contains(&format!("target {selection}: {category}")),
+                "{stdout}"
+            );
+            assert!(
+                stdout.contains(&format!("{namespace}/pods/draining-old:")),
+                "{stdout}"
+            );
+            assert!(
+                stdout.lines().any(|line| line.trim() == "draining"),
+                "{stdout}"
+            );
+            for pod in state["pods"][&key].as_array().unwrap() {
+                for container in pod["status"]["containerStatuses"].as_array().unwrap() {
+                    assert!(
+                        stdout.contains(container["imageID"].as_str().unwrap()),
+                        "{stdout}"
+                    );
+                }
+            }
+            if condition == "ready" {
+                after["pods"][&key]
+                    .as_array_mut()
+                    .unwrap()
+                    .retain(|pod| pod["metadata"]["deletionTimestamp"].is_null());
+                let (output, _, later) = fixture.run_command("status", None, None, &after)?;
+                let stdout = String::from_utf8(output.stdout)?;
+                assert!(
+                    stdout.contains(&format!("target {selection}: ready")),
+                    "{stdout}"
+                );
+                assert!(!stdout.contains("draining-old"), "{stdout}");
+                assert_eq!(later, after);
+            }
+        }
+    }
+    Ok(())
+}
+
+#[test]
 fn platform_host_update_fails_for_unhealthy_assigned_workloads() -> anyhow::Result<()> {
     let fixture = Fixture::new()?;
     let mut postgres = wamn_test_postgres::start(&[])?;
@@ -1514,6 +1597,11 @@ fn platform_host_update_fails_for_unhealthy_assigned_workloads() -> anyhow::Resu
         ] {
             let mut state = fixture.state(&target)?;
             set_database(&mut state, database.url())?;
+            state["pods"][format!("hosts/wasmcloud.com/hostgroup={group}")]
+                .as_array_mut()
+                .unwrap()
+                .push(json!({"kind":"Pod","metadata":{
+                    "name":"draining-old","deletionTimestamp":"2026-11-09T18:05:00Z"}}));
             let (source, workload) = state["workloads"]
                 .as_object_mut()
                 .unwrap()

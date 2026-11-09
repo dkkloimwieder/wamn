@@ -486,6 +486,19 @@ A failed or incomplete assigned workload prevents success, even when the native 
 An unreadable workload query reports unknown readiness.
 Workloads assigned to other host groups do not affect the target.
 
+A draining Pod is a Pod with a deletion timestamp.
+Status keeps that Pod and its images in the diagnostics and marks it as draining.
+The target can report ready while an old Pod drains.
+
+The Deployment must observe its current generation.
+Its updated, ready, and available replica counts must each reach the desired count.
+All assigned WorkloadDeployments must be ready.
+Enough active Pods must also be ready to meet the desired count.
+Otherwise, a draining Pod still prevents readiness.
+
+This rule applies to control, identity, and host targets.
+It adds no wait and changes no drain or credential retention rule.
+
 An explicit `--only <target> --chart <EARLIER>` selects an earlier compatible artifact through the same update operation.
 It does not reverse SQL or add a rollback or history subsystem.
 A retry repeats the targeted update without installation or initialization.

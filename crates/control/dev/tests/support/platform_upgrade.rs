@@ -147,6 +147,7 @@ async fn snapshot(journey: &Journey<'_>, target: &UpgradeTarget) -> anyhow::Resu
         .as_array()
         .context("target pods")?
         .iter()
+        .filter(|pod| pod["metadata"]["deletionTimestamp"].is_null())
         .map(|pod| {
             (
                 pod["metadata"]["name"]
@@ -208,6 +209,7 @@ async fn image_ready(
     let mut running = observed
         .observations
         .iter()
+        .filter(|entry| !entry.draining)
         .flat_map(|entry| entry.running_images.values());
     ensure!(
         observed.category == Category::Ready

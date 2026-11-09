@@ -40,6 +40,8 @@ impl fmt::Display for Category {
 pub struct Observation {
     pub source: String,
     pub category: Category,
+    /// A Pod with a deletion timestamp, retained for drain diagnostics.
+    pub draining: bool,
     pub facts: Vec<String>,
     pub next: Option<String>,
     /// Images requested by the resource, not proof of running bytes.
@@ -176,7 +178,7 @@ async fn target_status(
     .await;
     let mut warnings = Vec::new();
     if selection == &UpgradeTarget::Identity
-        && let Some(object) = workload
+        && let Some(object) = &workload
     {
         let mail = object
             .pointer("/spec/template/spec/containers")
@@ -208,16 +210,17 @@ async fn target_status(
         );
     }
     let pods = list(target, namespace, "pods", &["-l", &selector]).await;
-    append_resources(
+    let category = append_target_pods(
         &mut observations,
         &format!("{namespace}/pods"),
+        workload.as_ref(),
         pods.as_ref().ok(),
     );
     TargetStatus {
         name: label,
         selected,
         warnings,
-        category: combined(observations.iter().map(|o| o.category)),
+        category,
         observations,
     }
 }
@@ -241,6 +244,7 @@ fn observation(source: &str, category: Category, next: &str) -> Observation {
     Observation {
         source: source.to_owned(),
         category,
+        draining: false,
         facts: Vec::new(),
         next: (category != Category::Ready).then(|| next.to_owned()),
         images: BTreeMap::new(),
@@ -272,6 +276,7 @@ pub async fn read(document: &ClusterDocument, target: &Target) -> anyhow::Result
         targets.push(read_target(document, target, &selection).await);
     }
     let mut inherited_hosts = Vec::new();
+    let mut inherited_readiness = Vec::new();
     let hosts = helm_json(target, &["list", "-n", "hosts", "-o", "json"]).await;
     for release in hosts
         .as_ref()
@@ -320,6 +325,7 @@ pub async fn read(document: &ClusterDocument, target: &Target) -> anyhow::Result
             if group.get("image").is_some() {
                 targets.push(observed);
             } else {
+                inherited_readiness.push(observed.category);
                 inherited_hosts.extend(observed.observations);
             }
         }
@@ -480,7 +486,6 @@ pub async fn read(document: &ClusterDocument, target: &Target) -> anyhow::Result
                 || item.source == "Helm/platform/wamn"
         });
     observations = other;
-    default_observations.extend(inherited_hosts);
     let pods = list(
         target,
         "platform",
@@ -493,18 +498,21 @@ pub async fn read(document: &ClusterDocument, target: &Target) -> anyhow::Result
         "platform/pods",
         pods.as_ref().ok(),
     );
+    let default_category = combined(
+        default_observations
+            .iter()
+            .filter(|o| o.source != "Helm/platform/wamn")
+            .map(|o| o.category)
+            .chain(inherited_readiness),
+    );
+    default_observations.extend(inherited_hosts);
     targets.insert(
         0,
         TargetStatus {
             name: "platform default".into(),
             selected,
             warnings: vec![],
-            category: combined(
-                default_observations
-                    .iter()
-                    .filter(|o| o.source != "Helm/platform/wamn")
-                    .map(|o| o.category),
-            ),
+            category: default_category,
             observations: default_observations,
         },
     );
@@ -658,6 +666,8 @@ fn resource(source: &str, response: Result<Option<&Value>, ()>) -> Observation {
         ),
     );
     if let Ok(Some(object)) = response {
+        result.draining =
+            object["kind"] == "Pod" && !object["metadata"]["deletionTimestamp"].is_null();
         image_references(&object["spec"], "spec", &mut result.images);
         for field in ["generation", "observedGeneration"] {
             let value = if field == "generation" {
@@ -721,10 +731,7 @@ fn resource(source: &str, response: Result<Option<&Value>, ()>) -> Observation {
 fn classify(object: &Value) -> Category {
     let status = &object["status"];
     let kind = object["kind"].as_str().unwrap_or_default();
-    if object["metadata"]
-        .get("deletionTimestamp")
-        .is_some_and(|value| !value.is_null())
-    {
+    if !object["metadata"]["deletionTimestamp"].is_null() {
         return Category::Incomplete;
     }
     let generation = object["metadata"]["generation"].as_u64();
@@ -836,6 +843,37 @@ fn classify(object: &Value) -> Category {
         }
         _ => Category::Unknown,
     }
+}
+
+fn append_target_pods(
+    observations: &mut Vec<Observation>,
+    source: &str,
+    deployment: Option<&Value>,
+    pods: Option<&Value>,
+) -> Category {
+    let replacements_ready = deployment.is_some_and(|deployment| {
+        classify(deployment) == Category::Ready
+            && pods
+                .and_then(|pods| pods["items"].as_array())
+                .is_some_and(|pods| {
+                    pods.iter()
+                        .filter(|pod| {
+                            pod["kind"] == "Pod"
+                                && pod["metadata"]["deletionTimestamp"].is_null()
+                                && pod["status"]["phase"] == "Running"
+                                && classify(pod) == Category::Ready
+                        })
+                        .count() as u64
+                        >= deployment["spec"]["replicas"].as_u64().unwrap_or(1)
+                })
+    }) && observations.iter().all(|o| o.category == Category::Ready);
+    append_resources(observations, source, pods);
+    combined(
+        observations
+            .iter()
+            .filter(|o| !replacements_ready || !o.draining)
+            .map(|o| o.category),
+    )
 }
 
 fn append_resources(observations: &mut Vec<Observation>, source: &str, response: Option<&Value>) {
@@ -1133,6 +1171,9 @@ fn write_observation(
     output: &mut impl Write,
 ) -> anyhow::Result<()> {
     writeln!(output, "{}: {}", item.source, item.category)?;
+    if item.draining {
+        writeln!(output, "  draining")?;
+    }
     for fact in &item.facts {
         writeln!(output, "  {fact}")?;
     }
@@ -1313,11 +1354,102 @@ mod tests {
                 "alpha",
                 response,
             );
+            let pods = json!({"items":[
+                {"kind":"Pod","metadata":{"name":"old","deletionTimestamp":"2026-11-09T18:05:00Z"}},
+                {"kind":"Pod","metadata":{"name":"replacement"},
+                    "status":{"phase":"Running","conditions":[{"type":"Ready","status":"True"}]}}
+            ]});
             assert_eq!(
-                combined(observations.iter().map(|item| item.category)),
+                append_target_pods(&mut observations, "hosts/pods", Some(&host), Some(&pods)),
                 expected,
                 "{state}"
             );
+            assert_eq!(
+                observations.iter().find(|o| o.draining).unwrap().category,
+                Category::Incomplete
+            );
+        }
+    }
+
+    #[test]
+    fn target_readiness_requires_ready_replacements_before_ignoring_draining_pods() {
+        for state in [
+            "ready",
+            "missing",
+            "unready",
+            "too-few",
+            "succeeded",
+            "stale",
+            "unobserved",
+            "not-updated",
+            "not-ready",
+            "not-available",
+        ] {
+            let mut deployment = json!({
+                "kind":"Deployment", "metadata":{"generation":2}, "spec":{"replicas":1},
+                "status":{"observedGeneration":2,"updatedReplicas":1,"readyReplicas":1,"availableReplicas":1}
+            });
+            let mut pods = json!({"items":[
+                {"kind":"Pod","metadata":{"name":"old","deletionTimestamp":"2026-11-09T18:05:00Z"},
+                    "spec":{"containers":[{"name":"host","image":"registry/host:old"}]},
+                    "status":{"containerStatuses":[{"name":"host","imageID":"sha256:old","state":{"running":{}}}]}},
+                {"kind":"Pod","metadata":{"name":"replacement","deletionTimestamp":null},
+                    "status":{"phase":"Running","conditions":[{"type":"Ready","status":"True"}]}}
+            ]});
+            match state {
+                "missing" => {
+                    pods["items"].as_array_mut().unwrap().pop();
+                }
+                "unready" => pods["items"][1]["status"]["conditions"][0]["status"] = json!("False"),
+                "succeeded" => pods["items"][1]["status"]["phase"] = json!("Succeeded"),
+                "too-few" => {
+                    deployment["spec"]["replicas"] = json!(2);
+                    for field in ["updatedReplicas", "readyReplicas", "availableReplicas"] {
+                        deployment["status"][field] = json!(2);
+                    }
+                }
+                "stale" => deployment["status"]["observedGeneration"] = json!(1),
+                "unobserved" => deployment["status"]["observedGeneration"] = Value::Null,
+                "not-updated" => deployment["status"]["updatedReplicas"] = json!(0),
+                "not-ready" => deployment["status"]["readyReplicas"] = json!(0),
+                "not-available" => deployment["status"]["availableReplicas"] = json!(0),
+                _ => {}
+            }
+            let mut observations = vec![resource("hosts/Deployment/host", Ok(Some(&deployment)))];
+            let category = append_target_pods(
+                &mut observations,
+                "hosts/pods",
+                Some(&deployment),
+                Some(&pods),
+            );
+            assert_eq!(
+                category,
+                if state == "ready" {
+                    Category::Ready
+                } else {
+                    Category::Incomplete
+                },
+                "{state}"
+            );
+            let draining = observations.iter().find(|o| o.draining).unwrap();
+            assert_eq!(draining.category, Category::Incomplete);
+            assert_eq!(
+                draining.images["spec/containers/0"],
+                pods["items"][0]["spec"]["containers"][0]["image"]
+            );
+            assert_eq!(
+                draining.running_images["host"],
+                pods["items"][0]["status"]["containerStatuses"][0]["imageID"]
+            );
+            if state == "ready" {
+                pods["items"].as_array_mut().unwrap().remove(0);
+                let mut later = vec![resource("hosts/Deployment/host", Ok(Some(&deployment)))];
+                assert_eq!(
+                    append_target_pods(&mut later, "hosts/pods", Some(&deployment), Some(&pods)),
+                    Category::Ready
+                );
+                assert!(later.iter().all(|o| !o.draining));
+            }
         }
     }
 
