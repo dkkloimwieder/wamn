@@ -242,15 +242,25 @@ impl Fixture {
         selection: Option<&str>,
         state: &Value,
     ) -> anyhow::Result<(Output, Vec<Value>, Value)> {
+        self.run_with_chart(selection, Some(&self.chart.0), state)
+    }
+
+    fn run_with_chart(
+        &self,
+        selection: Option<&str>,
+        chart: Option<&Path>,
+        state: &Value,
+    ) -> anyhow::Result<(Output, Vec<Value>, Value)> {
         std::fs::write(self.bin.join("state.json"), serde_json::to_vec(state)?)?;
         std::fs::write(self.bin.join("calls.jsonl"), "")?;
         let mut command = Command::new(env!("CARGO_BIN_EXE_wamn"));
         command
             .args(["platform", "deploy"])
             .arg(&self.file)
-            .arg("--chart")
-            .arg(&self.chart.0)
             .env("PATH", &self.path);
+        if let Some(chart) = chart {
+            command.arg("--chart").arg(chart);
+        }
         if let Some(selection) = selection {
             command.args(["--only", selection]);
         }
@@ -362,6 +372,14 @@ fn platform_service_updates_change_only_the_selected_release() -> anyhow::Result
                 String::from_utf8_lossy(&output.stderr)
             );
             assert_operations(&calls, (&name, namespace), true);
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            assert!(
+                stdout.contains(&format!(
+                    "selected chart ({namespace}/{name}): {}",
+                    fixture.chart.0.canonicalize()?.display()
+                )),
+                "{stdout}"
+            );
             assert_eq!(
                 calls
                     .iter()
@@ -582,6 +600,83 @@ fn platform_updates_refuse_missing_owners_and_pending_hosts_without_mutation() -
 }
 
 #[test]
+fn platform_deploy_refuses_required_chart_without_mutation() -> anyhow::Result<()> {
+    let fixture = Fixture::new()?;
+    for selection in [
+        None,
+        Some("control"),
+        Some("identity"),
+        Some("host:alpha/alpha"),
+    ] {
+        for cluster_exists in [true, false] {
+            let mut state = fixture.state(&UpgradeTarget::Control)?;
+            if selection.is_none() {
+                state["owners"]
+                    .as_object_mut()
+                    .unwrap()
+                    .remove("platform/wamn");
+            }
+            if !cluster_exists {
+                state["cluster"] = "".into();
+            }
+            let (output, calls, after) = fixture.run_with_chart(selection, None, &state)?;
+            assert!(!output.status.success());
+            let error = String::from_utf8_lossy(&output.stderr);
+            let expected = if selection.is_some() {
+                "--chart is required with --only"
+            } else {
+                "--chart is required for a fresh installation without release platform/wamn"
+            };
+            assert!(error.contains(expected), "{error}");
+            assert!(error.contains("No resources changed."), "{error}");
+            assert_eq!(after, state);
+            for call in calls {
+                let args = call["args"].as_array().unwrap();
+                let read_only = match call["tool"].as_str().unwrap() {
+                    "kind" => args[0] == "get" || args[0] == "export",
+                    "helm" => args[4] == "list" || args[4] == "get",
+                    "kubectl" => args[6] == "get",
+                    _ => false,
+                };
+                assert!(read_only, "unexpected mutation: {call}");
+            }
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn platform_installation_reports_the_supplied_charts() -> anyhow::Result<()> {
+    let fixture = Fixture::new()?;
+    let mut state = fixture.state(&UpgradeTarget::Control)?;
+    state["owners"] = json!({});
+    state["reapply"] = true.into();
+    state["fail_read"] = "platform/secret/wamn-pg-superuser".into();
+    let (output, _, after) = fixture.run(None, &state)?;
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("wamn-pg-superuser"));
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        !stdout.contains("warning: recorded chart selections"),
+        "{stdout}"
+    );
+    for label in ["platform default", "control", "identity"] {
+        assert!(
+            stdout.contains(&format!(
+                "{label} chart: {}",
+                fixture.chart.0.canonicalize()?.display()
+            )),
+            "{stdout}"
+        );
+    }
+    assert_eq!(
+        after["owners"]["platform/wamn"]["platform"]["chart"],
+        fixture.chart.0.canonicalize()?.to_str().unwrap()
+    );
+    Ok(())
+}
+
+#[test]
 fn interrupted_platform_reapply_retains_default_and_service_selections() -> anyhow::Result<()> {
     use wamn_control_provision::identity_issuer::identity_issuer_generation_role;
     use wamn_control_provision::{
@@ -605,9 +700,29 @@ fn interrupted_platform_reapply_retains_default_and_service_selections() -> anyh
         state["reapply"] = true.into();
         state["org"] = fixture.document.org.clone().into();
         state["fail_read"] = "platform/secret/wamn-pg-superuser".into();
-        let (output, first_calls, mut interrupted) = fixture.run(None, &state)?;
+        let (output, first_calls, mut interrupted) = fixture.run_with_chart(None, None, &state)?;
         assert!(!output.status.success());
         assert!(String::from_utf8_lossy(&output.stderr).contains("wamn-pg-superuser"));
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            !stdout.contains("warning: recorded chart selections"),
+            "{stdout}"
+        );
+        for (label, owner) in [
+            ("platform default", "platform/wamn"),
+            ("control", control.as_str()),
+            ("identity", "identity/identity"),
+        ] {
+            let expected = if owner == own {
+                &service.0
+            } else {
+                &fixture.previous.0
+            };
+            assert!(
+                stdout.contains(&format!("{label} chart: {}", expected.display())),
+                "{stdout}"
+            );
+        }
         let operator = first_calls
             .iter()
             .find(|call| call["values"]["platform"]["chart"].is_string())
@@ -642,8 +757,18 @@ fn interrupted_platform_reapply_retains_default_and_service_selections() -> anyh
         });
         // Stop after both services apply, before edge readiness and the HTTP probe.
         interrupted["stop_release"] = "hosts/wamn-edge".into();
-        let (output, retry_calls, after) = fixture.run(None, &interrupted)?;
+        let unused = fixture.chart.0.join("unavailable");
+        let (output, retry_calls, after) =
+            fixture.run_with_chart(None, Some(&unused), &interrupted)?;
         assert!(!output.status.success());
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            stdout.contains(
+                "warning: recorded chart selections take precedence over --chart during reapply."
+            ),
+            "{stdout}"
+        );
+        assert!(!stdout.contains(unused.to_str().unwrap()), "{stdout}");
         for owner in ["platform/wamn", &control, "identity/identity"] {
             let expected = if owner == own {
                 &service.0
@@ -655,6 +780,17 @@ fn interrupted_platform_reapply_retains_default_and_service_selections() -> anyh
                 expected.to_str().unwrap(),
                 "{}",
                 String::from_utf8_lossy(&output.stderr)
+            );
+            let label = if owner == "platform/wamn" {
+                "platform default"
+            } else if owner == control {
+                "control"
+            } else {
+                "identity"
+            };
+            assert!(
+                stdout.contains(&format!("{label} chart: {}", expected.display())),
+                "{stdout}"
             );
         }
         for owner in [&control, "identity/identity"] {

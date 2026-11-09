@@ -223,10 +223,12 @@ pub fn select(chart: &Path) -> anyhow::Result<SelectedChart> {
 
 pub(super) fn platform_chart(
     operator: Option<&Value>,
-    supplied: &Path,
+    supplied: Option<&Path>,
 ) -> anyhow::Result<SelectedChart> {
     let Some(operator) = operator else {
-        return select(supplied);
+        return select(supplied.context(
+            "--chart is required for a fresh installation without release platform/wamn. No resources changed.",
+        )?);
     };
     let path = operator["platform"]["chart"]
         .as_str()

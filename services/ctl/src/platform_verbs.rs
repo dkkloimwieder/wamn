@@ -36,9 +36,9 @@ pub enum ProductPlatformCommand {
 pub struct DeployArgs {
     /// The cluster.k document.
     pub file: PathBuf,
-    /// The prepared platform chart directory.
+    /// The prepared chart directory, required for installation and --only.
     #[arg(long)]
-    pub chart: PathBuf,
+    pub chart: Option<PathBuf>,
     /// Select control, identity, or host:<release>/<group> for an existing platform.
     #[arg(long, value_name = "TARGET")]
     pub only: Option<UpgradeTarget>,
@@ -86,30 +86,36 @@ async fn deploy(
         .canonicalize()
         .with_context(|| format!("resolve cluster {}", args.file.display()))?;
     let document = ClusterDocument::compile(&file)?;
-    let chart = artifact_plan::select(&args.chart)?;
     writeln!(output, "cluster: {}", file.display())?;
-    writeln!(output, "chart: {}", chart.directory().display())?;
     // Kind nodes can mount files from this directory. Retain it for their lifetime.
     let directory = work_directory()?;
     writeln!(output, "work directory: {}", directory.display())?;
     output.flush()?;
     let result = interruptible(signals, async {
-        let kubeconfig = directory.join("kubeconfig");
-        let context = if args.only.is_some() {
-            provider::existing_kubeconfig(&document, &kubeconfig).await?
-        } else {
-            document.provider.kubeconfig(&document, &kubeconfig).await?
-        };
-        let target = Target {
-            kubeconfig,
-            context,
-            namespace: "platform".into(),
-        };
         match &args.only {
             Some(selection) => {
+                let chart = artifact_plan::select(
+                    args.chart
+                        .as_deref()
+                        .context("--chart is required with --only. No resources changed.")?,
+                )?;
+                let (name, namespace) = selection.owner(&document);
+                writeln!(
+                    output,
+                    "selected chart ({namespace}/{name}): {}",
+                    chart.directory().display()
+                )?;
+                output.flush()?;
+                let kubeconfig = directory.join("kubeconfig");
+                let context = provider::existing_kubeconfig(&document, &kubeconfig).await?;
+                let target = Target {
+                    kubeconfig,
+                    context,
+                    namespace: "platform".into(),
+                };
                 deploy::update(&document, &chart, &target, selection, &directory).await
             }
-            None => deploy::deploy(&document, &chart, &target, &directory, &mut output).await,
+            None => deploy::deploy(&document, args.chart.as_deref(), &directory, &mut output).await,
         }
     })
     .await;

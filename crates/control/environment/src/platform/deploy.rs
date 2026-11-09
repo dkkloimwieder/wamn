@@ -1,4 +1,4 @@
-//! Deploy platform resources from one selected, prepared chart.
+//! Deploy platform resources from their selected, prepared charts.
 
 use std::io::Write;
 use std::path::Path;
@@ -19,25 +19,46 @@ use crate::kubectl;
 /// Returns resource, bootstrap, service, or endpoint failures.
 pub async fn deploy(
     document: &ClusterDocument,
-    chart: &SelectedChart,
-    target: &Target,
+    chart: Option<&Path>,
     directory: &Path,
     output: &mut impl Write,
 ) -> anyhow::Result<()> {
+    let kubeconfig = directory.join("kubeconfig");
+    let context = provider::available_kubeconfig(document, &kubeconfig).await?;
+    let existing = context.is_some();
+    let mut target = Target {
+        kubeconfig,
+        context: context.unwrap_or_default(),
+        namespace: "platform".into(),
+    };
     // Resolve the platform default and both service selections before any mutation.
-    let operator_values = resources::release_values(target, "platform", "wamn").await?;
-    let platform_chart =
-        artifact_plan::platform_chart(operator_values.as_ref(), chart.directory())?;
-    let control_values =
-        resources::release_values(target, "hosts", &format!("c-{}", document.org)).await?;
-    let identity_values = resources::release_values(target, "identity", "identity").await?;
+    let operator_values = if existing {
+        resources::release_values(&target, "platform", "wamn").await?
+    } else {
+        None
+    };
+    if operator_values.is_some() && chart.is_some() {
+        writeln!(
+            output,
+            "warning: recorded chart selections take precedence over --chart during reapply."
+        )?;
+    }
+    let platform_chart = artifact_plan::platform_chart(operator_values.as_ref(), chart)?;
+    let (control_values, identity_values) = if existing {
+        (
+            resources::release_values(&target, "hosts", &format!("c-{}", document.org)).await?,
+            resources::release_values(&target, "identity", "identity").await?,
+        )
+    } else {
+        (None, None)
+    };
     let control_chart = artifact_plan::resolve_chart(
         document,
         &UpgradeTarget::Control,
         operator_values.as_ref(),
         control_values.as_ref(),
         identity_values.as_ref(),
-        chart.directory(),
+        platform_chart.directory(),
     )?;
     let identity_chart = artifact_plan::resolve_chart(
         document,
@@ -45,8 +66,29 @@ pub async fn deploy(
         operator_values.as_ref(),
         control_values.as_ref(),
         identity_values.as_ref(),
-        chart.directory(),
+        platform_chart.directory(),
     )?;
+    writeln!(
+        output,
+        "platform default chart: {}",
+        platform_chart.directory().display()
+    )?;
+    writeln!(
+        output,
+        "control chart: {}",
+        control_chart.directory().display()
+    )?;
+    writeln!(
+        output,
+        "identity chart: {}",
+        identity_chart.directory().display()
+    )?;
+    output.flush()?;
+    target.context = document
+        .provider
+        .kubeconfig(document, &target.kubeconfig)
+        .await?;
+    let target = &target;
     let chart = &platform_chart;
     infrastructure(document, chart, target, directory).await?;
     initialize(document, chart, target, directory, output).await?;

@@ -329,7 +329,7 @@ wamn platform deploy deploy/kind/cluster.k --chart /tmp/wamn-platform-chart
 wamn platform status deploy/kind/cluster.k
 
 # Stage 2: supported only after the local implementation works.
-wamn platform deploy deploy/gcp/cluster.k
+wamn platform deploy deploy/gcp/cluster.k --chart /tmp/wamn-platform-chart
 ```
 
 `deploy/kind/cluster.k` exists and selects `provider = "kind"`. Local work requires Docker, kind, a local OCI registry, cluster configuration, and access to required pinned images. It must not require Cloud Build, GKE, GCS, Artifact Registry, Workload Identity, cloud IAM, or public DNS. GCP-specific prerequisites remain owned by their existing infrastructure mechanism, including OpenTofu where appropriate.
@@ -450,12 +450,16 @@ Missing service metadata does not mean that initialization is missing.
 An existing-platform reapply uses and retains the recorded platform-default chart alongside the service selections.
 Infrastructure and later application deployments use that same default.
 An interruption before service application does not change the selections of a retry.
-A fresh installation without an operator release uses the supplied chart.
+A fresh installation without the `platform/wamn` operator release requires `--chart` and uses that chart.
 Changing the global default is separate later work.
 
 A later `platform deploy` without `--only` keeps the recorded control and identity selections and the explicit host image overrides.
 It does not undo a targeted upgrade. Only an explicit target selection changes a target (owner decision 2026-11-09).
 The command resolves the platform default and service selections before any resource change.
+An existing-platform reapply does not require `--chart`.
+If you supply `--chart` during reapply, the command warns that recorded selections take precedence.
+It does not read or validate that unused path.
+After resolution, installation and reapply report the platform default, control chart, and identity chart.
 
 If a recorded chart is unavailable or invalid, an untargeted reapply refuses before any resource change.
 The error names the owner release and the recorded path.
@@ -464,6 +468,9 @@ For a service, an explicit `--only <target>` update can select a new chart.
 An untargeted reapply never substitutes the supplied chart for an unavailable recorded chart.
 
 Targeted updates require an existing owner release.
+Every explicit `--only` update requires `--chart`.
+After resolution, the command reports the selected chart and its owner release.
+If a required chart is missing, the command refuses with an explicit error before any resource change.
 They prohibit bootstrap, migrations, data changes, and key creation or rotation.
 Reads that inspect existing initialization are allowed.
 Control and identity updates use the supplied `--chart` and record it with `selection_values` in the selected release.
@@ -503,6 +510,12 @@ DEP4-01 parses and resolves these inputs and prepares their owning values.
 DEP4-02 through DEP4-04 connect those values to existing resource application and reapply.
 
 ```bash
+# Install a fresh platform from a prepared chart.
+wamn platform deploy deploy/kind/cluster.k --chart /prepared/platform
+
+# Reapply the recorded platform and service selections.
+wamn platform deploy deploy/kind/cluster.k
+
 # Illustrative selection of one platform component.
 wamn platform deploy deploy/kind/cluster.k --chart /prepared/platform --only host:alpha/alpha
 
@@ -525,7 +538,7 @@ wamn platform deploy deploy/kind/cluster.k --chart /prepared/platform --only con
 ```bash
 wamn platform schema diff --scope system
 wamn platform schema apply --scope system
-wamn platform deploy deploy/kind/cluster.k --only control
+wamn platform deploy deploy/kind/cluster.k --chart /prepared/platform --only control
 
 # Independent project-substrate SQL targeting selected environments:
 wamn platform schema apply --scope project --env environments/dev/environment.k

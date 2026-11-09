@@ -161,6 +161,19 @@ pub async fn existing_kubeconfig(
     document: &ClusterDocument,
     path: &Path,
 ) -> anyhow::Result<String> {
+    available_kubeconfig(document, path)
+        .await?
+        .with_context(|| format!("kind cluster {} does not exist", document.cluster_name))
+}
+
+/// Export credentials if the cluster exists, without creating local resources.
+///
+/// # Errors
+/// Returns an error if cluster discovery or credential export fails.
+pub(super) async fn available_kubeconfig(
+    document: &ClusterDocument,
+    path: &Path,
+) -> anyhow::Result<Option<String>> {
     match document.provider {
         Provider::Gcp => {
             run(Command::new("gcloud")
@@ -172,16 +185,14 @@ pub async fn existing_kubeconfig(
             let output = run(Command::new("kind").args(kind_list_arguments())).await?;
             let clusters =
                 std::str::from_utf8(&output.stdout).context("decode kind get clusters")?;
-            ensure!(
-                cluster_exists(clusters, &document.cluster_name),
-                "kind cluster {} does not exist",
-                document.cluster_name
-            );
+            if !cluster_exists(clusters, &document.cluster_name) {
+                return Ok(None);
+            }
             run(Command::new("kind").args(kind_export_arguments(&document.cluster_name, path)))
                 .await?;
         }
     }
-    Ok(context_name(document.provider, document))
+    Ok(Some(context_name(document.provider, document)))
 }
 
 fn registry_endpoint(registry: &str) -> anyhow::Result<(&str, SocketAddr)> {
