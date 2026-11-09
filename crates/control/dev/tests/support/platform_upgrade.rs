@@ -1,9 +1,10 @@
 //! One deployed upgrade case. The existing journey prepares applications and owns cleanup.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context as _, ensure};
+use serde::Deserialize as _;
 use serde_json::{Value, json};
 use wamn_environment_control::platform::{
     artifact_plan::{self, SelectedChart},
@@ -217,7 +218,36 @@ async fn image_ready(
     Ok(())
 }
 
-async fn authority(journey: &Journey<'_>) -> anyhow::Result<Value> {
+fn secret_references<'a>(value: &'a Value, names: &mut BTreeSet<&'a str>) {
+    match value {
+        Value::Object(object) => {
+            // Follow the rendered input references used by resources::require_inputs.
+            for (field, key) in [
+                ("secretKeyRef", "name"),
+                ("secretRef", "name"),
+                ("secret", "secretName"),
+            ] {
+                if let Some(reference) = object.get(field)
+                    && reference["optional"] != true
+                    && let Some(name) = reference[key].as_str()
+                {
+                    names.insert(name);
+                }
+            }
+            for value in object.values() {
+                secret_references(value, names);
+            }
+        }
+        Value::Array(values) => {
+            for value in values {
+                secret_references(value, names);
+            }
+        }
+        _ => {}
+    }
+}
+
+async fn authority(journey: &Journey<'_>, targets: &[&UpgradeTarget]) -> anyhow::Result<Value> {
     let system =
         wamn_package_control::database::connect(&journey.variables["WAMN_SYSTEM_ADMIN_URL"])
             .await?;
@@ -233,15 +263,34 @@ async fn authority(journey: &Journey<'_>) -> anyhow::Result<Value> {
     )
     .await?;
     let mut credentials = BTreeMap::new();
-    for namespace in ["platform", "identity", "hosts"] {
-        let secrets = get(journey.run, namespace, "secrets", "").await?;
-        for secret in secrets["items"].as_array().context("credential Secrets")? {
-            if secret["type"] != "helm.sh/release.v1" {
+    for target in targets {
+        let (release, namespace) = target.owner(&journey.run.document);
+        let output = super::success(
+            tokio::process::Command::new("helm")
+                .arg("--kubeconfig")
+                .arg(&journey.run.target.kubeconfig)
+                .args([
+                    "--kube-context",
+                    &journey.run.target.context,
+                    "get",
+                    "manifest",
+                    &release,
+                    "-n",
+                    namespace,
+                ]),
+        )
+        .await?;
+        for document in serde_yaml::Deserializer::from_slice(&output.stdout) {
+            let object = Value::deserialize(document)?;
+            let namespace = object["metadata"]["namespace"]
+                .as_str()
+                .unwrap_or(namespace);
+            let mut names = BTreeSet::new();
+            secret_references(&object, &mut names);
+            for name in names {
+                let secret = get(journey.run, namespace, "secret", name).await?;
                 credentials.insert(
-                    format!(
-                        "{namespace}/{}",
-                        secret["metadata"]["name"].as_str().context("Secret name")?
-                    ),
+                    format!("{namespace}/{name}"),
                     json!({"uid":secret["metadata"]["uid"], "data":secret["data"]}),
                 );
             }
@@ -266,13 +315,14 @@ pub(super) async fn exercise(
     let rows = data(journey).await?;
     let database = observer(journey).await?;
     let baseline = stored(journey, &database).await?;
-    let credentials = authority(journey).await?;
     let alpha = application_target(journey, "alpha").await?;
     let beta = application_target(journey, "beta").await?;
     let beta_owner = snapshot(journey, &beta).await?;
     let alpha_before = snapshot(journey, &alpha).await?;
     let control = UpgradeTarget::Control;
     let identity = UpgradeTarget::Identity;
+    let targets = [&control, &identity, &alpha, &beta];
+    let credentials = authority(journey, &targets).await?;
     let control_chart = installed_chart(journey, &control).await?;
     let identity_chart = installed_chart(journey, &identity).await?;
     let identity_before = snapshot(journey, &identity).await?;
@@ -352,7 +402,7 @@ pub(super) async fn exercise(
             "application operation changed a service"
         );
         ensure!(
-            authority(journey).await? == credentials,
+            authority(journey, &targets).await? == credentials,
             "upgrade changed credentials or signing state"
         );
         ensure!(

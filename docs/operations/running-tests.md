@@ -871,7 +871,8 @@ These operations show that setup works without a platform upgrade.
 Make sure that cleanup works on that environment before you approve the upgrade body.
 Run `wamn-ctl env delete ORG/PROJECT/ENV --data` in a terminal.
 Enter only the disposable environment's coordinate at its confirmation prompt.
-Observe that its Helm releases, CNPG Cluster, database, and roles disappear.
+Observe that its database, roles, and Helm releases disappear.
+Make sure that the shared CNPG Cluster stays ready.
 Make sure that the other platform resources remain ready.
 The existing journey supplies the same terminal confirmation through `script`.
 The upgrade body restores its original control and identity charts before environment deletion.
@@ -891,6 +892,8 @@ Supply `WAMN_TEST_CLUSTER`, `WAMN_TEST_OWNER_PASSWORD`, `WAMN_KCL`, and the publ
 Supply the second chart through `WAMN_RELEASE_CHART`.
 The case observes running image digests, Helm revisions, pods, credentials, signing rows, schema identity, and application data.
 It leaves setup, cleanup, readiness, and data retention unverified until their approved cluster runs pass.
+Automatic rollback after a failed rollout stays unverified even after this case passes.
+This case explicitly reselects an earlier image and does not induce a rollout failure.
 
 ### Removed application cluster coverage
 
