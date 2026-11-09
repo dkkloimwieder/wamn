@@ -79,7 +79,7 @@ This section records the current code. It replaces the historical list of earlie
 | Publisher identity | No command accepts a caller-supplied publisher string. Publication records no publisher. The `catalog.releases` row of an applied release carries the record-history stamp of the authenticated deploy actor. |
 | Development loop | `wamn dev` prepares generation before the shared `schema::plan` decision. Its template reset and direct connection retain the same package SQL executor and records as deployed Jobs. |
 | Platform UI | Local kind deployment does not select the UI. The separate upload path still consumes a local bundle matching its stamped chart. |
-| Platform updates | `platform/deploy.rs` separates targeted updates from installation. Updates read the selected Helm owner. Service updates also read the operator default. Control and identity still refuse under DEP4-03. Hosts still refuse under DEP4-04. Untargeted runs keep recorded service charts and control host image overrides. Services without their own chart inherit the recorded operator default. Unavailable recorded charts refuse before resource changes and give restoration instructions. Untargeted runs still apply infrastructure, bootstrap, and edge. |
+| Platform updates | Control and identity updates apply only their selected Helm release. They retain credentials, signing keys, and control host image overrides. Missing initialization refuses before writes. Hosts still refuse under DEP4-04. Untargeted runs keep recorded service charts and host overrides. Services without chart metadata inherit the recorded operator default. Unavailable recorded charts give restoration instructions. Untargeted runs still apply infrastructure, bootstrap, and edge. |
 | Host runtime selection | The operator release `wamn` records one platform-wide chart reference. `environment/runtime.rs` reads it, and `environment/write.rs` renders the host groups of each application release from that chart. |
 
 The accepted Epic 2 record leaves `wamn-xy404`, `wamn-1riwn`, and `wamn-c361p` open.
@@ -428,7 +428,8 @@ Persistent system database upgrades are unsupported in this rebuild. Persistent 
 
 #### 5.3.1 Behavior-only or configuration-only change
 
-Implementation status: no targeted update exists. Untargeted `platform deploy` runs still apply infrastructure, run bootstrap, and start identity and control together (section 2).
+Implementation status: control and identity updates apply only the selected Helm release.
+Untargeted runs still apply infrastructure, run bootstrap, and initialize both services (section 2).
 Epic 4 implements this section. DEP4-01 defines the selection syntax below.
 DEP4-02 through DEP4-04 implement the update operations.
 
@@ -457,8 +458,14 @@ Restore the prepared chart at that path, or select a new one explicitly with `--
 The command never substitutes the supplied chart or other artifacts for an unavailable recorded chart.
 
 Targeted updates require an existing owner release and never run bootstrap.
-Control and identity still refuse under DEP4-03 after resolution, even without service selection metadata.
-DEP4-03 establishes the service selection on update.
+Control and identity updates use the supplied `--chart` and record it with `selection_values` in the selected release.
+They retain the installed credential references and control host image overrides.
+Control's Helm release now owns its Service and HTTP workload.
+The update reads required Secrets, ConfigMaps, and the active signing state before any write.
+A missing input gives an explicit error. It never triggers initialization.
+The signing query runs read-only through the existing PostgreSQL primary. It creates no Job.
+Both installation and updates call the same resource functions.
+Installation then initializes the services. Targeted updates run no initialization and write no credential Secret.
 Hosts still refuse under DEP4-04.
 
 Host runtime selections persist as `runtime-operator.runtime.hostGroups[].image` in the Helm release that owns the named group.

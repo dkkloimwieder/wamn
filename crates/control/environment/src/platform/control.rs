@@ -108,7 +108,7 @@ pub fn registry_pull_secret(document: &ClusterDocument, auth_file: &Path) -> any
 }
 
 /// Read bootstrap credentials and copy the operator Secret through the deploy client.
-pub async fn credentials(target: &Target, document: &ClusterDocument) -> anyhow::Result<()> {
+pub async fn initialize(target: &Target, document: &ClusterDocument) -> anyhow::Result<()> {
     if document.provider == Provider::Kind {
         let auth_file = std::env::var_os("WAMN_REGISTRY_AUTH_FILE")
             .context("set WAMN_REGISTRY_AUTH_FILE for the platform registry credential")?;
@@ -160,7 +160,18 @@ pub async fn credentials(target: &Target, document: &ClusterDocument) -> anyhow:
         &operator_secret(secret, &operator),
     )
     .await
-    .context("copy the control operator Secret")
+    .context("copy the control operator Secret")?;
+    super::oauth::ensure_key(target, document).await?;
+    let tls: SecretData = kubectl::get(
+        &target.kubeconfig,
+        &target.context,
+        "identity",
+        "secret",
+        "identity-tls",
+    )
+    .await?
+    .context("missing Secret identity/identity-tls")?;
+    super::resources::apply_object(target, &identity_ca(&secret_text(&tls, "ca.crt")?)).await
 }
 
 fn operator_secret(mut secret: Value, name: &str) -> Value {
@@ -300,35 +311,8 @@ pub(crate) fn release_values(
         json!({"name":"WAMN_CONTROL_PUBLIC_ORIGIN","value":format!("{scheme}://{}", document.route_hosts.control)}));
     desired["platformUi"] = platform_ui.into();
     desired["routeHost"] = document.route_hosts.control.as_str().into();
-    // Direct apply owns the control Service and WorkloadDeployment.
+    // The resource entry supplies the control Service and WorkloadDeployment.
     desired["roles"] = json!([]);
-    Ok(desired)
-}
-
-fn reapply_values(
-    document: &ClusterDocument,
-    chart: &Value,
-    platform_ui: bool,
-    installed: Option<&Value>,
-) -> anyhow::Result<Value> {
-    let mut desired = release_values(document, chart, platform_ui)?;
-    if let Some(groups) = installed
-        .and_then(|values| values.pointer("/runtime-operator/runtime/hostGroups"))
-        .and_then(Value::as_array)
-    {
-        for group in desired["runtime-operator"]["runtime"]["hostGroups"]
-            .as_array_mut()
-            .expect("control host groups")
-        {
-            if let Some(image) = groups
-                .iter()
-                .find(|previous| previous["name"] == group["name"])
-                .and_then(|previous| previous.get("image"))
-            {
-                group["image"] = image.clone();
-            }
-        }
-    }
     Ok(desired)
 }
 
@@ -341,13 +325,11 @@ fn identity_ca(ca: &str) -> Value {
     })
 }
 
-pub async fn release(
-    target: &Target,
+pub(super) fn resource_entry(
     document: &ClusterDocument,
     chart: &SelectedChart,
-    installed: Option<&Value>,
-    directory: &Path,
-) -> anyhow::Result<()> {
+    installed: Option<Value>,
+) -> anyhow::Result<Value> {
     let build_record = chart
         .directory()
         .join(crate::platform_build::BUILD_RECORD_FILE);
@@ -359,57 +341,21 @@ pub async fn release(
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => false,
         Err(error) => return Err(error).context("read the selected platform build record"),
     };
-    let desired = chart.selection_values(
-        document,
-        &UpgradeTarget::Control,
-        reapply_values(document, chart.values(), platform_ui, installed)?,
-    )?;
-    super::oauth::ensure_key(target, document).await?;
-    // The host verifies identity's JWKS and PAT endpoint with the serving CA,
-    // which cert-manager keeps in identity/identity-tls.
-    let tls: super::bootstrap::SecretData = kubectl::get(
-        &target.kubeconfig,
-        &target.context,
-        "identity",
-        "secret",
-        "identity-tls",
-    )
-    .await?
-    .context("missing Secret identity/identity-tls")?;
-    super::resources::apply_object(
-        target,
-        &identity_ca(&super::bootstrap::secret_text(&tls, "ca.crt")?),
-    )
-    .await?;
-    let values = directory.join("values-control.yaml");
-    std::fs::write(&values, serde_yaml::to_string(&desired)?)?;
-    let name = format!("c-{}", document.org);
-    let hosts = Target {
-        namespace: "hosts".into(),
-        ..target.clone()
-    };
-    wamn_release_control::release_chart::recover_pending(&hosts, &name).await?;
-    // As environment apply does, a failed upgrade carries the host pods.
-    let poller = crate::environment::host_report::Poller::start(&hosts, &name);
-    let upgraded = wamn_release_control::release_chart::upgrade(
-        &hosts,
-        chart.directory(),
-        &name,
-        &values,
-        std::time::Duration::from_secs(600),
-        "platform control host",
-    )
-    .await;
-    let report = poller.finish();
-    upgraded.map_err(|error| crate::environment::host_report::attach(&error, &report))?;
-    for object in service_objects(
+    let mut desired = release_values(document, chart.values(), platform_ui)?;
+    if let Some(installed) = installed {
+        super::manifests::merge(&mut desired, installed);
+    }
+    desired["runtime-operator"]["runtime"]["image"] =
+        chart.values()["runtime-operator"]["runtime"]["image"].clone();
+    desired["controlResources"] = service_objects(
         &chart.directory().join("platform/resources"),
         document,
         chart.image("http")?,
-    )? {
-        super::resources::apply_object(target, &object).await?;
-    }
-    Ok(())
+    )?
+    .into();
+    let desired = chart.selection_values(document, &UpgradeTarget::Control, desired)?;
+    Ok(json!({"chart":chart.directory(), "version":chart.version,
+        "name":format!("c-{}", document.org), "namespace":"hosts", "values":desired}))
 }
 
 /// Require the control route to refuse a request without credentials.
@@ -462,13 +408,12 @@ mod tests {
         let image = json!({"registry":"previous.example", "repository":"host",
             "tag":format!("previous@sha256:{}", "b".repeat(64)), "pull_policy":"IfNotPresent"});
         installed["runtime-operator"]["runtime"]["hostGroups"][0]["image"] = image.clone();
-        let values = reapply_values(&document, selected.values(), false, Some(&installed))?;
+        let entry = resource_entry(&document, &selected, Some(installed))?;
+        let values = &entry["values"];
         assert_eq!(
             values["runtime-operator"]["runtime"]["hostGroups"][0]["image"],
             image
         );
-        let entry = json!({"chart":selected.directory(), "version":selected.version,
-            "name":format!("c-{}", document.org), "namespace":"hosts", "values":values});
         let objects = super::super::resources::helm_template(&entry)?;
         let deployment = objects
             .iter()
@@ -478,7 +423,8 @@ mod tests {
             deployment["spec"]["template"]["spec"]["containers"][0]["image"],
             format!("previous.example/host:previous@sha256:{}", "b".repeat(64))
         );
-        let fresh = reapply_values(&document, selected.values(), false, None)?;
+        let entry = resource_entry(&document, &selected, None)?;
+        let fresh = &entry["values"];
         assert!(
             fresh["runtime-operator"]["runtime"]["hostGroups"][0]
                 .get("image")

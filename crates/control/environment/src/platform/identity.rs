@@ -6,7 +6,7 @@ use anyhow::{Context as _, ensure};
 use serde_json::{Value, json};
 
 use crate::kubectl;
-use wamn_release_control::release_chart::{self, Target};
+use wamn_release_control::release_chart::Target;
 
 use super::artifact_plan::SelectedChart;
 use super::bootstrap::{SecretData, database_host, secret_text};
@@ -112,7 +112,7 @@ fn resend_secret(key: &str) -> anyhow::Result<Value> {
     }))
 }
 
-pub async fn apply(
+pub async fn initialize(
     target: &Target,
     document: &ClusterDocument,
     chart: &SelectedChart,
@@ -159,14 +159,6 @@ pub async fn apply(
     .await?
     .context("missing Secret platform/wamn-pg-superuser")?;
     let image = chart.image("identity")?;
-    let mut entry = platform_chart_input(
-        &chart.directory().join("platform/identity"),
-        document,
-        image,
-    )?;
-    entry["values"] =
-        chart.selection_values(document, &UpgradeTarget::Identity, entry["values"].take())?;
-    install(&identity, directory, &entry).await?;
     let active = keys(target, &identity, directory, &superuser, image).await?;
     let ca: SecretData = kubectl::get(
         &target.kubeconfig,
@@ -375,21 +367,74 @@ pub(super) fn platform_chart_input(
     Ok(entry)
 }
 
-async fn install(target: &Target, directory: &Path, entry: &Value) -> anyhow::Result<()> {
-    let chart = Path::new(entry["chart"].as_str().context("identity chart input")?);
-    let values = &entry["values"];
-    release_chart::recover_pending(target, "identity").await?;
-    let path = directory.join("values-identity.yaml");
-    std::fs::write(&path, serde_yaml::to_string(values)?)?;
-    release_chart::upgrade(
-        target,
-        chart,
-        "identity",
-        &path,
-        std::time::Duration::from_secs(300),
-        "platform identity service",
+pub(super) fn resource_entry(
+    document: &ClusterDocument,
+    chart: &SelectedChart,
+    installed: Option<Value>,
+) -> anyhow::Result<Value> {
+    let mut entry = platform_chart_input(
+        &chart.directory().join("platform/identity"),
+        document,
+        chart.image("identity")?,
+    )?;
+    let image = entry["values"]["image"].take();
+    if let Some(installed) = installed {
+        super::manifests::merge(&mut entry["values"], installed);
+    }
+    entry["values"]["image"] = image;
+    entry["values"] =
+        chart.selection_values(document, &UpgradeTarget::Identity, entry["values"].take())?;
+    Ok(entry)
+}
+
+/// Read signing state through the existing PostgreSQL primary without a Job.
+pub(super) async fn require_keys(target: &Target) -> anyhow::Result<()> {
+    let cluster: Value = kubectl::get(
+        &target.kubeconfig,
+        &target.context,
+        "platform",
+        "cluster.postgresql.cnpg.io",
+        "wamn-pg",
+    )
+    .await?
+    .context("missing Cluster platform/wamn-pg. No resources changed.")?;
+    let primary = cluster["status"]["currentPrimary"]
+        .as_str()
+        .context("missing PostgreSQL primary for identity signing state. No resources changed.")?;
+    let query = format!("BEGIN READ ONLY; {KEY_STATE_SQL}; COMMIT;");
+    let result = kubectl::kubectl(
+        &target.kubeconfig,
+        &target.context,
+        "platform",
+        &[
+            "exec",
+            primary,
+            "-c",
+            "postgres",
+            "--",
+            "psql",
+            "--no-psqlrc",
+            "--no-password",
+            "--username=postgres",
+            "--dbname=wamn_system",
+            "--quiet",
+            "--tuples-only",
+            "--no-align",
+            "--set",
+            "ON_ERROR_STOP=1",
+            "--command",
+            &query,
+        ],
+        None,
     )
     .await
+    .context("read identity signing state. No resources changed.")?;
+    let state: Value = serde_json::from_str(&result).context("decode identity signing state")?;
+    ensure!(
+        state["active"].is_object(),
+        "missing active identity signing key in identity.session_signing_state. No resources changed."
+    );
+    Ok(())
 }
 
 async fn keys(
@@ -514,6 +559,18 @@ fn endpoint_job(ca: &str) -> (Value, Secret) {
     (job, files)
 }
 
+const KEY_STATE_SQL: &str = "SELECT json_build_object(\
+                'active', (SELECT json_build_object('kid', k.kid::text, \
+                    'x', translate(rtrim(encode(k.public_key, 'base64'), '='), '+/', '-_')) \
+                    FROM identity.session_signing_state s JOIN identity.session_keys k \
+                    ON (k.issuer, k.kid) = (s.issuer, s.active_kid) \
+                    WHERE s.issuer = 'https://identity.identity.svc.cluster.local' \
+                    AND k.signing_cutoff IS NULL AND k.private_pkcs8 IS NOT NULL), \
+                'published', (SELECT kid::text FROM identity.session_keys \
+                    WHERE issuer = 'https://identity.identity.svc.cluster.local' \
+                    AND signing_cutoff IS NULL AND private_pkcs8 IS NOT NULL \
+                    ORDER BY published_at, kid LIMIT 1))";
+
 fn key_state_job(image: &str) -> Value {
     let mut job = job::manifest(
         "platform-session-key-state",
@@ -524,17 +581,7 @@ fn key_state_job(image: &str) -> Value {
             "--tuples-only",
             "--no-align",
             "--command",
-            "SELECT json_build_object(\
-                'active', (SELECT json_build_object('kid', k.kid::text, \
-                    'x', translate(rtrim(encode(k.public_key, 'base64'), '='), '+/', '-_')) \
-                    FROM identity.session_signing_state s JOIN identity.session_keys k \
-                    ON (k.issuer, k.kid) = (s.issuer, s.active_kid) \
-                    WHERE s.issuer = 'https://identity.identity.svc.cluster.local' \
-                    AND k.signing_cutoff IS NULL AND k.private_pkcs8 IS NOT NULL), \
-                'published', (SELECT kid::text FROM identity.session_keys \
-                    WHERE issuer = 'https://identity.identity.svc.cluster.local' \
-                    AND signing_cutoff IS NULL AND private_pkcs8 IS NOT NULL \
-                    ORDER BY published_at, kid LIMIT 1))",
+            KEY_STATE_SQL,
         ],
     );
     job::environment(

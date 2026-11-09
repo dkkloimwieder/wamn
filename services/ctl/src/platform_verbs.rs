@@ -106,7 +106,9 @@ async fn deploy(
             namespace: "platform".into(),
         };
         match &args.only {
-            Some(selection) => deploy::update(&document, &chart, &target, selection).await,
+            Some(selection) => {
+                deploy::update(&document, &chart, &target, selection, &directory).await
+            }
             None => deploy::deploy(&document, &chart, &target, &directory, &mut output).await,
         }
     })

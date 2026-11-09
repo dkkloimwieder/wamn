@@ -254,6 +254,140 @@ pub(crate) async fn helm(
     Ok(output.stdout)
 }
 
+/// Apply one service release before its separate initialization.
+pub(super) async fn apply_release(
+    target: &Target,
+    entry: &Value,
+    directory: &Path,
+) -> anyhow::Result<()> {
+    let name = entry["name"].as_str().context("service release name")?;
+    let namespace = entry["namespace"].as_str().context("service namespace")?;
+    let chart = entry["chart"].as_str().context("service chart")?;
+    let values = directory.join(format!("values-{name}.yaml"));
+    std::fs::write(&values, serde_yaml::to_string(&entry["values"])?)?;
+    let owner = Target {
+        namespace: namespace.into(),
+        ..target.clone()
+    };
+    wamn_release_control::release_chart::recover_pending(&owner, name).await?;
+    // Adopt the control objects that the installer previously applied directly.
+    // Initialization supplies credentials after resource application, so do not wait here.
+    helm(
+        target,
+        &[
+            "upgrade".as_ref(),
+            "--install".as_ref(),
+            name.as_ref(),
+            chart.as_ref(),
+            "--namespace".as_ref(),
+            namespace.as_ref(),
+            "-f".as_ref(),
+            values.as_os_str(),
+            "--take-ownership".as_ref(),
+            "--skip-crds".as_ref(),
+            "--history-max".as_ref(),
+            "50".as_ref(),
+        ],
+    )
+    .await?;
+    Ok(())
+}
+
+/// Require the references rendered by this release before changing any resource.
+pub(super) async fn require_inputs(target: &Target, entry: &Value) -> anyhow::Result<()> {
+    use base64::Engine as _;
+    use std::collections::{BTreeMap, BTreeSet};
+
+    fn references(value: &Value, inputs: &mut BTreeMap<(String, String), BTreeSet<String>>) {
+        match value {
+            Value::Object(object) => {
+                for (field, kind, name) in [
+                    ("secretKeyRef", "secret", "name"),
+                    ("secret", "secret", "secretName"),
+                    ("configMapKeyRef", "configmap", "name"),
+                    ("configMap", "configmap", "name"),
+                ] {
+                    let Some(reference) = object.get(field) else {
+                        continue;
+                    };
+                    if reference["optional"] == true {
+                        continue;
+                    }
+                    let Some(name) = reference[name].as_str() else {
+                        continue;
+                    };
+                    let keys = inputs.entry((kind.into(), name.into())).or_default();
+                    if let Some(key) = reference["key"].as_str() {
+                        keys.insert(key.into());
+                    }
+                    for item in reference["items"].as_array().into_iter().flatten() {
+                        if let Some(key) = item["key"].as_str() {
+                            keys.insert(key.into());
+                        }
+                    }
+                }
+                for value in object.values() {
+                    references(value, inputs);
+                }
+            }
+            Value::Array(array) => {
+                for value in array {
+                    references(value, inputs);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    let objects = helm_template(entry)?;
+    for object in &objects {
+        let mut inputs = BTreeMap::new();
+        references(object, &mut inputs);
+        let namespace = object["metadata"]["namespace"]
+            .as_str()
+            .or_else(|| entry["namespace"].as_str())
+            .context("service namespace")?;
+        for ((kind, name), keys) in inputs {
+            // A ConfigMap rendered by this release is configuration, not initialization.
+            if kind == "configmap"
+                && objects.iter().any(|object| {
+                    object["kind"] == "ConfigMap"
+                        && object["metadata"]["name"] == name
+                        && object["metadata"]["namespace"]
+                            .as_str()
+                            .unwrap_or(namespace)
+                            == namespace
+                })
+            {
+                continue;
+            }
+            let input: Value =
+                kubectl::get(&target.kubeconfig, &target.context, namespace, &kind, &name)
+                    .await?
+                    .with_context(|| {
+                        format!("missing {kind} {namespace}/{name}. No resources changed.")
+                    })?;
+            for key in keys {
+                let value = input["data"][&key].as_str().with_context(|| {
+                    format!("missing {kind} {namespace}/{name} key {key}. No resources changed.")
+                })?;
+                let present = if kind == "secret" {
+                    base64::engine::general_purpose::STANDARD
+                        .decode(value)
+                        .is_ok_and(|value| !value.is_empty())
+                } else {
+                    !value.is_empty()
+                };
+                ensure!(
+                    present,
+                    "invalid {kind} {namespace}/{name} key {key}. No resources changed."
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Read the values of an existing release, including failed or pending releases.
 pub(crate) async fn release_values(
     target: &Target,

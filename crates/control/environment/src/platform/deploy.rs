@@ -47,16 +47,12 @@ pub async fn deploy(
     )?;
     infrastructure(document, chart, target, directory).await?;
     initialize(document, chart, target, directory, output).await?;
-    identity::apply(target, document, &identity_chart, directory).await?;
-    control::credentials(target, document).await?;
-    control::release(
-        target,
-        document,
-        &control_chart,
-        control_values.as_ref(),
-        directory,
-    )
-    .await?;
+    let entry = identity::resource_entry(document, &identity_chart, identity_values)?;
+    resources::apply_release(target, &entry, directory).await?;
+    identity::initialize(target, document, &identity_chart, directory).await?;
+    let entry = control::resource_entry(document, &control_chart, control_values)?;
+    resources::apply_release(target, &entry, directory).await?;
+    control::initialize(target, document).await?;
     let payload = chart.directory().join("platform/resources");
     let certificates = edge::certificates(&payload, document)?;
     apply(target, &certificates).await?;
@@ -68,12 +64,13 @@ pub async fn deploy(
 /// Prepare an update of one existing owner without entering installation.
 ///
 /// # Errors
-/// Returns an error for an absent owner or an update that needs DEP4-03 or DEP4-04.
+/// Returns an error for missing initialization or a host update that needs DEP4-04.
 pub async fn update(
     document: &ClusterDocument,
     chart: &SelectedChart,
     target: &Target,
     selection: &UpgradeTarget,
+    directory: &Path,
 ) -> anyhow::Result<()> {
     let (name, namespace) = selection.owner(document);
     let installed = resources::release_values(target, namespace, &name)
@@ -83,30 +80,19 @@ pub async fn update(
                 "targeted update requires existing release {namespace}/{name}; no resources changed"
             )
         })?;
-    if matches!(selection, UpgradeTarget::Host { .. }) {
-        chart.selection_values(document, selection, installed)?;
-    } else {
-        let operator = resources::release_values(target, "platform", "wamn").await?;
-        artifact_plan::resolve_chart(
-            document,
-            selection,
-            operator.as_ref(),
-            (selection == &UpgradeTarget::Control).then_some(&installed),
-            (selection == &UpgradeTarget::Identity).then_some(&installed),
-            chart.directory(),
-        )?;
-    }
-    match selection {
-        UpgradeTarget::Control => anyhow::bail!(
-            "control update requires DEP4-03 (wamn-275sr.3) to separate resources from credential initialization; no resources changed"
-        ),
-        UpgradeTarget::Identity => anyhow::bail!(
-            "identity update requires DEP4-03 (wamn-275sr.3) to separate resources from SQL and signing-key initialization; no resources changed"
-        ),
-        UpgradeTarget::Host { .. } => anyhow::bail!(
-            "host update requires DEP4-04 (wamn-275sr.4) to preserve the owning release and host selections; no resources changed"
-        ),
-    }
+    let entry = match selection {
+        UpgradeTarget::Control => control::resource_entry(document, chart, Some(installed))?,
+        UpgradeTarget::Identity => identity::resource_entry(document, chart, Some(installed))?,
+        UpgradeTarget::Host { .. } => {
+            chart.selection_values(document, selection, installed)?;
+            anyhow::bail!(
+                "host update requires DEP4-04 (wamn-275sr.4) to preserve the owning release and host selections; no resources changed"
+            );
+        }
+    };
+    resources::require_inputs(target, &entry).await?;
+    identity::require_keys(target).await?;
+    resources::apply_release(target, &entry, directory).await
 }
 
 async fn infrastructure(
@@ -323,4 +309,91 @@ async fn rollout(target: &Target, namespace: &str, resource: &str) -> anyhow::Re
     )
     .await?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn service_updates_render_with_existing_credential_and_key_references() -> anyhow::Result<()> {
+        let repository = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
+        let document = ClusterDocument::compile(&repository.join("deploy/kind/cluster.k"))?;
+        let previous = artifact_plan::test_util::prepared_chart(&repository)?;
+        let incoming = artifact_plan::test_util::prepared_chart(&repository)?;
+        let file = incoming.0.join("values.yaml");
+        let mut defaults: Value = serde_yaml::from_slice(&std::fs::read(&file)?)?;
+        defaults["platform"]["identity"]["image"] =
+            json!(format!("next.example/identity@sha256:{}", "b".repeat(64)));
+        defaults["platform"]["roles"]["http"]["image"] =
+            json!(format!("next.example/http@sha256:{}", "b".repeat(64)));
+        defaults["runtime-operator"]["runtime"]["image"]["tag"] =
+            json!(format!("next@sha256:{}", "b".repeat(64)));
+        std::fs::write(file, serde_yaml::to_string(&defaults)?)?;
+        let previous = artifact_plan::select(&previous.0)?;
+        let incoming = artifact_plan::select(&incoming.0)?;
+        for selection in [UpgradeTarget::Control, UpgradeTarget::Identity] {
+            let mut entry = match selection {
+                UpgradeTarget::Control => control::resource_entry(&document, &previous, None)?,
+                UpgradeTarget::Identity => identity::resource_entry(&document, &previous, None)?,
+                UpgradeTarget::Host { .. } => unreachable!(),
+            };
+            if selection == UpgradeTarget::Identity {
+                entry["values"]["databaseSecret"] = "retained-db".into();
+                entry["values"]["tlsSecret"] = "retained-tls".into();
+                entry["values"]["operatorCaSecret"] = "retained-operator-ca".into();
+                entry["values"]["sessionTargetSecrets"] = json!(["retained-target"]);
+            }
+            let before = resources::helm_template(&entry)?;
+            let updated = match selection {
+                UpgradeTarget::Control => {
+                    control::resource_entry(&document, &incoming, Some(entry["values"].take()))?
+                }
+                UpgradeTarget::Identity => {
+                    identity::resource_entry(&document, &incoming, Some(entry["values"].take()))?
+                }
+                UpgradeTarget::Host { .. } => unreachable!(),
+            };
+            let after = resources::helm_template(&updated)?;
+            for deployment in before
+                .iter()
+                .filter(|object| object["kind"] == "Deployment")
+            {
+                let updated = after
+                    .iter()
+                    .find(|object| {
+                        object["kind"] == deployment["kind"]
+                            && object["metadata"]["name"] == deployment["metadata"]["name"]
+                    })
+                    .unwrap();
+                let old = &deployment["spec"]["template"]["spec"];
+                let new = &updated["spec"]["template"]["spec"];
+                assert_eq!(
+                    new["volumes"], old["volumes"],
+                    "credential and key mounts stay unchanged"
+                );
+                for container in old["containers"].as_array().unwrap() {
+                    let updated = new["containers"]
+                        .as_array()
+                        .unwrap()
+                        .iter()
+                        .find(|next| next["name"] == container["name"])
+                        .unwrap();
+                    assert_eq!(
+                        updated["env"], container["env"],
+                        "credential and issuer references stay unchanged"
+                    );
+                    assert_eq!(updated["volumeMounts"], container["volumeMounts"]);
+                    assert_ne!(updated["image"], container["image"]);
+                }
+            }
+            assert!(
+                !after
+                    .iter()
+                    .any(|object| object["kind"] == "Secret" || object["kind"] == "Job")
+            );
+        }
+        Ok(())
+    }
 }
