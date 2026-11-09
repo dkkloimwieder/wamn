@@ -8,8 +8,8 @@ use serde::Deserialize as _;
 use serde_json::Value;
 use wamn_release_control::release_chart::Target;
 
-use super::artifact_plan::SelectedChart;
-use super::document::{ClusterDocument, Provider};
+use super::artifact_plan::{self, SelectedChart};
+use super::document::{ClusterDocument, Provider, UpgradeTarget};
 use super::{bootstrap, broker, control, edge, identity, manifests, provider, resources};
 use crate::kubectl;
 
@@ -23,6 +23,86 @@ pub async fn deploy(
     target: &Target,
     directory: &Path,
     output: &mut impl Write,
+) -> anyhow::Result<()> {
+    // Resolve both recorded selections before any resource mutation.
+    let control_values =
+        resources::release_values(target, "hosts", &format!("c-{}", document.org)).await?;
+    let identity_values = resources::release_values(target, "identity", "identity").await?;
+    let control_chart = artifact_plan::recorded_chart(control_values.as_ref())
+        .context("resolve recorded control selection")?;
+    let identity_chart = artifact_plan::recorded_chart(identity_values.as_ref())
+        .context("resolve recorded identity selection")?;
+    infrastructure(document, chart, target, directory).await?;
+    initialize(document, chart, target, directory, output).await?;
+    identity::apply(
+        target,
+        document,
+        identity_chart.as_ref().unwrap_or(chart),
+        directory,
+    )
+    .await?;
+    control::credentials(target, document).await?;
+    control::release(
+        target,
+        document,
+        control_chart.as_ref().unwrap_or(chart),
+        control_values.as_ref(),
+        directory,
+    )
+    .await?;
+    let payload = chart.directory().join("platform/resources");
+    let certificates = edge::certificates(&payload, document)?;
+    apply(target, &certificates).await?;
+    certificates_ready(target, &certificates).await?;
+    edge::apply(target, document, chart, directory).await?;
+    control::probe(target, document).await
+}
+
+/// Prepare an update of one existing owner without entering installation.
+///
+/// # Errors
+/// Returns an error for an absent owner or an update that needs DEP4-03 or DEP4-04.
+pub async fn update(
+    document: &ClusterDocument,
+    chart: &SelectedChart,
+    target: &Target,
+    selection: &UpgradeTarget,
+) -> anyhow::Result<()> {
+    let (name, namespace) = selection.owner(document);
+    let installed = resources::release_values(target, namespace, &name)
+        .await?
+        .with_context(|| {
+            format!(
+                "targeted update requires existing release {namespace}/{name}; no resources changed"
+            )
+        })?;
+    if matches!(selection, UpgradeTarget::Control | UpgradeTarget::Identity) {
+        anyhow::ensure!(
+            installed["platform"]["chart"]
+                .as_str()
+                .is_some_and(|chart| !chart.is_empty()),
+            "targeted update requires initialized release {namespace}/{name}: recorded platform.chart is absent; no resources changed"
+        );
+    }
+    chart.selection_values(document, selection, installed)?;
+    match selection {
+        UpgradeTarget::Control => anyhow::bail!(
+            "control update requires DEP4-03 (wamn-275sr.3) to separate resources from credential initialization; no resources changed"
+        ),
+        UpgradeTarget::Identity => anyhow::bail!(
+            "identity update requires DEP4-03 (wamn-275sr.3) to separate resources from SQL and signing-key initialization; no resources changed"
+        ),
+        UpgradeTarget::Host { .. } => anyhow::bail!(
+            "host update requires DEP4-04 (wamn-275sr.4) to preserve the owning release and host selections; no resources changed"
+        ),
+    }
+}
+
+async fn infrastructure(
+    document: &ClusterDocument,
+    chart: &SelectedChart,
+    target: &Target,
+    directory: &Path,
 ) -> anyhow::Result<()> {
     let payload = chart.directory().join("platform/resources");
     for object in resources::runtime_namespaces() {
@@ -166,6 +246,16 @@ pub async fn deploy(
         "600s",
     )
     .await?;
+    Ok(())
+}
+
+async fn initialize(
+    document: &ClusterDocument,
+    chart: &SelectedChart,
+    target: &Target,
+    directory: &Path,
+    output: &mut impl Write,
+) -> anyhow::Result<()> {
     let initialization = bootstrap::initialize(target, document, chart, directory).await;
     let public_result = directory.join("jobs/platform-system.log");
     let printed = (|| -> anyhow::Result<()> {
@@ -176,14 +266,7 @@ pub async fn deploy(
     })();
     initialization?;
     printed?;
-    identity::apply(target, document, chart, directory).await?;
-    control::credentials(target, document).await?;
-    control::release(target, document, chart, directory).await?;
-    let certificates = edge::certificates(&payload, document)?;
-    apply(target, &certificates).await?;
-    certificates_ready(target, &certificates).await?;
-    edge::apply(target, document, chart, directory).await?;
-    control::probe(target, document).await
+    Ok(())
 }
 
 async fn apply(target: &Target, objects: &[Value]) -> anyhow::Result<()> {

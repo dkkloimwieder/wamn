@@ -79,7 +79,7 @@ This section records the current code. It replaces the historical list of earlie
 | Publisher identity | No command accepts a caller-supplied publisher string. Publication records no publisher. The `catalog.releases` row of an applied release carries the record-history stamp of the authenticated deploy actor. |
 | Development loop | `wamn dev` prepares generation before the shared `schema::plan` decision. Its template reset and direct connection retain the same package SQL executor and records as deployed Jobs. |
 | Platform UI | Local kind deployment does not select the UI. The separate upload path still consumes a local bundle matching its stamped chart. |
-| Platform updates | `wamn platform deploy --only` parses a target and resolves prepared artifacts. Targeted updates are not implemented. Untargeted runs still apply infrastructure, bootstrap, identity, control, and edge. |
+| Platform updates | `platform/deploy.rs` separates targeted updates from installation. Updates read only the selected Helm owner. Control and identity still refuse under DEP4-03. Hosts still refuse under DEP4-04. Untargeted runs keep recorded service charts and control host image overrides. They still apply infrastructure, bootstrap, and edge. |
 | Host runtime selection | The operator release `wamn` records one platform-wide chart reference. `environment/runtime.rs` reads it, and `environment/write.rs` renders the host groups of each application release from that chart. |
 
 The accepted Epic 2 record leaves `wamn-xy404`, `wamn-1riwn`, and `wamn-c361p` open.

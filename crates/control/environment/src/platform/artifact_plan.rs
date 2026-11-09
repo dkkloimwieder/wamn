@@ -221,6 +221,18 @@ pub fn select(chart: &Path) -> anyhow::Result<SelectedChart> {
     })
 }
 
+pub(super) fn recorded_chart(installed: Option<&Value>) -> anyhow::Result<Option<SelectedChart>> {
+    installed
+        .map(|values| {
+            let chart = values["platform"]["chart"]
+                .as_str()
+                .filter(|chart| !chart.is_empty())
+                .context("existing service release has no platform.chart selection")?;
+            select(Path::new(chart))
+        })
+        .transpose()
+}
+
 fn read_yaml(file: &Path) -> anyhow::Result<Value> {
     serde_yaml::from_slice(
         &std::fs::read(file).with_context(|| format!("read {}", file.display()))?,
@@ -279,67 +291,19 @@ fn validate_platform_images(value: &Value) -> anyhow::Result<()> {
     Ok(())
 }
 
+#[cfg(any(test, feature = "test-util"))]
+pub mod test_util;
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use serde_json::json;
 
-    struct Chart(PathBuf);
-
-    impl Drop for Chart {
-        fn drop(&mut self) {
-            std::fs::remove_dir_all(&self.0).unwrap();
-        }
-    }
+    use super::test_util::Chart;
 
     fn prepared_chart() -> Chart {
-        use wamn_release_control::release_chart::{self, ImageSet};
-
         let repository = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
-        let chart =
-            Chart(std::env::temp_dir().join(format!("wamn-chart-{}", uuid::Uuid::new_v4())));
-        let digest = "a".repeat(64);
-        release_chart::stamp(
-            &repository.join("deploy/platform/release"),
-            &ImageSet {
-                host: format!("localhost:5001/host:host-build@sha256:{digest}"),
-                http: format!("registry.example/components/http@sha256:{digest}"),
-                materializer: format!("other.example/materializer:component-build@sha256:{digest}"),
-            },
-            None,
-            &chart.0,
-        )
-        .unwrap();
-        for file in PAYLOAD_FILES {
-            let target = chart.0.join(file);
-            let source = if let Some(identity) = file.strip_prefix("platform/identity/") {
-                repository.join("deploy/platform/identity").join(identity)
-            } else if let Some(edge) = file.strip_prefix("platform/edge/") {
-                repository.join("deploy/platform/edge").join(edge)
-            } else {
-                let basename = Path::new(file).file_name().unwrap();
-                [
-                    "deploy/infra",
-                    "deploy/platform",
-                    "deploy/kind",
-                    "deploy/gcp",
-                ]
-                .into_iter()
-                .map(|root| repository.join(root).join(basename))
-                .find(|path| path.is_file())
-                .unwrap()
-            };
-            std::fs::create_dir_all(target.parent().unwrap()).unwrap();
-            std::fs::copy(source, target).unwrap();
-        }
-        let mut values = read_yaml(&chart.0.join("values.yaml")).unwrap();
-        values["platform"]["ctl"] =
-            json!({"image": format!("ctl.example/wamn-ctl:ctl-build@sha256:{digest}")});
-        values["platform"]["identity"]["image"] =
-            json!(format!("identity.example/identity@sha256:{digest}"));
-        values["platform"]["edge"]["image"] = json!(format!("edge.example/edge@sha256:{digest}"));
-        write_values(&chart, &values);
-        chart
+        super::test_util::prepared_chart(&repository).unwrap()
     }
 
     fn write_values(chart: &Chart, values: &Value) {
@@ -377,6 +341,17 @@ mod tests {
 
         let chart = prepared_chart();
         let selected = select(&chart.0)?;
+        let incoming_chart = prepared_chart();
+        let mut incoming_values = read_yaml(&incoming_chart.0.join("values.yaml"))?;
+        incoming_values["runtime-operator"]["runtime"]["image"]["tag"] =
+            json!(format!("next@sha256:{}", "b".repeat(64)));
+        incoming_values["platform"]["identity"]["image"] =
+            json!(format!("identity.example/next@sha256:{}", "b".repeat(64)));
+        write_values(&incoming_chart, &incoming_values);
+        let incoming = select(&incoming_chart.0)?;
+        assert!(recorded_chart(None)?.is_none());
+        assert!(recorded_chart(Some(&json!({}))).is_err());
+        assert!(recorded_chart(Some(&json!({"platform":{"chart":"/absent/dep4-chart"}}))).is_err());
         let repository = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
         let document = ClusterDocument::compile(&repository.join("deploy/kind/cluster.k"))?;
         let identity = identity::platform_chart_input(
@@ -393,7 +368,9 @@ mod tests {
         ] {
             installed["platform"] = json!({"chart":"/previous/chart", "retained":"configuration"});
             let mut values = selected.selection_values(&document, &target, installed.clone())?;
-            let resolved = select(Path::new(values["platform"]["chart"].as_str().unwrap()))?;
+            let recorded = recorded_chart(Some(&values))?;
+            let resolved = recorded.as_ref().unwrap_or(&incoming);
+            assert_eq!(resolved.directory(), selected.directory());
             let (name, namespace) = target.owner(&document);
             let entry = match target {
                 UpgradeTarget::Control => json!({

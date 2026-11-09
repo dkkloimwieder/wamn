@@ -10,7 +10,7 @@ use wamn_release_control::release_chart::{self, Target};
 
 use super::artifact_plan::SelectedChart;
 use super::bootstrap::{SecretData, database_host, secret_text};
-use super::document::{ClusterDocument, Provider};
+use super::document::{ClusterDocument, Provider, UpgradeTarget};
 use super::job::{self, Secret};
 
 /// The platform broker Service used by in-cluster clients.
@@ -159,11 +159,13 @@ pub async fn apply(
     .await?
     .context("missing Secret platform/wamn-pg-superuser")?;
     let image = chart.image("identity")?;
-    let entry = platform_chart_input(
+    let mut entry = platform_chart_input(
         &chart.directory().join("platform/identity"),
         document,
         image,
     )?;
+    entry["values"] =
+        chart.selection_values(document, &UpgradeTarget::Identity, entry["values"].take())?;
     install(&identity, directory, &entry).await?;
     let active = keys(target, &identity, directory, &superuser, image).await?;
     let ca: SecretData = kubectl::get(

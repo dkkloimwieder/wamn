@@ -254,6 +254,55 @@ pub(crate) async fn helm(
     Ok(output.stdout)
 }
 
+/// Read the values of an existing release, including failed or pending releases.
+pub(crate) async fn release_values(
+    target: &Target,
+    namespace: &str,
+    name: &str,
+) -> anyhow::Result<Option<Value>> {
+    let filter = format!("^{name}$");
+    let listed = helm(
+        target,
+        &[
+            "list".as_ref(),
+            "--all".as_ref(),
+            "--namespace".as_ref(),
+            namespace.as_ref(),
+            "--filter".as_ref(),
+            filter.as_ref(),
+            "-o".as_ref(),
+            "json".as_ref(),
+        ],
+    )
+    .await?;
+    let releases: Vec<Value> = serde_json::from_slice(&listed).context("decode Helm releases")?;
+    if !releases.iter().any(|release| release["name"] == name) {
+        return Ok(None);
+    }
+    let values = helm(
+        target,
+        &[
+            "get".as_ref(),
+            "values".as_ref(),
+            name.as_ref(),
+            "--namespace".as_ref(),
+            namespace.as_ref(),
+            "-o".as_ref(),
+            "json".as_ref(),
+        ],
+    )
+    .await?;
+    let mut values: Value = serde_json::from_slice(&values).context("decode Helm values")?;
+    if values.is_null() {
+        values = json!({});
+    }
+    ensure!(
+        values.is_object(),
+        "installed Helm values must be an object"
+    );
+    Ok(Some(values))
+}
+
 /// Build a namespace prerequisite.
 pub fn namespace_object(namespace: &str) -> Value {
     json!({"apiVersion": "v1", "kind": "Namespace", "metadata": {"name": namespace}})

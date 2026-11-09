@@ -11,7 +11,7 @@ use wamn_release_control::release_chart::Target;
 
 use super::artifact_plan::SelectedChart;
 use super::bootstrap::{SecretData, secret_text};
-use super::document::{ClusterDocument, Provider};
+use super::document::{ClusterDocument, Provider, UpgradeTarget};
 
 const REGISTRY_PULL: &str = "wamn-registry-pull";
 const REGISTRY_AUTH_FILE: &str = "/etc/wamn/registry/config.json";
@@ -305,6 +305,33 @@ pub(crate) fn release_values(
     Ok(desired)
 }
 
+fn reapply_values(
+    document: &ClusterDocument,
+    chart: &Value,
+    platform_ui: bool,
+    installed: Option<&Value>,
+) -> anyhow::Result<Value> {
+    let mut desired = release_values(document, chart, platform_ui)?;
+    if let Some(groups) = installed
+        .and_then(|values| values.pointer("/runtime-operator/runtime/hostGroups"))
+        .and_then(Value::as_array)
+    {
+        for group in desired["runtime-operator"]["runtime"]["hostGroups"]
+            .as_array_mut()
+            .expect("control host groups")
+        {
+            if let Some(image) = groups
+                .iter()
+                .find(|previous| previous["name"] == group["name"])
+                .and_then(|previous| previous.get("image"))
+            {
+                group["image"] = image.clone();
+            }
+        }
+    }
+    Ok(desired)
+}
+
 fn identity_ca(ca: &str) -> Value {
     json!({
         "apiVersion": "v1",
@@ -318,6 +345,7 @@ pub async fn release(
     target: &Target,
     document: &ClusterDocument,
     chart: &SelectedChart,
+    installed: Option<&Value>,
     directory: &Path,
 ) -> anyhow::Result<()> {
     let build_record = chart
@@ -331,7 +359,11 @@ pub async fn release(
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => false,
         Err(error) => return Err(error).context("read the selected platform build record"),
     };
-    let desired = release_values(document, chart.values(), platform_ui)?;
+    let desired = chart.selection_values(
+        document,
+        &UpgradeTarget::Control,
+        reapply_values(document, chart.values(), platform_ui, installed)?,
+    )?;
     super::oauth::ensure_key(target, document).await?;
     // The host verifies identity's JWKS and PAT endpoint with the serving CA,
     // which cert-manager keeps in identity/identity-tls.
@@ -419,6 +451,41 @@ pub async fn probe(target: &Target, document: &ClusterDocument) -> anyhow::Resul
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn control_reapply_renders_the_recorded_host_image_override() -> anyhow::Result<()> {
+        let document = document();
+        let repository = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
+        let chart = super::super::artifact_plan::test_util::prepared_chart(&repository)?;
+        let selected = super::super::artifact_plan::select(&chart.0)?;
+        let mut installed = release_values(&document, selected.values(), false)?;
+        let image = json!({"registry":"previous.example", "repository":"host",
+            "tag":format!("previous@sha256:{}", "b".repeat(64)), "pull_policy":"IfNotPresent"});
+        installed["runtime-operator"]["runtime"]["hostGroups"][0]["image"] = image.clone();
+        let values = reapply_values(&document, selected.values(), false, Some(&installed))?;
+        assert_eq!(
+            values["runtime-operator"]["runtime"]["hostGroups"][0]["image"],
+            image
+        );
+        let entry = json!({"chart":selected.directory(), "version":selected.version,
+            "name":format!("c-{}", document.org), "namespace":"hosts", "values":values});
+        let objects = super::super::resources::helm_template(&entry)?;
+        let deployment = objects
+            .iter()
+            .find(|object| object["kind"] == "Deployment")
+            .unwrap();
+        assert_eq!(
+            deployment["spec"]["template"]["spec"]["containers"][0]["image"],
+            format!("previous.example/host:previous@sha256:{}", "b".repeat(64))
+        );
+        let fresh = reapply_values(&document, selected.values(), false, None)?;
+        assert!(
+            fresh["runtime-operator"]["runtime"]["hostGroups"][0]
+                .get("image")
+                .is_none()
+        );
+        Ok(())
+    }
 
     fn document() -> ClusterDocument {
         serde_json::from_value(json!({

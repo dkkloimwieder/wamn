@@ -87,12 +87,6 @@ async fn deploy(
         .with_context(|| format!("resolve cluster {}", args.file.display()))?;
     let document = ClusterDocument::compile(&file)?;
     let chart = artifact_plan::select(&args.chart)?;
-    if let Some(target) = &args.only {
-        let (name, namespace) = target.owner(&document);
-        anyhow::bail!(
-            "targeted update of {namespace}/{name} requires the existing-platform update path; no resources changed"
-        );
-    }
     writeln!(output, "cluster: {}", file.display())?;
     writeln!(output, "chart: {}", chart.directory().display())?;
     // Kind nodes can mount files from this directory. Retain it for their lifetime.
@@ -101,15 +95,26 @@ async fn deploy(
     output.flush()?;
     let result = interruptible(signals, async {
         let kubeconfig = directory.join("kubeconfig");
-        let context = document.provider.kubeconfig(&document, &kubeconfig).await?;
+        let context = if args.only.is_some() {
+            provider::existing_kubeconfig(&document, &kubeconfig).await?
+        } else {
+            document.provider.kubeconfig(&document, &kubeconfig).await?
+        };
         let target = Target {
             kubeconfig,
             context,
             namespace: "platform".into(),
         };
-        deploy::deploy(&document, &chart, &target, &directory, &mut output).await
+        match &args.only {
+            Some(selection) => deploy::update(&document, &chart, &target, selection).await,
+            None => deploy::deploy(&document, &chart, &target, &directory, &mut output).await,
+        }
     })
     .await;
+    if args.only.is_some() {
+        let cleanup = std::fs::remove_dir_all(directory).context("remove update directory");
+        return result.and(cleanup);
+    }
     let observed = report_status(&document, &directory, signals, &mut output).await;
     // A failed observation or output write must not replace the deployment error.
     result.and(observed)
