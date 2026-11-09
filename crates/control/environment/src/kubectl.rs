@@ -50,6 +50,21 @@ pub async fn kubectl(
     .await
 }
 
+/// Bound a complete inspection, including all kubectl calls and output reads.
+///
+/// Cancelling a kubectl future drops and kills its child process.
+///
+/// # Errors
+/// Returns the operation error or a timeout error.
+pub async fn with_timeout<T>(
+    limit: std::time::Duration,
+    operation: impl std::future::Future<Output = anyhow::Result<T>>,
+) -> anyhow::Result<T> {
+    tokio::time::timeout(limit, operation)
+        .await
+        .with_context(|| format!("kubectl inspection timed out after {limit:?}"))?
+}
+
 async fn run(
     kubeconfig: &Path,
     context: &str,

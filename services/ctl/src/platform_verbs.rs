@@ -113,7 +113,21 @@ async fn deploy(
                     context,
                     namespace: "platform".into(),
                 };
-                deploy::update(&document, &chart, &target, selection, &directory).await
+                let result =
+                    deploy::update(&document, &chart, &target, selection, &directory).await;
+                let observed = status::read_target(&document, &target, selection).await;
+                let reported = (|| -> anyhow::Result<()> {
+                    status::write_target(&observed, &mut output)?;
+                    output.flush()?;
+                    anyhow::ensure!(
+                        observed.category == status::Category::Ready,
+                        "target {} is {}",
+                        observed.name,
+                        observed.category
+                    );
+                    Ok(())
+                })();
+                result.and(reported)
             }
             None => deploy::deploy(&document, args.chart.as_deref(), &directory, &mut output).await,
         }

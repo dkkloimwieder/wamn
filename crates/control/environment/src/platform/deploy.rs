@@ -183,7 +183,8 @@ pub async fn update(
     };
     resources::require_inputs(target, &entry).await?;
     if selection == &UpgradeTarget::Identity {
-        identity::require_keys(target).await?;
+        // Allow five seconds for the statement and five for Cluster, exec, and output.
+        identity::require_keys(target, std::time::Duration::from_secs(10)).await?;
         resources::apply_release(&owner, &entry, directory).await
     } else {
         resources::upgrade_release(&owner, &entry, directory).await

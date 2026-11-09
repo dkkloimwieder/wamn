@@ -79,7 +79,7 @@ This section records the current code. It replaces the historical list of earlie
 | Publisher identity | No command accepts a caller-supplied publisher string. Publication records no publisher. The `catalog.releases` row of an applied release carries the record-history stamp of the authenticated deploy actor. |
 | Development loop | `wamn dev` prepares generation before the shared `schema::plan` decision. Its template reset and direct connection retain the same package SQL executor and records as deployed Jobs. |
 | Platform UI | Local kind deployment does not select the UI. The separate upload path still consumes a local bundle matching its stamped chart. |
-| Platform updates | Control and identity updates upgrade only their selected release from the supplied chart and retain host overrides, credentials, and signing keys. Only identity reads signing state, and missing initialization refuses before writes. Host updates wait for readiness and replace only the named group image through its owning release. Untargeted runs retain the recorded platform default, service charts, and host overrides. Services without chart metadata inherit that default. Untargeted runs still apply infrastructure, bootstrap, and edge. |
+| Platform updates | Targeted updates change only the selected release. They report its recorded artifact, running image IDs, and workload readiness, including after failure. Status reports each service, explicit host override, and platform default without requiring a healthy service. Reselection uses the same update. Retries run no installation. The complete identity signing inspection has a ten-second limit. Untargeted runs retain recorded selections and still run infrastructure, bootstrap, and edge. Deployed verification remains DEP4-06. |
 | Host runtime selection | The operator release `wamn` records the default chart. A targeted host update records an immutable image override in its owning release. Application and shared-host reapply read that release and retain only the matching image override. |
 
 The accepted Epic 2 record leaves `wamn-xy404`, `wamn-1riwn`, and `wamn-c361p` open.
@@ -432,6 +432,7 @@ Implementation status: control, identity, and host updates apply only the select
 Untargeted runs still apply infrastructure, run bootstrap, and initialize both services (section 2).
 Epic 4 implements this section. DEP4-01 defines the selection syntax below.
 DEP4-02 through DEP4-04 implement the update operations.
+DEP4-05 adds target status and bounds the complete signing inspection.
 
 Three ownership rules apply:
 
@@ -471,8 +472,23 @@ An untargeted reapply never substitutes the supplied chart for an unavailable re
 Targeted updates require an existing owner release.
 Every explicit `--only` update requires `--chart`.
 After resolution, the command reports the selected chart and its owner release.
+After the upgrade, the command reports that target's recorded artifact and observed readiness.
+It also reports that target after an unsuccessful upgrade.
+A failure never reports the whole platform as successful.
+The status command uses the same reader in `platform/status.rs`.
+It reports the control and identity charts, each explicit host image override, and the platform default.
+Hosts without an override appear with the platform default.
+It separates those selections from Kubernetes workload conditions, resource images, and running container image IDs.
+These reads do not require either service to be ready.
+
+An explicit `--only <target> --chart <EARLIER>` selects an earlier compatible artifact through the same update operation.
+It does not reverse SQL or add a rollback or history subsystem.
+A retry repeats the targeted update without installation or initialization.
+Command tests use fake cluster tools and real Helm rendering.
+Deployed readiness, rollback, host reports, and data retention remain unverified until DEP4-06.
+
 If a required chart is missing, the command refuses with an explicit error before any resource change.
-They prohibit bootstrap, migrations, data changes, and key creation or rotation.
+Targeted updates prohibit bootstrap, migrations, data changes, and key creation or rotation.
 Reads that inspect existing initialization are allowed.
 Control and identity updates use the supplied `--chart` and record it with `selection_values` in the selected release.
 An explicit service update does not resolve or require the previous chart directory.
@@ -504,8 +520,9 @@ Only an identity update reads the active signing state.
 A missing input gives an explicit error. It never triggers initialization.
 The read-only signing query uses the existing PostgreSQL primary through kubectl exec.
 It returns only a boolean and sets a five-second PostgreSQL statement timeout inside the read-only transaction.
-That timeout bounds the PostgreSQL statement, not the complete signing inspection.
-The kubectl exec call has no call timeout. DEP4-05 tracks this gap.
+A ten-second call limit bounds the complete inspection through the existing kubectl wrapper.
+It includes the Cluster read, exec call, and output read.
+A timeout stops the local kubectl process and refuses before resource changes.
 Missing or unreadable signing state refuses before resource changes.
 The error directs the operator to run platform deploy without `--only` to initialize identity.
 

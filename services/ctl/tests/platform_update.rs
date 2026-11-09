@@ -47,7 +47,7 @@ if tool == 'helm':
         sys.exit(subprocess.run([state['helm']] + args, input=sys.stdin.buffer.read()).returncode)
     namespace = args[args.index('--namespace') + 1] if '--namespace' in args else args[args.index('-n') + 1]
     if args[0] == 'list':
-        pattern = args[args.index('--filter') + 1]
+        pattern = args[args.index('--filter') + 1] if '--filter' in args else '.*'
         print(json.dumps([{'name': key.split('/')[1], 'status': state.get('pending', {}).get(key, 'deployed')} for key in state['owners']
             if key.split('/')[0] == namespace and re.fullmatch(pattern, key.split('/')[1])]))
         sys.exit(0)
@@ -113,6 +113,15 @@ if tool == 'kubectl':
             print('["active","inactive"]' if 'json_build_array' in query else 't')
         sys.exit(0)
     if args[0] == 'get':
+        if state.get('hang_read') == namespace + '/' + args[1]:
+            time.sleep(120)
+        if args[1] == 'pods':
+            selector = args[args.index('-l') + 1] if '-l' in args else ''
+            print(json.dumps({'items': state.get('pods', {}).get(namespace + '/' + selector, [])}))
+            sys.exit(0)
+        if namespace + '/' + args[1] in state.get('workloads', {}):
+            print(json.dumps(state['workloads'][namespace + '/' + args[1]]))
+            sys.exit(0)
         resource = namespace + '/' + args[1]
         if resource == state.get('fail_read'):
             sys.exit(1)
@@ -144,6 +153,9 @@ if tool == 'kubectl':
             print(json.dumps({'data': data}))
             sys.exit(0)
     if args[0] == 'exec':
+        if state.get('hang_exec'):
+            (root / 'exec.pid').write_text(str(__import__('os').getpid()))
+            time.sleep(120)
         if state.get('exec_error'):
             print(state['exec_error'], file=sys.stderr)
             sys.exit(1)
@@ -282,8 +294,62 @@ impl Fixture {
             groups.insert(0, other);
             owners[format!("hosts/{release}")] = values;
         }
+        let mut workloads = json!({});
+        let mut pods = json!({});
+        for (namespace, name, selector) in [
+            (
+                "identity",
+                "identity".to_owned(),
+                "app.kubernetes.io/name=wamn-identity".to_owned(),
+            ),
+            (
+                "platform",
+                "runtime-operator".to_owned(),
+                "wasmcloud.com/name=runtime-operator".to_owned(),
+            ),
+        ]
+        .into_iter()
+        .chain(
+            owners
+                .as_object()
+                .unwrap()
+                .iter()
+                .filter(|(owner, _)| owner.starts_with("hosts/"))
+                .flat_map(|(_, values)| {
+                    values
+                        .pointer("/runtime-operator/runtime/hostGroups")
+                        .and_then(Value::as_array)
+                        .into_iter()
+                        .flatten()
+                        .map(|group| {
+                            let name = group["name"].as_str().unwrap();
+                            (
+                                "hosts",
+                                format!("hostgroup-{name}"),
+                                format!("wasmcloud.com/hostgroup={name}"),
+                            )
+                        })
+                }),
+        ) {
+            let image = format!("running.example/{name}@sha256:{}", "b".repeat(64));
+            workloads[format!("{namespace}/Deployment/{name}")] = json!({
+                "kind":"Deployment", "metadata":{"name":name,"generation":1},
+                "spec":{"replicas":1,"template":{"spec":{"containers":[{"name":"main","image":image}]}}},
+                "status":{"observedGeneration":1,"readyReplicas":1,"updatedReplicas":1,"availableReplicas":1}
+            });
+            let pod = json!({"kind":"Pod", "metadata":{"name":format!("{name}-pod")},
+                "spec":{"containers":[{"name":"main","image":image}]},
+                "status":{"phase":"Running","conditions":[{"type":"Ready","status":"True"}],
+                    "containerStatuses":[{"name":"main","image":image,"imageID":image,"state":{"running":{}}}]}});
+            pods[format!("{namespace}/{selector}")] = json!([pod]);
+        }
+        workloads[format!("hosts/WorkloadDeployment/c-{}-http", self.document.org)] = json!({
+            "kind":"WorkloadDeployment", "metadata":{"generation":1}, "spec":{"replicas":1},
+            "status":{"replicas":{"ready":1}, "conditions":[{"type":"Ready","status":"True","observedGeneration":1}]}
+        });
         Ok(
             json!({"cluster":self.document.cluster_name, "owners":owners, "helm":self.helm,
+            "workloads":workloads,"pods":pods,
             "active":{"kid":"retained-key", "x":"retained-public-key"}}),
         )
     }
@@ -302,11 +368,21 @@ impl Fixture {
         chart: Option<&Path>,
         state: &Value,
     ) -> anyhow::Result<(Output, Vec<Value>, Value)> {
+        self.run_command("deploy", selection, chart, state)
+    }
+
+    fn run_command(
+        &self,
+        verb: &str,
+        selection: Option<&str>,
+        chart: Option<&Path>,
+        state: &Value,
+    ) -> anyhow::Result<(Output, Vec<Value>, Value)> {
         std::fs::write(self.bin.join("state.json"), serde_json::to_vec(state)?)?;
         std::fs::write(self.bin.join("calls.jsonl"), "")?;
         let mut command = Command::new(env!("CARGO_BIN_EXE_wamn"));
         command
-            .args(["platform", "deploy"])
+            .args(["platform", verb])
             .arg(&self.file)
             .env("PATH", &self.path);
         if let Some(chart) = chart {
@@ -359,21 +435,12 @@ fn assert_operations(calls: &[Value], owner: (&str, &str), allow_upgrade: bool) 
                 if args[0] == "show" || args[0] == "template" {
                     continue;
                 }
-                let namespace = args.iter().position(|arg| arg == "--namespace").unwrap();
-                if args[namespace + 1] == "platform" {
-                    assert!(args[0] == "list" || args[0] == "get", "{call}");
+                if args[0] == "list" || args[0] == "get" {
                     continue;
                 }
+                let namespace = args.iter().position(|arg| arg == "--namespace").unwrap();
                 assert_eq!(args[namespace + 1], owner.1, "{call}");
                 let name = match args[0].as_str().unwrap() {
-                    "list" => {
-                        let filter = args.iter().position(|arg| arg == "--filter").unwrap();
-                        args[filter + 1].as_str().unwrap().trim_matches(['^', '$'])
-                    }
-                    "get" => {
-                        assert_eq!(args[1], "values");
-                        args[2].as_str().unwrap()
-                    }
                     "upgrade" if allow_upgrade => {
                         upgrades.push(call);
                         assert!(args.iter().any(|arg| arg == "--wait"), "{call}");
@@ -1128,6 +1195,266 @@ fn interrupted_platform_reapply_retains_default_and_service_selections() -> anyh
                     .contains(&json!("--wait"))
             );
         }
+    }
+    Ok(())
+}
+
+#[test]
+fn platform_status_reports_selected_artifacts_and_unhealthy_targets() -> anyhow::Result<()> {
+    let fixture = Fixture::new()?;
+    let selection: UpgradeTarget = "host:alpha/alpha".parse()?;
+    let mut state = fixture.state(&selection)?;
+    state["owners"]["identity/identity"]["platform"]["chart"] = json!(fixture.chart.0);
+    // Control inherits the platform default. Identity can fail independently.
+    state["owners"][format!("hosts/c-{}", fixture.document.org)]
+        .as_object_mut()
+        .unwrap()
+        .remove("platform");
+    state["workloads"]["identity/Deployment/identity"]["status"]["conditions"] = json!([
+        {"type":"Progressing","status":"False","reason":"ProgressDeadlineExceeded"}
+    ]);
+    let (output, calls, after) = fixture.run_command("status", None, None, &state)?;
+    let stdout = String::from_utf8(output.stdout)?;
+    assert!(!output.status.success());
+    assert!(
+        stdout.contains("target platform default: ready"),
+        "{stdout}"
+    );
+    assert!(stdout.contains("target control: ready"), "{stdout}");
+    assert!(stdout.contains("target identity: failed"), "{stdout}");
+    let identity_report = stdout
+        .split("target identity:")
+        .nth(1)
+        .unwrap()
+        .split("\ntarget ")
+        .next()
+        .unwrap();
+    assert!(
+        identity_report.contains(&format!("chart={}", fixture.chart.0.display())),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains(&format!("chart={}", fixture.previous.0.display())),
+        "{stdout}"
+    );
+    for (owner, values) in state["owners"].as_object().unwrap() {
+        for group in values
+            .pointer("/runtime-operator/runtime/hostGroups")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+        {
+            if group.get("image").is_none() || owner == &format!("hosts/c-{}", fixture.document.org)
+            {
+                continue;
+            }
+            let release = owner.strip_prefix("hosts/").unwrap();
+            let name = group["name"].as_str().unwrap();
+            assert!(
+                stdout.contains(&format!("target host:{release}/{name}: ready")),
+                "{stdout}"
+            );
+            assert!(
+                stdout.contains(&format!(
+                    "selected image host: {}/{}:{}",
+                    group["image"]["registry"].as_str().unwrap(),
+                    group["image"]["repository"].as_str().unwrap(),
+                    group["image"]["tag"].as_str().unwrap()
+                )),
+                "{stdout}"
+            );
+        }
+    }
+    for pods in state["pods"].as_object().unwrap().values() {
+        for pod in pods.as_array().unwrap() {
+            for container in pod["status"]["containerStatuses"].as_array().unwrap() {
+                assert!(
+                    stdout.contains(container["imageID"].as_str().unwrap()),
+                    "{stdout}"
+                );
+            }
+        }
+    }
+    assert_operations(&calls, ("", ""), false);
+    assert_eq!(after, state);
+    Ok(())
+}
+
+#[test]
+fn platform_targeted_update_reports_only_affected_readiness() -> anyhow::Result<()> {
+    let fixture = Fixture::new()?;
+    for failed_upgrade in [false, true] {
+        let mut state = fixture.state(&UpgradeTarget::Identity)?;
+        state["workloads"]["identity/Deployment/identity"]["status"]["conditions"] = json!([
+            {"type":"Progressing","status":"False","reason":"ProgressDeadlineExceeded"}
+        ]);
+        if failed_upgrade {
+            state["stop_release"] = "identity/identity".into();
+        }
+        let (output, calls, after) = fixture.run(Some("identity"), &state)?;
+        let stdout = String::from_utf8(output.stdout)?;
+        assert!(!output.status.success());
+        assert!(stdout.contains("target identity: failed"), "{stdout}");
+        assert!(!stdout.contains("platform:"), "{stdout}");
+        assert!(!stdout.contains("target control:"), "{stdout}");
+        let expected = if failed_upgrade {
+            &fixture.previous.0
+        } else {
+            &fixture.chart.0
+        };
+        assert!(
+            stdout.contains(&format!("chart={}", expected.display())),
+            "{stdout}"
+        );
+        let image = state["pods"]["identity/app.kubernetes.io/name=wamn-identity"][0]["status"]["containerStatuses"][0]["imageID"].as_str().unwrap();
+        assert!(stdout.contains(image), "{stdout}");
+        assert_operations(&calls, ("identity", "identity"), true);
+        assert_eq!(
+            after["owners"]["platform/wamn"],
+            state["owners"]["platform/wamn"]
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn platform_targeted_reselection_and_retry_use_only_the_owner() -> anyhow::Result<()> {
+    let fixture = Fixture::new()?;
+    let mut postgres = wamn_test_postgres::start(&[])?;
+    let database = postgres.create_database("wamn_system")?;
+    for selection in [
+        "control",
+        "identity",
+        "host:alpha/alpha",
+        "host:shared/shared",
+    ] {
+        let target: UpgradeTarget = selection.parse()?;
+        let (name, namespace) = target.owner(&fixture.document);
+        let owner = format!("{namespace}/{name}");
+        let mut state = fixture.state(&target)?;
+        set_database(&mut state, database.url())?;
+        state["stop_release"] = owner.as_str().into();
+        let (output, calls, mut interrupted) = fixture.run(Some(selection), &state)?;
+        assert!(!output.status.success());
+        assert_operations(&calls, (&name, namespace), true);
+        assert_eq!(
+            interrupted, state,
+            "failed upgrade retains the earlier selection"
+        );
+        state.as_object_mut().unwrap().remove("stop_release");
+        interrupted.as_object_mut().unwrap().remove("stop_release");
+        let (output, calls, retried) = fixture.run(Some(selection), &interrupted)?;
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_operations(&calls, (&name, namespace), true);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            stdout.contains(&format!("target {selection}: ready")),
+            "{stdout}"
+        );
+        let (output, calls, mut earlier) =
+            fixture.run_with_chart(Some(selection), Some(&fixture.previous.0), &retried)?;
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_operations(&calls, (&name, namespace), true);
+        match &target {
+            UpgradeTarget::Host { group, .. } => {
+                let image = earlier["owners"][&owner]["runtime-operator"]["runtime"]["hostGroups"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .find(|entry| entry["name"] == *group)
+                    .unwrap();
+                assert_eq!(image["image"]["registry"], "localhost:5001");
+                assert_eq!(image["image"]["repository"], "host");
+                assert_eq!(
+                    image["image"]["tag"],
+                    artifact_plan::select(&fixture.previous.0)?.values()["runtime-operator"]["runtime"]
+                        ["image"]["tag"]
+                );
+            }
+            _ => assert_eq!(
+                earlier["owners"][&owner]["platform"]["chart"],
+                json!(fixture.previous.0)
+            ),
+        }
+        earlier["owners"][&owner] = state["owners"][&owner].clone();
+        assert_eq!(
+            earlier, state,
+            "reselection changes only the selected target"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn identity_signing_inspection_stops_hung_kubectl_before_mutation() -> anyhow::Result<()> {
+    const CHILD: &str = "WAMN_TEST_SIGNING_TIMEOUT";
+    if let Some(directory) = std::env::var_os(CHILD) {
+        let target = wamn_release_control::release_chart::Target {
+            kubeconfig: PathBuf::from(directory).join("kubeconfig"),
+            context: "fixture".into(),
+            namespace: "platform".into(),
+        };
+        let runtime = tokio::runtime::Runtime::new()?;
+        let error = runtime
+            .block_on(identity::require_keys(
+                &target,
+                std::time::Duration::from_millis(350),
+            ))
+            .unwrap_err();
+        let error = format!("{error:#}");
+        assert!(error.contains("timed out"), "{error}");
+        assert!(error.contains("platform deploy without --only"), "{error}");
+        return Ok(());
+    }
+    let fixture = Fixture::new()?;
+    for field in ["hang_read", "hang_exec"] {
+        let mut state = fixture.state(&UpgradeTarget::Identity)?;
+        state[field] = if field == "hang_read" {
+            json!("platform/cluster.postgresql.cnpg.io/wamn-pg")
+        } else {
+            json!(true)
+        };
+        std::fs::write(fixture.bin.join("state.json"), serde_json::to_vec(&state)?)?;
+        std::fs::write(fixture.bin.join("calls.jsonl"), "")?;
+        let started = std::time::Instant::now();
+        let output = Command::new(std::env::current_exe()?)
+            .args([
+                "--exact",
+                "identity_signing_inspection_stops_hung_kubectl_before_mutation",
+                "--nocapture",
+            ])
+            .env(CHILD, &fixture.bin)
+            .env("PATH", &fixture.path)
+            .output()?;
+        assert!(
+            output.status.success(),
+            "{}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(started.elapsed() < std::time::Duration::from_secs(5));
+        let calls = std::fs::read_to_string(fixture.bin.join("calls.jsonl"))?
+            .lines()
+            .map(serde_json::from_str)
+            .collect::<Result<Vec<Value>, _>>()?;
+        assert_operations(&calls, ("identity", "identity"), false);
+        if field == "hang_exec" {
+            let pid = std::fs::read_to_string(fixture.bin.join("exec.pid"))?;
+            assert!(
+                !Path::new("/proc").join(pid).exists(),
+                "kubectl child survived the timeout"
+            );
+        }
+        let after: Value = serde_json::from_slice(&std::fs::read(fixture.bin.join("state.json"))?)?;
+        assert_eq!(after, state);
     }
     Ok(())
 }

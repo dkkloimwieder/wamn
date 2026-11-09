@@ -11,7 +11,7 @@ use base64::Engine as _;
 use serde_json::Value;
 use wamn_release_control::release_chart::Target;
 
-use super::document::{ClusterDocument, Provider};
+use super::document::{ClusterDocument, Provider, UpgradeTarget};
 use super::{artifact_plan, resources};
 use crate::kubectl;
 
@@ -52,9 +52,181 @@ pub struct Observation {
 #[derive(Debug)]
 pub struct PlatformStatus {
     pub category: Category,
-    pub selected: Observation,
+    pub targets: Vec<TargetStatus>,
     pub observations: Vec<Observation>,
     pub warnings: Vec<String>,
+}
+
+/// One selected artifact and the independent readiness of its workloads.
+#[derive(Debug)]
+pub struct TargetStatus {
+    pub name: String,
+    pub selected: Observation,
+    pub warnings: Vec<String>,
+    pub category: Category,
+    pub observations: Vec<Observation>,
+}
+
+/// Read only the affected target, including after an unsuccessful upgrade.
+///
+/// No service endpoint or ready workload is required for inspection.
+pub async fn read_target(
+    document: &ClusterDocument,
+    target: &Target,
+    selection: &UpgradeTarget,
+) -> TargetStatus {
+    let (name, namespace) = selection.owner(document);
+    let values = owner_values(target, namespace, &name).await;
+    let default = if !matches!(selection, UpgradeTarget::Host { .. })
+        && values
+            .as_ref()
+            .is_some_and(|v| v.pointer("/platform/chart").is_none())
+    {
+        owner_values(target, "platform", "wamn").await
+    } else {
+        None
+    };
+    target_status(
+        document,
+        target,
+        selection,
+        values.as_ref(),
+        default.as_ref(),
+    )
+    .await
+}
+
+async fn owner_values(target: &Target, namespace: &str, name: &str) -> Option<Value> {
+    helm_json(
+        target,
+        &["get", "values", name, "-n", namespace, "-o", "json"],
+    )
+    .await
+    .ok()
+}
+
+async fn target_status(
+    document: &ClusterDocument,
+    target: &Target,
+    selection: &UpgradeTarget,
+    values: Option<&Value>,
+    default: Option<&Value>,
+) -> TargetStatus {
+    let (name, namespace) = selection.owner(document);
+    let label = match selection {
+        UpgradeTarget::Control => "control".into(),
+        UpgradeTarget::Identity => "identity".into(),
+        UpgradeTarget::Host { release, group } => format!("host:{release}/{group}"),
+    };
+    let mut selected = match selection {
+        UpgradeTarget::Host { group, .. } => {
+            let mut selected = observation(
+                "selected artifact",
+                Category::Unknown,
+                "Restore access to the owning Helm release values",
+            );
+            if let Some(image) = crate::environment::runtime::host_image(values, group) {
+                let registry = image["registry"].as_str().unwrap_or_default();
+                if let (Some(repository), Some(tag)) =
+                    (image["repository"].as_str(), image["tag"].as_str())
+                {
+                    let prefix = if registry.is_empty() {
+                        String::new()
+                    } else {
+                        format!("{registry}/")
+                    };
+                    selected
+                        .images
+                        .insert("host".into(), format!("{prefix}{repository}:{tag}"));
+                    selected.category = Category::Ready;
+                    selected.next = None;
+                }
+            }
+            selected
+        }
+        _ => selected_chart(
+            values
+                .filter(|v| v.pointer("/platform/chart").is_some())
+                .or(default),
+        ),
+    };
+    selected.source = format!("Helm/{namespace}/{name}/selected");
+    let (deployment, selector) = match selection {
+        UpgradeTarget::Identity => (
+            "identity".to_owned(),
+            "app.kubernetes.io/name=wamn-identity".to_owned(),
+        ),
+        UpgradeTarget::Control => (
+            format!("hostgroup-{name}"),
+            format!("wasmcloud.com/hostgroup={name}"),
+        ),
+        UpgradeTarget::Host { group, .. } => (
+            format!("hostgroup-{group}"),
+            format!("wasmcloud.com/hostgroup={group}"),
+        ),
+    };
+    let mut observations = Vec::new();
+    let workload = observe_workload(
+        target,
+        namespace,
+        "Deployment",
+        &deployment,
+        &mut observations,
+    )
+    .await;
+    let mut warnings = Vec::new();
+    if selection == &UpgradeTarget::Identity
+        && let Some(object) = workload
+    {
+        let mail = object
+            .pointer("/spec/template/spec/containers")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .flat_map(|container| container["env"].as_array().into_iter().flatten())
+            .any(|entry| entry["name"] == "RESEND_API_KEY");
+        if !mail {
+            warnings.push("identity/Deployment/identity: mail is not configured; configure identity mail to deliver invitations".into());
+        }
+    }
+    if selection == &UpgradeTarget::Control {
+        observe_workload(
+            target,
+            namespace,
+            "WorkloadDeployment",
+            &format!("{name}-http"),
+            &mut observations,
+        )
+        .await;
+    }
+    let pods = list(target, namespace, "pods", &["-l", &selector]).await;
+    append_resources(
+        &mut observations,
+        &format!("{namespace}/pods"),
+        pods.as_ref().ok(),
+    );
+    TargetStatus {
+        name: label,
+        selected,
+        warnings,
+        category: combined(observations.iter().map(|o| o.category)),
+        observations,
+    }
+}
+
+async fn observe_workload(
+    target: &Target,
+    namespace: &str,
+    kind: &str,
+    name: &str,
+    observations: &mut Vec<Observation>,
+) -> Option<Value> {
+    let result = get(target, namespace, kind, name).await;
+    observations.push(resource(
+        &format!("{namespace}/{kind}/{name}"),
+        result.as_ref().map(Option::as_ref).map_err(|_| ()),
+    ));
+    result.ok().flatten()
 }
 
 fn observation(source: &str, category: Category, next: &str) -> Observation {
@@ -87,7 +259,71 @@ pub async fn read(document: &ClusterDocument, target: &Target) -> anyhow::Result
     )
     .await;
     let mut selected = selected_chart(values.as_ref().ok());
+    let mut targets = Vec::new();
+    for selection in [UpgradeTarget::Control, UpgradeTarget::Identity] {
+        targets.push(read_target(document, target, &selection).await);
+    }
+    let mut inherited_hosts = Vec::new();
+    let hosts = helm_json(target, &["list", "-n", "hosts", "-o", "json"]).await;
+    for release in hosts
+        .as_ref()
+        .ok()
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        let Some(name) = release["name"].as_str() else {
+            continue;
+        };
+        if name == format!("c-{}", document.org) {
+            continue;
+        }
+        let installed = owner_values(target, "hosts", name).await;
+        // An unreadable owner cannot establish whether it has an explicit override.
+        if installed.is_none() {
+            targets.push(TargetStatus {
+                name: format!("host:{name}"),
+                selected: observation(
+                    &format!("Helm/hosts/{name}/selected"),
+                    Category::Unknown,
+                    "Restore access to the owning Helm release values",
+                ),
+                warnings: vec![],
+                category: Category::Unknown,
+                observations: vec![],
+            });
+        }
+        for group in installed
+            .as_ref()
+            .and_then(|v| v.pointer("/runtime-operator/runtime/hostGroups"))
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+        {
+            let Some(group_name) = group["name"].as_str() else {
+                continue;
+            };
+            let selection = UpgradeTarget::Host {
+                release: name.into(),
+                group: group_name.into(),
+            };
+            let observed =
+                target_status(document, target, &selection, installed.as_ref(), None).await;
+            if group.get("image").is_some() {
+                targets.push(observed);
+            } else {
+                inherited_hosts.extend(observed.observations);
+            }
+        }
+    }
     let mut observations = Vec::new();
+    if hosts.is_err() {
+        observations.push(observation(
+            "Helm/hosts",
+            Category::Unknown,
+            "Restore access to host releases and retry platform status",
+        ));
+    }
     let mut warnings = Vec::new();
     let control = format!("c-{}", document.org);
     for (namespace, name) in [
@@ -112,10 +348,12 @@ pub async fn read(document: &ClusterDocument, target: &Target) -> anyhow::Result
         observations.push(helm_status(namespace, name, result.as_ref().ok()));
     }
     // A missing operator release is known, so its chart value is missing, not unknown.
-    if observations[0].category == Category::Incomplete {
+    if observations
+        .iter()
+        .any(|item| item.source == "Helm/platform/wamn" && item.category == Category::Incomplete)
+    {
         selected.category = Category::Incomplete;
     }
-    let control_host = format!("hostgroup-{control}");
     let control_http = format!("{control}-http");
     let control_certificate = format!("wamn-nats-control-{}", document.org);
     let operator_certificate = format!("operator-{}", document.org);
@@ -127,11 +365,8 @@ pub async fn read(document: &ClusterDocument, target: &Target) -> anyhow::Result
         ("platform", "Deployment", "runtime-operator"),
         ("platform", "StatefulSet", "wamn-nats"),
         ("platform", "Cluster.postgresql.cnpg.io", "wamn-pg"),
-        ("identity", "Deployment", "identity"),
         ("hosts", "Deployment", "wamn-edge"),
         ("hosts", "Certificate", "wamn-edge-tls"),
-        ("hosts", "Deployment", control_host.as_str()),
-        ("hosts", "WorkloadDeployment", control_http.as_str()),
         ("cert-manager", "Certificate", "wasmcloud-ca"),
         ("platform", "Certificate", "wasmcloud-nats-tls"),
         ("platform", "Certificate", "wasmcloud-operator-tls"),
@@ -150,21 +385,6 @@ pub async fn read(document: &ClusterDocument, target: &Target) -> anyhow::Result
         ("platform", "ClusterIssuer", "wasmcloud-ca"),
     ] {
         let result = get(target, namespace, kind, name).await;
-        if namespace == "identity"
-            && kind == "Deployment"
-            && let Ok(Some(object)) = &result
-        {
-            let mail = object
-                .pointer("/spec/template/spec/containers")
-                .and_then(Value::as_array)
-                .into_iter()
-                .flatten()
-                .flat_map(|container| container["env"].as_array().into_iter().flatten())
-                .any(|entry| entry["name"] == "RESEND_API_KEY");
-            if !mail {
-                warnings.push("identity/Deployment/identity: mail is not configured; configure identity mail to deliver invitations".into());
-            }
-        }
         let source = format!("{namespace}/{kind}/{name}");
         observations.push(resource(
             &source,
@@ -175,8 +395,6 @@ pub async fn read(document: &ClusterDocument, target: &Target) -> anyhow::Result
         ("platform", String::new()),
         ("cert-manager", String::new()),
         ("cnpg-system", String::new()),
-        ("identity", "app.kubernetes.io/name=wamn-identity".into()),
-        ("hosts", format!("wasmcloud.com/hostgroup={control}")),
         ("hosts", "app.kubernetes.io/name=wamn-edge".into()),
     ] {
         let arguments = if selector.is_empty() {
@@ -248,12 +466,49 @@ pub async fn read(document: &ClusterDocument, target: &Target) -> anyhow::Result
     if document.buckets.otel.is_empty() {
         warnings.push("cluster.buckets.otel: telemetry storage is not selected; configure telemetry when needed".into());
     }
+    let (mut default_observations, other): (Vec<_>, Vec<_>) =
+        observations.into_iter().partition(|item| {
+            item.source == "platform/Deployment/runtime-operator"
+                || item.source == "Helm/platform/wamn"
+        });
+    observations = other;
+    default_observations.extend(inherited_hosts);
+    let pods = list(
+        target,
+        "platform",
+        "pods",
+        &["-l", "wasmcloud.com/name=runtime-operator"],
+    )
+    .await;
+    append_resources(
+        &mut default_observations,
+        "platform/pods",
+        pods.as_ref().ok(),
+    );
+    targets.insert(
+        0,
+        TargetStatus {
+            name: "platform default".into(),
+            selected,
+            warnings: vec![],
+            category: combined(
+                default_observations
+                    .iter()
+                    .filter(|o| o.source != "Helm/platform/wamn")
+                    .map(|o| o.category),
+            ),
+            observations: default_observations,
+        },
+    );
     let category = combined(
-        std::iter::once(selected.category).chain(observations.iter().map(|item| item.category)),
+        targets
+            .iter()
+            .flat_map(|item| [item.selected.category, item.category])
+            .chain(observations.iter().map(|item| item.category)),
     );
     Ok(PlatformStatus {
         category,
-        selected,
+        targets,
         observations,
         warnings,
     })
@@ -815,33 +1070,56 @@ async fn probe(
 /// Write safe facts and next actions without exposing Secrets or command diagnostics.
 pub fn write(status: &PlatformStatus, output: &mut impl Write) -> anyhow::Result<()> {
     writeln!(output, "platform: {}", status.category)?;
-    for (selected, item) in std::iter::once((true, &status.selected))
-        .chain(status.observations.iter().map(|item| (false, item)))
-    {
-        writeln!(output, "{}: {}", item.source, item.category)?;
-        for fact in &item.facts {
-            writeln!(output, "  {fact}")?;
-        }
-        for (name, image) in &item.images {
-            writeln!(
-                output,
-                "  {} {name}: {image}",
-                if selected {
-                    "selected image"
-                } else {
-                    "resource image"
-                }
-            )?;
-        }
-        for (name, image) in &item.running_images {
-            writeln!(output, "  running image ID {name}: {image}")?;
-        }
-        if let Some(next) = &item.next {
-            writeln!(output, "  next: {next}")?;
-        }
+    for target in &status.targets {
+        write_target(target, output)?;
+    }
+    for item in &status.observations {
+        write_observation(item, false, output)?;
     }
     for warning in &status.warnings {
         writeln!(output, "warning: {warning}")?;
+    }
+    Ok(())
+}
+
+/// Write one target without claiming readiness of the whole platform.
+pub fn write_target(target: &TargetStatus, output: &mut impl Write) -> anyhow::Result<()> {
+    writeln!(output, "target {}: {}", target.name, target.category)?;
+    write_observation(&target.selected, true, output)?;
+    for item in &target.observations {
+        write_observation(item, false, output)?;
+    }
+    for warning in &target.warnings {
+        writeln!(output, "warning: {warning}")?;
+    }
+    Ok(())
+}
+
+fn write_observation(
+    item: &Observation,
+    selected: bool,
+    output: &mut impl Write,
+) -> anyhow::Result<()> {
+    writeln!(output, "{}: {}", item.source, item.category)?;
+    for fact in &item.facts {
+        writeln!(output, "  {fact}")?;
+    }
+    for (name, image) in &item.images {
+        writeln!(
+            output,
+            "  {} {name}: {image}",
+            if selected {
+                "selected image"
+            } else {
+                "resource image"
+            }
+        )?;
+    }
+    for (name, image) in &item.running_images {
+        writeln!(output, "  running image ID {name}: {image}")?;
+    }
+    if let Some(next) = &item.next {
+        writeln!(output, "  next: {next}")?;
     }
     Ok(())
 }
@@ -1070,8 +1348,14 @@ mod tests {
                 "reason":"ProgressDeadlineExceeded","message":sensitive}]}});
         let status = PlatformStatus {
             category: Category::Failed,
-            selected: selected_chart(None),
-            observations: vec![resource("hosts/Deployment/control", Ok(Some(&object)))],
+            targets: vec![TargetStatus {
+                name: "control".into(),
+                selected: selected_chart(None),
+                category: Category::Failed,
+                warnings: vec![],
+                observations: vec![resource("hosts/Deployment/control", Ok(Some(&object)))],
+            }],
+            observations: vec![],
             warnings: vec![],
         };
         let mut output = Vec::new();

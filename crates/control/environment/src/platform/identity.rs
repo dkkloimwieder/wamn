@@ -382,7 +382,16 @@ pub(super) fn resource_entry(
 }
 
 /// Read signing state through the existing PostgreSQL primary without a Job.
-pub(super) async fn require_keys(target: &Target) -> anyhow::Result<()> {
+///
+/// # Errors
+/// Refuses missing or unreadable state within the complete call time limit.
+pub async fn require_keys(target: &Target, limit: std::time::Duration) -> anyhow::Result<()> {
+    kubectl::with_timeout(limit, inspect_keys(target)).await.context(
+        "Cannot inspect identity signing state. Run platform deploy without --only to initialize identity. No resources changed.",
+    )
+}
+
+async fn inspect_keys(target: &Target) -> anyhow::Result<()> {
     const RECOVERY: &str =
         "Run platform deploy without --only to initialize identity. No resources changed.";
     let cluster: Value = kubectl::get(
@@ -405,7 +414,7 @@ pub(super) async fn require_keys(target: &Target) -> anyhow::Result<()> {
         .with_context(|| {
             format!("missing PostgreSQL primary for identity signing state. {RECOVERY}")
         })?;
-    // Bound the read on the server. The kubectl wrapper has no call timeout.
+    // The server statement limit also applies within the complete inspection limit.
     let query = format!(
         "BEGIN READ ONLY; SET LOCAL statement_timeout = '5s'; \
          SELECT to_json(EXISTS (SELECT FROM identity.session_signing_state s \
