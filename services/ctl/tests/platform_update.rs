@@ -1,4 +1,4 @@
-//! Targeted platform commands inspect one existing owner and never enter installation.
+//! Targeted platform commands resolve the owner and default without entering installation.
 
 use std::os::unix::fs::PermissionsExt as _;
 use std::path::Path;
@@ -50,14 +50,18 @@ fn assert_read_only(calls: &Path, owner: (&str, &str)) -> anyhow::Result<()> {
                     "{call}"
                 );
                 let namespace = args.iter().position(|arg| arg == "--namespace").unwrap();
-                assert_eq!(args[namespace + 1], owner.1);
-                if args[0] == "list" {
+                let name = if args[0] == "list" {
                     let filter = args.iter().position(|arg| arg == "--filter").unwrap();
-                    assert_eq!(args[filter + 1], format!("^{}$", owner.0));
+                    args[filter + 1].as_str().unwrap().trim_matches(['^', '$'])
                 } else {
-                    assert_eq!(args[2], owner.0);
-                }
-                inspected = true;
+                    args[2].as_str().unwrap()
+                };
+                let release = (name, args[namespace + 1].as_str().unwrap());
+                assert!(
+                    release == owner || release == ("wamn", "platform"),
+                    "{call}"
+                );
+                inspected |= release == owner;
             }
             _ => panic!("targeted update invoked an unrelated or mutating tool: {call}"),
         }
@@ -73,6 +77,7 @@ fn platform_updates_refuse_missing_owners_and_pending_owner_separation_without_m
     let file = repository.join("deploy/kind/cluster.k");
     let document = ClusterDocument::compile(&file)?;
     let chart = prepared_chart(&repository)?;
+    let default = prepared_chart(&repository)?;
     let bin = chart.0.join("commands");
     std::fs::create_dir(&bin)?;
     for name in ["kind", "helm", "kubectl", "docker", "gcloud"] {
@@ -99,7 +104,7 @@ fn platform_updates_refuse_missing_owners_and_pending_owner_separation_without_m
                 "runtime-operator":{"runtime":{"hostGroups":[{"name":"alpha"}]}}
             })),
         ] {
-            let mut owners = json!({});
+            let mut owners = json!({"platform/wamn":{"platform":{"chart":default.0}}});
             if let Some(values) = &installed {
                 owners[format!("{namespace}/{name}")] = values.clone();
             }
@@ -122,13 +127,11 @@ fn platform_updates_refuse_missing_owners_and_pending_owner_separation_without_m
                     error.contains(&format!("existing release {namespace}/{name}")),
                     "{error}"
                 ),
-                Some(values) if values.as_object().unwrap().is_empty() => {
-                    let expected = if matches!(target, UpgradeTarget::Host { .. }) {
-                        "no host groups"
-                    } else {
-                        "initialized release"
-                    };
-                    assert!(error.contains(expected), "{error}");
+                Some(values)
+                    if values.as_object().unwrap().is_empty()
+                        && matches!(target, UpgradeTarget::Host { .. }) =>
+                {
+                    assert!(error.contains("no host groups"), "{error}");
                 }
                 Some(_) => assert!(error.contains(issue), "{error}"),
             }

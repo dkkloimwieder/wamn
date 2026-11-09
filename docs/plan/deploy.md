@@ -79,7 +79,7 @@ This section records the current code. It replaces the historical list of earlie
 | Publisher identity | No command accepts a caller-supplied publisher string. Publication records no publisher. The `catalog.releases` row of an applied release carries the record-history stamp of the authenticated deploy actor. |
 | Development loop | `wamn dev` prepares generation before the shared `schema::plan` decision. Its template reset and direct connection retain the same package SQL executor and records as deployed Jobs. |
 | Platform UI | Local kind deployment does not select the UI. The separate upload path still consumes a local bundle matching its stamped chart. |
-| Platform updates | `platform/deploy.rs` separates targeted updates from installation. Updates read only the selected Helm owner. Control and identity still refuse under DEP4-03. Hosts still refuse under DEP4-04. Untargeted runs keep recorded service charts and control host image overrides. They still apply infrastructure, bootstrap, and edge. |
+| Platform updates | `platform/deploy.rs` separates targeted updates from installation. Updates read the selected Helm owner. Service updates also read the operator default. Control and identity still refuse under DEP4-03. Hosts still refuse under DEP4-04. Untargeted runs keep recorded service charts and control host image overrides. Services without their own chart inherit the recorded operator default. Unavailable recorded charts refuse before resource changes and give restoration instructions. Untargeted runs still apply infrastructure, bootstrap, and edge. |
 | Host runtime selection | The operator release `wamn` records one platform-wide chart reference. `environment/runtime.rs` reads it, and `environment/write.rs` renders the host groups of each application release from that chart. |
 
 The accepted Epic 2 record leaves `wamn-xy404`, `wamn-1riwn`, and `wamn-c361p` open.
@@ -442,9 +442,24 @@ Application deployment renders and reapplies its own Helm release, and it takes 
 Control selections persist as `platform.chart` in the `hosts/c-<org>` Helm release values.
 Identity selections persist as `platform.chart` in the `identity/identity` Helm release values.
 Each value names the prepared chart that supplies that service's artifacts and configuration.
-A fresh installation uses the supplied chart for every target.
+
+An existing service without its own `platform.chart` inherits the value from the `platform/wamn` operator release.
+Missing service metadata does not mean that initialization is missing.
+A fresh installation without an operator release uses the supplied chart for every target.
+
 A later `platform deploy` without `--only` keeps the recorded control and identity selections and the explicit host image overrides.
 It does not undo a targeted upgrade. Only an explicit target selection changes a target (owner decision 2026-11-09).
+The command resolves service selections before any resource change.
+
+If a recorded chart is unavailable or invalid, the command refuses before any resource change.
+The error names the owner release and the recorded path.
+Restore the prepared chart at that path, or select a new one explicitly with `--only <target>`.
+The command never substitutes the supplied chart or other artifacts for an unavailable recorded chart.
+
+Targeted updates require an existing owner release and never run bootstrap.
+Control and identity still refuse under DEP4-03 after resolution, even without service selection metadata.
+DEP4-03 establishes the service selection on update.
+Hosts still refuse under DEP4-04.
 
 Host runtime selections persist as `runtime-operator.runtime.hostGroups[].image` in the Helm release that owns the named group.
 The existing image override holds the selected immutable host image.

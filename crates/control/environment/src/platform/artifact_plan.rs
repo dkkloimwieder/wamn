@@ -221,16 +221,37 @@ pub fn select(chart: &Path) -> anyhow::Result<SelectedChart> {
     })
 }
 
-pub(super) fn recorded_chart(installed: Option<&Value>) -> anyhow::Result<Option<SelectedChart>> {
-    installed
-        .map(|values| {
-            let chart = values["platform"]["chart"]
-                .as_str()
-                .filter(|chart| !chart.is_empty())
-                .context("existing service release has no platform.chart selection")?;
-            select(Path::new(chart))
-        })
-        .transpose()
+pub(super) fn resolve_chart(
+    document: &ClusterDocument,
+    selection: &UpgradeTarget,
+    operator: Option<&Value>,
+    control: Option<&Value>,
+    identity: Option<&Value>,
+    supplied: &Path,
+) -> anyhow::Result<SelectedChart> {
+    let (installed, only) = match selection {
+        UpgradeTarget::Control => (control, "control"),
+        UpgradeTarget::Identity => (identity, "identity"),
+        UpgradeTarget::Host { .. } => return select(supplied),
+    };
+    let path = [installed, operator]
+        .into_iter()
+        .flatten()
+        .filter_map(|values| values["platform"]["chart"].as_str())
+        .find(|chart| !chart.is_empty());
+    let (name, namespace) = selection.owner(document);
+    let Some(path) = path else {
+        ensure!(
+            operator.is_none(),
+            "cannot resolve owner release {namespace}/{name}: platform/wamn has no platform.chart default. No resources changed."
+        );
+        return select(supplied);
+    };
+    select(Path::new(path)).with_context(|| {
+        format!(
+            "recorded chart {path} for owner release {namespace}/{name} is unavailable or invalid. Restore the prepared chart at that path, or select a new one explicitly with --only {only}. No resources changed."
+        )
+    })
 }
 
 fn read_yaml(file: &Path) -> anyhow::Result<Value> {
@@ -336,22 +357,125 @@ mod tests {
     }
 
     #[test]
+    fn service_chart_resolution_prefers_own_then_default_then_fresh_supplied() -> anyhow::Result<()>
+    {
+        let supplied = prepared_chart();
+        let default = prepared_chart();
+        let own = prepared_chart();
+        let operator = json!({"platform":{"chart":default.0}});
+        let unavailable_default = json!({"platform":{"chart":default.0.join("missing")}});
+        let recorded = json!({"platform":{"chart":own.0}});
+        let legacy = json!({});
+        let repository = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
+        let document = ClusterDocument::compile(&repository.join("deploy/kind/cluster.k"))?;
+        for selection in [UpgradeTarget::Control, UpgradeTarget::Identity] {
+            for (operator, installed, expected) in [
+                (None, None, &supplied.0),
+                (Some(&operator), None, &default.0),
+                (Some(&operator), Some(&legacy), &default.0),
+                (Some(&operator), Some(&recorded), &own.0),
+                (Some(&unavailable_default), Some(&recorded), &own.0),
+                (None, Some(&recorded), &own.0),
+            ] {
+                let (control, identity) = match selection {
+                    UpgradeTarget::Control => (installed, Some(&recorded)),
+                    UpgradeTarget::Identity => (Some(&recorded), installed),
+                    UpgradeTarget::Host { .. } => unreachable!(),
+                };
+                let selected = resolve_chart(
+                    &document,
+                    &selection,
+                    operator,
+                    control,
+                    identity,
+                    &supplied.0,
+                )?;
+                assert_eq!(selected.directory(), expected.canonicalize()?);
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn service_chart_retry_keeps_the_recorded_selection() -> anyhow::Result<()> {
+        let original = prepared_chart();
+        let supplied = prepared_chart();
+        let operator = json!({"platform":{"chart":original.0}});
+        let repository = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
+        let document = ClusterDocument::compile(&repository.join("deploy/kind/cluster.k"))?;
+        for selection in [UpgradeTarget::Control, UpgradeTarget::Identity] {
+            let first = resolve_chart(
+                &document,
+                &selection,
+                Some(&operator),
+                Some(&json!({})),
+                Some(&json!({})),
+                &supplied.0,
+            )?;
+            let recorded = first.selection_values(&document, &selection, json!({}))?;
+            let changed_default = json!({"platform":{"chart":supplied.0}});
+            let retry = resolve_chart(
+                &document,
+                &selection,
+                Some(&changed_default),
+                Some(&recorded),
+                Some(&recorded),
+                &supplied.0,
+            )?;
+            assert_eq!(retry.directory(), original.0.canonicalize()?);
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn unavailable_recorded_service_charts_require_restoration_without_substitution()
+    -> anyhow::Result<()> {
+        let supplied = prepared_chart();
+        let invalid = prepared_chart();
+        std::fs::write(invalid.0.join("Chart.yaml"), "version: ''")?;
+        let missing = invalid.0.join("missing");
+        let repository = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
+        let document = ClusterDocument::compile(&repository.join("deploy/kind/cluster.k"))?;
+        for (selection, only) in [
+            (UpgradeTarget::Control, "control"),
+            (UpgradeTarget::Identity, "identity"),
+        ] {
+            for path in [&missing, &invalid.0] {
+                let recorded = json!({"platform":{"chart":path}});
+                let valid = json!({"platform":{"chart":supplied.0}});
+                let legacy = json!({});
+                for (operator, installed) in [(&valid, &recorded), (&recorded, &legacy)] {
+                    let error = resolve_chart(
+                        &document,
+                        &selection,
+                        Some(operator),
+                        Some(installed),
+                        Some(installed),
+                        &supplied.0,
+                    )
+                    .unwrap_err()
+                    .to_string();
+                    let (name, namespace) = selection.owner(&document);
+                    assert!(
+                        error.contains(&format!("owner release {namespace}/{name}")),
+                        "{error}"
+                    );
+                    assert!(error.contains(path.to_str().unwrap()), "{error}");
+                    assert!(error.contains(&format!(
+                        "Restore the prepared chart at that path, or select a new one explicitly with --only {only}"
+                    )), "{error}");
+                }
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
     fn service_selection_records_its_chart_in_the_existing_owner() -> anyhow::Result<()> {
         use super::super::{control, identity, resources};
 
         let chart = prepared_chart();
         let selected = select(&chart.0)?;
-        let incoming_chart = prepared_chart();
-        let mut incoming_values = read_yaml(&incoming_chart.0.join("values.yaml"))?;
-        incoming_values["runtime-operator"]["runtime"]["image"]["tag"] =
-            json!(format!("next@sha256:{}", "b".repeat(64)));
-        incoming_values["platform"]["identity"]["image"] =
-            json!(format!("identity.example/next@sha256:{}", "b".repeat(64)));
-        write_values(&incoming_chart, &incoming_values);
-        let incoming = select(&incoming_chart.0)?;
-        assert!(recorded_chart(None)?.is_none());
-        assert!(recorded_chart(Some(&json!({}))).is_err());
-        assert!(recorded_chart(Some(&json!({"platform":{"chart":"/absent/dep4-chart"}}))).is_err());
         let repository = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
         let document = ClusterDocument::compile(&repository.join("deploy/kind/cluster.k"))?;
         let identity = identity::platform_chart_input(
@@ -368,20 +492,17 @@ mod tests {
         ] {
             installed["platform"] = json!({"chart":"/previous/chart", "retained":"configuration"});
             let mut values = selected.selection_values(&document, &target, installed.clone())?;
-            let recorded = recorded_chart(Some(&values))?;
-            let resolved = recorded.as_ref().unwrap_or(&incoming);
-            assert_eq!(resolved.directory(), selected.directory());
             let (name, namespace) = target.owner(&document);
             let entry = match target {
                 UpgradeTarget::Control => json!({
-                    "chart":resolved.directory(), "version":resolved.version,
+                    "chart":selected.directory(), "version":selected.version,
                     "name":name, "namespace":namespace,
-                    "values":control::release_values(&document, resolved.values(), false)?,
+                    "values":control::release_values(&document, selected.values(), false)?,
                 }),
                 UpgradeTarget::Identity => identity::platform_chart_input(
-                    &resolved.directory().join("platform/identity"),
+                    &selected.directory().join("platform/identity"),
                     &document,
-                    resolved.image("identity")?,
+                    selected.image("identity")?,
                 )?,
                 UpgradeTarget::Host { .. } => unreachable!(),
             };

@@ -25,27 +25,34 @@ pub async fn deploy(
     output: &mut impl Write,
 ) -> anyhow::Result<()> {
     // Resolve both recorded selections before any resource mutation.
+    let operator_values = resources::release_values(target, "platform", "wamn").await?;
     let control_values =
         resources::release_values(target, "hosts", &format!("c-{}", document.org)).await?;
     let identity_values = resources::release_values(target, "identity", "identity").await?;
-    let control_chart = artifact_plan::recorded_chart(control_values.as_ref())
-        .context("resolve recorded control selection")?;
-    let identity_chart = artifact_plan::recorded_chart(identity_values.as_ref())
-        .context("resolve recorded identity selection")?;
+    let control_chart = artifact_plan::resolve_chart(
+        document,
+        &UpgradeTarget::Control,
+        operator_values.as_ref(),
+        control_values.as_ref(),
+        identity_values.as_ref(),
+        chart.directory(),
+    )?;
+    let identity_chart = artifact_plan::resolve_chart(
+        document,
+        &UpgradeTarget::Identity,
+        operator_values.as_ref(),
+        control_values.as_ref(),
+        identity_values.as_ref(),
+        chart.directory(),
+    )?;
     infrastructure(document, chart, target, directory).await?;
     initialize(document, chart, target, directory, output).await?;
-    identity::apply(
-        target,
-        document,
-        identity_chart.as_ref().unwrap_or(chart),
-        directory,
-    )
-    .await?;
+    identity::apply(target, document, &identity_chart, directory).await?;
     control::credentials(target, document).await?;
     control::release(
         target,
         document,
-        control_chart.as_ref().unwrap_or(chart),
+        &control_chart,
         control_values.as_ref(),
         directory,
     )
@@ -76,15 +83,19 @@ pub async fn update(
                 "targeted update requires existing release {namespace}/{name}; no resources changed"
             )
         })?;
-    if matches!(selection, UpgradeTarget::Control | UpgradeTarget::Identity) {
-        anyhow::ensure!(
-            installed["platform"]["chart"]
-                .as_str()
-                .is_some_and(|chart| !chart.is_empty()),
-            "targeted update requires initialized release {namespace}/{name}: recorded platform.chart is absent; no resources changed"
-        );
+    if matches!(selection, UpgradeTarget::Host { .. }) {
+        chart.selection_values(document, selection, installed)?;
+    } else {
+        let operator = resources::release_values(target, "platform", "wamn").await?;
+        artifact_plan::resolve_chart(
+            document,
+            selection,
+            operator.as_ref(),
+            (selection == &UpgradeTarget::Control).then_some(&installed),
+            (selection == &UpgradeTarget::Identity).then_some(&installed),
+            chart.directory(),
+        )?;
     }
-    chart.selection_values(document, selection, installed)?;
     match selection {
         UpgradeTarget::Control => anyhow::bail!(
             "control update requires DEP4-03 (wamn-275sr.3) to separate resources from credential initialization; no resources changed"
