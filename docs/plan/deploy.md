@@ -463,7 +463,9 @@ Restore the prepared chart at that path.
 For a service, an explicit `--only <target>` update can select a new chart.
 An untargeted reapply never substitutes the supplied chart for an unavailable recorded chart.
 
-Targeted updates require an existing owner release and never run bootstrap.
+Targeted updates require an existing owner release.
+They prohibit bootstrap, migrations, data changes, and key creation or rotation.
+Reads that inspect existing initialization are allowed.
 Control and identity updates use the supplied `--chart` and record it with `selection_values` in the selected release.
 An explicit target update does not resolve or require the previous chart directory.
 
@@ -476,7 +478,10 @@ Control's Helm release now owns its Service and HTTP workload.
 The update reads required Secrets and ConfigMaps before any write.
 Only an identity update reads the active signing state.
 A missing input gives an explicit error. It never triggers initialization.
-The read-only signing query uses the existing PostgreSQL primary without a Job.
+The read-only signing query uses the existing PostgreSQL primary through kubectl exec.
+It returns only a boolean and sets a five-second PostgreSQL statement timeout inside the read-only transaction.
+Missing or unreadable signing state refuses before resource changes.
+The error directs the operator to run platform deploy without `--only` to initialize identity.
 
 Both installation and updates call the same resource functions.
 Installation prepares control credentials before the control release waits for readiness. Targeted updates run no initialization and write no credential Secret.
@@ -505,9 +510,9 @@ wamn platform deploy deploy/kind/cluster.k --chart /prepared/platform --only hos
 wamn platform deploy deploy/kind/cluster.k --chart /prepared/platform --only control
 ```
 
-1. Select an already published image/configuration; building and publishing may be invoked separately. `platform deploy` itself consumes artifacts.
-2. Report which workloads will actually change. A shared host image may affect several environments; list those affected host groups and allow a smaller selection when supported.
-3. Submit the changed resource definition through Helm/Kubernetes. Do not invoke application package installation, new app release construction, or WAMN SQL. The wasmCloud operator manages Wasm workload updates.
+1. Select an already published image or configuration. Build and publish it separately when needed. `platform deploy` itself consumes artifacts.
+2. Report which workloads will change. A shared host image can affect several environments. List those host groups and allow a smaller selection when supported.
+3. Submit the changed resource definition through Helm/Kubernetes. Do not invoke application package installation or new app release construction. Read-only SQL can inspect existing initialization. The wasmCloud operator manages Wasm workload updates.
 4. Check affected workloads and report which are running the selected image. If one host group fails, report it independently rather than declaring the entire platform successful.
 5. Reselect a prior image when requested. No SQL reversal is implied by selecting earlier executable bytes.
 

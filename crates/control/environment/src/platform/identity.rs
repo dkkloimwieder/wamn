@@ -383,6 +383,8 @@ pub(super) fn resource_entry(
 
 /// Read signing state through the existing PostgreSQL primary without a Job.
 pub(super) async fn require_keys(target: &Target) -> anyhow::Result<()> {
+    const RECOVERY: &str =
+        "Run platform deploy without --only to initialize identity. No resources changed.";
     let cluster: Value = kubectl::get(
         &target.kubeconfig,
         &target.context,
@@ -390,12 +392,27 @@ pub(super) async fn require_keys(target: &Target) -> anyhow::Result<()> {
         "cluster.postgresql.cnpg.io",
         "wamn-pg",
     )
-    .await?
-    .context("missing Cluster platform/wamn-pg. No resources changed.")?;
+    .await
+    .with_context(|| {
+        format!("cannot read Cluster platform/wamn-pg for identity signing state. {RECOVERY}")
+    })?
+    .with_context(|| {
+        format!("missing Cluster platform/wamn-pg for identity signing state. {RECOVERY}")
+    })?;
     let primary = cluster["status"]["currentPrimary"]
         .as_str()
-        .context("missing PostgreSQL primary for identity signing state. No resources changed.")?;
-    let query = format!("BEGIN READ ONLY; {KEY_STATE_SQL}; COMMIT;");
+        .filter(|primary| !primary.is_empty())
+        .with_context(|| {
+            format!("missing PostgreSQL primary for identity signing state. {RECOVERY}")
+        })?;
+    // Bound the read on the server. The kubectl wrapper has no call timeout.
+    let query = format!(
+        "BEGIN READ ONLY; SET LOCAL statement_timeout = '5s'; \
+         SELECT to_json(EXISTS (SELECT FROM identity.session_signing_state s \
+         JOIN identity.session_keys k ON (k.issuer, k.kid) = (s.issuer, s.active_kid) \
+         WHERE s.issuer = '{ISSUER}' \
+         AND k.signing_cutoff IS NULL AND k.private_pkcs8 IS NOT NULL)); COMMIT;"
+    );
     let result = kubectl::kubectl(
         &target.kubeconfig,
         &target.context,
@@ -422,11 +439,15 @@ pub(super) async fn require_keys(target: &Target) -> anyhow::Result<()> {
         None,
     )
     .await
-    .context("read identity signing state. No resources changed.")?;
-    let state: Value = serde_json::from_str(&result).context("decode identity signing state")?;
+    .with_context(|| {
+        format!("cannot read identity signing state through the PostgreSQL primary. {RECOVERY}")
+    })?;
+    let active: bool = serde_json::from_str(&result).with_context(|| {
+        format!("cannot decode identity signing state as a boolean. {RECOVERY}")
+    })?;
     ensure!(
-        state["active"].is_object(),
-        "missing active identity signing key in identity.session_signing_state. No resources changed."
+        active,
+        "missing active identity signing key in identity.session_signing_state. {RECOVERY}"
     );
     Ok(())
 }

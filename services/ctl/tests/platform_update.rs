@@ -116,7 +116,7 @@ if tool == 'kubectl':
         if resource == state.get('missing'):
             sys.exit(0)
         if args[1] == 'cluster.postgresql.cnpg.io/wamn-pg':
-            print(json.dumps({'spec':{'imageName':'postgres:18'}, 'status': {'currentPrimary': 'wamn-pg-1'}}))
+            print(json.dumps({'spec':{'imageName':'postgres:18'}, 'status': {'currentPrimary': state.get('primary', 'wamn-pg-1')}}))
             sys.exit(0)
         if args[1].startswith(('secret/', 'configmap/')):
             data = {key: 'fixture' for key in ['url', 'ca.crt', 'tls.crt', 'tls.key',
@@ -128,7 +128,10 @@ if tool == 'kubectl':
             print(json.dumps({'data': data}))
             sys.exit(0)
     if args[0] == 'exec':
-        print(json.dumps({'active': state.get('active'), 'published': None}))
+        if state.get('exec_error'):
+            print(state['exec_error'], file=sys.stderr)
+            sys.exit(1)
+        print(state.get('exec_output', json.dumps(state.get('active') is not None)))
         sys.exit(0)
 sys.exit(1)
 "#;
@@ -359,6 +362,12 @@ fn platform_service_updates_change_only_the_selected_release() -> anyhow::Result
                 String::from_utf8_lossy(&output.stderr)
             );
             assert_operations(&calls, (&name, namespace), true);
+            assert_eq!(
+                calls
+                    .iter()
+                    .any(|call| call["tool"] == "kubectl" && call["args"][6] == "exec"),
+                selection == "identity"
+            );
             let values = &after["owners"][&owner];
             assert_eq!(
                 values["platform"]["chart"],
@@ -434,29 +443,90 @@ fn platform_service_updates_refuse_missing_initialization_without_mutation() -> 
     ] {
         let target: UpgradeTarget = selection.parse()?;
         let (name, namespace) = target.owner(&fixture.document);
-        for signing_key in [true, false]
-            .into_iter()
-            .filter(|present| *present || selection == "identity")
-        {
-            let mut state = fixture.state(&target)?;
-            let expected = if signing_key {
-                state["missing"] = missing.clone().into();
-                {
-                    let (namespace, resource) = missing.split_once('/').unwrap();
-                    let (_, name) = resource.split_once('/').unwrap();
-                    format!("secret {namespace}/{name}")
-                }
-            } else {
-                state["active"] = Value::Null;
-                "active identity signing key".into()
-            };
-            let (output, calls, after) = fixture.run(Some(selection), &state)?;
-            let error = String::from_utf8(output.stderr)?;
-            assert!(!output.status.success());
-            assert!(error.contains(&expected), "{error}");
-            assert_operations(&calls, (&name, namespace), false);
-            assert_eq!(after, state);
-        }
+        let mut state = fixture.state(&target)?;
+        state["missing"] = missing.clone().into();
+        let (input_namespace, resource) = missing.split_once('/').unwrap();
+        let (_, secret) = resource.split_once('/').unwrap();
+        let (output, calls, after) = fixture.run(Some(selection), &state)?;
+        let error = String::from_utf8(output.stderr)?;
+        assert!(!output.status.success());
+        assert!(
+            error.contains(&format!("secret {input_namespace}/{secret}")),
+            "{error}"
+        );
+        assert_operations(&calls, (&name, namespace), false);
+        assert_eq!(after, state);
+    }
+    Ok(())
+}
+
+#[test]
+fn identity_update_refuses_missing_signing_key_without_mutation() -> anyhow::Result<()> {
+    let fixture = Fixture::new()?;
+    let mut state = fixture.state(&UpgradeTarget::Identity)?;
+    state["active"] = Value::Null;
+    let (output, calls, after) = fixture.run(Some("identity"), &state)?;
+    let error = String::from_utf8(output.stderr)?;
+    assert!(!output.status.success());
+    assert!(
+        error.contains("missing active identity signing key"),
+        "{error}"
+    );
+    assert!(error.contains("platform deploy without --only"), "{error}");
+    assert_operations(&calls, ("identity", "identity"), false);
+    assert_eq!(after, state);
+    Ok(())
+}
+
+#[test]
+fn identity_update_refuses_unreadable_signing_state_without_mutation() -> anyhow::Result<()> {
+    let fixture = Fixture::new()?;
+    for (field, value, expected) in [
+        (
+            "exec_error",
+            json!("exec failed"),
+            "cannot read identity signing state",
+        ),
+        (
+            "exec_error",
+            json!("canceling statement due to statement timeout"),
+            "cannot read identity signing state",
+        ),
+        (
+            "exec_output",
+            json!("not json"),
+            "cannot decode identity signing state as a boolean",
+        ),
+        // The accepted result is a boolean. Key-material objects are not accepted.
+        (
+            "exec_output",
+            json!(
+                r#"{"active":{"kid":"key-id","x":"public-key","private_pkcs8":"private-key"},"published":null}"#
+            ),
+            "cannot decode identity signing state as a boolean",
+        ),
+        (
+            "missing",
+            json!("platform/cluster.postgresql.cnpg.io/wamn-pg"),
+            "missing Cluster platform/wamn-pg",
+        ),
+        (
+            "fail_read",
+            json!("platform/cluster.postgresql.cnpg.io/wamn-pg"),
+            "cannot read Cluster platform/wamn-pg",
+        ),
+        ("primary", Value::Null, "missing PostgreSQL primary"),
+        ("primary", json!(""), "missing PostgreSQL primary"),
+    ] {
+        let mut state = fixture.state(&UpgradeTarget::Identity)?;
+        state[field] = value;
+        let (output, calls, after) = fixture.run(Some("identity"), &state)?;
+        let error = String::from_utf8(output.stderr)?;
+        assert!(!output.status.success());
+        assert!(error.contains(expected), "{error}");
+        assert!(error.contains("platform deploy without --only"), "{error}");
+        assert_operations(&calls, ("identity", "identity"), false);
+        assert_eq!(after, state);
     }
     Ok(())
 }
@@ -499,6 +569,11 @@ fn platform_updates_refuse_missing_owners_and_pending_hosts_without_mutation() -
                     "{error}"
                 );
                 assert_operations(&calls, (&name, namespace), false);
+                assert!(
+                    !calls
+                        .iter()
+                        .any(|call| call["tool"] == "kubectl" && call["args"][6] == "exec")
+                );
                 assert_eq!(after, state);
             }
         }
