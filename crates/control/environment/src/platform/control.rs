@@ -348,21 +348,15 @@ pub(super) fn resource_entry(
         Err(error) => return Err(error).context("read the selected platform build record"),
     };
     let mut desired = release_values(document, chart.values(), platform_ui)?;
-    if let Some(groups) = installed
-        .and_then(|values| values.pointer("/runtime-operator/runtime/hostGroups"))
-        .and_then(Value::as_array)
+    for group in desired["runtime-operator"]["runtime"]["hostGroups"]
+        .as_array_mut()
+        .expect("control host groups")
     {
-        for group in desired["runtime-operator"]["runtime"]["hostGroups"]
-            .as_array_mut()
-            .expect("control host groups")
-        {
-            if let Some(image) = groups
-                .iter()
-                .find(|previous| previous["name"] == group["name"])
-                .and_then(|previous| previous.get("image"))
-            {
-                group["image"] = image.clone();
-            }
+        if let Some(image) = crate::environment::runtime::host_image(
+            installed,
+            group["name"].as_str().expect("control host group name"),
+        ) {
+            group["image"] = image.clone();
         }
     }
     desired["controlResources"] = service_objects(

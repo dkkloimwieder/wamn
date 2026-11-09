@@ -238,6 +238,7 @@ pub fn materializer_host_values(
     dup_window_secs: u64,
     host_group: Option<&Path>,
     insecure_registry: bool,
+    installed: Option<&serde_json::Value>,
 ) -> anyhow::Result<serde_json::Value> {
     use serde_json::json;
     use wamn_release_control::release_chart;
@@ -328,6 +329,9 @@ pub fn materializer_host_values(
         );
         variables.push(json!({"name":key,"value":value}));
     }
+    if let Some(image) = super::runtime::host_image(installed, group["name"].as_str().unwrap()) {
+        group["image"] = image.clone();
+    }
     let env_key =
         wamn_control_provision::project_env_key(&document.org, &document.project, &document.env);
     Ok(json!({
@@ -392,6 +396,13 @@ pub(super) async fn provision_materializer(
         .events
         .as_ref()
         .context("environment provisioning requires the event broker")?;
+    let name = environment_host_name(&document.org, &document.project, &document.env)?;
+    let installed = crate::platform::resources::release_values(
+        &platform.target,
+        &platform.target.namespace,
+        &name,
+    )
+    .await?;
     let desired = materializer_host_values(
         document,
         u32::try_from(policy.drain_bound_seconds)?,
@@ -399,11 +410,11 @@ pub(super) async fn provision_materializer(
         events.dup_window_secs,
         platform.host_group.as_deref(),
         platform.insecure_registry,
+        installed.as_ref(),
     )?;
     let private = PrivateDirectory::create()?;
     let values = private.path("environment-host.yaml");
     std::fs::write(&values, serde_yaml::to_string(&desired)?)?;
-    let name = environment_host_name(&document.org, &document.project, &document.env)?;
     super::runtime::require_chart_references(&platform.target, &platform.chart, &name, &desired)
         .await?;
     release_chart::recover_pending(&platform.target, &name).await?;
@@ -1189,6 +1200,51 @@ mod tests {
     use super::*;
 
     #[test]
+    fn shared_host_reapply_keeps_only_its_named_host_image() -> anyhow::Result<()> {
+        use serde_json::json;
+        let document = EnvironmentDocument::from_json(br#"{"org":"acme","project":"apps","env":"dev","target":"cloud","policy":"dev","applications":{}}"#)?;
+        let repository = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
+        let chart = crate::platform::artifact_plan::test_util::prepared_chart(&repository)?;
+        let fresh = materializer_host_values(&document, 70, 1, 120, None, false, None)?;
+        let mut installed = fresh.clone();
+        let image = json!({"registry":"selected.example", "repository":"host",
+            "tag":format!("selected@sha256:{}", "b".repeat(64)), "pull_policy":"IfNotPresent"});
+        let group = &mut installed["runtime-operator"]["runtime"]["hostGroups"][0];
+        group["image"] = image.clone();
+        group["replicas"] = 9.into();
+        group["env"] = json!([]);
+        installed["roles"] = json!([{"name":"stale"}]);
+        installed["runtime-operator"]["runtime"]["hostGroups"]
+            .as_array_mut()
+            .unwrap()
+            .insert(0, json!({"name":"unrelated", "image":{"tag":"wrong"}}));
+        let mut reapplied =
+            materializer_host_values(&document, 70, 1, 120, None, false, Some(&installed))?;
+        assert_eq!(
+            reapplied["runtime-operator"]["runtime"]["hostGroups"][0]["image"],
+            image
+        );
+        let entry = json!({"chart":chart.0, "version":crate::platform::artifact_plan::select(&chart.0)?.version,
+            "name":environment_host_name(&document.org, &document.project, &document.env)?,
+            "namespace":"hosts", "values":reapplied});
+        let objects = crate::platform::resources::helm_template(&entry)?;
+        let host = objects
+            .iter()
+            .find(|object| object["kind"] == "Deployment")
+            .unwrap();
+        assert_eq!(
+            host["spec"]["template"]["spec"]["containers"][0]["image"],
+            format!("selected.example/host:selected@sha256:{}", "b".repeat(64))
+        );
+        reapplied["runtime-operator"]["runtime"]["hostGroups"][0]
+            .as_object_mut()
+            .unwrap()
+            .remove("image");
+        assert_eq!(reapplied, fresh);
+        Ok(())
+    }
+
+    #[test]
     fn shared_materializer_uses_platform_registry_transport_and_addresses() -> anyhow::Result<()> {
         use crate::platform::resources::{LOCAL_REGISTRY, POD_REGISTRY};
         use serde_json::json;
@@ -1205,8 +1261,15 @@ mod tests {
                 ("WAMN_RELEASE_ARTIFACT_BASE", "releases"),
             ].map(|(name, repository)| json!({"name":name, "value":format!("{registry}/wamn/{repository}")}));
             std::fs::write(&overlay, serde_yaml::to_string(&json!({"env":variables}))?)?;
-            let values =
-                materializer_host_values(&document, 30, 1, 120, Some(&overlay), insecure_registry)?;
+            let values = materializer_host_values(
+                &document,
+                30,
+                1,
+                120,
+                Some(&overlay),
+                insecure_registry,
+                None,
+            )?;
             let group = &values["runtime-operator"]["runtime"]["hostGroups"][0];
             assert_eq!(
                 group["extraArgs"]

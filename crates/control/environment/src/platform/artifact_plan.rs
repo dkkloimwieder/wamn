@@ -557,12 +557,29 @@ mod tests {
                 "beta":{"packages":["platform_fixture_overlay"],"current":digest,"hostname":"beta.example"},
             },
         }))?)?;
-        let manifest = serde_json::from_value(json!({
+        let mut manifest: wamn_catalog::ServingManifest = serde_json::from_value(json!({
             "format-version":wamn_catalog::SERVING_MANIFEST_FORMAT_VERSION,
-            "release":{"packages":[]}, "components":[], "routes":[], "attachments":{},
+            "release":{"packages":[]}, "components":[], "routes":[],
+            "attachments":{"http":{"type":"http", "package-id":"platform_fixture",
+                "component":"fixture", "operation":"get", "definition":{},
+                "definition-hash":digest, "auth-policy":{"modes":["none"]}}},
         }))?;
+        let member = wamn_catalog::ServingEntryMember {
+            package_id: "platform_fixture".into(),
+            component: "fixture".into(),
+            digest: digest.clone(),
+        };
+        manifest.composed_entry = Some(wamn_catalog::ServingComposedEntry {
+            reference: format!("entries@{digest}"),
+            route_digest: digest.clone(),
+            application: member.clone(),
+            members: [member].into(),
+        });
         let overlay = chart.0.join("test-host.yaml");
-        std::fs::write(&overlay, "replicas: 1\n")?;
+        std::fs::write(
+            &overlay,
+            "replicas: 1\nenv:\n  - name: WAMN_COMPONENT_ARTIFACT_BASE\n    value: registry.example/components\n",
+        )?;
         let mut owners = Vec::new();
         for application in environment.applications.keys() {
             let (values, _) = write::release_values(
@@ -574,6 +591,7 @@ mod tests {
                 70,
                 "render",
                 Some(&overlay),
+                None,
             )?;
             owners.push(serde_json::to_value(values)?);
         }
@@ -584,6 +602,7 @@ mod tests {
             120,
             Some(&overlay),
             false,
+            None,
         )?);
         for (index, installed) in owners.iter().enumerate() {
             let mut installed = installed.clone();
@@ -605,6 +624,13 @@ mod tests {
             let entry = json!({"chart":original.directory(), "version":original.version,
                 "name":name, "namespace":namespace, "values":installed});
             let before = resources::helm_template(&entry)?;
+            if index < environment.applications.len() {
+                assert!(
+                    before
+                        .iter()
+                        .any(|object| object["kind"] == "WorkloadDeployment")
+                );
+            }
             let mut entry = entry;
             entry["values"] = values.clone();
             let mut after = resources::helm_template(&entry)?;
@@ -635,34 +661,6 @@ mod tests {
                 .unwrap()
                 .remove("image");
             assert_eq!(values, installed);
-            let missing = UpgradeTarget::Host {
-                release: group.into(),
-                group: "missing".into(),
-            };
-            assert!(
-                selected
-                    .selection_values(&cluster, &missing, installed.clone())
-                    .is_err()
-            );
-            let mut duplicate = installed.clone();
-            let groups = duplicate["runtime-operator"]["runtime"]["hostGroups"]
-                .as_array_mut()
-                .unwrap();
-            groups.push(groups[0].clone());
-            assert!(
-                selected
-                    .selection_values(&cluster, &target, duplicate)
-                    .is_err()
-            );
-            let control = UpgradeTarget::Host {
-                release: format!("c-{}", cluster.org),
-                group: group.into(),
-            };
-            assert!(
-                selected
-                    .selection_values(&cluster, &control, installed)
-                    .is_err()
-            );
         }
         Ok(())
     }

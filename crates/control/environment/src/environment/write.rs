@@ -49,6 +49,12 @@ pub(super) async fn prepare(
     .await?;
     let policy = &analysis.authorities.policy;
     let budget = Duration::from_secs(u64::try_from(policy.readiness_budget_seconds)?);
+    let installed = crate::platform::resources::release_values(
+        &platform.target,
+        &platform.target.namespace,
+        &analysis.authorities.release_name,
+    )
+    .await?;
     let (mut rendered, names) = release_values(
         document,
         &analysis.application,
@@ -58,6 +64,7 @@ pub(super) async fn prepare(
         u32::try_from(policy.drain_bound_seconds)?,
         &analysis.actor,
         platform.host_group.as_deref(),
+        installed.as_ref(),
     )?;
     let suffix = &analysis
         .authorities
@@ -149,6 +156,7 @@ pub fn release_values(
     drain_bound_seconds: u32,
     actor: &str,
     host_group_path: Option<&Path>,
+    installed: Option<&serde_json::Value>,
 ) -> anyhow::Result<(Value, Vec<RoleName>)> {
     let group = host_group(
         host_group_path,
@@ -156,7 +164,7 @@ pub fn release_values(
         &document.project,
         &document.env,
     )?;
-    plan::release_values(
+    let (mut values, roles) = plan::release_values(
         document,
         application,
         manifest,
@@ -165,7 +173,17 @@ pub fn release_values(
         drain_bound_seconds,
         actor,
         group,
-    )
+    )?;
+    let group = &mut values["runtime-operator"]["runtime"]["hostGroups"][0];
+    if let Some(image) = super::runtime::host_image(
+        installed,
+        group["name"]
+            .as_str()
+            .context("application host group name")?,
+    ) {
+        group["image"] = serde_yaml::to_value(image)?;
+    }
+    Ok((values, roles))
 }
 
 /// The host group body: the platform's part, read from
@@ -185,4 +203,75 @@ pub fn host_group(
         .with_context(|| format!("{} is not a YAML mapping", path.display()))?,
     };
     plan::host_group(group, org, project, env)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn application_reapply_keeps_only_its_named_host_image() -> anyhow::Result<()> {
+        let repository = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
+        let chart = crate::platform::artifact_plan::test_util::prepared_chart(&repository)?;
+        let digest = format!("sha256:{}", "c".repeat(64));
+        let document = EnvironmentDocument::from_json(&serde_json::to_vec(&json!({
+            "org":"acme", "project":"apps", "env":"dev", "target":"cloud", "policy":"dev",
+            "applications":{"alpha":{"packages":["alpha"],"current":digest,"hostname":"alpha.example"}}
+        }))?)?;
+        let manifest = serde_json::from_value(json!({
+            "format-version":wamn_catalog::SERVING_MANIFEST_FORMAT_VERSION,
+            "release":{"packages":[]}, "components":[], "routes":[], "attachments":{}
+        }))?;
+        let render = |installed| {
+            release_values(
+                &document,
+                "alpha",
+                &manifest,
+                &digest,
+                "registry.example/releases",
+                70,
+                "render",
+                None,
+                installed,
+            )
+        };
+        let (fresh, _) = render(None)?;
+        let mut installed = serde_json::to_value(&fresh)?;
+        let image = json!({"registry":"selected.example", "repository":"host",
+            "tag":format!("selected@sha256:{}", "b".repeat(64)), "pull_policy":"IfNotPresent"});
+        let group = &mut installed["runtime-operator"]["runtime"]["hostGroups"][0];
+        group["image"] = image.clone();
+        group["replicas"] = 9.into();
+        installed["routeHost"] = "stale.example".into();
+        installed["release"]["manifestDigest"] = "stale".into();
+        installed["runtime-operator"]["runtime"]["hostGroups"]
+            .as_array_mut()
+            .unwrap()
+            .insert(0, json!({"name":"unrelated", "image":{"tag":"wrong"}}));
+        let (mut reapplied, _) = render(Some(&installed))?;
+        assert_eq!(
+            serde_json::to_value(
+                &reapplied["runtime-operator"]["runtime"]["hostGroups"][0]["image"]
+            )?,
+            image
+        );
+        let entry = json!({"chart":chart.0, "version":crate::platform::artifact_plan::select(&chart.0)?.version,
+            "name":"alpha", "namespace":"hosts", "values":reapplied});
+        let objects = crate::platform::resources::helm_template(&entry)?;
+        let host = objects
+            .iter()
+            .find(|object| object["kind"] == "Deployment")
+            .unwrap();
+        assert_eq!(
+            host["spec"]["template"]["spec"]["containers"][0]["image"],
+            format!("selected.example/host:selected@sha256:{}", "b".repeat(64))
+        );
+        reapplied["runtime-operator"]["runtime"]["hostGroups"][0]
+            .as_mapping_mut()
+            .unwrap()
+            .remove("image");
+        assert_eq!(reapplied, fresh);
+        Ok(())
+    }
 }

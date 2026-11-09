@@ -124,6 +124,7 @@ fn changing_one_application_selection_leaves_the_other_release_unchanged() -> an
             70,
             "render",
             Some(&group),
+            None,
         )?;
         assert_eq!(
             values["applications"]
@@ -275,6 +276,7 @@ fn reset_stops_workloads_and_reapply_restores_them() -> anyhow::Result<()> {
             70,
             "reset-render",
             Some(&group),
+            None,
         )?;
         Ok(values)
     };
@@ -314,7 +316,8 @@ fn reset_stops_workloads_and_reapply_restores_them() -> anyhow::Result<()> {
 
     // The separate materializer is deleted before its host is stopped, then
     // ordinary provisioning renders it again with its running replica count.
-    let mut shared = ensure::materializer_host_values(&document, 70, 1, 120, Some(&group), false)?;
+    let mut shared =
+        ensure::materializer_host_values(&document, 70, 1, 120, Some(&group), false, None)?;
     reset::stop_values(&mut shared)?;
     let shared = template(&serde_yaml::to_value(&shared)?, NAMESPACE)?;
     assert!(
@@ -336,6 +339,7 @@ fn reset_stops_workloads_and_reapply_restores_them() -> anyhow::Result<()> {
             120,
             Some(&group),
             false,
+            None,
         )?)?,
         NAMESPACE,
     )?;
@@ -585,7 +589,7 @@ mod shared_resources {
                     .is_some_and(|url| matches!(url.scheme(), "postgres" | "postgresql"))
             );
         }
-        let values = ensure::materializer_host_values(&document, 30, 1, 120, None, false)?;
+        let values = ensure::materializer_host_values(&document, 30, 1, 120, None, false, None)?;
         document.applications = serde_json::from_value(json!({
             "a":{"packages":["a"],"current":format!("sha256:{}", "b".repeat(64)),"hostname":"a.example.com"},
             "b":{"packages":["b"],"current":format!("sha256:{}", "c".repeat(64)),"hostname":"b.example.com"}
@@ -596,7 +600,7 @@ mod shared_resources {
         );
         assert_eq!(
             values,
-            ensure::materializer_host_values(&document, 30, 1, 120, None, false)?
+            ensure::materializer_host_values(&document, 30, 1, 120, None, false, None)?
         );
         let group = &values["runtime-operator"]["runtime"]["hostGroups"][0];
         assert_eq!(

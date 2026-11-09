@@ -79,8 +79,8 @@ This section records the current code. It replaces the historical list of earlie
 | Publisher identity | No command accepts a caller-supplied publisher string. Publication records no publisher. The `catalog.releases` row of an applied release carries the record-history stamp of the authenticated deploy actor. |
 | Development loop | `wamn dev` prepares generation before the shared `schema::plan` decision. Its template reset and direct connection retain the same package SQL executor and records as deployed Jobs. |
 | Platform UI | Local kind deployment does not select the UI. The separate upload path still consumes a local bundle matching its stamped chart. |
-| Platform updates | Control and identity updates use the supplied chart and upgrade only the selected release with readiness waits. They keep host image overrides and leave credentials and signing keys unchanged. Only identity reads signing state. Missing initialization refuses before writes. Hosts still refuse under DEP4-04. Untargeted runs retain the recorded platform default, service charts, and host overrides. Services without chart metadata inherit that default. Untargeted runs still apply infrastructure, bootstrap, and edge. |
-| Host runtime selection | The operator release `wamn` records one platform-wide chart reference. `environment/runtime.rs` reads it, and `environment/write.rs` renders the host groups of each application release from that chart. |
+| Platform updates | Control and identity updates upgrade only their selected release from the supplied chart and retain host overrides, credentials, and signing keys. Only identity reads signing state, and missing initialization refuses before writes. Host updates wait for readiness and replace only the named group image through its owning release. Untargeted runs retain the recorded platform default, service charts, and host overrides. Services without chart metadata inherit that default. Untargeted runs still apply infrastructure, bootstrap, and edge. |
+| Host runtime selection | The operator release `wamn` records the default chart. A targeted host update records an immutable image override in its owning release. Application and shared-host reapply read that release and retain only the matching image override. |
 
 The accepted Epic 2 record leaves `wamn-xy404`, `wamn-1riwn`, and `wamn-c361p` open.
 It records `wamn-azv06` as not reproduced, not fixed.
@@ -428,7 +428,7 @@ Persistent system database upgrades are unsupported in this rebuild. Persistent 
 
 #### 5.3.1 Behavior-only or configuration-only change
 
-Implementation status: control and identity updates apply only the selected Helm release.
+Implementation status: control, identity, and host updates apply only the selected Helm release.
 Untargeted runs still apply infrastructure, run bootstrap, and initialize both services (section 2).
 Epic 4 implements this section. DEP4-01 defines the selection syntax below.
 DEP4-02 through DEP4-04 implement the update operations.
@@ -439,7 +439,8 @@ Three ownership rules apply:
 2. An application code upgrade does not silently select a different platform runtime.
 3. The existing Helm releases remain the resource owners. A targeted update is not a temporary patch that the next application operation overwrites.
 
-Application deployment renders and reapplies its own Helm release, and it takes the host runtime from the platform-wide chart reference.
+Application deployment renders and reapplies its own Helm release from the recorded platform default.
+It retains the explicit image override of its named host group from the installed application release.
 Control selections persist as `platform.chart` in the `hosts/c-<org>` Helm release values.
 Identity selections persist as `platform.chart` in the `identity/identity` Helm release values.
 Each value names the prepared chart that supplies that service's artifacts and configuration.
@@ -474,7 +475,9 @@ If a required chart is missing, the command refuses with an explicit error befor
 They prohibit bootstrap, migrations, data changes, and key creation or rotation.
 Reads that inspect existing initialization are allowed.
 Control and identity updates use the supplied `--chart` and record it with `selection_values` in the selected release.
-An explicit target update does not resolve or require the previous chart directory.
+An explicit service update does not resolve or require the previous chart directory.
+A host update uses the recorded platform default chart and the installed owner values.
+The incoming chart supplies only the selected immutable host image.
 
 Service configuration comes from the selected chart and cluster document.
 Only named host image overrides carry over from installed service values.
@@ -487,17 +490,24 @@ Only an identity update reads the active signing state.
 A missing input gives an explicit error. It never triggers initialization.
 The read-only signing query uses the existing PostgreSQL primary through kubectl exec.
 It returns only a boolean and sets a five-second PostgreSQL statement timeout inside the read-only transaction.
+That timeout bounds the PostgreSQL statement, not the complete signing inspection.
+The kubectl exec call has no call timeout. DEP4-05 tracks this gap.
 Missing or unreadable signing state refuses before resource changes.
 The error directs the operator to run platform deploy without `--only` to initialize identity.
 
 Both installation and updates call the same resource functions.
 Installation prepares control credentials before the control release waits for readiness. Targeted updates run no initialization and write no credential Secret.
-Hosts still refuse under DEP4-04.
+Host updates call `resources::apply_release`, which uses the shared `release_chart::upgrade` path with `--wait`.
+They change only the named group image in the existing `hosts` release.
+Other host groups, application components, release digests, routes, schema, data, and credentials stay unchanged.
+A missing owner, an absent or ambiguous group, or a group outside `hosts` refuses before any write.
+The control release requires `--only control`.
 
 Host runtime selections persist as `runtime-operator.runtime.hostGroups[].image` in the Helm release that owns the named group.
 The existing image override holds the selected immutable host image.
-Application deploy and shared host reapply preserve that override when they render the owning release.
-They retain their existing chart and application component selections.
+Application deploy and shared host reapply read that override from the owning release before rendering.
+They copy only image overrides whose group names match. Other installed configuration does not carry over.
+The host update retains the owner chart and its application component selections.
 
 The `platform.chart` value in the `platform/wamn` operator release stays the default for hosts without an override.
 Selecting one service or host group never replaces that default.

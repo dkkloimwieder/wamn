@@ -119,6 +119,16 @@ pub fn insecure_registry(group: &Value) -> bool {
         .is_some_and(|args| args.iter().any(|arg| arg == "--allow-insecure-registries"))
 }
 
+/// Borrow only the explicit image override of the named installed host group.
+pub(crate) fn host_image<'a>(installed: Option<&'a Value>, name: &str) -> Option<&'a Value> {
+    installed?
+        .pointer("/runtime-operator/runtime/hostGroups")?
+        .as_array()?
+        .iter()
+        .find(|group| group["name"] == name)?
+        .get("image")
+}
+
 pub(super) fn pod_artifact_base(
     insecure_registry: bool,
     base: &str,
@@ -528,7 +538,7 @@ mod tests {
             "applications":{"orders":{"packages":["orders"],"current":digest,"hostname":"orders.example"}}
         }))?)?;
         let shared = crate::environment::ensure::materializer_host_values(
-            &document, 70, 1, 120, None, false,
+            &document, 70, 1, 120, None, false, None,
         )?;
         let group = host_group(&control, &shared, &component_base)?;
         let path = private.path("host.yaml");
@@ -554,6 +564,7 @@ mod tests {
             70,
             "test",
             Some(&cloud_path),
+            None,
         )?;
         let cloud_args = cloud_values["runtime-operator"]["runtime"]["hostGroups"][0]["extraArgs"]
             .as_sequence()
@@ -576,6 +587,7 @@ mod tests {
             70,
             "test",
             Some(&path),
+            None,
         )?;
         assert!(
             remote_values["runtime-operator"]["runtime"]["hostGroups"][0]["extraArgs"]
@@ -594,6 +606,7 @@ mod tests {
             70,
             "test",
             Some(&path),
+            None,
         )?;
         let image = format!("registry.example/host:render@{digest}");
         let chart = release_chart::stamp(

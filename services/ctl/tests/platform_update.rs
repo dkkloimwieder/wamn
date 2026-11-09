@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
 use serde_json::{Value, json};
+use wamn_environment_control::environment::{document::EnvironmentDocument, ensure, write};
 use wamn_environment_control::platform::artifact_plan::test_util::{Chart, prepared_chart};
 use wamn_environment_control::platform::document::{ClusterDocument, UpgradeTarget};
 use wamn_environment_control::platform::{artifact_plan, control, identity};
@@ -157,6 +158,7 @@ impl Fixture {
         std::fs::write(
             &values,
             std::fs::read_to_string(&values)?
+                .replace("localhost:5001/host", "selected.example/host")
                 .replace("identity.example/identity", "selected.example/identity")
                 .replace(
                     "registry.example/components/http",
@@ -227,9 +229,43 @@ impl Fixture {
             "identity/identity":identity, "hosts/alpha":{"application":"retained"}});
         owners[format!("hosts/c-{}", self.document.org)] = control;
         if let UpgradeTarget::Host { release, group } = selection {
-            owners[format!("hosts/{release}")] = json!({
-                "runtime-operator":{"runtime":{"hostGroups":[{"name":group}]}}
-            });
+            let digest = format!("sha256:{}", "c".repeat(64));
+            let environment = EnvironmentDocument::from_json(&serde_json::to_vec(&json!({
+                "org":self.document.org,"project":"fixture","env":"dev","target":"cloud","policy":"dev",
+                "applications":{"alpha":{"packages":["alpha"],"current":digest,"hostname":"alpha.example"}}
+            }))?)?;
+            let manifest = serde_json::from_value(json!({
+                "format-version":wamn_catalog::SERVING_MANIFEST_FORMAT_VERSION,
+                "release":{"packages":[]}, "components":[], "routes":[], "attachments":{}
+            }))?;
+            let mut values = if release == "shared" {
+                ensure::materializer_host_values(&environment, 70, 1, 120, None, false, None)?
+            } else {
+                serde_json::to_value(
+                    write::release_values(
+                        &environment,
+                        "alpha",
+                        &manifest,
+                        &digest,
+                        "registry.example/releases",
+                        70,
+                        "fixture",
+                        None,
+                        None,
+                    )?
+                    .0,
+                )?
+            };
+            let groups = values["runtime-operator"]["runtime"]["hostGroups"]
+                .as_array_mut()
+                .unwrap();
+            groups[0]["name"] = group.as_str().into();
+            let mut other = groups[0].clone();
+            other["name"] = "untargeted".into();
+            other["image"] = json!({"registry":"retained.example", "repository":"host",
+                "tag":"retained", "pull_policy":"Never"});
+            groups.insert(0, other);
+            owners[format!("hosts/{release}")] = values;
         }
         Ok(
             json!({"cluster":self.document.cluster_name, "owners":owners, "helm":self.helm,
@@ -306,6 +342,10 @@ fn assert_operations(calls: &[Value], owner: (&str, &str), allow_upgrade: bool) 
                     continue;
                 }
                 let namespace = args.iter().position(|arg| arg == "--namespace").unwrap();
+                if args[namespace + 1] == "platform" {
+                    assert!(args[0] == "list" || args[0] == "get", "{call}");
+                    continue;
+                }
                 assert_eq!(args[namespace + 1], owner.1, "{call}");
                 let name = match args[0].as_str().unwrap() {
                     "list" => {
@@ -550,8 +590,7 @@ fn identity_update_refuses_unreadable_signing_state_without_mutation() -> anyhow
 }
 
 #[test]
-fn platform_updates_refuse_missing_owners_and_pending_hosts_without_mutation() -> anyhow::Result<()>
-{
+fn platform_updates_refuse_missing_owners_without_mutation() -> anyhow::Result<()> {
     let fixture = Fixture::new()?;
     for selection in ["control", "identity", "host:alpha/alpha"] {
         let target: UpgradeTarget = selection.parse()?;
@@ -569,32 +608,96 @@ fn platform_updates_refuse_missing_owners_and_pending_hosts_without_mutation() -
         );
         assert_operations(&calls, (&name, namespace), false);
         assert_eq!(after, state);
-        if matches!(target, UpgradeTarget::Host { .. }) {
-            for groups_present in [true, false] {
-                let mut state = fixture.state(&target)?;
-                if !groups_present {
-                    state["owners"][format!("{namespace}/{name}")] = json!({});
-                }
-                let (output, calls, after) = fixture.run(Some(selection), &state)?;
-                assert!(!output.status.success());
-                let error = String::from_utf8(output.stderr)?;
-                assert!(
-                    error.contains(if groups_present {
-                        "DEP4-04"
-                    } else {
-                        "no host groups"
-                    }),
-                    "{error}"
-                );
-                assert_operations(&calls, (&name, namespace), false);
-                assert!(
-                    !calls
-                        .iter()
-                        .any(|call| call["tool"] == "kubectl" && call["args"][6] == "exec")
-                );
-                assert_eq!(after, state);
+    }
+    Ok(())
+}
+
+#[test]
+fn platform_host_updates_upgrade_only_the_existing_owner() -> anyhow::Result<()> {
+    let fixture = Fixture::new()?;
+    for selection in ["host:alpha/alpha", "host:shared/shared"] {
+        let target: UpgradeTarget = selection.parse()?;
+        let (name, namespace) = target.owner(&fixture.document);
+        let owner = format!("{namespace}/{name}");
+        let state = fixture.state(&target)?;
+        let (output, calls, mut after) = fixture.run(Some(selection), &state)?;
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_operations(&calls, (&name, namespace), true);
+        assert!(
+            !calls
+                .iter()
+                .any(|call| call["tool"] == "kubectl" && call["args"][6] == "exec")
+        );
+        let upgrade = calls
+            .iter()
+            .find(|call| call.get("values").is_some())
+            .unwrap();
+        assert_eq!(upgrade["args"][3], fixture.previous.0.to_str().unwrap());
+        let image =
+            &after["owners"][&owner]["runtime-operator"]["runtime"]["hostGroups"][1]["image"];
+        assert_eq!(image["registry"], "selected.example");
+        assert_eq!(
+            image["tag"],
+            artifact_plan::select(&fixture.chart.0)?.values()["runtime-operator"]["runtime"]["image"]
+                ["tag"]
+        );
+        after["owners"][&owner]["runtime-operator"]["runtime"]["hostGroups"][1]
+            .as_object_mut()
+            .unwrap()
+            .remove("image");
+        assert_eq!(after, state, "only the selected host image changes");
+    }
+    Ok(())
+}
+
+#[test]
+fn platform_host_updates_refuse_invalid_groups_without_mutation() -> anyhow::Result<()> {
+    let fixture = Fixture::new()?;
+    let control = format!("host:c-{}/alpha", fixture.document.org);
+    for (selection, reason) in [
+        ("host:alpha/alpha", "no host groups"),
+        ("host:alpha/missing", "selected host group is absent"),
+        ("host:alpha/alpha", "selected host group is ambiguous"),
+        ("host:alpha/alpha", "selected host group must be in hosts"),
+        (
+            control.as_str(),
+            "select the control service with --only control",
+        ),
+    ] {
+        // Start from the same installed owner, including for an absent target name.
+        let mut state = fixture.state(&"host:alpha/alpha".parse()?)?;
+        match reason {
+            "no host groups" => state["owners"]["hosts/alpha"] = json!({}),
+            "selected host group is ambiguous" => {
+                let groups =
+                    state["owners"]["hosts/alpha"]["runtime-operator"]["runtime"]["hostGroups"]
+                        .as_array_mut()
+                        .unwrap();
+                groups.push(groups[1].clone());
             }
+            "selected host group must be in hosts" => {
+                state["owners"]["hosts/alpha"]["runtime-operator"]["runtime"]["hostGroups"][1]["namespace"] =
+                    "outside".into();
+            }
+            _ => {}
         }
+        let target: UpgradeTarget = selection.parse()?;
+        let (name, namespace) = target.owner(&fixture.document);
+        let (output, calls, after) = fixture.run(Some(selection), &state)?;
+        assert!(!output.status.success());
+        let error = String::from_utf8_lossy(&output.stderr);
+        assert!(error.contains(reason), "{error}");
+        assert_operations(&calls, (&name, namespace), false);
+        assert!(
+            !calls
+                .iter()
+                .any(|call| call["tool"] == "kubectl" && call["args"][6] == "exec")
+        );
+        assert_eq!(after, state);
     }
     Ok(())
 }

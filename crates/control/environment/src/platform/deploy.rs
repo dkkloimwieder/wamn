@@ -109,7 +109,7 @@ pub async fn deploy(
 /// Prepare an update of one existing owner without entering installation.
 ///
 /// # Errors
-/// Returns an error for missing initialization or a host update that needs DEP4-04.
+/// Returns an error for a missing owner, host group, chart, or required input.
 pub async fn update(
     document: &ClusterDocument,
     chart: &SelectedChart,
@@ -129,10 +129,17 @@ pub async fn update(
         UpgradeTarget::Control => control::resource_entry(document, chart, Some(&installed))?,
         UpgradeTarget::Identity => identity::resource_entry(document, chart)?,
         UpgradeTarget::Host { .. } => {
-            chart.selection_values(document, selection, installed)?;
-            anyhow::bail!(
-                "host update requires DEP4-04 (wamn-275sr.4) to preserve the owning release and host selections; no resources changed"
-            );
+            let values = chart.selection_values(document, selection, installed)?;
+            let operator = resources::release_values(target, "platform", "wamn")
+                .await?
+                .context(
+                    "host update requires existing release platform/wamn; no resources changed",
+                )?;
+            // Application and shared releases use the recorded default chart.
+            // The incoming chart supplies only the selected host image.
+            let owner_chart = artifact_plan::platform_chart(Some(&operator), None)?;
+            serde_json::json!({"chart":owner_chart.directory(), "version":owner_chart.version,
+                "name":name, "namespace":namespace, "values":values})
         }
     };
     resources::require_inputs(target, &entry).await?;
