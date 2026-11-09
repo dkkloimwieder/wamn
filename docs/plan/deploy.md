@@ -79,7 +79,7 @@ This section records the current code. It replaces the historical list of earlie
 | Publisher identity | No command accepts a caller-supplied publisher string. Publication records no publisher. The `catalog.releases` row of an applied release carries the record-history stamp of the authenticated deploy actor. |
 | Development loop | `wamn dev` prepares generation before the shared `schema::plan` decision. Its template reset and direct connection retain the same package SQL executor and records as deployed Jobs. |
 | Platform UI | Local kind deployment does not select the UI. The separate upload path still consumes a local bundle matching its stamped chart. |
-| Platform updates | `wamn platform deploy` has no target selection. Each run applies all infrastructure, runs `bootstrap::initialize`, and then applies identity, control, and edge in one pass. |
+| Platform updates | `wamn platform deploy --only` parses a target and resolves prepared artifacts. Targeted updates are not implemented. Untargeted runs still apply infrastructure, bootstrap, identity, control, and edge. |
 | Host runtime selection | The operator release `wamn` records one platform-wide chart reference. `environment/runtime.rs` reads it, and `environment/write.rs` renders the host groups of each application release from that chart. |
 
 The accepted Epic 2 record leaves `wamn-xy404`, `wamn-1riwn`, and `wamn-c361p` open.
@@ -412,7 +412,7 @@ Warnings identify schema differences, deprecated interfaces, and missing optiona
 ### 5.3 Platform upgrades: behavior, WAMN SQL, and infrastructure
 
 Epic 4 (section 7) implements section 5.3.1. Sections 5.3.2 and 5.3.3 remain later work.
-The current CLI supplies no `platform schema` command and no target selection for `platform deploy`.
+The CLI parses platform deployment targets. Applying a target is not implemented, and no `platform schema` command exists.
 Persistent system database upgrades are unsupported in this rebuild. Persistent platform SQL upgrades are the deployment epic after Epic 4.
 
 **Intent:** Update one part of the platform without repeating initial installation or changing unrelated applications. Implement against an already running kind platform before introducing GCP-specific actions.
@@ -428,8 +428,9 @@ Persistent system database upgrades are unsupported in this rebuild. Persistent 
 
 #### 5.3.1 Behavior-only or configuration-only change
 
-Implementation status: no targeted update exists. Every `platform deploy` run applies infrastructure, runs bootstrap, and starts identity and control together (section 2).
-Epic 4 implements this section. DEP4-01 decides the selection syntax, so the commands below are illustrative.
+Implementation status: no targeted update exists. Untargeted `platform deploy` runs still apply infrastructure, run bootstrap, and start identity and control together (section 2).
+Epic 4 implements this section. DEP4-01 defines the selection syntax below.
+DEP4-02 through DEP4-04 implement the update operations.
 
 Three ownership rules apply:
 
@@ -438,14 +439,32 @@ Three ownership rules apply:
 3. The existing Helm releases remain the resource owners. A targeted update is not a temporary patch that the next application operation overwrites.
 
 Application deployment renders and reapplies its own Helm release, and it takes the host runtime from the platform-wide chart reference.
-Because of this, a host selection must persist where `environment/write.rs` reads it. DEP4-01 records that owner in this section before dependent issues start.
+Control selections persist as `platform.chart` in the `hosts/c-<org>` Helm release values.
+Identity selections persist as `platform.chart` in the `identity/identity` Helm release values.
+Each value names the prepared chart that supplies that service's artifacts and configuration.
+Platform reapply reads these selections before calling the existing service owners.
+
+Host runtime selections persist as `runtime-operator.runtime.hostGroups[].image` in the Helm release that owns the named group.
+The existing image override holds the selected immutable host image.
+Application deploy and shared host reapply preserve that override when they render the owning release.
+They retain their existing chart and application component selections.
+
+The `platform.chart` value in the `platform/wamn` operator release stays the default for hosts without an override.
+Selecting one service or host group never replaces that default.
+No database record or separate selection store is added.
+
+The `--only` argument accepts `control`, `identity`, or `host:<release>/<group>`.
+A host target names both its owning Helm release in `hosts` and its group.
+Bare `host`, unknown targets, and missing groups are refused.
+DEP4-01 parses and resolves these inputs and prepares their owning values.
+DEP4-02 through DEP4-04 connect those values to existing resource application and reapply.
 
 ```bash
 # Illustrative selection of one platform component.
-wamn platform deploy deploy/kind/cluster.k --only host
+wamn platform deploy deploy/kind/cluster.k --chart /prepared/platform --only host:alpha/alpha
 
 # A control-service fix is independent.
-wamn platform deploy deploy/kind/cluster.k --only control
+wamn platform deploy deploy/kind/cluster.k --chart /prepared/platform --only control
 ```
 
 1. Select an already published image/configuration; building and publishing may be invoked separately. `platform deploy` itself consumes artifacts.

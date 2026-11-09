@@ -6,7 +6,9 @@
 //! which this module reads into [`ClusterDocument`]. Its canonical form is
 //! RFC 8785 JSON, as `environment.k` is.
 
+use std::borrow::Cow;
 use std::path::Path;
+use std::str::FromStr;
 
 use anyhow::{Context as _, ensure};
 use serde::{Deserialize, Serialize};
@@ -43,6 +45,54 @@ fn default_build_cloud_cap_usd() -> f64 {
 pub enum Provider {
     Gcp,
     Kind,
+}
+
+/// One existing Helm owner selected for a platform code upgrade.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum UpgradeTarget {
+    Control,
+    Identity,
+    /// One application or shared host group in the hosts namespace.
+    Host {
+        release: String,
+        group: String,
+    },
+}
+
+impl FromStr for UpgradeTarget {
+    type Err = anyhow::Error;
+
+    fn from_str(value: &str) -> anyhow::Result<Self> {
+        match value {
+            "control" => Ok(Self::Control),
+            "identity" => Ok(Self::Identity),
+            _ => {
+                let (release, group) = value
+                    .strip_prefix("host:")
+                    .and_then(|host| host.split_once('/'))
+                    .context("target must be control, identity, or host:<release>/<group>")?;
+                ensure!(
+                    name(release, 53) && name(group, 63),
+                    "host target requires a Helm release name and a host group name"
+                );
+                Ok(Self::Host {
+                    release: release.to_owned(),
+                    group: group.to_owned(),
+                })
+            }
+        }
+    }
+}
+
+impl UpgradeTarget {
+    /// The existing Helm release name and namespace that own this selection.
+    pub fn owner(&self, document: &ClusterDocument) -> (Cow<'_, str>, &'static str) {
+        match self {
+            Self::Control => (format!("c-{}", document.org).into(), "hosts"),
+            Self::Identity => ("identity".into(), "identity"),
+            Self::Host { release, .. } => (release.as_str().into(), "hosts"),
+        }
+    }
 }
 
 /// Owner-supplied buckets, by name. Empty strings for kind.

@@ -341,7 +341,7 @@ fn owner_state_job(document: &ClusterDocument, image: &str) -> (Value, Secret) {
     (job, files)
 }
 
-fn platform_chart_input(
+pub(super) fn platform_chart_input(
     chart: &Path,
     document: &ClusterDocument,
     image: &str,

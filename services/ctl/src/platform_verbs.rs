@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::Context as _;
 use clap::{Args, Subcommand};
-use wamn_environment_control::platform::document::ClusterDocument;
+use wamn_environment_control::platform::document::{ClusterDocument, UpgradeTarget};
 use wamn_environment_control::platform::pools::Direction;
 use wamn_environment_control::platform::{artifact_plan, deploy, provider, status};
 use wamn_release_control::release_chart::Target;
@@ -39,6 +39,9 @@ pub struct DeployArgs {
     /// The prepared platform chart directory.
     #[arg(long)]
     pub chart: PathBuf,
+    /// Select control, identity, or host:<release>/<group> for an existing platform.
+    #[arg(long, value_name = "TARGET")]
+    pub only: Option<UpgradeTarget>,
 }
 
 #[derive(Debug, Args)]
@@ -84,6 +87,12 @@ async fn deploy(
         .with_context(|| format!("resolve cluster {}", args.file.display()))?;
     let document = ClusterDocument::compile(&file)?;
     let chart = artifact_plan::select(&args.chart)?;
+    if let Some(target) = &args.only {
+        let (name, namespace) = target.owner(&document);
+        anyhow::bail!(
+            "targeted update of {namespace}/{name} requires the existing-platform update path; no resources changed"
+        );
+    }
     writeln!(output, "cluster: {}", file.display())?;
     writeln!(output, "chart: {}", chart.directory().display())?;
     // Kind nodes can mount files from this directory. Retain it for their lifetime.

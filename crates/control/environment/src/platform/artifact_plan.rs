@@ -5,6 +5,8 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context as _, ensure};
 use serde_json::Value;
 
+use super::document::{ClusterDocument, UpgradeTarget};
+
 // The portable payload emitted by platform_build (DEP-02).
 const PAYLOAD_FILES: &[&str] = &[
     "platform/resources/registry.yaml",
@@ -78,6 +80,67 @@ impl SelectedChart {
                     self.directory.display()
                 )
             })
+    }
+
+    /// Prepare the selection in its owning release's values without applying resources.
+    /// Service owners consume their selected chart on reapply. Host owners preserve
+    /// the group image override instead of replacing the application chart or components.
+    ///
+    /// # Errors
+    /// Returns an error for malformed values or an absent or ambiguous host group.
+    pub fn selection_values(
+        &self,
+        document: &ClusterDocument,
+        target: &UpgradeTarget,
+        mut installed: Value,
+    ) -> anyhow::Result<Value> {
+        ensure!(
+            installed.is_object(),
+            "installed Helm values must be an object"
+        );
+        match target {
+            UpgradeTarget::Control | UpgradeTarget::Identity => {
+                let platform = installed
+                    .as_object_mut()
+                    .expect("checked object")
+                    .entry("platform")
+                    .or_insert_with(|| serde_json::json!({}));
+                ensure!(
+                    platform.is_object(),
+                    "installed platform values must be an object"
+                );
+                platform["chart"] = serde_json::to_value(self.directory())?;
+            }
+            UpgradeTarget::Host { release, group } => {
+                ensure!(
+                    release != &format!("c-{}", document.org),
+                    "select the control service with --only control"
+                );
+                let groups = installed
+                    .pointer_mut("/runtime-operator/runtime/hostGroups")
+                    .and_then(Value::as_array_mut)
+                    .context("installed release has no host groups")?;
+                let mut matching = groups.iter_mut().filter(|entry| entry["name"] == *group);
+                let selected = matching.next().context("selected host group is absent")?;
+                ensure!(
+                    matching.next().is_none(),
+                    "selected host group is ambiguous"
+                );
+                ensure!(
+                    selected
+                        .get("namespace")
+                        .is_none_or(|namespace| namespace == "hosts"),
+                    "selected host group must be in hosts"
+                );
+                let reference: oci_client::Reference = self.host.parse()?;
+                let mut image = self.values["runtime-operator"]["runtime"]["image"].clone();
+                // Helm falls back to the old chart's registry for an empty group registry.
+                image["registry"] = reference.registry().into();
+                image["repository"] = reference.repository().into();
+                selected["image"] = image;
+            }
+        }
+        Ok(installed)
     }
 }
 
@@ -306,6 +369,214 @@ mod tests {
             }
             _ => {}
         }
+    }
+
+    #[test]
+    fn service_selection_records_its_chart_in_the_existing_owner() -> anyhow::Result<()> {
+        use super::super::{control, identity, resources};
+
+        let chart = prepared_chart();
+        let selected = select(&chart.0)?;
+        let repository = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
+        let document = ClusterDocument::compile(&repository.join("deploy/kind/cluster.k"))?;
+        let identity = identity::platform_chart_input(
+            &selected.directory().join("platform/identity"),
+            &document,
+            selected.image("identity")?,
+        )?;
+        for (target, mut installed) in [
+            (
+                UpgradeTarget::Control,
+                control::release_values(&document, selected.values(), false)?,
+            ),
+            (UpgradeTarget::Identity, identity["values"].clone()),
+        ] {
+            installed["platform"] = json!({"chart":"/previous/chart", "retained":"configuration"});
+            let mut values = selected.selection_values(&document, &target, installed.clone())?;
+            let resolved = select(Path::new(values["platform"]["chart"].as_str().unwrap()))?;
+            let (name, namespace) = target.owner(&document);
+            let entry = match target {
+                UpgradeTarget::Control => json!({
+                    "chart":resolved.directory(), "version":resolved.version,
+                    "name":name, "namespace":namespace,
+                    "values":control::release_values(&document, resolved.values(), false)?,
+                }),
+                UpgradeTarget::Identity => identity::platform_chart_input(
+                    &resolved.directory().join("platform/identity"),
+                    &document,
+                    resolved.image("identity")?,
+                )?,
+                UpgradeTarget::Host { .. } => unreachable!(),
+            };
+            let objects = resources::helm_template(&entry)?;
+            let deployment = objects
+                .iter()
+                .find(|object| object["kind"] == "Deployment")
+                .unwrap();
+            assert_eq!(deployment["metadata"]["namespace"], namespace);
+            let image = &deployment["spec"]["template"]["spec"]["containers"][0]["image"];
+            assert_eq!(
+                image,
+                selected.image(if target == UpgradeTarget::Control {
+                    "host"
+                } else {
+                    "identity"
+                })?
+            );
+            values["platform"]["chart"] = installed["platform"]["chart"].clone();
+            assert_eq!(values, installed);
+        }
+        assert!(
+            selected
+                .selection_values(&document, &UpgradeTarget::Control, json!([]))
+                .is_err()
+        );
+        assert!(
+            selected
+                .selection_values(&document, &UpgradeTarget::Identity, json!({"platform":[]}))
+                .is_err()
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn host_selection_renders_only_the_named_group_without_reselecting_application_code()
+    -> anyhow::Result<()> {
+        use super::super::resources;
+        use crate::environment::{document::EnvironmentDocument, ensure, write};
+
+        let chart = prepared_chart();
+        let mut defaults = read_yaml(&chart.0.join("values.yaml"))?;
+        defaults["runtime-operator"]["runtime"]["image"]["registry"] = "base.example".into();
+        defaults["runtime-operator"]["runtime"]["image"]["repository"] = "host".into();
+        write_values(&chart, &defaults);
+        let original = select(&chart.0)?;
+        let upgrade = prepared_chart();
+        let mut defaults = read_yaml(&upgrade.0.join("values.yaml"))?;
+        defaults["runtime-operator"]["runtime"]["image"] = json!({
+            "registry":"", "repository":"upgrade.example/host",
+            "tag":format!("upgrade@sha256:{}", "b".repeat(64)), "pull_policy":"IfNotPresent",
+        });
+        write_values(&upgrade, &defaults);
+        let selected = select(&upgrade.0)?;
+        let repository = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
+        let cluster = ClusterDocument::compile(&repository.join("deploy/kind/cluster.k"))?;
+        let digest = format!("sha256:{}", "c".repeat(64));
+        let environment = EnvironmentDocument::from_json(&serde_json::to_vec(&json!({
+            "org":cluster.org, "project":"fixture", "env":"dev", "target":"cloud", "policy":"dev",
+            "applications":{
+                "alpha":{"packages":["platform_fixture"],"current":digest,"hostname":"alpha.example"},
+                "beta":{"packages":["platform_fixture_overlay"],"current":digest,"hostname":"beta.example"},
+            },
+        }))?)?;
+        let manifest = serde_json::from_value(json!({
+            "format-version":wamn_catalog::SERVING_MANIFEST_FORMAT_VERSION,
+            "release":{"packages":[]}, "components":[], "routes":[], "attachments":{},
+        }))?;
+        let overlay = chart.0.join("test-host.yaml");
+        std::fs::write(&overlay, "replicas: 1\n")?;
+        let mut owners = Vec::new();
+        for application in environment.applications.keys() {
+            let (values, _) = write::release_values(
+                &environment,
+                application,
+                &manifest,
+                &digest,
+                "registry.example/releases",
+                70,
+                "render",
+                Some(&overlay),
+            )?;
+            owners.push(serde_json::to_value(values)?);
+        }
+        owners.push(ensure::materializer_host_values(
+            &environment,
+            70,
+            1,
+            120,
+            Some(&overlay),
+            false,
+        )?);
+        for (index, installed) in owners.iter().enumerate() {
+            let mut installed = installed.clone();
+            let unrelated =
+                &owners[(index + 1) % owners.len()]["runtime-operator"]["runtime"]["hostGroups"][0];
+            installed["runtime-operator"]["runtime"]["hostGroups"]
+                .as_array_mut()
+                .unwrap()
+                .push(unrelated.clone());
+            let group = installed["runtime-operator"]["runtime"]["hostGroups"][0]["name"]
+                .as_str()
+                .unwrap();
+            let target = UpgradeTarget::Host {
+                release: group.into(),
+                group: group.into(),
+            };
+            let mut values = selected.selection_values(&cluster, &target, installed.clone())?;
+            let (name, namespace) = target.owner(&cluster);
+            let entry = json!({"chart":original.directory(), "version":original.version,
+                "name":name, "namespace":namespace, "values":installed});
+            let before = resources::helm_template(&entry)?;
+            let mut entry = entry;
+            entry["values"] = values.clone();
+            let mut after = resources::helm_template(&entry)?;
+            let deployment = |object: &&Value| {
+                object["kind"] == "Deployment"
+                    && object["metadata"]["name"] == format!("hostgroup-{group}")
+            };
+            let previous = before
+                .iter()
+                .find(deployment)
+                .context("original host deployment")?;
+            let updated = after
+                .iter_mut()
+                .find(|object| deployment(&&**object))
+                .context("selected host deployment")?;
+            let image = &mut updated["spec"]["template"]["spec"]["containers"][0]["image"];
+            assert_eq!(
+                image,
+                &json!(format!(
+                    "upgrade.example/host:upgrade@sha256:{}",
+                    "b".repeat(64)
+                ))
+            );
+            *image = previous["spec"]["template"]["spec"]["containers"][0]["image"].clone();
+            assert_eq!(after, before);
+            values["runtime-operator"]["runtime"]["hostGroups"][0]
+                .as_object_mut()
+                .unwrap()
+                .remove("image");
+            assert_eq!(values, installed);
+            let missing = UpgradeTarget::Host {
+                release: group.into(),
+                group: "missing".into(),
+            };
+            assert!(
+                selected
+                    .selection_values(&cluster, &missing, installed.clone())
+                    .is_err()
+            );
+            let mut duplicate = installed.clone();
+            let groups = duplicate["runtime-operator"]["runtime"]["hostGroups"]
+                .as_array_mut()
+                .unwrap();
+            groups.push(groups[0].clone());
+            assert!(
+                selected
+                    .selection_values(&cluster, &target, duplicate)
+                    .is_err()
+            );
+            let control = UpgradeTarget::Host {
+                release: format!("c-{}", cluster.org),
+                group: group.into(),
+            };
+            assert!(
+                selected
+                    .selection_values(&cluster, &control, installed)
+                    .is_err()
+            );
+        }
+        Ok(())
     }
 
     #[test]

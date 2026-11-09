@@ -361,6 +361,7 @@ mod tests {
 mod platform_tests {
     use super::*;
     use wamn_ctl::platform_verbs::ProductPlatformCommand;
+    use wamn_environment_control::platform::document::UpgradeTarget;
 
     #[test]
     fn platform_deploy_requires_an_explicit_chart() {
@@ -381,6 +382,67 @@ mod platform_tests {
         };
         assert_eq!(args.file, std::path::Path::new("cluster.k"));
         assert_eq!(args.chart, std::path::Path::new("/prepared/chart"));
+        assert!(args.only.is_none());
+        for (argument, target) in [
+            ("control", UpgradeTarget::Control),
+            ("identity", UpgradeTarget::Identity),
+            (
+                "host:alpha/alpha",
+                UpgradeTarget::Host {
+                    release: "alpha".into(),
+                    group: "alpha".into(),
+                },
+            ),
+            (
+                "host:shared/events",
+                UpgradeTarget::Host {
+                    release: "shared".into(),
+                    group: "events".into(),
+                },
+            ),
+        ] {
+            let cli = Cli::try_parse_from([
+                "wamn",
+                "platform",
+                "deploy",
+                "cluster.k",
+                "--chart",
+                "/prepared/chart",
+                "--only",
+                argument,
+            ])
+            .unwrap();
+            let Command::Platform(ProductPlatformCommand::Deploy(args)) = cli.command else {
+                panic!("expected platform deploy");
+            };
+            assert_eq!(args.only, Some(target));
+        }
+        for target in [
+            "host",
+            "all",
+            "application:alpha",
+            "control,identity",
+            "host:/alpha",
+            "host:alpha/",
+            "host:alpha/*",
+            "host:alpha/group/extra",
+            "host:Alpha/group",
+        ] {
+            assert!(
+                Cli::try_parse_from([
+                    "wamn",
+                    "platform",
+                    "deploy",
+                    "cluster.k",
+                    "--chart",
+                    "/prepared/chart",
+                    "--only",
+                    target,
+                ])
+                .is_err(),
+                "{target}"
+            );
+        }
         assert!(Cli::try_parse_from(["wamn", "platform", "apply", "cluster.k"]).is_err());
     }
 
