@@ -138,6 +138,31 @@ fn changing_one_application_selection_leaves_the_other_release_unchanged() -> an
             Some(selection.hostname.as_str())
         );
         let carrier = template(&values, NAMESPACE)?;
+        for workload in carrier
+            .iter()
+            .filter(|object| object["kind"] == "WorkloadDeployment")
+        {
+            for component in workload["spec"]["template"]["spec"]["components"]
+                .as_array()
+                .unwrap()
+            {
+                let resources = &component["localResources"];
+                assert_eq!(resources["allowedIpNameLookups"], json!([]));
+                for (key, value) in resources["environment"]["config"]
+                    .as_object()
+                    .into_iter()
+                    .flatten()
+                {
+                    assert!(key != "DATABASE_URL" && !key.ends_with("_PG_URL"));
+                    assert!(
+                        !value
+                            .as_str()
+                            .and_then(|value| url::Url::parse(value).ok())
+                            .is_some_and(|url| matches!(url.scheme(), "postgres" | "postgresql"))
+                    );
+                }
+            }
+        }
         let row = carrier
             .iter()
             .find(|object| object["data"]["release.json"].is_string())
@@ -549,6 +574,17 @@ mod shared_resources {
         let mut document = EnvironmentDocument::from_json(br#"{"org":"acme","project":"apps","env":"dev","target":"cloud","policy":"dev","applications":{}}"#)?;
         let image = format!("registry.example/materializer@sha256:{}", "a".repeat(64));
         let workload = ensure::materializer_workload(&document, "hosts", &image, false)?;
+        let resources = &workload["spec"]["template"]["spec"]["service"]["localResources"];
+        assert_eq!(resources["allowedIpNameLookups"], json!([]));
+        for (key, value) in resources["environment"]["config"].as_object().unwrap() {
+            assert!(key != "DATABASE_URL" && !key.ends_with("_PG_URL"));
+            assert!(
+                !value
+                    .as_str()
+                    .and_then(|value| url::Url::parse(value).ok())
+                    .is_some_and(|url| matches!(url.scheme(), "postgres" | "postgresql"))
+            );
+        }
         let values = ensure::materializer_host_values(&document, 30, 1, 120, None, false)?;
         document.applications = serde_json::from_value(json!({
             "a":{"packages":["a"],"current":format!("sha256:{}", "b".repeat(64)),"hostname":"a.example.com"},
