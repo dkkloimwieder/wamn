@@ -6,7 +6,9 @@ use std::path::Path;
 use anyhow::Context as _;
 use serde::Deserialize as _;
 use serde_json::Value;
-use wamn_release_control::release_chart::Target;
+use wamn_release_control::release_chart::{self, Target};
+
+use crate::environment::lock::LifecycleLock;
 
 use super::artifact_plan::{self, SelectedChart};
 use super::document::{ClusterDocument, Provider, UpgradeTarget};
@@ -118,35 +120,134 @@ pub async fn update(
     directory: &Path,
 ) -> anyhow::Result<()> {
     let (name, namespace) = selection.owner(document);
-    let installed = resources::release_values(target, namespace, &name)
+    let owner = Target {
+        namespace: namespace.into(),
+        ..target.clone()
+    };
+    if selection == &UpgradeTarget::Control {
+        // Control preserves installed image overrides too.
+        release_chart::recover_pending(&owner, &name).await?;
+    }
+    let installed = installed_values(&owner, &name).await?;
+    if let UpgradeTarget::Host { group, .. } = selection {
+        // Validate the target before recovery can write. These values supply only lock identity.
+        let inspected = chart.selection_values(document, selection, installed)?;
+        let scope = host_scope(&inspected, group)?;
+        let operator = resources::release_values(target, "platform", "wamn")
+            .await?
+            .context("host update requires existing release platform/wamn")?;
+        let owner_chart = artifact_plan::platform_chart(Some(&operator), None)?;
+        let secret: bootstrap::SecretData = kubectl::get(
+            &target.kubeconfig,
+            &target.context,
+            "platform",
+            "secret",
+            "wamn-pg-superuser",
+        )
         .await?
-        .with_context(|| {
-            format!(
-                "targeted update requires existing release {namespace}/{name}; no resources changed"
-            )
-        })?;
+        .context("host update requires Secret platform/wamn-pg-superuser")?;
+        let forward =
+            resources::port_forward(target, "platform", "service/wamn-pg-rw", 5432).await?;
+        let mut url = url::Url::parse("postgresql://postgres@127.0.0.1/wamn_system")?;
+        url.set_port(Some(forward.port))
+            .map_err(|()| anyhow::anyhow!("set database port"))?;
+        url.set_password(Some(&bootstrap::secret_text(&secret, "password")?))
+            .map_err(|()| anyhow::anyhow!("set database password"))?;
+        let lock = match &scope.1 {
+            Some(application) => {
+                LifecycleLock::acquire_application(url.as_str(), &scope.0, application).await?
+            }
+            None => LifecycleLock::acquire(url.as_str(), &scope.0).await?,
+        };
+        let result = async {
+            release_chart::recover_pending(&owner, &name).await?;
+            let installed = installed_values(&owner, &name).await?;
+            anyhow::ensure!(
+                host_scope(&installed, group)? == scope,
+                "recovered release changed its environment or application owner"
+            );
+            let values = chart.selection_values(document, selection, installed)?;
+            let entry = serde_json::json!({"chart":owner_chart.directory(), "version":owner_chart.version,
+                "name":name, "namespace":namespace, "values":values});
+            resources::require_inputs(target, &entry).await?;
+            resources::upgrade_release(&owner, &entry, directory).await
+        }
+        .await;
+        lock.release().await;
+        return result;
+    }
     let entry = match selection {
         UpgradeTarget::Control => control::resource_entry(document, chart, Some(&installed))?,
         UpgradeTarget::Identity => identity::resource_entry(document, chart)?,
-        UpgradeTarget::Host { .. } => {
-            let values = chart.selection_values(document, selection, installed)?;
-            let operator = resources::release_values(target, "platform", "wamn")
-                .await?
-                .context(
-                    "host update requires existing release platform/wamn; no resources changed",
-                )?;
-            // Application and shared releases use the recorded default chart.
-            // The incoming chart supplies only the selected host image.
-            let owner_chart = artifact_plan::platform_chart(Some(&operator), None)?;
-            serde_json::json!({"chart":owner_chart.directory(), "version":owner_chart.version,
-                "name":name, "namespace":namespace, "values":values})
-        }
+        UpgradeTarget::Host { .. } => unreachable!("host update returned"),
     };
     resources::require_inputs(target, &entry).await?;
     if selection == &UpgradeTarget::Identity {
         identity::require_keys(target).await?;
+        resources::apply_release(&owner, &entry, directory).await
+    } else {
+        resources::upgrade_release(&owner, &entry, directory).await
     }
-    resources::apply_release(target, &entry, directory).await
+}
+
+async fn installed_values(target: &Target, name: &str) -> anyhow::Result<Value> {
+    resources::release_values(target, &target.namespace, name)
+        .await?
+        .with_context(|| {
+            format!(
+                "targeted update requires existing release {}/{name}",
+                target.namespace
+            )
+        })
+}
+
+fn host_scope<'a>(
+    values: &'a Value,
+    group: &str,
+) -> anyhow::Result<(wamn_control_registry::Triple, Option<&'a str>)> {
+    let application = match values.get("applications") {
+        Some(applications) => {
+            let applications = applications
+                .as_object()
+                .context("installed applications must be an object")?;
+            anyhow::ensure!(
+                applications.len() == 1,
+                "application release must own one application"
+            );
+            applications.keys().next().map(String::as_str)
+        }
+        None => None,
+    };
+    let triple = if let Some(environment) = values["environment"].as_str() {
+        let parts: Vec<_> = environment.split('/').collect();
+        let [org, project, env] = parts.as_slice() else {
+            anyhow::bail!("installed release has no environment coordinate");
+        };
+        wamn_control_registry::Triple::new(*org, *project, *env)
+    } else {
+        let group = values["runtime-operator"]["runtime"]["hostGroups"]
+            .as_array()
+            .context("installed release has no host groups")?
+            .iter()
+            .find(|entry| entry["name"] == group)
+            .context("selected host group is absent")?;
+        let variables = group["env"]
+            .as_array()
+            .context("installed host has no environment variables")?;
+        let variable = |name| {
+            variables
+                .iter()
+                .find(|variable| variable["name"] == name)
+                .and_then(|variable| variable["value"].as_str())
+                .context("installed host has no environment coordinate")
+        };
+        wamn_control_registry::Triple::new(
+            variable("WAMN_EVT_ORG")?,
+            variable("WAMN_EVT_PROJECT")?,
+            variable("WAMN_EVT_ENV")?,
+        )
+    };
+    Ok((triple, application))
 }
 
 async fn infrastructure(

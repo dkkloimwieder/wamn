@@ -261,19 +261,32 @@ pub(super) async fn apply_release(
     directory: &Path,
 ) -> anyhow::Result<()> {
     let name = entry["name"].as_str().context("service release name")?;
+    let owner = Target {
+        namespace: entry["namespace"]
+            .as_str()
+            .context("service namespace")?
+            .into(),
+        ..target.clone()
+    };
+    wamn_release_control::release_chart::recover_pending(&owner, name).await?;
+    upgrade_release(&owner, entry, directory).await
+}
+
+/// Upgrade one release after the caller recovers pending operations.
+pub(super) async fn upgrade_release(
+    target: &Target,
+    entry: &Value,
+    directory: &Path,
+) -> anyhow::Result<()> {
+    let name = entry["name"].as_str().context("service release name")?;
     let namespace = entry["namespace"].as_str().context("service namespace")?;
     let chart = entry["chart"].as_str().context("service chart")?;
     let values = directory.join(format!("values-{name}.yaml"));
     std::fs::write(&values, serde_yaml::to_string(&entry["values"])?)?;
-    let owner = Target {
-        namespace: namespace.into(),
-        ..target.clone()
-    };
-    wamn_release_control::release_chart::recover_pending(&owner, name).await?;
     let poller = (namespace == "hosts")
-        .then(|| crate::environment::host_report::Poller::start(&owner, name));
+        .then(|| crate::environment::host_report::Poller::start(target, name));
     let upgraded = wamn_release_control::release_chart::upgrade(
-        &owner,
+        target,
         Path::new(chart),
         name,
         &values,
@@ -396,7 +409,6 @@ pub(crate) async fn release_values(
         target,
         &[
             "list".as_ref(),
-            "--all".as_ref(),
             "--namespace".as_ref(),
             namespace.as_ref(),
             "--filter".as_ref(),

@@ -479,13 +479,27 @@ An explicit service update does not resolve or require the previous chart direct
 A host update uses the recorded platform default chart and the installed owner values.
 The incoming chart supplies only the selected immutable host image.
 
+The host update takes the existing application lock and shared environment exclusion.
+For a shared host, it takes the existing exclusive environment lock.
+Under that exclusion, it recovers any pending operation and reads installed values again.
+It then changes the selected image and upgrades.
+
+Recovery can restore an earlier application selection. The update preserves that recovered selection.
+The first read identifies the lock owner. It does not supply the upgrade values.
+The existing exclusion retries for six seconds before it refuses an active competing application deploy or environment operation.
+The refusal precedes recovery and upgrade.
+
 Service configuration comes from the selected chart and cluster document.
 Only named host image overrides carry over from installed service values.
+Control recovers pending operations before it reads those overrides.
+Application deployment does not write the control release.
+Identity carries over no installed values and keeps its existing recovery path.
+
 Each service records its selected chart. No other installed configuration carries over.
 Credential Secrets and signing keys stay unchanged.
 
 Control's Helm release now owns its Service and HTTP workload.
-The update reads required Secrets and ConfigMaps before any write.
+The update reads required Secrets and ConfigMaps before the upgrade.
 Only an identity update reads the active signing state.
 A missing input gives an explicit error. It never triggers initialization.
 The read-only signing query uses the existing PostgreSQL primary through kubectl exec.
@@ -497,10 +511,12 @@ The error directs the operator to run platform deploy without `--only` to initia
 
 Both installation and updates call the same resource functions.
 Installation prepares control credentials before the control release waits for readiness. Targeted updates run no initialization and write no credential Secret.
-Host updates call `resources::apply_release`, which uses the shared `release_chart::upgrade` path with `--wait`.
+Host updates recover before they prepare values, then call `resources::upgrade_release`.
+Installation calls the same function through `resources::apply_release`.
+Both use `release_chart::upgrade` with `--wait`.
 They change only the named group image in the existing `hosts` release.
 Other host groups, application components, release digests, routes, schema, data, and credentials stay unchanged.
-A missing owner, an absent or ambiguous group, or a group outside `hosts` refuses before any write.
+A missing owner, an absent or ambiguous group, or a group outside `hosts` refuses before the upgrade.
 The control release requires `--only control`.
 
 Host runtime selections persist as `runtime-operator.runtime.hostGroups[].image` in the Helm release that owns the named group.

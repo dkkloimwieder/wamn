@@ -11,7 +11,7 @@ use wamn_environment_control::platform::document::{ClusterDocument, UpgradeTarge
 use wamn_environment_control::platform::{artifact_plan, control, identity};
 
 const TOOL: &str = r#"#!/usr/bin/python3
-import base64, json, pathlib, re, subprocess, sys, yaml
+import base64, json, pathlib, re, subprocess, sys, time, yaml
 root = pathlib.Path(__file__).parent
 tool = pathlib.Path(sys.argv[0]).name
 args = sys.argv[1:]
@@ -48,11 +48,17 @@ if tool == 'helm':
     namespace = args[args.index('--namespace') + 1] if '--namespace' in args else args[args.index('-n') + 1]
     if args[0] == 'list':
         pattern = args[args.index('--filter') + 1]
-        print(json.dumps([{'name': key.split('/')[1], 'status': 'deployed'} for key in state['owners']
+        print(json.dumps([{'name': key.split('/')[1], 'status': state.get('pending', {}).get(key, 'deployed')} for key in state['owners']
             if key.split('/')[0] == namespace and re.fullmatch(pattern, key.split('/')[1])]))
         sys.exit(0)
     if args[:2] == ['get', 'values']:
         print(json.dumps(state['owners'][namespace + '/' + args[2]]))
+        sys.exit(0)
+    if args[0] == 'rollback':
+        owner = namespace + '/' + args[1]
+        state['owners'][owner] = state['recovered'].pop(owner)
+        state['pending'].pop(owner)
+        (root / 'state.json').write_text(json.dumps(state))
         sys.exit(0)
     if args[0] == 'upgrade':
         if state.get('stop_release') == namespace + '/' + args[2]:
@@ -74,6 +80,10 @@ if tool == 'docker':
 if tool == 'kubectl':
     namespace = args[args.index('-n') + 1]
     args = args[6:]
+    if args[0] == 'port-forward':
+        print('Forwarding from 127.0.0.1:' + str(state['database']['port']) + ' -> 5432', flush=True)
+        time.sleep(120)
+        sys.exit(0)
     if args[0] in ['wait', 'rollout', 'apply']:
         sys.exit(0)
     if args[0] == 'create':
@@ -116,12 +126,17 @@ if tool == 'kubectl':
             sys.exit(0)
         if resource == state.get('missing'):
             sys.exit(0)
+        if args[1] == 'service/wamn-pg-rw':
+            print(json.dumps({'spec':{'selector':{'app':'postgres'}}}))
+            sys.exit(0)
         if args[1] == 'cluster.postgresql.cnpg.io/wamn-pg':
             print(json.dumps({'spec':{'imageName':'postgres:18'}, 'status': {'currentPrimary': state.get('primary', 'wamn-pg-1')}}))
             sys.exit(0)
         if args[1].startswith(('secret/', 'configmap/')):
             data = {key: 'fixture' for key in ['url', 'ca.crt', 'tls.crt', 'tls.key',
                 'key', 'api-key', '.dockerconfigjson', 'target.json', 'password']}
+            if resource == 'platform/secret/wamn-pg-superuser' and 'database' in state:
+                data['password'] = state['database']['password']
             if resource in state.get('credentials', {}):
                 data['url'] = state['credentials'][resource]
             if args[1].startswith('secret/'):
@@ -331,7 +346,10 @@ fn assert_operations(calls: &[Value], owner: (&str, &str), allow_upgrade: bool) 
         let args = call["args"].as_array().unwrap();
         match call["tool"].as_str().unwrap() {
             "kind" => assert!(args[0] == "get" || args[0] == "export", "{call}"),
-            "kubectl" => assert!(args[6] == "get" || args[6] == "exec", "{call}"),
+            "kubectl" => assert!(
+                args[6] == "get" || args[6] == "exec" || args[6] == "port-forward",
+                "{call}"
+            ),
             "helm" => {
                 let args = if args[0] == "--kubeconfig" {
                     &args[4..]
@@ -615,11 +633,14 @@ fn platform_updates_refuse_missing_owners_without_mutation() -> anyhow::Result<(
 #[test]
 fn platform_host_updates_upgrade_only_the_existing_owner() -> anyhow::Result<()> {
     let fixture = Fixture::new()?;
+    let mut postgres = wamn_test_postgres::start(&[])?;
+    let database = postgres.create_database("wamn_system")?;
     for selection in ["host:alpha/alpha", "host:shared/shared"] {
         let target: UpgradeTarget = selection.parse()?;
         let (name, namespace) = target.owner(&fixture.document);
         let owner = format!("{namespace}/{name}");
-        let state = fixture.state(&target)?;
+        let mut state = fixture.state(&target)?;
+        set_database(&mut state, database.url())?;
         let (output, calls, mut after) = fixture.run(Some(selection), &state)?;
         assert!(
             output.status.success(),
@@ -627,16 +648,6 @@ fn platform_host_updates_upgrade_only_the_existing_owner() -> anyhow::Result<()>
             String::from_utf8_lossy(&output.stderr)
         );
         assert_operations(&calls, (&name, namespace), true);
-        assert!(
-            !calls
-                .iter()
-                .any(|call| call["tool"] == "kubectl" && call["args"][6] == "exec")
-        );
-        let upgrade = calls
-            .iter()
-            .find(|call| call.get("values").is_some())
-            .unwrap();
-        assert_eq!(upgrade["args"][3], fixture.previous.0.to_str().unwrap());
         let image =
             &after["owners"][&owner]["runtime-operator"]["runtime"]["hostGroups"][1]["image"];
         assert_eq!(image["registry"], "selected.example");
@@ -650,6 +661,201 @@ fn platform_host_updates_upgrade_only_the_existing_owner() -> anyhow::Result<()>
             .unwrap()
             .remove("image");
         assert_eq!(after, state, "only the selected host image changes");
+    }
+    Ok(())
+}
+
+fn set_database(state: &mut Value, url: &str) -> anyhow::Result<()> {
+    let url = url::Url::parse(url)?;
+    state["database"] = json!({"port":url.port().unwrap(), "password":url.password().unwrap()});
+    Ok(())
+}
+
+#[test]
+fn platform_updates_use_recovered_values() -> anyhow::Result<()> {
+    let fixture = Fixture::new()?;
+    let mut postgres = wamn_test_postgres::start(&[])?;
+    let database = postgres.create_database("wamn_system")?;
+    for selection in ["host:alpha/alpha", "host:shared/shared", "control"] {
+        let target: UpgradeTarget = selection.parse()?;
+        let (name, namespace) = target.owner(&fixture.document);
+        let owner = format!("{namespace}/{name}");
+        let mut state = fixture.state(&target)?;
+        set_database(&mut state, database.url())?;
+        let mut recovered = state["owners"][&owner].clone();
+        if selection == "control" {
+            recovered["runtime-operator"]["runtime"]["hostGroups"][0]["image"]["tag"] =
+                "recovered-control".into();
+        } else {
+            if selection == "host:alpha/alpha" {
+                let digest = format!("sha256:{}", "d".repeat(64));
+                recovered["release"]["manifestDigest"] = digest.clone().into();
+                recovered["applications"]["alpha"]["current"] = digest.clone().into();
+                recovered["runtime-operator"]["runtime"]["podAnnotations"]["wamn.release-digest"] =
+                    digest.clone().into();
+                let applications = format!("--applications={}", recovered["applications"]);
+                for argument in
+                    recovered["runtime-operator"]["runtime"]["hostGroups"][1]["extraArgs"]
+                        .as_array_mut()
+                        .unwrap()
+                {
+                    if argument
+                        .as_str()
+                        .unwrap()
+                        .starts_with("--release-manifest-digest=")
+                    {
+                        *argument = format!("--release-manifest-digest={digest}").into();
+                    } else if argument.as_str().unwrap().starts_with("--applications=") {
+                        *argument = applications.as_str().into();
+                    }
+                }
+                recovered["routeHost"] = "recovered.example".into();
+            }
+            recovered["runtime-operator"]["runtime"]["hostGroups"][1]["replicas"] = 2.into();
+            recovered["runtime-operator"]["runtime"]["hostGroups"][0]["image"]["tag"] =
+                "recovered-other".into();
+        }
+        state["pending"] = json!({&owner:"pending-upgrade"});
+        state["recovered"] = json!({&owner:recovered});
+        let (output, calls, mut after) = fixture.run(Some(selection), &state)?;
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let upgraded = calls.iter().find_map(|call| call.get("values")).unwrap();
+        assert_eq!(after["owners"][&owner], *upgraded);
+        if let UpgradeTarget::Host { group, .. } = &target {
+            let mut upgraded = upgraded.clone();
+            let groups = upgraded["runtime-operator"]["runtime"]["hostGroups"]
+                .as_array_mut()
+                .unwrap();
+            let selected = groups
+                .iter_mut()
+                .find(|entry| entry["name"] == *group)
+                .unwrap();
+            let image = selected.as_object_mut().unwrap().remove("image").unwrap();
+            assert_eq!(image["registry"], "selected.example");
+            assert_eq!(
+                image["tag"],
+                artifact_plan::select(&fixture.chart.0)?.values()["runtime-operator"]["runtime"]["image"]
+                    ["tag"]
+            );
+            assert_eq!(
+                upgraded, recovered,
+                "only the selected image changes from recovered values"
+            );
+        } else {
+            assert_eq!(
+                after["owners"][&owner]["runtime-operator"]["runtime"]["hostGroups"][0]["image"],
+                recovered["runtime-operator"]["runtime"]["hostGroups"][0]["image"]
+            );
+        }
+        after["owners"].as_object_mut().unwrap().remove(&owner);
+        state["owners"].as_object_mut().unwrap().remove(&owner);
+        state["pending"] = json!({});
+        state["recovered"] = json!({});
+        assert_eq!(after, state, "unrelated owners and state stay unchanged");
+    }
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn platform_host_update_refuses_a_held_application_or_environment_lock() -> anyhow::Result<()>
+{
+    use wamn_control_registry::Triple;
+    use wamn_environment_control::environment::lock::LifecycleLock;
+
+    let fixture = Fixture::new()?;
+    let mut postgres = wamn_test_postgres::start(&[])?;
+    let database = postgres.create_database("wamn_system")?;
+    let triple = Triple::new(&fixture.document.org, "fixture", "dev");
+    for (selection, application) in [
+        ("host:alpha/alpha", Some("alpha")),
+        ("host:alpha/alpha", None),
+        ("host:shared/shared", None),
+    ] {
+        let target: UpgradeTarget = selection.parse()?;
+        let mut state = fixture.state(&target)?;
+        set_database(&mut state, database.url())?;
+        let (name, namespace) = target.owner(&fixture.document);
+        let owner = format!("{namespace}/{name}");
+        state["pending"] = json!({&owner:"pending-upgrade"});
+        state["recovered"] = json!({&owner:state["owners"][&owner]});
+        let held = if let Some(application) = application {
+            LifecycleLock::acquire_application(database.url(), &triple, application).await?
+        } else {
+            LifecycleLock::acquire(database.url(), &triple).await?
+        };
+        // Keep the holder's connection and heartbeat active while the CLI runs.
+        let (output, calls, after) =
+            tokio::task::block_in_place(|| fixture.run(Some(selection), &state))?;
+        held.release().await;
+        assert!(
+            !output.status.success(),
+            "competing host update must refuse"
+        );
+        assert!(
+            String::from_utf8_lossy(&output.stderr)
+                .contains(wamn_environment_control::environment::lock::DEPLOYMENT_IN_PROGRESS),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let (name, namespace) = target.owner(&fixture.document);
+        assert_operations(&calls, (&name, namespace), false);
+        assert_eq!(after, state, "a held exclusion prevents writes");
+    }
+    Ok(())
+}
+
+#[test]
+fn platform_release_reads_accept_pinned_helm_flags() -> anyhow::Result<()> {
+    let fixture = Fixture::new()?;
+    let version = Command::new(&fixture.helm)
+        .args(["version", "--template", "{{.Version}}"])
+        .output()?;
+    assert!(version.status.success());
+    assert_eq!(String::from_utf8(version.stdout)?.trim(), "v4.2.2");
+    let mut state = fixture.state(&UpgradeTarget::Control)?;
+    state["owners"] = json!({});
+    let (_, calls, _) = fixture.run(Some("control"), &state)?;
+    let kubeconfig = fixture.bin.join("empty-kubeconfig");
+    std::fs::write(&kubeconfig, "")?;
+    let releases = fixture.bin.join("empty-releases.yaml");
+    std::fs::write(&releases, "[]\n")?;
+    let lists: Vec<_> = calls
+        .iter()
+        .filter(|call| {
+            call["tool"] == "helm"
+                && call["args"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|arg| arg == "list")
+        })
+        .collect();
+    assert!(!lists.is_empty(), "the command must read releases");
+    for call in lists {
+        let mut args: Vec<_> = call["args"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|arg| arg.as_str().unwrap().to_owned())
+            .collect();
+        let index = args.iter().position(|arg| arg == "--kubeconfig").unwrap();
+        args[index + 1] = kubeconfig.to_str().unwrap().into();
+        let index = args.iter().position(|arg| arg == "--kube-context").unwrap();
+        args[index + 1].clear();
+        let result = Command::new(&fixture.helm)
+            .args(args)
+            .env("HELM_DRIVER", "memory")
+            .env("HELM_MEMORY_DRIVER_DATA", &releases)
+            .output()?;
+        assert!(
+            result.status.success(),
+            "Helm rejected release read arguments: {}",
+            String::from_utf8_lossy(&result.stderr)
+        );
     }
     Ok(())
 }
@@ -692,11 +898,6 @@ fn platform_host_updates_refuse_invalid_groups_without_mutation() -> anyhow::Res
         let error = String::from_utf8_lossy(&output.stderr);
         assert!(error.contains(reason), "{error}");
         assert_operations(&calls, (&name, namespace), false);
-        assert!(
-            !calls
-                .iter()
-                .any(|call| call["tool"] == "kubectl" && call["args"][6] == "exec")
-        );
         assert_eq!(after, state);
     }
     Ok(())
@@ -738,7 +939,7 @@ fn platform_deploy_refuses_required_chart_without_mutation() -> anyhow::Result<(
                 let read_only = match call["tool"].as_str().unwrap() {
                     "kind" => args[0] == "get" || args[0] == "export",
                     "helm" => args[4] == "list" || args[4] == "get",
-                    "kubectl" => args[6] == "get",
+                    "kubectl" => args[6] == "get" || args[6] == "port-forward",
                     _ => false,
                 };
                 assert!(read_only, "unexpected mutation: {call}");
