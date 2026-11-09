@@ -481,6 +481,11 @@ Hosts without an override appear with the platform default.
 It separates those selections from Kubernetes workload conditions, resource images, and running container image IDs.
 These reads do not require either service to be ready.
 
+Host readiness includes the native Deployment, its pods, and WorkloadDeployments whose host selector names the selected group.
+A failed or incomplete assigned workload prevents success, even when the native host is ready.
+An unreadable workload query reports unknown readiness.
+Workloads assigned to other host groups do not affect the target.
+
 An explicit `--only <target> --chart <EARLIER>` selects an earlier compatible artifact through the same update operation.
 It does not reverse SQL or add a rollback or history subsystem.
 A retry repeats the targeted update without installation or initialization.

@@ -115,16 +115,20 @@ if tool == 'kubectl':
     if args[0] == 'get':
         if state.get('hang_read') == namespace + '/' + args[1]:
             time.sleep(120)
+        resource = namespace + '/' + args[1]
+        if resource == state.get('fail_read'):
+            sys.exit(1)
         if args[1] == 'pods':
             selector = args[args.index('-l') + 1] if '-l' in args else ''
             print(json.dumps({'items': state.get('pods', {}).get(namespace + '/' + selector, [])}))
             sys.exit(0)
+        if args[1] == 'WorkloadDeployment':
+            print(json.dumps({'items': [obj for key, obj in state.get('workloads', {}).items()
+                if key.startswith(namespace + '/WorkloadDeployment/')]}))
+            sys.exit(0)
         if namespace + '/' + args[1] in state.get('workloads', {}):
             print(json.dumps(state['workloads'][namespace + '/' + args[1]]))
             sys.exit(0)
-        resource = namespace + '/' + args[1]
-        if resource == state.get('fail_read'):
-            sys.exit(1)
         if args[1].startswith('job/'):
             obj = state.get('objects', {}).get(resource)
             if obj:
@@ -347,6 +351,19 @@ impl Fixture {
             "kind":"WorkloadDeployment", "metadata":{"generation":1}, "spec":{"replicas":1},
             "status":{"replicas":{"ready":1}, "conditions":[{"type":"Ready","status":"True","observedGeneration":1}]}
         });
+        if let UpgradeTarget::Host { release, group } = selection {
+            let name = if release == "shared" {
+                format!("{group}-materializer")
+            } else {
+                format!("{release}-http")
+            };
+            workloads[format!("hosts/WorkloadDeployment/{name}")] = json!({
+                "kind":"WorkloadDeployment", "metadata":{"name":name,"generation":2},
+                "spec":{"replicas":1,"template":{"spec":{"hostSelector":{"hostgroup":group}}}},
+                "status":{"replicas":{"ready":1},
+                    "conditions":[{"type":"Ready","status":"True","observedGeneration":2}]}
+            });
+        }
         Ok(
             json!({"cluster":self.document.cluster_name, "owners":owners, "helm":self.helm,
             "workloads":workloads,"pods":pods,
@@ -1213,11 +1230,24 @@ fn platform_status_reports_selected_artifacts_and_unhealthy_targets() -> anyhow:
     state["workloads"]["identity/Deployment/identity"]["status"]["conditions"] = json!([
         {"type":"Progressing","status":"False","reason":"ProgressDeadlineExceeded"}
     ]);
+    // Alpha inherits the platform default, including readiness of its assigned workload.
+    let host_workload = state["workloads"]
+        .as_object_mut()
+        .unwrap()
+        .values_mut()
+        .find(|object| {
+            object
+                .pointer("/spec/template/spec/hostSelector/hostgroup")
+                .and_then(Value::as_str)
+                == Some("alpha")
+        })
+        .unwrap();
+    host_workload["status"]["replicas"]["ready"] = json!(0);
     let (output, calls, after) = fixture.run_command("status", None, None, &state)?;
     let stdout = String::from_utf8(output.stdout)?;
     assert!(!output.status.success());
     assert!(
-        stdout.contains("target platform default: ready"),
+        stdout.contains("target platform default: incomplete"),
         "{stdout}"
     );
     assert!(stdout.contains("target control: ready"), "{stdout}");
@@ -1314,6 +1344,127 @@ fn platform_targeted_update_reports_only_affected_readiness() -> anyhow::Result<
             state["owners"]["platform/wamn"]
         );
     }
+    Ok(())
+}
+
+#[test]
+fn platform_host_update_fails_for_unhealthy_assigned_workloads() -> anyhow::Result<()> {
+    let fixture = Fixture::new()?;
+    let mut postgres = wamn_test_postgres::start(&[])?;
+    let database = postgres.create_database("wamn_system")?;
+    for selection in ["host:alpha/alpha", "host:shared/shared"] {
+        let target: UpgradeTarget = selection.parse()?;
+        let UpgradeTarget::Host { group, .. } = &target else {
+            unreachable!();
+        };
+        let (name, namespace) = target.owner(&fixture.document);
+        for (condition, category) in [
+            ("failed", "failed"),
+            ("incomplete", "incomplete"),
+            ("stale", "incomplete"),
+            ("unreadable", "unknown"),
+        ] {
+            let mut state = fixture.state(&target)?;
+            set_database(&mut state, database.url())?;
+            let (source, workload) = state["workloads"]
+                .as_object_mut()
+                .unwrap()
+                .iter_mut()
+                .find(|(_, object)| {
+                    object
+                        .pointer("/spec/template/spec/hostSelector/hostgroup")
+                        .and_then(Value::as_str)
+                        == Some(group.as_str())
+                })
+                .unwrap();
+            let source = source.to_owned();
+            match condition {
+                "failed" => {
+                    workload["status"]["conditions"][0] = json!({
+                        "type":"Ready","status":"False","reason":"Failed","observedGeneration":2
+                    });
+                }
+                "incomplete" => workload["status"]["replicas"]["ready"] = json!(0),
+                "stale" => workload["status"]["conditions"][0]["observedGeneration"] = json!(1),
+                "unreadable" => state["fail_read"] = "hosts/WorkloadDeployment".into(),
+                _ => unreachable!(),
+            }
+            let (output, calls, _) = fixture.run(Some(selection), &state)?;
+            let stdout = String::from_utf8(output.stdout)?;
+            assert!(
+                !output.status.success(),
+                "{selection} {condition}: {stdout}"
+            );
+            assert!(
+                stdout.contains(&format!("target {selection}: {category}")),
+                "{stdout}"
+            );
+            assert!(
+                stdout.contains(&format!("hosts/Deployment/hostgroup-{group}: ready")),
+                "{stdout}"
+            );
+            if condition != "unreadable" {
+                assert!(
+                    stdout.contains(&format!("{source}: {category}")),
+                    "{stdout}"
+                );
+            }
+            assert_operations(&calls, (&name, namespace), true);
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn platform_host_update_ignores_workloads_assigned_to_other_groups() -> anyhow::Result<()> {
+    let fixture = Fixture::new()?;
+    let mut postgres = wamn_test_postgres::start(&[])?;
+    let database = postgres.create_database("wamn_system")?;
+    let selection = "host:alpha/alpha";
+    let target: UpgradeTarget = selection.parse()?;
+    let mut state = fixture.state(&target)?;
+    set_database(&mut state, database.url())?;
+    // The selected release has a second host group, and beta is a different application.
+    for group in ["untargeted", "beta"] {
+        let name = format!("{group}-http");
+        state["workloads"][format!("hosts/WorkloadDeployment/{name}")] = json!({
+            "kind":"WorkloadDeployment", "metadata":{"name":name,"generation":1},
+            "spec":{"replicas":1,"template":{"spec":{"hostSelector":{"hostgroup":group}}}},
+            "status":{"conditions":[{"type":"Ready","status":"False","reason":"Failed","observedGeneration":1}]}
+        });
+    }
+    let (output, calls, _) = fixture.run(Some(selection), &state)?;
+    let stdout = String::from_utf8(output.stdout)?;
+    assert!(
+        output.status.success(),
+        "{}\n{stdout}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        stdout.contains(&format!("target {selection}: ready")),
+        "{stdout}"
+    );
+    for object in state["workloads"]
+        .as_object()
+        .unwrap()
+        .values()
+        .filter(|object| {
+            object["kind"] == "WorkloadDeployment"
+                && object
+                    .pointer("/spec/template/spec/hostSelector/hostgroup")
+                    .and_then(Value::as_str)
+                    .is_some_and(|group| group != "alpha")
+        })
+    {
+        assert!(
+            !stdout.contains(&format!(
+                "hosts/WorkloadDeployment/{}:",
+                object["metadata"]["name"].as_str().unwrap()
+            )),
+            "{stdout}"
+        );
+    }
+    assert_operations(&calls, ("alpha", "hosts"), true);
     Ok(())
 }
 

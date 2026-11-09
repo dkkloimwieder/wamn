@@ -198,6 +198,14 @@ async fn target_status(
             &mut observations,
         )
         .await;
+    } else if let UpgradeTarget::Host { group, .. } = selection {
+        let workloads = list(target, namespace, "WorkloadDeployment", &[]).await;
+        append_host_workloads(
+            &mut observations,
+            &format!("{namespace}/WorkloadDeployment"),
+            group,
+            workloads.ok(),
+        );
     }
     let pods = list(target, namespace, "pods", &["-l", &selector]).await;
     append_resources(
@@ -853,6 +861,30 @@ fn append_resources(observations: &mut Vec<Observation>, source: &str, response:
     }
 }
 
+fn append_host_workloads(
+    observations: &mut Vec<Observation>,
+    source: &str,
+    group: &str,
+    mut response: Option<Value>,
+) {
+    if let Some(items) = response
+        .as_mut()
+        .and_then(|response| response["items"].as_array_mut())
+    {
+        // The application renderer and materializer writer use this placement selector.
+        items.retain(|object| {
+            object
+                .pointer("/spec/template/spec/hostSelector/hostgroup")
+                .and_then(Value::as_str)
+                == Some(group)
+        });
+        if items.is_empty() {
+            return;
+        }
+    }
+    append_resources(observations, source, response.as_ref());
+}
+
 fn endpoints(source: &str, response: Option<&Value>) -> Observation {
     let items = response.and_then(|value| value["items"].as_array());
     let mut result = observation(
@@ -1227,6 +1259,66 @@ mod tests {
             combined([Category::Ready, Category::Failed, Category::Unknown]),
             Category::Failed
         );
+    }
+
+    #[test]
+    fn host_readiness_includes_only_assigned_workloads() {
+        let host = json!({
+            "kind":"Deployment", "metadata":{"generation":1}, "spec":{"replicas":1},
+            "status":{"observedGeneration":1,"readyReplicas":1,"updatedReplicas":1,"availableReplicas":1}
+        });
+        for (state, expected) in [
+            ("ready", Category::Ready),
+            ("failed", Category::Failed),
+            ("incomplete", Category::Incomplete),
+            ("stale-condition", Category::Incomplete),
+            ("stale-status", Category::Incomplete),
+            ("unreadable", Category::Unknown),
+            ("other-group", Category::Ready),
+            ("empty", Category::Ready),
+        ] {
+            let mut workload = json!({
+                "kind":"WorkloadDeployment", "metadata":{"name":"alpha-http","generation":2},
+                "spec":{"replicas":1,"template":{"spec":{"hostSelector":{"hostgroup":"alpha"}}}},
+                "status":{"replicas":{"ready":1},
+                    "conditions":[{"type":"Ready","status":"True","observedGeneration":2}]}
+            });
+            match state {
+                "failed" | "other-group" => {
+                    workload["status"]["conditions"][0] = json!({"type":"Ready","status":"False","reason":"Failed","observedGeneration":2});
+                    if state == "other-group" {
+                        workload["spec"]["template"]["spec"]["hostSelector"]["hostgroup"] =
+                            "beta".into();
+                    }
+                }
+                "incomplete" => workload["status"]["replicas"]["ready"] = json!(0),
+                "stale-condition" => {
+                    workload["status"]["conditions"][0]["observedGeneration"] = json!(1);
+                }
+                "stale-status" => workload["status"]["observedGeneration"] = json!(1),
+                _ => {}
+            }
+            let response = match state {
+                "unreadable" => None,
+                "empty" => Some(json!({"items":[]})),
+                _ => Some(json!({"items":[workload]})),
+            };
+            let mut observations = vec![resource(
+                "hosts/Deployment/hostgroup-alpha",
+                Ok(Some(&host)),
+            )];
+            append_host_workloads(
+                &mut observations,
+                "hosts/WorkloadDeployment",
+                "alpha",
+                response,
+            );
+            assert_eq!(
+                combined(observations.iter().map(|item| item.category)),
+                expected,
+                "{state}"
+            );
+        }
     }
 
     #[test]
