@@ -3,18 +3,23 @@
 GCP deployment support is unfinished. This page preserves external cloud prerequisites and operations for project `wamn-dev`.
 See [the deployment boundary](#platform-deployment-boundary) before deployment.
 
-Every command on this page runs in a shell with these two variables and nothing else:
+Set these variables before each command on this page.
 
 ```bash
 export CLOUDSDK_CONFIG=$HOME/.config/gcloud-wamn-agent
 export KUBECONFIG=$HOME/.kube/wamn-dev
 ```
 
-Do not run `gcloud config configurations activate`. Do not read or write `~/.config/gcloud` or `~/.kube/config`. The billing commands and the API enables are the owner's, and no step on this page runs them.
-
 ## Cloud credentials and prerequisites
 
-Never run `gcloud` or `kubectl` without `CLOUDSDK_CONFIG=~/.config/gcloud-wamn-agent` and `KUBECONFIG=~/.kube/wamn-dev` set, reads included. The owner's `~/.config/gcloud` and `~/.kube/config` are never used (owner ruling 2026-10-19).
+The operator maintains the gcloud login in `CLOUDSDK_CONFIG`.
+Keep these variables set for `gcloud` and `kubectl` reads and writes.
+Keep the operator's default gcloud and Kubernetes files separate from the agent files above.
+The owner runs billing commands and enables APIs.
+
+The GCP provider runs `gcloud container clusters get-credentials` with the cluster document's project, zone, and cluster name.
+It writes credentials to the caller's kubeconfig file and selects the matching GKE context.
+Install `gke-gcloud-auth-plugin` on the deployment host so kubectl can use the gcloud login.
 
 ## 1. Owner inputs
 
@@ -199,7 +204,12 @@ The teardown keeps these resources for later cloud integration. The owner makes 
 - The project custom role `wamnAgentTofuRead`, bound to `wamn-agent@wamn-dev` with no condition. It holds only `dns.managedZones.get` and `storage.buckets.getIamPolicy`, so that the agent's `tofu plan` can read the DNS zone and the IAM policy of the state bucket. It grants no write.
 - The direct `roles/storage.objectViewer` grant on `gs://wamn-dev-web` for `hosts/wamn-edge` (section 1, item 13).
 - The cost guard `wamn-guard` acts once when a budget message crosses a threshold. At 50 percent it only logs, at 90 percent it sets every pool to 0 nodes, and at 100 percent it unlinks billing. It keeps the last threshold of the month in `gs://wamn-dev-tofu-state/guard/state.json`. The first message of a new month resets it.
-- The Artifact Registry repositories `wamn` and `wamn-kind`, with immutable tags. `wamn` holds the platform images, the packages, the components and the releases. `wamn-kind` deletes every tag that is older than 7 days. [project.k](../../deploy/gcp/project.k) declares `wamn-kind`.
+- The Artifact Registry repository configured by the target holds platform images and product artifacts.
+  The layout is `<registry>/wamn/{packages,components,releases}`.
+  In `wamn-dev`, the registry is `us-central1-docker.pkg.dev/wamn-dev/wamn`.
+  The separate `wamn-kind` repository expires tags after seven days for local test artifacts.
+  Both repositories use immutable tags.
+  The project document declares this repository. [Project document](../../deploy/gcp/project.k)
 - The buckets `wamn-dev-web`, `wamn-dev-backups` and `wamn-dev-labels`.
 - The VPC `wamn`, its subnet `wamn-us-central1` and the node service account `wamn-nodes`.
 - The Cloud DNS zone `wamn-dev`, its records, and the `roles/dns.admin` binding of the cert-manager principal on the zone. `project.k` declares the zone. OpenTofu does not own the records or the binding.
@@ -383,6 +393,20 @@ If the backend service names no group, `remove-backend` refuses, and the agent r
 
 ## Platform deployment boundary
 
+GCP and kind use the same platform artifact set and prepared chart contract.
+`build-platform` builds and pins the shared images, including `ctl`, and the role components.
+The cluster document selects UI storage and cloud build inputs.
+The prepared chart supplies the pinned `ctl` image for control operation Jobs in namespace `platform`.
+
+Use the target's configured registry for artifact production and publication.
+Loopback registries use HTTP.
+[Building](building.md#cloud-platform-builds) describes cloud artifact production.
+
+[Deployment](deployment.md#local-platform) describes prepared chart deployment, status, access, and cleanup on kind.
+The deployment plan defines the remaining GCP integration work. [Deployment plan](../plan/deploy.md)
+Public ingress, web uploads, telemetry, and production policies still need cloud verification.
+The operations below use the external cloud credentials described above.
+
 Use the existing infrastructure and platform owners in this order.
 
 1. Render `deploy/gcp/project.k` with `wamn-ctl project render FILE --state-bucket BUCKET --state-prefix PREFIX DIRECTORY`.
@@ -403,11 +427,6 @@ Use the existing infrastructure and platform owners in this order.
 Keep the cert-manager DNS challenge record and the load balancer's certificate authorization CNAME separate.
 The OpenTofu authorization uses a per-project DNS name.
 cert-manager uses `_acme-challenge` for the certificate mounted by the edge.
-
-GCP integration remains unfinished until the deployed checks pass.
-The cloud prerequisites and rendered configuration alone do not establish a working deployment.
-The deployment plan defines the remaining GCP scope. [Deployment plan](../plan/deploy.md)
-Prepare artifacts with the platform deployment procedure. [Platform deployment](deployment.md#local-platform)
 
 ## 5. Operations
 

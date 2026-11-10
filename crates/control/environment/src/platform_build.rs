@@ -37,17 +37,7 @@ use wamn_release_control::release_chart::{ImageSet, stamp};
 mod inputs;
 
 /// The Dockerfile targets that build-platform pushes as images.
-fn selected_images(request: &BuildPlatformRequest) -> &'static [&'static str] {
-    if request
-        .cluster
-        .as_ref()
-        .is_some_and(|cluster| cluster.provider == crate::platform::document::Provider::Gcp)
-    {
-        &["host", "runner", "gates", "identity", "edge-web"]
-    } else {
-        &["host", "ctl", "identity", "edge-web"]
-    }
-}
+const IMAGES: &[&str] = &["host", "ctl", "identity", "edge-web"];
 
 fn selects_ui(request: &BuildPlatformRequest) -> bool {
     request
@@ -192,7 +182,7 @@ pub struct BuildPlatformRequest {
     pub registry: String,
     /// The directory the stamped chart is written to. It must not exist.
     pub out: PathBuf,
-    /// Optional cluster inputs selecting qualification images, UI and cloud builds.
+    /// Optional cluster inputs selecting UI and cloud builds.
     pub cluster: Option<crate::platform::document::ClusterDocument>,
     /// Use Cloud Build even when no other build runs, under the same daily cap.
     pub cloud: bool,
@@ -231,24 +221,6 @@ fn build_location(
     }
 }
 
-fn check_package_outputs(repository: &Path) -> anyhow::Result<()> {
-    let outputs = repository.join("apps/target/wamn");
-    for entry in
-        std::fs::read_dir(&outputs).with_context(|| format!("read {}", outputs.display()))?
-    {
-        let output = entry?.path();
-        if output.is_dir()
-            && output
-                .file_name()
-                .is_none_or(|name| name != wamn_catalog::host_route_package())
-        {
-            let source = wamn_schema_generator::build_record::source_root(&output)?;
-            wamn_schema_generator::build_record::read_current(&source, &output)?;
-        }
-    }
-    Ok(())
-}
-
 /// Build selected platform images and role components, then push them, then stamp
 /// them into a copy of the release chart at `request.out`. A failed build
 /// pushes nothing. Every image is tagged with the chart version and pinned by
@@ -264,9 +236,6 @@ pub async fn build_platform(request: &BuildPlatformRequest) -> anyhow::Result<Pa
         "the chart output {} exists",
         request.out.display()
     );
-    if selected_images(request).contains(&"runner") {
-        check_package_outputs(&request.repository)?;
-    }
     let processes = process_list()?;
     if build_location(
         &processes,
@@ -345,7 +314,7 @@ async fn stamp_from_registry(
     let version = &request.version;
     let mut pinned = BTreeMap::new();
     let mut missing = Vec::new();
-    for &target in selected_images(request) {
+    for &target in IMAGES {
         let reference = format!("{registry}/wamn-{target}:{version}");
         let digest = run(Command::new("docker").args([
             "buildx",
@@ -433,10 +402,9 @@ fn stamp_chart(
     )?;
     let path = chart.join("values.yaml");
     let mut defaults: serde_yaml::Value = serde_yaml::from_slice(&std::fs::read(&path)?)?;
-    for target in ["ctl", "identity", "runner", "gates", "edge-web"] {
-        let image = images.remove(target).unwrap_or_default();
+    for (target, image) in images {
         ensure!(
-            image.is_empty() || image.contains("@sha256:"),
+            image.contains("@sha256:"),
             "the {target} image is not pinned by digest"
         );
         let field = if target == "edge-web" { "edge" } else { target };
@@ -729,19 +697,19 @@ async fn plan(
                 &serde_json::from_str(&metadata).context("parse cargo metadata")?,
             )?);
         }
-        for &target in selected_images(request) {
+        for &target in IMAGES {
             let files = inputs::input_files(&request.repository, target, &graphs[0], &graphs[1])?;
             hashes.insert(target, inputs::input_hash(target, &files));
         }
     }
     let _stage = recorded_stage(durations, "input-lookups");
     let registry = &request.registry;
-    let lookups = selected_images(request)
+    let lookups = IMAGES
         .iter()
         .map(|&target| lookup(run, registry, target, &hashes[target]));
     let digests = futures_util::future::join_all(lookups).await;
     let mut images = BTreeMap::new();
-    for (&target, digest) in selected_images(request).iter().zip(digests) {
+    for (&target, digest) in IMAGES.iter().zip(digests) {
         if let Some(digest) = digest {
             images.insert(target, digest);
         }
@@ -816,12 +784,12 @@ async fn build_then_push(
     let registry = &request.registry;
     let version = &request.version;
     let mut references = Vec::new();
-    for &target in selected_images(request) {
+    for &target in IMAGES {
         let reference = format!("{registry}/wamn-{target}:{version}");
         let hash = &hashes[target];
         if !images.contains_key(target) {
             let _stage = recorded_stage(durations, format!("image-build-{target}"));
-            run(docker(&request.repository, target == "runner")?
+            run(docker(&request.repository)?
                 .args(["--target", target, "--tag", &reference, "--tag"])
                 .arg(input_tag(registry, target, hash))
                 .arg(format!("--label=wamn.dev/source-head={}", head.trim()))
@@ -834,7 +802,7 @@ async fn build_then_push(
     }
     {
         let _stage = recorded_stage(durations, "roles-export");
-        run(docker(&request.repository, false)?
+        run(docker(&request.repository)?
             .args(["--target", "roles", "--output"])
             .arg(format!("type=local,dest={}", roles.display()))
             .arg(&request.repository))
@@ -868,17 +836,12 @@ async fn build_then_push(
     ))
 }
 
-/// `docker build` of one target of the root `Dockerfile`, for amd64. The
-/// runner's cases compile against the package outputs of `wamn build`, the
-/// named context `apps-target`.
-fn docker(repository: &Path, needs_apps: bool) -> anyhow::Result<Command> {
+/// `docker build` of one target of the root `Dockerfile`, for amd64.
+fn docker(repository: &Path) -> anyhow::Result<Command> {
     let mut command = Command::new("docker");
     command.args(docker_arguments(
         &checkout_key(repository)?,
         &repository.join("Dockerfile").to_string_lossy(),
-        needs_apps
-            .then_some(repository.join("apps/target/wamn"))
-            .as_deref(),
     ));
     Ok(command)
 }
@@ -986,8 +949,7 @@ fn process_list() -> anyhow::Result<Vec<(u32, Vec<String>)>> {
     Ok(processes)
 }
 
-/// An owned source supplement: package output is a named Docker context,
-/// not a Cargo target cache. All target directories stay out of the upload.
+/// An owned directory for the Cloud Build configuration.
 struct CloudSource(PathBuf);
 
 impl Drop for CloudSource {
@@ -1291,17 +1253,13 @@ async fn submit_cloud_build(
     let path = request.repository.join(&supplement);
     std::fs::create_dir(&path).context("create the cloud source supplement")?;
     let source = CloudSource(path);
-    copy_package_output(
-        &request.repository.join("apps/target/wamn"),
-        &source.0.join("apps"),
-    )?;
     let head = output(Command::new("git").current_dir(&request.repository).args([
         "rev-parse",
         "--verify",
         "HEAD",
     ]))
     .await?;
-    let config = cloud_configuration(request, &supplement, head.trim(), plan)?;
+    let config = cloud_configuration(request, head.trim(), plan)?;
     let config_file = source.0.join("cloudbuild.json");
     std::fs::write(&config_file, serde_json::to_vec(&config)?)?;
     let submitted = cloud_output(
@@ -1385,12 +1343,11 @@ async fn output(command: &mut Command) -> anyhow::Result<String> {
 
 fn cloud_configuration(
     request: &BuildPlatformRequest,
-    supplement: &str,
     head: &str,
     plan: &Plan,
 ) -> anyhow::Result<serde_json::Value> {
     let key = checkout_key(&request.repository)?;
-    plan::cloud_configuration(request, supplement, head, plan, &key)
+    plan::cloud_configuration(request, head, plan, &key)
 }
 
 #[cfg(test)]
@@ -1599,7 +1556,7 @@ mod tests {
             cluster: Some(production_cluster()),
             cloud: true,
         };
-        let hashes: BTreeMap<_, _> = selected_images(&request)
+        let hashes: BTreeMap<_, _> = IMAGES
             .iter()
             .copied()
             .chain(["roles"])
@@ -1609,7 +1566,7 @@ mod tests {
             hashes,
             images: BTreeMap::new(),
         };
-        let config = cloud_configuration(&request, ".supplement", "head", &plan).unwrap();
+        let config = cloud_configuration(&request, "head", &plan).unwrap();
         assert_eq!(config["options"]["logging"], "CLOUD_LOGGING_ONLY");
         let steps = config["steps"].as_array().unwrap();
         assert_eq!(steps[0]["args"][5], "docker-container");
@@ -1617,7 +1574,7 @@ mod tests {
             .iter()
             .filter(|step| step["name"] == CLOUD_DOCKER_IMAGE && step["args"][3] == "build")
             .collect();
-        assert_eq!(builds.len(), selected_images(&request).len() + 1);
+        assert_eq!(builds.len(), IMAGES.len() + 1);
         let pushes = |step: &serde_json::Value| {
             step["args"]
                 .as_array()
@@ -1627,7 +1584,7 @@ mod tests {
         };
         assert_eq!(
             builds.iter().filter(|step| pushes(step)).count(),
-            selected_images(&request).len(),
+            IMAGES.len(),
             "every image target pushes, and roles exports locally"
         );
         // Each image build follows its own token step.
@@ -1650,7 +1607,7 @@ mod tests {
                 .any(|arg| arg.as_str() == Some(text))
         };
         assert!(builds.iter().filter(|step| pushes(step)).all(|step| {
-            selected_images(&request).iter().any(|target| {
+            IMAGES.iter().any(|target| {
                 has(
                     step,
                     &format!(
@@ -1672,13 +1629,13 @@ mod tests {
         );
         // Copied targets are left out of the submission.
         plan.images.insert("host", "sha256:host".into());
-        let config = cloud_configuration(&request, ".supplement", "head", &plan).unwrap();
+        let config = cloud_configuration(&request, "head", &plan).unwrap();
         let steps = config["steps"].as_array().unwrap();
         let builds: Vec<_> = steps
             .iter()
             .filter(|step| step["name"] == CLOUD_DOCKER_IMAGE && step["args"][3] == "build")
             .collect();
-        assert_eq!(builds.len(), selected_images(&request).len());
+        assert_eq!(builds.len(), IMAGES.len());
         assert!(!builds.iter().any(|step| has(step, "host")));
         assert!(builds.iter().any(|step| has(step, "roles")));
         assert_eq!(wash(steps), 2);
@@ -1856,22 +1813,19 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_local_build_needs_no_package_outputs_or_ui() {
-        for kind in [false, true] {
-            let checkout = inputs::tests::fake_checkout(if kind {
-                "kind-no-apps"
-            } else {
-                "local-no-apps"
-            });
-            std::fs::remove_dir_all(checkout.0.join("apps/target")).unwrap();
-            let roles = exported_roles(if kind {
-                "kind-no-apps"
-            } else {
-                "local-no-apps"
-            });
-            let cluster = kind.then(|| {
+    async fn platform_builds_prepare_the_same_chart_without_package_outputs() {
+        use crate::platform::document::Provider;
+
+        for (name, provider) in [
+            ("local-no-apps", None),
+            ("kind-no-apps", Some(Provider::Kind)),
+            ("gcp-no-apps", Some(Provider::Gcp)),
+        ] {
+            let checkout = inputs::tests::fake_checkout(name);
+            let roles = exported_roles(name);
+            let cluster = provider.map(|provider| {
                 let mut cluster = production_cluster();
-                cluster.provider = crate::platform::document::Provider::Kind;
+                cluster.provider = provider;
                 cluster.buckets.web.clear();
                 cluster
             });
@@ -1896,7 +1850,7 @@ mod tests {
             let images = &pinned.0;
             assert_eq!(
                 images.keys().copied().collect::<BTreeSet<_>>(),
-                selected_images(&request).iter().copied().collect()
+                IMAGES.iter().copied().collect()
             );
             assert!(
                 calls
@@ -1905,20 +1859,10 @@ mod tests {
             );
             copy_platform_sources(&checkout.0);
             stamp_chart(&request, pinned, None, &StageDurations::default()).unwrap();
-            assert!(request.out.join("platform/identity/Chart.yaml").is_file());
+            crate::platform::artifact_plan::select(&request.out).unwrap();
             std::fs::remove_dir_all(checkout.0).unwrap();
             std::fs::remove_dir_all(roles).unwrap();
         }
-    }
-
-    #[tokio::test]
-    async fn qualification_build_requires_package_outputs_before_building() {
-        let repository =
-            std::env::temp_dir().join(format!("wamn-qualification-no-apps-{}", std::process::id()));
-        let error = build_platform(&production_request(&repository))
-            .await
-            .unwrap_err();
-        assert!(format!("{error:#}").contains("apps/target/wamn"));
     }
 
     /// A fake registry of role components. Each push writes a manifest
@@ -2033,7 +1977,7 @@ mod tests {
         .await;
         if result.is_ok() {
             let durations = durations.into_inner().unwrap();
-            for &target in selected_images(request) {
+            for &target in IMAGES {
                 let built = calls
                     .borrow()
                     .iter()
@@ -2190,11 +2134,7 @@ mod tests {
                 .cloned()
                 .collect::<Vec<_>>()
         };
-        assert_eq!(
-            builds(&calls).len(),
-            selected_images(&production_request(&checkout.0)).len() + 1,
-            "{calls:?}"
-        );
+        assert_eq!(builds(&calls).len(), IMAGES.len() + 1, "{calls:?}");
         assert!(
             !calls.iter().any(|call| call.contains("imagetools create")),
             "{calls:?}"
@@ -2205,11 +2145,7 @@ mod tests {
             .filter(|reference| reference.contains(":input-"))
             .map(str::to_owned)
             .collect();
-        assert_eq!(
-            tags.len(),
-            selected_images(&production_request(&checkout.0)).len(),
-            "{calls:?}"
-        );
+        assert_eq!(tags.len(), IMAGES.len(), "{calls:?}");
         assert!(
             builds(&calls)
                 .iter()
@@ -2218,12 +2154,10 @@ mod tests {
             "{calls:?}"
         );
         assert_eq!(components.pushed.len(), 2, "{:?}", components.pushed);
-        // Only the runner reads the package outputs.
+        // Change one image input while the others keep their published input tags.
         std::fs::write(
-            checkout
-                .0
-                .join("apps/target/wamn/wamn_wms/client-ts/index.ts"),
-            "export const changed = true;",
+            checkout.0.join("services/identity/src/lib.rs"),
+            "// changed identity input",
         )
         .unwrap();
         components.pushed.clear();
@@ -2240,23 +2174,19 @@ mod tests {
         let _ = std::fs::remove_dir_all(&roles);
         let (images, _) = second.expect("the second build succeeds");
         let host = &images["host"];
-        let runner = &images["runner"];
+        let identity = &images["identity"];
         // The roles always build; their manifests are compared by wasm layer.
         let built = builds(&calls);
         assert_eq!(built.len(), 2, "{calls:?}");
-        assert!(built[0].contains("--target runner"), "{built:?}");
+        assert!(built[0].contains("--target identity"), "{built:?}");
         assert!(built[1].contains("--target roles"), "{built:?}");
         let copies: Vec<_> = calls
             .iter()
             .filter(|call| call.starts_with("docker buildx imagetools create --prefer-index=false"))
             .collect();
-        assert_eq!(
-            copies.len(),
-            selected_images(&production_request(&checkout.0)).len() - 1,
-            "{calls:?}"
-        );
+        assert_eq!(copies.len(), IMAGES.len() - 1, "{calls:?}");
         assert!(
-            copies.iter().all(|call| !call.contains("wamn-runner")),
+            copies.iter().all(|call| !call.contains("wamn-identity")),
             "{copies:?}"
         );
         assert_eq!(
@@ -2267,9 +2197,9 @@ mod tests {
             )
         );
         assert_eq!(
-            runner,
+            identity,
             &format!(
-                "localhost:5000/wamn-runner:{VERSION}@sha256:{}",
+                "localhost:5000/wamn-identity:{VERSION}@sha256:{}",
                 "a".repeat(64)
             )
         );
@@ -2515,22 +2445,20 @@ mod tests {
                     Some(&*format!("localhost:5000/wamn/{role}@{digest}"))
                 );
             }
-            let mut request = production_request(&repository);
-            request.cluster = production.then(production_cluster);
             for (field, value) in platform.as_mapping().unwrap() {
                 let field = field.as_str().unwrap();
                 if field == "roles" {
                     continue;
                 }
                 let target = if field == "edge" { "edge-web" } else { field };
-                let expected = if selected_images(&request).contains(&target) {
+                let expected = if IMAGES.contains(&target) {
                     format!("localhost:5000/wamn-{target}:{VERSION}@{digest}")
                 } else {
                     String::new()
                 };
                 assert_eq!(value["image"].as_str(), Some(expected.as_str()), "{target}");
             }
-            let expected = selected_images(&request)
+            let expected = IMAGES
                 .iter()
                 .map(|target| format!("localhost:5000/wamn-{target}:{VERSION}"))
                 .chain(production.then(|| format!("localhost:5000/wamn/platform-ui:{VERSION}")))
@@ -2572,12 +2500,12 @@ mod tests {
 
     #[tokio::test]
     async fn a_failed_build_pushes_nothing() {
-        let (error, calls) = record(Path::new("/nonexistent"), "--target runner").await;
+        let (error, calls) = record(Path::new("/nonexistent"), "--target ctl").await;
         assert!(error.to_string().contains("failed"), "{error}");
         assert!(
             calls
                 .last()
-                .is_some_and(|call| call.contains("--target runner"))
+                .is_some_and(|call| call.contains("--target ctl"))
         );
         assert!(
             !calls.iter().any(|call| call.contains("docker push")),
@@ -2610,20 +2538,8 @@ mod tests {
             .filter(|(_, call)| call.starts_with("docker build "))
             .map(|(index, _)| index)
             .collect::<Vec<_>>();
-        assert_eq!(
-            builds.len(),
-            selected_images(&production_request(&checkout.0)).len() + 1,
-            "{calls:?}"
-        );
+        assert_eq!(builds.len(), IMAGES.len() + 1, "{calls:?}");
         assert!(builds.iter().all(|index| *index < first_push), "{calls:?}");
-        for index in &builds {
-            assert_eq!(
-                calls[*index].contains("--build-context apps-target="),
-                calls[*index].contains("--target runner "),
-                "{}",
-                calls[*index],
-            );
-        }
         let key = checkout_key(&checkout.0).unwrap();
         let _ = std::fs::remove_dir_all(&checkout.0);
         assert!(

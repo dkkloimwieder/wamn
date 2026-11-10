@@ -58,16 +58,12 @@ const READERS: &[&str] = &[
 struct Declared {
     /// Root-workspace packages whose binaries the target carries.
     native: &'static [&'static str],
-    /// Root-workspace packages whose test executables the target carries.
-    cases: &'static [&'static str],
     /// Packages of the `apps` workspace that the target's stages compile.
     components: &'static [&'static str],
     /// Context paths that the target's stages copy whole.
     paths: &'static [&'static str],
     /// Paths below `paths` that the target's stages remove again.
     dropped: &'static [&'static str],
-    /// The target reads the `apps-target` named context.
-    apps_target: bool,
 }
 
 fn declared(target: &str) -> anyhow::Result<Declared> {
@@ -75,59 +71,27 @@ fn declared(target: &str) -> anyhow::Result<Declared> {
     Ok(match target {
         "host" => Declared {
             native: &["wamn-host", "wamn-runtime", "wamn-cdc-reader"],
-            cases: none,
             components: none,
             paths: none,
             dropped: none,
-            apps_target: false,
         },
         "ctl" => Declared {
             native: &["wamn-ctl", "wamn-scenario-worker", "wamn-runtime"],
-            cases: none,
             components: COMPONENTS,
             paths: &["tools/guest-rustflags", "deploy"],
             dropped: &["deploy/platform/release/Chart.yaml"],
-            apps_target: false,
         },
         "identity" => Declared {
             native: &["wamn-identity"],
-            cases: none,
             components: none,
             paths: none,
             dropped: none,
-            apps_target: false,
         },
         "edge-web" => Declared {
             native: &["wamn-edge"],
-            cases: none,
             components: none,
             paths: none,
             dropped: none,
-            apps_target: false,
-        },
-        "gates" => Declared {
-            native: &[
-                "wamn-host",
-                "wamn-runtime",
-                "wamn-gates",
-                "wamn-ctl",
-                "wamn-cdc-reader",
-            ],
-            cases: none,
-            components: COMPONENTS,
-            // The component builder runs the guests with these flags.
-            paths: &["tools/guest-rustflags"],
-            dropped: none,
-            apps_target: false,
-        },
-        "runner" => Declared {
-            native: &["wamn-ctl", "wamn-scenario-worker", "wamn-runtime"],
-            cases: &["wamn-wms-tests", "wamn-receiving-tests"],
-            components: COMPONENTS,
-            paths: &["apps", "deploy", "tools"],
-            // The inherited worker chart takes its version from server inputs.
-            dropped: &["deploy/platform/release/Chart.yaml"],
-            apps_target: true,
         },
         _ => bail!("{target} is not a platform build target"),
     })
@@ -331,8 +295,8 @@ pub(super) fn input_files(
             paths.insert(relative(&package.directory)?.join("Cargo.toml"));
         }
     }
-    let mut packages = closure(root, declared.native, declared.cases)?;
-    packages.extend(closure(apps, declared.components, &[])?);
+    let mut packages = closure(root, declared.native)?;
+    packages.extend(closure(apps, declared.components)?);
     for package in packages {
         let directory = relative(&package.directory)?;
         if package.opaque {
@@ -397,22 +361,6 @@ pub(super) fn input_files(
     for path in declared.paths {
         walk(repository, Path::new(path), &copied_whole, &mut files)?;
     }
-    if declared.apps_target {
-        let context = Path::new("apps/target/wamn");
-        ensure!(
-            repository.join(context).is_dir(),
-            "{} does not exist; run `wamn build` on the apps first",
-            context.display()
-        );
-        super::check_package_outputs(repository)?;
-        let all = |_: &Path| Some(true);
-        let mut context_files = BTreeMap::new();
-        walk(repository, context, &all, &mut context_files)?;
-        for (name, digest) in context_files {
-            let name = name.strip_prefix("apps/target/wamn/").unwrap_or(&name);
-            files.insert(format!("apps-target:{name}"), digest);
-        }
-    }
     Ok(files)
 }
 
@@ -451,12 +399,6 @@ pub(super) mod tests {
         ),
         ("wamn-edge", "services/edge", "", &[]),
         (
-            "wamn-gates",
-            "tests/orchestrator",
-            "",
-            &[("wamn-environment-control", None)],
-        ),
-        (
             "wamn-ctl",
             "services/ctl",
             "",
@@ -470,13 +412,6 @@ pub(super) mod tests {
         ),
         ("wamn-cdc-reader", "services/cdc-reader", "", &[]),
         ("wamn-scenario-worker", "services/scenario-worker", "", &[]),
-        (
-            "wamn-wms-tests",
-            "apps/wamn_wms/tests",
-            "",
-            &[("wamn-test-infrastructure", Some("dev"))],
-        ),
-        ("wamn-receiving-tests", "apps/wamn_receiving/tests", "", &[]),
         (
             "wamn-test-infrastructure",
             "test-support/infrastructure",
@@ -545,8 +480,6 @@ pub(super) mod tests {
             (".cargo/config.toml", "\n"),
             ("apps/Cargo.toml", "[workspace]\n"),
             ("apps/Cargo.lock", "version = 4\n"),
-            ("apps/wamn_wms/wamn.k", "# fixture"),
-            ("apps/target/wamn/wamn_wms/client-ts/index.ts", "export {};"),
             ("deploy/sql/run.sql", "create table run ();"),
             (
                 "deploy/platform/release/Chart.yaml",
@@ -570,57 +503,17 @@ pub(super) mod tests {
             );
             write(&format!("{directory}/src/lib.rs"), source);
         }
-        write_package_build_record(&repository);
         let root = metadata(&repository, ROOT);
         let apps = metadata(&repository, APPS);
         (repository, root, apps)
-    }
-
-    fn write_package_build_record(repository: &Path) {
-        use wamn_schema_generator::build_record;
-        let root = repository.join("apps/wamn_wms");
-        let output = wamn_schema_generator::output_root(&root);
-        std::fs::create_dir_all(&output).unwrap();
-        let built = build_record::BuildRecord {
-            schema: build_record::BUILD_RECORD_SCHEMA.to_owned(),
-            package: build_record::BuildPackage {
-                id: "wamn_wms".into(),
-                version: "0.1.0".into(),
-            },
-            inputs: build_record::BuildInputs {
-                digest: build_record::input_digest(&root).unwrap(),
-                generation_digest: build_record::generation_digest(&root).unwrap(),
-                files: BTreeMap::new(),
-            },
-            dependencies: Vec::new(),
-            generator: build_record::BuildGenerator {
-                id: "generator".into(),
-                toolchain: "toolchain".into(),
-                sqlx: "0.9.0".into(),
-            },
-            outputs: build_record::BuildOutputs {
-                manifest: "sha256:fixture".into(),
-                files: BTreeMap::new(),
-                components: Vec::new(),
-            },
-        };
-        std::fs::write(
-            output.join(build_record::BUILD_RECORD_FILE),
-            built.to_bytes(),
-        )
-        .unwrap();
     }
 
     /// The input hash of every target of `repository`.
     fn hashes(repository: &Path, root: &str, apps: &str) -> BTreeMap<&'static str, String> {
         let root = parse_metadata(&serde_json::from_str(root).unwrap()).unwrap();
         let apps = parse_metadata(&serde_json::from_str(apps).unwrap()).unwrap();
-        let mut request = super::super::tests::production_request(repository);
-        let production = super::super::selected_images(&request);
-        request.cluster = None;
-        production
+        super::super::IMAGES
             .iter()
-            .chain(super::super::selected_images(&request))
             .copied()
             .map(|target| {
                 let files = input_files(repository, target, &root, &apps).unwrap();
@@ -630,7 +523,7 @@ pub(super) mod tests {
     }
 
     /// The platform version lives in `Chart.yaml` alone, which no binary
-    /// embeds and the runner drops (wamn-6qo7v).
+    /// embeds (wamn-6qo7v).
     #[test]
     fn a_version_only_bump_keeps_the_input_hash_of_every_image() {
         let (repository, root, apps) = fake_checkout("version");
@@ -655,15 +548,13 @@ pub(super) mod tests {
         )
         .unwrap();
         let after = hashes(&repository, &root, &apps);
-        assert_ne!(before["gates"], after["gates"]);
+        assert_ne!(before["ctl"], after["ctl"]);
         assert_eq!(before["host"], after["host"]);
         std::fs::remove_dir_all(repository).unwrap();
     }
 
     /// A bump changes `Chart.yaml` alone. Over this checkout's real Cargo
-    /// graph, no image hashes it (wamn-6qo7v). The bump to 0.1.96 also
-    /// changed one telemetry check of the qualification cases, which reaches
-    /// the gates and runner inputs only.
+    /// graph, no image hashes it (wamn-6qo7v).
     #[test]
     fn a_version_bump_of_this_checkout_leaves_selected_images_unchanged() {
         let repository =
@@ -692,15 +583,7 @@ pub(super) mod tests {
         };
         let (root, apps) = (graph("Cargo.toml"), graph("apps/Cargo.toml"));
         let bump = "deploy/platform/release/Chart.yaml";
-        let request = crate::platform_build::BuildPlatformRequest {
-            repository: repository.clone(),
-            version: "0.1.1".into(),
-            registry: "localhost:5000".into(),
-            out: repository.join("unused"),
-            cluster: None,
-            cloud: false,
-        };
-        for target in crate::platform_build::selected_images(&request) {
+        for target in crate::platform_build::IMAGES {
             let files = input_files(&repository, target, &root, &apps).unwrap();
             assert!(!files.contains_key(bump), "{target} hashes {bump}");
             assert!(files.contains_key("Dockerfile"), "{target}");
@@ -709,13 +592,6 @@ pub(super) mod tests {
             let files = input_files(&repository, target, &root, &apps).unwrap();
             let path = "test-support/infrastructure/telemetry.rs";
             assert!(!files.contains_key(path), "{target} hashes {path}");
-        }
-        let gates = input_files(&repository, "gates", &root, &apps).unwrap();
-        for path in [
-            "test-support/infrastructure/telemetry.rs",
-            "deploy/platform/release/values.yaml",
-        ] {
-            assert!(gates.contains_key(path), "gates does not hash {path}");
         }
         let host = input_files(&repository, "host", &root, &apps).unwrap();
         assert!(host.contains_key("deploy/sql/run-state.sql"));
@@ -773,10 +649,7 @@ COPY --from=selected /build /output
         std::fs::write(repository.join("crates/unrelated.txt"), "after").unwrap();
         let after = hashes(&repository, &root, &apps);
         for target in before.keys() {
-            assert_eq!(
-                before[target] != after[target],
-                ["host", "gates"].contains(target)
-            );
+            assert_eq!(before[target] != after[target], *target == "host");
         }
         std::fs::remove_dir_all(repository).unwrap();
     }

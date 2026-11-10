@@ -1,6 +1,6 @@
 use super::{
-    BuildPlatformRequest, CLOUD_AUTH_SCRIPT, CLOUD_DOCKER_IMAGE, CLOUD_SDK_IMAGE, CloudBuild, Path,
-    PathBuf, Plan, ROLES, selected_images,
+    BuildPlatformRequest, CLOUD_AUTH_SCRIPT, CLOUD_DOCKER_IMAGE, CLOUD_SDK_IMAGE, CloudBuild,
+    IMAGES, Path, PathBuf, Plan, ROLES,
 };
 use anyhow::Context as _;
 
@@ -110,14 +110,12 @@ pub(super) fn stderr_tail(stderr: &[u8], lines: usize) -> String {
 
 pub(super) fn cloud_configuration(
     request: &BuildPlatformRequest,
-    supplement: &str,
     head: &str,
     plan: &Plan,
     key: &str,
 ) -> anyhow::Result<serde_json::Value> {
     use serde_json::json;
     let mut steps = Vec::new();
-    let apps = PathBuf::from(supplement).join("apps");
     // The token is captured in memory, then written privately to the shared
     // credential volume. Neither the token nor its encoded form is logged.
     // A token lasts an hour, so each push step gets a fresh one.
@@ -128,8 +126,7 @@ pub(super) fn cloud_configuration(
         "args": ["-c", auth, "bash", request.registry.split('/').next().context("registry host")?],
         "volumes": volume,
     });
-    // The worker daemon's BuildKit lacks named build contexts, so buildx runs
-    // its own BuildKit in a container (docker-container driver).
+    // Buildx runs its own BuildKit in a container (docker-container driver).
     steps.push(json!({
         "name": CLOUD_DOCKER_IMAGE,
         "args": ["buildx", "create", "--name", "wamn", "--driver", "docker-container"],
@@ -137,17 +134,13 @@ pub(super) fn cloud_configuration(
     }));
     let registry = &request.registry;
     let version = &request.version;
-    for target in selected_images(request).iter().copied().chain(["roles"]) {
+    for target in IMAGES.iter().copied().chain(["roles"]) {
         // An image whose input tag exists is copied after the build.
         if plan.images.contains_key(target) {
             continue;
         }
         let mut args: Vec<String> = vec!["buildx".into(), "--builder".into(), "wamn".into()];
-        args.extend(docker_arguments(
-            key,
-            "Dockerfile",
-            (target == "runner").then_some(apps.as_path()),
-        ));
+        args.extend(docker_arguments(key, "Dockerfile"));
         args.extend(["--target".into(), target.into()]);
         if target == "roles" {
             args.extend(["--output".into(), "type=local,dest=/workspace/roles".into()]);
@@ -187,7 +180,7 @@ pub(super) fn cloud_configuration(
     )
 }
 
-pub(super) fn docker_arguments(key: &str, file: &str, apps: Option<&Path>) -> Vec<String> {
+pub(super) fn docker_arguments(key: &str, file: &str) -> Vec<String> {
     let mut args = vec![
         "build".into(),
         "--platform=linux/amd64".into(),
@@ -195,12 +188,6 @@ pub(super) fn docker_arguments(key: &str, file: &str, apps: Option<&Path>) -> Ve
         "--build-arg".into(),
         format!("WAMN_CHECKOUT_KEY={key}"),
     ];
-    if let Some(apps) = apps {
-        args.extend([
-            "--build-context".into(),
-            format!("apps-target={}", apps.display()),
-        ]);
-    }
     args.extend(["--file".into(), file.into()]);
     args
 }

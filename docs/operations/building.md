@@ -341,7 +341,7 @@ wamn-ctl build-platform --cloud --cluster deploy/gcp/cluster.k --registry us-cen
 
 The command submits the same Dockerfile targets with `gcloud builds submit` in `us-central1`, on `E2_HIGHCPU_8`.
 It stages the source in `gs://<buckets.state>/build/source/`, so Cloud Build needs no staging bucket of its own.
-Each image build runs `docker buildx build` in `docker:28.5.1-cli` on a `docker-container` builder, because the worker daemon's BuildKit has no named build contexts.
+Each image build runs `docker buildx build` in `docker:28.5.1-cli` on a `docker-container` builder.
 Cloud Build writes the build log to Cloud Logging only.
 Read a failed build with `gcloud logging read 'resource.type="build" AND resource.labels.build_id="<id>"' --project wamn-dev`.
 If gcloud fails, the command prints the last 20 lines of its stderr.
@@ -356,9 +356,8 @@ If the cluster document selects UI storage, the UI build and recorded digest fol
 The `cloud-submit` stage prints start and end lines, including elapsed time.
 
 The root `.gcloudignore` excludes the `.dockerignore` paths and every target directory.
-Only the retained qualification-image path supplies `apps/target/wamn` as a runner input.
-The local platform build does not read this application output.
-It does not upload Cargo target caches.
+Cloud and local platform builds use the same artifact set.
+Application build output and Cargo target caches stay outside the cloud upload.
 
 Before submission, the command reads `gs://<buckets.state>/build/<YYYY-MM-DD>.json` for the UTC submission day.
 For wamn-dev, `buckets.state` is the OpenTofu state bucket `wamn-dev-tofu-state`.

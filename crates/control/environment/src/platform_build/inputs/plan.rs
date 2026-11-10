@@ -21,33 +21,26 @@ pub(super) fn declared_reads(script: &str) -> Option<Vec<String>> {
     (!reads.is_empty()).then_some(reads)
 }
 
-/// The packages that building `roots` compiles, with the dev dependencies of
-/// `cases` because their test executables need them.
-pub(super) fn closure<'a>(
-    graph: &'a Graph,
-    roots: &[&str],
-    cases: &[&str],
-) -> anyhow::Result<Vec<&'a Package>> {
+/// The packages that building `roots` compiles.
+pub(super) fn closure<'a>(graph: &'a Graph, roots: &[&str]) -> anyhow::Result<Vec<&'a Package>> {
     let mut stack = Vec::new();
-    for (names, dev) in [(roots, false), (cases, true)] {
-        for name in names {
-            let id = graph
-                .names
-                .get(*name)
-                .with_context(|| format!("cargo metadata has no package {name}"))?;
-            stack.push((id, dev));
-        }
+    for name in roots {
+        let id = graph
+            .names
+            .get(*name)
+            .with_context(|| format!("cargo metadata has no package {name}"))?;
+        stack.push(id);
     }
     let mut seen = BTreeSet::new();
     let mut packages = Vec::new();
-    while let Some((id, dev)) = stack.pop() {
+    while let Some(id) = stack.pop() {
         if !seen.insert(id) {
             continue;
         }
         let package = &graph.packages[id];
         for (dependency, dev_only) in &package.dependencies {
-            if dev || !dev_only {
-                stack.push((dependency, false));
+            if !dev_only {
+                stack.push(dependency);
             }
         }
         packages.push(package);
@@ -264,7 +257,7 @@ pub(in super::super) fn input_hash(target: &str, files: &BTreeMap<String, String
         "format": "wamn-input-hash/1",
         "target": target,
         // The checkout key names cache mounts only, so it is left out.
-        "arguments": super::super::docker_arguments("", "Dockerfile", (target == "runner").then_some(Path::new("apps-target"))),
+        "arguments": super::super::docker_arguments("", "Dockerfile"),
         "labels": ["wamn.dev/build-profile=release"],
         "files": files,
     });
