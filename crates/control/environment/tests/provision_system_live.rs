@@ -4,6 +4,7 @@
 //! cluster-wide roles and the PUBLIC CONNECT floor of every database.
 
 use std::os::unix::fs::PermissionsExt as _;
+use tokio::task::JoinHandle;
 use tokio_postgres::NoTls;
 
 use wamn_environment_control::provision_system::{
@@ -18,9 +19,7 @@ async fn provision_system_repeats_without_changing_the_platform_domain() {
     let (client, connection) = tokio_postgres::connect(&url, NoTls)
         .await
         .expect("connect to the disposable system database");
-    tokio::spawn(async move {
-        let _ = connection.await;
-    });
+    let connection = tokio::spawn(connection);
     // CloudNativePG creates the owner role at bootstrap. The test does it here.
     client
         .batch_execute(
@@ -345,24 +344,37 @@ async fn provision_system_repeats_without_changing_the_platform_domain() {
     let (worker, worker_connection) = tokio_postgres::connect(worker_url, NoTls)
         .await
         .expect("wamn_provisioner logs in with the Secret's password");
-    tokio::spawn(async move {
-        let _ = worker_connection.await;
-    });
+    let worker_connection = tokio::spawn(worker_connection);
     let user: String = worker
         .query_one("SELECT current_user::text", &[])
         .await
         .expect("read the current user")
         .get(0);
     assert_eq!(user, "wamn_provisioner");
+    disconnect(worker, worker_connection).await;
+    disconnect(client, connection).await;
     std::fs::remove_dir_all(&directory).expect("remove the output directory");
 }
 
-async fn connect(url: &str) -> tokio_postgres::Client {
+async fn connect(
+    url: &str,
+) -> (
+    tokio_postgres::Client,
+    JoinHandle<Result<(), tokio_postgres::Error>>,
+) {
     let (client, connection) = tokio_postgres::connect(url, NoTls).await.unwrap();
-    tokio::spawn(async move {
-        connection.await.unwrap();
-    });
-    client
+    (client, tokio::spawn(connection))
+}
+
+async fn disconnect(
+    client: tokio_postgres::Client,
+    connection: JoinHandle<Result<(), tokio_postgres::Error>>,
+) {
+    drop(client);
+    connection
+        .await
+        .expect("connection task completes without panicking")
+        .expect("connection closes cleanly");
 }
 
 // Enumerate the actual catalog and data rather than pinning a relation roster.
@@ -407,7 +419,7 @@ async fn snapshot(client: &tokio_postgres::Client) -> serde_json::Value {
 #[tokio::test]
 async fn bootstrap_is_atomic_and_uses_database_facts() {
     let url = locked_database::database(wamn_test_postgres::database);
-    let client = connect(&url).await;
+    let (client, connection) = connect(&url).await;
     client.batch_execute("DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'wamn_system') THEN CREATE ROLE wamn_system NOLOGIN; END IF; END $$;").await.unwrap();
     assert_eq!(system_state(&client).await.unwrap(), SystemState::Absent);
 
@@ -458,8 +470,8 @@ async fn bootstrap_is_atomic_and_uses_database_facts() {
     install_control_store(&client).await.unwrap();
     assert_eq!(system_state(&client).await.unwrap(), SystemState::Complete);
     let concurrent_database = wamn_test_postgres::database();
-    let first = connect(concurrent_database.url()).await;
-    let second = connect(concurrent_database.url()).await;
+    let (first, first_connection) = connect(concurrent_database.url()).await;
+    let (second, second_connection) = connect(concurrent_database.url()).await;
     let (left, right) = tokio::join!(
         install_control_store(&first),
         install_control_store(&second)
@@ -470,9 +482,11 @@ async fn bootstrap_is_atomic_and_uses_database_facts() {
     let concurrent = snapshot(&first).await;
     install_control_store(&first).await.unwrap();
     assert_eq!(snapshot(&first).await, concurrent);
+    disconnect(first, first_connection).await;
+    disconnect(second, second_connection).await;
 
     let partial_database = wamn_test_postgres::database();
-    let partial = connect(partial_database.url()).await;
+    let (partial, partial_connection) = connect(partial_database.url()).await;
     partial
         .batch_execute("CREATE SCHEMA registry")
         .await
@@ -484,6 +498,7 @@ async fn bootstrap_is_atomic_and_uses_database_facts() {
     let before = snapshot(&partial).await;
     assert!(install_control_store(&partial).await.is_err());
     assert_eq!(snapshot(&partial).await, before);
+    disconnect(partial, partial_connection).await;
 
     client
         .batch_execute("UPDATE registry.schema_baseline SET sha256 = 'sha256:' || repeat('0', 64)")
@@ -500,17 +515,22 @@ async fn bootstrap_is_atomic_and_uses_database_facts() {
         before,
         "mismatch does not replay or reset"
     );
+    disconnect(client, connection).await;
 }
 
 async fn migration_database(
     scope: wamn_control_provision::schema_migrations::MigrationScope,
-) -> (wamn_test_postgres::Database, tokio_postgres::Client) {
+) -> (
+    wamn_test_postgres::Database,
+    tokio_postgres::Client,
+    JoinHandle<Result<(), tokio_postgres::Error>>,
+) {
     use wamn_control_provision::schema_migrations::MigrationScope;
     let database = match scope {
         MigrationScope::System => wamn_test_postgres::database(),
         MigrationScope::Project => wamn_project_state::test_database::tenant_platform(),
     };
-    let client = connect(database.url()).await;
+    let (client, connection) = connect(database.url()).await;
     match scope {
         MigrationScope::System => {
             client.batch_execute("DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'wamn_system') THEN CREATE ROLE wamn_system NOLOGIN; END IF; END $$;").await.unwrap();
@@ -547,7 +567,7 @@ async fn migration_database(
         .batch_execute(&format!("SET ROLE {owner}"))
         .await
         .unwrap();
-    (database, client)
+    (database, client, connection)
 }
 
 #[tokio::test]
@@ -558,8 +578,9 @@ async fn platform_migrations_adopt_order_commit_and_resume_exact_bytes() {
 
     let _lock = wamn_test_postgres::lock();
     for scope in [MigrationScope::System, MigrationScope::Project] {
-        let (database, mut client) = migration_database(scope).await;
-        let (registry, system) = migration_database(MigrationScope::System).await;
+        let (database, mut client, mut connection) = migration_database(scope).await;
+        let (registry, system, system_connection) =
+            migration_database(MigrationScope::System).await;
         system
             .batch_execute(
                 &wamn_control_provision::test_database::seed_org_project_env_sql(
@@ -706,8 +727,9 @@ async fn platform_migrations_adopt_order_commit_and_resume_exact_bytes() {
         );
 
         // Discard the result, reconnect, and repeat. A CREATE without IF NOT EXISTS runs once.
-        drop(client);
-        client = connect(database.url()).await;
+        // Only the result is discarded; the client still closes its connection normally.
+        disconnect(client, connection).await;
+        (client, connection) = connect(database.url()).await;
         client
             .batch_execute(&format!("SET ROLE {owner}"))
             .await
@@ -822,6 +844,8 @@ async fn platform_migrations_adopt_order_commit_and_resume_exact_bytes() {
             .to_string();
         assert!(error.contains(&initialization.0));
         assert!(error.contains(&format!("sha256:{}", "0".repeat(64))));
+        disconnect(client, connection).await;
+        disconnect(system, system_connection).await;
     }
 }
 
@@ -834,8 +858,9 @@ async fn platform_nontransactional_files_keep_started_and_share_resolution() {
 
     let _lock = wamn_test_postgres::lock();
     for scope in [MigrationScope::System, MigrationScope::Project] {
-        let (_database, mut client) = migration_database(scope).await;
-        let (registry, system) = migration_database(MigrationScope::System).await;
+        let (_database, mut client, connection) = migration_database(scope).await;
+        let (registry, system, system_connection) =
+            migration_database(MigrationScope::System).await;
         system
             .batch_execute(
                 &wamn_control_provision::test_database::seed_org_project_env_sql(
@@ -969,5 +994,7 @@ async fn platform_nontransactional_files_keep_started_and_share_resolution() {
         );
         let complete: bool = client.query_one(&format!("SELECT bool_and((outcome='applied') = (applied_at IS NOT NULL)) FROM {schema}.schema_migration"), &[]).await.unwrap().get(0);
         assert!(complete);
+        disconnect(client, connection).await;
+        disconnect(system, system_connection).await;
     }
 }
