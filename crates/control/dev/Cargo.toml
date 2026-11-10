@@ -47,6 +47,8 @@ wamn-release-control = { workspace = true }
 wamn-environment-control = { workspace = true }
 
 [dev-dependencies]
+async-trait = { workspace = true }
+wamn-client = { workspace = true }
 wamn-gate-harness = { workspace = true }
 wamn-package-artifact = { workspace = true, features = ["test-util"] }
 wamn-runtime = { workspace = true, features = ["test-util"] }

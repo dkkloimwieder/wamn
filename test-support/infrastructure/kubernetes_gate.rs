@@ -3,12 +3,11 @@
 use std::path::Path;
 use std::time::Duration;
 
-use anyhow::ensure;
+use anyhow::{Context as _, ensure};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use tokio::process::Command;
 
-use crate::cluster;
 use crate::kubernetes_gate_verdict::PROTOCOL;
 
 /// An executable Job and its exact expected outcome.
@@ -48,15 +47,20 @@ fn hash(bytes: &[u8]) -> String {
 
 // UTC formatting through the system date command preserves RFC3339 nanoseconds.
 async fn timestamp() -> anyhow::Result<String> {
-    Ok(String::from_utf8(
-        cluster::run(Command::new("date").args(["-u", "+%Y-%m-%dT%H:%M:%S.%NZ"])).await?,
-    )?
-    .trim()
-    .to_owned())
+    let output = execute(
+        Command::new("date").args(["-u", "+%Y-%m-%dT%H:%M:%S.%NZ"]),
+        Duration::from_secs(300),
+    )
+    .await?;
+    ensure!(output.status.success(), "UTC timestamp command failed");
+    Ok(String::from_utf8(output.stdout)?.trim().to_owned())
 }
 
 async fn execute(command: &mut Command, timeout: Duration) -> anyhow::Result<std::process::Output> {
-    cluster::output_with_timeout(command, timeout).await
+    tokio::time::timeout(timeout, command.kill_on_drop(true).output())
+        .await
+        .context("Kubernetes gate command deadline")?
+        .context("execute Kubernetes gate command")
 }
 
 async fn probe(probe: &Probe, timeout: Duration) -> (i32, String) {

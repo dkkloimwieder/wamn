@@ -1,0 +1,561 @@
+//! DEP6 observes authenticated workers and selection isolation on one platform.
+
+use std::collections::{BTreeMap, BTreeSet};
+use std::sync::Arc;
+use std::time::Duration;
+
+use anyhow::{Context as _, ensure};
+use serde_json::{Value, json};
+use tokio::process::Command;
+use wamn_catalog::HostRouteSet;
+use wamn_client::credentials::{PasswordCredentials, SecretInput, SessionTarget};
+use wamn_client::{
+    ClientError, CredentialProvider, HttpRequest, HttpResponse, StaticPat, Transport,
+};
+use wamn_environment_control::platform::artifact_plan;
+
+use super::{Journey, get, success};
+
+#[derive(Debug)]
+struct IdentityTransport(reqwest::Client);
+
+#[async_trait::async_trait]
+impl Transport for IdentityTransport {
+    async fn send(&self, request: HttpRequest) -> Result<HttpResponse, ClientError> {
+        let result = async {
+            let mut builder = self.0.request(request.method.parse()?, &request.url);
+            for (name, value) in request.headers {
+                builder = builder.header(name, value);
+            }
+            let response = builder.body(request.body).send().await?;
+            Ok::<_, anyhow::Error>(HttpResponse {
+                status: response.status().as_u16(),
+                body: response.text().await?,
+            })
+        }
+        .await;
+        result.map_err(|error| ClientError::Transport {
+            detail: error.to_string(),
+        })
+    }
+}
+
+struct Control<'a> {
+    journey: &'a Journey<'a>,
+    client: &'a reqwest::Client,
+    url: &'a str,
+    credentials: &'a dyn CredentialProvider,
+}
+
+impl Control<'_> {
+    async fn request(&self, operation: &str, mut value: Value) -> anyhow::Result<Value> {
+        let (_, attachment) = HostRouteSet::Control
+            .attachments()
+            .find(|(_, attachment)| attachment.route.operation == operation)
+            .context("control operation contract")?;
+        if attachment.route.authority == wamn_catalog::HostRouteAuthority::ProjectAdmin {
+            value["project"] = self.journey.project.into();
+            value["env"] = self.journey.environment.into();
+        }
+        let path = attachment.definition["route"]["path"]
+            .as_str()
+            .context("control path")?;
+        let url = format!("{}{path}", self.url);
+        let request = if attachment.route.type_.is_read() {
+            let query =
+                wamn_execution_contract::encode_read_query(value.as_object().context("query")?);
+            self.client.get(format!("{url}?{query}"))
+        } else {
+            self.client
+                .post(url)
+                .json(&json!([{"request_id":uuid::Uuid::new_v4().to_string(),"value":value}]))
+        };
+        let response = request
+            .header(
+                reqwest::header::HOST,
+                &self.journey.run.document.route_hosts.control,
+            )
+            .bearer_auth(self.credentials.bearer().await?)
+            .send()
+            .await?
+            .error_for_status()?;
+        let [answer]: [Value; 1] = response.json().await?;
+        Ok(answer)
+    }
+
+    async fn call(&self, operation: &str, value: Value) -> anyhow::Result<Value> {
+        let mut answer = self.request(operation, value).await?;
+        ensure!(
+            answer.get("error").is_none(),
+            "{operation} refused: {answer}"
+        );
+        answer
+            .as_object_mut()
+            .context("control answer")?
+            .remove("value")
+            .context("control value")
+    }
+
+    async fn operation(&self, operation: &str, value: Value) -> anyhow::Result<Value> {
+        let started = self.call(operation, value).await?;
+        let name = started["job"].as_str().context("operation Job")?;
+        tokio::time::timeout(Duration::from_mins(16), async {
+            loop {
+                let status = self.call("operation.status", json!({"job":name})).await?;
+                match status["state"].as_str() {
+                    Some("succeeded") => break,
+                    Some("failed") => anyhow::bail!("{operation} failed: {}", status["log"]),
+                    Some("pending" | "running") => tokio::time::sleep(Duration::from_secs(1)).await,
+                    _ => anyhow::bail!("invalid operation status: {status}"),
+                }
+            }
+            Ok::<_, anyhow::Error>(())
+        })
+        .await
+        .context("operation Job deadline")??;
+        let pods = get(
+            self.journey.run,
+            "platform",
+            "pods",
+            &format!("-l=job-name={name}"),
+        )
+        .await?;
+        ensure!(
+            !pods["items"].as_array().context("Job pods")?.is_empty(),
+            "Job has no pod"
+        );
+        Ok(pods)
+    }
+}
+
+pub(super) async fn exercise(
+    journey: &Journey<'_>,
+    artifacts: &BTreeMap<&str, String>,
+    identity: &reqwest::Client,
+    identity_url: &str,
+    control_url: &str,
+    password: &str,
+) -> anyhow::Result<()> {
+    // Initial environment declaration and provisioning remain trusted product verbs.
+    journey
+        .apply(
+            "provision-environment",
+            journey
+                .cli(
+                    &journey.run.binary.with_file_name("wamn-ctl"),
+                    &["env", "apply"],
+                )
+                .arg(&journey.file)
+                .args(["--application", "alpha"]),
+        )
+        .await?;
+    for (application, key) in [("alpha", "a0"), ("beta", "b0")] {
+        journey
+            .apply(
+                &format!("bootstrap-{application}-schema"),
+                journey
+                    .command(&[
+                        "schema",
+                        "apply",
+                        application,
+                        "--release",
+                        &artifacts[key],
+                        "--env",
+                    ])
+                    .arg(&journey.file),
+            )
+            .await?;
+        journey
+            .apply(
+                &format!("bootstrap-{application}-code"),
+                &mut journey.deploy(&artifacts[key]),
+            )
+            .await?;
+    }
+    let row = journey
+        .route(
+            "alpha",
+            "counter/create",
+            &json!([{
+                "request_id":uuid::Uuid::new_v4().to_string(),
+                "idempotency_key":uuid::Uuid::new_v4().to_string(),"label":"before"
+            }]),
+        )
+        .await?;
+    // Published execution must succeed after the submitting checkout is gone.
+    success(
+        Command::new("git")
+            .args(["-c", "core.hooksPath=/dev/null"])
+            .arg("-C")
+            .arg(&journey.run.repository)
+            .args(["worktree", "remove", "--force"])
+            .arg(&journey.run.checkout),
+    )
+    .await?;
+    let credentials = PasswordCredentials::new(
+        SessionTarget::new(
+            identity_url,
+            format!("urn:wamn:control:{}", journey.run.document.org),
+        )?,
+        // The authentication transport shares the configured TLS identity and CA with route calls.
+        Arc::new(IdentityTransport(identity.clone())),
+    );
+    credentials
+        .login(
+            &journey.run.document.owner_email,
+            SecretInput::new(password.to_owned())?,
+        )
+        .await?;
+    let control = Control {
+        journey,
+        client: identity,
+        url: control_url,
+        credentials: &credentials,
+    };
+    let coordinate = wamn_control_provision::environment_state::environment_resource_name(
+        &journey.run.document.org,
+        journey.project,
+        journey.environment,
+    )?;
+    denial(&control, identity_url, &artifacts["b1"]).await?;
+    let before = document(journey, &coordinate).await?;
+    let alpha_release = application_release(journey, "alpha").await?;
+    let deployed = control
+        .operation("application.deploy", json!({"release":artifacts["b1"]}))
+        .await?;
+    let after = document(journey, &coordinate).await?;
+    ensure!(
+        after["applications"]["alpha"] == before["applications"]["alpha"]
+            && application_release(journey, "alpha").await? == alpha_release,
+        "deploying beta changed alpha's selection or release ConfigMap"
+    );
+    ensure!(
+        after["applications"]["beta"]["current"] == artifacts["b1"],
+        "beta selection did not advance"
+    );
+    worker(journey, &deployed).await?;
+    control
+        .operation("application.rollback", json!({"application":"beta"}))
+        .await?;
+    let rolled_back = document(journey, &coordinate).await?;
+    ensure!(
+        rolled_back["applications"]["beta"]["current"] == artifacts["b0"]
+            && rolled_back["applications"]["alpha"] == before["applications"]["alpha"],
+        "route rollback did not restore only beta"
+    );
+    let applied = control
+        .operation(
+            "schema.apply",
+            json!({"application":"alpha","release":artifacts["schema"]}),
+        )
+        .await?;
+    job_credentials(journey, &coordinate, &deployed, &applied).await?;
+    let found = journey
+        .route("alpha", "counter/get", &json!([{"id":row["id"]}]))
+        .await?;
+    ensure!(
+        found["label"] == "before-migrated",
+        "schema.apply did not mutate the served data"
+    );
+    ensure!(
+        document(journey, &coordinate).await?["applications"] == rolled_back["applications"],
+        "schema.apply changed code selections"
+    );
+    hosted_ui(journey).await
+}
+
+async fn document(journey: &Journey<'_>, coordinate: &str) -> anyhow::Result<Value> {
+    let object = get(journey.run, "hosts", "configmap", coordinate).await?;
+    Ok(serde_json::from_str(
+        object["data"]["environment.json"]
+            .as_str()
+            .context("environment document")?,
+    )?)
+}
+
+async fn application_release(journey: &Journey<'_>, application: &str) -> anyhow::Result<Value> {
+    let name = wamn_control_provision::environment_state::application_release_name(
+        &journey.run.document.org,
+        journey.project,
+        journey.environment,
+        application,
+    )?;
+    Ok(get(journey.run, "hosts", "configmap", &name).await?["data"].take())
+}
+
+async fn jobs(control: &Control<'_>) -> anyhow::Result<BTreeSet<String>> {
+    let objects = get(control.journey.run, "platform", "jobs", "").await?;
+    objects["items"]
+        .as_array()
+        .context("Jobs")?
+        .iter()
+        .map(|job| {
+            Ok(job["metadata"]["uid"]
+                .as_str()
+                .context("Job UID")?
+                .to_owned())
+        })
+        .collect()
+}
+
+async fn denial(control: &Control<'_>, identity_url: &str, release: &str) -> anyhow::Result<()> {
+    let other = format!("other-{}", uuid::Uuid::new_v4().simple());
+    control
+        .call("project.create", json!({"project":other}))
+        .await?;
+    let email = format!("{other}@example.invalid");
+    control.call("user.invite", json!({"email":email,"display_name":"Other project administrator","project_admins":[other]})).await?;
+    let mut login = super::super::password_session(
+        control.journey.run,
+        control.client,
+        identity_url,
+        &email,
+        &uuid::Uuid::new_v4().to_string(),
+        true,
+    )
+    .await?;
+    let credentials = StaticPat::new(serde_json::from_value::<String>(
+        login["access_token"].take(),
+    )?)?;
+    let outsider = Control {
+        credentials: &credentials,
+        ..*control
+    };
+    // A valid control session for another project reaches authorization, rather than failing authentication.
+    outsider.call("control.mine", json!({})).await?;
+    let before = jobs(control).await?;
+    let answer = outsider
+        .request("application.deploy", json!({"release":release}))
+        .await?;
+    ensure!(
+        answer["error"]["code"] == "permission_denied",
+        "cross-project deploy was not denied: {answer}"
+    );
+    ensure!(
+        jobs(control).await? == before,
+        "denied deploy created a Job"
+    );
+    Ok(())
+}
+
+fn secret_names<'a>(value: &'a Value, names: &mut BTreeSet<&'a str>) {
+    match value {
+        Value::Object(fields) => {
+            for (key, value) in fields {
+                let name = match key.as_str() {
+                    "secretKeyRef" | "secretRef" => value["name"].as_str(),
+                    "secret" => value["secretName"]
+                        .as_str()
+                        .or_else(|| value["name"].as_str()),
+                    _ => None,
+                };
+                if let Some(name) = name {
+                    names.insert(name);
+                }
+                secret_names(value, names);
+            }
+        }
+        Value::Array(values) => {
+            for value in values {
+                secret_names(value, names);
+            }
+        }
+        _ => {}
+    }
+}
+
+async fn job_credentials(
+    journey: &Journey<'_>,
+    coordinate: &str,
+    code: &Value,
+    schema: &Value,
+) -> anyhow::Result<()> {
+    let target = get(
+        journey.run,
+        "platform",
+        "configmap",
+        &format!("{coordinate}-operations"),
+    )
+    .await?;
+    let cluster = target["data"]["cluster"]
+        .as_str()
+        .context("target CNPG cluster")?;
+    let administrator = format!("{cluster}-superuser");
+    // Schema mutation needs the target administrator in addition to the code worker's credentials.
+    // Derive shared credentials from the deployed code pod; no credential roster is pinned here.
+    let mut common = BTreeSet::new();
+    for pod in code["items"].as_array().context("code pods")? {
+        let mut actual = BTreeSet::new();
+        secret_names(&pod["spec"], &mut actual);
+        ensure!(
+            !actual.contains(administrator.as_str()),
+            "deploy pod has administrator Secret"
+        );
+        for container in ["containers", "initContainers"]
+            .into_iter()
+            .flat_map(|field| pod["spec"][field].as_array().into_iter().flatten())
+        {
+            ensure!(
+                !container["env"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .any(|env| env["name"] == "WAMN_SYSTEM_ADMIN_URL"
+                        || env["value"]
+                            .as_str()
+                            .is_some_and(|value| value.contains("/credentials/administrator"))),
+                "deploy pod has administrator environment"
+            );
+        }
+        common.extend(actual);
+    }
+    let mut expected = common;
+    expected.insert(&administrator);
+    for pod in schema["items"].as_array().context("schema pods")? {
+        let mut actual = BTreeSet::new();
+        secret_names(&pod["spec"], &mut actual);
+        ensure!(
+            actual == expected,
+            "schema pod credentials differ from its operation needs"
+        );
+    }
+    Ok(())
+}
+
+async fn worker(journey: &Journey<'_>, pods: &Value) -> anyhow::Result<()> {
+    let selected = artifact_plan::select(&journey.run.chart)?;
+    let selector = get(
+        journey.run,
+        "platform",
+        "configmap",
+        &format!("wamn-operation-{}", journey.run.document.org),
+    )
+    .await?;
+    let inputs = selector["data"]["inputs"]
+        .as_str()
+        .context("worker input selection")?;
+    let configuration = get(journey.run, "platform", "configmap", inputs).await?;
+    ensure!(
+        configuration["immutable"] == true,
+        "worker inputs are mutable"
+    );
+    for file in ["Chart.yaml", "values.yaml"] {
+        ensure!(
+            configuration["data"][file].as_str()
+                == Some(std::fs::read_to_string(journey.run.chart.join(file))?.as_str()),
+            "worker chart differs from the published selection"
+        );
+    }
+    for pod in pods["items"].as_array().context("worker pods")? {
+        let spec = &pod["spec"];
+        for volume in spec["volumes"].as_array().context("volumes")? {
+            ensure!(
+                volume.get("hostPath").is_none() && volume.get("persistentVolumeClaim").is_none(),
+                "worker uses machine storage"
+            );
+        }
+        ensure!(
+            spec["volumes"]
+                .as_array()
+                .context("volumes")?
+                .iter()
+                .any(|volume| volume["configMap"]["name"] == inputs),
+            "worker did not mount selected chart inputs"
+        );
+        let encoded = serde_json::to_string(spec)?;
+        for path in [
+            &journey.run.repository,
+            &journey.run.checkout,
+            &journey.run.chart,
+        ] {
+            ensure!(
+                !encoded.contains(path.to_str().context("checkout path")?),
+                "worker refers to submitting machine"
+            );
+        }
+        let container = spec["containers"]
+            .as_array()
+            .context("containers")?
+            .iter()
+            .find(|container| container["name"] == "operation")
+            .context("operation container")?;
+        ensure!(
+            container["image"] == selected.image("ctl")? && pod["status"]["phase"] == "Succeeded",
+            "worker did not execute the published image"
+        );
+    }
+    Ok(())
+}
+
+async fn hosted_ui(journey: &Journey<'_>) -> anyhow::Result<()> {
+    let selected = artifact_plan::select(&journey.run.chart)?;
+    let digest = selected.values()["platformUi"]
+        .as_str()
+        .context("platform UI artifact")?;
+    wamn_package_artifact::ensure_digest(digest)?;
+    let release = get(
+        journey.run,
+        "hosts",
+        "configmap",
+        &format!("c-{}", journey.run.document.org),
+    )
+    .await?;
+    let release: Value = serde_json::from_str(
+        release["data"]["release.json"]
+            .as_str()
+            .context("control web release")?,
+    )?;
+    ensure!(
+        release["platformUi"] == digest,
+        "edge UI artifact selection differs"
+    );
+    let forward = wamn_environment_control::platform::resources::port_forward(
+        &journey.run.target,
+        "hosts",
+        "service/wamn-edge",
+        443,
+    )
+    .await?;
+    let tls = get(journey.run, "hosts", "secret", "wamn-edge-tls").await?;
+    let host = &journey.run.document.route_hosts.control;
+    let client = reqwest::Client::builder()
+        .no_proxy()
+        .timeout(Duration::from_secs(30))
+        .add_root_certificate(reqwest::Certificate::from_pem(&super::secret(
+            &tls, "ca.crt",
+        )?)?)
+        .resolve(host, ([127, 0, 0, 1], forward.port).into())
+        .build()?;
+    let url = format!("https://{host}:{}", forward.port);
+    let html = client
+        .get(&url)
+        .send()
+        .await?
+        .error_for_status()?
+        .text()
+        .await?;
+    let assets: BTreeSet<_> = html
+        .split('"')
+        .filter(|path| path.starts_with("/assets/"))
+        .collect();
+    ensure!(
+        !assets.is_empty(),
+        "hosted platform UI has no asset references"
+    );
+    for path in assets.into_iter().chain(std::iter::once("/config.json")) {
+        let response = client
+            .get(format!("{url}{path}"))
+            .send()
+            .await?
+            .error_for_status()?;
+        ensure!(
+            !response.bytes().await?.is_empty(),
+            "hosted UI returned no bytes for {path}"
+        );
+    }
+    ensure!(
+        !journey.run.checkout.exists(),
+        "source checkout still exists"
+    );
+    Ok(())
+}

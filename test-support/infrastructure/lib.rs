@@ -2,7 +2,6 @@
 //!
 //! MVP outcome: test coverage.
 
-pub mod cluster;
 pub mod ctl_process;
 pub mod declarations;
 pub mod event_broker;

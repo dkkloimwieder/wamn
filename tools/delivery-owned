@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# Native artifact builds and cleanup of historical kept clusters.
+# Native artifact builds.
 set -euo pipefail
 umask 077
-action=${1:?build-native or remove-kept}
+action=${1:?build-native}
 repository=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
 if [[ $action == build-native ]]; then
   target=${2:?absolute native target directory}
@@ -22,10 +22,6 @@ if [[ $action == build-native ]]; then
     CXXFLAGS="-ffile-prefix-map=$target=/wamn-build" \
     cargo build --locked --offline --profile dev --bins --target-dir "$target" \
       -p wamn-host -p wamn-ctl -p wamn-identity -p wamn-cdc-reader -p wamn-scenario-worker
-fi
-if [[ $action == remove-kept ]]; then
-  cd "$repository"
-  exec cargo run --locked --offline -p wamn-test-infrastructure --bin wamn-test-cluster -- "${2:?kept delivery cluster name}"
 fi
 printf 'Unknown owned delivery action: %s\n' "$action" >&2
 exit 64

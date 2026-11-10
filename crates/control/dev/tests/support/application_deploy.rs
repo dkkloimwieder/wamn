@@ -17,6 +17,9 @@ use wamn_environment_control::platform::resources;
 
 use super::{POLL_LIMIT, ProcessGroup, Run, execute, get, kubectl, success};
 
+#[path = "control_operations.rs"]
+mod control_operations;
+
 #[path = "schema_reset.rs"]
 mod schema_reset;
 
@@ -36,6 +39,7 @@ pub(super) enum Case {
     Reset,
     PlatformUpgrade,
     PlatformSchema,
+    ControlOperations,
 }
 
 struct Journey<'a> {
@@ -60,6 +64,8 @@ impl Journey<'_> {
         command
             .current_dir(&self.run.directory)
             .env_remove("WAMN_TEST_OWNER_PASSWORD")
+            .env_remove("WAMN_CONTROL_URL")
+            .env_remove("WAMN_TOKEN")
             .env_remove("WAMN_RELEASE_HOST_GROUP")
             .env_remove("WAMN_DATABASE_HOST")
             .env_remove("WAMN_DATABASE_PORT")
@@ -227,15 +233,17 @@ impl Journey<'_> {
 
 pub(super) async fn exercise(run: &Run, cases: &[Case], password: &str) -> anyhow::Result<()> {
     exercise_inner(run, cases, password).await?;
-    success(
-        Command::new("git")
-            .args(["-c", "core.hooksPath=/dev/null"])
-            .arg("-C")
-            .arg(&run.repository)
-            .args(["worktree", "remove", "--force"])
-            .arg(&run.checkout),
-    )
-    .await?;
+    if run.checkout.exists() {
+        success(
+            Command::new("git")
+                .args(["-c", "core.hooksPath=/dev/null"])
+                .arg("-C")
+                .arg(&run.repository)
+                .args(["worktree", "remove", "--force"])
+                .arg(&run.checkout),
+        )
+        .await?;
+    }
     Ok(())
 }
 
@@ -410,6 +418,17 @@ async fn exercise_inner(run: &Run, cases: &[Case], password: &str) -> anyhow::Re
         let document = case_document(&document, case);
         std::fs::write(&journey.file, document.to_kcl())?;
         let result = match case {
+            Case::ControlOperations => {
+                control_operations::exercise(
+                    &journey,
+                    &artifacts,
+                    &identity_client,
+                    &endpoint,
+                    &format!("http://127.0.0.1:{}", control.port),
+                    password,
+                )
+                .await
+            }
             Case::SqlJob => {
                 schema_job::exercise(&journey, &artifacts["sql0"], &artifacts["sql1"]).await
             }
@@ -428,6 +447,9 @@ fn case_document(document: &EnvironmentDocument, case: Case) -> EnvironmentDocum
     let mut document = document.clone();
     if case == Case::PlatformSchema {
         document.applications.retain(|name, _| name == "alpha");
+    }
+    if case == Case::ControlOperations {
+        document.schema.mode = Some(SchemaMode::Migrate);
     }
     if case == Case::SqlJob {
         document.applications.retain(|name, _| name == "alpha");
@@ -476,6 +498,22 @@ async fn prepare_artifacts(
             journey.publish("alpha", "1.0.2", &sources["alpha"]).await?,
         );
         version(&sources["alpha"], "1.0.2", "1.0.1")?;
+    }
+    if cases.contains(&Case::ControlOperations) {
+        version(&sources["beta"], "1.0.0", "1.0.1")?;
+        artifacts.insert(
+            "b1",
+            journey.publish("beta", "1.0.1", &sources["beta"]).await?,
+        );
+        version(&sources["alpha"], "1.0.0", "1.1.0")?;
+        std::fs::write(
+            sources["alpha"].join("migrations/0002_counter_data.sql"),
+            "UPDATE alpha_data.counter SET label = label || '-migrated';\n",
+        )?;
+        artifacts.insert(
+            "schema",
+            journey.publish("alpha", "1.1.0", &sources["alpha"]).await?,
+        );
     }
     if cases.contains(&Case::Reset) {
         let root = &sources["alpha"];

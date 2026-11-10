@@ -700,6 +700,7 @@ Select each test by its exact name in the `platform_apply_kind` Cargo target:
 
 | Test | Coverage | Platform |
 | --- | --- | --- |
+| `control_operations_kind` | Authenticated Job credentials, cross-project denial without a Job, two-application selection isolation, rollback, schema mutation, artifact worker and hosted UI | Creates one fresh kind cluster; bounded to 45 minutes |
 | `platform_install_recovery_kind` | Interrupt platform installation after its first Kubernetes write, retry, status, and owner sign-in | Creates one fresh kind cluster |
 | `application_deploy_kind` | Source and published code updates, interrupted installation and replacement recovery, reapply, rollback, missing artifacts, stale checkout, retained data, and independent applications | Attaches to an existing disposable kind platform |
 | `platform_upgrade_kind` | Independent control and identity updates, one application host update, code reapply, earlier runtime selection, and retained data | Attaches to an existing disposable kind platform |
@@ -814,6 +815,28 @@ Run fresh-platform acceptance with the prepared chart selected by `WAMN_RELEASE_
 ```bash
 cargo test --locked --offline -p wamn-dev-control --test platform_apply_kind platform_apply_kind -- --ignored --exact --nocapture
 ```
+
+DEP6's bounded case uses one fresh platform, trusted product commands for its first environment,
+and authenticated control routes for the subsequent deploy, rollback, and schema mutation.
+It reads actual Job pods, the canonical environment ConfigMap, and application release ConfigMaps.
+It deletes its publishing checkout before route execution.
+It reads the worker's image, immutable chart inputs, and storage mounts to exclude paths from the submitting machine.
+The same run reads the artifact-hosted platform UI through the product edge.
+Select a prepared chart with a published platform UI artifact.
+Supply all publication inputs listed above before the run.
+Allow 30–45 minutes with prepared platform artifacts.
+The test enforces a 45-minute limit that includes setup and successful cleanup.
+Run it with this command:
+
+```bash
+cargo test --locked -p wamn-dev-control --test platform_apply_kind \
+  control_operations_kind -- --ignored --exact --nocapture
+```
+
+The case deletes its cluster after success and retains failed resources with exact cleanup commands.
+It creates another project for the denied caller.
+Cluster deletion removes both projects.
+Project deletion still has no standalone product operation.
 
 A CLI-only change rebuilds the native binaries and the affected test executable.
 It reuses the installed platform and its prepared chart and images.
@@ -1358,13 +1381,9 @@ For manual fixtures, remove only the exact container, cluster, image, volume, an
 
 A killed cluster test (SIGKILL) does not run its cleanup, so its cluster and containers stay.
 After a killed run, find the cluster that your run created with `kind get clusters`.
-For a historical Receiving or WMS cluster, use the shared Rust fixture:
-
-```bash
-cargo run --locked --offline -p wamn-test-infrastructure --bin wamn-test-cluster -- <cluster>
-```
-
-The fixture deletes the kind cluster and its owned containers, registry volume, and local image tags.
+The historical Receiving/WMS fixture cleanup binary was removed with DEP6-06.
+Use the retained run's exact cluster name and the product provider's cleanup commands.
+For a run that predates product deployment, inspect and remove only that run's sidecars and image tags.
 Never remove a cluster that another session created.
 
 Use explicit cluster names, kubeconfig paths, and contexts for Kubernetes and Helm commands.

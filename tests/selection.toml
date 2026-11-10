@@ -822,6 +822,22 @@ ignored = true
 resource_lock = ""
 
 [[suites]]
+id = "control-operations-kind"
+tier = "kind"
+workspace = "root"
+package = "wamn-dev-control"
+target = ["test:platform_apply_kind"]
+tests = ["control_operations_kind"]
+features = []
+prerequisites = ["docker", "kind", "helm", "kubectl", "openssl", "script"]
+inputs = ["^crates/control/dev/tests/support/control_operations\\.rs$", "^test-support/infrastructure/", "^crates/execution/host/src/control_route/operation_job\\.rs$", "^crates/control/environment/src/(environment/operation|platform/operations)\\.rs$"]
+execution = "libtest"
+mode = "local"
+select_packages = ["wamn-environment-control", "wamn-dev-control", "wamn-execution-host", "wamn-test-infrastructure"]
+ignored = true
+resource_lock = ""
+
+[[suites]]
 id = "platform-upgrade-kind"
 tier = "kind"
 workspace = "root"

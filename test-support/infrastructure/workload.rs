@@ -147,7 +147,15 @@ pub async fn image_ready(
     build_profile: &str,
     evidence: &Path,
 ) -> anyhow::Result<String> {
-    let config = crate::cluster::image_config(cluster, image).await?;
+    let names = checked(Command::new("kind").args(["get", "nodes", "--name", cluster])).await?;
+    let node = std::str::from_utf8(&names)?
+        .lines()
+        .next()
+        .context("kind reported no node")?;
+    let observed = command_json(&mut node_image(node, image)).await?;
+    let config = observed
+        .pointer("/info/imageSpec")
+        .context("CRI returned no image configuration")?;
     let labels = config["config"]["Labels"].clone();
     save(evidence, "host-image-labels.json", &labels)?;
     ensure!(
@@ -165,7 +173,7 @@ pub async fn image_ready(
     let nodes = command_json(kubectl(cluster, work).args(["get", "nodes", "-o", "json"])).await?;
     save(evidence, "nodes.json", &nodes)?;
     validate_nodes(&nodes)?;
-    let names = checked(&mut crate::cluster::nodes(cluster)).await?;
+    let names = checked(Command::new("kind").args(["get", "nodes", "--name", cluster])).await?;
     let names = String::from_utf8(names)?
         .lines()
         .map(str::to_owned)
@@ -189,7 +197,7 @@ async fn loaded_image_digest(
 ) -> anyhow::Result<String> {
     let mut inspections = Vec::new();
     for node in names {
-        let bytes = checked(&mut crate::cluster::node_image(node, image)).await?;
+        let bytes = checked(&mut node_image(node, image)).await?;
         fs::write(evidence.join(format!("node-image-{node}.json")), &bytes)?;
         inspections.push((node, bytes));
     }
@@ -224,13 +232,19 @@ async fn loaded_image_digest(
 pub async fn capture_node_images(names: &BTreeSet<String>, evidence: &Path) {
     for node in names {
         for (mut command, file) in [
-            (crate::cluster::cri_images(node), "cri-images.json"),
             (
-                crate::cluster::containerd_images(node),
+                docker(&["exec", node, "crictl", "images", "-o", "json"]),
+                "cri-images.json",
+            ),
+            (
+                docker(&["exec", node, "ctr", "--namespace", "k8s.io", "images", "ls"]),
                 "containerd-images.txt",
             ),
         ] {
-            let Ok(output) = crate::cluster::output(&mut command).await else {
+            let Ok(Ok(output)) =
+                tokio::time::timeout(Duration::from_secs(30), command.kill_on_drop(true).output())
+                    .await
+            else {
                 continue;
             };
             let path = evidence.join(format!("failure-{node}-{file}"));
@@ -681,12 +695,31 @@ fn kubectl(cluster: &str, work: &Path) -> Command {
         .arg(format!("kind-{cluster}"));
     command
 }
+fn docker(args: &[&str]) -> Command {
+    let mut command = Command::new("docker");
+    command.args(args);
+    command
+}
+fn node_image(node: &str, image: &str) -> Command {
+    docker(&["exec", node, "crictl", "inspecti", "-o", "json", image])
+}
 async fn command_json(command: &mut Command) -> anyhow::Result<Value> {
     serde_json::from_slice(&checked(command).await?)
         .context("read the observed Kubernetes or image JSON")
 }
 async fn checked(command: &mut Command) -> anyhow::Result<Vec<u8>> {
-    crate::cluster::run(command).await
+    let output = tokio::time::timeout(
+        Duration::from_secs(300),
+        command.kill_on_drop(true).output(),
+    )
+    .await
+    .context("workload observation deadline")??;
+    ensure!(
+        output.status.success(),
+        "workload observation failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    Ok(output.stdout)
 }
 
 #[cfg(test)]

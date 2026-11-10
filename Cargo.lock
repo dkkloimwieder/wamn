@@ -5850,6 +5850,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-nats",
+ "async-trait",
  "base64 0.22.1",
  "chrono",
  "futures-util",
@@ -5871,6 +5872,7 @@ dependencies = [
  "uuid",
  "wamn-authoring-model",
  "wamn-catalog",
+ "wamn-client",
  "wamn-component-composer",
  "wamn-control-provision",
  "wamn-control-registry",

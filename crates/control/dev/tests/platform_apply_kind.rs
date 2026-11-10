@@ -130,6 +130,44 @@ async fn platform_apply_kind() -> anyhow::Result<()> {
     fresh(true).await
 }
 
+/// DEP6 acceptance uses one fresh platform and a 45-minute setup-to-cleanup bound.
+#[tokio::test]
+#[ignore = "requires: bin:kind, bin:docker, bin:kubectl, bin:helm, bin:openssl, bin:script, env:WAMN_RELEASE_CHART, env:WAMN_KCL, env:DATABASE_URL, env:WAMN_FLOW_HTTP_COMPONENT, env:WAMN_PACKAGE_ARTIFACT_BASE, env:WAMN_COMPONENT_ARTIFACT_BASE, env:WAMN_RELEASE_ARTIFACT_BASE, env:WAMN_REGISTRY_AUTH_FILE"]
+async fn control_operations_kind() -> anyhow::Result<()> {
+    wamn_test_postgres::require_ignored_prerequisites(
+        "requires: bin:kind, bin:docker, bin:kubectl, bin:helm, bin:openssl, bin:script, env:WAMN_RELEASE_CHART, env:WAMN_KCL, env:DATABASE_URL, env:WAMN_FLOW_HTTP_COMPONENT, env:WAMN_PACKAGE_ARTIFACT_BASE, env:WAMN_COMPONENT_ARTIFACT_BASE, env:WAMN_RELEASE_ARTIFACT_BASE, env:WAMN_REGISTRY_AUTH_FILE",
+    );
+    tokio::time::timeout(Duration::from_mins(45), async {
+        let (repository, binary, kcl) = inputs()?;
+        let chart = platform_images::source_chart(&repository, &repository)?;
+        let selected = artifact_plan::select(&chart)?;
+        wamn_package_artifact::ensure_digest(
+            selected.values()["platformUi"]
+                .as_str()
+                .context("select a published platform UI artifact")?,
+        )?;
+        for name in ["WAMN_FLOW_HTTP_COMPONENT", "WAMN_REGISTRY_AUTH_FILE"] {
+            ensure!(
+                Path::new(&std::env::var(name)?).is_file(),
+                "{name} must name a prepared file"
+            );
+        }
+        let mut run = prepare(&repository, &chart, &binary, &kcl, None)?;
+        deploy(&run, "control-platform-deploy").await?;
+        run.target.context =
+            provider::existing_kubeconfig(&run.document, &run.target.kubeconfig).await?;
+        application_deploy::exercise(
+            &run,
+            &[application_deploy::Case::ControlOperations],
+            &uuid::Uuid::new_v4().to_string(),
+        )
+        .await?;
+        cleanup(&mut run).await
+    })
+    .await
+    .context("control operations exceeded 45 minutes")?
+}
+
 fn inputs() -> anyhow::Result<(PathBuf, PathBuf, PathBuf)> {
     let repository = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../..")
@@ -574,6 +612,25 @@ async fn owner_session(
     password: &str,
     enroll: bool,
 ) -> anyhow::Result<Value> {
+    password_session(
+        run,
+        client,
+        endpoint,
+        &run.document.owner_email,
+        password,
+        enroll,
+    )
+    .await
+}
+
+async fn password_session(
+    run: &Run,
+    client: &reqwest::Client,
+    endpoint: &str,
+    email: &str,
+    password: &str,
+    enroll: bool,
+) -> anyhow::Result<Value> {
     if enroll {
         let mail = success(kubectl(run).args([
             "-n",
@@ -593,11 +650,11 @@ async fn owner_session(
             .collect::<Result<_, _>>()?;
         let code = records
             .iter()
-            .filter(|record| record["to"] == run.document.owner_email)
+            .filter(|record| record["to"] == email)
             .filter_map(|record| record["text"].as_str())
             .flat_map(str::lines)
             .find_map(|line| line.strip_prefix("Invitation code: "))
-            .context("owner invitation is absent from local mail")?;
+            .context("invitation is absent from local mail")?;
         let (principal, invitation) = code.split_once(':').context("invitation code")?;
         let response = client
             .post(format!("{endpoint}/password/enroll"))
@@ -613,7 +670,7 @@ async fn owner_session(
         );
     }
     let response = client.post(format!("{endpoint}/password/session"))
-        .json(&json!({"email": run.document.owner_email, "password": password, "aud": format!("urn:wamn:control:{}", run.document.org)})).send().await?;
+        .json(&json!({"email": email, "password": password, "aud": format!("urn:wamn:control:{}", run.document.org)})).send().await?;
     ensure!(
         response.status().is_success(),
         "owner login returned {}",

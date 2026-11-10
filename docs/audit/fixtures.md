@@ -2,6 +2,13 @@
 
 Branch `worktree-fixtures` on origin, based on main b7aff8e09. It is not merged. The epic stays open until the reviewer accepts it.
 
+DEP6-06 removes the superseded `test-support/infrastructure/cluster.rs` lifecycle,
+preflight, image transport, deadline wrappers, and helper tests, plus `wamn-test-cluster`
+and `tools/delivery-owned remove-kept`. The descriptions below record the historical implementation.
+Independent workload observations and Kubernetes Job verdicts remain with their current owners.
+The product-driven `control_operations_kind` case in `platform_apply_kind` replaces deployment orchestration.
+Its cluster execution remains unverified until the owner-approved run.
+
 ## Issues
 
 | Issue | Commits |
