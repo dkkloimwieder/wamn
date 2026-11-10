@@ -1,4 +1,4 @@
-use std::{env, fs, path::Path};
+use std::{env, fmt::Write, fs, path::Path};
 
 fn main() {
     let root =
@@ -14,10 +14,12 @@ fn main() {
             .filter(|path| path.file_name().is_none_or(|name| name != ".gitkeep"))
             .collect::<Vec<_>>();
         files.sort();
-        generated.push_str(&format!(
-            "/// Ordered migration IDs and exact bytes from the image.\npub const {}_MIGRATIONS: &[(&str, &[u8])] = &[\n",
+        writeln!(
+            generated,
+            "/// Ordered migration IDs and exact bytes from the image.\npub const {}_MIGRATIONS: &[(&str, &[u8])] = &[",
             scope.to_uppercase()
-        ));
+        )
+        .expect("write migration list to String");
         for path in files {
             assert!(
                 path.is_file(),
@@ -30,7 +32,14 @@ fn main() {
                 .to_str()
                 .expect("migration name is UTF-8");
             let id = format!("migrations/{scope}/{name}");
-            generated.push_str(&format!("({id:?}, include_bytes!({path:?})),\n"));
+            writeln!(
+                generated,
+                "({id:?}, include_bytes!(\"{}\")),",
+                path.to_str()
+                    .expect("migration path is UTF-8")
+                    .escape_default()
+            )
+            .expect("write migration entry to String");
             println!("cargo:rerun-if-changed={}", path.display());
         }
         generated.push_str("];\n");

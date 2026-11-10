@@ -91,7 +91,7 @@ pub async fn adopt_package_schemas(
             .as_ref()
             .is_none_or(|record| record.physical_schema_fingerprint != fingerprint)
         {
-            super::record_package_schema(
+            super::package_version::record_package_schema(
                 &tx,
                 env_key,
                 &complete.coordinate,

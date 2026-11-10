@@ -1,3 +1,4 @@
+use super::operation_grants::ensure_admin_role;
 use super::*;
 
 #[tokio::test]

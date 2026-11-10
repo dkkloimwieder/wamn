@@ -115,10 +115,10 @@ struct NormalizedMigration<'a> {
     sha256: String,
 }
 
-fn normalized_migrations(
-    sources: &[MigrationSource],
+fn normalized_migrations<'a>(
+    sources: &'a [MigrationSource],
     prefix: &str,
-) -> Result<Vec<NormalizedMigration<'_>>, PackageMigrationError> {
+) -> Result<Vec<NormalizedMigration<'a>>, PackageMigrationError> {
     let mut migrations = sources
         .iter()
         .map(|source| {
