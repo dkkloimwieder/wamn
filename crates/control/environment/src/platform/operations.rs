@@ -108,6 +108,8 @@ pub fn target_objects(
             json!({"apiGroups":[""],"resources":["pods","events"],"verbs":["get","list","watch"]}),
             json!({"apiGroups":["apps"],"resources":["deployments"],"verbs":["get","list","watch","create","update","patch","delete"]}),
             json!({"apiGroups":["apps"],"resources":["replicasets"],"verbs":["get","list","watch"]}),
+            // Runtime deployment refuses to start while the platform edge has no ready endpoint.
+            json!({"apiGroups":["discovery.k8s.io"],"resources":["endpointslices"],"verbs":["list"]}),
             json!({"apiGroups":["runtime.wasmcloud.dev"],"resources":["workloaddeployments"],"verbs":["get","list","watch","create","update","patch","delete"]}),
         ];
         if privileged {
