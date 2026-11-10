@@ -511,10 +511,10 @@ mod tests {
             assert_eq!(actual, expected, "{}", route.operation);
             match operation {
                 Operation::Deploy | Operation::Rollback | Operation::Diff => {
-                    assert!(!actual.contains("cnpg-superuser"))
+                    assert!(!actual.contains("cnpg-superuser"));
                 }
                 Operation::Apply | Operation::Reset | Operation::Adopt => {
-                    assert!(actual.contains("cnpg-superuser"))
+                    assert!(actual.contains("cnpg-superuser"));
                 }
             }
             assert_eq!(

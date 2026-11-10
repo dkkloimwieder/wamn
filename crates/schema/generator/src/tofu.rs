@@ -96,6 +96,7 @@ pub fn render_project_tofu(
                 "labels": labels,
                 "taint": taints,
                 "service_account": project.node_service_account,
+                "workload_metadata_config": {"mode": "GKE_METADATA"},
             },
             "lifecycle": {"prevent_destroy": true, "ignore_changes": ["node_count", "node_config[0].taint"]},
         });
@@ -555,6 +556,10 @@ mod tests {
                 assert_eq!(pool["node_config"][field], source[field]);
             }
             assert_eq!(pool["node_config"]["disk_size_gb"], source["disk_size"]);
+            assert_eq!(
+                pool["node_config"]["workload_metadata_config"]["mode"],
+                "GKE_METADATA"
+            );
             assert_eq!(
                 pool["node_config"]["service_account"],
                 declared["node_service_account"]

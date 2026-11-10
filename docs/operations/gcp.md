@@ -40,17 +40,49 @@ The owner supplies these external cloud inputs.
      --role roles/secretmanager.secretAccessor
    ```
 
-4. The Workload Identity grants of the namespace `hosts`. Each environment host runs as its own Kubernetes service account `hosts/wamn-host-<org>--<project>--<env>`, and the platform Jobs run as `hosts/wamn-host`. No account carries an `iam.gke.io` annotation. The grants name the namespace, so every account in `hosts` reads the registry and the labels bucket. A teardown keeps these grants, because they are IAM. If a grant is missing, the owner runs:
+4. Workload Identity grants for the rendered worker accounts.
+   Workload Identity authenticates Kubernetes workloads to Google Cloud without service-account keys.
+   Grant access to each account below. Do not grant access to an entire namespace. Remove former namespace grants from existing deployments.
+   The control chart renders `hosts/wamn-control-<org>`.
+   Environment provisioning creates `hosts/wamn-host-<org>--<project>--<env>` for application and shared hosts.
+   Control operation Jobs run as `platform/<coordinate>-code` or `platform/<coordinate>-sql`.
+   The coordinate is the environment ConfigMap name in `hosts`.
+   `operations.rs` creates both operation accounts from that same coordinate.
+
+   Set these values for one configured target before you grant access:
 
    ```bash
    NUMBER=$(gcloud projects describe wamn-dev --format 'value(projectNumber)')
-   gcloud artifacts repositories add-iam-policy-binding wamn --project wamn-dev --location us-central1 \
-     --member "principalSet://iam.googleapis.com/projects/$NUMBER/locations/global/workloadIdentityPools/wamn-dev.svc.id.goog/namespace/hosts" --role roles/artifactregistry.reader
-   gcloud storage buckets add-iam-policy-binding gs://wamn-dev-labels \
-     --member "principalSet://iam.googleapis.com/projects/$NUMBER/locations/global/workloadIdentityPools/wamn-dev.svc.id.goog/namespace/hosts" --role roles/storage.objectAdmin
+   ORG=<organization>
+   PROJECT=<project>
+   ENV=<environment>
+   COORDINATE=<environment-configmap-name>
+   POOL="principal://iam.googleapis.com/projects/$NUMBER/locations/global/workloadIdentityPools/wamn-dev.svc.id.goog/subject/ns"
    ```
 
+   Grant registry reads to the accounts that read OCI artifacts:
+
+   ```bash
+   for ACCOUNT in "hosts/wamn-control-$ORG" "hosts/wamn-host-$ORG--$PROJECT--$ENV" \
+     "platform/$COORDINATE-code" "platform/$COORDINATE-sql"
+   do
+     gcloud artifacts repositories add-iam-policy-binding wamn --project wamn-dev --location us-central1 \
+       --member "$POOL/${ACCOUNT%/*}/sa/${ACCOUNT#*/}" --role roles/artifactregistry.reader
+   done
+   ```
+
+   Grant labels access only to the environment host that uses the labels connection:
+
+   ```bash
+   gcloud storage buckets add-iam-policy-binding gs://wamn-dev-labels \
+     --member "$POOL/hosts/sa/wamn-host-$ORG--$PROJECT--$ENV" --role roles/storage.objectAdmin
+   ```
+
+   For another target, use its configured repositories and buckets.
+   These direct grants need no Google service account or `iam.gke.io` annotation.
+   A teardown keeps the grants because IAM owns them.
    The project number of `wamn-dev` is 540250462877.
+   [GKE workload authentication](https://docs.cloud.google.com/kubernetes-engine/docs/how-to/workload-identity) describes the direct principal format.
 
 5. The telemetry bucket and its writer. The bucket `wamn-dev-otel` deletes an object 30 days after it lands. The Google service account `wamn-otel` writes to it and reads its metadata, because the collector exporter reads the bucket at start (`storage.buckets.get`). The Kubernetes service account `platform/otel-collector` acts as `wamn-otel`. A teardown keeps all three, because they are a bucket and IAM:
 
@@ -144,11 +176,17 @@ The owner supplies these external cloud inputs.
     The owner grants `roles/dns.admin` on that zone to the manifest's service account `cert-manager/cert-manager`.
     The load balancer uses its own Google-managed certificate from Certificate Manager.
 
-15. Write access to `buckets.web` for web uploads. The `hosts/wamn-host` service account takes the grants of namespace `hosts` (item 4). A teardown keeps this grant, because it is IAM. If the grant is missing, the agent runs:
+15. Read and create access to `buckets.web` for web uploads.
+    The uploader reads the completion index and existing objects before it writes.
+    The agent runs `wamn web upload`. Control operation Jobs do not upload web artifacts.
+    Grant the agent both roles:
 
     ```bash
-    gcloud storage buckets add-iam-policy-binding gs://wamn-dev-web \
-      --member "principalSet://iam.googleapis.com/projects/$NUMBER/locations/global/workloadIdentityPools/wamn-dev.svc.id.goog/namespace/hosts" --role roles/storage.objectCreator
+    for ROLE in roles/storage.objectViewer roles/storage.objectCreator
+    do
+      gcloud storage buckets add-iam-policy-binding gs://wamn-dev-web \
+        --member serviceAccount:wamn-agent@wamn-dev.iam.gserviceaccount.com --role "$ROLE"
+    done
     ```
 
 Cloud artifact production uses these owner inputs and never creates their grants or budget. If an input is missing, the cloud operation fails.
@@ -165,7 +203,7 @@ The teardown keeps these resources for later cloud integration. The owner makes 
 - The buckets `wamn-dev-web`, `wamn-dev-backups` and `wamn-dev-labels`.
 - The VPC `wamn`, its subnet `wamn-us-central1` and the node service account `wamn-nodes`.
 - The Cloud DNS zone `wamn-dev`, its records, and the `roles/dns.admin` binding of the cert-manager principal on the zone. `project.k` declares the zone. OpenTofu does not own the records or the binding.
-- The grants of the namespace `hosts` on `wamn`, `gs://wamn-dev-labels` and `gs://wamn-dev-web` (section 1, items 4 and 15).
+- The direct worker grants on `wamn`, `gs://wamn-dev-labels` and `gs://wamn-dev-web` (section 1, items 4 and 15).
 - The firewall rule that permits load balancer traffic to nginx on TCP port 8443. The project document declares the load balancer objects.
 
 Run every command as the project owner, with `--project wamn-dev`. The default project of the gcloud configuration can be another project, so a command without `--project` acts on the wrong one.
@@ -200,7 +238,9 @@ gcloud beta quotas preferences list --project wamn-dev --format="value(quotaId,q
 
 To change a cap, run `gcloud beta quotas preferences update` with the same preference id.
 
-Make the network and the node service account. `deploy/gcp/project.k` names both:
+Make the network and the node service account. `deploy/gcp/project.k` names both.
+GKE uses `wamn-nodes` to [pull container images](https://docs.cloud.google.com/kubernetes-engine/docs/concepts/workload-identity), including Job images.
+OpenTofu enables the GKE metadata server on each node pool for workload requests inside containers.
 
 ```bash
 gcloud compute networks create wamn --project wamn-dev --subnet-mode=custom
@@ -209,10 +249,12 @@ gcloud compute networks subnets create wamn-us-central1 --project wamn-dev \
   --secondary-range pods=10.20.0.0/16,services=10.30.0.0/20
 gcloud iam service-accounts create wamn-nodes --project wamn-dev --display-name="wamn GKE nodes"
 NSA=wamn-nodes@wamn-dev.iam.gserviceaccount.com
-for role in roles/logging.logWriter roles/monitoring.metricWriter roles/artifactregistry.reader
+for role in roles/logging.logWriter roles/monitoring.metricWriter
 do
   gcloud projects add-iam-policy-binding wamn-dev --member=serviceAccount:$NSA --role=$role --condition=None
 done
+gcloud artifacts repositories add-iam-policy-binding wamn --project wamn-dev --location us-central1 \
+  --member serviceAccount:$NSA --role roles/artifactregistry.reader
 ```
 
 Make the firewall rule for the load balancer health checks (owner input 14):
@@ -235,7 +277,7 @@ gcloud storage buckets create gs://wamn-dev-labels --project wamn-dev --location
   --uniform-bucket-level-access --public-access-prevention
 ```
 
-Grant the namespace `hosts` read access to `wamn` and `roles/storage.objectAdmin` on the labels bucket, with the commands of owner input 4 (section 1).
+Grant each rendered worker access with the commands in section 1, items 4 and 15.
 
 Make the read-only role of the agent's OpenTofu plan, and bind it to `wamn-agent`:
 
