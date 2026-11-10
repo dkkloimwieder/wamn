@@ -1777,6 +1777,7 @@ mod tests {
                 "wamn-control-integration-list-http",
                 "wamn-control-integration-type-list-http",
                 "wamn-control-member-list-http",
+                "wamn-control-operation-status-http",
                 "wamn-control-project-list-http",
                 "wamn-control-release-profile-http",
                 "wamn-control-user-list-http",

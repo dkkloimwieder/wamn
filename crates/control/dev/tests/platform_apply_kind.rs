@@ -132,10 +132,10 @@ async fn platform_apply_kind() -> anyhow::Result<()> {
 
 /// DEP6 acceptance uses one fresh platform and a 45-minute setup-to-cleanup bound.
 #[tokio::test]
-#[ignore = "requires: bin:kind, bin:docker, bin:kubectl, bin:helm, bin:openssl, bin:script, env:WAMN_RELEASE_CHART, env:WAMN_KCL, env:DATABASE_URL, env:WAMN_FLOW_HTTP_COMPONENT, env:WAMN_PACKAGE_ARTIFACT_BASE, env:WAMN_COMPONENT_ARTIFACT_BASE, env:WAMN_RELEASE_ARTIFACT_BASE, env:WAMN_REGISTRY_AUTH_FILE"]
+#[ignore = "requires: bin:kind, bin:docker, bin:kubectl, bin:helm, bin:openssl, bin:script"]
 async fn control_operations_kind() -> anyhow::Result<()> {
     wamn_test_postgres::require_ignored_prerequisites(
-        "requires: bin:kind, bin:docker, bin:kubectl, bin:helm, bin:openssl, bin:script, env:WAMN_RELEASE_CHART, env:WAMN_KCL, env:DATABASE_URL, env:WAMN_FLOW_HTTP_COMPONENT, env:WAMN_PACKAGE_ARTIFACT_BASE, env:WAMN_COMPONENT_ARTIFACT_BASE, env:WAMN_RELEASE_ARTIFACT_BASE, env:WAMN_REGISTRY_AUTH_FILE",
+        "requires: bin:kind, bin:docker, bin:kubectl, bin:helm, bin:openssl, bin:script",
     );
     tokio::time::timeout(Duration::from_mins(45), async {
         let (repository, binary, kcl) = inputs()?;

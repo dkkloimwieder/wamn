@@ -148,6 +148,9 @@ if tool == 'kubectl':
         if args[1] == 'cluster.postgresql.cnpg.io/wamn-pg':
             print(json.dumps({'spec':{'imageName':'postgres:18'}, 'status': {'currentPrimary': state.get('primary', 'wamn-pg-1')}}))
             sys.exit(0)
+        if resource in state.get('configmaps', {}):
+            print(json.dumps({'apiVersion':'v1', 'kind':'ConfigMap', 'data':state['configmaps'][resource]}))
+            sys.exit(0)
         if args[1].startswith(('secret/', 'configmap/')):
             data = {key: 'fixture' for key in ['url', 'ca.crt', 'tls.crt', 'tls.key',
                 'key', 'api-key', '.dockerconfigjson', 'target.json', 'password']}
@@ -609,12 +612,19 @@ async fn platform_project_schema_runs_only_the_selected_environment_sql_job() ->
         .batch_execute(wamn_control_provision::APP_SCHEMA_SQL)
         .await?;
     wamn_package_control::schema_baseline::record_project(&client).await?;
-    let document = EnvironmentDocument::from_json(br#"{"org":"dep5","project":"fixture","env":"dev","target":"cloud","policy":"dev","applications":{}}"#)?;
+    let text = r#"{"org":"dep5","project":"fixture","env":"dev","target":"cloud","policy":"dev","applications":{}}"#;
+    let document = EnvironmentDocument::from_json(text.as_bytes())?;
+    // The deployed environment ConfigMap is the document authority.
+    let coordinate = wamn_control_provision::environment_state::environment_resource_name(
+        "dep5", "fixture", "dev",
+    )?;
+    let authority = format!("configmap/{coordinate}");
     let file = fixture.bin.join("environment.k");
     std::fs::write(&file, document.to_kcl())?;
     let chart = artifact_plan::select(&fixture.chart.0)?;
     for action in ["diff", "apply"] {
-        let state = fixture.state(&UpgradeTarget::Control)?;
+        let mut state = fixture.state(&UpgradeTarget::Control)?;
+        state["configmaps"] = json!({format!("hosts/{authority}"): {"environment.json": text}});
         std::fs::write(fixture.bin.join("state.json"), serde_json::to_vec(&state)?)?;
         std::fs::write(fixture.bin.join("calls.jsonl"), "")?;
         let mut command = Command::new(env!("CARGO_BIN_EXE_wamn"));
@@ -653,12 +663,14 @@ async fn platform_project_schema_runs_only_the_selected_environment_sql_job() ->
                 continue;
             }
             assert_eq!(args[3], "fixture-current-context");
-            assert_eq!(args[5], "platform");
             match args[6].as_str().unwrap() {
                 "get" | "logs" | "patch" | "delete" => {}
                 "create" => assert_eq!(call["object"]["kind"], "Job"),
                 "apply" => assert_eq!(call["object"]["kind"], "Secret"),
                 _ => panic!("unrelated operation: {call}"),
+            }
+            if matches!(args[6].as_str().unwrap(), "create" | "apply") {
+                assert_eq!(args[5], "hosts", "{call}");
             }
         }
         let job = &jobs[0]["object"];
@@ -669,7 +681,7 @@ async fn platform_project_schema_runs_only_the_selected_environment_sql_job() ->
         let mut expected = vec![
             "env",
             &verb,
-            "/inputs/environment.json",
+            "/environment/environment.json",
             "/inputs/database.json",
             "--image",
             chart.image("ctl")?,
@@ -688,11 +700,14 @@ async fn platform_project_schema_runs_only_the_selected_environment_sql_job() ->
                         && entry["valueFrom"]["secretKeyRef"].is_object())
             );
         }
-        let files = calls
-            .iter()
-            .find_map(|call| call["object"]["stringData"]["environment.json"].as_str())
-            .unwrap();
-        assert_eq!(EnvironmentDocument::from_json(files.as_bytes())?, document);
+        assert!(
+            job["spec"]["template"]["spec"]["volumes"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|volume| volume["configMap"]["name"] == coordinate.as_str()),
+            "the SQL Job mounts the environment ConfigMap"
+        );
         let after: Value = serde_json::from_slice(&std::fs::read(fixture.bin.join("state.json"))?)?;
         assert_eq!(after["owners"], state["owners"]);
         assert!(after["objects"].as_object().unwrap().is_empty());
