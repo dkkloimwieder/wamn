@@ -17,7 +17,7 @@ tool = pathlib.Path(sys.argv[0]).name
 args = sys.argv[1:]
 state = json.loads((root / 'state.json').read_text())
 call = {'tool': tool, 'args': args}
-if tool == 'kubectl' and args[6] in ['apply', 'create']:
+if tool == 'kubectl' and len(args) > 6 and args[6] in ['apply', 'create']:
     call['object'] = json.load(sys.stdin)
 if tool == 'helm' and 'upgrade' in args:
     values = args[args.index('-f') + 1]
@@ -78,6 +78,9 @@ if tool == 'docker':
         print('kind')
     sys.exit(0)
 if tool == 'kubectl':
+    if args[:2] == ['config', 'current-context']:
+        print('fixture-current-context')
+        sys.exit(0)
     namespace = args[args.index('-n') + 1]
     args = args[6:]
     if args[0] == 'port-forward':
@@ -486,6 +489,82 @@ fn assert_operations(calls: &[Value], owner: (&str, &str), allow_upgrade: bool) 
         usize::from(allow_upgrade),
         "one selected release operation"
     );
+}
+
+#[test]
+fn platform_schema_runs_only_the_selected_ctl_job() -> anyhow::Result<()> {
+    let fixture = Fixture::new()?;
+    let state = fixture.state(&UpgradeTarget::Control)?;
+    let chart = artifact_plan::select(&fixture.chart.0)?;
+    let resolution = "migrations/system/0001_probe.sql=applied";
+    for action in ["diff", "apply"] {
+        std::fs::write(fixture.bin.join("state.json"), serde_json::to_vec(&state)?)?;
+        std::fs::write(fixture.bin.join("calls.jsonl"), "")?;
+        let mut command = Command::new(env!("CARGO_BIN_EXE_wamn"));
+        command
+            .args(["platform", "schema", action, "--scope", "system", "--chart"])
+            .arg(&fixture.chart.0)
+            .env("PATH", &fixture.path)
+            .env("KUBECONFIG", fixture.bin.join("current-kubeconfig"));
+        if action == "apply" {
+            command.args(["--resolve", resolution]);
+        }
+        let output = command.output()?;
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(String::from_utf8_lossy(&output.stdout).contains(chart.image("ctl")?));
+        let calls = std::fs::read_to_string(fixture.bin.join("calls.jsonl"))?
+            .lines()
+            .map(serde_json::from_str)
+            .collect::<Result<Vec<Value>, _>>()?;
+        let mut jobs = Vec::new();
+        for call in &calls {
+            assert_eq!(call["tool"], "kubectl", "{call}");
+            let args = call["args"].as_array().unwrap();
+            if args[0] == "config" {
+                continue;
+            }
+            assert_eq!(args[3], "fixture-current-context");
+            assert_eq!(args[5], "platform");
+            match args[6].as_str().unwrap() {
+                "get" | "logs" | "patch" | "delete" => {}
+                "create" => {
+                    assert_eq!(call["object"]["kind"], "Job");
+                    jobs.push(&call["object"]);
+                }
+                "apply" => assert_eq!(call["object"]["kind"], "Secret"),
+                _ => panic!("unrelated operation: {call}"),
+            }
+        }
+        assert_eq!(jobs.len(), 1);
+        let job = jobs[0];
+        assert_eq!(job["spec"]["backoffLimit"], 0);
+        assert_eq!(job["spec"]["suspend"], true);
+        assert!(job["spec"]["activeDeadlineSeconds"].as_u64().unwrap() > 0);
+        let pod = &job["spec"]["template"]["spec"];
+        assert_eq!(pod["restartPolicy"], "Never");
+        assert_eq!(pod["automountServiceAccountToken"], false);
+        let container = &pod["containers"][0];
+        assert_eq!(container["image"], chart.image("ctl")?);
+        assert_eq!(container["command"], json!(["/usr/local/bin/wamn-ctl"]));
+        let mut expected = vec!["system-schema", action, "--image", chart.image("ctl")?];
+        if action == "apply" {
+            expected.extend(["--resolve", resolution]);
+        }
+        assert_eq!(container["args"], json!(expected));
+        assert_eq!(
+            container["env"],
+            json!([{"name":"WAMN_SYSTEM_ADMIN_URL",
+            "valueFrom":{"secretKeyRef":{"name":"wamn-system-admin","key":"url"}}}])
+        );
+        let after: Value = serde_json::from_slice(&std::fs::read(fixture.bin.join("state.json"))?)?;
+        assert_eq!(after["owners"], state["owners"]);
+        assert!(after["objects"].as_object().unwrap().is_empty());
+    }
+    Ok(())
 }
 
 #[test]

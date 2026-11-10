@@ -10,6 +10,7 @@ pub mod document;
 pub mod edge;
 pub mod identity;
 pub(crate) mod job;
+pub use job::system_schema;
 pub mod manifests;
 pub mod oauth;
 pub mod pools;

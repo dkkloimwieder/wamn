@@ -9,7 +9,7 @@ use tokio_postgres::NoTls;
 
 use wamn_environment_control::provision_system::{
     EmitProvisionerRequest, ProvisionSystemRequest, SystemState, emit_provisioner_credential,
-    install_control_store, provision_system, system_state,
+    initialize_system, install_control_store, provision_system, system_state,
 };
 use wamn_test_infrastructure::locked_database;
 
@@ -377,6 +377,165 @@ async fn disconnect(
         .expect("connection closes cleanly");
 }
 
+#[tokio::test]
+async fn fresh_system_runs_image_migrations_and_reapply_runs_none() {
+    use wamn_control_provision::schema_migrations::MigrationScope;
+    use wamn_environment_control::platform_migrations;
+    use wamn_schema_control::MigrationSource;
+
+    let url = locked_database::database(wamn_test_postgres::database);
+    let (mut client, connection) = connect(&url).await;
+    client.batch_execute("DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'wamn_system') THEN CREATE ROLE wamn_system NOLOGIN; END IF; END $$;").await.unwrap();
+    let mut sources = platform_migrations::embedded_sources(MigrationScope::System);
+    sources.push(MigrationSource {
+        relative_path: format!("migrations/system/{:04}_fresh_probe.sql", sources.len() + 1),
+        bytes: b"CREATE TABLE registry.dep5_fresh_probe (value int); INSERT INTO registry.dep5_fresh_probe VALUES (1);".to_vec(),
+    });
+    initialize_system(&mut client, &sources).await.unwrap();
+    assert_eq!(
+        client
+            .query_one("SELECT value FROM registry.dep5_fresh_probe", &[])
+            .await
+            .unwrap()
+            .get::<_, i32>(0),
+        1
+    );
+    let recorded = platform_migrations::plan(&client, MigrationScope::System, &sources)
+        .await
+        .unwrap();
+    assert!(!recorded.adoption);
+    assert!(recorded.migrations.pending.is_empty());
+    assert_eq!(
+        recorded
+            .recorded
+            .iter()
+            .map(|row| row.relative_path.as_str())
+            .collect::<Vec<_>>(),
+        sources
+            .iter()
+            .map(|source| source.relative_path.as_str())
+            .collect::<Vec<_>>()
+    );
+
+    let before = snapshot(&client).await;
+    let earlier = &sources[..sources.len() - 1];
+    let preview = platform_migrations::plan(&client, MigrationScope::System, earlier)
+        .await
+        .unwrap();
+    assert!(
+        preview.missing.is_some(),
+        "diff warns when the image lacks recorded files"
+    );
+    assert_eq!(preview.recorded, recorded.recorded);
+    assert!(
+        platform_migrations::apply_system(&mut client, earlier, None)
+            .await
+            .is_err()
+    );
+    assert_eq!(
+        snapshot(&client).await,
+        before,
+        "missing bytes never authorize SQL or history changes"
+    );
+
+    sources.push(MigrationSource {
+        relative_path: format!("migrations/system/{:04}_later_probe.sql", sources.len() + 1),
+        bytes: b"INSERT INTO registry.dep5_fresh_probe VALUES (2);".to_vec(),
+    });
+    let before = snapshot(&client).await;
+    initialize_system(&mut client, &sources).await.unwrap();
+    assert_eq!(
+        snapshot(&client).await,
+        before,
+        "reapply runs no pending SQL and preserves initialization"
+    );
+    assert!(
+        !platform_migrations::plan(&client, MigrationScope::System, &sources)
+            .await
+            .unwrap()
+            .migrations
+            .pending
+            .is_empty()
+    );
+    client.batch_execute("SET ROLE wamn_system").await.unwrap();
+    platform_migrations::apply_system(&mut client, &sources, None)
+        .await
+        .unwrap();
+    assert_eq!(
+        client
+            .query(
+                "SELECT value FROM registry.dep5_fresh_probe ORDER BY value",
+                &[]
+            )
+            .await
+            .unwrap()
+            .iter()
+            .map(|row| row.get::<_, i32>(0))
+            .collect::<Vec<_>>(),
+        [1, 2]
+    );
+    disconnect(client, connection).await;
+}
+
+#[tokio::test]
+async fn fresh_system_failure_keeps_progress_for_explicit_schema_apply() {
+    use wamn_control_provision::schema_migrations::MigrationScope;
+    use wamn_environment_control::platform_migrations;
+    use wamn_schema_control::MigrationSource;
+
+    let url = locked_database::database(wamn_test_postgres::database);
+    let (mut client, connection) = connect(&url).await;
+    client.batch_execute("DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'wamn_system') THEN CREATE ROLE wamn_system NOLOGIN; END IF; END $$;").await.unwrap();
+    let mut sources = platform_migrations::embedded_sources(MigrationScope::System);
+    sources.push(MigrationSource {
+        relative_path: format!(
+            "migrations/system/{:04}_resume_probe.sql",
+            sources.len() + 1
+        ),
+        bytes: b"CREATE TABLE registry.dep5_resume_probe (value int);".to_vec(),
+    });
+    sources.push(MigrationSource {
+        relative_path: format!(
+            "migrations/system/{:04}_wait_for_repair.sql",
+            sources.len() + 1
+        ),
+        bytes: b"SELECT 1 / count(*)::int FROM registry.dep5_resume_probe;".to_vec(),
+    });
+    let error = initialize_system(&mut client, &sources).await.unwrap_err();
+    assert_eq!(
+        error
+            .downcast_ref::<tokio_postgres::Error>()
+            .unwrap()
+            .code(),
+        Some(&tokio_postgres::error::SqlState::DIVISION_BY_ZERO)
+    );
+    assert_eq!(system_state(&client).await.unwrap(), SystemState::Complete);
+    let interrupted = platform_migrations::plan(&client, MigrationScope::System, &sources)
+        .await
+        .unwrap();
+    assert_eq!(interrupted.recorded.len(), sources.len() - 1);
+    assert_eq!(
+        interrupted.migrations.pending[0].relative_path,
+        sources.last().unwrap().relative_path
+    );
+    let before = snapshot(&client).await;
+    initialize_system(&mut client, &sources).await.unwrap();
+    assert_eq!(snapshot(&client).await, before);
+    client
+        .batch_execute("INSERT INTO registry.dep5_resume_probe VALUES (1); SET ROLE wamn_system;")
+        .await
+        .unwrap();
+    platform_migrations::apply_system(&mut client, &sources, None)
+        .await
+        .unwrap();
+    let resumed = platform_migrations::plan(&client, MigrationScope::System, &sources)
+        .await
+        .unwrap();
+    assert!(resumed.migrations.pending.is_empty());
+    assert_eq!(resumed.recorded.len(), sources.len());
+    disconnect(client, connection).await;
+}
+
 // Enumerate the actual catalog and data rather than pinning a relation roster.
 async fn snapshot(client: &tokio_postgres::Client) -> serde_json::Value {
     let catalog: serde_json::Value = client.query_one(r"
@@ -467,7 +626,7 @@ async fn bootstrap_is_atomic_and_uses_database_facts() {
         .await
         .unwrap();
 
-    install_control_store(&client).await.unwrap();
+    assert!(install_control_store(&client).await.unwrap());
     assert_eq!(system_state(&client).await.unwrap(), SystemState::Complete);
     let concurrent_database = wamn_test_postgres::database();
     let (first, first_connection) = connect(concurrent_database.url()).await;
@@ -476,11 +635,10 @@ async fn bootstrap_is_atomic_and_uses_database_facts() {
         install_control_store(&first),
         install_control_store(&second)
     );
-    left.unwrap();
-    right.unwrap();
+    assert_ne!(left.unwrap(), right.unwrap(), "only one caller initializes");
     assert_eq!(system_state(&first).await.unwrap(), SystemState::Complete);
     let concurrent = snapshot(&first).await;
-    install_control_store(&first).await.unwrap();
+    assert!(!install_control_store(&first).await.unwrap());
     assert_eq!(snapshot(&first).await, concurrent);
     disconnect(first, first_connection).await;
     disconnect(second, second_connection).await;

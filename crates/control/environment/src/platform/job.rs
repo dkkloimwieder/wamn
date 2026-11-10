@@ -1,4 +1,4 @@
-//! Kubernetes lifecycle for the platform's initialization Jobs.
+//! Kubernetes lifecycle for platform initialization and SQL Jobs.
 
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -7,7 +7,62 @@ use std::time::{Duration, Instant};
 use crate::kubectl;
 use anyhow::{Context as _, ensure};
 use serde_json::{Value, json};
+use wamn_package_control::migrations::{MigrationResolution, Resolution};
 use wamn_release_control::release_chart::Target;
+
+use super::artifact_plan::SelectedChart;
+use super::bootstrap::{self, SecretData};
+
+/// Run one system SQL action through the existing bounded Job lifecycle.
+pub async fn system_schema(
+    target: &Target,
+    directory: &Path,
+    chart: &SelectedChart,
+    apply: bool,
+    resolution: Option<&MigrationResolution>,
+) -> anyhow::Result<String> {
+    let superuser: SecretData = kubectl::get(
+        &target.kubeconfig,
+        &target.context,
+        "platform",
+        "secret",
+        "wamn-pg-superuser",
+    )
+    .await?
+    .context("missing Secret platform/wamn-pg-superuser")?;
+    let mut job = system_schema_job(chart.image("ctl")?, apply, resolution);
+    let admin = bootstrap::administrator(&mut job, &superuser)?;
+    run(target, directory, &mut job, &mut [admin]).await
+}
+
+fn system_schema_job(image: &str, apply: bool, resolution: Option<&MigrationResolution>) -> Value {
+    let mut job = manifest(
+        "platform-system-schema",
+        image,
+        &["/usr/local/bin/wamn-ctl"],
+        &[
+            "system-schema",
+            if apply { "apply" } else { "diff" },
+            "--image",
+            image,
+        ],
+    );
+    if let Some(resolution) = resolution {
+        container(&mut job)["args"].as_array_mut().unwrap().extend([
+            "--resolve".into(),
+            format!(
+                "{}={}",
+                resolution.path,
+                match resolution.action {
+                    Resolution::Applied => "applied",
+                    Resolution::Retry => "retry",
+                }
+            )
+            .into(),
+        ]);
+    }
+    job
+}
 
 const OUTPUT_FILE: &str = "/out/secret.json";
 // Bound execution even if the caller exits. Kubernetes never retries these Jobs.
@@ -30,7 +85,7 @@ struct JobError {
 }
 impl std::fmt::Display for JobError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "initialization Job {} failed", self.name)
+        write!(f, "platform Job {} failed", self.name)
     }
 }
 impl std::error::Error for JobError {}
@@ -54,9 +109,7 @@ pub(crate) fn manifest(name: &str, image: &str, command: &[&str], arguments: &[&
 }
 
 pub(crate) fn name(job: &Value) -> &str {
-    job["metadata"]["name"]
-        .as_str()
-        .expect("initialization Job name")
+    job["metadata"]["name"].as_str().expect("platform Job name")
 }
 
 pub(crate) fn container(job: &mut Value) -> &mut Value {
@@ -263,7 +316,7 @@ async fn wait(target: &Target, job: &Value) -> anyhow::Result<()> {
                 tokio::time::sleep(Duration::from_secs(1)).await;
                 continue;
             }
-            status => status?.context("bootstrap Job disappeared")?,
+            status => status?.context("platform Job disappeared")?,
         };
         if completed(&status, name(job))? {
             return Ok(());
@@ -273,7 +326,7 @@ async fn wait(target: &Target, job: &Value) -> anyhow::Result<()> {
         }
         ensure!(
             Instant::now() < deadline,
-            "bootstrap Job {} did not complete in {}s",
+            "platform Job {} did not complete in {}s",
             name(job),
             INSTALL_DEADLINE.as_secs()
         );
@@ -334,7 +387,7 @@ async fn collect(target: &Target, directory: &Path, job: &Value) -> anyhow::Resu
             .map(|error| format!("\nJob cleanup failed: {error:#}"))
             .unwrap_or_default();
         format!(
-            "bootstrap Job log saved at {}:\n{log}{cleanup_error}",
+            "platform Job log saved at {}:\n{log}{cleanup_error}",
             path.display()
         )
     })?;

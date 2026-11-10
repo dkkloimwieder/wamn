@@ -4,10 +4,13 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use anyhow::Context as _;
-use clap::{Args, Subcommand};
+use clap::{Args, Subcommand, ValueEnum};
+use wamn_control_provision::schema_migrations::MigrationScope;
 use wamn_environment_control::platform::document::{ClusterDocument, UpgradeTarget};
 use wamn_environment_control::platform::pools::Direction;
 use wamn_environment_control::platform::{artifact_plan, deploy, provider, status};
+use wamn_environment_control::platform_migrations;
+use wamn_package_control::migrations::MigrationResolution;
 use wamn_release_control::release_chart::Target;
 
 /// Management verbs also available through the low-level control tool.
@@ -28,8 +31,129 @@ pub enum ProductPlatformCommand {
     Deploy(DeployArgs),
     /// Read the current platform state without creating a cluster.
     Status(ShowArgs),
+    /// Inspect or apply system SQL from an explicitly selected prepared chart.
+    #[command(subcommand)]
+    Schema(PlatformSchemaCommand),
     #[command(flatten)]
     Manage(PlatformCommand),
+}
+
+#[derive(Debug, Subcommand)]
+pub enum PlatformSchemaCommand {
+    /// Read initialization and migration state without changing SQL.
+    Diff(PlatformSchemaArgs),
+    /// Apply pending system SQL without changing service releases.
+    Apply(PlatformSchemaApplyArgs),
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+pub enum PlatformSchemaScope {
+    System,
+}
+
+#[derive(Debug, Args)]
+pub struct PlatformSchemaArgs {
+    /// The database scope.
+    #[arg(long, value_enum)]
+    pub scope: PlatformSchemaScope,
+    /// The prepared chart whose ctl image supplies the SQL.
+    #[arg(long)]
+    pub chart: PathBuf,
+}
+
+#[derive(Debug, Args)]
+pub struct PlatformSchemaApplyArgs {
+    #[command(flatten)]
+    pub selection: PlatformSchemaArgs,
+    /// Resolve one uncertain nontransactional file after inspection.
+    #[arg(long, value_name = "PATH=applied|retry", value_parser = system_resolution)]
+    pub resolve: Option<MigrationResolution>,
+}
+
+fn system_resolution(value: &str) -> anyhow::Result<MigrationResolution> {
+    anyhow::ensure!(
+        !value.contains(':'),
+        "resolution must be <path>=applied|retry"
+    );
+    format!("system:{value}").parse()
+}
+
+/// In-image entry points. Both actions read the same embedded migration bytes.
+#[derive(Debug, Subcommand)]
+pub enum SystemSchemaCommand {
+    Diff(SystemSchemaArgs),
+    Apply(SystemSchemaApplyArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct SystemSchemaArgs {
+    /// The system database administrator URL supplied by the Job Secret.
+    #[arg(long, env = "WAMN_SYSTEM_ADMIN_URL", hide_env_values = true)]
+    pub system_url: String,
+    /// The immutable ctl image selected by the prepared chart.
+    #[arg(long)]
+    pub image: String,
+}
+
+#[derive(Debug, Args)]
+pub struct SystemSchemaApplyArgs {
+    #[command(flatten)]
+    pub database: SystemSchemaArgs,
+    #[arg(long, value_name = "PATH=applied|retry", value_parser = system_resolution)]
+    pub resolve: Option<MigrationResolution>,
+}
+
+pub async fn run_system_schema(
+    command: SystemSchemaCommand,
+    mut output: impl Write,
+) -> anyhow::Result<()> {
+    let (args, apply, resolution) = match &command {
+        SystemSchemaCommand::Diff(args) => (args, false, None),
+        SystemSchemaCommand::Apply(args) => (&args.database, true, args.resolve.as_ref()),
+    };
+    writeln!(output, "system SQL image: {}", args.image)?;
+    output.flush()?;
+    let (mut client, connection) = tokio_postgres::connect(&args.system_url, tokio_postgres::NoTls)
+        .await
+        .context("connect to the system SQL database")?;
+    let connection = tokio::spawn(connection);
+    let result = async {
+        client.batch_execute("SET ROLE wamn_system").await?;
+        let sources = platform_migrations::embedded_sources(MigrationScope::System);
+        if !apply {
+            client.batch_execute("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY").await?;
+        }
+        let planned = platform_migrations::plan(&client, MigrationScope::System, &sources).await?;
+        write!(output, "{}", platform_migrations::system_report(&planned))?;
+        if !planned.migrations.pending.is_empty() {
+            writeln!(output, "warning: selected image has pending system SQL. Control and identity code can require different SQL objects.")?;
+            match platform_migrations::system_warnings(&client, &planned).await {
+                Ok(warnings) => {
+                    for warning in warnings {
+                        writeln!(output, "warning: {warning}")?;
+                    }
+                }
+                Err(error) => writeln!(output, "warning: SQL reference analysis is unavailable: {error:#}")?,
+            }
+        }
+        for (file, sql) in planned.migrations.pending.iter().zip(&planned.migrations.statements) {
+            writeln!(output, "SQL {} ({}):\n{}", file.relative_path,
+                if file.transactional { "transactional" } else { "nontransactional" }, sql.sql)?;
+        }
+        output.flush()?;
+        if apply {
+            platform_migrations::apply_system(&mut client, &sources, resolution).await?;
+            let completed = platform_migrations::plan(&client, MigrationScope::System, &sources).await?;
+            write!(output, "{}", platform_migrations::system_report(&completed))?;
+        } else {
+            client.batch_execute("ROLLBACK").await?;
+        }
+        output.flush()?;
+        anyhow::Ok(())
+    }.await;
+    drop(client);
+    let driven = connection.await.context("join the system SQL connection")?;
+    result.and(driven.context("drive the system SQL connection"))
 }
 
 #[derive(Debug, Args)]
@@ -69,6 +193,40 @@ pub async fn run_product(
             let result = report_status(&document, &directory, &mut signals, &mut output).await;
             let cleanup = std::fs::remove_dir_all(directory).context("remove status directory");
             result.and(cleanup)
+        }
+        ProductPlatformCommand::Schema(command) => {
+            let (args, apply, resolution) = match &command {
+                PlatformSchemaCommand::Diff(args) => (args, false, None),
+                PlatformSchemaCommand::Apply(args) => {
+                    (&args.selection, true, args.resolve.as_ref())
+                }
+            };
+            let chart = artifact_plan::select(&args.chart)?;
+            let target =
+                wamn_environment_control::environment::kubernetes_target("platform".into())?;
+            writeln!(
+                output,
+                "system SQL target: {}/{}",
+                target.context, target.namespace
+            )?;
+            writeln!(output, "selected chart: {}", chart.directory().display())?;
+            writeln!(output, "system SQL image: {}", chart.image("ctl")?)?;
+            output.flush()?;
+            let directory = work_directory()?;
+            let result = interruptible(&mut signals, async {
+                let log = wamn_environment_control::platform::system_schema(
+                    &target, &directory, &chart, apply, resolution,
+                )
+                .await?;
+                writeln!(output, "{log}")?;
+                output.flush().context("write the system SQL result")
+            })
+            .await;
+            // Retain failed Job logs, including committed SQL and the resume command.
+            if result.is_ok() {
+                std::fs::remove_dir_all(directory).context("remove system SQL directory")?;
+            }
+            result
         }
         ProductPlatformCommand::Manage(command) => {
             interruptible(&mut signals, run(command, output)).await

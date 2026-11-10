@@ -46,6 +46,9 @@ enum Command {
     QualifyRelease(delivery_verbs::QualifyReleaseArgs),
     /// Install the control store into an empty system database and record its platform domain
     ProvisionSystem(provisioning_verbs::ProvisionSystemArgs),
+    /// Inspect or apply the system SQL embedded in this image.
+    #[command(subcommand)]
+    SystemSchema(platform_verbs::SystemSchemaCommand),
     /// Render a dedicated org's CNPG Cluster set (one per recovery domain, sized by env policy) + record it in the T1 registry (wamn-q3n.6 / D18)
     ProvisionOrg(provisioning_verbs::ProvisionOrgArgs),
     /// Render a per-project-env database (CNPG Database CRD) + privilege step + record it in the T1 registry (wamn-q3n.7)
@@ -132,6 +135,9 @@ async fn main() -> anyhow::Result<()> {
         Command::BuildPlatform(args) => delivery_verbs::build_platform(args).await,
         Command::QualifyRelease(args) => delivery_verbs::qualify(args).await,
         Command::ProvisionSystem(args) => provisioning_verbs::provision_system(args).await,
+        Command::SystemSchema(command) => {
+            platform_verbs::run_system_schema(command, std::io::stdout().lock()).await
+        }
         Command::ProvisionOrg(args) => provisioning_verbs::provision_org(args).await,
         Command::ProvisionProjectEnv(args) => provisioning_verbs::provision(args).await,
         Command::ProvisionIdentityIssuer(args) => identity_verbs::provision_issuer(args).await,
@@ -171,6 +177,37 @@ mod tests {
     use clap::Parser as _;
 
     use super::{Cli, Command};
+
+    #[test]
+    fn system_schema_is_available_in_the_shipped_ctl() {
+        for action in ["diff", "apply"] {
+            let cli = Cli::try_parse_from([
+                "wamn-ctl",
+                "system-schema",
+                action,
+                "--system-url",
+                "postgres://admin/system",
+                "--image",
+                "registry/ctl@sha256:abc",
+            ])
+            .unwrap();
+            assert!(matches!(cli.command, Command::SystemSchema(_)));
+        }
+        assert!(
+            Cli::try_parse_from([
+                "wamn-ctl",
+                "system-schema",
+                "apply",
+                "--system-url",
+                "postgres://admin/system",
+                "--image",
+                "registry/ctl@sha256:abc",
+                "--resolve",
+                "migrations/system/0001_probe.sql=applied",
+            ])
+            .is_ok()
+        );
+    }
 
     #[test]
     fn platform_rejects_removed_apply_and_product_deploy() {

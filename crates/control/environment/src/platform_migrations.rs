@@ -6,7 +6,8 @@ use wamn_control_provision::schema_migrations::{self, MigrationScope};
 use wamn_package_control::migrations::{self, MigrationHooks, MigrationResolution, MigrationTable};
 use wamn_schema_control::migrations::MigrationPlan;
 use wamn_schema_control::{
-    MigrationOutcome, MigrationSource, RecordedMigration, SqlStatement, Value,
+    MigrationOutcome, MigrationSource, PackageMigrationError, PackageMigrationErrorType,
+    RecordedMigration, SqlStatement, Value,
 };
 
 /// Project execution requires the existing environment lifecycle exclusion.
@@ -22,6 +23,160 @@ pub struct PlatformMigrationPlan {
     pub adoption: bool,
     pub migrations: MigrationPlan,
     pub recorded: Vec<RecordedMigration>,
+    /// System diff can describe a newer history, but apply still refuses missing bytes.
+    pub missing: Option<PackageMigrationError>,
+}
+
+/// Describe the database's completed and remaining system files.
+pub fn system_report(planned: &PlatformMigrationPlan) -> String {
+    use std::fmt::Write as _;
+    let mut report = format!(
+        "system migration history adoption: {}\ncompleted files:\n",
+        if planned.adoption { "required" } else { "none" }
+    );
+    for row in &planned.recorded {
+        if row.outcome == MigrationOutcome::Applied {
+            writeln!(report, "  {} {}", row.relative_path, row.sha256).unwrap();
+        }
+    }
+    for row in planned
+        .recorded
+        .iter()
+        .filter(|row| row.outcome == MigrationOutcome::Started)
+    {
+        writeln!(
+            report,
+            "uncertain (started): {} {}",
+            row.relative_path, row.sha256
+        )
+        .unwrap();
+    }
+    report.push_str("remaining files:\n");
+    for file in &planned.migrations.pending {
+        writeln!(
+            report,
+            "  {} {}{}",
+            file.relative_path,
+            file.sha256,
+            if file.started {
+                " uncertain (started)"
+            } else {
+                ""
+            }
+        )
+        .unwrap();
+    }
+    if let Some(error) = &planned.missing {
+        writeln!(
+            report,
+            "warning: selected image lacks recorded system files: {error}"
+        )
+        .unwrap();
+    }
+    report
+}
+
+/// Describe known SQL consumers without imposing a compatibility gate.
+pub async fn system_warnings(
+    client: &impl GenericClient,
+    planned: &PlatformMigrationPlan,
+) -> anyhow::Result<Vec<String>> {
+    use wamn_schema_introspection::migration_policy::{
+        DefinitionAction, DefinitionType, inspect_migration_definition_mutations,
+    };
+    let namespaces = client
+        .query("SELECT nspname::text FROM pg_namespace", &[])
+        .await?;
+    let schemas = namespaces
+        .iter()
+        .map(|row| row.get::<_, &str>(0))
+        .collect::<Vec<_>>();
+    let mut warnings = Vec::new();
+    for (file, sql) in planned
+        .migrations
+        .pending
+        .iter()
+        .zip(&planned.migrations.statements)
+    {
+        let mutations = match inspect_migration_definition_mutations(
+            &file.relative_path,
+            sql.sql.as_bytes(),
+            &schemas,
+        ) {
+            Ok(mutations) => mutations,
+            Err(_) => {
+                warnings.push(format!(
+                    "SQL reference analysis is unavailable for {}. Inspect its SQL.",
+                    file.relative_path
+                ));
+                continue;
+            }
+        };
+        for mutation in mutations {
+            if mutation.action() != DefinitionAction::Drop {
+                continue;
+            }
+            let relation = format!(
+                "{}.{}",
+                wamn_pg_core::quote_ident(mutation.schema()),
+                wamn_pg_core::quote_ident(mutation.relation())
+            );
+            let column = (mutation.definition_type() == DefinitionType::Field)
+                .then_some(mutation.definition());
+            let (kind, member) = match mutation.definition_type() {
+                DefinitionType::Relation => ("table", String::new()),
+                DefinitionType::Field => (
+                    "column",
+                    format!(".{}", wamn_pg_core::quote_ident(mutation.definition())),
+                ),
+                DefinitionType::Constraint => (
+                    "constraint",
+                    format!(".{}", wamn_pg_core::quote_ident(mutation.definition())),
+                ),
+            };
+            warnings.push(format!(
+                "{} removes {kind} {relation}{member}. Inspect control and identity consumers.",
+                file.relative_path
+            ));
+            for row in client
+                .query(
+                    "SELECT DISTINCT pg_describe_object(classid, objid, objsubid) FROM pg_depend \
+                 WHERE refclassid = 'pg_class'::regclass AND refobjid = to_regclass($1) \
+                   AND ($2::text IS NULL OR refobjsubid = (SELECT attnum FROM pg_attribute \
+                     WHERE attrelid = to_regclass($1) AND attname = $2)) ORDER BY 1",
+                    &[&relation, &column],
+                )
+                .await?
+            {
+                warnings.push(format!(
+                    "known SQL reference to {relation}: {}",
+                    row.get::<_, String>(0)
+                ));
+            }
+        }
+    }
+    Ok(warnings)
+}
+
+/// Apply system files and report committed progress if execution stops.
+pub async fn apply_system(
+    client: &mut Client,
+    sources: &[MigrationSource],
+    resolution: Option<&MigrationResolution>,
+) -> anyhow::Result<usize> {
+    let result = apply(client, MigrationTarget::System, sources, resolution).await;
+    match result {
+        Ok(count) => Ok(count),
+        Err(error) => {
+            let report = match plan(client, MigrationScope::System, sources).await {
+                Ok(planned) => system_report(&planned),
+                Err(error) => format!("cannot read completed and remaining files: {error:#}\n"),
+            };
+            Err(error.context(format!(
+                "{report}next: wamn platform schema apply --scope system --chart <prepared-chart>"
+            )))
+        }
+    }
 }
 
 fn scope_names(scope: MigrationScope) -> (&'static str, &'static str, &'static str) {
@@ -95,8 +250,26 @@ pub async fn plan(
             });
         }
     }
-    let migrations =
-        wamn_schema_control::migrations::plan_migrations(sources, &recorded, prefix, None)?;
+    let (migrations, missing) =
+        match wamn_schema_control::migrations::plan_migrations(sources, &recorded, prefix, None) {
+            Ok(migrations) => (migrations, None),
+            Err(error)
+                if scope == MigrationScope::System
+                    && error.error_type() == PackageMigrationErrorType::MigrationDrift
+                    && error.actual_hash() == Some("missing") =>
+            {
+                // The shared planner already validated the complete history's shape.
+                // Validate the image's available prefix with that same planner.
+                let migrations = wamn_schema_control::migrations::plan_migrations(
+                    sources,
+                    &recorded[..sources.len()],
+                    prefix,
+                    None,
+                )?;
+                (migrations, Some(error))
+            }
+            Err(error) => return Err(error.into()),
+        };
     for (file, sql) in migrations.pending.iter().zip(&migrations.statements) {
         wamn_schema_control::migrations::validate_execution_sql(file, sql)?;
     }
@@ -104,6 +277,7 @@ pub async fn plan(
         adoption: !exists,
         migrations,
         recorded,
+        missing,
     })
 }
 
@@ -149,6 +323,9 @@ async fn apply_locked(
     resolution: Option<&MigrationResolution>,
 ) -> anyhow::Result<usize> {
     let planned = plan(client, scope, sources).await?;
+    if let Some(error) = planned.missing {
+        return Err(error.into());
+    }
     let (label, schema, _) = scope_names(scope);
     let table_name = format!("{schema}.schema_migration");
     let table = MigrationTable {

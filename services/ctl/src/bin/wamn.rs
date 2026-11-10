@@ -364,6 +364,75 @@ mod platform_tests {
     use wamn_environment_control::platform::document::UpgradeTarget;
 
     #[test]
+    fn platform_schema_requires_explicit_system_scope_and_chart() {
+        use wamn_ctl::platform_verbs::{PlatformSchemaCommand, PlatformSchemaScope};
+        use wamn_package_control::migrations::Resolution;
+
+        for action in ["diff", "apply"] {
+            let arguments = [
+                "wamn",
+                "platform",
+                "schema",
+                action,
+                "--scope",
+                "system",
+                "--chart",
+                "/prepared/chart",
+            ];
+            let cli = Cli::try_parse_from(arguments).unwrap();
+            let Command::Platform(ProductPlatformCommand::Schema(command)) = cli.command else {
+                panic!("expected platform schema");
+            };
+            let args = match command {
+                PlatformSchemaCommand::Diff(args) => {
+                    assert_eq!(action, "diff");
+                    args
+                }
+                PlatformSchemaCommand::Apply(args) => {
+                    assert_eq!(action, "apply");
+                    assert!(args.resolve.is_none());
+                    args.selection
+                }
+            };
+            assert!(matches!(args.scope, PlatformSchemaScope::System));
+            assert_eq!(args.chart, std::path::Path::new("/prepared/chart"));
+            assert!(Cli::try_parse_from(&arguments[..4]).is_err());
+            assert!(Cli::try_parse_from(&arguments[..6]).is_err());
+            assert!(
+                Cli::try_parse_from(
+                    arguments[..4]
+                        .iter()
+                        .copied()
+                        .chain(["--chart", "/prepared/chart"])
+                )
+                .is_err()
+            );
+            let mut project = arguments;
+            project[5] = "project";
+            assert!(Cli::try_parse_from(project).is_err());
+            let resolved = Cli::try_parse_from(
+                arguments
+                    .into_iter()
+                    .chain(["--resolve", "migrations/system/0001_probe.sql=retry"]),
+            );
+            if action == "diff" {
+                assert!(resolved.is_err());
+            } else {
+                let Command::Platform(ProductPlatformCommand::Schema(
+                    PlatformSchemaCommand::Apply(args),
+                )) = resolved.unwrap().command
+                else {
+                    panic!("expected schema apply");
+                };
+                let resolution = args.resolve.unwrap();
+                assert_eq!(resolution.package, "system");
+                assert_eq!(resolution.path, "migrations/system/0001_probe.sql");
+                assert_eq!(resolution.action, Resolution::Retry);
+            }
+        }
+    }
+
+    #[test]
     fn platform_deploy_accepts_an_optional_chart_and_explicit_targets() {
         let cli = Cli::try_parse_from(["wamn", "platform", "deploy", "cluster.k"]).unwrap();
         let Command::Platform(ProductPlatformCommand::Deploy(args)) = cli.command else {

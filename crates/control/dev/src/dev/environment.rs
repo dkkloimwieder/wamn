@@ -395,7 +395,9 @@ pub async fn reset_control_store(admin: &Client) -> anyhow::Result<()> {
         )
         .await
         .context("prepare the production control owner")?;
-    wamn_environment_control::provision_system::install_control_store(admin).await
+    wamn_environment_control::provision_system::install_control_store(admin)
+        .await
+        .map(|_| ())
 }
 
 pub async fn provision_route(

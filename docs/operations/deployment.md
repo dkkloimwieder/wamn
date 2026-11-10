@@ -706,8 +706,56 @@ Use the environment's identity Deployment and require its readiness before issui
 
 ## Platform schema upgrades
 
-The full schema files under `deploy/sql/` own each platform schema and build fresh installations.
-Application package migrations retain their own streams.
+Select the prepared chart explicitly for each system SQL operation.
+Set `KUBECONFIG` to the target cluster file and select its current context first.
+Without `KUBECONFIG`, the command uses `$HOME/.kube/config`.
+The command reads the existing `platform/wamn-pg-superuser` Secret.
+It runs a bounded Job in `platform`, with no laptop database connection.
+
+```bash
+wamn platform schema diff --scope system --chart /prepared/platform
+wamn platform schema apply --scope system --chart /prepared/platform
+```
+
+Both commands run the selected chart's immutable `ctl` image and print its digest.
+Both read the migration bytes embedded in that image.
+Diff writes no SQL state.
+It reports adoption, completed files, pending SQL, checksums, and uncertain `started` files.
+For recognized removals, it warns about columns and known SQL dependencies.
+It also names control and identity code as possible consumers.
+
+If the image lacks recorded files, diff warns and apply refuses.
+Adoption creates an empty migration history for an existing matching initialization.
+Only apply performs adoption and runs pending files.
+
+Each transactional file commits with its history row.
+Apply skips completed files and refuses changed checksums or a different initialization digest.
+A failure reports completed and remaining files.
+Committed SQL stays committed if a later file fails.
+
+A file with the `-- wamn:no-transaction` marker runs outside a transaction.
+If its outcome stays `started`, inspect the database before resolution.
+Use `applied` to record that the statement completed.
+After any manual cleanup, use `retry` to run the same bytes again.
+
+```bash
+wamn platform schema apply --scope system --chart /prepared/platform \
+  --resolve migrations/system/0001_example.sql=applied
+wamn platform schema apply --scope system --chart /prepared/platform \
+  --resolve migrations/system/0001_example.sql=retry
+```
+
+Fresh platform installation initializes an empty system database, then runs every embedded system migration.
+If migration execution stops, resume with `platform schema apply --scope system` and the same `--chart`.
+Repeated installation preserves initialization and runs no pending migration.
+Ordinary platform reapply also runs no migration.
+
+System schema apply changes only system SQL objects and migration records.
+It changes no service release, application selection, credential, or Helm release.
+Deploy compatible control code separately with `platform deploy ... --only control`.
+This build accepts only `--scope system`.
+Project substrate commands remain DEP5-04 work.
+Application package migrations keep their own streams.
 
 ## Rollback and maintenance
 

@@ -7,7 +7,8 @@
 //! `wamn_system`, closes the PUBLIC floors, creates the login
 //! `wamn_provisioner` of the provisioning worker and `wamn_apply`, and writes
 //! `registry.meta.platform_domain`. A complete installation needs no replay.
-//! Partial installations require explicit repair.
+//! Partial initialization requires explicit repair. Interrupted migrations resume
+//! through `wamn platform schema apply --scope system --chart <prepared-chart>`.
 //!
 //! With the emit flags, the verb installs nothing. It writes the Secret
 //! manifest of `wamn_provisioner` and the role statement that sets its
@@ -32,7 +33,9 @@ use wamn_control_provision::provisioner::{PROVISIONER_ROLE, provisioner_statemen
 use crate::provision_project_env::{
     ensure_distinct_secret_paths, ensure_secret_path, write_secret_json,
 };
+use wamn_control_provision::schema_migrations::MigrationScope;
 use wamn_control_provision::{CONTROL_BOOTSTRAP_SQL, sql, validate_platform_domain};
+use wamn_schema_control::MigrationSource;
 
 /// Inputs of one `provision-system` run.
 #[derive(Debug)]
@@ -51,7 +54,11 @@ pub async fn provision_system(request: &ProvisionSystemRequest) -> anyhow::Resul
         .context("connect to the system database")?;
     let connection = tokio::spawn(connection);
     let result = async {
-        install_control_store(&client).await?;
+        initialize_system(
+            &mut client,
+            &crate::platform_migrations::embedded_sources(MigrationScope::System),
+        )
+        .await?;
         set_platform_domain(&mut client, &request.platform_domain).await?;
         Ok(())
     }
@@ -148,8 +155,24 @@ pub async fn system_state(client: &(impl GenericClient + Sync)) -> anyhow::Resul
     }
 }
 
-/// Install the control store and baseline in one transaction, or recognize completion.
-pub async fn install_control_store(admin: &Client) -> anyhow::Result<()> {
+/// Initialize an empty system database, then run the selected image's migrations.
+/// Existing initialization never runs pending files on platform reapply.
+pub async fn initialize_system(
+    admin: &mut Client,
+    sources: &[MigrationSource],
+) -> anyhow::Result<()> {
+    if install_control_store(admin).await? {
+        admin.batch_execute("SET ROLE wamn_system").await?;
+        let result = crate::platform_migrations::apply_system(admin, sources, None).await;
+        let reset = admin.batch_execute("RESET ROLE").await;
+        result?;
+        reset?;
+    }
+    Ok(())
+}
+
+/// Install the control store and baseline atomically. Return true only for a new installation.
+pub async fn install_control_store(admin: &Client) -> anyhow::Result<bool> {
     admin
         .batch_execute("BEGIN")
         .await
@@ -166,7 +189,7 @@ pub async fn install_control_store(admin: &Client) -> anyhow::Result<()> {
                     .batch_execute("COMMIT")
                     .await
                     .context("finish system initialization read")?;
-                return Ok(());
+                return Ok(false);
             }
             state => anyhow::bail!("{state}"),
         }
@@ -227,17 +250,19 @@ pub async fn install_control_store(admin: &Client) -> anyhow::Result<()> {
             .batch_execute("COMMIT")
             .await
             .context("commit system initialization")?;
-        Ok(())
+        Ok(true)
     }
     .await;
-    if let Err(error) = result {
-        admin
-            .batch_execute("ROLLBACK")
-            .await
-            .with_context(|| format!("roll back system initialization after {error:#}"))?;
-        return Err(error);
+    match result {
+        Ok(initialized) => Ok(initialized),
+        Err(error) => {
+            admin
+                .batch_execute("ROLLBACK")
+                .await
+                .with_context(|| format!("roll back system initialization after {error:#}"))?;
+            Err(error)
+        }
     }
-    Ok(())
 }
 
 /// Write the restricted apply credential after system provisioning.

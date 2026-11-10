@@ -105,22 +105,12 @@ impl Platform {
     }
 
     fn from_database_env(database_variable: &str) -> anyhow::Result<Self> {
-        let variable = |name: &str| {
-            std::env::var(name).with_context(|| format!("set {name} for wamn-ctl env"))
-        };
-        let kubeconfig = match std::env::var_os("KUBECONFIG") {
-            Some(path) => PathBuf::from(path),
-            None => PathBuf::from(variable("HOME")?).join(".kube/config"),
-        };
-        let context = current_context(&kubeconfig)?;
         Self::from_inputs(
             database_variable,
-            release_chart::Target {
-                kubeconfig,
-                context,
-                namespace: std::env::var("WAMN_RELEASE_NAMESPACE")
+            kubernetes_target(
+                std::env::var("WAMN_RELEASE_NAMESPACE")
                     .unwrap_or_else(|_| DEFAULT_NAMESPACE.to_owned()),
-            },
+            )?,
             std::env::var_os("WAMN_RELEASE_CHART")
                 .map(PathBuf::from)
                 .unwrap_or_default(),
@@ -226,6 +216,20 @@ impl Platform {
             None => Ok(wamn_platform_identity::auth_changes::AuthChanges::default()),
         }
     }
+}
+
+/// Read the current Kubernetes target without database or artifact inputs.
+pub fn kubernetes_target(namespace: String) -> anyhow::Result<release_chart::Target> {
+    let kubeconfig = match std::env::var_os("KUBECONFIG") {
+        Some(path) => PathBuf::from(path),
+        None => PathBuf::from(std::env::var_os("HOME").context("set HOME or KUBECONFIG")?)
+            .join(".kube/config"),
+    };
+    Ok(release_chart::Target {
+        context: current_context(&kubeconfig)?,
+        kubeconfig,
+        namespace,
+    })
 }
 
 fn current_context(kubeconfig: &Path) -> anyhow::Result<String> {
