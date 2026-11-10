@@ -15,7 +15,7 @@ use crate::provision_project_env::registry;
 /// Immutable reconstruction inputs, not deployment progress.
 #[derive(Debug, Serialize, Deserialize)]
 struct Inputs {
-    project_baseline: String,
+    substrate: crate::platform_migrations::ProjectReset,
     sources: BTreeMap<String, SchemaSource>,
 }
 
@@ -43,20 +43,20 @@ pub async fn prepare(
         "environment is not recorded as disposable"
     );
     let diff = schema::plan(document, application, Some(release), &selected, &state)?;
-    let baseline = state
-        .project_baseline
-        .context("installed project substrate is unknown")?;
-    ensure!(
-        baseline == wamn_control_provision::schema_baseline::project_sha256(),
-        "SQL image differs from installed project substrate"
-    );
     let candidates = schema::reset_candidates(platform, &diff, selected).await?;
     prepare_inputs(
         platform,
         document,
         candidates,
         Inputs {
-            project_baseline: baseline,
+            substrate: recorded_substrate(
+                platform,
+                document,
+                &crate::platform_migrations::embedded_sources(
+                    wamn_control_provision::schema_migrations::MigrationScope::Project,
+                ),
+            )
+            .await?,
             sources: diff.reset_sources,
         },
         diff.database_instance.as_deref(),
@@ -71,14 +71,29 @@ pub async fn prepare_retained(
     document: &EnvironmentDocument,
     admin_url: &str,
 ) -> anyhow::Result<()> {
+    prepare_retained_with_migrations(
+        platform,
+        document,
+        admin_url,
+        &crate::platform_migrations::embedded_sources(
+            wamn_control_provision::schema_migrations::MigrationScope::Project,
+        ),
+    )
+    .await
+}
+
+/// Prepare retained SQL with the executing image's exact project files.
+pub async fn prepare_retained_with_migrations(
+    platform: &Platform,
+    document: &EnvironmentDocument,
+    admin_url: &str,
+    migrations: &[wamn_schema_control::MigrationSource],
+) -> anyhow::Result<()> {
     let state = schema::state(platform, document).await?;
     ensure!(
         state.disposable == Some(true),
         "environment is not recorded as disposable"
     );
-    let baseline = state
-        .project_baseline
-        .context("installed project substrate is unknown")?;
     ensure!(
         state.unknowns.is_empty(),
         "installed schema is unknown: {}",
@@ -108,7 +123,7 @@ pub async fn prepare_retained(
         document,
         candidates,
         Inputs {
-            project_baseline: baseline,
+            substrate: recorded_substrate(platform, document, migrations).await?,
             sources,
         },
         state.database_instance.as_deref(),
@@ -125,10 +140,6 @@ async fn prepare_inputs(
     expected: Option<&str>,
     admin_url: &str,
 ) -> anyhow::Result<()> {
-    ensure!(
-        inputs.project_baseline == wamn_control_provision::schema_baseline::project_sha256(),
-        "SQL image differs from installed project substrate"
-    );
     validate_candidates(document, &candidates, &inputs.sources)?;
     resolve_releases(platform, document).await?;
     let inputs = serde_json::to_value(inputs)?;
@@ -148,6 +159,31 @@ async fn prepare_inputs(
         .batch_execute(&crate::provision_project_env::role_posture_sql())
         .await?;
     Ok(())
+}
+
+async fn recorded_substrate(
+    platform: &Platform,
+    document: &EnvironmentDocument,
+    sources: &[wamn_schema_control::MigrationSource],
+) -> anyhow::Result<crate::platform_migrations::ProjectReset> {
+    let url = ensure::project_url(platform, &document.triple()).await?;
+    let project = analyse::connect_project(&url).await?;
+    crate::platform_migrations::ProjectReset::read(&project, sources).await
+}
+
+/// Select only pinned applied files during reset initialization and retries.
+pub(crate) async fn migration_sources(
+    system: &impl tokio_postgres::GenericClient,
+    triple: &wamn_control_registry::Triple,
+    sources: &[wamn_schema_control::MigrationSource],
+) -> anyhow::Result<Option<Vec<wamn_schema_control::MigrationSource>>> {
+    let pending = registry::pending_database(system, triple).await?;
+    pending
+        .map(|pending| {
+            let pending: Pending = serde_json::from_value(pending)?;
+            pending.inputs.substrate.sources(sources.to_vec())
+        })
+        .transpose()
 }
 
 fn database(document: &EnvironmentDocument, instance: &str) -> String {
@@ -239,6 +275,21 @@ async fn resolve_releases(
     Ok(releases)
 }
 
+/// Validate a retry image before the caller stops writers or recreates a database.
+pub async fn validate_pending_substrate(
+    platform: &Platform,
+    document: &EnvironmentDocument,
+) -> anyhow::Result<()> {
+    let pending = read_pending(platform, document).await?;
+    pending
+        .inputs
+        .substrate
+        .validate(&crate::platform_migrations::embedded_sources(
+            wamn_control_provision::schema_migrations::MigrationScope::Project,
+        ))?;
+    Ok(())
+}
+
 /// Restore the same database from pinned inputs after CNPG reports success.
 /// Package SQL and execution records commit together through apply-package.
 pub async fn initialize(
@@ -246,12 +297,26 @@ pub async fn initialize(
     document: &EnvironmentDocument,
     admin_url: &str,
 ) -> anyhow::Result<()> {
+    initialize_with_migrations(
+        platform,
+        document,
+        admin_url,
+        &crate::platform_migrations::embedded_sources(
+            wamn_control_provision::schema_migrations::MigrationScope::Project,
+        ),
+    )
+    .await
+}
+
+/// Restore pinned SQL with explicit files from the executing image.
+pub async fn initialize_with_migrations(
+    platform: &Platform,
+    document: &EnvironmentDocument,
+    admin_url: &str,
+    migrations: &[wamn_schema_control::MigrationSource],
+) -> anyhow::Result<()> {
     let pending = read_pending(platform, document).await?;
-    ensure!(
-        pending.inputs.project_baseline
-            == wamn_control_provision::schema_baseline::project_sha256(),
-        "SQL image differs from installed project substrate"
-    );
+    pending.inputs.substrate.validate(migrations)?;
     let instance = crate::provision_project_env::read_project_env_instance(
         &platform.system_database_url,
         &document.triple(),
@@ -295,7 +360,10 @@ pub async fn initialize(
     admin
         .batch_execute(&crate::provision_project_env::privilege_sql(&database))
         .await?;
-    ensure::ensure_project_database(platform, document, &packages, &admin, admin_url).await?;
+    ensure::ensure_project_database_with_migrations(
+        platform, document, &packages, &admin, admin_url, migrations,
+    )
+    .await?;
     let changes = platform.auth_changes().await?;
     let drops = super::super::bindings::project_authority(
         &platform.system_database_url,
@@ -317,19 +385,22 @@ pub async fn initialize(
         })
         .await?;
     }
-    crate::reconcile_package_data_access::reconcile_package_data_access(
-        crate::reconcile_package_data_access::ReconcilePackageDataAccessRequest {
-            packages: candidates
-                .iter()
-                .map(|candidate| candidate.root.clone())
-                .collect(),
-            database_url: project_url.clone(),
-            org: document.org.clone(),
-            project: document.project.clone(),
-            environment: document.env.clone(),
-        },
-    )
-    .await?;
+    // An environment with no applications has no package data authority to reconcile.
+    if !candidates.is_empty() {
+        crate::reconcile_package_data_access::reconcile_package_data_access(
+            crate::reconcile_package_data_access::ReconcilePackageDataAccessRequest {
+                packages: candidates
+                    .iter()
+                    .map(|candidate| candidate.root.clone())
+                    .collect(),
+                database_url: project_url.clone(),
+                org: document.org.clone(),
+                project: document.project.clone(),
+                environment: document.env.clone(),
+            },
+        )
+        .await?;
+    }
     let mut defaults = Vec::new();
     for application in document.applications.keys() {
         let selected = analyse::select_application(document, Some(application))?;

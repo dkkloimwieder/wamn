@@ -195,8 +195,13 @@ The watcher and code deployment initialize absent packages but do not advance in
 An ordinary migration file and its completion record commit together.
 `catalog.packages` stores each package's baseline, current fingerprint, version, and artifact source.
 `catalog.package_migrations` stores ordered paths, checksums, outcomes, and completion timestamps across code versions.
-`platform.schema_baseline` records the project substrate and initialization identity.
-Status reports unreadable state as unknown. An adopted record does not prove that SQL ran.
+`platform.schema_baseline` records the frozen project initialization digest and its `installed_at` identity.
+Status reports initialization identity, installed files, pending image files, and uncertain `started` files separately from executable selections.
+Status and diff warn when the image lacks recorded files or contains pending files.
+Status reports unreadable state as unknown.
+Status and analysis report initialization digest differences and changed recorded checksums as warnings.
+Operations refuse initialization digest differences, changed recorded checksums, authorization failures, unavailable inputs, and SQL failures.
+An adopted application record does not prove that SQL ran.
 
 `schema adopt` asserts the configured sources without executing SQL or selecting code.
 Matching records remain unchanged. New or changed asserted files receive `adopted` with no `applied_at` timestamp.
@@ -212,10 +217,17 @@ Neither operation resets `wamn_system` or changes another environment's database
 
 Before stopping writers, WAMN resolves every retained schema, permission, and required published artifact.
 Missing sources, omitted installed applications, or conflicting definitions stop preparation before destruction.
+The executing SQL image must contain every recorded project file with its original checksum.
+Resolve any project file with a `started` outcome before reset:
+`wamn platform schema apply --scope project --env FILE --chart DIR --resolve <path>=applied|retry`.
+Inspect the file's database effects before choosing its resolution.
 The environment lock excludes application deployment during reset.
 `registry.project_envs.pending_database` pins the complete inputs and a new initialization identity outside the database being replaced.
 CNPG sets the existing Database to `ensure: absent`, waits, then sets `ensure: present` under the same name and waits again.
-The SQL Job restores the pinned schema. Existing owners restore grants, bindings, release caches, and CDC.
+The SQL Job runs initialization SQL, then the pinned applied project files in order through the shared executor.
+Files pending for the image stay pending after reset. Retries retain the pinned initialization identity and applied file set.
+An unavailable or changed file refuses each reset attempt before database replacement.
+Existing owners restore grants, bindings, release caches, and CDC.
 The broker discards only that environment's obsolete events while writers remain stopped.
 WAMN clears the pending record before resuming unchanged application selections.
 

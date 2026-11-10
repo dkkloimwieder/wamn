@@ -213,7 +213,10 @@ pub async fn run(command: EnvCommand) -> anyhow::Result<()> {
             let lock = expected.lock(&platform, &document, true).await?;
             let admin = std::env::var("WAMN_SYSTEM_ADMIN_URL").context("SQL administrator URL")?;
             if expected.pending.is_some() {
-                environment::sql::reset::initialize(&platform, &document, &admin).await?;
+                environment::sql::reset::validate_pending_substrate(&platform, &document).await?;
+                if !environment::sql::reset::needs_recreation(&platform, &document).await? {
+                    environment::sql::reset::initialize(&platform, &document, &admin).await?;
+                }
             } else if let Some((application, release)) =
                 args.application.as_deref().zip(args.release.as_deref())
             {

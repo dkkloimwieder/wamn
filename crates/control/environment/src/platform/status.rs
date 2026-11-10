@@ -997,17 +997,8 @@ async fn database(target: &Target) -> anyhow::Result<Observation> {
             .start()
             .await?;
         let state = crate::provision_system::system_state(&transaction).await?;
-        let baseline = match state {
-            crate::provision_system::SystemState::Complete
-            | crate::provision_system::SystemState::BaselineMismatch { .. } => Some(
-                transaction
-                    .query_one("SELECT sha256 FROM registry.schema_baseline", &[])
-                    .await?
-                    .get::<_, String>(0),
-            ),
-            _ => None,
-        };
-        let result = database_state(&state, baseline.as_deref());
+        let report = wamn_package_control::schema_baseline::observe_system(&transaction).await?;
+        let result = database_state(&state, &report);
         transaction.rollback().await?;
         Ok(result)
     };
@@ -1021,12 +1012,14 @@ async fn database(target: &Target) -> anyhow::Result<Observation> {
 
 fn database_state(
     state: &crate::provision_system::SystemState,
-    baseline: Option<&str>,
+    report: &wamn_package_control::schema_baseline::SchemaReport,
 ) -> Observation {
     use crate::provision_system::SystemState;
     // system_state compares with its executable. Status reports only recorded database facts.
     let category = match state {
-        SystemState::Complete | SystemState::BaselineMismatch { .. } if baseline.is_some() => {
+        SystemState::Complete | SystemState::BaselineMismatch { .. }
+            if report.initialization.is_some() =>
+        {
             Category::Ready
         }
         SystemState::Absent | SystemState::Incomplete => Category::Incomplete,
@@ -1044,9 +1037,9 @@ fn database_state(
             }
         },
     );
-    if let Some(baseline) = baseline {
-        result.facts.push(format!("installed baseline={baseline}"));
-    }
+    result
+        .facts
+        .extend(report.to_string().lines().map(str::to_owned));
     result
 }
 
@@ -1526,18 +1519,35 @@ mod tests {
     #[test]
     fn installed_baseline_is_not_judged_against_the_status_executable() {
         use crate::provision_system::SystemState;
+        use wamn_package_control::schema_baseline::{InitializationIdentity, SchemaReport};
         let state = SystemState::BaselineMismatch {
             installed: "installed-hash".into(),
             expected: "local-executable-hash".into(),
         };
-        let observed = database_state(&state, Some("installed-hash"));
+        let mut report = SchemaReport {
+            initialization: Some(InitializationIdentity {
+                sha256: "installed-hash".into(),
+                installed_at: "original-identity".into(),
+            }),
+            installed: vec![],
+            pending: vec![],
+            uncertain: vec![],
+            missing: vec![],
+            warnings: vec![],
+        };
+        let observed = database_state(&state, &report);
         assert_eq!(observed.category, Category::Ready);
+        let identity = report.initialization.as_ref().unwrap();
+        assert!(observed.facts.iter().any(|fact| {
+            fact.contains(&identity.sha256) && fact.contains(&identity.installed_at)
+        }));
+        report.initialization = None;
         assert_eq!(
-            database_state(&SystemState::Absent, None).category,
+            database_state(&SystemState::Absent, &report).category,
             Category::Incomplete
         );
         assert_eq!(
-            database_state(&SystemState::Incomplete, None).category,
+            database_state(&SystemState::Incomplete, &report).category,
             Category::Incomplete
         );
     }

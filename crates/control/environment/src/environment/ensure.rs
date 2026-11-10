@@ -519,6 +519,27 @@ pub async fn ensure_project_database(
     admin: &tokio_postgres::Client,
     admin_url: &str,
 ) -> anyhow::Result<String> {
+    ensure_project_database_with_migrations(
+        platform,
+        document,
+        packages,
+        admin,
+        admin_url,
+        &crate::platform_migrations::embedded_sources(
+            wamn_control_provision::schema_migrations::MigrationScope::Project,
+        ),
+    )
+    .await
+}
+
+pub(crate) async fn ensure_project_database_with_migrations(
+    platform: &Platform,
+    document: &EnvironmentDocument,
+    packages: &[wamn_catalog::manifest::PackageManifest],
+    admin: &tokio_postgres::Client,
+    admin_url: &str,
+    sources: &[wamn_schema_control::MigrationSource],
+) -> anyhow::Result<String> {
     let project_url = project_url(platform, &document.triple()).await?;
     let mut project_admin = url::Url::parse(admin_url)?;
     project_admin.set_path(url::Url::parse(&project_url)?.path());
@@ -545,7 +566,7 @@ pub async fn ensure_project_database(
         dry_run: false,
         changes: platform.auth_changes().await?,
     };
-    crate::reconcile_run_plane::reconcile_run_plane(request)
+    crate::reconcile_run_plane::reconcile_run_plane_with_migrations(request, sources)
         .await
         .context("reconcile the run plane")?;
     Ok(project_admin)

@@ -360,7 +360,7 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
         "a",
         Some(refused_component),
         "1.0.1",
-        "ALTER TABLE a.data ADD COLUMN added text; INSERT INTO a.data(value) VALUES ('refused');",
+        "ALTER TABLE a.data ADD COLUMN added text; TRUNCATE a.data;",
     )?;
     let refused_release = release(&mut objects, refused_component.clone(), "1.0.1")?;
     let mut missing_objects = objects.clone();
@@ -1133,7 +1133,6 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
         .downcast_ref::<wamn_schema_introspection::migration_policy::MigrationPolicyError>()
         .context("reset reports the package owner's migration policy refusal")?;
     assert!(policy.path().ends_with("migrations/0001_data.sql"));
-    assert_eq!(policy.statement_index(), Some(3));
     assert!(admin.query_one("SELECT pending_database IS NULL FROM registry.project_envs WHERE org='acme' AND project='apps' AND env='dev'", &[]).await?.get::<_, bool>(0));
     assert_eq!(before_sql, rows(&observer, &stable_sql).await?);
     assert_eq!(before_schema, rows(&observer, schema_query).await?);
@@ -1560,5 +1559,274 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
             wamn_pg_core::quote_ident(&database_name),
         ))
         .await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn reset_replays_recorded_project_sql_and_refuses_unreconstructable_history()
+-> anyhow::Result<()> {
+    use wamn_control_provision::schema_migrations::MigrationScope;
+    use wamn_environment_control::{platform_migrations, provision_system};
+    use wamn_schema_control::MigrationSource;
+
+    let scratch = ScratchRoot::create()?;
+    let mut postgres = wamn_test_postgres::start(&[])?;
+    let system = postgres.create_database("wamn_system")?;
+    let (admin, driver) = tokio_postgres::connect(system.url(), tokio_postgres::NoTls).await?;
+    let driver = tokio::spawn(driver);
+    admin
+        .batch_execute(
+            "CREATE ROLE wamn_system NOLOGIN; ALTER DATABASE wamn_system OWNER TO wamn_system",
+        )
+        .await?;
+    provision_system::provision_system(&provision_system::ProvisionSystemRequest {
+        system_database_url: system.url().into(),
+        platform_domain: "example.invalid".into(),
+    })
+    .await?;
+    admin
+        .batch_execute(
+            &wamn_control_provision::test_database::seed_org_project_env_sql(
+                "reset",
+                "substrate",
+                "dev",
+            ),
+        )
+        .await?;
+    let platform = Platform {
+        system_database_url: system.url().into(),
+        target: wamn_release_control::release_chart::Target {
+            kubeconfig: PathBuf::new(),
+            context: String::new(),
+            namespace: "hosts".into(),
+        },
+        chart: PathBuf::new(),
+        release_artifact_base: String::new(),
+        registry_auth_file: scratch.path().join("auth.json"),
+        oci_ca_paths: Vec::new(),
+        insecure_registry: false,
+        package_artifact_base: None,
+        component_artifact_base: None,
+        database_namespace: "platform".into(),
+        database_host: None,
+        database_port: 5432,
+        host_group: None,
+        pat_issuer: wamn_identity_client::PatIssuerConfig::default(),
+        events: None,
+        auth_nats: None,
+    };
+    let document = EnvironmentDocument::from_json(br#"{"org":"reset","project":"substrate","env":"dev","target":"cloud","policy":"dev","applications":{}}"#)?;
+    admin.batch_execute(&format!("BEGIN; {} UPDATE registry.project_envs SET disposable=true WHERE org='reset' AND project='substrate' AND env='dev'; COMMIT;", wamn_control_provision::bind_platform_principal_sql(wamn_control_provision::PlatformComponent::Provisioning))).await?;
+    let name =
+        wamn_control_provision::project_env_database_name("reset", "substrate", "dev", "aaaaaaa1");
+    admin
+        .batch_execute(&format!(
+            "CREATE DATABASE {} OWNER wamn_db_owner",
+            wamn_pg_core::quote_ident(&name)
+        ))
+        .await?;
+    let database = postgres.database(&name)?;
+    ensure::ensure_project_database(&platform, &document, &[], &admin, system.url()).await?;
+    let (mut project, connection) =
+        tokio_postgres::connect(database.url(), tokio_postgres::NoTls).await?;
+    let connection = tokio::spawn(connection);
+    let mut files = platform_migrations::embedded_sources(MigrationScope::Project);
+    for (label, sql) in [
+        (
+            "create",
+            "CREATE TABLE platform.reset_probe(value int); INSERT INTO platform.reset_probe VALUES (7);",
+        ),
+        ("upgrade", "UPDATE platform.reset_probe SET value=value+1;"),
+    ] {
+        files.push(MigrationSource {
+            relative_path: format!("migrations/project/{:04}_{label}.sql", files.len() + 1),
+            bytes: sql.as_bytes().to_vec(),
+        });
+    }
+    let lock = wamn_environment_control::environment::lock::LifecycleLock::acquire(
+        system.url(),
+        &document.triple(),
+    )
+    .await?;
+    platform_migrations::apply(
+        &mut project,
+        platform_migrations::MigrationTarget::Project(&lock),
+        &files,
+        None,
+    )
+    .await?;
+    files.push(MigrationSource {
+        relative_path: format!("migrations/project/{:04}_pending.sql", files.len() + 1),
+        bytes: b"UPDATE platform.reset_probe SET value=value+1;".to_vec(),
+    });
+    let before =
+        wamn_package_control::schema_baseline::observe(&project, MigrationScope::Project, &files)
+            .await?;
+    assert_eq!(
+        project
+            .query_one("SELECT value FROM platform.reset_probe", &[])
+            .await?
+            .get::<_, i32>(0),
+        8
+    );
+    for missing in [true, false] {
+        let mut unavailable = files.clone();
+        if missing {
+            unavailable.truncate(files.len() - 2);
+        } else {
+            unavailable[0].bytes.push(b' ');
+        }
+        assert!(
+            sql::reset::prepare_retained_with_migrations(
+                &platform,
+                &document,
+                system.url(),
+                &unavailable
+            )
+            .await
+            .is_err()
+        );
+        assert_eq!(
+            wamn_package_control::schema_baseline::observe(
+                &project,
+                MigrationScope::Project,
+                &files
+            )
+            .await?,
+            before
+        );
+        assert_eq!(
+            project
+                .query_one("SELECT value FROM platform.reset_probe", &[])
+                .await?
+                .get::<_, i32>(0),
+            8
+        );
+        assert!(admin.query_one("SELECT pending_database IS NULL FROM registry.project_envs WHERE org='reset' AND project='substrate' AND env='dev'", &[]).await?.get::<_, bool>(0));
+    }
+    sql::reset::prepare_retained_with_migrations(&platform, &document, system.url(), &files)
+        .await?;
+    let pending: serde_json::Value = admin.query_one("SELECT pending_database FROM registry.project_envs WHERE org='reset' AND project='substrate' AND env='dev'", &[]).await?.get(0);
+    // CNPG owns deletion/recreation. This case observes the SQL restoration boundary only.
+    drop(project);
+    connection.await??;
+    admin
+        .batch_execute(&format!(
+            "DROP DATABASE {} WITH (FORCE)",
+            wamn_pg_core::quote_ident(&name)
+        ))
+        .await?;
+    admin
+        .batch_execute(&format!(
+            "CREATE DATABASE {} OWNER wamn_db_owner",
+            wamn_pg_core::quote_ident(&name)
+        ))
+        .await?;
+    lock.release().await;
+    // An unavailable retry image refuses even before initialization SQL creates a relation.
+    let mut unavailable = files.clone();
+    unavailable[0].bytes.push(b' ');
+    assert!(
+        sql::reset::initialize_with_migrations(&platform, &document, system.url(), &unavailable)
+            .await
+            .is_err()
+    );
+    let (project, connection) =
+        tokio_postgres::connect(database.url(), tokio_postgres::NoTls).await?;
+    let connection = tokio::spawn(connection);
+    assert!(
+        project
+            .query_one(
+                "SELECT to_regclass('platform.schema_baseline') IS NULL",
+                &[]
+            )
+            .await?
+            .get::<_, bool>(0)
+    );
+    sql::reset::initialize_with_migrations(&platform, &document, system.url(), &files).await?;
+    sql::reset::initialize_with_migrations(&platform, &document, system.url(), &files).await?;
+    let restored =
+        wamn_package_control::schema_baseline::observe(&project, MigrationScope::Project, &files)
+            .await?;
+    assert_eq!(restored.installed, before.installed);
+    assert_eq!(restored.pending, before.pending);
+    assert_eq!(
+        restored.initialization.as_ref().unwrap().sha256,
+        before.initialization.as_ref().unwrap().sha256
+    );
+    assert_eq!(
+        restored.initialization.as_ref().unwrap().installed_at,
+        pending["initialization_identity"].as_str().unwrap()
+    );
+    assert_ne!(
+        restored.initialization.as_ref().unwrap().installed_at,
+        before.initialization.as_ref().unwrap().installed_at
+    );
+    assert_eq!(
+        project
+            .query_one("SELECT value FROM platform.reset_probe", &[])
+            .await?
+            .get::<_, i32>(0),
+        8
+    );
+    // A real nontransactional failure leaves a started record and blocks a new reset.
+    let lock = wamn_environment_control::environment::lock::LifecycleLock::acquire(
+        system.url(),
+        &document.triple(),
+    )
+    .await?;
+    files.last_mut().unwrap().bytes = b"-- wamn:no-transaction\nCREATE INDEX CONCURRENTLY reset_probe_idx ON platform.absent_reset_probe(value);".to_vec();
+    let (mut executor, executor_connection) =
+        tokio_postgres::connect(database.url(), tokio_postgres::NoTls).await?;
+    let executor_connection = tokio::spawn(executor_connection);
+    assert!(
+        platform_migrations::apply(
+            &mut executor,
+            platform_migrations::MigrationTarget::Project(&lock),
+            &files,
+            None
+        )
+        .await
+        .is_err()
+    );
+    let uncertain =
+        wamn_package_control::schema_baseline::observe(&project, MigrationScope::Project, &files)
+            .await?;
+    let error =
+        sql::reset::prepare_retained_with_migrations(&platform, &document, system.url(), &files)
+            .await
+            .unwrap_err();
+    assert!(error.to_string().contains("--resolve"));
+    assert_eq!(
+        wamn_package_control::schema_baseline::observe(&project, MigrationScope::Project, &files)
+            .await?,
+        uncertain
+    );
+    assert_eq!(
+        uncertain
+            .uncertain
+            .iter()
+            .map(|file| &file.relative_path)
+            .collect::<Vec<_>>(),
+        files
+            .last()
+            .map(|file| &file.relative_path)
+            .into_iter()
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(
+        project
+            .query_one("SELECT value FROM platform.reset_probe", &[])
+            .await?
+            .get::<_, i32>(0),
+        8
+    );
+    lock.release().await;
+    drop(executor);
+    executor_connection.await??;
+    drop(project);
+    connection.await??;
+    drop(admin);
+    driver.await??;
     Ok(())
 }

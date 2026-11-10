@@ -26,6 +26,8 @@ pub struct Status {
     pub installed: Option<BTreeMap<String, super::analyse::Installed>>,
     pub warnings: Vec<String>,
     pub schema: Option<super::sql::schema::Status>,
+    pub system_schema: Option<wamn_package_control::schema_baseline::SchemaReport>,
+    pub project_schema: Option<wamn_package_control::schema_baseline::SchemaReport>,
 }
 
 /// Independently observed state of one application's Helm release and host group.
@@ -72,6 +74,45 @@ pub async fn status(
     let document = super::document::EnvironmentDocument::compile(file)?;
     let triple = document.triple();
     let mut warnings = Vec::new();
+    let system_schema = match async {
+        let system = connect(&platform.system_database_url).await?;
+        wamn_package_control::schema_baseline::observe_system(&system).await
+    }
+    .await
+    {
+        Ok(report) => {
+            warnings.extend(report.warnings.iter().cloned());
+            Some(report)
+        }
+        Err(error) => {
+            warnings.push(format!("system schema unknown: {error:#}"));
+            None
+        }
+    };
+    let project_schema = match async {
+        let system = connect(&platform.system_database_url).await?;
+        let Some(row) = super::analyse::read_row(&system, &document).await? else {
+            return Ok::<_, anyhow::Error>(None);
+        };
+        let url = super::analyse::project_url(platform, &document, &row)?;
+        let project = super::analyse::connect_project(&url).await?;
+        wamn_package_control::schema_baseline::observe_project(&project)
+            .await
+            .map(Some)
+    }
+    .await
+    {
+        Ok(report) => {
+            if let Some(report) = &report {
+                warnings.extend(report.warnings.iter().cloned());
+            }
+            report
+        }
+        Err(error) => {
+            warnings.push(format!("project schema unknown: {error:#}"));
+            None
+        }
+    };
     let schema = match super::sql::schema::status(platform, &document).await {
         Ok(schema) => Some(schema),
         Err(error) => {
@@ -183,6 +224,8 @@ pub async fn status(
         installed,
         warnings,
         schema,
+        system_schema,
+        project_schema,
     })
 }
 

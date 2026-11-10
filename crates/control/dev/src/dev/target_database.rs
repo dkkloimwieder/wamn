@@ -636,6 +636,7 @@ pub(crate) struct ResetInputs {
     template: Identifier,
     fingerprint: String,
     acl: String,
+    substrate: Vec<wamn_schema_control::MigrationSource>,
 }
 
 /// Exclusive ownership held while a development session can serve this target.
@@ -816,10 +817,64 @@ impl TargetLease {
             config.activation_identity(),
         );
         validate_template(&self.client, &template, &fingerprint).await?;
+        let substrate = async {
+            use wamn_environment_control::platform_migrations::{self, ProjectReset};
+            use wamn_control_provision::schema_migrations::MigrationScope;
+            let mut template_url = PostgresConfig::from_str(config.target_database_url())?;
+            template_url.dbname(template.as_str());
+            let (template_client, connection) = template_url.connect(NoTls).await?;
+            let connection = tokio::spawn(connection);
+            let result = async {
+                let image = platform_migrations::embedded_sources(MigrationScope::Project);
+                let exists: bool = self.client
+                    .query_one(
+                        "SELECT EXISTS(SELECT FROM pg_database WHERE datname=$1)",
+                        &[&self.spec.database.as_str()],
+                    )
+                    .await?
+                    .get(0);
+                let target = if exists {
+                    Some(wamn_package_control::database::connect(config.target_database_url()).await?)
+                } else {
+                    None
+                };
+                let mut recorded_client = &template_client;
+                if let Some(target) = &target {
+                    let initialized: bool = target
+                        .query_one("SELECT to_regclass('platform.schema_baseline') IS NOT NULL", &[])
+                        .await?
+                        .get(0);
+                    if initialized {
+                        recorded_client = target;
+                    }
+                }
+                let recorded = ProjectReset::read(recorded_client, &image).await?;
+                let template_state = ProjectReset::read(&template_client, &image).await?;
+                anyhow::ensure!(
+                    template_state.applied.len() <= recorded.applied.len()
+                        && recorded.applied.starts_with(&template_state.applied),
+                    "local reset template contains SQL outside the recorded target state; run wamn dev up with matching substrate"
+                );
+                recorded.sources(image)
+            }
+            .await;
+            drop(template_client);
+            connection.await??;
+            result
+        }
+        .await
+        .map_err(|source: anyhow::Error| TargetDatabaseError {
+            source: Some(source.into_boxed_dyn_error()),
+            ..TargetDatabaseError::new(
+                TargetDatabaseErrorType::TemplateForeign,
+                "resolve uncertain project SQL and use an image with every recorded file before reset",
+            )
+        })?;
         Ok(ResetInputs {
             template,
             fingerprint,
             acl,
+            substrate,
         })
     }
 
@@ -838,6 +893,7 @@ impl TargetLease {
             template,
             fingerprint,
             acl,
+            substrate,
         } = inputs;
         let instance =
             replace_database(&self.client, &self.spec, template, fingerprint, acl).await?;
@@ -863,7 +919,7 @@ impl TargetLease {
                 )
                 .with_source(source)
             })?;
-        let target = wamn_package_control::database::connect(config.target_database_url())
+        let mut target = wamn_package_control::database::connect(config.target_database_url())
             .await
             .map_err(|source| TargetDatabaseError {
                 source: Some(source.into_boxed_dyn_error()),
@@ -875,6 +931,15 @@ impl TargetLease {
         target.batch_execute("UPDATE platform.schema_baseline SET installed_at=clock_timestamp() WHERE singleton")
             .await.map_err(|source| TargetDatabaseError::new(TargetDatabaseErrorType::CreateFailed,
                 "record the recreated database initialization identity").with_source(source))?;
+        wamn_environment_control::platform_migrations::restore_project(&mut target, substrate)
+            .await
+            .map_err(|source| TargetDatabaseError {
+                source: Some(source.into_boxed_dyn_error()),
+                ..TargetDatabaseError::new(
+                    TargetDatabaseErrorType::CreateFailed,
+                    "resume the recorded project substrate through the shared migration executor",
+                )
+            })?;
         Ok(instance)
     }
 }

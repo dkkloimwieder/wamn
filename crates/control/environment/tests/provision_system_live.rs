@@ -16,10 +16,7 @@ use wamn_test_infrastructure::locked_database;
 #[tokio::test]
 async fn provision_system_repeats_without_changing_the_platform_domain() {
     let url = locked_database::database(wamn_test_postgres::database);
-    let (client, connection) = tokio_postgres::connect(&url, NoTls)
-        .await
-        .expect("connect to the disposable system database");
-    let connection = tokio::spawn(connection);
+    let (client, connection) = connect(&url).await;
     // CloudNativePG creates the owner role at bootstrap. The test does it here.
     client
         .batch_execute(
@@ -483,6 +480,25 @@ async fn fresh_system_runs_image_migrations_and_reapply_runs_none() {
             .map(|row| row.get::<_, i32>(0))
             .collect::<Vec<_>>(),
         [1, 2]
+    );
+    platform_migrations::apply_reported(
+        &mut client,
+        platform_migrations::MigrationTarget::System,
+        &sources,
+        None,
+    )
+    .await
+    .unwrap();
+    sources.push(MigrationSource {
+        relative_path: format!("migrations/system/{:04}_pending.sql", sources.len() + 1),
+        bytes: b"INSERT INTO registry.dep5_fresh_probe VALUES (3);".to_vec(),
+    });
+    let upgraded = snapshot(&client).await;
+    initialize_system(&mut client, &sources).await.unwrap();
+    assert_eq!(
+        snapshot(&client).await,
+        upgraded,
+        "reapply after upgrade runs no bootstrap or pending migration"
     );
     disconnect(client, connection).await;
 }
@@ -1069,6 +1085,23 @@ async fn platform_nontransactional_files_keep_started_and_share_resolution() {
         assert_eq!(uncertain.recorded.len(), files.len());
         assert_eq!(uncertain.recorded[0].outcome, MigrationOutcome::Started);
         assert_eq!(uncertain.migrations.pending[0].relative_path, path);
+        let observed = wamn_package_control::schema_baseline::observe(&client, scope, &files)
+            .await
+            .unwrap();
+        assert!(observed.installed.is_empty());
+        assert!(observed.pending.is_empty());
+        assert_eq!(
+            observed
+                .uncertain
+                .iter()
+                .map(|file| &file.relative_path)
+                .collect::<Vec<_>>(),
+            files
+                .iter()
+                .map(|file| &file.relative_path)
+                .collect::<Vec<_>>()
+        );
+
         assert!(apply(&mut client, target, &files, None).await.is_err());
         // A started row can complete, but its execution identity cannot change.
         for assignment in [
@@ -1379,6 +1412,46 @@ async fn project_schema_preserves_applications_and_other_environments_and_holds_
         .await
         .unwrap();
     assert_eq!((row.get::<_, String>(0), row.get::<_, String>(1)), baseline);
+    sources.push(MigrationSource {
+        relative_path: format!("migrations/project/{:04}_pending.sql", sources.len() + 1),
+        bytes: b"INSERT INTO platform.dep5_probe VALUES (3);".to_vec(),
+    });
+    let before_reapply = snapshot(&project).await;
+    let repeated = reconcile_run_plane_with_migrations(request(), &sources)
+        .await
+        .unwrap();
+    assert!(!repeated.env_key_identity.app_schema_installed);
+    assert_eq!(snapshot(&project).await, before_reapply);
+    let observed =
+        wamn_package_control::schema_baseline::observe(&project, MigrationScope::Project, &sources)
+            .await
+            .unwrap();
+    assert_eq!(
+        observed
+            .installed
+            .iter()
+            .map(|file| &file.relative_path)
+            .collect::<Vec<_>>(),
+        completed
+            .recorded
+            .iter()
+            .map(|file| &file.relative_path)
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(
+        observed
+            .pending
+            .iter()
+            .map(|file| &file.relative_path)
+            .collect::<Vec<_>>(),
+        sources
+            .last()
+            .map(|file| &file.relative_path)
+            .into_iter()
+            .collect::<Vec<_>>()
+    );
+    // Restore the original selection for the unchanged apply and partial-installation contracts.
+    sources.pop();
     // A read-only diff and an identical apply leave every record unchanged.
     for apply in [false, true] {
         let before = snapshot(&project).await;

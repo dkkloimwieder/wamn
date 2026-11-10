@@ -58,7 +58,7 @@ pub struct Installed {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ProjectState {
     pub installed: BTreeMap<String, Installed>,
-    pub schema_difference: Option<wamn_package_control::schema_baseline::BaselineDifference>,
+    pub schema_report: Option<wamn_package_control::schema_baseline::SchemaReport>,
     /// `(manifest_digest, component_digest, store_alias, instance_id)`.
     pub bindings: BTreeSet<(String, String, String, String)>,
 }
@@ -129,6 +129,9 @@ pub struct Notice {
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 #[serde(tag = "kind", rename_all = "kebab-case")]
 pub enum Observation {
+    PlatformSchema {
+        report: wamn_package_control::schema_baseline::SchemaReport,
+    },
     SchemaDifference {
         installed: Option<String>,
         selected: String,
@@ -276,8 +279,8 @@ pub async fn analyse(
     }
     let plan = plan(document, &authorities);
     let mut notices = notices(document, application, &authorities, &fingerprints);
-    let system_baseline = wamn_package_control::schema_baseline::observe_system(&system).await?;
-    if let Some(observed) = system_baseline {
+    let report = wamn_package_control::schema_baseline::observe_system(&system).await?;
+    if !report.warnings.is_empty() {
         notices.push(Notice {
             application: application.clone(),
             identity: format!(
@@ -286,11 +289,10 @@ pub async fn analyse(
                     .path()
                     .trim_start_matches('/')
             ),
-            observed: Observation::SchemaDifference {
-                installed: observed.installed,
-                selected: observed.candidate,
-            },
-            next_action: "Inspect the installed system SQL baseline and rebuild a disposable platform with its selected artifacts".into(),
+            observed: Observation::PlatformSchema { report },
+            next_action:
+                "Inspect system SQL with wamn platform schema diff --scope system --chart DIR"
+                    .into(),
         });
     }
     Ok(Analysis {
@@ -444,12 +446,12 @@ pub async fn read_project(url: &str, env_key: &str) -> anyhow::Result<Option<Pro
         .into_iter()
         .map(|row| (row.get(0), row.get(1), row.get(2), row.get(3)))
         .collect();
-    let schema_difference =
-        wamn_package_control::schema_baseline::observe_project(&transaction).await?;
+    let schema_report =
+        Some(wamn_package_control::schema_baseline::observe_project(&transaction).await?);
     transaction.commit().await.context("end the project read")?;
     Ok(Some(ProjectState {
         installed,
-        schema_difference,
+        schema_report,
         bindings,
     }))
 }
@@ -834,6 +836,55 @@ pub async fn replica_refusals(
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn project_schema_notices_require_a_warning() {
+        use wamn_package_control::schema_baseline::{InitializationIdentity, SchemaReport};
+        let document = EnvironmentDocument::from_json(
+            br#"{"org":"acme","project":"apps","env":"dev","target":"cloud","policy":"dev","applications":{}}"#,
+        ).unwrap();
+        let mut authorities = Authorities {
+            release_name: String::new(),
+            connections: BTreeMap::new(),
+            artifact_bindings: BTreeSet::new(),
+            policy: Policy {
+                name: "dev".into(),
+                readiness_budget_seconds: 30,
+                drain_bound_seconds: 30,
+            },
+            row: None,
+            project: Some(ProjectState {
+                schema_report: Some(SchemaReport {
+                    initialization: Some(InitializationIdentity {
+                        sha256: wamn_control_provision::schema_baseline::project_sha256(),
+                        installed_at: "identity".into(),
+                    }),
+                    installed: vec![],
+                    pending: vec![],
+                    uncertain: vec![],
+                    missing: vec![],
+                    warnings: vec![],
+                }),
+                ..ProjectState::default()
+            }),
+            release: None,
+            revision: None,
+            live: BTreeMap::new(),
+        };
+        assert!(notices(&document, "app", &authorities, &BTreeMap::new()).is_empty());
+        let report = authorities
+            .project
+            .as_mut()
+            .unwrap()
+            .schema_report
+            .as_mut()
+            .unwrap();
+        report.initialization = None;
+        report.warnings.push("initialization is absent".into());
+        assert!(notices(&document, "app", &authorities, &BTreeMap::new()).iter().any(|notice| {
+            matches!(&notice.observed, Observation::PlatformSchema { report } if !report.warnings.is_empty())
+        }));
+    }
 
     #[test]
     fn an_exclusive_cloud_connection_requires_one_explicit_replica() {

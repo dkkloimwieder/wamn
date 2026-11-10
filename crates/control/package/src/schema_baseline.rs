@@ -1,23 +1,60 @@
-//! Record and observe initialization digests.
+//! Record initialization identities and observe image-owned SQL history.
 
 pub(super) mod plan;
-use plan::compare_digest;
 
-use anyhow::Context as _;
+use anyhow::{Context as _, ensure};
+use serde::{Deserialize, Serialize};
 use tokio_postgres::GenericClient;
 use wamn_control_provision::schema_baseline::{project_sha256, system_sha256};
+use wamn_control_provision::schema_migrations::{self, MigrationScope};
+use wamn_schema_control::{MigrationOutcome, MigrationSource, RecordedMigration};
 
-/// Record the system initialization schema in the caller's current transaction or session.
+/// The immutable initialization digest and the database's creation identity.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct InitializationIdentity {
+    pub sha256: String,
+    pub installed_at: String,
+}
+
+/// One exact SQL file, independent of executable selections.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MigrationFile {
+    pub ordinal: u32,
+    pub relative_path: String,
+    pub sha256: String,
+}
+
+/// Installed database facts and files pending for the selected image.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct SchemaReport {
+    pub initialization: Option<InitializationIdentity>,
+    pub installed: Vec<MigrationFile>,
+    pub pending: Vec<MigrationFile>,
+    pub uncertain: Vec<MigrationFile>,
+    pub missing: Vec<MigrationFile>,
+    pub warnings: Vec<String>,
+}
+
+/// Read-only adoption and file plan for an image.
+#[derive(Debug)]
+pub struct SchemaPlan {
+    pub initialization: InitializationIdentity,
+    pub adoption: bool,
+    pub migrations: wamn_schema_control::migrations::MigrationPlan,
+    pub recorded: Vec<RecordedMigration>,
+    pub missing: Option<wamn_schema_control::PackageMigrationError>,
+}
+
+/// Record the system initialization schema in the caller's transaction or session.
 pub async fn record_system(client: &impl GenericClient) -> anyhow::Result<()> {
     record(client, "registry.schema_baseline", &system_sha256()).await
 }
 
-/// Record the project initialization schema in the caller's current transaction or session.
+/// Record the project initialization schema in the caller's transaction or session.
 pub async fn record_project(client: &impl GenericClient) -> anyhow::Result<()> {
     record(client, "platform.schema_baseline", &project_sha256()).await
 }
 
-/// Record the digest after initialization.
 async fn record(client: &impl GenericClient, table: &str, sha256: &str) -> anyhow::Result<()> {
     client
         .execute(
@@ -29,61 +66,186 @@ async fn record(client: &impl GenericClient, table: &str, sha256: &str) -> anyho
     Ok(())
 }
 
-/// Observe the system baseline without authorizing schema writes.
-pub async fn observe_system(
-    client: &impl GenericClient,
-) -> anyhow::Result<Option<BaselineDifference>> {
-    compare(client, "registry.schema_baseline", &system_sha256()).await
+/// Read the image's embedded directory listing.
+pub fn embedded_sources(scope: MigrationScope) -> Vec<MigrationSource> {
+    let files = match scope {
+        MigrationScope::System => schema_migrations::SYSTEM_MIGRATIONS,
+        MigrationScope::Project => schema_migrations::PROJECT_MIGRATIONS,
+    };
+    files
+        .iter()
+        .map(|(id, bytes)| MigrationSource {
+            relative_path: (*id).into(),
+            bytes: bytes.to_vec(),
+        })
+        .collect()
 }
 
-/// Observe the project baseline without authorizing schema writes.
-pub async fn observe_project(
-    client: &impl GenericClient,
-) -> anyhow::Result<Option<BaselineDifference>> {
-    compare(client, "platform.schema_baseline", &project_sha256()).await
+/// Observe system SQL independently of application and service selections.
+pub async fn observe_system(client: &impl GenericClient) -> anyhow::Result<SchemaReport> {
+    observe(
+        client,
+        MigrationScope::System,
+        &embedded_sources(MigrationScope::System),
+    )
+    .await
 }
 
-async fn compare(
+/// Observe project SQL independently of application selections.
+pub async fn observe_project(client: &impl GenericClient) -> anyhow::Result<SchemaReport> {
+    observe(
+        client,
+        MigrationScope::Project,
+        &embedded_sources(MigrationScope::Project),
+    )
+    .await
+}
+
+fn scope_names(scope: MigrationScope) -> (&'static str, &'static str, String) {
+    match scope {
+        MigrationScope::System => ("system", "registry", system_sha256()),
+        MigrationScope::Project => ("project", "platform", project_sha256()),
+    }
+}
+
+async fn initialization(
     client: &impl GenericClient,
-    table: &str,
-    candidate: &str,
-) -> anyhow::Result<Option<BaselineDifference>> {
+    schema: &str,
+) -> anyhow::Result<Option<InitializationIdentity>> {
+    let table = format!("{schema}.schema_baseline");
     let exists: bool = client
         .query_one("SELECT to_regclass($1) IS NOT NULL", &[&table])
-        .await
-        .with_context(|| format!("look for {table}"))?
+        .await?
         .get(0);
-    let installed = if exists {
-        client
-            .query_opt(&format!("SELECT sha256 FROM {table}"), &[])
-            .await
-            .with_context(|| format!("read {table}"))?
-            .map(|row| row.get::<_, String>(0))
-    } else {
-        None
-    };
-    Ok(compare_digest(installed.as_deref(), candidate))
+    if !exists {
+        return Ok(None);
+    }
+    Ok(client
+        .query_opt(
+            &format!("SELECT sha256, installed_at::text FROM {table} WHERE singleton"),
+            &[],
+        )
+        .await
+        .with_context(|| format!("read {table}"))?
+        .map(|row| InitializationIdentity {
+            sha256: row.get(0),
+            installed_at: row.get(1),
+        }))
 }
 
-/// Recorded and selected schema identities. Absence is an observation, not permission to initialize.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct BaselineDifference {
-    pub installed: Option<String>,
-    pub candidate: String,
+/// Compare recorded state with explicit image files without writing SQL.
+pub async fn observe(
+    client: &impl GenericClient,
+    scope: MigrationScope,
+    sources: &[MigrationSource],
+) -> anyhow::Result<SchemaReport> {
+    let (_, schema, _) = scope_names(scope);
+    let initialization = initialization(client, schema).await?;
+    let (_, recorded) = recorded(client, schema).await?;
+    Ok(plan::observe(
+        scope,
+        initialization.as_ref(),
+        &recorded,
+        sources,
+    ))
 }
 
-#[cfg(test)]
-mod tests {
-    use super::compare_digest;
+/// Plan files through the shared prefix planner, including read-only adoption.
+pub async fn plan(
+    client: &impl GenericClient,
+    scope: MigrationScope,
+    sources: &[MigrationSource],
+) -> anyhow::Result<SchemaPlan> {
+    let (label, schema, candidate) = scope_names(scope);
+    let initialization = initialization(client, schema)
+        .await?
+        .context("initialization identity is absent")?;
+    ensure!(
+        initialization.sha256 == candidate,
+        "BaselineMismatch: installed={} candidate={candidate}",
+        initialization.sha256
+    );
+    let (adoption, recorded) = recorded(client, schema).await?;
+    let (migrations, missing) =
+        plan::migrations(sources, &recorded, &format!("migrations/{label}/"))?;
+    Ok(SchemaPlan {
+        initialization,
+        adoption,
+        migrations,
+        recorded,
+        missing,
+    })
+}
 
-    #[test]
-    fn changed_or_absent_baselines_are_observations() {
-        let candidate = "sha256:selected";
-        for installed in [Some("sha256:installed"), None] {
-            let difference = compare_digest(installed, candidate).unwrap();
-            assert_eq!(difference.installed.as_deref(), installed);
-            assert_eq!(difference.candidate, candidate);
+async fn recorded(
+    client: &impl GenericClient,
+    schema: &str,
+) -> anyhow::Result<(bool, Vec<RecordedMigration>)> {
+    let table = format!("{schema}.schema_migration");
+    let exists: bool = client
+        .query_one("SELECT to_regclass($1) IS NOT NULL", &[&table])
+        .await?
+        .get(0);
+    let mut recorded = Vec::new();
+    if exists {
+        for row in client
+            .query(
+                &format!(
+                    "SELECT ordinal, relative_path, sha256, outcome FROM {table} ORDER BY ordinal"
+                ),
+                &[],
+            )
+            .await?
+        {
+            let outcome: &str = row.get(3);
+            recorded.push(RecordedMigration {
+                ordinal: u32::try_from(row.get::<_, i32>(0))?,
+                relative_path: row.get(1),
+                sha256: row.get(2),
+                outcome: match outcome {
+                    "started" => MigrationOutcome::Started,
+                    "applied" => MigrationOutcome::Applied,
+                    _ => anyhow::bail!("unsupported schema migration outcome: {outcome}"),
+                },
+            });
         }
-        assert!(compare_digest(Some(candidate), candidate).is_none());
+    }
+    Ok((!exists, recorded))
+}
+
+/// Report recorded facts and image differences without execution refusals.
+pub fn report(
+    scope: MigrationScope,
+    planned: &SchemaPlan,
+    sources: &[MigrationSource],
+) -> SchemaReport {
+    plan::report(scope, planned, sources)
+}
+
+impl std::fmt::Display for SchemaReport {
+    fn fmt(&self, output: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if let Some(identity) = &self.initialization {
+            writeln!(
+                output,
+                "initialization: {} installed_at={}",
+                identity.sha256, identity.installed_at
+            )?;
+        } else {
+            writeln!(output, "initialization: absent")?;
+        }
+        for (label, files) in [
+            ("installed", &self.installed),
+            ("pending", &self.pending),
+            ("uncertain (started)", &self.uncertain),
+        ] {
+            writeln!(output, "{label} files:")?;
+            for file in files {
+                writeln!(output, "  {} {}", file.relative_path, file.sha256)?;
+            }
+        }
+        for warning in &self.warnings {
+            writeln!(output, "warning: {warning}")?;
+        }
+        Ok(())
     }
 }

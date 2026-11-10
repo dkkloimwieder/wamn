@@ -208,10 +208,11 @@ pub(crate) fn notices(
             });
         }
     }
-    if let Some(difference) = authorities
+    if let Some(report) = authorities
         .project
         .as_ref()
-        .and_then(|project| project.schema_difference.as_ref())
+        .and_then(|project| project.schema_report.as_ref())
+        .filter(|report| !report.warnings.is_empty())
     {
         notices.push(Notice {
             application: application.to_owned(),
@@ -219,12 +220,9 @@ pub(crate) fn notices(
                 "{}/{}/{}/platform.schema_baseline",
                 document.org, document.project, document.env
             ),
-            observed: Observation::SchemaDifference {
-                installed: difference.installed.clone(),
-                selected: difference.candidate.clone(),
-            },
+            observed: Observation::PlatformSchema { report: report.clone() },
             next_action: format!(
-                "Inspect the project SQL baseline for {}/{}/{}",
+                "Inspect project SQL with wamn platform schema diff --scope project --env FILE --chart DIR for {}/{}/{}",
                 document.org, document.project, document.env
             ),
         });

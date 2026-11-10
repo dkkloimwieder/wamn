@@ -4,11 +4,7 @@ use anyhow::{Context as _, ensure};
 use tokio_postgres::{Client, GenericClient, Transaction};
 use wamn_control_provision::schema_migrations::{self, MigrationScope};
 use wamn_package_control::migrations::{self, MigrationHooks, MigrationResolution, MigrationTable};
-use wamn_schema_control::migrations::MigrationPlan;
-use wamn_schema_control::{
-    MigrationOutcome, MigrationSource, PackageMigrationError, PackageMigrationErrorType,
-    RecordedMigration, SqlStatement, Value,
-};
+use wamn_schema_control::{MigrationSource, SqlStatement, Value};
 
 /// Project execution requires the existing environment lifecycle exclusion.
 #[derive(Debug, Clone, Copy)]
@@ -26,64 +22,20 @@ impl MigrationTarget<'_> {
     }
 }
 
-/// Read-only adoption and file plan for the selected image.
-#[derive(Debug)]
-pub struct PlatformMigrationPlan {
-    pub adoption: bool,
-    pub migrations: MigrationPlan,
-    pub recorded: Vec<RecordedMigration>,
-    /// Diff can describe a newer history, but apply still refuses missing bytes.
-    pub missing: Option<PackageMigrationError>,
-}
+pub use wamn_package_control::schema_baseline::{
+    SchemaPlan as PlatformMigrationPlan, embedded_sources, plan,
+};
 
-/// Describe the database's completed and remaining files.
-fn report(scope: MigrationScope, planned: &PlatformMigrationPlan) -> String {
-    use std::fmt::Write as _;
-    let (label, _, _) = scope_names(scope);
-    let mut report = format!(
-        "{label} migration history adoption: {}\ncompleted files:\n",
-        if planned.adoption { "required" } else { "none" }
-    );
-    for row in &planned.recorded {
-        if row.outcome == MigrationOutcome::Applied {
-            writeln!(report, "  {} {}", row.relative_path, row.sha256).unwrap();
-        }
-    }
-    for row in planned
-        .recorded
-        .iter()
-        .filter(|row| row.outcome == MigrationOutcome::Started)
-    {
-        writeln!(
-            report,
-            "uncertain (started): {} {}",
-            row.relative_path, row.sha256
-        )
-        .unwrap();
-    }
-    report.push_str("remaining files:\n");
-    for file in &planned.migrations.pending {
-        writeln!(
-            report,
-            "  {} {}{}",
-            file.relative_path,
-            file.sha256,
-            if file.started {
-                " uncertain (started)"
-            } else {
-                ""
-            }
-        )
-        .unwrap();
-    }
-    if let Some(error) = &planned.missing {
-        writeln!(
-            report,
-            "warning: selected image lacks recorded {label} files: {error}"
-        )
-        .unwrap();
-    }
-    report
+fn report(
+    scope: MigrationScope,
+    planned: &PlatformMigrationPlan,
+    sources: &[MigrationSource],
+) -> String {
+    format!(
+        "migration history adoption: {}\n{}",
+        if planned.adoption { "required" } else { "none" },
+        wamn_package_control::schema_baseline::report(scope, planned, sources)
+    )
 }
 
 /// Describe known SQL consumers without imposing a compatibility gate.
@@ -191,7 +143,7 @@ async fn report_result(
         Ok(count) => Ok(count),
         Err(error) => {
             let report = match plan(client, scope, sources).await {
-                Ok(planned) => report(scope, &planned),
+                Ok(planned) => report(scope, &planned, sources),
                 Err(error) => format!("cannot read completed and remaining files: {error:#}\n"),
             };
             let selection = match scope {
@@ -211,12 +163,20 @@ pub(crate) async fn initialize_project(
     sources: &[MigrationSource],
 ) -> anyhow::Result<usize> {
     client.batch_execute("SET ROLE wamn_db_owner").await?;
-    let result = apply_scope(client, MigrationScope::Project, sources, None).await;
-    let result = report_result(client, MigrationScope::Project, sources, result).await;
+    let result = restore_project(client, sources).await;
     let reset = client.batch_execute("RESET ROLE").await;
     let count = result?;
     reset?;
     Ok(count)
+}
+
+/// Restore validated project files while the caller holds reset or provisioning exclusion.
+pub async fn restore_project(
+    client: &mut Client,
+    sources: &[MigrationSource],
+) -> anyhow::Result<usize> {
+    let result = apply_scope(client, MigrationScope::Project, sources, None).await;
+    report_result(client, MigrationScope::Project, sources, result).await
 }
 
 /// Inspect or execute one image's SQL using an already selected database and exclusion.
@@ -240,7 +200,7 @@ pub async fn run(
             .await?;
     }
     let planned = plan(client, scope, sources).await?;
-    write!(output, "{}", report(scope, &planned))?;
+    write!(output, "{}", report(scope, &planned, sources))?;
     if !planned.migrations.pending.is_empty() {
         writeln!(
             output,
@@ -280,7 +240,7 @@ pub async fn run(
     if apply {
         apply_reported(client, target, sources, resolution).await?;
         let completed = plan(client, scope, sources).await?;
-        write!(output, "{}", report(scope, &completed))?;
+        write!(output, "{}", report(scope, &completed, sources))?;
     } else {
         client.batch_execute("ROLLBACK").await?;
     }
@@ -293,100 +253,6 @@ fn scope_names(scope: MigrationScope) -> (&'static str, &'static str, &'static s
         MigrationScope::System => ("system", "registry", "migrations/system/"),
         MigrationScope::Project => ("project", "platform", "migrations/project/"),
     }
-}
-
-/// Read the embedded directory listing without a second source of file names.
-pub fn embedded_sources(scope: MigrationScope) -> Vec<MigrationSource> {
-    let files = match scope {
-        MigrationScope::System => schema_migrations::SYSTEM_MIGRATIONS,
-        MigrationScope::Project => schema_migrations::PROJECT_MIGRATIONS,
-    };
-    files
-        .iter()
-        .map(|(id, bytes)| MigrationSource {
-            relative_path: (*id).into(),
-            bytes: bytes.to_vec(),
-        })
-        .collect()
-}
-
-/// Compare initialization and history without creating a table or recording a file.
-pub async fn plan(
-    client: &impl GenericClient,
-    scope: MigrationScope,
-    sources: &[MigrationSource],
-) -> anyhow::Result<PlatformMigrationPlan> {
-    let (_, schema, prefix) = scope_names(scope);
-    let candidate = match scope {
-        MigrationScope::System => wamn_control_provision::schema_baseline::system_sha256(),
-        MigrationScope::Project => wamn_control_provision::schema_baseline::project_sha256(),
-    };
-    let installed: String = client
-        .query_one(&format!("SELECT sha256 FROM {schema}.schema_baseline"), &[])
-        .await
-        .context("read initialization identity before migration")?
-        .get(0);
-    ensure!(
-        installed == candidate,
-        "BaselineMismatch: installed={installed} candidate={candidate}"
-    );
-    let table = format!("{schema}.schema_migration");
-    let exists: bool = client
-        .query_one("SELECT to_regclass($1) IS NOT NULL", &[&table])
-        .await?
-        .get(0);
-    let mut recorded = Vec::new();
-    if exists {
-        for row in client
-            .query(
-                &format!(
-                    "SELECT ordinal, relative_path, sha256, outcome FROM {table} ORDER BY ordinal"
-                ),
-                &[],
-            )
-            .await?
-        {
-            let outcome: String = row.get(3);
-            recorded.push(RecordedMigration {
-                ordinal: u32::try_from(row.get::<_, i32>(0))?,
-                relative_path: row.get(1),
-                sha256: row.get(2),
-                outcome: match outcome.as_str() {
-                    "started" => MigrationOutcome::Started,
-                    "applied" => MigrationOutcome::Applied,
-                    _ => anyhow::bail!("unsupported schema migration outcome: {outcome}"),
-                },
-            });
-        }
-    }
-    let (migrations, missing) =
-        match wamn_schema_control::migrations::plan_migrations(sources, &recorded, prefix, None) {
-            Ok(migrations) => (migrations, None),
-            Err(error)
-                if error.error_type() == PackageMigrationErrorType::MigrationDrift
-                    && error.actual_hash() == Some("missing") =>
-            {
-                // The shared planner already validated the complete history's shape.
-                // Validate the image's available prefix with that same planner.
-                let migrations = wamn_schema_control::migrations::plan_migrations(
-                    sources,
-                    &recorded[..sources.len()],
-                    prefix,
-                    None,
-                )?;
-                (migrations, Some(error))
-            }
-            Err(error) => return Err(error.into()),
-        };
-    for (file, sql) in migrations.pending.iter().zip(&migrations.statements) {
-        wamn_schema_control::migrations::validate_execution_sql(file, sql)?;
-    }
-    Ok(PlatformMigrationPlan {
-        adoption: !exists,
-        migrations,
-        recorded,
-        missing,
-    })
 }
 
 /// Apply exact files without initialization, package authority, or release changes.
@@ -515,5 +381,100 @@ impl MigrationHooks for PlatformHooks {
     ) -> anyhow::Result<()> {
         client.batch_execute(&sql.sql).await.with_context(|| format!(
             "migration {} has an uncertain outcome; inspect its effects and use --resolve {}=applied|retry", file.relative_path, file.relative_path))
+    }
+}
+
+/// Recorded substrate required by a disposable reset, independent of image additions.
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+pub struct ProjectReset {
+    pub initialization_sha256: String,
+    pub applied: Vec<wamn_package_control::schema_baseline::MigrationFile>,
+}
+
+impl ProjectReset {
+    /// Refuse uncertain history before pinning or changing the serving database.
+    pub async fn read(
+        client: &impl GenericClient,
+        sources: &[MigrationSource],
+    ) -> anyhow::Result<Self> {
+        let planned = plan(client, MigrationScope::Project, sources).await?;
+        if let Some(error) = planned.missing {
+            return Err(error.into());
+        }
+        if let Some(file) = planned
+            .recorded
+            .iter()
+            .find(|file| file.outcome == wamn_schema_control::MigrationOutcome::Started)
+        {
+            anyhow::bail!(
+                "project migration {} is uncertain (started); inspect its effects and run wamn platform schema apply --scope project --env FILE --chart DIR --resolve {}=applied|retry before reset",
+                file.relative_path,
+                file.relative_path
+            );
+        }
+        Ok(Self {
+            initialization_sha256: planned.initialization.sha256,
+            applied: planned
+                .recorded
+                .into_iter()
+                .map(
+                    |file| wamn_package_control::schema_baseline::MigrationFile {
+                        ordinal: file.ordinal,
+                        relative_path: file.relative_path,
+                        sha256: file.sha256,
+                    },
+                )
+                .collect(),
+        })
+    }
+
+    /// Validate the complete image against the pinned initialization and history.
+    pub fn validate(&self, sources: &[MigrationSource]) -> anyhow::Result<()> {
+        let candidate = wamn_control_provision::schema_baseline::project_sha256();
+        ensure!(
+            self.initialization_sha256 == candidate,
+            "BaselineMismatch: installed={} candidate={candidate}",
+            self.initialization_sha256
+        );
+        let recorded = self
+            .applied
+            .iter()
+            .map(|file| wamn_schema_control::RecordedMigration {
+                ordinal: file.ordinal,
+                relative_path: file.relative_path.clone(),
+                sha256: file.sha256.clone(),
+                outcome: wamn_schema_control::MigrationOutcome::Applied,
+            })
+            .collect::<Vec<_>>();
+        wamn_schema_control::migrations::plan_migrations(
+            sources,
+            &recorded,
+            "migrations/project/",
+            None,
+        )?;
+        Ok(())
+    }
+
+    /// Retain only applied SQL after validating the pinned identities.
+    pub fn sources(
+        &self,
+        mut sources: Vec<MigrationSource>,
+    ) -> anyhow::Result<Vec<MigrationSource>> {
+        self.validate(&sources)?;
+        sources.retain(|source| {
+            self.applied
+                .iter()
+                .any(|file| file.relative_path == source.relative_path)
+        });
+        let replay = wamn_schema_control::migrations::plan_migrations(
+            &sources,
+            &[],
+            "migrations/project/",
+            None,
+        )?;
+        for (file, sql) in replay.pending.iter().zip(&replay.statements) {
+            wamn_schema_control::migrations::validate_execution_sql(file, sql)?;
+        }
+        Ok(sources)
     }
 }
