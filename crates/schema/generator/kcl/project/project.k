@@ -26,14 +26,6 @@ schema NodePool:
         label == "" or regex.match(label, r"^[a-z0-9][a-z0-9_.-]*=[a-z0-9][a-z0-9_.-]*$"), "label is key=value or empty"
         taint == "" or regex.match(taint, r"^[a-z0-9][a-z0-9_.-]*=[a-z0-9][a-z0-9_.-]*:(NoSchedule|PreferNoSchedule|NoExecute)$"), "taint is key=value:effect or empty"
 
-schema Edge:
-    # The GKE Service owns this NEG. OpenTofu only reads it.
-    neg_name: "wamn-edge"
-    neg_zone: str
-
-    check:
-        regex.match(neg_zone, r"^[a-z]+-[a-z]+[0-9]+-[a-z]$"), "neg_zone is a GCP zone"
-
 schema KindRegistry:
     # The Artifact Registry repository for kind test pushes. It deletes
     # every tag older than cleanup_older_than_days.
@@ -78,7 +70,6 @@ schema Project:
     service_secondary_range_name: str
     node_service_account: str
     node_pools: [NodePool]
-    edge: Edge
     kind_registry: KindRegistry
     dns_zone: DnsZone
     guard_state: GuardState

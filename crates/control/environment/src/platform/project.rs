@@ -23,7 +23,6 @@ pub struct ProjectDocument {
     pub service_secondary_range_name: String,
     pub node_service_account: String,
     pub node_pools: Vec<NodePool>,
-    pub edge: Edge,
     pub kind_registry: KindRegistry,
     pub dns_zone: DnsZone,
     pub guard_state: GuardState,
@@ -55,14 +54,6 @@ pub struct DnsZone {
 pub struct GuardState {
     pub bucket: String,
     pub service_account: String,
-}
-
-/// The Service-owned endpoint group behind the HTTPS load balancer.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct Edge {
-    pub neg_name: String,
-    pub neg_zone: String,
 }
 
 /// One fixed-size node pool.
@@ -109,22 +100,6 @@ impl ProjectDocument {
     }
 
     fn check(&self) -> anyhow::Result<()> {
-        ensure!(
-            self.edge.neg_name == "wamn-edge",
-            "edge.neg_name must be wamn-edge"
-        );
-        let neg_zone: Vec<_> = self.edge.neg_zone.split('-').collect();
-        ensure!(
-            neg_zone.len() == 3
-                && lower(neg_zone[0])
-                && neg_zone[2].len() == 1
-                && lower(neg_zone[2])
-                && {
-                    let region = neg_zone[1].trim_end_matches(|c: char| c.is_ascii_digit());
-                    lower(region) && region.len() < neg_zone[1].len()
-                },
-            "edge.neg_zone is not a GCP zone"
-        );
         ensure!(
             name(&self.cluster_name, 40),
             "cluster_name is not a lowercase name"
@@ -286,7 +261,6 @@ mod tests {
             "network": "wamn", "subnetwork": "wamn-us-central1",
             "pod_secondary_range_name": "pods", "service_secondary_range_name": "services",
             "node_service_account": "wamn-nodes@wamn-dev.iam.gserviceaccount.com",
-            "edge": {"neg_name": "wamn-edge", "neg_zone": "us-central1-a"},
             "kind_registry": {
                 "repository_id": "wamn-kind", "location": "us-central1",
                 "description": "kind test pushes of upgrade-environment", "cleanup_older_than_days": 7
@@ -336,7 +310,6 @@ mod tests {
         for pointer in [
             "",
             "/node_pools/0",
-            "/edge",
             "/kind_registry",
             "/dns_zone",
             "/guard_state",
@@ -358,8 +331,6 @@ mod tests {
         for (pointer, value) in [
             ("/project_id", json!("bad")),
             ("/zone", json!("us-central1")),
-            ("/edge/neg_zone", json!("us-central1")),
-            ("/edge/neg_name", json!("other")),
             ("/cluster_name", json!("Bad")),
             ("/release_channel", json!("latest")),
             ("/network", json!("")),

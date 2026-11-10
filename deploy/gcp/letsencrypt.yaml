@@ -1,8 +1,7 @@
-# nginx mounts edge/wamn-edge-tls and terminates TLS behind the HTTPS load
+# nginx mounts hosts/wamn-edge-tls and terminates TLS behind the HTTPS load
 # balancer, which re-encrypts to it. cert-manager owns this certificate. The
 # load balancer presents its own Google-managed certificate.
-# The public certificate of docs/history/gcp-deployment.md step 2. cert-manager
-# answers the Let's Encrypt DNS-01 challenge in the Cloud DNS zone wamn-dev.
+# cert-manager answers the Let's Encrypt DNS-01 challenge in the Cloud DNS zone wamn-dev.
 # Its service account has roles/dns.admin on that zone only, through Workload
 # Identity, so the solver names the zone and never lists zones.
 apiVersion: cert-manager.io/v1
@@ -21,16 +20,11 @@ spec:
             project: wamn-dev
             hostedZoneName: wamn-dev
 ---
-apiVersion: v1
-kind: Namespace
-metadata:
-  name: edge
----
 apiVersion: cert-manager.io/v1
 kind: Certificate
 metadata:
   name: wamn-edge-tls
-  namespace: edge
+  namespace: hosts
 spec:
   secretName: wamn-edge-tls
   dnsNames:

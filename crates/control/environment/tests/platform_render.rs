@@ -98,7 +98,6 @@ fn platform_edge_uses_the_selected_image_and_existing_certificate() -> anyhow::R
             .iter()
             .find(|object| object["kind"] == "Certificate")
             .unwrap();
-        assert_eq!(certificate["metadata"]["namespace"], "hosts");
         assert!(!objects.iter().any(|object| object["kind"] == "Certificate"));
         let deployments: Vec<_> = objects
             .iter()
@@ -107,6 +106,10 @@ fn platform_edge_uses_the_selected_image_and_existing_certificate() -> anyhow::R
         assert_eq!(deployments.len(), 1);
         let deployment = deployments[0];
         assert_eq!(deployment["metadata"]["namespace"], "hosts");
+        assert_eq!(
+            certificate["metadata"]["namespace"],
+            deployment["metadata"]["namespace"]
+        );
         let pod = &deployment["spec"]["template"]["spec"];
         assert!(
             pod["volumes"]
@@ -135,6 +138,15 @@ fn platform_edge_uses_the_selected_image_and_existing_certificate() -> anyhow::R
             .find(|object| object["kind"] == "RoleBinding")
             .unwrap();
         assert_eq!(binding["subjects"][0]["name"], pod["serviceAccountName"]);
+        let account = objects
+            .iter()
+            .find(|object| object["kind"] == "ServiceAccount")
+            .unwrap();
+        assert_eq!(account["metadata"]["name"], pod["serviceAccountName"]);
+        assert_eq!(
+            account["metadata"]["namespace"],
+            deployment["metadata"]["namespace"]
+        );
         assert_eq!(binding["roleRef"]["name"], role["metadata"]["name"]);
         let config = objects
             .iter()
@@ -158,6 +170,30 @@ fn platform_edge_uses_the_selected_image_and_existing_certificate() -> anyhow::R
             service["metadata"]["annotations"]["cloud.google.com/neg"].is_string(),
             provider == Provider::Gcp
         );
+        if provider == Provider::Gcp {
+            let project = wamn_environment_control::platform::project::ProjectDocument::compile(
+                &repository.join("deploy/gcp/project.k"),
+            )?;
+            let infrastructure: serde_json::Value =
+                serde_json::from_slice(&wamn_schema_generator::render_project_tofu(
+                    &project.canonical_json()?,
+                    "state",
+                    "fixture",
+                )?)?;
+            let neg: serde_json::Value = serde_json::from_str(
+                service["metadata"]["annotations"]["cloud.google.com/neg"]
+                    .as_str()
+                    .unwrap(),
+            )?;
+            let group = &infrastructure["data"]["google_compute_network_endpoint_group"]["edge"];
+            for port in service["spec"]["ports"].as_array().unwrap() {
+                assert_eq!(
+                    group["name"],
+                    neg["exposed_ports"][port["port"].to_string()]["name"]
+                );
+            }
+            assert_eq!(group["zone"], project.zone);
+        }
     }
     Ok(())
 }

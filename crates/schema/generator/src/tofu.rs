@@ -165,8 +165,6 @@ pub fn render_project_tofu(
                 "certificates": ["${google_certificate_manager_certificate.edge.id}"],
                 "matcher": "PRIMARY",
             }},
-            // A new address, so that the cutover creates it while the TCP
-            // proxy still holds the old backend service.
             "google_compute_backend_service": {"edge_https": {
                 "name": "wamn-edge", "project": project.project_id,
                 "protocol": "HTTPS", "load_balancing_scheme": "EXTERNAL_MANAGED",
@@ -255,7 +253,8 @@ pub fn render_project_tofu(
         },
         "data": {
             "google_compute_network_endpoint_group": {"edge": {
-                "name": project.edge.neg_name, "zone": project.edge.neg_zone,
+                // The edge chart's Service creates this group in the cluster's zone.
+                "name": "wamn-edge", "zone": project.zone,
                 "project": project.project_id,
             }},
         },
@@ -279,7 +278,6 @@ struct ProjectInput {
     service_secondary_range_name: String,
     node_service_account: String,
     node_pools: Vec<NodePool>,
-    edge: Edge,
     kind_registry: KindRegistry,
     dns_zone: DnsZone,
     guard_state: GuardState,
@@ -304,12 +302,6 @@ struct DnsZone {
 struct GuardState {
     bucket: String,
     service_account: String,
-}
-
-#[derive(Deserialize)]
-struct Edge {
-    neg_name: String,
-    neg_zone: String,
 }
 
 #[derive(Deserialize)]
@@ -340,7 +332,7 @@ mod tests {
     #[test]
     fn edge_https_proxy_serves_the_service_neg_through_the_cdn() {
         let mut source: Value = serde_json::from_slice(&project()).unwrap();
-        source["edge"]["neg_zone"] = json!("us-east1-b");
+        source["zone"] = json!("us-east1-b");
         let rendered: Value = serde_json::from_slice(
             &render_project_tofu(&serde_json::to_vec(&source).unwrap(), "state", "dev").unwrap(),
         )
@@ -348,7 +340,7 @@ mod tests {
         assert_eq!(
             rendered["data"]["google_compute_network_endpoint_group"]["edge"],
             json!({
-                "name": "wamn-edge", "zone": "us-east1-b", "project": "wamn-dev"
+                "name": "wamn-edge", "zone": source["zone"], "project": source["project_id"]
             })
         );
         let resources = &rendered["resource"];

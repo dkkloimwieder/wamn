@@ -10,7 +10,6 @@ project.Project {
     pod_secondary_range_name = "pods"
     service_secondary_range_name = "services"
     node_service_account = "wamn-nodes@wamn-dev.iam.gserviceaccount.com"
-    edge = {neg_name = "wamn-edge", neg_zone = "us-central1-a"}
     kind_registry = {
         repository_id = "wamn-kind"
         location = "us-central1"

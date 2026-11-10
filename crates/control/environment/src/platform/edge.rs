@@ -15,10 +15,7 @@ use crate::kubectl;
 
 /// Render the platform's existing edge certificate in the hosts namespace.
 pub fn certificates(payload: &Path, document: &ClusterDocument) -> anyhow::Result<Vec<Value>> {
-    Ok(manifests::objects(payload, "letsencrypt.yaml", document)?
-        .into_iter()
-        .filter(|object| object["kind"] != "Namespace")
-        .collect())
+    manifests::objects(payload, "letsencrypt.yaml", document)
 }
 
 /// Select one platform edge, with no application route list.

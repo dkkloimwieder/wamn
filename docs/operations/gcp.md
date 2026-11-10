@@ -59,7 +59,8 @@ The owner supplies these external cloud inputs.
    gcloud storage buckets create gs://wamn-dev-otel --project wamn-dev --location us-central1 \
      --uniform-bucket-level-access --lifecycle-file=/tmp/otel-lifecycle.json
    gcloud iam service-accounts create wamn-otel --project wamn-dev
-   for role in roles/storage.objectCreator roles/storage.legacyBucketReader; do
+   for role in roles/storage.objectCreator roles/storage.legacyBucketReader
+   do
      gcloud storage buckets add-iam-policy-binding gs://wamn-dev-otel \
        --member serviceAccount:wamn-otel@wamn-dev.iam.gserviceaccount.com --role $role
    done
@@ -116,28 +117,32 @@ The owner supplies these external cloud inputs.
     gcloud projects add-iam-policy-binding wamn-dev --member=serviceAccount:wamn-agent@wamn-dev.iam.gserviceaccount.com --role=roles/logging.viewer
     ```
 
-13. Read access to `buckets.web` for the Rust edge. The Google service account is `wamn-edge@wamn-dev.iam.gserviceaccount.com`.
-    The Kubernetes service account `edge/wamn-edge-web` uses this identity.
-    The bucket grants `roles/storage.objectViewer` to the Google account.
-    The Google account grants `roles/iam.workloadIdentityUser` to `serviceAccount:wamn-dev.svc.id.goog[edge/wamn-edge-web]`.
-    If these inputs are absent, the owner creates them:
+13. Read access to `buckets.web` for the Rust edge.
+    The edge chart renders the Kubernetes service account `hosts/wamn-edge`.
+    Workload Identity authenticates Kubernetes workloads to Google Cloud.
+    Grant that account `roles/storage.objectViewer` on the web bucket through Workload Identity.
+    If the grant is missing, the owner runs these commands.
 
     ```bash
-    gcloud iam service-accounts create wamn-edge --project wamn-dev
+    NUMBER=$(gcloud projects describe wamn-dev --format 'value(projectNumber)')
     gcloud storage buckets add-iam-policy-binding gs://wamn-dev-web \
-      --member serviceAccount:wamn-edge@wamn-dev.iam.gserviceaccount.com --role roles/storage.objectViewer
-    gcloud iam service-accounts add-iam-policy-binding wamn-edge@wamn-dev.iam.gserviceaccount.com --project wamn-dev \
-      --role roles/iam.workloadIdentityUser --member 'serviceAccount:wamn-dev.svc.id.goog[edge/wamn-edge-web]'
+      --member "principal://iam.googleapis.com/projects/$NUMBER/locations/global/workloadIdentityPools/wamn-dev.svc.id.goog/subject/ns/hosts/sa/wamn-edge" \
+      --role roles/storage.objectViewer
     ```
 
-    For another project, replace `wamn-dev` with `project_id` and the bucket with `buckets.web`.
-    The owner supplies these IAM grants. Deployment integration for the Kubernetes account and its annotation remains unfinished.
+    For another project, use its project number, `project_id`, and `buckets.web`.
+    The direct grant uses the Kubernetes service account identity. [GKE workload authentication](https://docs.cloud.google.com/kubernetes-engine/docs/how-to/workload-identity)
 
-14. The edge NEG zone in `deploy/gcp/project.k`, currently `us-central1-a`, must match the zone of the deployed network endpoint group (NEG).
-    The fixed NEG name is `wamn-edge`.
+14. The edge Service `hosts/wamn-edge` creates the network endpoint group (NEG), which lists the load balancer's backend endpoints.
+    Its annotation names the group `wamn-edge`.
+    OpenTofu reads that group in the cluster's `zone` from `deploy/gcp/project.k`.
     DNS for every route host must point to the global address that OpenTofu creates.
     The owner supplies a firewall rule for TCP port 8443 from `35.191.0.0/16` and `130.211.0.0/22` to the cluster nodes.
-    Cloud load balancer creation depends on a deployed NEG. That deployment integration remains unfinished.
+    Platform deployment creates the Service before OpenTofu plans the load balancer.
+    The edge mounts the Secret `hosts/wamn-edge-tls`, which cert-manager creates from `deploy/gcp/letsencrypt.yaml`.
+    The issuer uses Cloud DNS zone `wamn-dev` in project `wamn-dev`.
+    The owner grants `roles/dns.admin` on that zone to the manifest's service account `cert-manager/cert-manager`.
+    The load balancer uses its own Google-managed certificate from Certificate Manager.
 
 15. Write access to `buckets.web` for web uploads. The `hosts/wamn-host` service account takes the grants of namespace `hosts` (item 4). A teardown keeps this grant, because it is IAM. If the grant is missing, the agent runs:
 
@@ -153,9 +158,8 @@ Cloud artifact production uses these owner inputs and never creates their grants
 The teardown keeps these resources for later cloud integration. The owner makes them once, with the commands below:
 
 - The APIs, the quotas and the daily guard that sets every pool to 0 nodes at 03:00 New York time (07:00 UTC).
-- The project custom role `wamnAgentIam`, bound to `wamn-agent@wamn-dev` with a condition. The condition admits the project resource, for `iam.serviceAccounts.create` alone, and the two `wamn-edge` resources: `projects/-/serviceAccounts/101495263876384747666` and `projects/_/buckets/wamn-dev-web`. The agent holds IAM only on the `wamn-edge` resources, never on itself.
 - The project custom role `wamnAgentTofuRead`, bound to `wamn-agent@wamn-dev` with no condition. It holds only `dns.managedZones.get` and `storage.buckets.getIamPolicy`, so that the agent's `tofu plan` can read the DNS zone and the IAM policy of the state bucket. It grants no write.
-- The Google service account `wamn-edge`, its `roles/storage.objectViewer` binding on `gs://wamn-dev-web`, and the Workload Identity binding of `edge/wamn-edge-web`.
+- The direct `roles/storage.objectViewer` grant on `gs://wamn-dev-web` for `hosts/wamn-edge` (section 1, item 13).
 - The cost guard `wamn-guard` acts once when a budget message crosses a threshold. At 50 percent it only logs, at 90 percent it sets every pool to 0 nodes, and at 100 percent it unlinks billing. It keeps the last threshold of the month in `gs://wamn-dev-tofu-state/guard/state.json`. The first message of a new month resets it.
 - The Artifact Registry repositories `wamn` and `wamn-kind`, with immutable tags. `wamn` holds the platform images, the packages, the components and the releases. `wamn-kind` deletes every tag that is older than 7 days. [project.k](../../deploy/gcp/project.k) declares `wamn-kind`.
 - The buckets `wamn-dev-web`, `wamn-dev-backups` and `wamn-dev-labels`.
@@ -174,7 +178,8 @@ gcloud services enable --project wamn-dev \
   artifactregistry.googleapis.com iam.googleapis.com cloudquotas.googleapis.com \
   billingbudgets.googleapis.com cloudbilling.googleapis.com pubsub.googleapis.com \
   cloudfunctions.googleapis.com run.googleapis.com cloudbuild.googleapis.com \
-  eventarc.googleapis.com cloudscheduler.googleapis.com logging.googleapis.com
+  eventarc.googleapis.com cloudscheduler.googleapis.com logging.googleapis.com \
+  certificatemanager.googleapis.com
 ```
 
 Set the quota caps. Google refuses a decrease of more than 10 percent without `--allow-high-percentage-quota-decrease`. Owner input 2 sets the SSD quota:
@@ -204,7 +209,8 @@ gcloud compute networks subnets create wamn-us-central1 --project wamn-dev \
   --secondary-range pods=10.20.0.0/16,services=10.30.0.0/20
 gcloud iam service-accounts create wamn-nodes --project wamn-dev --display-name="wamn GKE nodes"
 NSA=wamn-nodes@wamn-dev.iam.gserviceaccount.com
-for role in roles/logging.logWriter roles/monitoring.metricWriter roles/artifactregistry.reader; do
+for role in roles/logging.logWriter roles/monitoring.metricWriter roles/artifactregistry.reader
+do
   gcloud projects add-iam-policy-binding wamn-dev --member=serviceAccount:$NSA --role=$role --condition=None
 done
 ```
@@ -230,16 +236,6 @@ gcloud storage buckets create gs://wamn-dev-labels --project wamn-dev --location
 ```
 
 Grant the namespace `hosts` read access to `wamn` and `roles/storage.objectAdmin` on the labels bucket, with the commands of owner input 4 (section 1).
-
-Point each route host at the global address of the cloud load balancer.
-Use `receiving.wamn.dev.`, `wms.wamn.dev.`, and `control.wamn.dev.`:
-
-```bash
-gcloud dns record-sets create receiving.wamn.dev. --project wamn-dev --zone wamn-dev --type A --ttl 300 \
-  --rrdatas "$(gcloud compute addresses describe wamn-edge --project wamn-dev --global --format='value(address)')"
-gcloud dns record-sets create control.wamn.dev. --project wamn-dev --zone wamn-dev --type A --ttl 300 \
-  --rrdatas "$(gcloud compute addresses describe wamn-edge --project wamn-dev --global --format='value(address)')"
-```
 
 Make the read-only role of the agent's OpenTofu plan, and bind it to `wamn-agent`:
 
@@ -345,19 +341,31 @@ If the backend service names no group, `remove-backend` refuses, and the agent r
 
 ## Platform deployment boundary
 
-GCP deployment support is unfinished. The old numbered installer and `wamn-ctl platform apply` are removed.
-The current implementation targets local kind clusters.
-[The deployment plan](../plan/deploy.md) defines platform and application ownership and the later GCP work.
+Use the existing infrastructure and platform owners in this order.
 
-[Local platform deployment](deployment.md#local-platform) covers registry preparation, artifact production, explicit chart deployment, status, access, and cleanup.
-It consumes prepared artifacts and works outside the source checkout.
-A ready local platform includes system initialization, identity, and control, with zero applications.
-The cloud prerequisites above do not establish GCP deployment support.
+1. Render `deploy/gcp/project.k` with `wamn-ctl project render FILE --state-bucket BUCKET --state-prefix PREFIX DIRECTORY`.
+   Use the existing state bucket and prefix for this project.
+   Initialize OpenTofu in that directory.
+   For a fresh cluster, target the node pool resource addresses from `main.tf.json`.
+   Their dependencies include the cluster.
+   Save the plan and apply it after approval.
+   OpenTofu resource targeting includes each target's dependencies. [OpenTofu plan](https://opentofu.org/docs/cli/commands/plan/)
+2. Run `wamn platform deploy deploy/gcp/cluster.k --chart <prepared-chart>`.
+   The platform owner deploys cert-manager, the edge certificate, and the edge Helm release.
+   GKE creates the NEG from the Service annotation.
+3. Run a full `tofu plan` in the same directory and apply the approved saved plan.
+   OpenTofu reads the Service-owned NEG and creates the HTTPS load balancer, address, CDN, and Google-managed certificate.
+   The DNS owner publishes the certificate authorization CNAME from the OpenTofu outputs.
+   The DNS owner points each route host at the global address `wamn-edge`.
 
-GCP integration, public ingress, web uploads, optional telemetry, and production policies remain outside the local milestone.
-Application release selection, project databases, application SQL, activation, pin updates, and rollback belong to the next application epic.
-SQL migration modes and compatibility warnings also remain unfinished.
-The existing cloud and application operations below are separate from the local platform journey.
+Keep the cert-manager DNS challenge record and the load balancer's certificate authorization CNAME separate.
+The OpenTofu authorization uses a per-project DNS name.
+cert-manager uses `_acme-challenge` for the certificate mounted by the edge.
+
+GCP integration remains unfinished until the deployed checks pass.
+The cloud prerequisites and rendered configuration alone do not establish a working deployment.
+The deployment plan defines the remaining GCP scope. [Deployment plan](../plan/deploy.md)
+Prepare artifacts with the platform deployment procedure. [Platform deployment](deployment.md#local-platform)
 
 ## 5. Operations
 
