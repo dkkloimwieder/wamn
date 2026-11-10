@@ -211,7 +211,7 @@ pub fn validate_migration_bytes_for_schemas(
     let path = path.as_ref();
     let statements = artifact_statements(path, bytes, configured_schemas)?;
     let transactional = wamn_catalog::manifest::migration_is_transactional(bytes);
-    if !transactional && statements.len() != 1 {
+    if !wamn_catalog::manifest::migration_statement_count_is_safe(bytes, statements.len()) {
         return Err(policy_error(
             MigrationPolicyErrorType::NontransactionalOperation,
             path,

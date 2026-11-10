@@ -1,99 +1,7 @@
-use anyhow::{Context as _, ensure};
+use anyhow::Context as _;
 use tokio_postgres::{Client, Transaction};
-use wamn_schema_control::RecordedMigration;
 
-/// The developer's explicit decision about one uncertain file.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct MigrationResolution {
-    pub package: String,
-    pub path: String,
-    pub action: Resolution,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Resolution {
-    Applied,
-    Retry,
-}
-
-impl std::fmt::Display for MigrationResolution {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "{}:{}={}",
-            self.package,
-            self.path,
-            match self.action {
-                Resolution::Applied => "applied",
-                Resolution::Retry => "retry",
-            }
-        )
-    }
-}
-
-impl std::str::FromStr for MigrationResolution {
-    type Err = anyhow::Error;
-
-    fn from_str(value: &str) -> Result<Self, Self::Err> {
-        let (path, action) = value
-            .split_once('=')
-            .context("resolution must be <package>:<relative_path>=applied|retry")?;
-        let (package, path) = path
-            .split_once(':')
-            .context("resolution requires a package and migration path")?;
-        ensure!(
-            !package.is_empty() && !path.is_empty(),
-            "resolution requires a package and migration path"
-        );
-        let action = match action {
-            "applied" => Resolution::Applied,
-            "retry" => Resolution::Retry,
-            _ => anyhow::bail!("resolution must be <package>:<relative_path>=applied|retry"),
-        };
-        Ok(Self {
-            package: package.into(),
-            path: path.into(),
-            action,
-        })
-    }
-}
-
-/// Route a path to exactly one selected package before applying any SQL.
-/// A repeated resolution for an applied file is harmless after a lost result.
-pub fn resolution_package<'a>(
-    resolution: Option<&MigrationResolution>,
-    packages: impl IntoIterator<Item = (&'a str, &'a [RecordedMigration])>,
-) -> anyhow::Result<Option<&'a str>> {
-    let mut matched = None;
-    let mut recorded = false;
-    for (id, files) in packages {
-        for file in files {
-            if file.outcome == wamn_schema_control::MigrationOutcome::Started
-                && resolution.is_none()
-            {
-                anyhow::bail!(
-                    "package {id}: migration {} has an uncertain outcome; inspect its effects and use --resolve {id}:{}=applied|retry",
-                    file.relative_path,
-                    file.relative_path
-                );
-            }
-            if resolution
-                .is_some_and(|choice| choice.package == id && choice.path == file.relative_path)
-            {
-                recorded = true;
-                matched = Some(id);
-            }
-        }
-    }
-    if let Some(resolution) = resolution {
-        ensure!(
-            recorded,
-            "resolution names no recorded migration: {}",
-            resolution.path
-        );
-    }
-    Ok(matched)
-}
+pub use crate::migrations::{MigrationResolution, Resolution, resolution_package};
 
 pub(super) async fn begin<'a>(
     client: &'a mut Client,
@@ -107,72 +15,140 @@ pub(super) async fn begin<'a>(
     Ok(tx)
 }
 
-pub(super) async fn complete(
-    tx: &Transaction<'_>,
-    env_key: &str,
-    package: &str,
-    path: &str,
-) -> anyhow::Result<()> {
-    let updated = tx
-        .execute(
-            "UPDATE catalog.package_migrations SET outcome = 'applied', applied_at = now() \
-         WHERE env_key = $1 AND package_id = $2 AND relative_path = $3 AND outcome = 'started'",
-            &[&env_key, &package, &path],
-        )
-        .await
-        .context("record nontransactional completion")?;
-    ensure!(
-        updated == 1,
-        "nontransactional start record disappeared: {path}"
-    );
-    Ok(())
+/// Package authority stays outside the shared migration rules.
+pub(super) struct PackageMigrationHooks<'a> {
+    pub env_key: &'a str,
+    pub package: &'a super::PreparedPackage,
+    pub plan: &'a wamn_schema_control::PackageMigrationPlan,
+    pub coordinate: &'a str,
+    pub initial: bool,
+    pub artifact_digest: Option<&'a str>,
+    pub local_comment: Option<wamn_runtime::local_application::LocalTargetComment>,
+    pub changed: bool,
+    pub drops: wamn_platform_identity::auth_changes::AuthDrops,
 }
 
-/// Acquire the existing lock key without retaining a snapshot while waiting.
-/// A blocking advisory-lock query can deadlock with CREATE INDEX CONCURRENTLY,
-/// which waits for older snapshots. Each attempt finishes before the client sleeps.
-pub(super) async fn lock_session(
-    client: &Client,
-    transaction_lock_sql: &str,
-    parameters: &[&(dyn tokio_postgres::types::ToSql + Sync)],
-) -> anyhow::Result<()> {
-    let key: i64 = client
-        .query_one(
-            &transaction_lock_sql.replace("pg_advisory_xact_lock", ""),
-            parameters,
+impl crate::migrations::MigrationHooks for PackageMigrationHooks<'_> {
+    async fn begin<'a>(&mut self, client: &'a mut Client) -> anyhow::Result<Transaction<'a>> {
+        begin(client, self.env_key).await
+    }
+
+    async fn initialize(&mut self, tx: &Transaction<'_>) -> anyhow::Result<()> {
+        if self.initial {
+            self.changed |= crate::connection_requirement::install(
+                tx,
+                self.env_key,
+                &self.package.root,
+                &self.package.manifest,
+                self.package.component_source.as_ref(),
+            )
+            .await?
+                != 0;
+        }
+        tx.batch_execute(&wamn_control_provision::sql::install_platform_extensions_sql())
+            .await
+            .context("install the platform extensions")?;
+        super::ensure_model_schemas(tx, self.plan, &self.package.manifest).await
+    }
+
+    async fn before(
+        &mut self,
+        tx: &Transaction<'_>,
+        file: &wamn_schema_control::PendingMigration,
+        accept: bool,
+    ) -> anyhow::Result<()> {
+        let mutations = self
+            .package
+            .policy
+            .mutations
+            .iter()
+            .filter(|mutation| mutation.relative_path.as_ref() == file.relative_path)
+            .collect::<Vec<_>>();
+        super::definition_ownership::validate_definition_ownership_before_apply(
+            tx,
+            self.env_key,
+            self.coordinate,
+            self.plan.coordinate.package_id(),
+            &self.package.manifest,
+            if accept { &[] } else { &mutations },
         )
         .await
-        .context("read package schema lock key")?
-        .get(0);
-    let mut delay = std::time::Duration::from_millis(25);
-    let mut reported_holders = None;
-    loop {
-        if client
-            .query_one("SELECT pg_try_advisory_lock($1)", &[&key])
-            .await
-            .context("try package schema session lock")?
-            .get::<_, bool>(0)
-        {
-            return Ok(());
-        }
-        let holders = client
-            .query(
-                "SELECT pid FROM pg_locks WHERE locktype='advisory' AND granted \
-             AND database=(SELECT oid FROM pg_database WHERE datname=current_database()) \
-             AND classid::bigint=(($1::bigint >> 32) & 4294967295) \
-             AND objid::bigint=($1::bigint & 4294967295) AND objsubid=1 ORDER BY pid",
-                &[&key],
-            )
-            .await
-            .context("read package schema lock holders")?
+    }
+
+    async fn transactional(
+        &mut self,
+        tx: &Transaction<'_>,
+        sql: &wamn_schema_control::SqlStatement,
+    ) -> anyhow::Result<()> {
+        super::roles::execute_migration(tx, &self.package.manifest, sql, true).await
+    }
+
+    async fn nontransactional(
+        &mut self,
+        client: &Client,
+        file: &wamn_schema_control::PendingMigration,
+        sql: &wamn_schema_control::SqlStatement,
+    ) -> anyhow::Result<()> {
+        super::roles::execute_migration(client, &self.package.manifest, sql, false).await
+            .with_context(|| format!("migration {} has an uncertain outcome; inspect its effects and use --resolve {}:{}=applied|retry", file.relative_path, self.plan.coordinate.package_id(), file.relative_path))
+    }
+
+    async fn after(
+        &mut self,
+        tx: &Transaction<'_>,
+        file: &wamn_schema_control::PendingMigration,
+    ) -> anyhow::Result<()> {
+        let mutations = self
+            .package
+            .policy
+            .mutations
             .iter()
-            .map(|row| row.get::<_, Option<i32>>(0))
+            .filter(|mutation| mutation.relative_path.as_ref() == file.relative_path)
             .collect::<Vec<_>>();
-        if reported_holders.as_ref() != Some(&holders) {
-            eprintln!("waiting for package schema lock {key}; PostgreSQL holders: {holders:?}");
-            reported_holders = Some(holders);
+        self.changed |= super::definition_ownership::reconcile_definition_ownership(
+            tx,
+            self.env_key,
+            self.coordinate,
+            self.plan.coordinate.package_id(),
+            &self.package.manifest,
+            &mutations,
+        )
+        .await?;
+        Ok(())
+    }
+
+    async fn finish(&mut self, tx: &Transaction<'_>) -> anyhow::Result<()> {
+        let manifest = &self.package.manifest;
+        let directory = &self.package.directory;
+        super::roles::assert_host_role(tx).await?;
+        self.changed |= super::record_history::create_history_tables(tx, manifest).await?;
+        super::entity_maps::reconcile_entity_maps(tx, self.plan, manifest).await?;
+        self.changed |=
+            super::record_history::reconcile_record_history_triggers(tx, manifest).await?;
+        let fingerprint = super::installed_physical_fingerprint(tx, directory, manifest).await?;
+        self.changed |= super::package_version::record_package_schema(
+            tx,
+            self.env_key,
+            &self.plan.coordinate,
+            self.artifact_digest,
+            &fingerprint,
+        )
+        .await
+        .context("record the completed package schema")?;
+        if self.initial {
+            self.changed |=
+                super::operation_grants::ensure_admin_role(tx, self.env_key, &mut self.drops)
+                    .await?;
         }
-        tokio::time::sleep(delay).await;
-        delay = (delay * 2).min(std::time::Duration::from_millis(250));
+        if let Some(comment) = self.local_comment.as_mut() {
+            self.changed |= super::local_target::record_manifest(
+                tx,
+                comment,
+                self.coordinate,
+                &super::local_target::manifest_digest(directory),
+            )
+            .await?;
+        }
+        Ok(())
     }
 }

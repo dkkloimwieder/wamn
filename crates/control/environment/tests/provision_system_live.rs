@@ -501,3 +501,473 @@ async fn bootstrap_is_atomic_and_uses_database_facts() {
         "mismatch does not replay or reset"
     );
 }
+
+async fn migration_database(
+    scope: wamn_control_provision::schema_migrations::MigrationScope,
+) -> (wamn_test_postgres::Database, tokio_postgres::Client) {
+    use wamn_control_provision::schema_migrations::MigrationScope;
+    let database = match scope {
+        MigrationScope::System => wamn_test_postgres::database(),
+        MigrationScope::Project => wamn_project_state::test_database::tenant_platform(),
+    };
+    let client = connect(database.url()).await;
+    match scope {
+        MigrationScope::System => {
+            client.batch_execute("DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'wamn_system') THEN CREATE ROLE wamn_system NOLOGIN; END IF; END $$;").await.unwrap();
+            install_control_store(&client).await.unwrap();
+        }
+        MigrationScope::Project => {
+            client
+                .batch_execute(include_str!(
+                    "../../../../deploy/sql/app-schema-baseline.sql"
+                ))
+                .await
+                .unwrap();
+            wamn_package_control::schema_baseline::record_project(&client)
+                .await
+                .unwrap();
+        }
+    }
+    let owner = match scope {
+        MigrationScope::System => "wamn_system",
+        MigrationScope::Project => "wamn_db_owner",
+    };
+    client
+        .batch_execute(&format!(
+            "ALTER DATABASE {} OWNER TO {owner}",
+            wamn_pg_core::quote_ident(database.name())
+        ))
+        .await
+        .unwrap();
+    if scope == MigrationScope::Project {
+        // The existing fixture installs as its administrator. Match the production substrate owner.
+        client.batch_execute("ALTER SCHEMA platform OWNER TO wamn_db_owner; ALTER TABLE platform.schema_baseline OWNER TO wamn_db_owner;").await.unwrap();
+    }
+    client
+        .batch_execute(&format!("SET ROLE {owner}"))
+        .await
+        .unwrap();
+    (database, client)
+}
+
+#[tokio::test]
+async fn platform_migrations_adopt_order_commit_and_resume_exact_bytes() {
+    use wamn_control_provision::schema_migrations::MigrationScope;
+    use wamn_environment_control::platform_migrations::{MigrationTarget, apply, plan};
+    use wamn_schema_control::{MigrationOutcome, MigrationSource};
+
+    let _lock = wamn_test_postgres::lock();
+    for scope in [MigrationScope::System, MigrationScope::Project] {
+        let (database, mut client) = migration_database(scope).await;
+        let (registry, system) = migration_database(MigrationScope::System).await;
+        system
+            .batch_execute(
+                &wamn_control_provision::test_database::seed_org_project_env_sql(
+                    "migration",
+                    "fixture",
+                    "dev",
+                ),
+            )
+            .await
+            .unwrap();
+        let triple = wamn_control_registry::Triple::new("migration", "fixture", "dev");
+        let lifecycle = wamn_environment_control::environment::lock::LifecycleLock::acquire(
+            registry.url(),
+            &triple,
+        )
+        .await
+        .unwrap();
+        let target = match scope {
+            MigrationScope::System => MigrationTarget::System,
+            MigrationScope::Project => MigrationTarget::Project(&lifecycle),
+        };
+        let (name, schema, owner) = match scope {
+            MigrationScope::System => ("system", "registry", "wamn_system"),
+            MigrationScope::Project => ("project", "platform", "wamn_db_owner"),
+        };
+        let baseline_sql =
+            format!("SELECT sha256, installed_at::text FROM {schema}.schema_baseline");
+        let before = client.query_one(&baseline_sql, &[]).await.unwrap();
+        let initialization = (before.get::<_, String>(0), before.get::<_, String>(1));
+        let path = |ordinal: usize| format!("migrations/{name}/{ordinal:04}_effect.sql");
+        let source = |ordinal, sql: String| MigrationSource {
+            relative_path: path(ordinal),
+            bytes: sql.into_bytes(),
+        };
+        let first = source(
+            1,
+            format!(
+                "CREATE TABLE public.migration_effect (sequence int GENERATED ALWAYS AS IDENTITY, path text UNIQUE); INSERT INTO public.migration_effect(path) VALUES ('{}');",
+                path(1)
+            ),
+        );
+        let second = source(
+            2,
+            format!(
+                "INSERT INTO public.migration_effect(path) VALUES ('{}');",
+                path(2)
+            ),
+        );
+
+        // The unsafe later file refuses before the earlier file or adoption writes.
+        let unsafe_files = vec![first.clone(), source(2, "-- wamn:no-transaction\nCREATE TABLE public.unsafe_a(id int); CREATE TABLE public.unsafe_b(id int);".into())];
+        assert!(
+            apply(&mut client, target, &unsafe_files, None)
+                .await
+                .is_err()
+        );
+        assert!(plan(&client, scope, &[]).await.unwrap().adoption);
+        assert!(client.query_one("SELECT to_regclass('public.migration_effect') IS NULL AND to_regclass('public.unsafe_a') IS NULL AND to_regclass('public.unsafe_b') IS NULL", &[]).await.unwrap().get::<_, bool>(0));
+
+        // A failed first transactional file rolls back its DDL and history creation.
+        let failing = vec![source(
+            1,
+            "CREATE TABLE public.failed_effect(id int); SELECT 1/0;".into(),
+        )];
+        assert!(apply(&mut client, target, &failing, None).await.is_err());
+        assert!(plan(&client, scope, &[]).await.unwrap().adoption);
+        assert!(
+            client
+                .query_one("SELECT to_regclass('public.failed_effect') IS NULL", &[])
+                .await
+                .unwrap()
+                .get::<_, bool>(0)
+        );
+
+        // Read-only planning describes adoption and pending files without writing.
+        let files = vec![second, first];
+        let preview = plan(&client, scope, &files).await.unwrap();
+        assert!(preview.adoption);
+        assert!(preview.recorded.is_empty());
+        assert!(plan(&client, scope, &[]).await.unwrap().adoption);
+        assert_eq!(apply(&mut client, target, &[], None).await.unwrap(), 0);
+        let adopted = plan(&client, scope, &files).await.unwrap();
+        assert!(!adopted.adoption);
+        assert!(
+            adopted.recorded.is_empty(),
+            "adoption claims no executed file"
+        );
+
+        // A real record-write failure rolls back the file's non-idempotent effect.
+        client.batch_execute(&format!("CREATE FUNCTION public.reject_migration_record() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'record unavailable'; END $$; CREATE TRIGGER reject_migration_record BEFORE INSERT ON {schema}.schema_migration FOR EACH ROW EXECUTE FUNCTION public.reject_migration_record();")).await.unwrap();
+        assert!(apply(&mut client, target, &files, None).await.is_err());
+        assert!(
+            client
+                .query_one("SELECT to_regclass('public.migration_effect') IS NULL", &[])
+                .await
+                .unwrap()
+                .get::<_, bool>(0)
+        );
+        assert!(
+            plan(&client, scope, &files)
+                .await
+                .unwrap()
+                .recorded
+                .is_empty()
+        );
+        client.batch_execute(&format!("DROP TRIGGER reject_migration_record ON {schema}.schema_migration; DROP FUNCTION public.reject_migration_record();")).await.unwrap();
+
+        // Earlier files commit while a later transactional failure leaves no row.
+        let mut interrupted = files;
+        interrupted.push(source(
+            3,
+            "CREATE TABLE public.failed_effect(id int); SELECT 1/0;".into(),
+        ));
+        assert!(
+            apply(&mut client, target, &interrupted, None)
+                .await
+                .is_err()
+        );
+        let partial = plan(&client, scope, &interrupted).await.unwrap();
+        assert_eq!(partial.recorded.len(), preview.migrations.pending.len());
+        assert!(
+            partial
+                .recorded
+                .iter()
+                .all(|row| row.outcome == MigrationOutcome::Applied)
+        );
+        assert!(
+            client
+                .query_one("SELECT to_regclass('public.failed_effect') IS NULL", &[])
+                .await
+                .unwrap()
+                .get::<_, bool>(0)
+        );
+        interrupted.last_mut().unwrap().bytes = format!(
+            "INSERT INTO public.migration_effect(path) VALUES ('{}');",
+            path(3)
+        )
+        .into_bytes();
+        assert_eq!(
+            apply(&mut client, target, &interrupted, None)
+                .await
+                .unwrap(),
+            partial.migrations.pending.len()
+        );
+
+        // Discard the result, reconnect, and repeat. A CREATE without IF NOT EXISTS runs once.
+        drop(client);
+        client = connect(database.url()).await;
+        client
+            .batch_execute(&format!("SET ROLE {owner}"))
+            .await
+            .unwrap();
+        assert_eq!(
+            apply(&mut client, target, &interrupted, None)
+                .await
+                .unwrap(),
+            0
+        );
+        let completed = plan(&client, scope, &interrupted).await.unwrap();
+        let mut expected = interrupted
+            .iter()
+            .map(|file| file.relative_path.as_str())
+            .collect::<Vec<_>>();
+        expected.sort_unstable();
+        let actual = client
+            .query(
+                "SELECT path FROM public.migration_effect ORDER BY sequence",
+                &[],
+            )
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|row| row.get::<_, String>(0))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            actual, expected,
+            "effects follow the artifact's ordinal order exactly once"
+        );
+        assert_eq!(
+            completed
+                .recorded
+                .iter()
+                .map(|row| row.relative_path.as_str())
+                .collect::<Vec<_>>(),
+            expected
+        );
+        for record in &completed.recorded {
+            let source = interrupted
+                .iter()
+                .find(|file| file.relative_path == record.relative_path)
+                .unwrap();
+            assert_eq!(
+                record.sha256,
+                wamn_execution_contract::bytes_sha256(&source.bytes)
+            );
+        }
+        let actor = wamn_control_provision::PlatformComponent::Provisioning
+            .principal_id()
+            .to_string();
+        wamn_test_infrastructure::record_history::assert_stamp(
+            &client,
+            &format!("{schema}.schema_migration"),
+            "ordinal=1",
+            &actor,
+            &actor,
+        )
+        .await;
+        if scope == MigrationScope::System {
+            assert!(client.query_one("SELECT has_table_privilege('wamn_apply', 'registry.schema_migration', 'SELECT') AND NOT has_table_privilege('wamn_apply', 'registry.schema_migration', 'INSERT,UPDATE,DELETE')", &[]).await.unwrap().get::<_, bool>(0));
+        }
+
+        // A drift refusal blocks every later file before its effect.
+        let mut edited = interrupted.clone();
+        edited[0].bytes.push(b' ');
+        edited.push(source(
+            4,
+            "CREATE TABLE public.must_not_run(id int);".into(),
+        ));
+        let error = apply(&mut client, target, &edited, None).await.unwrap_err();
+        assert!(
+            error
+                .downcast_ref::<wamn_schema_control::PackageMigrationError>()
+                .is_some()
+        );
+        assert!(
+            client
+                .query_one("SELECT to_regclass('public.must_not_run') IS NULL", &[])
+                .await
+                .unwrap()
+                .get::<_, bool>(0)
+        );
+        assert_eq!(
+            plan(&client, scope, &interrupted).await.unwrap().recorded,
+            completed.recorded
+        );
+        for sql in [
+            format!("DELETE FROM {schema}.schema_migration"),
+            format!("UPDATE {schema}.schema_migration SET sha256='sha256:' || repeat('0',64)"),
+            format!("UPDATE {schema}.schema_migration SET applied_at=NULL"),
+            format!("UPDATE {schema}.schema_migration SET outcome='started', applied_at=NULL"),
+        ] {
+            assert!(client.batch_execute(&sql).await.is_err());
+        }
+        let after = client.query_one(&baseline_sql, &[]).await.unwrap();
+        assert_eq!(
+            (after.get::<_, String>(0), after.get::<_, String>(1)),
+            initialization
+        );
+
+        // A different initialization refuses and exposes both digests without migration writes.
+        client
+            .batch_execute(&format!(
+                "UPDATE {schema}.schema_baseline SET sha256='sha256:' || repeat('0',64)"
+            ))
+            .await
+            .unwrap();
+        let error = plan(&client, scope, &interrupted)
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains(&initialization.0));
+        assert!(error.contains(&format!("sha256:{}", "0".repeat(64))));
+    }
+}
+
+#[tokio::test]
+async fn platform_nontransactional_files_keep_started_and_share_resolution() {
+    use wamn_control_provision::schema_migrations::MigrationScope;
+    use wamn_environment_control::platform_migrations::{MigrationTarget, apply, plan};
+    use wamn_package_control::migrations::{MigrationResolution, Resolution};
+    use wamn_schema_control::{MigrationOutcome, MigrationSource};
+
+    let _lock = wamn_test_postgres::lock();
+    for scope in [MigrationScope::System, MigrationScope::Project] {
+        let (_database, mut client) = migration_database(scope).await;
+        let (registry, system) = migration_database(MigrationScope::System).await;
+        system
+            .batch_execute(
+                &wamn_control_provision::test_database::seed_org_project_env_sql(
+                    "migration",
+                    "fixture",
+                    "dev",
+                ),
+            )
+            .await
+            .unwrap();
+        let triple = wamn_control_registry::Triple::new("migration", "fixture", "dev");
+        let lifecycle = wamn_environment_control::environment::lock::LifecycleLock::acquire(
+            registry.url(),
+            &triple,
+        )
+        .await
+        .unwrap();
+        let target = match scope {
+            MigrationScope::System => MigrationTarget::System,
+            MigrationScope::Project => MigrationTarget::Project(&lifecycle),
+        };
+        let (name, schema) = match scope {
+            MigrationScope::System => ("system", "registry"),
+            MigrationScope::Project => ("project", "platform"),
+        };
+        let path = format!("migrations/{name}/0001_index.sql");
+        let mut files = vec![MigrationSource { relative_path: path.clone(),
+            bytes: b"-- wamn:no-transaction\nCREATE UNIQUE INDEX CONCURRENTLY migration_effect_idx ON public.migration_effect(id);".to_vec() }];
+        // A nontransactional first failure retains adoption and its durable started row.
+        assert!(apply(&mut client, target, &files, None).await.is_err());
+        let uncertain = plan(&client, scope, &files).await.unwrap();
+        assert!(!uncertain.adoption);
+        assert_eq!(uncertain.recorded.len(), files.len());
+        assert_eq!(uncertain.recorded[0].outcome, MigrationOutcome::Started);
+        assert_eq!(uncertain.migrations.pending[0].relative_path, path);
+        assert!(apply(&mut client, target, &files, None).await.is_err());
+        // A started row can complete, but its execution identity cannot change.
+        for assignment in [
+            "ordinal=ordinal+1000",
+            "relative_path=replace(relative_path,'.sql','_edited.sql')",
+            "sha256='sha256:' || repeat('0',64)",
+        ] {
+            assert!(client.batch_execute(&format!("UPDATE {schema}.schema_migration SET {assignment}, outcome='applied', applied_at=now() WHERE outcome='started'")).await.is_err());
+        }
+        let mut choice = MigrationResolution {
+            package: name.into(),
+            path: path.clone(),
+            action: Resolution::Retry,
+        };
+        let original = files[0].bytes.clone();
+        files[0].bytes.push(b' ');
+        let refusal = apply(&mut client, target, &files, Some(&choice))
+            .await
+            .unwrap_err();
+        assert_eq!(
+            refusal
+                .downcast_ref::<wamn_schema_control::PackageMigrationError>()
+                .unwrap()
+                .error_type(),
+            wamn_schema_control::PackageMigrationErrorType::MigrationDrift
+        );
+        files[0].bytes = original;
+        // The developer supplies the missing prerequisite, then retries the same bytes.
+        client
+            .batch_execute("CREATE TABLE public.migration_effect(id int);")
+            .await
+            .unwrap();
+        assert_eq!(
+            apply(&mut client, target, &files, Some(&choice))
+                .await
+                .unwrap(),
+            files.len()
+        );
+        assert!(
+            plan(&client, scope, &files)
+                .await
+                .unwrap()
+                .recorded
+                .iter()
+                .all(|file| file.outcome == MigrationOutcome::Applied)
+        );
+
+        // Lose the completion write after a non-idempotent statement commits.
+        let next_path = format!("migrations/{name}/0002_effect.sql");
+        files.push(MigrationSource {
+            relative_path: next_path.clone(),
+            bytes: b"-- wamn:no-transaction\nCREATE TABLE public.once_only(id int);".to_vec(),
+        });
+        client.batch_execute(&format!("CREATE FUNCTION public.reject_completion() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'completion unavailable'; END $$; CREATE TRIGGER reject_completion BEFORE UPDATE ON {schema}.schema_migration FOR EACH ROW EXECUTE FUNCTION public.reject_completion();")).await.unwrap();
+        assert!(apply(&mut client, target, &files, None).await.is_err());
+        assert!(
+            client
+                .query_one("SELECT to_regclass('public.once_only') IS NOT NULL", &[])
+                .await
+                .unwrap()
+                .get::<_, bool>(0)
+        );
+        assert_eq!(
+            plan(&client, scope, &files)
+                .await
+                .unwrap()
+                .recorded
+                .last()
+                .unwrap()
+                .outcome,
+            MigrationOutcome::Started
+        );
+        client.batch_execute(&format!("DROP TRIGGER reject_completion ON {schema}.schema_migration; DROP FUNCTION public.reject_completion();")).await.unwrap();
+        choice.path = next_path;
+        choice.action = Resolution::Applied;
+        assert_eq!(
+            apply(&mut client, target, &files, Some(&choice))
+                .await
+                .unwrap(),
+            0
+        );
+        assert!(
+            plan(&client, scope, &files)
+                .await
+                .unwrap()
+                .migrations
+                .pending
+                .is_empty()
+        );
+        assert_eq!(
+            apply(&mut client, target, &files, Some(&choice))
+                .await
+                .unwrap(),
+            0,
+            "repeated resolution after a lost result does not execute again"
+        );
+        let complete: bool = client.query_one(&format!("SELECT bool_and((outcome='applied') = (applied_at IS NOT NULL)) FROM {schema}.schema_migration"), &[]).await.unwrap().get(0);
+        assert!(complete);
+    }
+}

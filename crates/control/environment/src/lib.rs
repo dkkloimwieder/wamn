@@ -17,6 +17,7 @@ pub mod kubectl;
 pub mod org_connection;
 pub mod platform;
 pub mod platform_build;
+pub mod platform_migrations;
 pub mod provision_org;
 pub mod provision_project_env;
 pub mod provision_system;

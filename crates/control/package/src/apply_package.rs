@@ -1,7 +1,5 @@
 //! Initialize or explicitly advance package SQL from verified files.
 
-use package_version::record_package_schema;
-
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
@@ -9,16 +7,9 @@ use anyhow::{Context as _, ensure};
 use tokio_postgres::{NoTls, Transaction};
 use wamn_catalog::manifest::PackageManifest;
 use wamn_control_provision::{PlatformComponent, bind_platform_principal_sql};
-use wamn_schema_control::{PackageDirectory, SqlStatement, plan_package_migrations};
+use wamn_schema_control::{PackageDirectory, plan_package_migrations};
 
-use definition_ownership::{
-    reconcile_definition_ownership, validate_definition_ownership_before_apply,
-    validate_migration_policy,
-};
-use entity_maps::reconcile_entity_maps;
-use operation_grants::ensure_admin_role;
-use record_history::{create_history_tables, reconcile_record_history_triggers};
-use roles::assert_host_role;
+use definition_ownership::{validate_definition_ownership_before_apply, validate_migration_policy};
 
 mod adoption;
 pub use adoption::adopt_package_schemas;
@@ -297,14 +288,14 @@ async fn apply(
     let presented = plan_package_migrations(&package.directory, None, &[])?;
     // Match the transaction lock keys, but retain exclusion across file commits.
     // apply_request closes this dedicated connection on every result.
-    migration::lock_session(client, LOCK_SQL, &[]).await?;
-    migration::lock_session(
+    crate::migrations::lock_session(client, LOCK_SQL, &[]).await?;
+    crate::migrations::lock_session(
         client,
         LOCK_PACKAGE_SQL,
         &[&env_key, &presented.coordinate.package_id()],
     )
     .await?;
-    let mut tx = migration::begin(client, env_key).await?;
+    let tx = migration::begin(client, env_key).await?;
     let package_root = &package.root;
     let directory = &package.directory;
     let manifest = &package.manifest;
@@ -316,7 +307,7 @@ async fn apply(
     let package_version = presented.coordinate.package_version().to_owned();
     let coordinate_label = format!("{package_id}@{package_version}");
     let coordinate_text = coordinate_label.as_str();
-    let mut local_comment = match local_environment {
+    let local_comment = match local_environment {
         Some(environment) => Some(
             wamn_runtime::local_application::read_local_target_comment(&tx, env_key, environment)
                 .await?,
@@ -355,38 +346,12 @@ async fn apply(
     }
     let recorded = read_package_migrations(&tx, env_key, &package_id).await?;
     let plan = plan_package_migrations(directory, applied.as_ref(), &recorded)?;
-    if let Some(resolution) = resolution {
-        ensure!(
-            resolution.package == package_id
-                && recorded
-                    .iter()
-                    .any(|file| file.relative_path == resolution.path),
-            "resolution names no recorded migration: {}",
-            resolution.path
-        );
-    }
-    for file in plan.pending.iter().filter(|file| file.started) {
-        ensure!(
-            resolution.is_some_and(
-                |choice| choice.package == package_id && choice.path == file.relative_path
-            ),
-            "package {package_id}: migration {} has an uncertain outcome; inspect its effects and use --resolve {package_id}:{}=applied|retry",
-            file.relative_path,
-            file.relative_path
-        );
-    }
-    let requirements_written = if applied.is_none() {
-        crate::connection_requirement::install(
-            &tx,
-            env_key,
-            package_root,
-            manifest,
-            package.component_source.as_ref(),
-        )
-        .await?
-    } else {
-        0
-    };
+    crate::migrations::validate_resolution(
+        crate::migrations::ResolutionScope::Package(&package_id),
+        &plan.pending,
+        &recorded,
+        resolution,
+    )?;
     let migration_changed = !plan.is_noop();
     if let Some(deferred) = deferred {
         let paths = plan
@@ -415,119 +380,44 @@ async fn apply(
             .with_context(|| format!("validate {} before apply", deferred.relative_path));
     }
 
-    // wamn-yk9l. The platform extensions go in FIRST, while this connection is
-    // still the administrator: `CREATE EXTENSION` is refused to a package by
-    // the migration policy and is not a privilege the package-owner role holds.
-    // Idempotent, so it converges a database provisioned before the list
-    // existed.
-    tx.batch_execute(&wamn_control_provision::sql::install_platform_extensions_sql())
+    // Reopen through the shared executor. No package mutation precedes its first transaction.
+    tx.rollback()
         .await
-        .context("install the platform extensions")?;
-
-    // Provision package authority before any authored DDL. The migration
-    // runner selects the owning role after the policy refuses role changes.
-    ensure_model_schemas(&tx, &plan, manifest).await?;
-    let mut ownership_changed = false;
-    let mut executed = 0;
-    for (file, [sql, record]) in plan.pending.iter().zip(plan.statements.as_chunks::<2>().0) {
-        let file_mutations = mutations
-            .iter()
-            .filter(|mutation| mutation.relative_path.as_ref() == file.relative_path)
-            .collect::<Vec<_>>();
-        let accept =
-            file.started && resolution.is_some_and(|choice| choice.action == Resolution::Applied);
-        validate_definition_ownership_before_apply(
-            &tx,
-            env_key,
-            coordinate_text,
-            &package_id,
-            manifest,
-            if accept { &[] } else { &file_mutations },
-        )
-        .await?;
-        if file.transactional {
-            roles::execute_migration(&tx, manifest, sql, true).await?;
-            execute(&tx, record).await?;
-            executed += 1;
-        } else {
-            // Earlier transactional work commits before the durable started record.
-            tx.commit()
-                .await
-                .context("commit package migration batch")?;
-            tx = migration::begin(client, env_key).await?;
-            if !file.started {
-                execute(&tx, record).await?;
-            }
-            tx.commit().await.context("commit nontransactional start")?;
-            if !accept {
-                roles::execute_migration(client, manifest, sql, false).await
-                    .with_context(|| format!("migration {} has an uncertain outcome; inspect its effects and use --resolve {package_id}:{}=applied|retry", file.relative_path, file.relative_path))?;
-                executed += 1;
-            }
-            tx = migration::begin(client, env_key).await?;
-            migration::complete(&tx, env_key, &package_id, &file.relative_path).await?;
-        }
-        ownership_changed |= reconcile_definition_ownership(
-            &tx,
-            env_key,
-            coordinate_text,
-            &package_id,
-            manifest,
-            &file_mutations,
-        )
-        .await?;
-        tx.commit().await.context("commit migration completion")?;
-        tx = migration::begin(client, env_key).await?;
-    }
-    assert_host_role(&tx).await?;
-    let history_changed = create_history_tables(&tx, manifest).await?;
-    reconcile_entity_maps(&tx, &plan, manifest).await?;
-    let triggers_changed = reconcile_record_history_triggers(&tx, manifest).await?;
-    let physical_schema_fingerprint =
-        installed_physical_fingerprint(&tx, directory, manifest).await?;
-    let schema_recorded = record_package_schema(
-        &tx,
+        .context("finish package migration planning")?;
+    let keys: [(&str, &(dyn tokio_postgres::types::ToSql + Sync)); 2] =
+        [("env_key", &env_key), ("package_id", &package_id)];
+    let table = crate::migrations::MigrationTable {
+        name: "catalog.package_migrations",
+        keys: &keys,
+        recorded: &recorded,
+        scope: crate::migrations::ResolutionScope::Package(&package_id),
+    };
+    let mut hooks = migration::PackageMigrationHooks {
         env_key,
-        &plan.coordinate,
+        package,
+        plan: &plan,
+        coordinate: coordinate_text,
+        initial: applied.is_none(),
         artifact_digest,
-        &physical_schema_fingerprint,
+        local_comment,
+        changed: migration_changed,
+        drops: wamn_platform_identity::auth_changes::AuthDrops::default(),
+    };
+    let executed = crate::migrations::execute_migrations(
+        client,
+        &plan.pending,
+        &plan.statements,
+        &table,
+        resolution,
+        &mut hooks,
     )
-    .await
-    .context("record the completed package schema")?;
-    let mut drops = wamn_platform_identity::auth_changes::AuthDrops::default();
-    let admin_role_changed = if applied.is_none() {
-        ensure_admin_role(&tx, env_key, &mut drops).await?
-    } else {
-        false
-    };
-    let comment_changed = match local_comment.as_mut() {
-        Some(comment) => {
-            local_target::record_manifest(
-                &tx,
-                comment,
-                coordinate_text,
-                &local_target::manifest_digest(directory),
-            )
-            .await?
-        }
-        None => false,
-    };
-    tx.commit()
-        .await
-        .context("commit completed package schema")?;
+    .await?;
     Ok(ApplyOutcome {
-        drops,
+        drops: hooks.drops,
         package_id,
         package_version,
         migrations_applied: executed,
-        changed: requirements_written != 0
-            || schema_recorded
-            || migration_changed
-            || ownership_changed
-            || history_changed
-            || triggers_changed
-            || admin_role_changed
-            || comment_changed,
+        changed: hooks.changed,
     })
 }
 
@@ -608,14 +498,4 @@ async fn ensure_model_schemas(
         }
     }
     Ok(())
-}
-
-async fn execute(tx: &Transaction<'_>, statement: &SqlStatement) -> anyhow::Result<()> {
-    let result = if statement.params.is_empty() {
-        tx.batch_execute(&statement.sql).await
-    } else {
-        let params = crate::sql_params::as_postgres(&statement.params);
-        tx.execute(&statement.sql, &params).await.map(|_| ())
-    };
-    result.with_context(|| format!("apply {}", statement.summary))
 }

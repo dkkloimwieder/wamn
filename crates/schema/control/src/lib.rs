@@ -8,6 +8,7 @@
 pub mod connections;
 mod environment;
 pub mod exposure;
+pub mod migrations;
 mod model;
 mod package_migrations;
 pub mod physical_schema;

@@ -17,6 +17,11 @@ pub fn migration_is_transactional(bytes: &[u8]) -> bool {
     bytes.split(|byte| *byte == b'\n').next() != Some(b"-- wamn:no-transaction".as_slice())
 }
 
+/// Refuse multiple statements in files that execute outside a transaction.
+pub fn migration_statement_count_is_safe(bytes: &[u8], count: usize) -> bool {
+    migration_is_transactional(bytes) || count == 1
+}
+
 /// Strict package-owned behavior declaration parsed from `wamn.json`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

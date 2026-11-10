@@ -6,7 +6,6 @@
 //! returns ordered files and their completion records; it performs no filesystem or database
 //! I/O.
 
-use std::collections::BTreeSet;
 use std::error::Error;
 use std::fmt;
 
@@ -14,7 +13,6 @@ use wamn_catalog::PackageCoordinate;
 use wamn_catalog::manifest::{PackageManifest, validate_operation_vocabulary};
 use wamn_record_history::history_table_name;
 
-use crate::connections::prefixed_sha256;
 use crate::{SqlStatement, Value};
 
 pub const PACKAGE_MANIFEST_PATH: &str = "wamn.json";
@@ -184,7 +182,7 @@ impl PackageMigrationError {
         self.actual_hash.as_deref()
     }
 
-    fn new(kind: PackageMigrationErrorType, context: impl Into<String>) -> Self {
+    pub(crate) fn new(kind: PackageMigrationErrorType, context: impl Into<String>) -> Self {
         Self {
             type_: kind,
             context: context.into().into_boxed_str(),
@@ -196,7 +194,7 @@ impl PackageMigrationError {
         }
     }
 
-    fn with_source(
+    pub(crate) fn with_source(
         type_: PackageMigrationErrorType,
         context: impl Into<String>,
         source: impl Error + Send + Sync + 'static,
@@ -207,15 +205,15 @@ impl PackageMigrationError {
         }
     }
 
-    fn at_path(mut self, path: impl Into<String>) -> Self {
+    pub(crate) fn at_path(mut self, path: impl Into<String>) -> Self {
         self.path = Some(path.into().into_boxed_str());
         self
     }
 
-    fn drift(
+    pub(crate) fn drift(
         type_: PackageMigrationErrorType,
         context: impl Into<String>,
-        coordinate: &PackageCoordinate,
+        coordinate: Option<&PackageCoordinate>,
         path: impl Into<String>,
         recorded_hash: impl Into<String>,
         actual_hash: impl Into<String>,
@@ -223,7 +221,7 @@ impl PackageMigrationError {
         Self {
             type_,
             context: context.into().into_boxed_str(),
-            coordinate: Some(coordinate_text(coordinate).into_boxed_str()),
+            coordinate: coordinate.map(|value| coordinate_text(value).into_boxed_str()),
             path: Some(path.into().into_boxed_str()),
             recorded_hash: Some(recorded_hash.into().into_boxed_str()),
             actual_hash: Some(actual_hash.into().into_boxed_str()),
@@ -355,13 +353,18 @@ pub fn plan_package_migrations(
         validate_package_schema_source(&coordinate, artifact_digest.as_deref(), existing)?;
     }
 
-    // A package that owns no table ships no migration.
-    let migrations = if manifest.owns_no_table() && directory.migrations.is_empty() {
-        Vec::new()
-    } else {
-        normalized_migrations(&directory.migrations)?
-    };
-    validate_recorded_prefix(&coordinate, recorded, &migrations)?;
+    if !manifest.owns_no_table() && directory.migrations.is_empty() {
+        return Err(PackageMigrationError::new(
+            PackageMigrationErrorType::Gap,
+            format!("{PACKAGE_MIGRATION_GAP_REFUSAL}: package has no 0001 migration"),
+        ));
+    }
+    let migration_plan = crate::migrations::plan_migrations(
+        &directory.migrations,
+        recorded,
+        "migrations/",
+        Some(&coordinate),
+    )?;
 
     let mut models = Vec::with_capacity(manifest.models.len());
     let mut history_exclusions = Vec::new();
@@ -405,26 +408,12 @@ pub fn plan_package_migrations(
         })
         .chain(history_exclusions)
         .collect();
-    let completed = recorded
-        .iter()
-        .take_while(|row| row.outcome != MigrationOutcome::Started)
-        .count();
-    let pending_sources = &migrations[completed..];
-    let pending = pending_sources
-        .iter()
-        .map(|migration| PendingMigration {
-            ordinal: migration.ordinal,
-            relative_path: migration.source.relative_path.clone(),
-            sha256: migration.sha256.clone(),
-            transactional: wamn_catalog::manifest::migration_is_transactional(
-                &migration.source.bytes,
-            ),
-            started: recorded.iter().any(|row| {
-                row.ordinal == migration.ordinal && row.outcome == MigrationOutcome::Started
-            }),
-        })
-        .collect::<Vec<_>>();
-    let statements = transaction_statements(&coordinate, pending_sources)?;
+    let pending = migration_plan.pending;
+    let mut statements = Vec::with_capacity(pending.len() * 2);
+    for (file, sql) in pending.iter().zip(migration_plan.statements) {
+        statements.push(sql);
+        statements.push(record_migration_statement(&coordinate, file)?);
+    }
 
     Ok(PackageMigrationPlan {
         coordinate,
@@ -436,209 +425,12 @@ pub fn plan_package_migrations(
     })
 }
 
-struct NormalizedMigration<'a> {
-    ordinal: u32,
-    source: &'a MigrationSource,
-    sha256: String,
-}
-
-fn normalized_migrations(
-    sources: &[MigrationSource],
-) -> Result<Vec<NormalizedMigration<'_>>, PackageMigrationError> {
-    if sources.is_empty() {
-        return Err(PackageMigrationError::new(
-            PackageMigrationErrorType::Gap,
-            format!("{PACKAGE_MIGRATION_GAP_REFUSAL}: package has no 0001 migration"),
-        ));
-    }
-    let mut migrations = sources
-        .iter()
-        .map(|source| {
-            let ordinal = migration_ordinal(&source.relative_path)?;
-            Ok(NormalizedMigration {
-                ordinal,
-                source,
-                sha256: prefixed_sha256(&source.bytes),
-            })
-        })
-        .collect::<Result<Vec<_>, PackageMigrationError>>()?;
-    migrations.sort_by(|left, right| {
-        left.ordinal
-            .cmp(&right.ordinal)
-            .then_with(|| left.source.relative_path.cmp(&right.source.relative_path))
-    });
-
-    let mut paths = BTreeSet::new();
-    for (index, migration) in migrations.iter().enumerate() {
-        if !paths.insert(migration.source.relative_path.as_str())
-            || (index > 0 && migrations[index - 1].ordinal == migration.ordinal)
-        {
-            return Err(PackageMigrationError::new(
-                PackageMigrationErrorType::Duplicate,
-                format!(
-                    "{PACKAGE_MIGRATION_DUPLICATE_REFUSAL}: ordinal or path occurs more than once"
-                ),
-            )
-            .at_path(&migration.source.relative_path));
-        }
-        let expected = u32::try_from(index + 1).expect("migration count fits u32");
-        if migration.ordinal != expected {
-            return Err(PackageMigrationError::new(
-                PackageMigrationErrorType::Gap,
-                format!(
-                    "{PACKAGE_MIGRATION_GAP_REFUSAL}: expected ordinal {expected:04}, found {:04}",
-                    migration.ordinal
-                ),
-            )
-            .at_path(&migration.source.relative_path));
-        }
-    }
-    Ok(migrations)
-}
-
-fn migration_ordinal(path: &str) -> Result<u32, PackageMigrationError> {
-    let Some(file_name) = path.strip_prefix("migrations/") else {
-        return Err(invalid_path(path));
-    };
-    let Some(stem) = file_name.strip_suffix(".sql") else {
-        return Err(invalid_path(path));
-    };
-    let Some((digits, name)) = stem.split_once('_') else {
-        return Err(invalid_path(path));
-    };
-    if digits.len() != 4
-        || !digits.bytes().all(|byte| byte.is_ascii_digit())
-        || name.is_empty()
-        || !name
-            .bytes()
-            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_')
-    {
-        return Err(invalid_path(path));
-    }
-    digits.parse::<u32>().map_err(|source| {
-        PackageMigrationError::with_source(
-            PackageMigrationErrorType::InvalidDirectory,
-            "migration ordinal is invalid",
-            source,
-        )
-        .at_path(path)
-    })
-}
-
-fn invalid_path(path: &str) -> PackageMigrationError {
-    PackageMigrationError::new(
-        PackageMigrationErrorType::InvalidDirectory,
-        "migration path must be migrations/NNNN_snake_case.sql",
-    )
-    .at_path(path)
-}
-
-fn validate_recorded_prefix(
-    coordinate: &PackageCoordinate,
-    recorded: &[RecordedMigration],
-    actual: &[NormalizedMigration<'_>],
-) -> Result<(), PackageMigrationError> {
-    let mut paths = BTreeSet::new();
-    for (index, row) in recorded.iter().enumerate() {
-        if row.outcome == MigrationOutcome::Started && index + 1 != recorded.len() {
-            return Err(PackageMigrationError::new(
-                PackageMigrationErrorType::InvalidDirectory,
-                "an unfinished migration must be the last recorded file",
-            )
-            .at_path(&row.relative_path));
-        }
-        if !paths.insert(row.relative_path.as_str())
-            || (index > 0 && recorded[index - 1].ordinal == row.ordinal)
-        {
-            return Err(PackageMigrationError::new(
-                PackageMigrationErrorType::Duplicate,
-                format!(
-                    "{PACKAGE_MIGRATION_DUPLICATE_REFUSAL}: recorded ordinal or path occurs more than once"
-                ),
-            )
-            .at_path(&row.relative_path));
-        }
-        let expected = u32::try_from(index + 1).expect("migration count fits u32");
-        if row.ordinal != expected {
-            return Err(PackageMigrationError::new(
-                PackageMigrationErrorType::Gap,
-                format!(
-                    "{PACKAGE_MIGRATION_GAP_REFUSAL}: migration records expected ordinal {expected:04}, found {:04}",
-                    row.ordinal
-                ),
-            )
-            .at_path(&row.relative_path));
-        }
-    }
-    if recorded.len() > actual.len() {
-        let missing = &recorded[actual.len()];
-        return Err(PackageMigrationError::drift(
-            PackageMigrationErrorType::MigrationDrift,
-            PACKAGE_MIGRATION_DRIFT_REFUSAL,
-            coordinate,
-            &missing.relative_path,
-            &missing.sha256,
-            "missing",
-        ));
-    }
-    for (index, row) in recorded.iter().enumerate() {
-        let migration = &actual[index];
-        if row.ordinal != migration.ordinal
-            || row.relative_path != migration.source.relative_path
-            || row.sha256 != migration.sha256
-        {
-            return Err(PackageMigrationError::drift(
-                PackageMigrationErrorType::MigrationDrift,
-                PACKAGE_MIGRATION_DRIFT_REFUSAL,
-                coordinate,
-                &row.relative_path,
-                &row.sha256,
-                &migration.sha256,
-            ));
-        }
-        if row.outcome == MigrationOutcome::Started
-            && wamn_catalog::manifest::migration_is_transactional(&migration.source.bytes)
-        {
-            return Err(PackageMigrationError::new(
-                PackageMigrationErrorType::InvalidDirectory,
-                "a transactional migration cannot have a started outcome",
-            )
-            .at_path(&row.relative_path));
-        }
-    }
-    Ok(())
-}
-
-fn transaction_statements(
-    coordinate: &PackageCoordinate,
-    pending: &[NormalizedMigration<'_>],
-) -> Result<Vec<SqlStatement>, PackageMigrationError> {
-    let mut statements = Vec::with_capacity(pending.len() * 2);
-    for migration in pending {
-        let sql = std::str::from_utf8(&migration.source.bytes).map_err(|source| {
-            PackageMigrationError::with_source(
-                PackageMigrationErrorType::InvalidDirectory,
-                "migration SQL is not UTF-8",
-                source,
-            )
-            .at_path(&migration.source.relative_path)
-        })?;
-        statements.push(SqlStatement {
-            summary: format!("apply {}", migration.source.relative_path),
-            sql: sql.into(),
-            params: Vec::new(),
-        });
-        statements.push(record_migration_statement(coordinate, migration)?);
-    }
-    Ok(statements)
-}
-
 fn record_migration_statement(
     coordinate: &PackageCoordinate,
-    migration: &NormalizedMigration<'_>,
+    migration: &PendingMigration,
 ) -> Result<SqlStatement, PackageMigrationError> {
     Ok(SqlStatement {
-        summary: format!("record {}", migration.source.relative_path),
+        summary: format!("record {}", migration.relative_path),
         sql: "INSERT INTO catalog.package_migrations \
               (env_key, package_id, package_version, ordinal, relative_path, sha256, outcome, applied_at) \
               VALUES (NULLIF(current_setting('app.env_key', true), ''), $1, $2, $3, $4, $5, $6, \
@@ -653,11 +445,11 @@ fn record_migration_statement(
                     "migration ordinal exceeds PostgreSQL integer",
                     source,
                 )
-                .at_path(&migration.source.relative_path)
+                .at_path(&migration.relative_path)
             })?),
-            Value::Text(migration.source.relative_path.clone()),
+            Value::Text(migration.relative_path.clone()),
             Value::Text(migration.sha256.clone()),
-            Value::Text(if wamn_catalog::manifest::migration_is_transactional(&migration.source.bytes) { "applied" } else { "started" }.into()),
+            Value::Text(if migration.transactional { "applied" } else { "started" }.into()),
         ],
     })
 }

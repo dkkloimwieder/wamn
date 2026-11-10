@@ -1,4 +1,4 @@
-//! Record and observe full-schema digests.
+//! Record and observe initialization digests.
 
 pub(super) mod plan;
 use plan::compare_digest;
@@ -7,20 +7,17 @@ use anyhow::Context as _;
 use tokio_postgres::GenericClient;
 use wamn_control_provision::schema_baseline::{project_sha256, system_sha256};
 
-/// Record the full system schema in the caller's current transaction or session.
+/// Record the system initialization schema in the caller's current transaction or session.
 pub async fn record_system(client: &impl GenericClient) -> anyhow::Result<()> {
     record(client, "registry.schema_baseline", &system_sha256()).await
 }
 
-/// Record the full project schema in the caller's current transaction or session.
+/// Record the project initialization schema in the caller's current transaction or session.
 pub async fn record_project(client: &impl GenericClient) -> anyhow::Result<()> {
     record(client, "platform.schema_baseline", &project_sha256()).await
 }
 
-/// Record the digest after full-schema installation.
-///
-/// Migrations are deferred until development is stable, not removed.
-/// They return then with a smaller design.
+/// Record the digest after initialization.
 async fn record(client: &impl GenericClient, table: &str, sha256: &str) -> anyhow::Result<()> {
     client
         .execute(

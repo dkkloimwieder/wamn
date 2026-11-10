@@ -69,6 +69,7 @@ pub mod provisioner;
 #[cfg(feature = "ops")]
 pub mod recovery;
 pub mod schema_baseline;
+pub mod schema_migrations;
 pub mod secret;
 pub mod session_role_reader;
 pub mod session_target;
