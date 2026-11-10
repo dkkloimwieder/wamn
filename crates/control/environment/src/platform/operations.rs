@@ -104,7 +104,7 @@ pub fn target_objects(
             json!({"apiGroups":[""],"resources":["secrets"],"verbs":["get","list","create","update","delete"]}),
             // Chart web ConfigMaps: Helm lifecycle and waits; edge conflict listing.
             json!({"apiGroups":[""],"resources":["configmaps"],"verbs":["get","list","watch","create","patch","delete"]}),
-            json!({"apiGroups":[""],"resources":["services"],"verbs":["get","list","create","update","patch","delete"]}),
+            json!({"apiGroups":[""],"resources":["services"],"verbs":["get","list","watch","create","update","patch","delete"]}),
             json!({"apiGroups":[""],"resources":["pods","events"],"verbs":["get","list","watch"]}),
             json!({"apiGroups":["apps"],"resources":["deployments"],"verbs":["get","list","watch","create","update","patch","delete"]}),
             json!({"apiGroups":["apps"],"resources":["replicasets"],"verbs":["get","list","watch"]}),
