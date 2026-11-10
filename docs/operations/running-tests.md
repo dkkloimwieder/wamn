@@ -700,7 +700,7 @@ Select each test by its exact name in the `platform_apply_kind` Cargo target:
 
 | Test | Coverage | Platform |
 | --- | --- | --- |
-| `control_operations_kind` | Authenticated Job credentials, cross-project denial without a Job, two-application selection isolation, rollback, schema mutation, artifact worker and hosted UI | Creates one fresh kind cluster; bounded to 45 minutes |
+| `control_operations_kind` | Authenticated Job credentials, cross-project denial without a Job, two-application selection isolation, rollback, schema mutation and artifact worker | Creates one fresh kind cluster; bounded to 45 minutes |
 | `platform_install_recovery_kind` | Interrupt platform installation after its first Kubernetes write, retry, status, and owner sign-in | Creates one fresh kind cluster |
 | `application_deploy_kind` | Source and published code updates, interrupted installation and replacement recovery, reapply, rollback, missing artifacts, stale checkout, retained data, and independent applications | Attaches to an existing disposable kind platform |
 | `platform_upgrade_kind` | Independent control and identity updates, one application host update, code reapply, earlier runtime selection, and retained data | Attaches to an existing disposable kind platform |
@@ -821,8 +821,7 @@ and authenticated control routes for the subsequent deploy, rollback, and schema
 It reads actual Job pods, the canonical environment ConfigMap, and application release ConfigMaps.
 It deletes its publishing checkout before route execution.
 It reads the worker's image, immutable chart inputs, and storage mounts to exclude paths from the submitting machine.
-The same run reads the artifact-hosted platform UI through the product edge.
-Select a prepared chart with a published platform UI artifact.
+Kind has no web bucket, so hosted platform UI serving is verified on GCP in DEP7.
 Supply all publication inputs listed above before the run.
 Allow 30–45 minutes with prepared platform artifacts.
 The test enforces a 45-minute limit that includes setup and successful cleanup.

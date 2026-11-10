@@ -261,7 +261,11 @@ pub(super) async fn exercise(
         document(journey, &coordinate).await?["applications"] == rolled_back["applications"],
         "schema.apply changed code selections"
     );
-    hosted_ui(journey).await
+    ensure!(
+        !journey.run.checkout.exists(),
+        "source checkout still exists"
+    );
+    Ok(())
 }
 
 async fn document(journey: &Journey<'_>, coordinate: &str) -> anyhow::Result<Value> {
@@ -484,78 +488,5 @@ async fn worker(journey: &Journey<'_>, pods: &Value) -> anyhow::Result<()> {
             "worker did not execute the published image"
         );
     }
-    Ok(())
-}
-
-async fn hosted_ui(journey: &Journey<'_>) -> anyhow::Result<()> {
-    let selected = artifact_plan::select(&journey.run.chart)?;
-    let digest = selected.values()["platformUi"]
-        .as_str()
-        .context("platform UI artifact")?;
-    wamn_package_artifact::ensure_digest(digest)?;
-    let release = get(
-        journey.run,
-        "hosts",
-        "configmap",
-        &format!("c-{}", journey.run.document.org),
-    )
-    .await?;
-    let release: Value = serde_json::from_str(
-        release["data"]["release.json"]
-            .as_str()
-            .context("control web release")?,
-    )?;
-    ensure!(
-        release["platformUi"] == digest,
-        "edge UI artifact selection differs"
-    );
-    let forward = wamn_environment_control::platform::resources::port_forward(
-        &journey.run.target,
-        "hosts",
-        "service/wamn-edge",
-        443,
-    )
-    .await?;
-    let tls = get(journey.run, "hosts", "secret", "wamn-edge-tls").await?;
-    let host = &journey.run.document.route_hosts.control;
-    let client = reqwest::Client::builder()
-        .no_proxy()
-        .timeout(Duration::from_secs(30))
-        .add_root_certificate(reqwest::Certificate::from_pem(&super::secret(
-            &tls, "ca.crt",
-        )?)?)
-        .resolve(host, ([127, 0, 0, 1], forward.port).into())
-        .build()?;
-    let url = format!("https://{host}:{}", forward.port);
-    let html = client
-        .get(&url)
-        .send()
-        .await?
-        .error_for_status()?
-        .text()
-        .await?;
-    let assets: BTreeSet<_> = html
-        .split('"')
-        .filter(|path| path.starts_with("/assets/"))
-        .collect();
-    ensure!(
-        !assets.is_empty(),
-        "hosted platform UI has no asset references"
-    );
-    for path in assets.into_iter().chain(std::iter::once("/config.json")) {
-        let response = client
-            .get(format!("{url}{path}"))
-            .send()
-            .await?
-            .error_for_status()?;
-        ensure!(
-            !response.bytes().await?.is_empty(),
-            "hosted UI returned no bytes for {path}"
-        );
-    }
-    ensure!(
-        !journey.run.checkout.exists(),
-        "source checkout still exists"
-    );
     Ok(())
 }

@@ -140,12 +140,6 @@ async fn control_operations_kind() -> anyhow::Result<()> {
     tokio::time::timeout(Duration::from_mins(45), async {
         let (repository, binary, kcl) = inputs()?;
         let chart = platform_images::source_chart(&repository, &repository)?;
-        let selected = artifact_plan::select(&chart)?;
-        wamn_package_artifact::ensure_digest(
-            selected.values()["platformUi"]
-                .as_str()
-                .context("select a published platform UI artifact")?,
-        )?;
         for name in ["WAMN_FLOW_HTTP_COMPONENT", "WAMN_REGISTRY_AUTH_FILE"] {
             ensure!(
                 Path::new(&std::env::var(name)?).is_file(),
