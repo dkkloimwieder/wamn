@@ -905,6 +905,9 @@ impl ProductionDevStageRunner {
             &identity.env_key(),
             published.digest.as_str(),
             &published.manifest,
+            &wamn_control_provision::PlatformComponent::Provisioning
+                .principal_id()
+                .to_string(),
         )
         .await
         .map_err(|source| ProductionDevStageError::owner("install local release", source))?;

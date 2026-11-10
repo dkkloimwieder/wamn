@@ -459,7 +459,10 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
             "b",
             b.digest().as_str(),
             &b,
-            &[b_package.clone(), base_package.clone()]
+            &[b_package.clone(), base_package.clone()],
+            &wamn_control_provision::PlatformComponent::Provisioning
+                .principal_id()
+                .to_string(),
         )
         .await
         .is_err()
@@ -556,6 +559,9 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
         old_a.digest().as_str(),
         &old_a,
         &old_packages,
+        &wamn_control_provision::PlatformComponent::Provisioning
+            .principal_id()
+            .to_string(),
     )
     .await?;
     expand::prepare(
@@ -565,6 +571,9 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
         b.digest().as_str(),
         &b,
         &[b_package, base_package.clone()],
+        &wamn_control_provision::PlatformComponent::Provisioning
+            .principal_id()
+            .to_string(),
     )
     .await?;
     observer
@@ -693,6 +702,9 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
         new_a.digest().as_str(),
         &new_a,
         &candidate_packages,
+        &wamn_control_provision::PlatformComponent::Provisioning
+            .principal_id()
+            .to_string(),
     )
     .await?;
     let control_query = "SELECT (to_jsonb(t) - 'created_at' - 'updated_at')::text FROM catalog.connection_requirement t UNION ALL SELECT (to_jsonb(t) - 'created_at' - 'updated_at')::text FROM catalog.connection_binding t UNION ALL SELECT (to_jsonb(t) - 'created_at' - 'updated_at')::text FROM catalog.release_connection t UNION ALL SELECT (to_jsonb(t) - 'created_at' - 'updated_at')::text FROM platform.permission t UNION ALL SELECT (to_jsonb(t) - 'created_at' - 'updated_at')::text FROM platform.user_role t ORDER BY 1";
@@ -704,6 +716,9 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
         new_a.digest().as_str(),
         &new_a,
         &candidate_packages,
+        &wamn_control_provision::PlatformComponent::Provisioning
+            .principal_id()
+            .to_string(),
     )
     .await?;
     assert_eq!(before_retry, rows(&observer, control_query).await?);
@@ -777,7 +792,10 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
             "a",
             failed_release.digest().as_str(),
             &failed_release,
-            &failed_packages
+            &failed_packages,
+            &wamn_control_provision::PlatformComponent::Provisioning
+                .principal_id()
+                .to_string(),
         )
         .await
         .is_err()
@@ -1053,6 +1071,9 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
         old_a.digest().as_str(),
         &old_a,
         &old_packages,
+        &wamn_control_provision::PlatformComponent::Provisioning
+            .principal_id()
+            .to_string(),
     )
     .await?;
     assert!(

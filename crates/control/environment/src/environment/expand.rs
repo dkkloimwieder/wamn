@@ -10,6 +10,7 @@ pub async fn expand(
     platform: &Platform,
     document: &EnvironmentDocument,
     analysis: &Analysis,
+    actor: &str,
 ) -> anyhow::Result<()> {
     let Some(release) = &analysis.authorities.release else {
         return Ok(());
@@ -31,6 +32,7 @@ pub async fn expand(
         &release.digest,
         &release.manifest,
         &analysis.packages,
+        actor,
     )
     .await
 }
@@ -43,6 +45,7 @@ pub async fn prepare(
     digest: &str,
     manifest: &wamn_catalog::ServingManifest,
     packages: &[wamn_catalog::manifest::PackageManifest],
+    actor: &str,
 ) -> anyhow::Result<()> {
     for package in packages.iter().filter(|package| {
         wamn_release_control::publish_release::composes_integration(package, &manifest.components)
@@ -79,11 +82,16 @@ pub async fn prepare(
         manifest,
         packages,
         &project_url,
+        actor,
     )
     .await
 }
 
 /// Rebuild runtime facts through the same owner in a prepared replacement database.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Release preparation needs its target, artifact, packages, database, and publisher"
+)]
 pub(super) async fn prepare_at(
     platform: &Platform,
     document: &EnvironmentDocument,
@@ -92,6 +100,7 @@ pub(super) async fn prepare_at(
     manifest: &wamn_catalog::ServingManifest,
     packages: &[wamn_catalog::manifest::PackageManifest],
     project_url: &str,
+    actor: &str,
 ) -> anyhow::Result<()> {
     let document = super::analyse::select_application(document, Some(application))?;
     let document = &document;
@@ -125,7 +134,7 @@ pub(super) async fn prepare_at(
     let bindings = super::bindings::analyse(&system, document, packages).await?;
     let changes = platform.auth_changes().await?;
     // The immutable cache can survive a later preparation failure. It selects no release.
-    super::stage::write_release(project_url, &env_key, digest, manifest).await?;
+    super::stage::write_release(project_url, &env_key, digest, manifest, actor).await?;
     let tx = project.transaction().await?;
     tx.batch_execute(&wamn_control_provision::bind_platform_principal_sql(
         wamn_project_state::PlatformComponent::Provisioning,

@@ -327,12 +327,22 @@ pub async fn apply(
         file,
         application,
         document::SelectionChange::Reapply,
+        None,
     )
     .await
 }
 
 /// Resolve the published release's application from the document's declared membership.
 pub async fn deploy(platform: &Platform, file: &Path, digest: &str) -> anyhow::Result<Analysis> {
+    deploy_as(platform, file, digest, None).await
+}
+
+async fn deploy_as(
+    platform: &Platform,
+    file: &Path,
+    digest: &str,
+    actor: Option<&str>,
+) -> anyhow::Result<Analysis> {
     wamn_package_artifact::ensure_digest(digest)?;
     let document = EnvironmentDocument::read_deployed(platform, file, None).await?;
     let mut platform = platform.clone();
@@ -368,6 +378,7 @@ pub async fn deploy(platform: &Platform, file: &Path, digest: &str) -> anyhow::R
         file,
         application,
         document::SelectionChange::Deploy(digest),
+        actor,
     )
     .await
 }
@@ -378,6 +389,7 @@ async fn apply_selection(
     file: &Path,
     application: &str,
     change: document::SelectionChange<'_>,
+    actor: Option<&str>,
 ) -> anyhow::Result<Analysis> {
     let input = EnvironmentDocument::compile(file)?;
     let mut document;
@@ -427,11 +439,23 @@ async fn apply_selection(
         runtime::resolve_application(&mut platform, &document, &private.path("."), &control)
             .await?;
         let mut analysis = analyse::analyse(&platform, &document, Some(application)).await?;
+        if let Some(actor) = actor {
+            analysis.actor = actor.to_owned();
+        }
         let prepared = match &analysis.authorities.release {
             Some(release) => Some(write::prepare(&platform, &document, &analysis, release).await?),
             None => None,
         };
-        expand::expand(&platform, &document, &analysis)
+        let provisioning;
+        let publisher = if let Some(actor) = actor {
+            actor
+        } else {
+            provisioning = wamn_project_state::PlatformComponent::Provisioning
+                .principal_id()
+                .to_string();
+            &provisioning
+        };
+        expand::expand(&platform, &document, &analysis, publisher)
             .await
             .context("prepare application control records")?;
         let document = document.persist_selection(&platform, application).await?;

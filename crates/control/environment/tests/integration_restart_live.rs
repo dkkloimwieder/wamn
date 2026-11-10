@@ -428,6 +428,9 @@ async fn apply(
             env_key,
             digest,
             release.manifest(),
+            &wamn_control_provision::PlatformComponent::Provisioning
+                .principal_id()
+                .to_string(),
         )
         .await?;
         let tx = project.transaction().await?;

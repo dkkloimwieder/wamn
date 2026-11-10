@@ -434,6 +434,9 @@ pub async fn initialize_with_migrations(
             &manifest,
             &code_packages,
             &project_url,
+            &wamn_control_provision::PlatformComponent::Provisioning
+                .principal_id()
+                .to_string(),
         )
         .await?;
     }

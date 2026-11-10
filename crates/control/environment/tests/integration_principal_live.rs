@@ -153,7 +153,16 @@ async fn apply_creates_one_integration_principal_and_grants_declared_dependencie
     .await?;
     let (_, digest) = ServingManifest::from_canonical_bytes(&manifest.canonical_bytes())?;
     for _ in 0..2 {
-        write_release(project.url(), ENV_KEY, digest.as_str(), &manifest).await?;
+        write_release(
+            project.url(),
+            ENV_KEY,
+            digest.as_str(),
+            &manifest,
+            &wamn_control_provision::PlatformComponent::Provisioning
+                .principal_id()
+                .to_string(),
+        )
+        .await?;
         materialize_application_principals(
             system.url(),
             project.url(),

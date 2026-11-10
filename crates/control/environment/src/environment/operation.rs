@@ -87,6 +87,10 @@ pub struct Request<'a> {
 /// # Errors
 /// Returns invalid target, input, Kubernetes, or operation failures.
 pub async fn run(request: Request<'_>) -> anyhow::Result<Value> {
+    let actor = std::env::var("WAMN_DEPLOY_ACTOR")
+        .context("authenticated deploy actor is absent")?
+        .parse::<wamn_platform_identity::PrincipalId>()
+        .context("authenticated deploy actor is not a principal id")?;
     ensure!(
         matches!(
             request.operation,
@@ -156,22 +160,24 @@ pub async fn run(request: Request<'_>) -> anyhow::Result<Value> {
     };
     match request.operation {
         "deploy" => {
-            let analysis = super::deploy(
+            let analysis = super::deploy_as(
                 &platform,
                 file,
                 request.release.context("deploy requires a release")?,
+                Some(actor.as_str()),
             )
             .await?;
             Ok(json!({"notices":analysis.notices,"plan":analysis.plan}))
         }
         "rollback" => {
-            let analysis = super::rollback::rollback(
+            let analysis = super::apply_selection(
                 &platform,
                 file,
                 request
                     .application
                     .context("rollback requires an application")?,
-                request.release,
+                super::document::SelectionChange::Rollback(request.release),
+                Some(actor.as_str()),
             )
             .await?;
             Ok(json!({"notices":analysis.notices,"plan":analysis.plan}))

@@ -114,6 +114,9 @@ pub async fn workflow_host(
         ENV_KEY,
         digest.as_str(),
         manifest,
+        &wamn_control_provision::PlatformComponent::Provisioning
+            .principal_id()
+            .to_string(),
     )
     .await?;
     let mut credentials = ClassCredentials::default();

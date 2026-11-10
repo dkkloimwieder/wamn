@@ -15,6 +15,7 @@ pub async fn rollback(
         file,
         application,
         SelectionChange::Rollback(release),
+        None,
     )
     .await
 }

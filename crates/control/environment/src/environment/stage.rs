@@ -631,6 +631,8 @@ pub(super) async fn open(
 /// Write `catalog.releases (manifest_digest, manifest)` for the release if
 /// absent (R1). The row is immutable, and its bytes hash to its key. This is
 /// the one writer of the row (R1 (3), R2); publish writes OCI only.
+/// The caller supplies the authenticated publisher, or the provisioning
+/// machine principal on the trusted direct path. Retries keep the first stamp.
 ///
 /// # Errors
 ///
@@ -640,6 +642,7 @@ pub async fn write_release(
     env_key: &str,
     digest: &str,
     manifest: &wamn_catalog::ServingManifest,
+    actor: &str,
 ) -> anyhow::Result<()> {
     let bytes = manifest.canonical_bytes();
     ensure!(
@@ -653,11 +656,13 @@ pub async fn write_release(
         .await
         .context("begin the release cache write")?;
     transaction
-        .batch_execute(&wamn_control_provision::bind_platform_principal_sql(
-            wamn_control_provision::PlatformComponent::Provisioning,
-        ))
+        .query_one(
+            "SELECT set_config('app.user_id', $1, true), \
+             set_config('app.operation', 'wamn:provisioning', true)",
+            &[&actor],
+        )
         .await
-        .context("bind wamn:provisioning as the actor and operation")?;
+        .context("bind the release publisher and provisioning operation")?;
     transaction
         .query_one("SELECT set_config('app.env_key', $1, true)", &[&env_key])
         .await
@@ -694,7 +699,7 @@ mod tests {
     use super::apply_order;
 
     #[tokio::test]
-    async fn release_writer_stamps_provisioning_and_keeps_exact_retries() {
+    async fn release_writer_stamps_publisher_and_keeps_first_stamp_on_retry() {
         let _lock = wamn_test_postgres::lock();
         let database = wamn_project_state::test_database::tenant_platform();
         database
@@ -719,21 +724,52 @@ mod tests {
             host_routes: BTreeSet::new(),
         };
         let digest = manifest.digest();
-        super::write_release(database.url(), "history", digest.as_str(), &manifest)
+        let publisher = uuid::Uuid::new_v4();
+        super::write_release(
+            database.url(),
+            "history",
+            digest.as_str(),
+            &manifest,
+            &publisher.to_string(),
+        )
+        .await
+        .unwrap();
+        let client = super::super::analyse::connect_project(database.url())
             .await
             .unwrap();
-        let sql = format!(
-            "SELECT count(*) = 1 AND bool_and(created_by = '{actor}' AND updated_by = '{actor}' AND created_at = updated_at) \
-             FROM catalog.releases",
-            actor = wamn_control_provision::PlatformComponent::Provisioning.principal_id()
+        let stamps = async || {
+            let row = client
+                .query_one(
+                    "SELECT created_by, updated_by, created_at::text, updated_at::text \
+                 FROM catalog.releases WHERE env_key=$1 AND manifest_digest=$2",
+                    &[&"history", &digest.as_str()],
+                )
+                .await
+                .unwrap();
+            (
+                row.get::<_, uuid::Uuid>(0),
+                row.get::<_, uuid::Uuid>(1),
+                row.get::<_, String>(2),
+                row.get::<_, String>(3),
+            )
+        };
+        let before = stamps().await;
+        assert_eq!((before.0, before.1), (publisher, publisher));
+        assert_eq!(before.2, before.3);
+        super::write_release(
+            database.url(),
+            "history",
+            digest.as_str(),
+            &manifest,
+            &uuid::Uuid::new_v4().to_string(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            stamps().await,
+            before,
+            "a second publisher cannot replace the first insertion stamp"
         );
-        assert_eq!(database.execute(&[&sql]).unwrap().trim(), "t");
-        let image = "SELECT to_jsonb(r)::text FROM catalog.releases r ORDER BY 1";
-        let before = database.execute(&[image]).unwrap();
-        super::write_release(database.url(), "history", digest.as_str(), &manifest)
-            .await
-            .unwrap();
-        assert_eq!(database.execute(&[image]).unwrap(), before);
     }
 
     #[test]

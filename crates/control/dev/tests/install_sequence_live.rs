@@ -358,6 +358,9 @@ async fn release_cache(
         &env_key,
         digest.as_str(),
         manifest,
+        &wamn_control_provision::PlatformComponent::Provisioning
+            .principal_id()
+            .to_string(),
     )
     .await?;
     let client = connect(project_url).await?;
