@@ -303,8 +303,6 @@ impl<'ast> syn::visit::Visit<'ast> for IgnoredTests<'_> {
     }
 
     fn visit_item_fn(&mut self, function: &'ast syn::ItemFn) {
-        use syn::spanned::Spanned as _;
-
         if ignored_reason(function).is_none() {
             return;
         }
@@ -317,19 +315,9 @@ impl<'ast> syn::visit::Visit<'ast> for IgnoredTests<'_> {
         {
             return;
         }
-        let line = function
-            .attrs
-            .iter()
-            .find(|attribute| attribute.path().is_ident("ignore"))
-            .unwrap()
-            .span()
-            .start()
-            .line;
         for error in ignore_errors(function) {
-            self.errors.push(format!(
-                "{}:{line}: {identity}: {error}",
-                self.file.display()
-            ));
+            self.errors
+                .push(format!("{}: {identity}: {error}", self.file.display()));
         }
     }
 }

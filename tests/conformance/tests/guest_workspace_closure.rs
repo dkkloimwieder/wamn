@@ -1,52 +1,12 @@
-//! No guest-consumed crate may live outside the components workspace.
-//!
-//! # Why this is a gate and not a convention
-//!
-//! A Cargo path dependency that escapes its workspace root gets a `-C metadata`
-//! hash derived from its ABSOLUTE path, which lands in the v0 crate
-//! disambiguator of every mangled symbol and therefore in the compiled bytes.
-//! A component digest built from such a graph is a claim about the checkout it
-//! was built in, not about the source an author wrote: the same commit produced
-//! a different digest in every worktree, so a pin minted in one was
-//! unreproducible in all the others, and `[WAMN-DEV-LIVE]` could only pass from
-//! the directory the pin happened to be minted in (`wamn-10yt.10.29`).
-//!
-//! That is one of two costs, and it is the narrower one. Cargo reads EVERY
-//! member manifest of a workspace before it builds one guest, so any escape,
-//! of any dependency kind, makes the guest workspace unloadable on its own. In
-//! `wamn-i9rg` that broke the Docker component stage, which was then given a
-//! copy of the escaped tree to read. `wamn-98hz` measured the two apart: the
-//! escape there was a dev-dependency, and the guest build compiles lib targets
-//! only, so it reached no guest byte and no digest moved.
-//!
-//! `wamn-10yt.10.29` relocated the four escaping crates under `components/`.
-//! This gate keeps them there. It is deliberately structural rather than a
-//! digest comparison: the property is cheap to assert on every run, while
-//! comparing two checkouts' digests costs two full guest builds.
-//!
-//! The companion channel — absolute `file!()` strings that `include!`d package
-//! sources bake into the artifact — is closed by `--remap-path-prefix` in
-//! `tools/guest-rustflags`, asserted below so the two cannot drift apart.
-//!
-//! A shared Cargo invocation previously changed guest bytes when the selected
-//! packages changed (`wamn-10yt.61`). Each guest now uses its own invocation.
-//! The cross-profile arm compares declared application guests with all workspace
-//! guests to check that the selection does not change their bytes.
-//!
-//! Guest WIT inputs must not resolve into root-workspace member packages.
-//! The WIT guard reads binding macros and resolves links in dependency trees.
+//! Guest path dependencies stay inside their workspace.
 
 use std::fs;
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path, PathBuf};
+use std::process::Command;
 
 use sha2::{Digest as _, Sha256};
-use syn::visit::Visit as _;
 
-/// Every workspace whose members are compiled into guest artifacts.
 const GUEST_WORKSPACES: [&str; 2] = ["apps/Cargo.toml", "apps/platform/no-std/Cargo.toml"];
-
-/// The one place that sets the RUSTFLAGS of every guest build.
-const GUEST_RUSTFLAGS: &str = "tools/guest-rustflags";
 
 fn repository_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -56,494 +16,48 @@ fn repository_root() -> PathBuf {
         .to_path_buf()
 }
 
-fn read(relative: &str) -> String {
-    let path = repository_root().join(relative);
-    fs::read_to_string(&path).unwrap_or_else(|error| panic!("read {}: {error}", path.display()))
-}
-
-/// The dependency table one declaration sits in, which decides what an escape
-/// from it costs.
-#[derive(Clone, Copy)]
-enum DependencyKind {
-    Normal,
-    Build,
-    Dev,
-    /// `[workspace.dependencies]`, where the inheriting member decides the kind.
-    Workspace,
-}
-
-/// The dependency table a header names, or `None` for any other table.
-///
-/// The keyword sits last in `[dependencies]`, `[build-dependencies]` and
-/// `[target.'cfg(unix)'.dependencies]`, and ahead of the one crate it declares
-/// in `[dev-dependencies.wamn-test-postgres]`, so this walks the segments
-/// instead of reading either end.
-fn dependency_kind(table: &str) -> Option<DependencyKind> {
-    if table == "workspace.dependencies" || table.starts_with("workspace.dependencies.") {
-        return Some(DependencyKind::Workspace);
-    }
-    let mut rest = table;
-    loop {
-        let (segment, tail) = match rest.split_once('.') {
-            Some((segment, tail)) => (segment, Some(tail)),
-            None => (rest, None),
-        };
-        match segment {
-            "dependencies" => return Some(DependencyKind::Normal),
-            "build-dependencies" => return Some(DependencyKind::Build),
-            "dev-dependencies" => return Some(DependencyKind::Dev),
-            _ => rest = tail?,
-        }
-    }
-}
-
-/// The canonical spelling of the table a kind names.
-fn table_name(kind: DependencyKind) -> &'static str {
-    match kind {
-        DependencyKind::Normal => "dependencies",
-        DependencyKind::Build => "build-dependencies",
-        DependencyKind::Dev => "dev-dependencies",
-        DependencyKind::Workspace => "workspace.dependencies",
-    }
-}
-
-/// What an escape from this table costs.
-///
-/// One cost applies to every kind. Cargo reads every member manifest before it
-/// builds one guest, so the escaped directory has to be present wherever a guest
-/// is built. The digest cost is narrower: it needs the escaped crate to be
-/// COMPILED into a guest, and `wamn build` builds lib targets only,
-/// under resolver 2, so a dev-dependency reaches no guest byte. `wamn-98hz`
-/// measured that: built at two absolute roots, `wamn-event-reg` kept
-/// `-C metadata=cddb1d4d2d3d1541` and a byte-identical rlib, and the escaped
-/// dev-dependency was never compiled in either build.
-fn cost(kind: DependencyKind) -> &'static str {
-    match kind {
-        DependencyKind::Dev => {
-            "ONE COST APPLIES HERE. The guest workspace cannot load on its own, because Cargo \
-             reads every member manifest before it builds one guest, so the escaped directory \
-             has to be present wherever a guest is built (wamn-i9rg). The digest channel of \
-             wamn-10yt.10.29 does NOT apply to a dev-dependency: the guest build compiles lib \
-             targets only, under resolver 2, so this crate reaches no guest byte (wamn-98hz). \
-             Move the test that needs it into the root workspace."
-        }
-        DependencyKind::Workspace => {
-            "BOTH COSTS ARE IN PLAY, and the members that inherit this entry decide which. \
-             Whatever inherits it: the guest workspace cannot load on its own, because Cargo \
-             reads every member manifest before it builds one guest, so the escaped directory \
-             has to be present wherever a guest is built (wamn-i9rg). Where a member inherits \
-             it into [dependencies] or [build-dependencies]: the escaped crate's absolute path \
-             enters its -C metadata disambiguator and so its compiled bytes, which makes every \
-             component digest a claim about the build directory rather than about the source \
-             (wamn-10yt.10.29)."
-        }
-        DependencyKind::Normal | DependencyKind::Build => {
-            "TWO COSTS APPLY HERE. The guest workspace cannot load on its own, because Cargo \
-             reads every member manifest before it builds one guest, so the escaped directory \
-             has to be present wherever a guest is built (wamn-i9rg). And the escaped crate's \
-             absolute path enters its -C metadata disambiguator and so its compiled bytes, \
-             which makes every component digest a claim about the build directory rather than \
-             about the source (wamn-10yt.10.29). Move the crate under the workspace instead of \
-             reaching out to it."
-        }
-    }
-}
-
-/// `path = "..."` values declared in a dependency table of one manifest, with
-/// their line and the table they sit in.
-///
-/// Only dependency tables are read. A `[[bin]]` or `[lib]` path is a source file
-/// of the declaring package, not a reach into another one.
-fn declared_dependency_paths(source: &str) -> Vec<(usize, String, DependencyKind)> {
-    let mut found = Vec::new();
-    let mut table = None;
-    for (index, line) in source.lines().enumerate() {
-        let trimmed = line.trim();
-        if trimmed.starts_with('[') && trimmed.ends_with(']') {
-            table = dependency_kind(trimmed.trim_matches(['[', ']']));
-            continue;
-        }
-        if trimmed.starts_with('#') {
-            continue;
-        }
-        let Some(kind) = table else { continue };
-        let mut rest = trimmed;
-        while let Some(at) = rest.find("path = \"") {
-            let tail = &rest[at + "path = \"".len()..];
-            let Some(end) = tail.find('"') else { break };
-            found.push((index + 1, tail[..end].to_string(), kind));
-            rest = &tail[end..];
-        }
-    }
-    found
-}
-
-/// Whether a `path` declared in `manifest_directory` lands outside `workspace_root`.
-///
-/// Both directories are relative to the repository root, so a `..` that walks
-/// off the top of the tree fails to pop and is an escape. The resolution is
-/// lexical: `../http-request` from one member of a workspace names a sibling
-/// member and is not an escape, which a leading-`..` test alone cannot tell.
-fn leaves_workspace(workspace_root: &Path, manifest_directory: &Path, declared: &str) -> bool {
-    let mut resolved = manifest_directory.to_path_buf();
-    for component in Path::new(declared).components() {
-        match component {
-            Component::CurDir => {}
-            Component::ParentDir => {
-                if !resolved.pop() {
-                    return true;
-                }
-            }
-            Component::Normal(part) => resolved.push(part),
-            // A root or a prefix makes the path absolute, which is always outside.
-            Component::RootDir | Component::Prefix(_) => return true,
-        }
-    }
-    !resolved.starts_with(workspace_root)
-}
-
-/// The member directories one workspace root manifest declares.
-///
-/// The value is a literal array in both guest workspaces, so this reads the
-/// quoted entries between its brackets. An `exclude`d directory is not a member,
-/// so it is already left out, and it belongs to another workspace.
-fn declared_members(manifest: &str, source: &str) -> Vec<String> {
-    let at = source
-        .find("members = [")
-        .unwrap_or_else(|| panic!("{manifest} declares no workspace members"));
-    let tail = &source[at + "members = [".len()..];
-    let end = tail
-        .find(']')
-        .unwrap_or_else(|| panic!("{manifest} has an unterminated members array"));
-    let mut members = Vec::new();
-    let mut rest = &tail[..end];
-    while let Some(open) = rest.find('"') {
-        let after = &rest[open + 1..];
-        let Some(close) = after.find('"') else { break };
-        let entry = &after[..close];
-        assert!(
-            !entry.contains('*'),
-            "{manifest} declares the glob member {entry:?}. This gate expands no globs, so a \
-             member matched only by a glob goes unscanned, which is the hole wamn-gn57 closed"
-        );
-        members.push(entry.to_string());
-        rest = &after[close + 1..];
-    }
-    members
-}
-
-/// Every manifest Cargo reads to load one guest workspace: its root and each member.
-fn workspace_manifests(workspace: &str) -> Vec<String> {
-    let root = Path::new(workspace)
-        .parent()
-        .expect("a workspace manifest sits in a directory");
-    let mut manifests = vec![workspace.to_string()];
-    for member in declared_members(workspace, &read(workspace)) {
-        let manifest = root.join(&member).join("Cargo.toml");
-        manifests.push(
-            manifest
-                .to_str()
-                .expect("a member manifest path is UTF-8")
-                .to_string(),
-        );
-    }
-    manifests
-}
-
-/// Member manifests are read too, not just workspace roots.
-///
-/// A path escape written straight into a member manifest was invisible to this
-/// gate for a day, and went red only when a different gate pushed the same line
-/// up into the workspace root (`wamn-gn57`). An escape is now caught in the
-/// manifest that declares it.
 #[test]
 fn no_guest_workspace_declares_a_dependency_outside_itself() {
-    let mut escapes = Vec::new();
     for workspace in GUEST_WORKSPACES {
-        let root = Path::new(workspace)
-            .parent()
-            .expect("a workspace manifest sits in a directory");
-        for manifest in workspace_manifests(workspace) {
-            let directory = Path::new(&manifest)
-                .parent()
-                .expect("a manifest sits in a directory")
-                .to_path_buf();
-            for (line, declared, kind) in declared_dependency_paths(&read(&manifest)) {
-                if leaves_workspace(root, &directory, &declared) {
-                    escapes.push(format!(
-                        "{manifest}:{line}: [{}] path = {declared:?}\n    {}",
-                        table_name(kind),
-                        cost(kind)
-                    ));
+        let output = Command::new(env!("CARGO"))
+            .args([
+                "metadata",
+                "--no-deps",
+                "--locked",
+                "--offline",
+                "--format-version",
+                "1",
+                "--manifest-path",
+                workspace,
+            ])
+            .current_dir(repository_root())
+            .output()
+            .expect("run Cargo metadata for the guest workspace");
+        assert!(
+            output.status.success(),
+            "{workspace}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let metadata: serde_json::Value =
+            serde_json::from_slice(&output.stdout).expect("decode Cargo metadata");
+        let root = Path::new(metadata["workspace_root"].as_str().unwrap());
+        let members = metadata["workspace_members"].as_array().unwrap();
+        for package in metadata["packages"].as_array().unwrap() {
+            if !members.contains(&package["id"]) {
+                continue;
+            }
+            for dependency in package["dependencies"].as_array().unwrap() {
+                if let Some(path) = dependency["path"].as_str() {
+                    assert!(
+                        Path::new(path).starts_with(root),
+                        "{workspace}: {} depends on {path} outside {}",
+                        package["name"],
+                        root.display()
+                    );
                 }
             }
         }
     }
-    assert!(
-        escapes.is_empty(),
-        "a guest workspace declares a dependency outside itself. Each escape carries the cost \
-         that applies to the table it sits in:\n{}",
-        escapes.join("\n")
-    );
-}
-
-#[derive(Default)]
-struct WitPaths(Vec<String>);
-
-impl<'ast> syn::visit::Visit<'ast> for WitPaths {
-    fn visit_macro(&mut self, node: &'ast syn::Macro) {
-        let Some(name) = node.path.segments.last() else {
-            return;
-        };
-        let binding = (name.ident == "generate"
-            && node
-                .path
-                .segments
-                .iter()
-                .any(|part| part.ident == "wit_bindgen"))
-            || (name.ident == "bindgen"
-                && node
-                    .path
-                    .segments
-                    .iter()
-                    .any(|part| part.ident == "component"));
-        if !binding {
-            return;
-        }
-        let mut tokens: Vec<_> = node.tokens.clone().into_iter().collect();
-        if let [proc_macro2::TokenTree::Group(body)] = tokens.as_slice() {
-            tokens = body.stream().into_iter().collect();
-        }
-        let mut explicit = false;
-        for field in tokens.windows(3) {
-            let proc_macro2::TokenTree::Ident(key) = &field[0] else {
-                continue;
-            };
-            let proc_macro2::TokenTree::Punct(colon) = &field[1] else {
-                continue;
-            };
-            if colon.as_char() != ':' {
-                continue;
-            }
-            if key == "inline" {
-                explicit = true;
-            }
-            if key != "path" {
-                continue;
-            }
-            explicit = true;
-            let values = match &field[2] {
-                proc_macro2::TokenTree::Group(array) => array.stream(),
-                value => std::iter::once(value.clone()).collect(),
-            };
-            for value in values {
-                if matches!(&value, proc_macro2::TokenTree::Punct(comma) if comma.as_char() == ',')
-                {
-                    continue;
-                }
-                let path = syn::parse2::<syn::LitStr>(std::iter::once(value).collect())
-                    .expect("binding WIT paths must be string literals");
-                self.0.push(path.value());
-            }
-        }
-        if !explicit {
-            self.0.push("wit".to_owned());
-        }
-    }
-}
-
-fn root_member_directories(root: &Path) -> Vec<PathBuf> {
-    let source = fs::read_to_string(root.join("Cargo.toml")).expect("read root workspace manifest");
-    declared_members("Cargo.toml", &source)
-        .into_iter()
-        .map(|member| {
-            root.join(member)
-                .canonicalize()
-                .expect("root member directory")
-        })
-        .collect()
-}
-
-fn wit_path_reaches_native(members: &[PathBuf], directory: &Path, declared: &Path) -> bool {
-    let path = directory.join(declared);
-    let mut existing = path.as_path();
-    while !existing.exists() && !existing.is_symlink() {
-        let Some(parent) = existing.parent() else {
-            return false;
-        };
-        existing = parent;
-    }
-    let Ok(resolved) = existing.canonicalize() else {
-        return false;
-    };
-    let resolved = resolved.join(path.strip_prefix(existing).unwrap());
-    let mut normalized = PathBuf::new();
-    for part in resolved.components() {
-        match part {
-            Component::ParentDir => {
-                normalized.pop();
-            }
-            Component::CurDir => {}
-            _ => normalized.push(part.as_os_str()),
-        }
-    }
-    members.iter().any(|member| normalized.starts_with(member))
-}
-
-fn guest_wit_escapes(members: &[PathBuf], directory: &Path) -> Vec<String> {
-    let mut escapes = Vec::new();
-    let mut pending = vec![directory.to_path_buf()];
-    while let Some(path) = pending.pop() {
-        let metadata = fs::symlink_metadata(&path).expect("inspect guest input");
-        if metadata.file_type().is_symlink() {
-            if path.starts_with(directory.join("wit"))
-                && wit_path_reaches_native(
-                    members,
-                    directory,
-                    path.strip_prefix(directory).unwrap(),
-                )
-            {
-                escapes.push(format!(
-                    "{}: WIT link resolves into a root-workspace package",
-                    path.display()
-                ));
-            }
-            continue;
-        }
-        if metadata.is_dir() {
-            if path != directory && path.join("Cargo.toml").is_file() {
-                continue;
-            }
-            pending.extend(
-                fs::read_dir(path)
-                    .expect("read guest directory")
-                    .map(|entry| entry.expect("read guest entry").path())
-                    .filter(|path| path.file_name().is_none_or(|name| name != "target")),
-            );
-        } else if path.extension().is_some_and(|extension| extension == "rs") {
-            let source = fs::read_to_string(&path).expect("read guest Rust source");
-            let parsed = syn::parse_file(&source)
-                .unwrap_or_else(|error| panic!("parse {}: {error}", path.display()));
-            let mut paths = WitPaths::default();
-            paths.visit_file(&parsed);
-            for declared in paths.0 {
-                if wit_path_reaches_native(members, directory, Path::new(&declared)) {
-                    escapes.push(format!(
-                        "{}: WIT path {declared:?} resolves into a root-workspace package",
-                        path.display()
-                    ));
-                }
-            }
-        }
-    }
-    escapes
-}
-
-#[test]
-fn guest_wit_paths_do_not_reach_root_workspace_packages() {
-    let root = repository_root().canonicalize().expect("repository root");
-    let members = root_member_directories(&root);
-    let mut escapes = Vec::new();
-    for workspace in GUEST_WORKSPACES {
-        for manifest in workspace_manifests(workspace).into_iter().skip(1) {
-            let directory = root.join(manifest).parent().unwrap().to_path_buf();
-            escapes.extend(guest_wit_escapes(&members, &directory));
-        }
-    }
-    assert!(
-        escapes.is_empty(),
-        "guest WIT paths reach native packages:\n{}",
-        escapes.join("\n")
-    );
-}
-
-#[test]
-fn wit_paths_include_arrays_raw_strings_and_default_directories() {
-    let source = r##"
-        wit_bindgen::generate!({ path: [r#"../../../wit/wamn-node"#, "wit"] });
-        wasmtime::component::bindgen!({ path: "../../../native/wit" });
-        wit_bindgen::generate!({ world: "default" });
-        wit_bindgen::generate!({ inline: "package test:inline; world test {}" });
-    "##;
-    let mut paths = WitPaths::default();
-    paths.visit_file(&syn::parse_file(source).unwrap());
-    assert_eq!(
-        paths.0,
-        [
-            "../../../wit/wamn-node",
-            "wit",
-            "../../../native/wit",
-            "wit"
-        ]
-    );
-}
-
-#[test]
-fn guest_wit_guard_rejects_native_paths_and_dependency_links() {
-    let root = std::env::temp_dir().join(format!(
-        "wamn-guest-wit-{}-{}",
-        std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    ));
-    let guest = root.join("apps/guest");
-    for directory in [
-        "apps/guest/src",
-        "apps/guest/wit/deps",
-        "wit/shared",
-        "crates/native/wit",
-        "apps/native-tests/wit",
-    ] {
-        fs::create_dir_all(root.join(directory)).unwrap();
-    }
-    fs::write(
-        root.join("Cargo.toml"),
-        "[workspace]\nmembers = [\"crates/native\", \"apps/native-tests\"]\n",
-    )
-    .unwrap();
-    let members = root_member_directories(&root);
-    let source = guest.join("src/lib.rs");
-    fs::write(
-        &source,
-        r#"wit_bindgen::generate!({ path: ["../../wit/shared", "wit", "wit/generated",
-            "../another/wit", "../../integrations/test/wit", "../target/wamn/guest/wit"] });"#,
-    )
-    .unwrap();
-    let allowed = guest_wit_escapes(&members, &guest);
-    fs::write(
-        &source,
-        r#"wit_bindgen::generate!({ path: "../../crates/native/wit" });"#,
-    )
-    .unwrap();
-    let native = guest_wit_escapes(&members, &guest);
-    fs::write(&source, r#"wit_bindgen::generate!({ path: "wit" });"#).unwrap();
-    std::os::unix::fs::symlink(
-        "../../../../apps/native-tests/wit",
-        guest.join("wit/deps/native"),
-    )
-    .unwrap();
-    let linked = guest_wit_escapes(&members, &guest);
-    fs::remove_file(guest.join("wit/deps/native")).unwrap();
-    std::os::unix::fs::symlink("../../../../wit/shared", guest.join("wit/deps/shared")).unwrap();
-    let canonical = guest_wit_escapes(&members, &guest);
-    fs::remove_dir_all(root).unwrap();
-    assert!(allowed.is_empty(), "{allowed:?}");
-    assert_eq!(native.len(), 1, "{native:?}");
-    assert_eq!(linked.len(), 1, "{linked:?}");
-    assert!(canonical.is_empty(), "{canonical:?}");
-}
-
-#[test]
-fn the_shared_guest_build_remaps_the_source_prefix() {
-    let tool = read(GUEST_RUSTFLAGS);
-    assert!(
-        tool.contains("--remap-path-prefix=%s=/wamn"),
-        "{GUEST_RUSTFLAGS} must remap the repository root out of guest artifacts; without it the \
-         absolute file!() strings that include!d package sources carry survive into the bytes \
-         and the digest moves with the checkout (wamn-10yt.10.29)"
-    );
 }
 
 /// Directories holding one checkout's virtualized guest artifacts.

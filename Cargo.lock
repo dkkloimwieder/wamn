@@ -5727,7 +5727,6 @@ dependencies = [
  "anyhow",
  "clap",
  "hex",
- "proc-macro2",
  "serde",
  "serde_json",
  "serde_yaml",

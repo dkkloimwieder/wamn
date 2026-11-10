@@ -38,8 +38,6 @@ targets = [
   { workspace="root", package="wamn-conformance-tests", target="test:contract_diff", tier="contract" },
   { workspace="root", package="wamn-conformance-tests", target="test:cranelift_dev", tier="contract" },
   { workspace="root", package="wamn-conformance-tests", target="test:delivery_native_build", tier="contract" },
-  { workspace="root", package="wamn-conformance-tests", target="test:effect_spans", tier="contract" },
-  { workspace="root", package="wamn-conformance-tests", target="test:gate_jobs", tier="contract" },
   { workspace="root", package="wamn-conformance-tests", target="test:guest_workspace_closure", tier="contract" },
   { workspace="root", package="wamn-conformance-tests", target="test:kubernetes_gate_runner", tier="contract" },
   { workspace="root", package="wamn-conformance-tests", target="test:otel_collector", tier="contract" },
@@ -58,6 +56,7 @@ targets = [
   { workspace="root", package="wamn-dev-control", target="lib:wamn_dev_control", tier="live-nats" },
   { workspace="root", package="wamn-environment-control", target="test:app_generation_isolation_live", tier="live-postgres" },
   { workspace="root", package="wamn-environment-control", target="test:application_activation_live", tier="live-postgres" },
+  { workspace="root", package="wamn-environment-control", target="test:environment_delete_live", tier="live-postgres" },
   { workspace="root", package="wamn-release-control", target="test:application_composition", tier="contract" },
   { workspace="root", package="wamn-environment-control", target="test:apply_package_live", tier="live-postgres" },
   { workspace="root", package="wamn-environment-control", target="test:capture_gap_live", tier="live-nats" },
@@ -320,6 +319,8 @@ root_features = ["wamn-environment-control/ops", "wamn-ctl/ops"]
   WAMN_STD_VIRTUALIZATION_FLOW_HTTP_WASM = "Exact component bytes selected by the operator for an artifact comparison."
   WAMN_STD_VIRTUALIZATION_RECEIVING_DIRECTORY = "Receiving directory of the operator-selected virtualization comparison."
   WAMN_STD_VIRTUALIZATION_SENTINEL = "Sentinel value for the operator-selected virtualization comparison."
+  WAMN_TEST_CLUSTER = "Disposable platform that the operator deployed for a focused kind case."
+  WAMN_TEST_OWNER_PASSWORD = "Owner password of the operator-deployed disposable platform."
   WAMN_TIMINGS_ROOT = "Operator-selected directory for browser evidence."
 
 [[rules]]

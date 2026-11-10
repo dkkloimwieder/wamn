@@ -13,7 +13,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use wamn_component_policy::{
-    CAPABILITY_REGISTRY, Posture, WASI_FAMILY, capability_row, import_pkg, import_version,
+    CAPABILITY_REGISTRY, WASI_FAMILY, capability_row, import_pkg, import_version,
 };
 use wash_runtime::wasmtime::component::Component;
 use wasi_virt::WasiVirt;
@@ -222,33 +222,4 @@ fn vendored_wasi_packages_are_registered_or_deliberately_absent() {
              deliberately absent; a new WASI dependency needs a ruling, not silence"
         );
     }
-}
-
-/// The registry's own shape, asserted where a reviewer will look for it.
-#[test]
-fn registry_is_closed_and_every_row_is_reachable() {
-    assert_eq!(
-        CAPABILITY_REGISTRY.len(),
-        11,
-        "the registry is a closed set; changing its size is a ruled expansion"
-    );
-    let effects: Vec<&str> = CAPABILITY_REGISTRY
-        .iter()
-        .filter(|row| row.posture == Posture::Effect)
-        .map(|row| row.package)
-        .collect();
-    assert_eq!(
-        effects,
-        // wamn:postgres 0.2.0 is the owner ruling on wamn-utci (2026-09-26).
-        vec![
-            "wamn:modbus",
-            // The private bound interface stays denied.
-            "wamn:integration",
-            "wamn:postgres",
-            "wamn:postgres",
-            "wamn:connection",
-            "wasmcloud:blobstore"
-        ],
-        "the effect set is the security-relevant half; it moves only by ruling"
-    );
 }

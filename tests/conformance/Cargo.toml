@@ -33,7 +33,6 @@ wasm-encoder = { workspace = true }
 
 [dev-dependencies]
 wamn-test-infrastructure = { workspace = true }
-proc-macro2 = { version = "1.0.107", features = ["span-locations"] }
 serde_yaml = { workspace = true }
 sqlx = { workspace = true, features = ["chrono", "json", "macros", "postgres", "runtime-tokio", "rust_decimal", "uuid"] }
 wamn-execution-host = { workspace = true }
