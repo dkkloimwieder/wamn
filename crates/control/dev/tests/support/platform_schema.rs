@@ -166,6 +166,71 @@ async fn database_state(journey: &Journey<'_>) -> anyhow::Result<Value> {
     Ok(serde_json::to_value(state)?)
 }
 
+async fn relations(
+    databases: &[tokio_postgres::Client; 3],
+) -> anyhow::Result<[BTreeSet<String>; 3]> {
+    let mut sets = std::array::from_fn(|_| BTreeSet::new());
+    for (database, set) in databases.iter().zip(&mut sets) {
+        *set = database
+            .query(
+                "SELECT format('%I.%I', n.nspname, c.relname)
+                 FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+                 WHERE c.relkind IN ('r', 'p', 'v', 'm')
+                   AND n.nspname !~ '^pg_' AND n.nspname <> 'information_schema'
+                   AND c.relname <> 'schema_migration'",
+                &[],
+            )
+            .await?
+            .into_iter()
+            .map(|row| row.get(0))
+            .collect();
+    }
+    Ok(sets)
+}
+
+async fn database_effect(
+    databases: &[tokio_postgres::Client; 3],
+    before: &[BTreeSet<String>; 3],
+    applied: usize,
+) -> anyhow::Result<()> {
+    let after = relations(databases).await?;
+    for (index, (before, after)) in before.iter().zip(&after).enumerate() {
+        if index != applied {
+            ensure!(
+                before == after,
+                "SQL apply changed database {index} relations"
+            );
+            continue;
+        }
+        let mut added = after.difference(before);
+        let table = added.next().context("SQL apply created no probe table")?;
+        ensure!(
+            added.next().is_none() && before.is_subset(after),
+            "SQL apply must add exactly one table in database {index}: {before:?} -> {after:?}"
+        );
+        let database = &databases[index];
+        ensure!(
+            database
+                .query_one(
+                    "SELECT relkind IN ('r', 'p') FROM pg_class WHERE oid = $1::text::regclass",
+                    &[table],
+                )
+                .await?
+                .get::<_, bool>(0),
+            "SQL apply created {table}, which is not a table"
+        );
+        let count: i64 = database
+            .query_one(&format!("SELECT count(*) FROM {table}"), &[])
+            .await?
+            .get(0);
+        ensure!(
+            count == 1,
+            "SQL probe {table} has {count} rows instead of one"
+        );
+    }
+    Ok(())
+}
+
 pub(super) async fn exercise(journey: &Journey<'_>, release: &str) -> anyhow::Result<()> {
     let selected = inputs(journey.run)?;
     let chart = selected.directory();
@@ -213,6 +278,17 @@ pub(super) async fn exercise(journey: &Journey<'_>, release: &str) -> anyhow::Re
         before.push(applications(environment).await?);
     }
 
+    let system_database =
+        wamn_package_control::database::connect(&journey.variables["WAMN_SYSTEM_ADMIN_URL"])
+            .await?;
+    system_database
+        .batch_execute("SET default_transaction_read_only = on")
+        .await?;
+    let databases = [
+        system_database,
+        super::observer(journey).await?,
+        super::observer(&other).await?,
+    ];
     let baseline = database_state(journey).await?;
     let isolated = database_state(&other).await?;
     let system = schema(journey, "system-before", "diff", "system", chart).await?;
@@ -225,7 +301,9 @@ pub(super) async fn exercise(journey: &Journey<'_>, release: &str) -> anyhow::Re
         database_state(journey).await? == baseline && database_state(&other).await? == isolated,
         "system diff changed recorded SQL state"
     );
+    let relations_before = relations(&databases).await?;
     schema(journey, "system-apply", "apply", "system", chart).await?;
+    database_effect(&databases, &relations_before, 0).await?;
     let system_after = schema(journey, "system-after", "diff", "system", chart).await?;
     ensure!(
         files(&system_after, "pending")?.is_empty()
@@ -245,7 +323,9 @@ pub(super) async fn exercise(journey: &Journey<'_>, release: &str) -> anyhow::Re
         database_state(journey).await? == baseline && database_state(&other).await? == isolated,
         "project diff changed recorded SQL state"
     );
+    let relations_before = relations(&databases).await?;
     schema(journey, "project-apply", "apply", "project", chart).await?;
+    database_effect(&databases, &relations_before, 1).await?;
     let project_after = schema(journey, "project-after", "diff", "project", chart).await?;
     ensure!(
         files(&project_after, "pending")?.is_empty()

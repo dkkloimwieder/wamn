@@ -871,6 +871,7 @@ Set `WAMN_RELEASE_CHART` to chart B.
 DEP5-06 adds `platform_schema_kind` with its body in `support/platform_schema.rs`.
 The case refuses equal `ctl` digests or a changed digest for any other image.
 It derives pending file names and checksums from `wamn platform schema diff` for chart B.
+It reads each database catalog directly and requires one new table with one row in the applied database, and no relation change in the others.
 The existing journey deploys one application release into two environments and deletes both environments after success.
 The case needs explicit owner approval to run.
 Approval must cover setup, both SQL applies, and cleanup on the disposable platform.
