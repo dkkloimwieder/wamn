@@ -46,7 +46,7 @@ pub(super) fn manifest_digest(json: &str) -> anyhow::Result<String> {
 }
 
 /// A loopback registry is reached over plain HTTP.
-pub(super) fn loopback(registry: &str) -> bool {
+pub fn loopback(registry: &str) -> bool {
     let host = registry.split([':', '/']).next().unwrap_or_default();
     matches!(host, "localhost" | "127.0.0.1")
 }

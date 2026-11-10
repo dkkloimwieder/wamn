@@ -63,14 +63,10 @@ pub async fn publish_from_env(
     let variable = |name: &str| {
         std::env::var(name).with_context(|| format!("set {name} for source publication"))
     };
-    let insecure_registry = match std::env::var_os("WAMN_RELEASE_HOST_GROUP") {
-        Some(path) => wamn_environment_control::environment::runtime::insecure_registry(
-            &serde_yaml::from_slice(&std::fs::read(path)?)?,
-        ),
-        None => false,
-    };
+    let artifact_base = variable("WAMN_PACKAGE_ARTIFACT_BASE")?;
+    let insecure_registry = wamn_environment_control::platform_build::loopback(&artifact_base);
     let registry = PackageRegistry {
-        artifact_base: variable("WAMN_PACKAGE_ARTIFACT_BASE")?,
+        artifact_base,
         registry_auth_file: variable("WAMN_REGISTRY_AUTH_FILE")?.into(),
         insecure_registry,
         oci_ca_paths: std::env::var("WAMN_OCI_CA_PATHS")

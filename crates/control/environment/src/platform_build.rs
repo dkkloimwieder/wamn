@@ -13,10 +13,11 @@
 //! artifact when selected. `platform-build.json` records stage durations.
 
 pub(super) mod plan;
+pub use plan::loopback;
 use plan::platform_ui_dist;
 use plan::{
-    builds_platform, cloud_minutes, docker_arguments, input_tag, loopback, manifest_digest,
-    previous_version, stderr_tail, wasm_layer,
+    builds_platform, cloud_minutes, docker_arguments, input_tag, manifest_digest, previous_version,
+    stderr_tail, wasm_layer,
 };
 
 use std::collections::BTreeMap;
