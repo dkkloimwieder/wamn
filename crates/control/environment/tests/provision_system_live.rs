@@ -489,6 +489,24 @@ async fn fresh_system_runs_image_migrations_and_reapply_runs_none() {
     )
     .await
     .unwrap();
+    // The image's full file set produces the same substrate through fresh installation.
+    let fresh = wamn_test_postgres::database();
+    let (mut fresh_client, fresh_connection) = connect(fresh.url()).await;
+    initialize_system(&mut fresh_client, &sources)
+        .await
+        .unwrap();
+    assert_eq!(schema_dump(fresh.url()).await, schema_dump(&url).await);
+    assert_eq!(
+        platform_migrations::plan(&fresh_client, MigrationScope::System, &sources)
+            .await
+            .unwrap()
+            .recorded,
+        platform_migrations::plan(&client, MigrationScope::System, &sources)
+            .await
+            .unwrap()
+            .recorded
+    );
+    disconnect(fresh_client, fresh_connection).await;
     sources.push(MigrationSource {
         relative_path: format!("migrations/system/{:04}_pending.sql", sources.len() + 1),
         bytes: b"INSERT INTO registry.dep5_fresh_probe VALUES (3);".to_vec(),
@@ -565,6 +583,29 @@ async fn fresh_system_failure_keeps_progress_for_explicit_schema_apply() {
     assert!(resumed.migrations.pending.is_empty());
     assert_eq!(resumed.recorded.len(), sources.len());
     disconnect(client, connection).await;
+}
+
+// Compare substrate objects, including functions, grants, and history guards.
+// The application-data fixture lives in public, outside the substrate.
+// A fixed restrict key removes pg_dump's random session delimiter.
+async fn schema_dump(url: &str) -> String {
+    let output = tokio::process::Command::new("/usr/lib/postgresql/18/bin/pg_dump")
+        .args([
+            "--schema-only",
+            "--no-comments",
+            "--exclude-schema=public",
+            "--restrict-key=wamnDEP506",
+            url,
+        ])
+        .output()
+        .await
+        .expect("dump the disposable PostgreSQL schema");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    String::from_utf8(output.stdout).expect("pg_dump emits UTF-8 SQL")
 }
 
 // Enumerate the actual catalog and data rather than pinning a relation roster.
@@ -1085,6 +1126,17 @@ async fn platform_nontransactional_files_keep_started_and_share_resolution() {
         assert_eq!(uncertain.recorded.len(), files.len());
         assert_eq!(uncertain.recorded[0].outcome, MigrationOutcome::Started);
         assert_eq!(uncertain.migrations.pending[0].relative_path, path);
+        assert!(
+            client
+                .query_one(
+                    &format!("SELECT age(c.xmin) > age(m.xmin) FROM pg_class c CROSS JOIN {schema}.schema_migration m WHERE c.oid = '{schema}.schema_migration'::regclass"),
+                    &[],
+                )
+                .await
+                .unwrap()
+                .get::<_, bool>(0),
+            "adoption commits in an earlier transaction than the first started row"
+        );
         let observed = wamn_package_control::schema_baseline::observe(&client, scope, &files)
             .await
             .unwrap();
@@ -1412,6 +1464,64 @@ async fn project_schema_preserves_applications_and_other_environments_and_holds_
         .await
         .unwrap();
     assert_eq!((row.get::<_, String>(0), row.get::<_, String>(1)), baseline);
+    // Project provisioning has its own initialization path into the shared executor.
+    // Use the same database identity because its name is bound into SQL helpers.
+    let mut fresh_postgres = wamn_test_postgres::start(&[]).unwrap();
+    let fresh_registry = fresh_postgres.create_database("wamn_system").unwrap();
+    let (mut fresh_system, fresh_system_connection) = connect(fresh_registry.url()).await;
+    fresh_system
+        .batch_execute("CREATE ROLE wamn_system NOLOGIN")
+        .await
+        .unwrap();
+    install_control_store(&fresh_system).await.unwrap();
+    wamn_environment_control::provision_system::set_platform_domain(
+        &mut fresh_system,
+        "example.invalid",
+    )
+    .await
+    .unwrap();
+    fresh_system
+        .batch_execute(
+            &wamn_control_provision::test_database::seed_org_project_env_sql(
+                "dep5", "fixture", "dev",
+            ),
+        )
+        .await
+        .unwrap();
+    let name =
+        wamn_control_provision::project_env_database_name("dep5", "fixture", "dev", "aaaaaaa1");
+    fresh_system
+        .batch_execute(&format!(
+            "CREATE DATABASE {} OWNER wamn_db_owner",
+            wamn_pg_core::quote_ident(&name)
+        ))
+        .await
+        .unwrap();
+    let fresh = fresh_postgres.database(&name).unwrap();
+    reconcile_run_plane_with_migrations(
+        ReconcileRunPlaneRequest {
+            system_database_url: fresh_registry.url().into(),
+            admin_database_url: fresh.url().into(),
+            ..request()
+        },
+        &sources,
+    )
+    .await
+    .unwrap();
+    let (fresh_client, fresh_connection) = connect(fresh.url()).await;
+    assert_eq!(
+        schema_dump(fresh.url()).await,
+        schema_dump(databases[0].url()).await
+    );
+    assert_eq!(
+        platform_migrations::plan(&fresh_client, MigrationScope::Project, &sources)
+            .await
+            .unwrap()
+            .recorded,
+        completed.recorded
+    );
+    disconnect(fresh_client, fresh_connection).await;
+    disconnect(fresh_system, fresh_system_connection).await;
     sources.push(MigrationSource {
         relative_path: format!("migrations/project/{:04}_pending.sql", sources.len() + 1),
         bytes: b"INSERT INTO platform.dep5_probe VALUES (3);".to_vec(),
