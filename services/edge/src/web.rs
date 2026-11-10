@@ -51,36 +51,41 @@ struct LiveRelease {
     digest: String,
     clients: BTreeMap<String, String>,
     webs: BTreeMap<String, String>,
-    platform_version: String,
+    platform_ui: String,
+    org: String,
 }
 
 impl LiveRelease {
     fn root(&self, host: &str) -> anyhow::Result<String> {
         ensure!(self.host == host, "the release does not serve this host");
-        if !self.platform_version.is_empty() {
-            ensure!(segment(&self.platform_version), "invalid platform version");
-            return Ok(format!("platform-ui/{}", self.platform_version));
+        if !self.platform_ui.is_empty() {
+            return Ok(format!(
+                "platform-ui/sha256-{}",
+                digest_hex(&self.platform_ui)?
+            ));
         }
         let package = self
             .clients
             .get(host)
             .context("the host has no web client")?;
         ensure!(segment(package), "invalid client package");
-        let hex = self
-            .webs
-            .get(host)
-            .context("the host has no web client")?
-            .strip_prefix("sha256:")
-            .context("invalid web digest")?;
-        ensure!(
-            hex.len() == 64
-                && hex
-                    .bytes()
-                    .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte)),
-            "invalid web digest"
-        );
+        let hex = digest_hex(self.webs.get(host).context("the host has no web client")?)?;
         Ok(format!("clients/{package}/{hex}"))
     }
+}
+
+fn digest_hex(digest: &str) -> anyhow::Result<&str> {
+    let hex = digest
+        .strip_prefix("sha256:")
+        .context("invalid web digest")?;
+    ensure!(
+        hex.len() == 64
+            && hex
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte)),
+        "invalid web digest"
+    );
+    Ok(hex)
 }
 
 fn segment(value: &str) -> bool {
@@ -196,7 +201,7 @@ struct File {
 #[derive(Debug)]
 struct Web {
     store: Option<Arc<dyn ObjectStore>>,
-    /// The object path includes the package and web digest (or platform version).
+    /// The object path includes the pinned web artifact digest.
     files: RwLock<BTreeMap<String, File>>,
 }
 
@@ -228,8 +233,13 @@ impl Web {
         } else {
             ("index.html", false)
         };
-        let key = format!("{root}/{file}");
         let config = file == "config.json";
+        let key = if config && !row.platform_ui.is_empty() {
+            ensure!(segment(&row.org), "invalid platform UI org");
+            format!("platform-ui/orgs/{}/config.json", row.org)
+        } else {
+            format!("{root}/{file}")
+        };
         let cached = if config {
             None
         } else {
@@ -264,7 +274,7 @@ impl Web {
             }
             file
         };
-        if config && row.platform_version.is_empty() {
+        if config && row.platform_ui.is_empty() {
             let mut scope: serde_json::Map<String, serde_json::Value> =
                 serde_json::from_slice(&file.bytes).context("read web config.json")?;
             scope.insert("release".into(), row.digest.clone().into());
@@ -493,7 +503,7 @@ pub async fn check(path: &Path) -> anyhow::Result<()> {
         Client::builder(TokioExecutor::new()).build_http();
     for (host, route) in releases.routes().await? {
         let row = releases.read(&route.release).await?;
-        if row.platform_version.is_empty() && !row.clients.contains_key(&host) {
+        if row.platform_ui.is_empty() && !row.clients.contains_key(&host) {
             continue;
         }
         for path in ["/", "/config.json"] {
@@ -536,7 +546,8 @@ mod tests {
                 format!("sha256:{}", digit.to_string().repeat(64)),
             )]
             .into(),
-            platform_version: String::new(),
+            platform_ui: String::new(),
+            org: String::new(),
         }
     }
 
@@ -602,7 +613,7 @@ mod tests {
         let mut objects = Vec::new();
         for (host, name) in &applications {
             let row = json!({"host":host, "digest":name, "clients":{*host:name},
-                "webs":{*host:format!("sha256:{}", "a".repeat(64))}, "platformVersion":""});
+                "webs":{*host:format!("sha256:{}", "a".repeat(64))}, "platformUi":"", "org":""});
             let release = LiveRelease::deserialize(&row).unwrap();
             put(&store, &release.root(host).unwrap(), "config.json", "{}").await;
             rows.write().await.insert(name.to_string(), row);
@@ -878,18 +889,20 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn platform_version_selects_the_ui_and_unknown_paths_do_not_escape_it() {
+    async fn platform_digest_selects_the_ui_and_unknown_paths_do_not_escape_it() {
         let store = Arc::new(InMemory::new());
         let web = Web {
             store: Some(Arc::<InMemory>::clone(&store)),
             files: RwLock::new(BTreeMap::new()),
         };
         let mut row = row('a');
-        row.platform_version = "0.1.68".into();
+        row.platform_ui = format!("sha256:{}", "a".repeat(64));
+        row.org = "acme".into();
+        let root = row.root(&row.host).unwrap();
         row.webs.clear();
-        put(&store, "platform-ui/0.1.68", "index.html", "platform").await;
+        put(&store, &root, "index.html", "platform").await;
         let config = r#"{"org":"acme"}"#;
-        put(&store, "platform-ui/0.1.68", "config.json", config).await;
+        put(&store, "platform-ui/orgs/acme", "config.json", config).await;
         assert_eq!(
             body(
                 web.answer(&row, &row.host, "/config.json", &Method::GET)
@@ -908,6 +921,25 @@ mod tests {
             .await,
             "platform"
         );
+        let original_root = root;
+        row.platform_ui = format!("sha256:{}", "b".repeat(64));
+        let root = row.root(&row.host).unwrap();
+        assert_ne!(original_root, root);
+        put(&store, &root, "index.html", "new platform").await;
+        assert_eq!(
+            body(
+                web.answer(&row, &row.host, "/", &Method::GET)
+                    .await
+                    .unwrap()
+            )
+            .await,
+            "new platform"
+        );
+        for digest in ["0.1.68", "sha256:short", "../../config.json"] {
+            row.platform_ui = digest.into();
+            assert!(row.root(&row.host).is_err());
+        }
+        row.platform_ui = format!("sha256:{}", "b".repeat(64));
         assert!(
             web.answer(&row, "other.example.com", "/", &Method::GET)
                 .await

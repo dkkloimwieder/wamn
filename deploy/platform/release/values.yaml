@@ -115,8 +115,10 @@ applications: {}
 webClients: {}
 # Host to pinned web artifact digest.
 webDigests: {}
-# The control release serves the platform UI at the chart version.
-platformUi: false
+# The control release pins the platform UI artifact by manifest digest.
+platformUi: ""
+# Organization whose platform UI configuration the edge serves.
+org: ""
 # The application's HTTP role: `{name: http, entry: ..., config: {}}`.
 roles: []
 # `{actor}`: who applied. Helm keeps it with the revision.

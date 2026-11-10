@@ -476,7 +476,7 @@ mod tests {
         for (target, mut installed) in [
             (
                 UpgradeTarget::Control,
-                control::release_values(&document, selected.values(), false)?,
+                control::release_values(&document, selected.values())?,
             ),
             (UpgradeTarget::Identity, identity["values"].clone()),
         ] {
@@ -487,7 +487,7 @@ mod tests {
                 UpgradeTarget::Control => json!({
                     "chart":selected.directory(), "version":selected.version,
                     "name":name, "namespace":namespace,
-                    "values":control::release_values(&document, selected.values(), false)?,
+                    "values":control::release_values(&document, selected.values())?,
                 }),
                 UpgradeTarget::Identity => identity::platform_chart_input(
                     &selected.directory().join("platform/identity"),

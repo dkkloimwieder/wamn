@@ -560,7 +560,7 @@ mod tests {
             )
             .is_ok()
         );
-        let mut control = crate::platform::control::release_values(&cluster, &json!({}), false)?;
+        let mut control = crate::platform::control::release_values(&cluster, &json!({}))?;
         let installed = &mut control["runtime-operator"]["runtime"]["hostGroups"][0];
         for entry in installed["env"].as_array_mut().unwrap() {
             if entry["name"] == "WAMN_SESSION_ISSUER" {
@@ -587,7 +587,7 @@ mod tests {
         cloud.provider = crate::platform::document::Provider::Gcp;
         cloud.project_id = "project-one".into();
         cloud.zone = "us-east1-b".into();
-        let cloud_control = crate::platform::control::release_values(&cloud, &json!({}), false)?;
+        let cloud_control = crate::platform::control::release_values(&cloud, &json!({}))?;
         let cloud_group = host_group(&cloud_control, &shared, "remote.example/components")?;
         let cloud_path = private.path("cloud-host.yaml");
         std::fs::write(&cloud_path, serde_yaml::to_string(&cloud_group)?)?;

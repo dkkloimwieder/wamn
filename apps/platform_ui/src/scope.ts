@@ -1,8 +1,8 @@
 /**
  * The org the shell signs in to, read when the page loads.
  *
- * `wamn web upload` writes `config.json` beside `index.html` at the platform version
- * path. The built files are the same bytes for every org.
+ * `wamn web upload` writes organization configuration outside the shared artifact
+ * prefix. The edge serves it at `/config.json`. The built files are the same for every org.
  */
 
 /** The path of the file, on the page's own origin. */

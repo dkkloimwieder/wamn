@@ -9,7 +9,7 @@ metadata:
     {{- include "release.annotations" . | nindent 4 }}
   {{- end }}
 data:
-  release.json: {{ dict "host" .Values.routeHost "digest" .Values.release.manifestDigest "clients" .Values.webClients "webs" .Values.webDigests "platformVersion" (ternary .Chart.AppVersion "" .Values.platformUi) | toJson | quote }}
+  release.json: {{ dict "host" .Values.routeHost "digest" .Values.release.manifestDigest "clients" .Values.webClients "webs" .Values.webDigests "platformUi" .Values.platformUi "org" .Values.org | toJson | quote }}
 {{- end }}
 
 {{- if .Values.routeHost }}

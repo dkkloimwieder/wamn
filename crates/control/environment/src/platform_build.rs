@@ -9,11 +9,11 @@
 //!
 //! A reinstall at an unchanged platform version builds nothing: the stamp-only
 //! step reads the digests of the chart version's tags from the registry and
-//! stamps those (owner ruling R15, 2026-10-14). Both modes record the digest
-//! of selected local platform UI files in `platform-build.json` beside the chart defaults.
+//! stamps those (owner ruling R15, 2026-10-14). The chart pins the published UI
+//! artifact when selected. `platform-build.json` records stage durations.
 
 pub(super) mod plan;
-pub use plan::platform_ui_dist;
+use plan::platform_ui_dist;
 use plan::{
     builds_platform, cloud_minutes, docker_arguments, input_tag, loopback, manifest_digest,
     previous_version, stderr_tail, wasm_layer,
@@ -131,12 +131,10 @@ impl Drop for Stage<'_> {
     }
 }
 
-/// The UI digest and stage durations of one platform build.
+/// The stage durations of one platform build.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PlatformBuildRecord {
-    /// SHA-256 of relative UI file paths and digests, or None when unselected.
-    pub platform_ui: Option<String>,
     /// Elapsed milliseconds by executed stage, with copies separate from builds.
     pub stage_durations_ms: BTreeMap<String, u64>,
 }
@@ -144,45 +142,29 @@ pub struct PlatformBuildRecord {
 /// The platform build record beside the stamped chart's defaults.
 pub const BUILD_RECORD_FILE: &str = "platform-build.json";
 
-fn ui_build_record(request: &BuildPlatformRequest) -> anyhow::Result<PlatformBuildRecord> {
-    let platform_ui = if selects_ui(request) {
-        let dist = platform_ui_dist(&request.repository);
-        ensure!(
-            dist.is_dir(),
-            "the platform UI build {} is absent; run `pnpm --filter @wamn/platform-ui build`",
-            dist.display()
-        );
-        Some(platform_ui_digest(&dist)?)
-    } else {
-        None
-    };
-    Ok(PlatformBuildRecord {
-        platform_ui,
-        stage_durations_ms: BTreeMap::new(),
-    })
-}
-
-/// Digest the built platform UI, including its index and every asset.
-pub fn platform_ui_digest(dist: &Path) -> anyhow::Result<String> {
-    let mut files = Vec::new();
-    wamn_package_control::web_artifact::collect(dist, &mut files)?;
-    ensure!(
-        files.iter().any(|file| file == &dist.join("index.html")),
-        "the platform UI build {} has no index.html",
-        dist.display()
-    );
-    let mut digests = BTreeMap::new();
-    for file in files {
-        let relative = file
-            .strip_prefix(dist)?
-            .to_str()
-            .context("a platform UI file name is UTF-8")?
-            .to_owned();
-        digests.insert(relative, bytes_sha256(&std::fs::read(file)?));
+async fn publish_ui(request: &BuildPlatformRequest) -> anyhow::Result<Option<String>> {
+    if !selects_ui(request) {
+        return Ok(None);
     }
-    Ok(bytes_sha256(&canonical_json_bytes(&serde_json::to_value(
-        digests,
-    )?)))
+    let packed = wamn_package_control::web_artifact::platform_ui::pack(
+        &platform_ui_dist(&request.repository),
+        &request.version,
+    )?;
+    let reference = format!("{}/wamn/platform-ui:{}", request.registry, packed.tag);
+    let (client, reference, auth) = OciComponents {
+        insecure: loopback(&request.registry),
+    }
+    .client(&reference)?;
+    let repository = wamn_package_artifact::Repository {
+        client,
+        reference,
+        auth,
+    };
+    Ok(Some(
+        wamn_package_control::web_artifact::push_archive(&packed, &repository)
+            .await?
+            .digest,
+    ))
 }
 
 /// The first 16 SHA-256 hex digits of the checkout's canonical absolute path.
@@ -303,7 +285,8 @@ pub async fn build_platform(request: &BuildPlatformRequest) -> anyhow::Result<Pa
     let pushed = build_then_push(request, &roles, output, &mut components, &durations).await;
     let _ = std::fs::remove_dir_all(&roles);
     let pushed = pushed?;
-    stamp_chart(request, pushed, &ui_build_record(request)?, &durations)
+    let ui = publish_ui(request).await?;
+    stamp_chart(request, pushed, ui.as_deref(), &durations)
 }
 
 /// Stamp the registry's images and role components of `request.version` into
@@ -317,35 +300,28 @@ async fn stamp_only_with_durations(
     request: &BuildPlatformRequest,
     durations: &StageDurations,
 ) -> anyhow::Result<PathBuf> {
-    let build_record = ui_build_record(request)?;
     let insecure = loopback(&request.registry);
-    stamp_from_registry(
-        request,
-        &build_record,
-        durations,
-        output,
-        async |reference: &str| {
-            let parsed = reference.parse()?;
-            let (_, digest) = registry_pull::retry(
-                &parsed,
-                tokio::time::Instant::now() + Duration::from_secs(30),
-                || async {
-                    wash_runtime::oci::pull_component(
-                        reference,
-                        wash_runtime::oci::OciConfig {
-                            insecure,
-                            ..wash_runtime::oci::OciConfig::default()
-                        },
-                        wash_runtime::oci::OciPullPolicy::Always,
-                    )
-                    .await
-                },
-                |error: &anyhow::Error| error.as_ref(),
-            )
-            .await?;
-            Ok(digest)
-        },
-    )
+    stamp_from_registry(request, durations, output, async |reference: &str| {
+        let parsed = reference.parse()?;
+        let (_, digest) = registry_pull::retry(
+            &parsed,
+            tokio::time::Instant::now() + Duration::from_secs(30),
+            || async {
+                wash_runtime::oci::pull_component(
+                    reference,
+                    wash_runtime::oci::OciConfig {
+                        insecure,
+                        ..wash_runtime::oci::OciConfig::default()
+                    },
+                    wash_runtime::oci::OciPullPolicy::Always,
+                )
+                .await
+            },
+            |error: &anyhow::Error| error.as_ref(),
+        )
+        .await?;
+        Ok(digest)
+    })
     .await
 }
 
@@ -354,7 +330,6 @@ async fn stamp_only_with_durations(
 /// which returns the manifest digest. Then stamp them.
 async fn stamp_from_registry(
     request: &BuildPlatformRequest,
-    build_record: &PlatformBuildRecord,
     durations: &StageDurations,
     mut run: impl AsyncFnMut(&mut Command) -> anyhow::Result<String>,
     mut pull: impl AsyncFnMut(&str) -> anyhow::Result<String>,
@@ -388,6 +363,23 @@ async fn stamp_from_registry(
             Err(error) => missing.push(format!("{reference} ({error:#})")),
         }
     }
+    let ui = if selects_ui(request) {
+        let reference = format!("{registry}/wamn/platform-ui:{version}");
+        Some(
+            run(Command::new("docker").args([
+                "buildx",
+                "imagetools",
+                "inspect",
+                "--format",
+                "{{json .Manifest}}",
+                &reference,
+            ]))
+            .await
+            .and_then(|json| manifest_digest(&json))?,
+        )
+    } else {
+        None
+    };
     let mut roles = BTreeMap::new();
     for (_, role) in ROLES {
         let reference = format!("{registry}/wamn/{role}:{version}");
@@ -415,7 +407,7 @@ async fn stamp_from_registry(
                 roles.remove("materializer").context("materializer pin")?,
             ),
         ),
-        build_record,
+        ui.as_deref(),
         durations,
     )
 }
@@ -424,7 +416,7 @@ async fn stamp_from_registry(
 fn stamp_chart(
     request: &BuildPlatformRequest,
     (mut images, (http, materializer)): Pinned,
-    build_record: &PlatformBuildRecord,
+    platform_ui: Option<&str>,
     durations: &StageDurations,
 ) -> anyhow::Result<PathBuf> {
     let stage = recorded_stage(durations, "stamp");
@@ -449,6 +441,7 @@ fn stamp_chart(
         let field = if target == "edge-web" { "edge" } else { target };
         defaults["platform"][field]["image"] = image.into();
     }
+    defaults["platformUi"] = platform_ui.unwrap_or_default().into();
     std::fs::write(path, serde_yaml::to_string(&defaults)?)?;
     let platform = chart.join("platform");
     std::fs::create_dir_all(platform.join("resources"))?;
@@ -469,10 +462,9 @@ fn stamp_chart(
         .with_context(|| format!("package {}", source.display()))?;
     }
     drop(stage);
-    let mut build_record = build_record.clone();
-    build_record
-        .stage_durations_ms
-        .extend(durations.lock().expect("stage durations lock").clone());
+    let build_record = PlatformBuildRecord {
+        stage_durations_ms: durations.lock().expect("stage durations lock").clone(),
+    };
     std::fs::write(
         chart.join(BUILD_RECORD_FILE),
         canonical_json_bytes(&serde_json::to_value(&build_record)?),
@@ -1276,6 +1268,7 @@ async fn cloud_build(
         durations,
     )
     .await?;
+    publish_ui(request).await?;
     stamp_only_with_durations(request, durations).await
 }
 
@@ -1829,53 +1822,30 @@ mod tests {
         );
     }
 
-    #[test]
-    fn the_build_record_digest_covers_paths_and_bytes_of_the_ui() {
-        let dist =
-            std::env::temp_dir().join(format!("wamn-platform-ui-digest-{}", std::process::id()));
-        std::fs::create_dir_all(dist.join("assets")).unwrap();
-        std::fs::write(dist.join("index.html"), b"index").unwrap();
-        std::fs::write(dist.join("assets/app.js"), b"app").unwrap();
-        let durations = StageDurations::default();
-        {
-            let mut stage = recorded_stage(&durations, "ui-build");
-            stage.start -= Duration::from_millis(42);
-        }
-        let build_record = PlatformBuildRecord {
-            platform_ui: Some(platform_ui_digest(&dist).unwrap()),
-            stage_durations_ms: durations.into_inner().unwrap(),
-        };
-        assert!(build_record.stage_durations_ms["ui-build"] >= 42);
-        assert_eq!(
-            build_record.platform_ui.as_deref(),
-            Some("sha256:5a8575268118ba787b9258f2e2277418d1139a5cc0ba08f3c7bf5e6b0fd04e45")
-        );
-        let bytes = serde_json::to_vec(&build_record).unwrap();
-        assert_eq!(
-            serde_json::from_slice::<PlatformBuildRecord>(&bytes).unwrap(),
-            build_record
-        );
-        std::fs::rename(dist.join("assets/app.js"), dist.join("assets/new.js")).unwrap();
-        assert_ne!(
-            Some(platform_ui_digest(&dist).unwrap()),
-            build_record.platform_ui
-        );
-        std::fs::rename(dist.join("assets/new.js"), dist.join("assets/app.js")).unwrap();
-        std::fs::write(dist.join("assets/app.js"), b"changed").unwrap();
-        assert_ne!(
-            Some(platform_ui_digest(&dist).unwrap()),
-            build_record.platform_ui
-        );
-        std::fs::remove_file(dist.join("index.html")).unwrap();
-        assert!(platform_ui_digest(&dist).is_err());
-        std::fs::remove_dir_all(dist).unwrap();
-    }
-
     #[tokio::test]
     async fn a_failed_ui_build_pushes_nothing() {
         let (error, calls) = record(Path::new("/nonexistent"), "@wamn/platform-ui").await;
         assert!(error.to_string().contains("failed"), "{error}");
         assert_eq!(calls, ["pnpm --filter @wamn/platform-ui build"]);
+    }
+
+    #[tokio::test]
+    async fn the_selected_ui_is_published_to_the_platform_registry() {
+        let scratch = wamn_test_infrastructure::scratch::ScratchRoot::create().unwrap();
+        let dist = platform_ui_dist(scratch.path());
+        std::fs::create_dir_all(&dist).unwrap();
+        std::fs::write(dist.join("index.html"), "platform UI").unwrap();
+        let packed = wamn_package_control::web_artifact::platform_ui::pack(&dist, VERSION).unwrap();
+        let server = registry_pull::test_server::Server::start(vec![(200, packed.manifest)]).await;
+        let mut request = production_request(scratch.path());
+        request.registry = server.reference.registry().to_owned();
+        assert_eq!(
+            publish_ui(&request).await.unwrap().as_deref(),
+            Some(packed.digest.as_str())
+        );
+        request.cluster.as_mut().unwrap().buckets.web.clear();
+        std::fs::remove_dir_all(dist).unwrap();
+        assert_eq!(publish_ui(&request).await.unwrap(), None);
     }
 
     #[tokio::test]
@@ -1926,10 +1896,8 @@ mod tests {
                     .iter()
                     .all(|call| !call.starts_with("pnpm ") && !call.contains("apps-target="))
             );
-            let record = ui_build_record(&request).unwrap();
-            assert_eq!(record.platform_ui, None);
             copy_platform_sources(&checkout.0);
-            stamp_chart(&request, pinned, &record, &StageDurations::default()).unwrap();
+            stamp_chart(&request, pinned, None, &StageDurations::default()).unwrap();
             assert!(request.out.join("platform/identity/Chart.yaml").is_file());
             std::fs::remove_dir_all(checkout.0).unwrap();
             std::fs::remove_dir_all(roles).unwrap();
@@ -1944,13 +1912,6 @@ mod tests {
             .await
             .unwrap_err();
         assert!(format!("{error:#}").contains("apps/target/wamn"));
-    }
-
-    #[test]
-    fn a_selected_ui_requires_a_build_output() {
-        let repository =
-            std::env::temp_dir().join(format!("wamn-stamp-no-ui-{}", std::process::id()));
-        assert!(ui_build_record(&production_request(&repository)).is_err());
     }
 
     /// A fake registry of role components. Each push writes a manifest
@@ -2440,14 +2401,8 @@ mod tests {
             version: VERSION.into(),
             out: out.to_owned(),
         };
-        if selects_ui(&request) {
-            let dist = platform_ui_dist(&repository);
-            std::fs::create_dir_all(&dist).unwrap();
-            std::fs::write(dist.join("index.html"), "selected UI").unwrap();
-        }
         let stamped = stamp_from_registry(
             &request,
-            &ui_build_record(&request).unwrap(),
             &StageDurations::default(),
             async |command: &mut Command| {
                 let std = command.as_std();
@@ -2481,7 +2436,16 @@ mod tests {
             let build_record: PlatformBuildRecord =
                 serde_json::from_slice(&std::fs::read(out.join(BUILD_RECORD_FILE)).unwrap())
                     .unwrap();
-            assert_eq!(build_record.platform_ui.is_some(), production);
+            let defaults: serde_yaml::Value =
+                serde_yaml::from_slice(&std::fs::read(out.join("values.yaml")).unwrap()).unwrap();
+            assert_eq!(
+                defaults["platformUi"].as_str().unwrap(),
+                if production {
+                    format!("sha256:{}", "a".repeat(64))
+                } else {
+                    String::new()
+                }
+            );
             let repository = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
             for resource in RESOURCES {
                 let source = repository.join(resource);
@@ -2559,7 +2523,16 @@ mod tests {
                 };
                 assert_eq!(value["image"].as_str(), Some(expected.as_str()), "{target}");
             }
-            assert_eq!(calls.len(), selected_images(&request).len(), "{calls:?}");
+            let expected = selected_images(&request)
+                .iter()
+                .map(|target| format!("localhost:5000/wamn-{target}:{VERSION}"))
+                .chain(production.then(|| format!("localhost:5000/wamn/platform-ui:{VERSION}")))
+                .collect::<BTreeSet<_>>();
+            let inspected = calls
+                .iter()
+                .map(|call| call.rsplit(' ').next().unwrap().to_owned())
+                .collect::<BTreeSet<_>>();
+            assert_eq!(inspected, expected);
             assert!(
                 calls
                     .iter()

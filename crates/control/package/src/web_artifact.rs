@@ -3,10 +3,11 @@
 //! A standalone artifact packs `dist/` and canonical `web.json` in one tar layer.
 //! Its metadata binds the client to the package's recorded manifest digest.
 //!
-//! `wamn web upload --platform-ui` uploads the local platform UI.
+//! `wamn web upload --platform-ui` uploads a pinned platform UI artifact.
 //! Application uploads copy the pinned artifact to its immutable bucket root.
 
 pub(super) mod plan;
+pub mod platform_ui;
 pub use plan::client_project;
 use plan::{cache_control, content_type, read_web_manifest, web_dist_files, web_manifest};
 
@@ -199,6 +200,14 @@ fn pack_web(root: &Path) -> anyhow::Result<PackedWebArtifact> {
         root.display()
     );
     files.insert(PathBuf::from(WEB_MANIFEST_FILE), bytes);
+    pack_archive(tag, files, WEB_ARTIFACT_TYPE)
+}
+
+fn pack_archive(
+    tag: String,
+    files: std::collections::BTreeMap<PathBuf, Vec<u8>>,
+    artifact_type: &str,
+) -> anyhow::Result<PackedWebArtifact> {
     let mut archive = tar::Builder::new(Vec::new());
     for (path, bytes) in files {
         let mut header = tar::Header::new_gnu();
@@ -214,7 +223,7 @@ fn pack_web(root: &Path) -> anyhow::Result<PackedWebArtifact> {
     let manifest = canonical_json_bytes(&serde_json::json!({
         "schemaVersion": 2,
         "mediaType": OCI_IMAGE_MEDIA_TYPE,
-        "artifactType": WEB_ARTIFACT_TYPE,
+        "artifactType": artifact_type,
         "config": {"mediaType": EMPTY_CONFIG_MEDIA_TYPE, "digest": bytes_sha256(EMPTY_CONFIG), "size": EMPTY_CONFIG.len()},
         "layers": [{"mediaType": WEB_TAR_MEDIA_TYPE, "digest": bytes_sha256(&tar), "size": tar.len()}],
     }));
@@ -278,12 +287,29 @@ pub async fn push_web_artifact(
     packed: &PackedWebArtifact,
     registry: &PackageRegistry,
 ) -> Result<PushedWebArtifact, WebArtifactError> {
-    async {
+    let repository = (|| {
         let base = wamn_catalog::parse_component_artifact_base(&registry.artifact_base)?;
         let credentials =
             read_registry_push_credentials(&registry.registry_auth_file, base.registry())?;
-        let repository =
-            Repository::with_auth(registry, &packed.tag, registry_auth(credentials.as_ref()))?;
+        Repository::with_auth(registry, &packed.tag, registry_auth(credentials.as_ref()))
+    })()
+    .map_err(|source| WebArtifactError {
+        kind: WebArtifactErrorKind::Push,
+        context: format!("{}:{}", registry.artifact_base, packed.tag),
+        source,
+    })?;
+    push_archive(packed, &repository).await
+}
+
+/// Publish a packed browser artifact through an authenticated repository.
+///
+/// # Errors
+/// Refuses a conflicting tag or a failed transfer.
+pub async fn push_archive(
+    packed: &PackedWebArtifact,
+    repository: &Repository,
+) -> Result<PushedWebArtifact, WebArtifactError> {
+    async {
         let disposition = match repository.manifest().await? {
             Some((_, digest)) if digest == packed.digest => WebPushDisposition::AlreadyPresent,
             Some((_, digest)) => bail!(
@@ -322,11 +348,9 @@ pub async fn push_web_artifact(
             digest: packed.digest.clone(),
             disposition,
         })
-    }
-    .await
-    .map_err(|source| WebArtifactError {
+    }.await.map_err(|source| WebArtifactError {
         kind: WebArtifactErrorKind::Push,
-        context: format!("{}:{}", registry.artifact_base, packed.tag),
+        context: repository.reference.to_string(),
         source,
     })
 }
@@ -350,38 +374,7 @@ async fn pull_web(
     digest: &str,
 ) -> Result<(WebManifest, Vec<u8>), WebArtifactError> {
     async {
-        ensure_digest(digest)?;
-        let repository = Repository::open(registry, digest)?;
-        let (bytes, _) = repository
-            .manifest()
-            .await?
-            .with_context(|| format!("web artifact {digest} does not exist"))?;
-        ensure!(
-            bytes_sha256(&bytes) == digest,
-            "web artifact manifest does not hash to {digest}"
-        );
-        let manifest: OciImageManifest = serde_json::from_slice(&bytes)?;
-        ensure!(
-            manifest.artifact_type.as_deref() == Some(WEB_ARTIFACT_TYPE),
-            "{digest} is not a {WEB_ARTIFACT_TYPE} web artifact"
-        );
-        ensure!(
-            manifest.layers.len() == 1 && manifest.layers[0].media_type == WEB_TAR_MEDIA_TYPE,
-            "web artifact {digest} must have one {WEB_TAR_MEDIA_TYPE} layer"
-        );
-        let layer = &manifest.layers[0];
-        let tar = wamn_package_artifact::registry_pull::blob(
-            &repository.client,
-            &repository.reference,
-            layer,
-            tokio::time::Instant::now() + std::time::Duration::from_secs(30),
-        )
-        .await?;
-        ensure!(
-            bytes_sha256(&tar) == layer.digest,
-            "web artifact {digest} layer does not hash to {}",
-            layer.digest
-        );
+        let tar = pull_archive(registry, digest, WEB_ARTIFACT_TYPE).await?;
         Ok((read_web_manifest(&tar)?, tar))
     }
     .await
@@ -390,6 +383,46 @@ async fn pull_web(
         context: format!("{}@{digest}", registry.artifact_base),
         source,
     })
+}
+
+async fn pull_archive(
+    registry: &PackageRegistry,
+    digest: &str,
+    artifact_type: &str,
+) -> anyhow::Result<Vec<u8>> {
+    ensure_digest(digest)?;
+    let repository = Repository::open(registry, digest)?;
+    let (bytes, _) = repository
+        .manifest()
+        .await?
+        .with_context(|| format!("web artifact {digest} does not exist"))?;
+    ensure!(
+        bytes_sha256(&bytes) == digest,
+        "web artifact manifest does not hash to {digest}"
+    );
+    let manifest: OciImageManifest = serde_json::from_slice(&bytes)?;
+    ensure!(
+        manifest.artifact_type.as_deref() == Some(artifact_type),
+        "{digest} is not a {artifact_type} web artifact"
+    );
+    ensure!(
+        manifest.layers.len() == 1 && manifest.layers[0].media_type == WEB_TAR_MEDIA_TYPE,
+        "web artifact {digest} must have one {WEB_TAR_MEDIA_TYPE} layer"
+    );
+    let layer = &manifest.layers[0];
+    let tar = wamn_package_artifact::registry_pull::blob(
+        &repository.client,
+        &repository.reference,
+        layer,
+        tokio::time::Instant::now() + std::time::Duration::from_secs(30),
+    )
+    .await?;
+    ensure!(
+        bytes_sha256(&tar) == layer.digest,
+        "web artifact {digest} layer does not hash to {}",
+        layer.digest
+    );
+    Ok(tar)
 }
 
 /// A built file name carries its content hash, so a browser keeps it.
@@ -494,65 +527,6 @@ pub async fn upload_web_to_store(
     Ok((package.to_owned(), root, true))
 }
 
-pub async fn write_platform_ui(
-    store: &dyn ObjectStore,
-    root: &str,
-    dist: &Path,
-    org: &str,
-) -> anyhow::Result<()> {
-    ensure!(!org.is_empty(), "the platform UI requires an org");
-    let mut files = Vec::new();
-    collect(dist, &mut files)?;
-    write_files(
-        store,
-        root,
-        dist,
-        &mut files,
-        &crate::web_scope::platform_scope_file_bytes(org),
-    )
-    .await
-}
-
-/// Write every built file create-only, then `config.json`, and the index
-/// last, so no reader meets an index whose files are absent.
-pub async fn write_files(
-    store: &dyn ObjectStore,
-    root: &str,
-    dist: &Path,
-    files: &mut [PathBuf],
-    scope: &[u8],
-) -> anyhow::Result<()> {
-    files.sort_by_key(|file| file == &dist.join("index.html"));
-    for file in files.iter() {
-        if file == &dist.join("index.html") {
-            put(
-                store,
-                root,
-                SCOPE_FILE,
-                scope.to_vec(),
-                SCOPE_CACHE,
-                SCOPE_CONTENT_TYPE,
-            )
-            .await?;
-        }
-        let relative = file
-            .strip_prefix(dist)?
-            .to_str()
-            .context("a built file name is UTF-8")?;
-        let cache = cache_control(relative)?;
-        put(
-            store,
-            root,
-            relative,
-            std::fs::read(file)?,
-            cache,
-            content_type(relative)?,
-        )
-        .await?;
-    }
-    Ok(())
-}
-
 /// Write one object create-only with its Cache-Control and content type. An
 /// existing object with equal bytes is the write of an earlier run that
 /// stopped, so it stays. An existing object with other bytes refuses.
@@ -568,10 +542,11 @@ async fn put(
     attributes.insert(Attribute::CacheControl, cache.into());
     attributes.insert(Attribute::ContentType, content_type.into());
     let key = object_store::path::Path::from(format!("{root}/{relative}"));
+    let bytes = object_store::PutPayload::from(bytes);
     let written = store
         .put_opts(
             &key,
-            bytes.clone().into(),
+            bytes.clone(),
             PutOptions {
                 mode: PutMode::Create,
                 attributes,
@@ -591,7 +566,11 @@ async fn put(
                 .await
                 .with_context(|| format!("read the existing {key}"))?;
             ensure!(
-                existing.as_ref() == bytes.as_slice(),
+                existing
+                    .as_ref()
+                    .iter()
+                    .copied()
+                    .eq(bytes.iter().flat_map(|part| part.iter().copied())),
                 "write {key}; an existing object with other bytes is never replaced"
             );
             Ok(())
@@ -662,8 +641,7 @@ mod tests {
 
     use super::{
         Scheme, Sink, WEB_MANIFEST_FILE, WebPushDisposition, artifact_output, build_web_artifact,
-        collect, pack_web_artifact, pull_web_artifact, push_web_artifact, read_web_manifest,
-        web_manifest, write_files,
+        pack_web_artifact, pull_web_artifact, push_web_artifact, read_web_manifest, web_manifest,
     };
 
     fn write_build(scratch: &ScratchRoot, record: &BuildRecord, compiled: &[u8]) -> PathBuf {
@@ -1038,9 +1016,6 @@ fs.copyFileSync('index.html', dist + '/index.html');
     use object_store::memory::InMemory;
     use object_store::{ObjectStore as _, ObjectStoreExt as _};
 
-    const HEAD: &str = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
-    const SCOPE: &[u8] = br#"{"org":"acme","project":"receiving"}"#;
-
     #[tokio::test]
     async fn an_existing_index_skips_all_writes_even_when_an_asset_is_absent() {
         let scratch = ScratchRoot::create().unwrap();
@@ -1131,85 +1106,6 @@ fs.copyFileSync('index.html', dist + '/index.html');
                     .is_empty()
             );
         }
-    }
-
-    #[tokio::test]
-    async fn a_rerun_keeps_equal_objects_and_the_service_worker_is_not_cached() {
-        let dist = std::env::temp_dir().join(format!("wamn-web-rerun-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dist);
-        std::fs::create_dir_all(dist.join("assets")).unwrap();
-        std::fs::write(dist.join("index.html"), "index").unwrap();
-        std::fs::write(dist.join("sw.js"), "worker").unwrap();
-        std::fs::write(dist.join("assets/main.css"), "style").unwrap();
-        let store = InMemory::new();
-        // An earlier run wrote one asset, then stopped.
-        store
-            .put(
-                &object_store::path::Path::from(format!("{HEAD}/assets/main.css")),
-                "style".into(),
-            )
-            .await
-            .unwrap();
-        let mut files = Vec::new();
-        collect(&dist, &mut files).unwrap();
-        write_files(&store, HEAD, &dist, &mut files, SCOPE)
-            .await
-            .expect("the rerun keeps the equal asset and writes the rest");
-        let worker = store
-            .get(&object_store::path::Path::from(format!("{HEAD}/sw.js")))
-            .await
-            .unwrap();
-        assert_eq!(
-            worker
-                .attributes
-                .get(&object_store::Attribute::CacheControl)
-                .map(AsRef::as_ref),
-            Some(super::INDEX_CACHE)
-        );
-        assert_eq!(&worker.bytes().await.unwrap()[..], b"worker");
-        std::fs::remove_dir_all(&dist).unwrap();
-    }
-
-    #[tokio::test]
-    async fn an_existing_object_is_never_replaced() {
-        let dist = std::env::temp_dir().join(format!("wamn-web-upload-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dist);
-        std::fs::create_dir_all(dist.join("assets")).unwrap();
-        std::fs::write(dist.join("index.html"), "first").unwrap();
-        std::fs::write(dist.join("assets/app.js"), "first").unwrap();
-        let store = InMemory::new();
-        let mut files = Vec::new();
-        collect(&dist, &mut files).unwrap();
-        write_files(&store, HEAD, &dist, &mut files, SCOPE)
-            .await
-            .expect("the first upload writes");
-
-        std::fs::write(dist.join("index.html"), "second").unwrap();
-        std::fs::write(dist.join("assets/app.js"), "second").unwrap();
-        let error = write_files(&store, HEAD, &dist, &mut files, SCOPE)
-            .await
-            .expect_err("the second upload refuses");
-        assert!(
-            error
-                .to_string()
-                .starts_with(&format!("write {HEAD}/assets/app.js")),
-            "{error}"
-        );
-        for (name, bytes) in [
-            ("index.html", &b"first"[..]),
-            ("assets/app.js", b"first"),
-            ("config.json", SCOPE),
-        ] {
-            let stored = store
-                .get(&object_store::path::Path::from(format!("{HEAD}/{name}")))
-                .await
-                .unwrap()
-                .bytes()
-                .await
-                .unwrap();
-            assert_eq!(&stored[..], bytes, "{name}");
-        }
-        std::fs::remove_dir_all(&dist).unwrap();
     }
 
     #[test]

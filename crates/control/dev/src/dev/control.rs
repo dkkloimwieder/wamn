@@ -18,7 +18,11 @@ use wamn_environment_control::provision_project_env::{
 
 /// Refuse missing web bytes before provisioning an environment.
 pub(super) fn preflight(args: &super::up::DevUpRequest) -> anyhow::Result<()> {
-    wamn_environment_control::platform_build::platform_ui_digest(&args.platform_ui)?;
+    anyhow::ensure!(
+        args.platform_ui.join("index.html").is_file(),
+        "build the platform UI before dev up: {} has no index.html",
+        args.platform_ui.display()
+    );
     for package in &args.packages {
         if package.join("web").is_dir() {
             wamn_schema_generator::build_record::check_current(package)?;

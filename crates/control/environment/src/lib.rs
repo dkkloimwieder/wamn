@@ -35,7 +35,4 @@ pub mod workflow_lifecycle;
 mod publish_release_tests;
 
 #[cfg(test)]
-mod platform_ui_tests;
-
-#[cfg(test)]
 mod web_artifact_tests;

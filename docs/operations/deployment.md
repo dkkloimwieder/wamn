@@ -538,9 +538,14 @@ Ruled: the files under `assets/` carry a content hash in their names, so they ar
 
 ## Platform UI files
 
-Use [Web upload](web-upload.md#platform-ui) to upload the local platform UI with its matching stamped chart.
-The default destination is `gs://wamn-dev-web/platform-ui/<platform version>/`.
-The upload page owns the command, build comparison, organization configuration, and refusal of existing objects.
+Use [Web upload](web-upload.md#platform-ui) with the artifact digest that the prepared chart pins in `platformUi`.
+The command pulls the artifact from the platform registry and makes sure that its bytes match the digest before any bucket write.
+The default destination is `gs://wamn-dev-web/platform-ui/sha256-<hex>/`.
+Organization configuration lives separately at `platform-ui/orgs/<org>/config.json`.
+The chart writes the UI digest and organization into `release.json`.
+The edge selects shared files by that digest and reads configuration from the organization path.
+Deployment needs no source checkout, pnpm installation, or local UI output.
+Kind keeps an empty web bucket and selects no platform UI.
 
 The control root is `https://control.wamn.dev`.
 Its host group runs `wamn-host host --control --org=dkk` in namespace `hosts`.

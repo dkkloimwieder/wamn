@@ -68,13 +68,18 @@ fn qualification_images_fixture() -> QualificationImages {
 
 /// Stamp a copy of the chart with its committed subchart archive.
 fn stamped_chart(scratch: &Scratch) -> PathBuf {
-    stamp(
+    let chart = stamp(
         &repository_root().join("deploy/platform/release"),
         &image_set_fixture(),
         Some(&qualification_images_fixture()),
         &scratch.0.join("chart"),
     )
-    .expect("stamp the chart")
+    .expect("stamp the chart");
+    let path = chart.join("values.yaml");
+    let mut defaults: Value = serde_yaml::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    defaults["platformUi"] = WEB_DIGEST.into();
+    std::fs::write(path, serde_yaml::to_string(&defaults).unwrap()).unwrap();
+    chart
 }
 
 fn input(env: &str) -> ValuesInput {
@@ -441,7 +446,7 @@ async fn the_release_chart_renders_one_host_group_and_its_role_workloads() {
     assert_eq!(row["digest"], DIGEST);
     assert_eq!(row["clients"]["wms.acme.example"], "wamn_wms");
     assert_eq!(row["webs"]["wms.acme.example"], WEB_DIGEST);
-    assert_eq!(row["platformVersion"], "");
+    assert_eq!(row["platformUi"], "");
     for document in &documents {
         let annotations = &document["metadata"]["annotations"];
         assert!(
@@ -606,6 +611,30 @@ async fn the_release_chart_renders_one_host_group_and_its_role_workloads() {
             "application releases own no shared service workload"
         );
     }
+}
+
+#[test]
+#[ignore = "requires: bin:helm"]
+fn the_platform_ui_digest_and_org_reach_the_release_row() {
+    wamn_test_postgres::require_ignored_prerequisites("requires: bin:helm");
+    let scratch = Scratch::new("platform-ui-digest");
+    let chart = stamped_chart(&scratch);
+    let mut values = render_values("prod");
+    values["applications"] = Value::Mapping(Mapping::new());
+    values["platformUi"] = WEB_DIGEST.into();
+    values["org"] = "acme".into();
+    let yaml = render_yaml(&chart, &scratch, "prod", &values);
+    let row = serde_yaml::Deserializer::from_str(&yaml)
+        .map(Value::deserialize)
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap()
+        .into_iter()
+        .find(|object| object["data"]["release.json"].is_string())
+        .unwrap();
+    let row: serde_json::Value =
+        serde_json::from_str(row["data"]["release.json"].as_str().unwrap()).unwrap();
+    assert_eq!(row["platformUi"], WEB_DIGEST);
+    assert_eq!(row["org"], values["org"].as_str().unwrap());
 }
 
 #[test]

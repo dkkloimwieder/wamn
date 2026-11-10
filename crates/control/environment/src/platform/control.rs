@@ -273,11 +273,7 @@ fn component_image<'a>(
     }
 }
 
-pub(crate) fn release_values(
-    document: &ClusterDocument,
-    chart: &Value,
-    platform_ui: bool,
-) -> anyhow::Result<Value> {
+pub(crate) fn release_values(document: &ClusterDocument, chart: &Value) -> anyhow::Result<Value> {
     let mut desired = host_values(&document.org);
     desired["runtime-operator"]["runtime"]["image"] =
         chart["runtime-operator"]["runtime"]["image"].clone();
@@ -315,7 +311,17 @@ pub(crate) fn release_values(
     };
     group["env"].as_array_mut().expect("host environment").push(
         json!({"name":"WAMN_CONTROL_PUBLIC_ORIGIN","value":format!("{scheme}://{}", document.route_hosts.control)}));
+    let platform_ui = match chart.get("platformUi") {
+        Some(value) => value
+            .as_str()
+            .context("platformUi must be an artifact digest or empty")?,
+        None => "",
+    };
+    if !platform_ui.is_empty() {
+        wamn_package_artifact::ensure_digest(platform_ui)?;
+    }
     desired["platformUi"] = platform_ui.into();
+    desired["org"] = document.org.as_str().into();
     desired["routeHost"] = document.route_hosts.control.as_str().into();
     // The resource entry supplies the control Service and WorkloadDeployment.
     desired["roles"] = json!([]);
@@ -336,18 +342,7 @@ pub(super) fn resource_entry(
     chart: &SelectedChart,
     installed: Option<&Value>,
 ) -> anyhow::Result<Value> {
-    let build_record = chart
-        .directory()
-        .join(crate::platform_build::BUILD_RECORD_FILE);
-    let platform_ui = match std::fs::read(&build_record) {
-        Ok(bytes) => serde_json::from_slice::<crate::platform_build::PlatformBuildRecord>(&bytes)
-            .context("decode the selected platform build record")?
-            .platform_ui
-            .is_some(),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => false,
-        Err(error) => return Err(error).context("read the selected platform build record"),
-    };
-    let mut desired = release_values(document, chart.values(), platform_ui)?;
+    let mut desired = release_values(document, chart.values())?;
     for group in desired["runtime-operator"]["runtime"]["hostGroups"]
         .as_array_mut()
         .expect("control host groups")
@@ -416,7 +411,7 @@ mod tests {
         let repository = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
         let chart = super::super::artifact_plan::test_util::prepared_chart(&repository)?;
         let selected = super::super::artifact_plan::select(&chart.0)?;
-        let mut installed = release_values(&document, selected.values(), false)?;
+        let mut installed = release_values(&document, selected.values())?;
         let image = json!({"registry":"previous.example", "repository":"host",
             "tag":format!("previous@sha256:{}", "b".repeat(64)), "pull_policy":"IfNotPresent"});
         installed["runtime-operator"]["runtime"]["hostGroups"][0]["image"] = image.clone();
@@ -548,9 +543,9 @@ mod tests {
         let image = json!({"registry":"", "repository":"localhost:5000/platform/host",
             "tag":format!("build@sha256:{}", "a".repeat(64)), "pull_policy":"IfNotPresent"});
         let chart = json!({"runtime-operator":{"runtime":{"image":image}}});
-        let values = release_values(&document, &chart, false).unwrap();
+        let values = release_values(&document, &chart).unwrap();
         assert_eq!(values["runtime-operator"]["runtime"]["image"], image);
-        assert_eq!(values["platformUi"], false);
+        assert_eq!(values["platformUi"], "");
         assert_eq!(values["routeHost"], document.route_hosts.control);
         assert_eq!(values["roles"], json!([]));
         let groups = values["runtime-operator"]["runtime"]["hostGroups"]
@@ -617,8 +612,11 @@ mod tests {
         cloud.provider = Provider::Gcp;
         cloud.project_id = "project-one".into();
         cloud.zone = "us-east1-b".into();
-        let values = release_values(&cloud, &chart, true).unwrap();
-        assert_eq!(values["platformUi"], true);
+        let mut chart = chart;
+        let digest = format!("sha256:{}", "a".repeat(64));
+        chart["platformUi"] = digest.as_str().into();
+        let values = release_values(&cloud, &chart).unwrap();
+        assert_eq!(values["platformUi"], digest);
         assert_eq!(values["routeHost"], cloud.route_hosts.control);
         assert!(
             !values["runtime-operator"]["runtime"]["hostGroups"][0]["extraArgs"]

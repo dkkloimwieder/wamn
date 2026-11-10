@@ -18,4 +18,3 @@ pub mod project;
 pub mod provider;
 pub mod resources;
 pub mod status;
-pub mod web;

@@ -1,7 +1,7 @@
 # Web clients
 
 `wamn web upload` writes built browser files to an S3 or Google Cloud Storage bucket.
-It uploads the platform UI from the local repository.
+It pulls the platform UI from its pinned registry artifact.
 Application uploads pull a pinned standalone web artifact from the registry.
 It does not build files or change edge routing.
 [services/ctl/src/web.rs](../../services/ctl/src/web.rs) defines the arguments and output.
@@ -53,7 +53,7 @@ The push uses the existing registry client and Docker credential reader.
 The registry arguments match `apply-package`: `--artifact-base`, `--registry-auth-file`, `--insecure-registry`, and repeatable `--oci-ca-path`.
 For an anonymous push, the credential file must explicitly contain `{"auths":{"<registry>":{}}}`.
 
-`wamn web upload --platform-ui` still reads the local platform UI.
+`wamn web upload --platform-ui` pulls the separate platform UI artifact by digest.
 
 ## Arguments
 
@@ -61,15 +61,15 @@ The [wamn binary](../../services/ctl/src/bin/wamn.rs) exposes these two forms:
 
 ```text
 wamn web upload --web sha256:<64 lowercase hex digits> --org <org> --bucket <bucket URL> --artifact-base <registry/repository> --registry-auth-file <file>
-wamn web upload --platform-ui --org <org> [--bucket <bucket URL>]
+wamn web upload --platform-ui sha256:<64 lowercase hex digits> --org <org> [--bucket <bucket URL>] --artifact-base <registry/repository> --registry-auth-file <file>
 ```
 
 | Input | Package clients | Platform UI |
 | --- | --- | --- |
 | `--web` | Required digest of the web artifact | Refused |
-| Registry arguments | Same arguments as `web push`, required | Refused |
+| Registry arguments | Same arguments as `web push`, required | Same arguments, required |
 | `--bucket` | Required | Defaults to `gs://wamn-dev-web` |
-| `--platform-ui` | Omit | Required |
+| `--platform-ui` | Omit | Required digest of the platform UI artifact |
 | `--org` | Required, nonempty organization name | Required, nonempty organization name |
 
 A bucket URL uses `s3://<bucket>[/<prefix>]` or `gs://<bucket>[/<prefix>]`.
@@ -82,36 +82,29 @@ The upload does not create the bucket or grant public access.
 
 ## Platform UI
 
-Run this mode from the repository root that contains `apps/platform_ui/dist`.
-Use the stamped chart and matching local files from [the platform build](building.md#platform-ui).
-The upload reads `Chart.yaml` and `platform-build.json` from that chart directory.
-
-1. Set `WAMN_RELEASE_CHART` to the stamped chart directory.
-2. Make sure that the local `apps/platform_ui/dist` matches the files recorded in that chart.
-3. Make sure that bucket credentials are available to the upload process.
-4. Run the upload with the target organization.
+Use the `platformUi` manifest digest from the prepared chart's `values.yaml`.
+The platform build publishes this artifact in `<registry>/wamn/platform-ui`.
+Supply registry credentials and bucket credentials to the upload process.
+The upload needs no checkout, chart directory, pnpm installation, or local build output.
 
 ```bash
-export WAMN_RELEASE_CHART=/path/to/stamped-chart
-wamn web upload --platform-ui --org dkk
+wamn web upload --platform-ui sha256:<64 lowercase hex digits> --org dkk \
+  --artifact-base registry.example/wamn/platform-ui \
+  --registry-auth-file /path/to/dockerconfig.json
 ```
 
-For another bucket or prefix, pass `--bucket`:
+The default bucket is `gs://wamn-dev-web`.
+For another bucket or prefix, pass `--bucket gs://example-web/prefix`.
+The destination is `<prefix>/platform-ui/sha256-<hex>/`.
+The artifact contains UI files and UI metadata only.
+The uploader makes sure that the manifest and tar layer match their digests before any bucket write.
+It refuses application artifacts and invalid UI metadata.
 
-```bash
-wamn web upload --platform-ui --org dkk --bucket gs://example-web/clients
-```
-
-The uploader requires the chart version to equal the version in `deploy/platform/release/Chart.yaml`, which it reads at run time.
-It also requires the local file digest to match `PlatformBuildRecord.platform_ui` before it writes any object.
-[platform_ui_source](../../crates/control/environment/src/platform/web.rs) applies these rules.
-[platform_ui_digest](../../crates/control/environment/src/platform_build.rs) includes each relative file path and file digest, and requires `index.html`.
-
-The destination is `<prefix>/platform-ui/<platform version>/`.
-The default example prints `platform-ui gs://wamn-dev-web/platform-ui/<platform version>/ written` after success.
-Its `config.json` contains only `{"org":"dkk"}`, as [web_scope.rs](../../crates/control/package/src/web_scope.rs) defines.
-This mode requires no environment coordinate, release selection, or package artifact.
-A repeated platform upload attempts the writes again. It keeps equal objects and refuses objects with other bytes.
+The uploader writes `{"org":"dkk"}` to `<prefix>/platform-ui/orgs/dkk/config.json`.
+No organization configuration enters the shared artifact prefix.
+An existing index marks a complete shared upload.
+A repeated upload keeps equal organization configuration and prints `present` for the shared files.
+A different artifact digest selects a different shared prefix.
 
 ## Package clients
 
@@ -143,12 +136,14 @@ Another upload prints `present` and writes nothing.
 
 ## Object writes and errors
 
-Both upload modes write assets first, generated `config.json` next, and `index.html` last.
+Both upload modes write `index.html` last.
+Application uploads write assets first and generated `config.json` next.
+Platform uploads keep organization configuration outside the shared files.
 Each write creates a new object and never replaces an existing object.
 A failed upload can leave objects behind. The command performs no rollback.
 A retry after a partial upload keeps each existing object whose bytes are equal, and refuses an object with other bytes.
 
-[write_files](../../crates/control/package/src/web_artifact.rs) accepts `index.html`, the service worker `sw.js`, and files under `assets/`.
+[The web archive reader](../../crates/control/package/src/web_artifact/plan.rs) accepts `index.html`, the service worker `sw.js`, and files under `assets/`.
 Assets carry `Cache-Control: public, max-age=31536000, immutable`.
 The index, `sw.js` and generated `config.json` carry `Cache-Control: no-cache`.
 The accepted extensions are `html`, `js`, `css`, `json`, `map`, `svg`, `png`, `ico`, `woff2`, and `woff`.
@@ -157,10 +152,6 @@ The [CLI](../../services/ctl/src/web.rs) and [upload implementation](../../crate
 
 | Error text | Cause or action |
 | --- | --- |
-| `set WAMN_RELEASE_CHART to the stamped platform chart` | Set the variable before a platform upload. |
-| ``read <path>; run `wamn-ctl build-platform` `` | The platform build record is absent or unreadable. Use the matching stamped chart. |
-| `the stamped chart version <version> differs from platform <version>` | Use a stamped chart that matches `deploy/platform/release/Chart.yaml`. |
-| `the platform UI build <path> differs from the platform build record <path>` | Restore the matching local build before upload. |
 | `--bucket must be s3://<bucket>[/<prefix>] or gs://<bucket>[/<prefix>]` | Use one of the two supported bucket schemes. |
 | `the build wrote <path>, which has no declared cache rule` | Keep built files under `assets/`, except for `index.html` and `sw.js`. The uploader generates `config.json`. |
 | `the build wrote <path>, which has no declared content type` | Use a supported file extension. |

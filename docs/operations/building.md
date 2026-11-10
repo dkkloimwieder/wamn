@@ -179,15 +179,18 @@ For that separate path, install workspace dependencies with `pnpm install --offl
 The producer then runs `pnpm --filter @wamn/platform-ui build`.
 The platform UI has no `wamn.k` or application package artifact.
 
-The stamped chart contains `platform-build.json`.
-Its `platform_ui` field is null when the UI is unselected.
-When selected, the field records a digest of the relative file paths and file digests in `apps/platform_ui/dist`.
-The digest covers `index.html` and every asset.
+The producer publishes one deterministic OCI artifact under `<registry>/wamn/platform-ui:<platform version>`.
+The artifact contains only `dist/` and canonical `web.json` with the platform version.
+It uses the web archive format and the artifact type `application/vnd.wamn.platform-ui.v1`.
+It contains no organization configuration or application package.
+The prepared chart pins its manifest digest in `values.yaml` as `platformUi`.
+An empty value means that the build selects no UI.
+`platform-build.json` records only stage durations.
 
-With UI selection, `--stamp-only` requires the existing bundle and hashes it without building or publishing it.
-Without UI selection, stamping needs no bundle.
-The producer creates no OCI artifact for the static bundle.
-Keep a selected bundle with its matching chart for [standalone upload](deployment.md#platform-ui-files), which retains its artifact requirements.
+With UI selection, `--stamp-only` resolves the published artifact tag from the registry.
+It reads no local UI output and publishes nothing.
+Deployment and [upload](deployment.md#platform-ui-files) use the published artifact.
+They need no source checkout, pnpm installation, or local UI bundle.
 
 ## Unchanged platform images
 

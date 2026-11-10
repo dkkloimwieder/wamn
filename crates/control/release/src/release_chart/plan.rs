@@ -288,6 +288,7 @@ pub fn values(input: &ValuesInput) -> anyhow::Result<Value> {
     );
     values.insert("environment".into(), environment.into());
     values.insert("routeHost".into(), input.route_host.clone().into());
+    values.insert("platformUi".into(), "".into());
     values.insert(
         "applications".into(),
         serde_yaml::to_value(&input.applications).context("render the applications")?,
