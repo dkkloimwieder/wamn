@@ -300,14 +300,14 @@ pub async fn dry_run(
     file: &Path,
     application: Option<&str>,
 ) -> anyhow::Result<Analysis> {
-    let document = EnvironmentDocument::compile(file)?;
+    let document = EnvironmentDocument::read_deployed(platform, file, application).await?;
     let private = ensure::PrivateDirectory::create()?;
     let mut resolved = platform.clone();
     runtime::resolve_target(&mut resolved, &document, &private.path(".")).await?;
     analyse::analyse(&resolved, &document, application).await
 }
 
-/// Activate one application without provisioning or initializing its database.
+/// Apply explicit environment configuration and reapply one recorded application selection.
 ///
 /// # Errors
 ///
@@ -318,6 +318,9 @@ pub async fn apply(
     file: &Path,
     application: &str,
 ) -> anyhow::Result<Analysis> {
+    EnvironmentDocument::compile(file)?
+        .provision_document(platform)
+        .await?;
     apply_selection(
         platform,
         file,
@@ -330,7 +333,7 @@ pub async fn apply(
 /// Resolve the published release's application from the document's declared membership.
 pub async fn deploy(platform: &Platform, file: &Path, digest: &str) -> anyhow::Result<Analysis> {
     wamn_package_artifact::ensure_digest(digest)?;
-    let document = EnvironmentDocument::compile(file)?;
+    let document = EnvironmentDocument::read_deployed(platform, file, None).await?;
     let mut platform = platform.clone();
     runtime::resolve_platform(&mut platform, &document.org).await?;
     let manifest = analyse::pull_release_manifest(&platform, digest).await?;
@@ -375,24 +378,25 @@ async fn apply_selection(
     application: &str,
     change: document::SelectionChange<'_>,
 ) -> anyhow::Result<Analysis> {
-    let before = EnvironmentDocument::compile(file)?;
-    let before_selection = before
-        .applications
-        .get(application)
-        .with_context(|| format!("application {application} is not declared"))?;
-    let mut document = before.clone();
-    let release_name = analyse::application_release_name(&before, application)?;
+    let input = EnvironmentDocument::compile(file)?;
+    let mut document;
+    let release_name = analyse::application_release_name(&input, application)?;
     let private = ensure::PrivateDirectory::create()?;
     let mut platform = platform.clone();
-    let control = runtime::resolve_platform(&mut platform, &document.org).await?;
+    let control = runtime::resolve_platform(&mut platform, &input.org).await?;
     let mut schema_operations = Vec::new();
     let lock = loop {
         let lock = lock::LifecycleLock::acquire_application(
             &platform.system_database_url,
-            &before.triple(),
+            &input.triple(),
             application,
         )
         .await?;
+        document = EnvironmentDocument::read_target(&platform, &input, Some(application)).await?;
+        let before_selection = document
+            .applications
+            .get(application)
+            .with_context(|| format!("application {application} is not declared"))?;
         let applied = analyse::read_applied_releases(&platform, &release_name).await?;
         if let Some(warning) = document::selection_warning(
             application,
@@ -403,14 +407,14 @@ async fn apply_selection(
         }
         document.select_release(application, change, &applied)?;
         if let document::SelectionChange::Deploy(release) = change {
-            let row = analyse::read_row(lock.client(), &before).await?;
+            let row = analyse::read_row(lock.client(), &input).await?;
             let pending = match &row {
                 // A first install has no recorded environment and nothing to reset.
                 None => None,
                 Some(_) => {
                     crate::provision_project_env::registry::pending_database(
                         lock.client(),
-                        &before.triple(),
+                        &input.triple(),
                     )
                     .await?
                 }
@@ -469,11 +473,24 @@ async fn apply_selection(
                 continue;
             }
         }
-        crate::provision_project_env::registry::require_no_reset(lock.client(), &before.triple())
+        crate::provision_project_env::registry::require_no_reset(lock.client(), &input.triple())
             .await?;
         break lock;
     };
     let result = async {
+        if matches!(change, document::SelectionChange::Reapply)
+            && !ensure::resources_in_place(&platform, &document).await?
+        {
+            let admin = std::env::var("WAMN_SYSTEM_ADMIN_URL")
+                .context("set WAMN_SYSTEM_ADMIN_URL for environment provisioning")?;
+            Box::pin(ensure::provision_resources(
+                &platform,
+                &document,
+                &[],
+                &admin,
+            ))
+            .await?;
+        }
         if matches!(change, document::SelectionChange::Deploy(_)) {
             Box::pin(initialize_selection(
                 &platform,
@@ -494,7 +511,7 @@ async fn apply_selection(
         expand::expand(&platform, &document, &analysis)
             .await
             .context("prepare application control records")?;
-        let document = document::persist_selection(file, &before, &document, application)?;
+        let document = document.persist_selection(&platform, application).await?;
         let release_name = &analysis.authorities.release_name;
         if let Some(prepared) = prepared {
             let written = write::write(

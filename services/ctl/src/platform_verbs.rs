@@ -255,9 +255,9 @@ pub async fn run_product(
                     }
                     PlatformSchemaScope::Project => {
                         let file = args.env.as_deref().context("--env is required for project scope")?;
-                        let document = wamn_environment_control::environment::document::EnvironmentDocument::compile(file)?;
                         let mut platform = wamn_environment_control::environment::Platform::project_schema_from_env()?;
                         platform.target = target;
+                        let document = wamn_environment_control::environment::document::EnvironmentDocument::read_deployed(&platform, file, None).await?;
                         writeln!(output, "project SQL environment: {}", document.triple())?;
                         output.flush()?;
                         wamn_environment_control::environment::sql::project_schema_deployed(

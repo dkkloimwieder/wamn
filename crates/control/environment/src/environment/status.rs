@@ -65,13 +65,14 @@ pub struct RevisionStatus {
     pub manifest_digest: Option<String>,
 }
 
-/// Read authored selections even when runtime or database state is unavailable.
+/// Read canonical selections even when runtime or database state is unavailable.
 pub async fn status(
     platform: &mut Platform,
     file: &std::path::Path,
     admin_url: &str,
 ) -> anyhow::Result<Status> {
-    let document = super::document::EnvironmentDocument::compile(file)?;
+    let document =
+        super::document::EnvironmentDocument::read_deployed(platform, file, None).await?;
     let triple = document.triple();
     let mut warnings = Vec::new();
     let system_schema = match async {

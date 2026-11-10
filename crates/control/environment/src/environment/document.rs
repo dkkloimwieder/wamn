@@ -6,6 +6,8 @@
 //! KCL compiles the document to JSON. Its canonical form is RFC 8785 JSON.
 
 pub(super) mod plan;
+mod store;
+pub(super) use store::JOB_DOCUMENT;
 
 use std::collections::BTreeMap;
 use std::fmt;
@@ -26,19 +28,26 @@ pub use plan::DeclaredRelease;
 pub use plan::{Schema, SchemaMode};
 
 impl EnvironmentDocument {
-    /// Compile an `environment.k` file and read it.
+    /// Read compiled JSON or compile an `environment.k` file.
     ///
     /// # Errors
     ///
     /// When KCL refuses the file, or when the JSON is not a valid document.
     pub fn compile(file: &Path) -> anyhow::Result<Self> {
-        let bytes = wamn_schema_generator::compile_environment(file)?;
+        let bytes = if file
+            .extension()
+            .is_some_and(|extension| extension == "json")
+        {
+            std::fs::read(file)?
+        } else {
+            wamn_schema_generator::compile_environment(file)?
+        };
         Self::from_json(&bytes)
             .with_context(|| format!("{} is not a valid environment", file.display()))
     }
 }
 
-/// A requested change to one application's authored selection.
+/// A requested change to one application's canonical selection.
 #[derive(Debug, Clone, Copy)]
 pub(super) enum SelectionChange<'a> {
     Deploy(&'a str),
@@ -80,7 +89,7 @@ pub(super) fn selection_warning(
     };
     (requested != applied).then(|| {
         format!(
-            "application {application}: environment.k requests {}, last successful Helm apply is {}; inspect wamn status --env <environment.k>",
+            "application {application}: ConfigMap selects {}, last successful Helm apply is {}; inspect wamn status --env <environment.k>",
             requested.unwrap_or("none"),
             applied.unwrap_or("none"),
         )
@@ -133,66 +142,12 @@ impl EnvironmentDocument {
     }
 }
 
-/// Merge a prepared selection into the latest file under a short file lock.
-/// A concurrent edit to the target or shared configuration refuses before Helm.
-pub(super) fn persist_selection(
-    file: &Path,
-    before: &EnvironmentDocument,
-    prepared: &EnvironmentDocument,
-    application: &str,
-) -> anyhow::Result<EnvironmentDocument> {
-    use std::io::Write as _;
-    let file = std::fs::canonicalize(file)?;
-    let _lock = super::lock::document_lock(&file)?;
-    let mut latest = EnvironmentDocument::compile(&file)?;
-    ensure!(
-        latest.org == before.org
-            && latest.project == before.project
-            && latest.env == before.env
-            && latest.target == before.target
-            && latest.policy == before.policy
-            && latest.schema == before.schema
-            && latest.integrations == before.integrations
-            && latest.applications.get(application) == before.applications.get(application),
-        "environment configuration or application {application} changed during preparation; retry"
-    );
-    let selection = latest
-        .applications
-        .get_mut(application)
-        .context("application disappeared")?;
-    let intended = &prepared.applications[application];
-    if selection.current == intended.current && selection.previous == intended.previous {
-        return Ok(latest);
-    }
-    selection.current.clone_from(&intended.current);
-    selection.previous.clone_from(&intended.previous);
-    let temporary = file.with_extension("k.pending");
-    let result = (|| -> anyhow::Result<()> {
-        let mut output = std::fs::OpenOptions::new()
-            .write(true)
-            .create(true)
-            .truncate(true)
-            .open(&temporary)?;
-        output.set_permissions(std::fs::metadata(&file)?.permissions())?;
-        output.write_all(latest.to_kcl().as_bytes())?;
-        output.sync_all()?;
-        std::fs::rename(&temporary, &file)?;
-        std::fs::File::open(file.parent().context("environment parent")?)?.sync_all()?;
-        Ok(())
-    })();
-    if result.is_err() {
-        let _ = std::fs::remove_file(&temporary);
-    }
-    result.with_context(|| format!("persist application {application} in {}", file.display()))?;
-    Ok(latest)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use serde_json::{Value, json};
 
-    fn document() -> Value {
+    pub(super) fn document() -> Value {
         json!({
             "org": "acme", "project": "wms", "env": "prod",
             "policy": "prod", "target": "cloud",
@@ -358,92 +313,6 @@ mod tests {
                 .is_err()
         );
         assert_eq!(document, before);
-    }
-
-    #[test]
-    fn persistence_keeps_pending_selection_and_refuses_stale_configuration() {
-        let scratch = wamn_test_infrastructure::scratch::ScratchRoot::create().unwrap();
-        let file = scratch.path().join("environment.k");
-        let initial = EnvironmentDocument::from_json(document().to_string().as_bytes()).unwrap();
-        std::fs::write(&file, initial.to_kcl()).unwrap();
-        let mut prepared = initial.clone();
-        prepared
-            .select_release(
-                "wms",
-                SelectionChange::Deploy(&format!("sha256:{}", "e".repeat(64))),
-                &AppliedReleases {
-                    current: Some(format!("sha256:{}", "f".repeat(64))),
-                    previous: None,
-                },
-            )
-            .unwrap();
-        persist_selection(&file, &initial, &prepared, "wms").unwrap();
-        // A failed rollout leaves the prepared selection on disk for the next invocation.
-        let pending = EnvironmentDocument::compile(&file).unwrap();
-        assert_eq!(pending, prepared);
-        let bytes = std::fs::read(&file).unwrap();
-        persist_selection(&file, &pending, &pending, "wms").unwrap();
-        assert_eq!(std::fs::read(&file).unwrap(), bytes);
-        let mut changed = pending.clone();
-        changed.policy = "other".into();
-        std::fs::write(&file, changed.to_kcl()).unwrap();
-        assert!(persist_selection(&file, &pending, &initial, "wms").is_err());
-        assert_eq!(EnvironmentDocument::compile(&file).unwrap(), changed);
-        changed.policy.clone_from(&pending.policy);
-        changed.schema.mode = Some(SchemaMode::Migrate);
-        std::fs::write(&file, changed.to_kcl()).unwrap();
-        assert!(persist_selection(&file, &pending, &initial, "wms").is_err());
-        assert_eq!(EnvironmentDocument::compile(&file).unwrap(), changed);
-    }
-
-    #[test]
-    fn concurrent_application_writes_merge_without_losing_either_selection() {
-        let scratch = wamn_test_infrastructure::scratch::ScratchRoot::create().unwrap();
-        let file = scratch.path().join("environment.k");
-        let before = EnvironmentDocument::from_json(document().to_string().as_bytes()).unwrap();
-        std::fs::write(&file, before.to_kcl()).unwrap();
-        let a1 = format!("sha256:{}", "e".repeat(64));
-        let b1 = format!("sha256:{}", "f".repeat(64));
-        let mut a = before.clone();
-        a.select_release(
-            "wms",
-            SelectionChange::Deploy(&a1),
-            &AppliedReleases {
-                current: Some(before.applications["wms"].current.to_string()),
-                previous: None,
-            },
-        )
-        .unwrap();
-        let mut b = before.clone();
-        b.select_release(
-            "receiving",
-            SelectionChange::Deploy(&b1),
-            &AppliedReleases {
-                current: Some(before.applications["receiving"].current.to_string()),
-                previous: before.applications["receiving"].previous.clone(),
-            },
-        )
-        .unwrap();
-        let barrier = std::sync::Barrier::new(2);
-        std::thread::scope(|scope| {
-            let first = scope.spawn(|| {
-                barrier.wait();
-                persist_selection(&file, &before, &a, "wms").unwrap();
-            });
-            let second = scope.spawn(|| {
-                barrier.wait();
-                persist_selection(&file, &before, &b, "receiving").unwrap();
-            });
-            first.join().unwrap();
-            second.join().unwrap();
-        });
-        a.applications.insert(
-            "receiving".into(),
-            b.applications.remove("receiving").unwrap(),
-        );
-        assert_eq!(EnvironmentDocument::compile(&file).unwrap(), a);
-        assert!(persist_selection(&file, &before, &before, "wms").is_err());
-        assert_eq!(EnvironmentDocument::compile(&file).unwrap(), a);
     }
 
     #[test]

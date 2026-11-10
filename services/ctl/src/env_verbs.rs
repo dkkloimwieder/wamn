@@ -33,11 +33,11 @@ pub enum EnvCommand {
     Apply(ApplyArgs),
     /// Write the committed integration documents of one environment.
     Connections(ConnectionsArgs),
-    /// Apply one application’s previous authored release.
+    /// Apply one application’s previous canonical release.
     Rollback(RollbackArgs),
     /// Delete one environment. Its database stays on the cluster unless --data.
     Delete(DeleteArgs),
-    /// Print the authored environment.k document.
+    /// Export the canonical environment document as KCL.
     Show(FileArgs),
     /// Print the current state of one environment as JSON.
     Status(FileArgs),
@@ -61,6 +61,9 @@ pub struct InitializeArgs {
     /// The application whose absent baselines to initialize.
     #[arg(long)]
     pub application: Option<String>,
+    /// The published SQL input before its code selection is recorded.
+    #[arg(long, requires = "application")]
+    pub release: Option<String>,
 }
 
 #[derive(Debug, Args)]
@@ -159,7 +162,12 @@ pub struct FileArgs {
 
 pub async fn run(command: EnvCommand) -> anyhow::Result<()> {
     if let EnvCommand::Show(args) = &command {
-        print!("{}", environment::show::show(&args.file)?.to_kcl());
+        print!(
+            "{}",
+            environment::show::show(&Platform::from_env()?, &args.file)
+                .await?
+                .to_kcl()
+        );
         return Ok(());
     }
     if let EnvCommand::ProjectSchemaDiff(args) = &command {
@@ -179,7 +187,10 @@ pub async fn run(command: EnvCommand) -> anyhow::Result<()> {
     };
     match command {
         EnvCommand::Provision(args) => {
-            let document = sql_document(&args.file)?;
+            let document = environment::document::EnvironmentDocument::read_deployed(
+                &platform, &args.file, None,
+            )
+            .await?;
             let lock = sql_lock(&platform, &document, &args.database, false).await?;
             let outcome = environment::ensure::provision(
                 &platform,
@@ -195,7 +206,22 @@ pub async fn run(command: EnvCommand) -> anyhow::Result<()> {
             println!("{}", serde_json::to_string(&outcome.database_cr)?);
         }
         EnvCommand::Initialize(args) => {
-            let document = sql_document(&args.file)?;
+            let mut document = environment::document::EnvironmentDocument::read_deployed(
+                &platform, &args.file, None,
+            )
+            .await?;
+            if let Some(release) = args.release {
+                wamn_package_artifact::ensure_digest(&release)?;
+                let application = args
+                    .application
+                    .as_deref()
+                    .context("initialization application")?;
+                document
+                    .applications
+                    .get_mut(application)
+                    .with_context(|| format!("application {application} is not declared"))?
+                    .current = environment::document::DeclaredRelease::Digest(release);
+            }
             let lock = sql_lock(&platform, &document, &args.database, false).await?;
             environment::sql::initialize(
                 &platform,
@@ -207,7 +233,10 @@ pub async fn run(command: EnvCommand) -> anyhow::Result<()> {
             lock.release().await;
         }
         EnvCommand::Reset(args) => {
-            let document = sql_document(&args.file)?;
+            let document = environment::document::EnvironmentDocument::read_deployed(
+                &platform, &args.file, None,
+            )
+            .await?;
             let expected: environment::sql::ExpectedDatabase =
                 serde_json::from_slice(&std::fs::read(&args.database)?)?;
             let lock = expected.lock(&platform, &document, true).await?;
@@ -234,7 +263,10 @@ pub async fn run(command: EnvCommand) -> anyhow::Result<()> {
             lock.release().await;
         }
         EnvCommand::SchemaAdopt(args) => {
-            let document = sql_document(&args.file)?;
+            let document = environment::document::EnvironmentDocument::read_deployed(
+                &platform, &args.file, None,
+            )
+            .await?;
             let expected: environment::sql::ExpectedDatabase =
                 serde_json::from_slice(&std::fs::read(&args.database)?)?;
             let lock = expected.lock(&platform, &document, false).await?;
@@ -254,7 +286,10 @@ pub async fn run(command: EnvCommand) -> anyhow::Result<()> {
             );
         }
         EnvCommand::SchemaApply(args) => {
-            let document = sql_document(&args.file)?;
+            let document = environment::document::EnvironmentDocument::read_deployed(
+                &platform, &args.file, None,
+            )
+            .await?;
             let lock = sql_lock(&platform, &document, &args.database, true).await?;
             let admin = std::env::var("WAMN_SYSTEM_ADMIN_URL").context("SQL administrator URL")?;
             environment::sql::schema::apply(
@@ -289,7 +324,10 @@ pub async fn run(command: EnvCommand) -> anyhow::Result<()> {
             }
         }
         EnvCommand::Connections(args) => {
-            let document = environment::document::EnvironmentDocument::compile(&args.file)?;
+            let document = environment::document::EnvironmentDocument::read_deployed(
+                &platform, &args.file, None,
+            )
+            .await?;
             for line in
                 environment::connections::write(&platform, &document, &args.documents).await?
             {
@@ -342,7 +380,9 @@ async fn project_schema(
 ) -> anyhow::Result<()> {
     // Substrate SQL uses no application artifact, host or broker inputs.
     let platform = Platform::project_schema_from_env()?;
-    let document = sql_document(&args.file)?;
+    let document =
+        environment::document::EnvironmentDocument::read_deployed(&platform, &args.file, None)
+            .await?;
     let expected = serde_json::from_slice(&std::fs::read(&args.database)?)?;
     println!("project SQL image: {}", args.image);
     std::io::stdout().flush()?;
@@ -378,19 +418,6 @@ async fn sql_lock(
     )
     .await?;
     Ok(lock)
-}
-
-fn sql_document(
-    file: &std::path::Path,
-) -> anyhow::Result<environment::document::EnvironmentDocument> {
-    if file
-        .extension()
-        .is_some_and(|extension| extension == "json")
-    {
-        environment::document::EnvironmentDocument::from_json(&std::fs::read(file)?)
-    } else {
-        environment::document::EnvironmentDocument::compile(file)
-    }
 }
 
 /// `--data` drops the database, so the coordinate is typed again at a

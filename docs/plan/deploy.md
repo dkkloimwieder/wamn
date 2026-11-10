@@ -33,7 +33,7 @@ Deploy and rollback persist only the targeted application's release selection. C
 
 Reads and necessary WAMN control writes are allowed: release-cache entries, application release bindings and application-scoped runtime grants. Writes must be repeatable and scoped to the targeted application. Shared immutable cache entries can be added or reused. Code-only operations preserve other applications' records, effective permissions, selections, and workloads. They perform no environment-wide grant or binding reconciliation. A schema-changing reset rebuilds the database-local control facts and reconnects all affected applications while preserving their release selections.
 
-Bindings and grants for the running release stay until the new release is ready and the old release drains. The drain wait is bounded by the environment policy's `drain_bound_seconds`. If old pods are still live after the bound, or pinned work still needs a binding, the binding stays. A failed deployment leaves the running code usable. Control records are not a second release-selection authority competing with `environment.k` and Helm.
+Bindings and grants for the running release stay until the new release is ready and the old release drains. The drain wait is bounded by the environment policy's `drain_bound_seconds`. If old pods are still live after the bound, or pinned work still needs a binding, the binding stays. A failed deployment leaves the running code usable. Control records do not compete with the canonical environment ConfigMap and Helm.
 
 Each application's Helm release owns its route ConfigMaps. They carry the label `wamn.route=true`, and the edge reads them by that selector. A code-only deployment changes only the targeted application's route ConfigMaps. Another application's routes stay unchanged.
 
@@ -68,7 +68,7 @@ This section records the current code. It replaces the historical list of earlie
 | Installation state | The numbered installer, steps, environment-first pass, broad installer lock, and completion ConfigMaps are deleted. `platform/job.rs` keeps bounded initialization Jobs. |
 | Initial system SQL | `provision_system::install_control_store` commits the control store and baseline together. Only newly initialized databases run embedded system migrations through the shared executor. Reapply recognizes the frozen initialization digest after upgrades and runs no bootstrap or migration. |
 | Platform schema commands | `wamn platform schema diff` and `apply` require `--scope system\|project --chart <directory>`. Both run the selected chart's `ctl` image through the existing Job lifecycle. Apply supports `--resolve <path>=applied\|retry` and reports committed progress on failure. Project scope requires `--env FILE` and uses the existing environment SQL Job, registry target, credentials, and lifecycle exclusion. Fresh environment initialization runs project migrations, while repeated provisioning runs none. |
-| Application selection | `environment/document.rs` merges per-application selections. Under the application lock, `environment/mod.rs` derives `previous` from successful Helm history and preserves it on retry. |
+| Application selection | `environment/document/store.rs` merges per-application selections in the canonical ConfigMap with resourceVersion retries. Under the application lock, `environment/mod.rs` derives `previous` from successful Helm history and preserves it on retry. |
 | Application deployment | `environment/mod.rs`, `expand.rs`, and `write.rs` prepare targeted control facts and apply one application's Helm release. `rollback.rs` supports an explicit target and refuses ambiguous history. |
 | Routes and drain | The application release renders its route ConfigMaps with `wamn.route=true`. `environment/drain.rs` waits up to the policy drain bound and keeps bindings that live pods or pinned work still need. |
 | Application publication | `crates/control/release/src/application.rs` publishes from package artifacts without installing them in a target database. Source deployment and `wamn schema publish` use the same owner. |
@@ -118,23 +118,57 @@ Prepare the new release's bindings and grants alongside those of the running rel
 
 ### Release selection
 
-`environment.k` expresses the requested selection. Each application records `current`, the release to run, and `previous`, the release that ran before it. Helm records the applied operations of each application release. On first installation, `previous` is absent.
+One non-secret environment document in a Kubernetes ConfigMap selects releases for every deployed writer, including the trusted CLI.
+The ConfigMap uses the existing environment resource name, `e-<env-slug>-<coordinate-hash>`, in the provisioning namespace, `hosts`.
+Its `data.environment.json` holds the existing JSON document form.
+Checkout files are explicit configuration inputs or exports.
+They do not select deployed releases.
 
-Deploy and rollback hold the existing application lock for the targeted application. Under that lock, the command derives `previous` from the last successfully applied release in that application's Helm history. It does not derive `previous` from the `current` value in the local checkout, because that file can be stale. Reapplying the same selection leaves both fields unchanged.
+Each application records `current`, the requested release, and `previous`, the prior successfully applied release.
+On first installation, `previous` is absent.
+Helm keeps the applied-release history for each application.
+Deploy and rollback keep the existing application lock.
+They derive `previous` from that application's successful Helm history.
+Reapplying the same selection leaves both fields unchanged.
 
-If the file and the applied state diverge, the command warns and names both releases. A divergence is not a refusal. A failed deployment keeps its requested `current`. A retry applies the same bytes and does not rotate `previous` again.
+Explicit provisioning creates the ConfigMap from the input file when absent.
+Later configuration updates preserve each application's recorded release pair.
+Deploy, rollback, status, and deployed schema operations read the ConfigMap.
+The `--env` file names the environment and cluster target.
+If shared configuration or the targeted release pair differs, the command warns and names both values.
+Stale input does not cause refusal.
 
-Rollback selects the last successfully applied release before the current one and applies its published bytes. It publishes no replacement release. If the local pair is ambiguous, rollback requires an explicit `--release` target. Examples are a file `previous` that differs from the applied history, or a failed deploy with no successful apply after it. Do not invoke `helm rollback` to select application code.
+After preparation, deploy or rollback writes only the targeted application's `current` and `previous`, then applies its Helm release.
+The write supplies the resourceVersion, the Kubernetes revision read with the document.
+On a conflict, the writer rereads the document and merges only that application's pair again.
+Retries have a small fixed bound.
+Other applications and shared configuration stay unchanged.
+No deployment controller or environment-wide rollout lock exists.
 
-After artifact preparation succeeds, deploy or rollback atomically writes only the targeted selection before applying that application's Helm release. Other application selections and shared configuration remain unchanged. Status reports observed artifacts, including mixed or unknown state within the targeted application.
-
-Do not add blanket mismatch refusals, mandatory Git commits, or another selection store.
+A failed deployment retains its requested `current` in the ConfigMap.
+A retry uses the same bytes without rotating `previous` again.
+Rollback selects published bytes from successful Helm history and never reverses SQL.
+If the recorded pair is ambiguous, rollback requires an explicit `--release`.
+Do not use `helm rollback` to select application code.
+Status reports observed artifacts, including mixed or unknown state.
+`env show` exports the canonical document as KCL.
+Deploy and rollback never write the checkout file.
 
 ### Authorization
 
-Direct kubeconfig and database access is the trusted developer and bootstrap path. A developer with that access can run every command in this section against their own cluster.
+Direct kubeconfig and database access remain the trusted developer and bootstrap path.
+This path reads the same canonical ConfigMap as other deployed writers.
 
-The product target is authenticated WAMN control routes. The CLI and the UI call the same operations through those routes. They do not get separate deployment implementations. Each operation runs as a deployment Job with only the scope that its target needs.
+The CLI and UI use the same authenticated control operations.
+The server authorizes each request for its actor, operation, and target.
+The server builds each Job's image, command, and Secret references.
+Each Job receives only the credentials and Kubernetes permissions that its operation needs.
+
+System and project SQL Jobs, provisioning, and reset are privileged operations.
+They keep the CNPG administrator credential.
+System SQL is for platform administrators only.
+Code deploy and rollback Jobs never receive administrator credentials.
+Privileged Jobs are not called credential-isolated.
 
 The publisher identity comes from the authenticated credentials of the request. A caller-supplied string does not set it. Recording a human publisher comes with the authenticated control routes. On the trusted direct path, the identity comes from the credentials that the developer uses for that path.
 
@@ -393,7 +427,7 @@ Control reads and the targeted writes above are allowed. Writes must be repeatab
 
 Keep the running release's bindings and grants alongside the new release's requirements until readiness and drain permit removal under section 3. A failed deployment leaves the running code usable.
 
-If initial SQL succeeds but rollout fails, keep the SQL record. Retrying the selection uses published bytes and does not repeat committed initialization. The file retains the requested release, and status reports what actually runs.
+If initial SQL succeeds but rollout fails, keep the SQL record. Retrying the selection uses published bytes and does not repeat committed initialization. The ConfigMap retains the requested release, and status reports what actually runs.
 
 ```text
 Deploy sample_app -> org/project/dev
@@ -787,7 +821,7 @@ wamn deploy --release sha256:<release-digest> --env environments/dev/environment
 
 Rollback follows the same code-only rule. Reads and necessary control writes are allowed for release-cache entries, application release bindings and application-scoped runtime grants. Writes must be repeatable and targeted. Shared immutable cache entries can be added or reused. Do not run environment-wide grant or binding reconciliation or change another application's effective permissions or records.
 
-Prepare the selected release's bindings and grants before applying Helm. Preserve those needed by running code until the replacement is ready and the old release drains. Remove obsolete facts only under section 3's removal rule. A failed deployment leaves the running code usable. Control records never compete with `environment.k` and Helm as a release-selection authority.
+Prepare the selected release's bindings and grants before applying Helm. Preserve those needed by running code until the replacement is ready and the old release drains. Remove obsolete facts only under section 3's removal rule. A failed deployment leaves the running code usable. Control records never compete with the environment ConfigMap and Helm as a release-selection authority.
 
 ```text
 Deploy sample_app -> org/project/dev
@@ -805,7 +839,7 @@ Deploy sample_app -> org/project/dev
 Result: deployed
 ```
 
-A build or publication failure leaves the file and running workloads unchanged. If Helm fails after selection, the file retains A1 as current and A0 as previous. Status reports A0 if it still runs, or the observed mixed state. Retrying A1 uses the same bytes and preserves A0 as previous, because A0 is still the last successfully applied release.
+A build or publication failure leaves the file and running workloads unchanged. If Helm fails after selection, the ConfigMap retains A1 as current and A0 as previous. Status reports A0 if it still runs, or the observed mixed state. Retrying A1 uses the same bytes and preserves A0 as previous, because A0 is still the last successfully applied release.
 
 Stale checkout example: developer 1 deploys A1 from a checkout. Developer 2 has an older checkout that still says `current = A0`, and deploys A2. Under the application lock, the command derives `previous = A1` from the last successful apply, writes `current = A2, previous = A1`, and warns that the file said A0. A later rollback selects A1.
 
@@ -868,7 +902,7 @@ After an interrupted Helm write, read that application's Helm and Kubernetes res
 
 After interrupted SQL execution, read the applied SQL records and report incomplete work. Do not trust installer completion ConfigMaps. A failed application rollout leaves committed SQL in place. Platform executable rollback also leaves committed platform SQL in place.
 
-Serialize SQL mutations to the same database. Protect the shared file during selection updates so that concurrent application commands cannot overwrite each other's selections. Each application has its own application lock, so alpha and beta deployments run concurrently. An environment-wide reset excludes every application deployment in that environment. Normal application rollout needs no global platform installation lock.
+Serialize SQL mutations to the same database. Use the ConfigMap resourceVersion to merge targeted selections after a concurrent write. Each application has its own application lock, so alpha and beta deployments run concurrently. An environment-wide reset excludes every application deployment in that environment. Normal application rollout needs no global platform installation lock.
 
 ## 6. Warnings and operation results
 

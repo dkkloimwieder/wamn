@@ -25,6 +25,18 @@ impl std::fmt::Display for Unreachable {
 
 impl std::error::Error for Unreachable {}
 
+/// The API server refused a stale resource version or a concurrent creation.
+#[derive(Debug)]
+pub(crate) struct Conflict;
+
+impl std::fmt::Display for Conflict {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Kubernetes resource changed concurrently")
+    }
+}
+
+impl std::error::Error for Conflict {}
+
 /// Run `kubectl` against the selected cluster and namespace.
 ///
 /// Calls with input suppress standard error because the input can contain Secrets.
@@ -98,6 +110,12 @@ async fn run(
     }
     let output = child.wait_with_output().await.context("wait for kubectl")?;
     if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        if stderr.contains("Error from server (Conflict)")
+            || stderr.contains("Error from server (AlreadyExists)")
+        {
+            return Err(Conflict.into());
+        }
         if !show_error {
             bail!(
                 "kubectl {} exited {}",
@@ -105,7 +123,6 @@ async fn run(
                 output.status
             );
         }
-        let stderr = String::from_utf8_lossy(&output.stderr);
         let message = format!(
             "kubectl {} exited {}: {}",
             arguments.join(" "),

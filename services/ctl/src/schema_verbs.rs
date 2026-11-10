@@ -30,7 +30,7 @@ pub enum SchemaCommand {
 
 #[derive(Debug, Args)]
 pub struct EnvironmentArgs {
-    /// The shared environment.k file. An adjacent dev.json selects local adoption.
+    /// The target environment file. An adjacent dev.json selects local adoption.
     #[arg(long)]
     pub env: PathBuf,
 }
@@ -39,7 +39,7 @@ pub struct EnvironmentArgs {
 pub struct SchemaArgs {
     /// The declared application or source directory. Source diff needs current build output.
     pub application: String,
-    /// The shared environment.k file.
+    /// The target environment file.
     #[arg(long)]
     pub env: PathBuf,
     /// Select published application SQL instead of the configured current release. Conflicts with source input.
@@ -79,8 +79,9 @@ pub async fn run(command: SchemaCommand) -> anyhow::Result<()> {
                     serde_json::json!({"adopted": result, "sql_executed": false, "live_verified": false})
                 );
             } else {
-                let document = EnvironmentDocument::compile(&args.env)?;
                 let mut platform = Platform::apply_from_env()?;
+                let document =
+                    EnvironmentDocument::read_deployed(&platform, &args.env, None).await?;
                 environment::runtime::resolve_platform(&mut platform, &document.org).await?;
                 environment::sql::adopt_deployed(&platform, &document).await?;
             }
@@ -115,12 +116,15 @@ pub async fn run(command: SchemaCommand) -> anyhow::Result<()> {
         println!("{}", serde_json::to_string_pretty(&diffs)?);
         return Ok(());
     }
-    let document = EnvironmentDocument::compile(&args.env)?;
     let mut platform = if apply {
         Platform::apply_from_env()?
     } else {
         Platform::from_env()?
     };
+    let warning_application =
+        (!std::path::Path::new(&args.application).is_dir()).then_some(args.application.as_str());
+    let document =
+        EnvironmentDocument::read_deployed(&platform, &args.env, warning_application).await?;
     let (application, release) = if apply && !document.applications.contains_key(&args.application)
     {
         ensure!(
@@ -210,8 +214,8 @@ pub async fn run(command: SchemaCommand) -> anyhow::Result<()> {
 }
 
 async fn publish(args: PublishArgs) -> anyhow::Result<()> {
-    let document = EnvironmentDocument::compile(&args.env)?;
     let platform = Platform::apply_from_env()?;
+    let document = EnvironmentDocument::read_deployed(&platform, &args.env, None).await?;
     let database_url =
         std::env::var("DATABASE_URL").context("set DATABASE_URL for disposable build databases")?;
     let (application, digest) = wamn_dev_control::source_deploy::publish(

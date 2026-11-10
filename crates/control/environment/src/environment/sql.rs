@@ -309,6 +309,9 @@ pub async fn run_deployed(
             "select one application before initialization"
         );
     }
+    if matches!(operation, Operation::Provision) {
+        document.provision_document(platform).await?;
+    }
     let verb = match operation {
         Operation::Provision => "provision",
         Operation::ProjectSchema { apply, .. } => {
@@ -350,7 +353,7 @@ pub async fn run_deployed(
     let mut arguments = vec![
         "env",
         verb,
-        "/inputs/environment.json",
+        super::document::JOB_DOCUMENT,
         "/inputs/database.json",
     ];
     if matches!(operation, Operation::ProjectSchema { .. }) {
@@ -366,6 +369,18 @@ pub async fn run_deployed(
             ..
         } => Some((application, release)),
         Operation::Reset { candidate } => candidate,
+        Operation::Initialize => {
+            document
+                .applications
+                .iter()
+                .next()
+                .and_then(|(name, selection)| match &selection.current {
+                    super::document::DeclaredRelease::Digest(release) => {
+                        Some((name.as_str(), release.as_str()))
+                    }
+                    super::document::DeclaredRelease::None => None,
+                })
+        }
         _ => None,
     };
     if let Some((application, release)) = candidate {
@@ -393,10 +408,8 @@ pub async fn run_deployed(
         arguments.extend(["--resolve", resolution]);
     }
     let mut job = job::manifest(&name, image, &["/usr/local/bin/wamn-ctl"], &arguments);
-    let mut files = BTreeMap::from([(
-        "environment.json".into(),
-        String::from_utf8(document.canonical_json()?)?,
-    )]);
+    environment_input(&mut job, document)?;
+    let mut files = BTreeMap::new();
     let mut expected = ExpectedDatabase::read(platform, document).await?;
     if matches!(
         operation,
@@ -529,7 +542,9 @@ pub async fn run_deployed(
     if matches!(operation, Operation::Provision) {
         job::secret_output(&mut job);
     }
-    let output = job::run(&platform.target, directory, &mut job, &mut secrets).await?;
+    let mut target = platform.target.clone();
+    super::DEFAULT_NAMESPACE.clone_into(&mut target.namespace);
+    let output = job::run(&target, directory, &mut job, &mut secrets).await?;
     match operation {
         Operation::Provision | Operation::Reset { .. } => {}
         Operation::ApplySchema { .. }
@@ -538,6 +553,26 @@ pub async fn run_deployed(
         Operation::Initialize => ensure::ensure_cdc(platform, document).await?,
     }
     database_resource(operation, &output)
+}
+
+/// Mount the authority directly. SQL Jobs need no Kubernetes API credential.
+fn environment_input(job: &mut Value, document: &EnvironmentDocument) -> anyhow::Result<()> {
+    let name = wamn_control_provision::environment_state::environment_resource_name(
+        &document.org,
+        &document.project,
+        &document.env,
+    )?;
+    job["spec"]["template"]["spec"]["volumes"]
+        .as_array_mut()
+        .context("Job volumes")?
+        .push(serde_json::json!({"name":"environment", "configMap":{"name":name}}));
+    job::container(job)["volumeMounts"]
+        .as_array_mut()
+        .context("Job mounts")?
+        .push(
+            serde_json::json!({"name":"environment", "mountPath":"/environment", "readOnly":true}),
+        );
+    Ok(())
 }
 
 /// Provisioning alone returns a new Database resource. Other Jobs return only logs.
@@ -601,6 +636,47 @@ mod tests {
     use super::*;
     use serde::Deserialize as _;
     use wamn_platform_identity::nats::PlatformNats;
+
+    #[test]
+    fn sql_job_reads_the_canonical_configmap_without_api_credentials() -> anyhow::Result<()> {
+        let document = EnvironmentDocument::from_json(&serde_json::to_vec(&serde_json::json!({
+            "org":"acme", "project":"apps", "env":"dev", "target":"cloud",
+            "policy":"dev", "applications":{}
+        }))?)?;
+        let mut job = job::manifest("initialize", "ctl", &["wamn-ctl"], &["env", "initialize"]);
+        environment_input(&mut job, &document)?;
+        let pod = &job["spec"]["template"]["spec"];
+        let volumes = pod["volumes"].as_array().context("volumes")?;
+        let mount = pod["containers"][0]["volumeMounts"]
+            .as_array()
+            .context("mounts")?
+            .iter()
+            .find(|mount| {
+                volumes.iter().any(|volume| {
+                    volume["name"] == mount["name"] && volume.get("configMap").is_some()
+                })
+            })
+            .context("mounted environment authority")?;
+        let volume = volumes
+            .iter()
+            .find(|volume| volume["name"] == mount["name"])
+            .context("environment volume")?;
+        assert_eq!(
+            volume["configMap"]["name"],
+            wamn_control_provision::environment_state::environment_resource_name(
+                &document.org,
+                &document.project,
+                &document.env,
+            )?
+        );
+        assert!(
+            Path::new(crate::environment::document::JOB_DOCUMENT)
+                .starts_with(mount["mountPath"].as_str().context("mount path")?)
+        );
+        assert_eq!(mount["readOnly"], true);
+        assert_eq!(pod["automountServiceAccountToken"], false);
+        Ok(())
+    }
 
     #[test]
     fn reset_completion_does_not_require_a_database_resource() -> anyhow::Result<()> {

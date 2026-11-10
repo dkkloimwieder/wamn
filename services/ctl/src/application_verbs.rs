@@ -1,4 +1,4 @@
-//! Product commands for authored application release selections.
+//! Product commands for canonical application release selections.
 
 use anyhow::Context as _;
 use clap::Args;
@@ -13,7 +13,7 @@ pub struct DeployArgs {
     /// The published application release digest.
     #[arg(long)]
     pub release: Option<String>,
-    /// The shared environment.k file. Changed physical SQL in authorized reset mode discards all application data.
+    /// The target environment file. Changed physical SQL in authorized reset mode discards all application data.
     #[arg(long)]
     pub env: PathBuf,
 }
@@ -24,21 +24,23 @@ pub struct RollbackArgs {
     /// The published target release, required when the prior selection is ambiguous.
     #[arg(long)]
     pub release: Option<String>,
-    /// The shared environment.k file. Rollback preserves schema.mode and other applications.
+    /// The target environment file. Rollback preserves schema.mode and other applications.
     #[arg(long)]
     pub env: PathBuf,
 }
 
 #[derive(Debug, Args)]
 pub struct StatusArgs {
-    /// The authored environment.k file.
+    /// The target environment file.
     #[arg(long)]
     pub env: PathBuf,
 }
 
 pub async fn deploy(args: DeployArgs) -> anyhow::Result<()> {
-    let document = environment::document::EnvironmentDocument::compile(&args.env)?;
     let platform = Platform::apply_from_env()?;
+    let document =
+        environment::document::EnvironmentDocument::read_deployed(&platform, &args.env, None)
+            .await?;
     let digest = match args.package {
         Some(package) => {
             let database_url = std::env::var("DATABASE_URL").context(
@@ -57,7 +59,6 @@ pub async fn deploy(args: DeployArgs) -> anyhow::Result<()> {
 }
 
 pub async fn rollback(args: RollbackArgs) -> anyhow::Result<()> {
-    environment::document::EnvironmentDocument::compile(&args.env)?;
     let platform = Platform::apply_from_env()?;
     print_analysis(
         environment::rollback::rollback(
@@ -71,7 +72,6 @@ pub async fn rollback(args: RollbackArgs) -> anyhow::Result<()> {
 }
 
 pub async fn status(args: StatusArgs) -> anyhow::Result<()> {
-    environment::document::EnvironmentDocument::compile(&args.env)?;
     let mut platform = Platform::from_env()?;
     let admin_url =
         std::env::var("WAMN_SYSTEM_ADMIN_URL").context("set WAMN_SYSTEM_ADMIN_URL for status")?;

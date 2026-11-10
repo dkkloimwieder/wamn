@@ -1,6 +1,5 @@
-//! Locks for environment lifecycle operations, application rollouts, and short file writes.
+//! Locks for environment lifecycle operations and application rollouts.
 //! Application rollouts use distinct advisory keys, so other applications can proceed.
-//! The file lock covers only the read, merge, and atomic rename of the authored document.
 
 use anyhow::{Context as _, bail};
 use std::{sync::Arc, time::Duration};
@@ -182,16 +181,4 @@ impl Drop for LifecycleLock {
     fn drop(&mut self) {
         self.connection.abort();
     }
-}
-
-/// Hold only the read/merge/rename of an environment document.
-pub(super) fn document_lock(file: &std::path::Path) -> anyhow::Result<std::fs::File> {
-    let lock = std::fs::OpenOptions::new()
-        .read(true)
-        .write(true)
-        .create(true)
-        .truncate(false)
-        .open(file.with_extension("k.lock"))?;
-    lock.lock().context("lock the environment document")?;
-    Ok(lock)
 }

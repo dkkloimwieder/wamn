@@ -681,7 +681,7 @@ mod shared_resources {
 }
 
 #[tokio::test]
-async fn unavailable_authorities_preserve_authored_selections_and_report_unknown()
+async fn unavailable_environment_authority_never_substitutes_checkout_selections()
 -> anyhow::Result<()> {
     use wamn_environment_control::environment::{self, Platform};
     let scratch = ScratchRoot::create()?;
@@ -720,17 +720,11 @@ async fn unavailable_authorities_preserve_authored_selections_and_report_unknown
             .is_err()
     );
     assert_eq!(std::fs::read(&file)?, original);
-    let status = environment::status::status(&mut platform, &file, "invalid database URL").await?;
-    assert!(status.installed.is_none());
-    assert!(!status.schema.as_ref().unwrap().unknowns.is_empty());
-    for (name, selection) in &document.applications {
-        let reported = &status.applications[name];
-        assert_eq!(reported.current, selection.current);
-        assert_eq!(reported.previous, selection.previous);
-        assert_eq!(reported.hostname, selection.hostname);
-        assert!(reported.observed.is_none());
-        assert!(!reported.warnings.is_empty());
-    }
+    assert!(
+        environment::status::status(&mut platform, &file, "invalid database URL")
+            .await
+            .is_err()
+    );
     assert_eq!(std::fs::read(&file)?, original);
     Ok(())
 }

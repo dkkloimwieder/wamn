@@ -143,7 +143,17 @@ Supply the existing application inputs before these commands:
 - Set `WAMN_REGISTRY_AUTH_FILE` and the existing certificate and broker inputs for that platform.
 - Set `DATABASE_URL` to a separate disposable PostgreSQL server when building source.
 
-`environment.k` declares each application's package membership, hostname, and `current` and `previous` release selections.
+The canonical environment document lives in a non-secret ConfigMap in the provisioning namespace, `hosts`.
+Its name is the existing environment resource name, `e-<env-slug>-<coordinate-hash>`.
+Its `data.environment.json` holds the existing JSON document form.
+Run `wamn env apply <environment.k> --application <application>` to create it or apply explicit configuration edits.
+Configuration edits preserve recorded application release pairs.
+Checkout files are configuration inputs or exports.
+Deploy, rollback, status, and deployed schema operations read the ConfigMap.
+If the ConfigMap cannot be read, deployed operations fail.
+The `--env` file names the target.
+Stale shared configuration or target selections produce a warning with both values.
+`wamn env show <environment.k>` exports the canonical document as KCL.
 Use a source package directory for source deployment. Use an application release digest for deployment without source:
 
 ```bash
@@ -159,6 +169,11 @@ Each application owns its Helm release, host group, workloads, Services, and rou
 The route ConfigMaps carry `wamn.route=true`. The edge reads that label.
 Code-only deploy, reapply, and rollback preserve installed SQL and other applications' data, permissions, routes, and workloads.
 Under the application lock, selection derives `previous` from the last successful Helm apply.
+Helm keeps the applied-release history.
+Deploy and rollback write only the target application's release pair to the ConfigMap before Helm applies it.
+The write uses the resourceVersion read with the document.
+On a conflict, the command rereads and merges only the target pair, with bounded retries.
+Deploy and rollback never write the checkout file.
 An explicit rollback release resolves an ambiguous prior selection. Rollback never reverses SQL.
 
 Deployment prepares bindings and grants before Helm changes the application.

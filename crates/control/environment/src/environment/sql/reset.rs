@@ -500,7 +500,12 @@ pub async fn reset_deployed(
     file: &std::path::Path,
     candidate: Option<(&str, &str)>,
 ) -> anyhow::Result<Value> {
-    let document = EnvironmentDocument::compile(file)?;
+    let document = EnvironmentDocument::read_deployed(
+        platform,
+        file,
+        candidate.map(|(application, _)| application),
+    )
+    .await?;
     let private = ensure::PrivateDirectory::create()?;
     let mut platform = platform.clone();
     super::super::runtime::resolve_target(&mut platform, &document, &private.path(".")).await?;
@@ -521,7 +526,7 @@ pub async fn reset_deployed(
             &document.triple(),
         )
         .await?;
-        let current = EnvironmentDocument::compile(file)?;
+        let current = EnvironmentDocument::read_target(&platform, &document, None).await?;
         ensure!(
             current == document,
             "environment document changed during reset"
