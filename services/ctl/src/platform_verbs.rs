@@ -31,7 +31,7 @@ pub enum ProductPlatformCommand {
     Deploy(DeployArgs),
     /// Read the current platform state without creating a cluster.
     Status(ShowArgs),
-    /// Inspect or apply system SQL from an explicitly selected prepared chart.
+    /// Inspect or apply platform SQL from an explicitly selected prepared chart.
     #[command(subcommand)]
     Schema(PlatformSchemaCommand),
     #[command(flatten)]
@@ -42,23 +42,66 @@ pub enum ProductPlatformCommand {
 pub enum PlatformSchemaCommand {
     /// Read initialization and migration state without changing SQL.
     Diff(PlatformSchemaArgs),
-    /// Apply pending system SQL without changing service releases.
+    /// Apply pending platform SQL without changing service releases.
     Apply(PlatformSchemaApplyArgs),
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
 pub enum PlatformSchemaScope {
     System,
+    Project,
+}
+
+#[derive(Debug)]
+pub struct PlatformSchemaArgs {
+    pub scope: PlatformSchemaScope,
+    pub env: Option<PathBuf>,
+    pub chart: PathBuf,
 }
 
 #[derive(Debug, Args)]
-pub struct PlatformSchemaArgs {
+struct PlatformSchemaInput {
     /// The database scope.
     #[arg(long, value_enum)]
-    pub scope: PlatformSchemaScope,
+    scope: PlatformSchemaScope,
+    /// The environment document, required only for project scope.
+    #[arg(long, required_if_eq("scope", "project"))]
+    env: Option<PathBuf>,
     /// The prepared chart whose ctl image supplies the SQL.
     #[arg(long)]
-    pub chart: PathBuf,
+    chart: PathBuf,
+}
+
+impl clap::FromArgMatches for PlatformSchemaArgs {
+    fn from_arg_matches(matches: &clap::ArgMatches) -> Result<Self, clap::Error> {
+        let input = PlatformSchemaInput::from_arg_matches(matches)?;
+        if matches!(input.scope, PlatformSchemaScope::System) && input.env.is_some() {
+            return Err(clap::Error::raw(
+                clap::error::ErrorKind::ArgumentConflict,
+                "--env is refused for system scope",
+            ));
+        }
+        Ok(Self {
+            scope: input.scope,
+            env: input.env,
+            chart: input.chart,
+        })
+    }
+
+    fn update_from_arg_matches(&mut self, matches: &clap::ArgMatches) -> Result<(), clap::Error> {
+        *self = Self::from_arg_matches(matches)?;
+        Ok(())
+    }
+}
+
+impl Args for PlatformSchemaArgs {
+    fn augment_args(command: clap::Command) -> clap::Command {
+        PlatformSchemaInput::augment_args(command)
+    }
+
+    fn augment_args_for_update(command: clap::Command) -> clap::Command {
+        PlatformSchemaInput::augment_args_for_update(command)
+    }
 }
 
 #[derive(Debug, Args)]
@@ -66,16 +109,21 @@ pub struct PlatformSchemaApplyArgs {
     #[command(flatten)]
     pub selection: PlatformSchemaArgs,
     /// Resolve one uncertain nontransactional file after inspection.
-    #[arg(long, value_name = "PATH=applied|retry", value_parser = system_resolution)]
+    #[arg(long, value_name = "PATH=applied|retry", value_parser = platform_resolution)]
     pub resolve: Option<MigrationResolution>,
 }
 
-fn system_resolution(value: &str) -> anyhow::Result<MigrationResolution> {
+pub(crate) fn platform_resolution(value: &str) -> anyhow::Result<MigrationResolution> {
     anyhow::ensure!(
         !value.contains(':'),
         "resolution must be <path>=applied|retry"
     );
-    format!("system:{value}").parse()
+    let scope = if value.starts_with("migrations/project/") {
+        "project"
+    } else {
+        "system"
+    };
+    format!("{scope}:{value}").parse()
 }
 
 /// In-image entry points. Both actions read the same embedded migration bytes.
@@ -99,7 +147,7 @@ pub struct SystemSchemaArgs {
 pub struct SystemSchemaApplyArgs {
     #[command(flatten)]
     pub database: SystemSchemaArgs,
-    #[arg(long, value_name = "PATH=applied|retry", value_parser = system_resolution)]
+    #[arg(long, value_name = "PATH=applied|retry", value_parser = platform_resolution)]
     pub resolve: Option<MigrationResolution>,
 }
 
@@ -120,37 +168,18 @@ pub async fn run_system_schema(
     let result = async {
         client.batch_execute("SET ROLE wamn_system").await?;
         let sources = platform_migrations::embedded_sources(MigrationScope::System);
-        if !apply {
-            client.batch_execute("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY").await?;
-        }
-        let planned = platform_migrations::plan(&client, MigrationScope::System, &sources).await?;
-        write!(output, "{}", platform_migrations::system_report(&planned))?;
-        if !planned.migrations.pending.is_empty() {
-            writeln!(output, "warning: selected image has pending system SQL. Control and identity code can require different SQL objects.")?;
-            match platform_migrations::system_warnings(&client, &planned).await {
-                Ok(warnings) => {
-                    for warning in warnings {
-                        writeln!(output, "warning: {warning}")?;
-                    }
-                }
-                Err(error) => writeln!(output, "warning: SQL reference analysis is unavailable: {error:#}")?,
-            }
-        }
-        for (file, sql) in planned.migrations.pending.iter().zip(&planned.migrations.statements) {
-            writeln!(output, "SQL {} ({}):\n{}", file.relative_path,
-                if file.transactional { "transactional" } else { "nontransactional" }, sql.sql)?;
-        }
-        output.flush()?;
-        if apply {
-            platform_migrations::apply_system(&mut client, &sources, resolution).await?;
-            let completed = platform_migrations::plan(&client, MigrationScope::System, &sources).await?;
-            write!(output, "{}", platform_migrations::system_report(&completed))?;
-        } else {
-            client.batch_execute("ROLLBACK").await?;
-        }
-        output.flush()?;
+        platform_migrations::run(
+            &mut client,
+            platform_migrations::MigrationTarget::System,
+            &sources,
+            apply,
+            resolution,
+            &mut output,
+        )
+        .await?;
         anyhow::Ok(())
-    }.await;
+    }
+    .await;
     drop(client);
     let driven = connection.await.context("join the system SQL connection")?;
     result.and(driven.context("drive the system SQL connection"))
@@ -204,27 +233,42 @@ pub async fn run_product(
             let chart = artifact_plan::select(&args.chart)?;
             let target =
                 wamn_environment_control::environment::kubernetes_target("platform".into())?;
+            let label = match args.scope {
+                PlatformSchemaScope::System => "system",
+                PlatformSchemaScope::Project => "project",
+            };
             writeln!(
                 output,
-                "system SQL target: {}/{}",
+                "{label} SQL target: {}/{}",
                 target.context, target.namespace
             )?;
             writeln!(output, "selected chart: {}", chart.directory().display())?;
-            writeln!(output, "system SQL image: {}", chart.image("ctl")?)?;
+            writeln!(output, "{label} SQL image: {}", chart.image("ctl")?)?;
             output.flush()?;
             let directory = work_directory()?;
-            let result = interruptible(&mut signals, async {
-                let log = wamn_environment_control::platform::system_schema(
-                    &target, &directory, &chart, apply, resolution,
-                )
-                .await?;
-                writeln!(output, "{log}")?;
-                output.flush().context("write the system SQL result")
-            })
-            .await;
+            let result = Box::pin(interruptible(&mut signals, async {
+                match args.scope {
+                    PlatformSchemaScope::System => {
+                        let log = wamn_environment_control::platform::system_schema(
+                            &target, &directory, &chart, apply, resolution).await?;
+                        writeln!(output, "{log}")?;
+                    }
+                    PlatformSchemaScope::Project => {
+                        let file = args.env.as_deref().context("--env is required for project scope")?;
+                        let document = wamn_environment_control::environment::document::EnvironmentDocument::compile(file)?;
+                        let mut platform = wamn_environment_control::environment::Platform::project_schema_from_env()?;
+                        platform.target = target;
+                        writeln!(output, "project SQL environment: {}", document.triple())?;
+                        output.flush()?;
+                        wamn_environment_control::environment::sql::project_schema_deployed(
+                            &platform, &document, chart.image("ctl")?, apply, resolution, &directory).await?;
+                    }
+                }
+                output.flush().context("write the platform SQL result")
+            })).await;
             // Retain failed Job logs, including committed SQL and the resume command.
             if result.is_ok() {
-                std::fs::remove_dir_all(directory).context("remove system SQL directory")?;
+                std::fs::remove_dir_all(directory).context("remove platform SQL directory")?;
             }
             result
         }

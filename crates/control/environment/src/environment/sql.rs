@@ -191,11 +191,91 @@ async fn run_schema_deployed(
     Ok(())
 }
 
+/// Run project substrate SQL from the explicitly selected image, without provisioning.
+pub async fn project_schema_deployed(
+    platform: &Platform,
+    document: &EnvironmentDocument,
+    image: &str,
+    apply: bool,
+    resolution: Option<&wamn_package_control::migrations::MigrationResolution>,
+    directory: &Path,
+) -> anyhow::Result<()> {
+    let cluster = reset::recorded_cluster(platform, document).await?;
+    run_deployed(
+        platform,
+        document,
+        Operation::ProjectSchema { apply, resolution },
+        image,
+        &cluster,
+        directory,
+    )
+    .await?;
+    Ok(())
+}
+
+/// Inputs for one project substrate operation in the selected image.
+#[derive(Debug)]
+pub struct ProjectSchemaRequest<'a> {
+    pub expected: &'a ExpectedDatabase,
+    pub admin_url: &'a str,
+    pub sources: &'a [wamn_schema_control::MigrationSource],
+    pub apply: bool,
+    pub resolution: Option<&'a wamn_package_control::migrations::MigrationResolution>,
+}
+
+/// Resolve the registry target under the Job's exclusion and execute only substrate SQL.
+pub async fn project_schema(
+    platform: &Platform,
+    document: &EnvironmentDocument,
+    request: ProjectSchemaRequest<'_>,
+    output: impl std::io::Write,
+) -> anyhow::Result<()> {
+    let ProjectSchemaRequest {
+        expected,
+        admin_url,
+        sources,
+        apply,
+        resolution,
+    } = request;
+    let lock = expected.lock(platform, document, true).await?;
+    crate::provision_project_env::require_connected(lock.client(), &document.triple()).await?;
+    let url = ensure::project_url(platform, &document.triple()).await?;
+    let mut admin = url::Url::parse(admin_url)?;
+    admin.set_path(url::Url::parse(&url)?.path());
+    let (mut client, connection) =
+        tokio_postgres::connect(admin.as_str(), tokio_postgres::NoTls).await?;
+    let connection = tokio::spawn(connection);
+    let result = async {
+        client.batch_execute("SET ROLE wamn_db_owner").await?;
+        crate::platform_migrations::run(
+            &mut client,
+            crate::platform_migrations::MigrationTarget::Project(&lock),
+            sources,
+            apply,
+            resolution,
+            output,
+        )
+        .await
+    }
+    .await;
+    drop(client);
+    let driven = connection
+        .await
+        .context("join the project SQL connection")?;
+    lock.release().await;
+    result.and(driven.context("drive the project SQL connection"))
+}
+
 /// SQL operations that run in the selected ctl image.
 #[derive(Debug, Clone, Copy)]
 pub enum Operation<'a> {
     /// Record the environment and return its CNPG Database resource.
     Provision,
+    /// Inspect or apply only the selected environment's platform substrate.
+    ProjectSchema {
+        apply: bool,
+        resolution: Option<&'a wamn_package_control::migrations::MigrationResolution>,
+    },
     /// Resolve reset inputs, or restore the recorded inputs after CNPG recreation.
     Reset {
         candidate: Option<(&'a str, &'a str)>,
@@ -231,13 +311,23 @@ pub async fn run_deployed(
     }
     let verb = match operation {
         Operation::Provision => "provision",
+        Operation::ProjectSchema { apply, .. } => {
+            if apply {
+                "project-schema-apply"
+            } else {
+                "project-schema-diff"
+            }
+        }
         Operation::Reset { .. } => "reset",
         Operation::Initialize => "initialize",
         Operation::ApplySchema { .. } => "schema-apply",
         Operation::AdoptSchema => "schema-adopt",
     };
     let coordinate = match operation {
-        Operation::Provision | Operation::Reset { .. } | Operation::AdoptSchema => {
+        Operation::Provision
+        | Operation::Reset { .. }
+        | Operation::AdoptSchema
+        | Operation::ProjectSchema { .. } => {
             wamn_control_provision::environment_state::environment_resource_name(
                 &document.org,
                 &document.project,
@@ -263,6 +353,9 @@ pub async fn run_deployed(
         "/inputs/environment.json",
         "/inputs/database.json",
     ];
+    if matches!(operation, Operation::ProjectSchema { .. }) {
+        arguments.extend(["--image", image]);
+    }
     if matches!(operation, Operation::Provision) {
         arguments.extend(["--emit-secret", "/out/secret.json"]);
     }
@@ -283,6 +376,17 @@ pub async fn run_deployed(
             resolution: Some(choice),
             ..
         } => Some(choice.to_string()),
+        Operation::ProjectSchema {
+            resolution: Some(choice),
+            ..
+        } => Some(format!(
+            "{}={}",
+            choice.path,
+            match choice.action {
+                wamn_package_control::migrations::Resolution::Applied => "applied",
+                wamn_package_control::migrations::Resolution::Retry => "retry",
+            }
+        )),
         _ => None,
     };
     if let Some(resolution) = &resolution {
@@ -296,7 +400,7 @@ pub async fn run_deployed(
     let mut expected = ExpectedDatabase::read(platform, document).await?;
     if matches!(
         operation,
-        Operation::AdoptSchema | Operation::ApplySchema { .. }
+        Operation::AdoptSchema | Operation::ApplySchema { .. } | Operation::ProjectSchema { .. }
     ) {
         expected.initialization_identity = Some(
             schema::state(platform, document)
@@ -349,76 +453,78 @@ pub async fn run_deployed(
         "url",
         &bootstrap::secret_text(&apply, "url")?,
     ));
-    let release_base = super::runtime::pod_artifact_base(
-        platform.insecure_registry,
-        &platform.release_artifact_base,
-    )?;
-    job::environment(
-        &mut job,
-        &[
-            ("WAMN_RELEASE_NAMESPACE", &platform.target.namespace),
-            ("WAMN_DATABASE_NAMESPACE", &platform.database_namespace),
-            ("WAMN_DATABASE_HOST", &host),
-            ("WAMN_RELEASE_ARTIFACT_BASE", &release_base),
-        ],
-    );
-    for (variable, value) in [
-        (
-            "WAMN_PACKAGE_ARTIFACT_BASE",
-            platform.package_artifact_base.as_deref(),
-        ),
-        (
-            "WAMN_COMPONENT_ARTIFACT_BASE",
-            platform.component_artifact_base.as_deref(),
-        ),
-    ] {
-        if let Some(value) = value {
-            job::environment(
-                &mut job,
-                &[(
-                    variable,
-                    &super::runtime::pod_artifact_base(platform.insecure_registry, value)?,
-                )],
-            );
+    if !matches!(operation, Operation::ProjectSchema { .. }) {
+        let release_base = super::runtime::pod_artifact_base(
+            platform.insecure_registry,
+            &platform.release_artifact_base,
+        )?;
+        job::environment(
+            &mut job,
+            &[
+                ("WAMN_RELEASE_NAMESPACE", &platform.target.namespace),
+                ("WAMN_DATABASE_NAMESPACE", &platform.database_namespace),
+                ("WAMN_DATABASE_HOST", &host),
+                ("WAMN_RELEASE_ARTIFACT_BASE", &release_base),
+            ],
+        );
+        for (variable, value) in [
+            (
+                "WAMN_PACKAGE_ARTIFACT_BASE",
+                platform.package_artifact_base.as_deref(),
+            ),
+            (
+                "WAMN_COMPONENT_ARTIFACT_BASE",
+                platform.component_artifact_base.as_deref(),
+            ),
+        ] {
+            if let Some(value) = value {
+                job::environment(
+                    &mut job,
+                    &[(
+                        variable,
+                        &super::runtime::pod_artifact_base(platform.insecure_registry, value)?,
+                    )],
+                );
+            }
         }
+        // The existing host overlay carries the selected host's transport arguments.
+        files.insert(
+            "host.json".into(),
+            serde_json::to_string(&serde_json::json!({
+                "extraArgs": if platform.insecure_registry {
+                    vec!["--allow-insecure-registries"]
+                } else { Vec::new() }
+            }))?,
+        );
+        job::environment(
+            &mut job,
+            &[("WAMN_RELEASE_HOST_GROUP", "/inputs/host.json")],
+        );
+        let registry = pod_registry_credentials(
+            platform.insecure_registry,
+            serde_json::from_slice(&std::fs::read(&platform.registry_auth_file)?)?,
+        )?;
+        files.insert("registry.json".into(), serde_json::to_string(&registry)?);
+        job::environment(
+            &mut job,
+            &[("WAMN_REGISTRY_AUTH_FILE", "/inputs/registry.json")],
+        );
+        let mut ca_paths = Vec::new();
+        for (index, path) in platform.oci_ca_paths.iter().enumerate() {
+            let name = format!("registry-ca-{index}.crt");
+            files.insert(name.clone(), std::fs::read_to_string(path)?);
+            ca_paths.push(format!("/inputs/{name}"));
+        }
+        job::environment(&mut job, &[("WAMN_OCI_CA_PATHS", &ca_paths.join(":"))]);
+        nats_inputs(
+            &mut job,
+            &mut files,
+            platform
+                .auth_nats
+                .as_ref()
+                .context("SQL Jobs require the authorization change publisher")?,
+        )?;
     }
-    // The existing host overlay carries the selected host's transport arguments.
-    files.insert(
-        "host.json".into(),
-        serde_json::to_string(&serde_json::json!({
-            "extraArgs": if platform.insecure_registry {
-                vec!["--allow-insecure-registries"]
-            } else { Vec::new() }
-        }))?,
-    );
-    job::environment(
-        &mut job,
-        &[("WAMN_RELEASE_HOST_GROUP", "/inputs/host.json")],
-    );
-    let registry = pod_registry_credentials(
-        platform.insecure_registry,
-        serde_json::from_slice(&std::fs::read(&platform.registry_auth_file)?)?,
-    )?;
-    files.insert("registry.json".into(), serde_json::to_string(&registry)?);
-    job::environment(
-        &mut job,
-        &[("WAMN_REGISTRY_AUTH_FILE", "/inputs/registry.json")],
-    );
-    let mut ca_paths = Vec::new();
-    for (index, path) in platform.oci_ca_paths.iter().enumerate() {
-        let name = format!("registry-ca-{index}.crt");
-        files.insert(name.clone(), std::fs::read_to_string(path)?);
-        ca_paths.push(format!("/inputs/{name}"));
-    }
-    job::environment(&mut job, &[("WAMN_OCI_CA_PATHS", &ca_paths.join(":"))]);
-    nats_inputs(
-        &mut job,
-        &mut files,
-        platform
-            .auth_nats
-            .as_ref()
-            .context("SQL Jobs require the authorization change publisher")?,
-    )?;
     secrets.push(job::files(&mut job, files));
     if matches!(operation, Operation::Provision) {
         job::secret_output(&mut job);
@@ -426,7 +532,9 @@ pub async fn run_deployed(
     let output = job::run(&platform.target, directory, &mut job, &mut secrets).await?;
     match operation {
         Operation::Provision | Operation::Reset { .. } => {}
-        Operation::ApplySchema { .. } | Operation::AdoptSchema => print!("{output}"),
+        Operation::ApplySchema { .. }
+        | Operation::AdoptSchema
+        | Operation::ProjectSchema { .. } => print!("{output}"),
         Operation::Initialize => ensure::ensure_cdc(platform, document).await?,
     }
     database_resource(operation, &output)

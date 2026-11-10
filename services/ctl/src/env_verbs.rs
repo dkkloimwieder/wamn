@@ -21,6 +21,10 @@ pub enum EnvCommand {
     Initialize(InitializeArgs),
     /// Execute the selected schema release inside the SQL Job.
     SchemaApply(SchemaApplyArgs),
+    /// Read image-owned project substrate state without changing SQL.
+    ProjectSchemaDiff(ProjectSchemaArgs),
+    /// Apply image-owned project substrate SQL without activating an application.
+    ProjectSchemaApply(ProjectSchemaApplyArgs),
     /// Record an explicit schema assertion inside the SQL Job.
     SchemaAdopt(SchemaAdoptArgs),
     /// Resolve or restore the recorded same-name reset inputs in the SQL Job.
@@ -75,6 +79,22 @@ pub struct SchemaApplyArgs {
     pub release: String,
     #[arg(long)]
     pub resolve: Option<wamn_package_control::apply_package::MigrationResolution>,
+}
+
+#[derive(Debug, Args)]
+pub struct ProjectSchemaArgs {
+    pub file: PathBuf,
+    pub database: PathBuf,
+    #[arg(long)]
+    pub image: String,
+}
+
+#[derive(Debug, Args)]
+pub struct ProjectSchemaApplyArgs {
+    #[command(flatten)]
+    pub selection: ProjectSchemaArgs,
+    #[arg(long, value_name = "PATH=applied|retry", value_parser = crate::platform_verbs::platform_resolution)]
+    pub resolve: Option<wamn_package_control::migrations::MigrationResolution>,
 }
 
 #[derive(Debug, Args)]
@@ -141,6 +161,12 @@ pub async fn run(command: EnvCommand) -> anyhow::Result<()> {
     if let EnvCommand::Show(args) = &command {
         print!("{}", environment::show::show(&args.file)?.to_kcl());
         return Ok(());
+    }
+    if let EnvCommand::ProjectSchemaDiff(args) = &command {
+        return project_schema(args, false, None).await;
+    }
+    if let EnvCommand::ProjectSchemaApply(args) = &command {
+        return project_schema(&args.selection, true, args.resolve.as_ref()).await;
     }
     let mut platform = match &command {
         EnvCommand::Provision(_)
@@ -292,6 +318,9 @@ pub async fn run(command: EnvCommand) -> anyhow::Result<()> {
                 println!("{line}");
             }
         }
+        EnvCommand::ProjectSchemaDiff(_) | EnvCommand::ProjectSchemaApply(_) => {
+            unreachable!("project schema returns before runtime inputs")
+        }
         EnvCommand::Show(_) => unreachable!("show returns before platform inputs"),
         EnvCommand::Status(args) => {
             let admin_url = std::env::var("WAMN_SYSTEM_ADMIN_URL")
@@ -301,6 +330,34 @@ pub async fn run(command: EnvCommand) -> anyhow::Result<()> {
         }
     }
     Ok(())
+}
+
+async fn project_schema(
+    args: &ProjectSchemaArgs,
+    apply: bool,
+    resolution: Option<&wamn_package_control::migrations::MigrationResolution>,
+) -> anyhow::Result<()> {
+    // Substrate SQL uses no application artifact, host or broker inputs.
+    let platform = Platform::project_schema_from_env()?;
+    let document = sql_document(&args.file)?;
+    let expected = serde_json::from_slice(&std::fs::read(&args.database)?)?;
+    println!("project SQL image: {}", args.image);
+    std::io::stdout().flush()?;
+    environment::sql::project_schema(
+        &platform,
+        &document,
+        environment::sql::ProjectSchemaRequest {
+            expected: &expected,
+            admin_url: &std::env::var("WAMN_SYSTEM_ADMIN_URL").context("SQL administrator URL")?,
+            sources: &wamn_environment_control::platform_migrations::embedded_sources(
+                wamn_control_provision::schema_migrations::MigrationScope::Project,
+            ),
+            apply,
+            resolution,
+        },
+        std::io::stdout().lock(),
+    )
+    .await
 }
 
 async fn sql_lock(

@@ -17,21 +17,31 @@ pub enum MigrationTarget<'a> {
     Project(&'a crate::environment::lock::LifecycleLock),
 }
 
+impl MigrationTarget<'_> {
+    fn scope(self) -> MigrationScope {
+        match self {
+            Self::System => MigrationScope::System,
+            Self::Project(_) => MigrationScope::Project,
+        }
+    }
+}
+
 /// Read-only adoption and file plan for the selected image.
 #[derive(Debug)]
 pub struct PlatformMigrationPlan {
     pub adoption: bool,
     pub migrations: MigrationPlan,
     pub recorded: Vec<RecordedMigration>,
-    /// System diff can describe a newer history, but apply still refuses missing bytes.
+    /// Diff can describe a newer history, but apply still refuses missing bytes.
     pub missing: Option<PackageMigrationError>,
 }
 
-/// Describe the database's completed and remaining system files.
-pub fn system_report(planned: &PlatformMigrationPlan) -> String {
+/// Describe the database's completed and remaining files.
+fn report(scope: MigrationScope, planned: &PlatformMigrationPlan) -> String {
     use std::fmt::Write as _;
+    let (label, _, _) = scope_names(scope);
     let mut report = format!(
-        "system migration history adoption: {}\ncompleted files:\n",
+        "{label} migration history adoption: {}\ncompleted files:\n",
         if planned.adoption { "required" } else { "none" }
     );
     for row in &planned.recorded {
@@ -69,7 +79,7 @@ pub fn system_report(planned: &PlatformMigrationPlan) -> String {
     if let Some(error) = &planned.missing {
         writeln!(
             report,
-            "warning: selected image lacks recorded system files: {error}"
+            "warning: selected image lacks recorded {label} files: {error}"
         )
         .unwrap();
     }
@@ -77,12 +87,17 @@ pub fn system_report(planned: &PlatformMigrationPlan) -> String {
 }
 
 /// Describe known SQL consumers without imposing a compatibility gate.
-pub async fn system_warnings(
+async fn warnings(
     client: &impl GenericClient,
     planned: &PlatformMigrationPlan,
+    scope: MigrationScope,
 ) -> anyhow::Result<Vec<String>> {
     use wamn_schema_introspection::migration_policy::{
         DefinitionAction, DefinitionType, inspect_migration_definition_mutations,
+    };
+    let consumers = match scope {
+        MigrationScope::System => "control and identity",
+        MigrationScope::Project => "platform and application",
     };
     let namespaces = client
         .query("SELECT nspname::text FROM pg_namespace", &[])
@@ -132,7 +147,7 @@ pub async fn system_warnings(
                 ),
             };
             warnings.push(format!(
-                "{} removes {kind} {relation}{member}. Inspect control and identity consumers.",
+                "{} removes {kind} {relation}{member}. Inspect {consumers} consumers.",
                 file.relative_path
             ));
             for row in client
@@ -155,25 +170,122 @@ pub async fn system_warnings(
     Ok(warnings)
 }
 
-/// Apply system files and report committed progress if execution stops.
-pub async fn apply_system(
+/// Apply files and report committed progress if execution stops.
+pub async fn apply_reported(
     client: &mut Client,
+    target: MigrationTarget<'_>,
     sources: &[MigrationSource],
     resolution: Option<&MigrationResolution>,
 ) -> anyhow::Result<usize> {
-    let result = apply(client, MigrationTarget::System, sources, resolution).await;
+    let result = apply(client, target, sources, resolution).await;
+    report_result(client, target.scope(), sources, result).await
+}
+
+async fn report_result(
+    client: &Client,
+    scope: MigrationScope,
+    sources: &[MigrationSource],
+    result: anyhow::Result<usize>,
+) -> anyhow::Result<usize> {
     match result {
         Ok(count) => Ok(count),
         Err(error) => {
-            let report = match plan(client, MigrationScope::System, sources).await {
-                Ok(planned) => system_report(&planned),
+            let report = match plan(client, scope, sources).await {
+                Ok(planned) => report(scope, &planned),
                 Err(error) => format!("cannot read completed and remaining files: {error:#}\n"),
             };
+            let selection = match scope {
+                MigrationScope::System => "system --chart <prepared-chart>",
+                MigrationScope::Project => "project --env FILE --chart DIR",
+            };
             Err(error.context(format!(
-                "{report}next: wamn platform schema apply --scope system --chart <prepared-chart>"
+                "{report}next: wamn platform schema apply --scope {selection}"
             )))
         }
     }
+}
+
+/// Finish only a newly initialized project database under provisioning's exclusion.
+pub(crate) async fn initialize_project(
+    client: &mut Client,
+    sources: &[MigrationSource],
+) -> anyhow::Result<usize> {
+    client.batch_execute("SET ROLE wamn_db_owner").await?;
+    let result = apply_scope(client, MigrationScope::Project, sources, None).await;
+    let result = report_result(client, MigrationScope::Project, sources, result).await;
+    let reset = client.batch_execute("RESET ROLE").await;
+    let count = result?;
+    reset?;
+    Ok(count)
+}
+
+/// Inspect or execute one image's SQL using an already selected database and exclusion.
+pub async fn run(
+    client: &mut Client,
+    target: MigrationTarget<'_>,
+    sources: &[MigrationSource],
+    apply: bool,
+    resolution: Option<&MigrationResolution>,
+    mut output: impl std::io::Write,
+) -> anyhow::Result<()> {
+    let scope = target.scope();
+    let (label, _, _) = scope_names(scope);
+    let consumers = match scope {
+        MigrationScope::System => "Control and identity",
+        MigrationScope::Project => "Platform and application",
+    };
+    if !apply {
+        client
+            .batch_execute("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY")
+            .await?;
+    }
+    let planned = plan(client, scope, sources).await?;
+    write!(output, "{}", report(scope, &planned))?;
+    if !planned.migrations.pending.is_empty() {
+        writeln!(
+            output,
+            "warning: selected image has pending {label} SQL. {consumers} code can require different SQL objects."
+        )?;
+        match warnings(client, &planned, scope).await {
+            Ok(warnings) => {
+                for warning in warnings {
+                    writeln!(output, "warning: {warning}")?;
+                }
+            }
+            Err(error) => writeln!(
+                output,
+                "warning: SQL reference analysis is unavailable: {error:#}"
+            )?,
+        }
+    }
+    for (file, sql) in planned
+        .migrations
+        .pending
+        .iter()
+        .zip(&planned.migrations.statements)
+    {
+        writeln!(
+            output,
+            "SQL {} ({}):\n{}",
+            file.relative_path,
+            if file.transactional {
+                "transactional"
+            } else {
+                "nontransactional"
+            },
+            sql.sql
+        )?;
+    }
+    output.flush()?;
+    if apply {
+        apply_reported(client, target, sources, resolution).await?;
+        let completed = plan(client, scope, sources).await?;
+        write!(output, "{}", report(scope, &completed))?;
+    } else {
+        client.batch_execute("ROLLBACK").await?;
+    }
+    output.flush()?;
+    Ok(())
 }
 
 fn scope_names(scope: MigrationScope) -> (&'static str, &'static str, &'static str) {
@@ -251,8 +363,7 @@ pub async fn plan(
         match wamn_schema_control::migrations::plan_migrations(sources, &recorded, prefix, None) {
             Ok(migrations) => (migrations, None),
             Err(error)
-                if scope == MigrationScope::System
-                    && error.error_type() == PackageMigrationErrorType::MigrationDrift
+                if error.error_type() == PackageMigrationErrorType::MigrationDrift
                     && error.actual_hash() == Some("missing") =>
             {
                 // The shared planner already validated the complete history's shape.
@@ -288,10 +399,15 @@ pub async fn apply(
     sources: &[MigrationSource],
     resolution: Option<&MigrationResolution>,
 ) -> anyhow::Result<usize> {
-    let scope = match target {
-        MigrationTarget::System => MigrationScope::System,
-        MigrationTarget::Project(_) => MigrationScope::Project,
-    };
+    apply_scope(client, target.scope(), sources, resolution).await
+}
+
+async fn apply_scope(
+    client: &mut Client,
+    scope: MigrationScope,
+    sources: &[MigrationSource],
+    resolution: Option<&MigrationResolution>,
+) -> anyhow::Result<usize> {
     let lock_sql = match scope {
         MigrationScope::System => {
             "SELECT pg_advisory_xact_lock(hashtextextended('wamn.platform.system-schema:' || current_database(), 0))"

@@ -428,9 +428,14 @@ async fn fresh_system_runs_image_migrations_and_reapply_runs_none() {
     );
     assert_eq!(preview.recorded, recorded.recorded);
     assert!(
-        platform_migrations::apply_system(&mut client, earlier, None)
-            .await
-            .is_err()
+        platform_migrations::apply_reported(
+            &mut client,
+            platform_migrations::MigrationTarget::System,
+            earlier,
+            None
+        )
+        .await
+        .is_err()
     );
     assert_eq!(
         snapshot(&client).await,
@@ -458,9 +463,14 @@ async fn fresh_system_runs_image_migrations_and_reapply_runs_none() {
             .is_empty()
     );
     client.batch_execute("SET ROLE wamn_system").await.unwrap();
-    platform_migrations::apply_system(&mut client, &sources, None)
-        .await
-        .unwrap();
+    platform_migrations::apply_reported(
+        &mut client,
+        platform_migrations::MigrationTarget::System,
+        &sources,
+        None,
+    )
+    .await
+    .unwrap();
     assert_eq!(
         client
             .query(
@@ -525,9 +535,14 @@ async fn fresh_system_failure_keeps_progress_for_explicit_schema_apply() {
         .batch_execute("INSERT INTO registry.dep5_resume_probe VALUES (1); SET ROLE wamn_system;")
         .await
         .unwrap();
-    platform_migrations::apply_system(&mut client, &sources, None)
-        .await
-        .unwrap();
+    platform_migrations::apply_reported(
+        &mut client,
+        platform_migrations::MigrationTarget::System,
+        &sources,
+        None,
+    )
+    .await
+    .unwrap();
     let resumed = platform_migrations::plan(&client, MigrationScope::System, &sources)
         .await
         .unwrap();
@@ -1155,4 +1170,343 @@ async fn platform_nontransactional_files_keep_started_and_share_resolution() {
         disconnect(client, connection).await;
         disconnect(system, system_connection).await;
     }
+}
+
+#[tokio::test]
+async fn project_schema_preserves_applications_and_other_environments_and_holds_exclusion() {
+    use wamn_control_provision::schema_migrations::MigrationScope;
+    use wamn_environment_control::environment::{
+        Platform, document::EnvironmentDocument, lock::LifecycleLock, sql,
+    };
+    use wamn_environment_control::{
+        platform_migrations,
+        reconcile_run_plane::{ReconcileRunPlaneRequest, reconcile_run_plane_with_migrations},
+    };
+    use wamn_schema_control::MigrationSource;
+
+    let mut postgres = wamn_test_postgres::start(&[]).unwrap();
+    let system_database = postgres.create_database("wamn_system").unwrap();
+    let (mut system, system_connection) = connect(system_database.url()).await;
+    system
+        .batch_execute("CREATE ROLE wamn_system NOLOGIN")
+        .await
+        .unwrap();
+    install_control_store(&system).await.unwrap();
+    wamn_environment_control::provision_system::set_platform_domain(&mut system, "example.invalid")
+        .await
+        .unwrap();
+    for env in ["dev", "other"] {
+        system
+            .batch_execute(
+                &wamn_control_provision::test_database::seed_org_project_env_sql(
+                    "dep5", "fixture", env,
+                ),
+            )
+            .await
+            .unwrap();
+    }
+    let platform = Platform {
+        system_database_url: system_database.url().into(),
+        target: wamn_release_control::release_chart::Target {
+            kubeconfig: std::path::PathBuf::new(),
+            context: String::new(),
+            namespace: "platform".into(),
+        },
+        chart: std::path::PathBuf::new(),
+        release_artifact_base: String::new(),
+        registry_auth_file: std::path::PathBuf::new(),
+        oci_ca_paths: Vec::new(),
+        insecure_registry: false,
+        package_artifact_base: None,
+        component_artifact_base: None,
+        database_namespace: "platform".into(),
+        database_host: None,
+        database_port: 5432,
+        host_group: None,
+        pat_issuer: wamn_identity_client::PatIssuerConfig::default(),
+        events: None,
+        auth_nats: None,
+    };
+    let document = EnvironmentDocument::from_json(br#"{"org":"dep5","project":"fixture","env":"dev","target":"cloud","policy":"dev","applications":{}}"#).unwrap();
+    let mut databases = Vec::new();
+    for env in ["dev", "other"] {
+        let name =
+            wamn_control_provision::project_env_database_name("dep5", "fixture", env, "aaaaaaa1");
+        system
+            .batch_execute(&format!(
+                "CREATE DATABASE {} OWNER wamn_db_owner",
+                wamn_pg_core::quote_ident(&name)
+            ))
+            .await
+            .unwrap();
+        let database = postgres.database(&name).unwrap();
+        databases.push(database);
+    }
+    let (project, project_connection) = connect(databases[0].url()).await;
+    let (other, other_connection) = connect(databases[1].url()).await;
+    let request = || ReconcileRunPlaneRequest {
+        system_database_url: system_database.url().into(),
+        admin_database_url: databases[0].url().into(),
+        org: "dep5".into(),
+        project: "fixture".into(),
+        env: "dev".into(),
+        schema: "wamn_run".into(),
+        dry_run: false,
+        changes: wamn_platform_identity::auth_changes::AuthChanges::default(),
+    };
+    let mut sources = platform_migrations::embedded_sources(MigrationScope::Project);
+    sources.push(MigrationSource {
+        relative_path: format!("migrations/project/{:04}_fresh.sql", sources.len() + 1),
+        bytes: b"CREATE TABLE platform.dep5_probe (value int); INSERT INTO platform.dep5_probe VALUES (1);".to_vec(),
+    });
+    let fresh = reconcile_run_plane_with_migrations(request(), &sources)
+        .await
+        .unwrap();
+    assert!(fresh.env_key_identity.app_schema_installed);
+    let installed = platform_migrations::plan(&project, MigrationScope::Project, &sources)
+        .await
+        .unwrap();
+    assert!(installed.migrations.pending.is_empty());
+    assert_eq!(
+        installed
+            .recorded
+            .iter()
+            .map(|row| &row.relative_path)
+            .collect::<Vec<_>>(),
+        sources
+            .iter()
+            .map(|file| &file.relative_path)
+            .collect::<Vec<_>>()
+    );
+    let baseline: (String, String) = {
+        let row = project
+            .query_one(
+                "SELECT sha256, installed_at::text FROM platform.schema_baseline",
+                &[],
+            )
+            .await
+            .unwrap();
+        (row.get(0), row.get(1))
+    };
+    sources.push(MigrationSource {
+        relative_path: format!("migrations/project/{:04}_selected.sql", sources.len() + 1),
+        bytes: b"INSERT INTO platform.dep5_probe VALUES (2);".to_vec(),
+    });
+    let repeated = reconcile_run_plane_with_migrations(request(), &sources)
+        .await
+        .unwrap();
+    assert!(!repeated.env_key_identity.app_schema_installed);
+    assert_eq!(
+        platform_migrations::plan(&project, MigrationScope::Project, &sources)
+            .await
+            .unwrap()
+            .recorded,
+        installed.recorded
+    );
+    project.batch_execute("CREATE TABLE public.application_data (id int PRIMARY KEY, value text); INSERT INTO public.application_data VALUES (1, 'keep');").await.unwrap();
+    other.batch_execute("CREATE TABLE public.application_data (id int PRIMARY KEY, value text); INSERT INTO public.application_data VALUES (2, 'other');").await.unwrap();
+    let unchanged_other = snapshot(&other).await;
+    let unchanged_system = snapshot(&system).await;
+    let app_before: serde_json::Value = project
+        .query_one("SELECT to_jsonb(t) FROM public.application_data t", &[])
+        .await
+        .unwrap()
+        .get(0);
+    let expected = sql::ExpectedDatabase::read(&platform, &document)
+        .await
+        .unwrap();
+    {
+        let held = LifecycleLock::acquire(system_database.url(), &document.triple())
+            .await
+            .unwrap();
+        let mut output = Vec::new();
+        let operation = sql::project_schema(
+            &platform,
+            &document,
+            sql::ProjectSchemaRequest {
+                expected: &expected,
+                admin_url: system_database.url(),
+                sources: &sources,
+                apply: true,
+                resolution: None,
+            },
+            &mut output,
+        );
+        tokio::pin!(operation);
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_millis(250), &mut operation)
+                .await
+                .is_err()
+        );
+        assert_eq!(
+            platform_migrations::plan(&project, MigrationScope::Project, &sources)
+                .await
+                .unwrap()
+                .recorded,
+            installed.recorded
+        );
+        held.release().await;
+        tokio::time::timeout(std::time::Duration::from_secs(5), operation)
+            .await
+            .unwrap()
+            .unwrap();
+    }
+    let completed = platform_migrations::plan(&project, MigrationScope::Project, &sources)
+        .await
+        .unwrap();
+    assert!(completed.migrations.pending.is_empty());
+    let values: Vec<i32> = project
+        .query("SELECT value FROM platform.dep5_probe ORDER BY value", &[])
+        .await
+        .unwrap()
+        .iter()
+        .map(|row| row.get(0))
+        .collect();
+    assert_eq!(values, [1, 2]);
+    let app_after: serde_json::Value = project
+        .query_one("SELECT to_jsonb(t) FROM public.application_data t", &[])
+        .await
+        .unwrap()
+        .get(0);
+    assert_eq!(app_after, app_before);
+    assert_eq!(snapshot(&other).await, unchanged_other);
+    assert_eq!(snapshot(&system).await, unchanged_system);
+    let row = project
+        .query_one(
+            "SELECT sha256, installed_at::text FROM platform.schema_baseline",
+            &[],
+        )
+        .await
+        .unwrap();
+    assert_eq!((row.get::<_, String>(0), row.get::<_, String>(1)), baseline);
+    // A read-only diff and an identical apply leave every record unchanged.
+    for apply in [false, true] {
+        let before = snapshot(&project).await;
+        sql::project_schema(
+            &platform,
+            &document,
+            sql::ProjectSchemaRequest {
+                expected: &expected,
+                admin_url: system_database.url(),
+                sources: &sources,
+                apply,
+                resolution: None,
+            },
+            Vec::new(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(snapshot(&project).await, before);
+    }
+    // A fresh database keeps committed progress after a later file fails.
+    system
+        .batch_execute(
+            &wamn_control_provision::test_database::seed_org_project_env_sql(
+                "dep5",
+                "fixture",
+                "interrupted",
+            ),
+        )
+        .await
+        .unwrap();
+    let name = wamn_control_provision::project_env_database_name(
+        "dep5",
+        "fixture",
+        "interrupted",
+        "aaaaaaa1",
+    );
+    system
+        .batch_execute(&format!(
+            "CREATE DATABASE {} OWNER wamn_db_owner",
+            wamn_pg_core::quote_ident(&name)
+        ))
+        .await
+        .unwrap();
+    let interrupted = postgres.database(&name).unwrap();
+    let mut failing = sources;
+    failing.push(MigrationSource {
+        relative_path: format!(
+            "migrations/project/{:04}_interrupted.sql",
+            failing.len() + 1
+        ),
+        bytes: b"CREATE TABLE platform.failed_probe (id int); SELECT 1/0;".to_vec(),
+    });
+    let interrupted_request = || ReconcileRunPlaneRequest {
+        system_database_url: system_database.url().into(),
+        admin_database_url: interrupted.url().into(),
+        org: "dep5".into(),
+        project: "fixture".into(),
+        env: "interrupted".into(),
+        schema: "wamn_run".into(),
+        dry_run: false,
+        changes: wamn_platform_identity::auth_changes::AuthChanges::default(),
+    };
+    let error = reconcile_run_plane_with_migrations(interrupted_request(), &failing)
+        .await
+        .unwrap_err();
+    let report = format!("{error:#}");
+    assert!(
+        report.contains("wamn platform schema apply --scope project --env FILE --chart DIR"),
+        "{report}"
+    );
+    let (interrupted_client, interrupted_connection) = connect(interrupted.url()).await;
+    let partial = platform_migrations::plan(&interrupted_client, MigrationScope::Project, &failing)
+        .await
+        .unwrap();
+    assert_eq!(partial.recorded.len(), failing.len() - 1);
+    for file in &partial.recorded {
+        assert!(report.contains(&file.relative_path), "{report}");
+    }
+    for file in &partial.migrations.pending {
+        assert!(report.contains(&file.relative_path), "{report}");
+    }
+    assert!(
+        interrupted_client
+            .query_one("SELECT to_regclass('platform.failed_probe') IS NULL", &[])
+            .await
+            .unwrap()
+            .get::<_, bool>(0)
+    );
+    reconcile_run_plane_with_migrations(interrupted_request(), &failing)
+        .await
+        .unwrap();
+    assert_eq!(
+        platform_migrations::plan(&interrupted_client, MigrationScope::Project, &failing)
+            .await
+            .unwrap()
+            .recorded,
+        partial.recorded
+    );
+    failing.last_mut().unwrap().bytes = b"CREATE TABLE platform.failed_probe (id int);".to_vec();
+    let mut interrupted_document = document;
+    interrupted_document.env = "interrupted".into();
+    let expected = sql::ExpectedDatabase::read(&platform, &interrupted_document)
+        .await
+        .unwrap();
+    sql::project_schema(
+        &platform,
+        &interrupted_document,
+        sql::ProjectSchemaRequest {
+            expected: &expected,
+            admin_url: system_database.url(),
+            sources: &failing,
+            apply: true,
+            resolution: None,
+        },
+        Vec::new(),
+    )
+    .await
+    .unwrap();
+    assert!(
+        platform_migrations::plan(&interrupted_client, MigrationScope::Project, &failing)
+            .await
+            .unwrap()
+            .migrations
+            .pending
+            .is_empty()
+    );
+    disconnect(interrupted_client, interrupted_connection).await;
+    disconnect(project, project_connection).await;
+    disconnect(other, other_connection).await;
+    disconnect(system, system_connection).await;
 }

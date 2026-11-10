@@ -567,6 +567,142 @@ fn platform_schema_runs_only_the_selected_ctl_job() -> anyhow::Result<()> {
     Ok(())
 }
 
+#[tokio::test]
+async fn platform_project_schema_runs_only_the_selected_environment_sql_job() -> anyhow::Result<()>
+{
+    let fixture = Fixture::new()?;
+    let mut postgres = wamn_test_postgres::start(&[])?;
+    let database = postgres.create_database("wamn_system")?;
+    let (system, connection) =
+        tokio_postgres::connect(database.url(), tokio_postgres::NoTls).await?;
+    let connection = tokio::spawn(connection);
+    system
+        .batch_execute("CREATE ROLE wamn_system NOLOGIN")
+        .await?;
+    wamn_environment_control::provision_system::install_control_store(&system).await?;
+    system
+        .batch_execute(
+            &wamn_control_provision::test_database::seed_org_project_env_sql(
+                "dep5", "fixture", "dev",
+            ),
+        )
+        .await?;
+    let name =
+        wamn_control_provision::project_env_database_name("dep5", "fixture", "dev", "aaaaaaa1");
+    system
+        .batch_execute(&format!(
+            "CREATE DATABASE {} OWNER wamn_db_owner",
+            wamn_pg_core::quote_ident(&name)
+        ))
+        .await?;
+    let project = postgres.database(&name)?;
+    let (client, project_connection) =
+        tokio_postgres::connect(project.url(), tokio_postgres::NoTls).await?;
+    let project_connection = tokio::spawn(project_connection);
+    wamn_environment_control::reconcile_run_plane::ensure_runtime_roles(&client).await?;
+    client.batch_execute("SET ROLE wamn_db_owner").await?;
+    client
+        .batch_execute(wamn_catalog::CATALOG_SCHEMA_SQL)
+        .await?;
+    client
+        .batch_execute(wamn_control_provision::APP_SCHEMA_SQL)
+        .await?;
+    wamn_package_control::schema_baseline::record_project(&client).await?;
+    let document = EnvironmentDocument::from_json(br#"{"org":"dep5","project":"fixture","env":"dev","target":"cloud","policy":"dev","applications":{}}"#)?;
+    let file = fixture.bin.join("environment.k");
+    std::fs::write(&file, document.to_kcl())?;
+    let chart = artifact_plan::select(&fixture.chart.0)?;
+    for action in ["diff", "apply"] {
+        let state = fixture.state(&UpgradeTarget::Control)?;
+        std::fs::write(fixture.bin.join("state.json"), serde_json::to_vec(&state)?)?;
+        std::fs::write(fixture.bin.join("calls.jsonl"), "")?;
+        let mut command = Command::new(env!("CARGO_BIN_EXE_wamn"));
+        command
+            .args(["platform", "schema", action, "--scope", "project", "--env"])
+            .arg(&file)
+            .arg("--chart")
+            .arg(&fixture.chart.0)
+            .env("PATH", &fixture.path)
+            .env("KUBECONFIG", fixture.bin.join("current-kubeconfig"))
+            .env("WAMN_APPLY_DATABASE_URL", database.url());
+        if action == "apply" {
+            command.args(["--resolve", "migrations/project/0001_probe.sql=retry"]);
+        }
+        // The child reads this private PostgreSQL server while the runtime drives its sessions.
+        let output = tokio::task::spawn_blocking(move || command.output()).await??;
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(String::from_utf8_lossy(&output.stdout).contains(chart.image("ctl")?));
+        let calls = std::fs::read_to_string(fixture.bin.join("calls.jsonl"))?
+            .lines()
+            .map(serde_json::from_str)
+            .collect::<Result<Vec<Value>, _>>()?;
+        let jobs: Vec<_> = calls
+            .iter()
+            .filter(|call| call["object"]["kind"] == "Job")
+            .collect();
+        assert_eq!(jobs.len(), 1);
+        for call in &calls {
+            assert_eq!(call["tool"], "kubectl", "{call}");
+            let args = call["args"].as_array().unwrap();
+            if args[0] == "config" {
+                continue;
+            }
+            assert_eq!(args[3], "fixture-current-context");
+            assert_eq!(args[5], "platform");
+            match args[6].as_str().unwrap() {
+                "get" | "logs" | "patch" | "delete" => {}
+                "create" => assert_eq!(call["object"]["kind"], "Job"),
+                "apply" => assert_eq!(call["object"]["kind"], "Secret"),
+                _ => panic!("unrelated operation: {call}"),
+            }
+        }
+        let job = &jobs[0]["object"];
+        let container = &job["spec"]["template"]["spec"]["containers"][0];
+        assert_eq!(container["image"], chart.image("ctl")?);
+        assert_eq!(container["command"], json!(["/usr/local/bin/wamn-ctl"]));
+        let verb = format!("project-schema-{action}");
+        let mut expected = vec![
+            "env",
+            &verb,
+            "/inputs/environment.json",
+            "/inputs/database.json",
+            "--image",
+            chart.image("ctl")?,
+        ];
+        if action == "apply" {
+            expected.extend(["--resolve", "migrations/project/0001_probe.sql=retry"]);
+        }
+        assert_eq!(container["args"], json!(expected));
+        for variable in ["WAMN_SYSTEM_ADMIN_URL", "WAMN_APPLY_DATABASE_URL"] {
+            assert!(
+                container["env"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|entry| entry["name"] == variable
+                        && entry["valueFrom"]["secretKeyRef"].is_object())
+            );
+        }
+        let files = calls
+            .iter()
+            .find_map(|call| call["object"]["stringData"]["environment.json"].as_str())
+            .unwrap();
+        assert_eq!(EnvironmentDocument::from_json(files.as_bytes())?, document);
+        let after: Value = serde_json::from_slice(&std::fs::read(fixture.bin.join("state.json"))?)?;
+        assert_eq!(after["owners"], state["owners"]);
+        assert!(after["objects"].as_object().unwrap().is_empty());
+    }
+    drop(client);
+    project_connection.await??;
+    drop(system);
+    connection.await??;
+    Ok(())
+}
+
 #[test]
 fn platform_service_updates_change_only_the_selected_release() -> anyhow::Result<()> {
     let fixture = Fixture::new()?;

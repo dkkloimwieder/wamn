@@ -433,6 +433,63 @@ mod platform_tests {
     }
 
     #[test]
+    fn platform_schema_selects_project_only_with_an_environment() {
+        use wamn_ctl::platform_verbs::{PlatformSchemaCommand, PlatformSchemaScope};
+        for action in ["diff", "apply"] {
+            let arguments = [
+                "wamn",
+                "platform",
+                "schema",
+                action,
+                "--scope",
+                "project",
+                "--chart",
+                "/prepared/chart",
+                "--env",
+                "environment.k",
+            ];
+            assert!(Cli::try_parse_from(&arguments[..8]).is_err());
+            let mut system = arguments;
+            system[5] = "system";
+            assert!(Cli::try_parse_from(system).is_err());
+            let cli = Cli::try_parse_from(arguments).unwrap();
+            let Command::Platform(ProductPlatformCommand::Schema(command)) = cli.command else {
+                panic!("expected platform schema");
+            };
+            let args = match command {
+                PlatformSchemaCommand::Diff(args) => args,
+                PlatformSchemaCommand::Apply(args) => args.selection,
+            };
+            assert!(matches!(args.scope, PlatformSchemaScope::Project));
+            assert_eq!(
+                args.env.as_deref(),
+                Some(std::path::Path::new("environment.k"))
+            );
+            let resolved = Cli::try_parse_from(
+                arguments
+                    .into_iter()
+                    .chain(["--resolve", "migrations/project/0001_probe.sql=retry"]),
+            );
+            if action == "diff" {
+                assert!(resolved.is_err());
+            } else {
+                let Command::Platform(ProductPlatformCommand::Schema(
+                    PlatformSchemaCommand::Apply(args),
+                )) = resolved.unwrap().command
+                else {
+                    panic!("expected project apply");
+                };
+                let resolution = args.resolve.unwrap();
+                assert_eq!(resolution.package, "project");
+                assert_eq!(
+                    resolution.action,
+                    wamn_package_control::migrations::Resolution::Retry
+                );
+            }
+        }
+    }
+
+    #[test]
     fn platform_deploy_accepts_an_optional_chart_and_explicit_targets() {
         let cli = Cli::try_parse_from(["wamn", "platform", "deploy", "cluster.k"]).unwrap();
         let Command::Platform(ProductPlatformCommand::Deploy(args)) = cli.command else {

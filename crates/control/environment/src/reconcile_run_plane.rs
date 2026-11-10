@@ -173,6 +173,20 @@ impl StdError for ReconcileTargetError {
 pub async fn reconcile_run_plane(
     args: ReconcileRunPlaneRequest,
 ) -> anyhow::Result<ReconcileRunPlaneOutcome> {
+    reconcile_run_plane_with_migrations(
+        args,
+        &crate::platform_migrations::embedded_sources(
+            wamn_control_provision::schema_migrations::MigrationScope::Project,
+        ),
+    )
+    .await
+}
+
+/// Reconcile with explicit image files, using the same executor as project schema apply.
+pub async fn reconcile_run_plane_with_migrations(
+    args: ReconcileRunPlaneRequest,
+    sources: &[wamn_schema_control::MigrationSource],
+) -> anyhow::Result<ReconcileRunPlaneOutcome> {
     anyhow::ensure!(
         ![&args.org, &args.project, &args.env]
             .iter()
@@ -301,6 +315,9 @@ pub async fn reconcile_run_plane(
         drop(system);
         let _ = connection.await;
         let env_key_identity = identity_result?;
+        if env_key_identity.app_schema_installed {
+            crate::platform_migrations::initialize_project(&mut client, sources).await?;
+        }
         Ok::<_, anyhow::Error>((plan, policy_changed, durability_class, env_key_identity))
     }
     .await;

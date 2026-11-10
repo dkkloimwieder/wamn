@@ -114,6 +114,7 @@ impl Platform {
             std::env::var_os("WAMN_RELEASE_CHART")
                 .map(PathBuf::from)
                 .unwrap_or_default(),
+            false,
         )
     }
 
@@ -128,6 +129,22 @@ impl Platform {
                     .unwrap_or_else(|_| DEFAULT_NAMESPACE.to_owned()),
             },
             PathBuf::new(),
+            false,
+        )
+    }
+
+    /// Read only database inputs for a project substrate SQL Job.
+    pub fn project_schema_from_env() -> anyhow::Result<Self> {
+        Self::from_inputs(
+            "WAMN_APPLY_DATABASE_URL",
+            release_chart::Target {
+                kubeconfig: PathBuf::new(),
+                context: String::new(),
+                namespace: std::env::var("WAMN_RELEASE_NAMESPACE")
+                    .unwrap_or_else(|_| DEFAULT_NAMESPACE.to_owned()),
+            },
+            PathBuf::new(),
+            true,
         )
     }
 
@@ -135,11 +152,16 @@ impl Platform {
         database_variable: &str,
         target: release_chart::Target,
         chart: PathBuf,
+        project_schema: bool,
     ) -> anyhow::Result<Self> {
         let variable = |name: &str| {
             std::env::var(name).with_context(|| format!("set {name} for wamn-ctl env"))
         };
-        let host_group = std::env::var_os("WAMN_RELEASE_HOST_GROUP").map(PathBuf::from);
+        let host_group = if project_schema {
+            None
+        } else {
+            std::env::var_os("WAMN_RELEASE_HOST_GROUP").map(PathBuf::from)
+        };
         let insecure_registry = match &host_group {
             Some(path) => runtime::insecure_registry(&serde_yaml::from_slice(
                 &std::fs::read(path).with_context(|| format!("read {}", path.display()))?,
@@ -150,8 +172,16 @@ impl Platform {
             insecure_registry,
             system_database_url: variable(database_variable)?,
             chart,
-            release_artifact_base: variable("WAMN_RELEASE_ARTIFACT_BASE")?,
-            registry_auth_file: PathBuf::from(variable("WAMN_REGISTRY_AUTH_FILE")?),
+            release_artifact_base: if project_schema {
+                String::new()
+            } else {
+                variable("WAMN_RELEASE_ARTIFACT_BASE")?
+            },
+            registry_auth_file: if project_schema {
+                PathBuf::new()
+            } else {
+                PathBuf::from(variable("WAMN_REGISTRY_AUTH_FILE")?)
+            },
             oci_ca_paths: std::env::var("WAMN_OCI_CA_PATHS")
                 .map(|paths| {
                     paths
@@ -178,8 +208,16 @@ impl Platform {
                 client_key: std::env::var_os("WAMN_IDENTITY_CLIENT_KEY").map(PathBuf::from),
                 server_ca: std::env::var_os("WAMN_IDENTITY_SERVER_CA").map(PathBuf::from),
             },
-            events: event_broker_from_env()?,
-            auth_nats: Some(wamn_platform_identity::nats::PlatformNats::from_env()?),
+            events: if project_schema {
+                None
+            } else {
+                event_broker_from_env()?
+            },
+            auth_nats: if project_schema {
+                None
+            } else {
+                Some(wamn_platform_identity::nats::PlatformNats::from_env()?)
+            },
             target,
         })
     }

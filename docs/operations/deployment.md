@@ -706,11 +706,11 @@ Use the environment's identity Deployment and require its readiness before issui
 
 ## Platform schema upgrades
 
-Select the prepared chart explicitly for each system SQL operation.
+Select the prepared chart explicitly for each platform SQL operation.
 Set `KUBECONFIG` to the target cluster file and select its current context first.
 Without `KUBECONFIG`, the command uses `$HOME/.kube/config`.
-The command reads the existing `platform/wamn-pg-superuser` Secret.
-It runs a bounded Job in `platform`, with no laptop database connection.
+System scope reads the existing `platform/wamn-pg-superuser` Secret.
+Both scopes execute SQL in a bounded Job in `platform`.
 
 ```bash
 wamn platform schema diff --scope system --chart /prepared/platform
@@ -753,8 +753,29 @@ Ordinary platform reapply also runs no migration.
 System schema apply changes only system SQL objects and migration records.
 It changes no service release, application selection, credential, or Helm release.
 Deploy compatible control code separately with `platform deploy ... --only control`.
-This build accepts only `--scope system`.
-Project substrate commands remain DEP5-04 work.
+For one environment, select project scope and its environment document.
+Project scope requires `--env`, and system scope refuses it.
+Set `WAMN_APPLY_DATABASE_URL` to the installed system registry before project operations.
+The command reads the environment's recorded database instance and PostgreSQL cluster from that registry.
+The SQL Job uses the existing CNPG administrator and `platform/wamn-apply` credentials.
+
+```bash
+wamn platform schema diff --scope project --env environments/dev/environment.k --chart /prepared/platform
+wamn platform schema apply --scope project --env environments/dev/environment.k --chart /prepared/platform
+wamn platform schema apply --scope project --env environments/dev/environment.k --chart /prepared/platform \
+  --resolve migrations/project/0001_example.sql=retry
+```
+
+The Job holds the environment's exclusive lifecycle lock for the whole operation.
+It waits for an active reset or application schema operation.
+It changes only WAMN substrate SQL and `platform.schema_migration` in that environment's recorded database.
+Application tables, rows, code selections, Helm releases, and other environments stay unchanged.
+The operation runs no environment provisioning or application activation.
+
+Fresh environment provisioning installs the catalog and project substrate, then runs every embedded project migration.
+Repeated provisioning runs no pending migration.
+If execution stops, the error reports completed and remaining files.
+Resume with `wamn platform schema apply --scope project --env FILE --chart DIR` and the same chart.
 Application package migrations keep their own streams.
 
 ## Rollback and maintenance

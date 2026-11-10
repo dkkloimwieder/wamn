@@ -163,7 +163,13 @@ pub async fn initialize_system(
 ) -> anyhow::Result<()> {
     if install_control_store(admin).await? {
         admin.batch_execute("SET ROLE wamn_system").await?;
-        let result = crate::platform_migrations::apply_system(admin, sources, None).await;
+        let result = crate::platform_migrations::apply_reported(
+            admin,
+            crate::platform_migrations::MigrationTarget::System,
+            sources,
+            None,
+        )
+        .await;
         let reset = admin.batch_execute("RESET ROLE").await;
         result?;
         reset?;
