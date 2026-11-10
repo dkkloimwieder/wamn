@@ -289,6 +289,16 @@ async fn status_pulls_candidates_with_installed_registry_transport() -> anyhow::
     // Only the installed control release is available. No routing service or chart exists.
     let bin = scratch.path().join("bin");
     std::fs::create_dir(&bin)?;
+    std::fs::write(
+        bin.join("environment-configmap.json"),
+        serde_json::to_vec(&json!({
+            "apiVersion":"v1", "kind":"ConfigMap",
+            "metadata":{"name":wamn_control_provision::environment_state::environment_resource_name(
+                &document.org, &document.project, &document.env,
+            )?, "namespace":"hosts"},
+            "data":{"environment.json":serde_json::to_string(&document)?}
+        }))?,
+    )?;
     for (name, script) in [
         (
             "helm",
@@ -306,6 +316,7 @@ esac
 case "$*" in
   'config current-context --kubeconfig '*) printf 'status-test' ;;
   *'get --raw '*) printf '{"items":[]}' ;;
+  *'get configmap/'*) cat "$(dirname "$0")/environment-configmap.json" ;;
   *) exit 1 ;;
 esac
 "#,

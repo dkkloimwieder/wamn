@@ -25,21 +25,7 @@ pub async fn publish(
     root: &Path,
     database_url: &str,
 ) -> anyhow::Result<(String, ManifestDigest)> {
-    let (application, roots) = sources(document, root)?;
-    let mut packages = Vec::with_capacity(roots.len());
-    for root in &roots {
-        // build_package owns current_build/current_generation and builds only stale inputs.
-        let record = build_package(&BuildRequest::new(
-            root,
-            &default_output_root(root),
-            database_url,
-        ))
-        .await?;
-        packages.push(PackageCoordinate::new(
-            record.package.id,
-            record.package.version,
-        )?);
-    }
+    let source = build(document, root, database_url).await?;
     let mut platform = platform.clone();
     wamn_environment_control::environment::runtime::resolve_platform(&mut platform, &document.org)
         .await?;
@@ -57,6 +43,98 @@ pub async fn publish(
         .component_artifact_base
         .as_deref()
         .context("set WAMN_COMPONENT_ARTIFACT_BASE for source deployment")?;
+    publish_built(
+        document,
+        source,
+        registry,
+        component_artifact_base,
+        &platform.release_artifact_base,
+    )
+    .await
+}
+
+/// Build and publish source without deployment or target-database credentials.
+pub async fn publish_from_env(
+    document: &EnvironmentDocument,
+    root: &Path,
+    database_url: &str,
+) -> anyhow::Result<(String, ManifestDigest)> {
+    let source = build(document, root, database_url).await?;
+    let variable = |name: &str| {
+        std::env::var(name).with_context(|| format!("set {name} for source publication"))
+    };
+    let insecure_registry = match std::env::var_os("WAMN_RELEASE_HOST_GROUP") {
+        Some(path) => wamn_environment_control::environment::runtime::insecure_registry(
+            &serde_yaml::from_slice(&std::fs::read(path)?)?,
+        ),
+        None => false,
+    };
+    let registry = PackageRegistry {
+        artifact_base: variable("WAMN_PACKAGE_ARTIFACT_BASE")?,
+        registry_auth_file: variable("WAMN_REGISTRY_AUTH_FILE")?.into(),
+        insecure_registry,
+        oci_ca_paths: std::env::var("WAMN_OCI_CA_PATHS")
+            .unwrap_or_default()
+            .split(':')
+            .filter(|path| !path.is_empty())
+            .map(Into::into)
+            .collect(),
+    };
+    publish_built(
+        document,
+        source,
+        registry,
+        &variable("WAMN_COMPONENT_ARTIFACT_BASE")?,
+        &variable("WAMN_RELEASE_ARTIFACT_BASE")?,
+    )
+    .await
+}
+
+struct SourceBuild {
+    application: String,
+    roots: Vec<PathBuf>,
+    packages: Vec<PackageCoordinate>,
+}
+
+async fn build(
+    document: &EnvironmentDocument,
+    root: &Path,
+    database_url: &str,
+) -> anyhow::Result<SourceBuild> {
+    let (application, roots) = sources(document, root)?;
+    let mut packages = Vec::with_capacity(roots.len());
+    for root in &roots {
+        // build_package owns current_build/current_generation and builds only stale inputs.
+        let record = build_package(&BuildRequest::new(
+            root,
+            &default_output_root(root),
+            database_url,
+        ))
+        .await?;
+        packages.push(PackageCoordinate::new(
+            record.package.id,
+            record.package.version,
+        )?);
+    }
+    Ok(SourceBuild {
+        application,
+        roots,
+        packages,
+    })
+}
+
+async fn publish_built(
+    document: &EnvironmentDocument,
+    source: SourceBuild,
+    registry: PackageRegistry,
+    component_artifact_base: &str,
+    release_artifact_base: &str,
+) -> anyhow::Result<(String, ManifestDigest)> {
+    let SourceBuild {
+        application,
+        roots,
+        packages,
+    } = source;
     let mut publication = PushPackageRequest {
         package: PathBuf::new(),
         registry,
@@ -91,7 +169,7 @@ pub async fn publish(
             packages,
         },
         &publication.registry,
-        &platform.release_artifact_base,
+        release_artifact_base,
         Some(&EntryPublicationInputs {
             component_artifact_base,
             route_guest: &route_guest,

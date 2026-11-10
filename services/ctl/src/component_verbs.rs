@@ -159,9 +159,21 @@ pub(crate) async fn call(
     operation: &str,
     value: &Value,
 ) -> anyhow::Result<()> {
+    let value = invoke(&reqwest::Client::new(), host_url, token, operation, value).await?;
+    println!("{value}");
+    Ok(())
+}
+
+/// Call one route and retain its result for adapters that follow an operation.
+pub(crate) async fn invoke(
+    client: &reqwest::Client,
+    host_url: &str,
+    token: &str,
+    operation: &str,
+    value: &Value,
+) -> anyhow::Result<Value> {
     let attachment = route(operation)?;
-    let client = reqwest::Client::new();
-    let request = route_request(&client, host_url, token, attachment, value)?;
+    let request = route_request(client, host_url, token, attachment, value)?;
     let response = client
         .execute(request)
         .await
@@ -172,13 +184,16 @@ pub(crate) async fn call(
         status.is_success(),
         "{operation} answered HTTP {status}: {body}"
     );
-    let [answer]: [Value; 1] =
+    let [mut answer]: [Value; 1] =
         serde_json::from_str(&body).context("control route answers one request element")?;
     if let Some(error) = answer.get("error") {
         anyhow::bail!("{operation} refused: {error}");
     }
-    println!("{}", answer["value"]);
-    Ok(())
+    answer
+        .as_object_mut()
+        .context("control response object")?
+        .remove("value")
+        .context("control response value")
 }
 
 pub async fn connection(args: ConnectionArgs) -> anyhow::Result<()> {

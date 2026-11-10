@@ -2,8 +2,11 @@
 
 use anyhow::Context as _;
 use clap::Args;
+use serde_json::json;
 use std::path::PathBuf;
 use wamn_environment_control::environment::{self, Platform};
+
+use crate::operation_verbs::ControlHost;
 
 #[derive(Debug, Args)]
 pub struct DeployArgs {
@@ -37,6 +40,23 @@ pub struct StatusArgs {
 }
 
 pub async fn deploy(args: DeployArgs) -> anyhow::Result<()> {
+    if let Some(host) = ControlHost::from_env()? {
+        let digest = match args.package {
+            Some(package) => {
+                let document = environment::document::EnvironmentDocument::compile(&args.env)?;
+                crate::operation_verbs::publish(&document, &package)
+                    .await?
+                    .1
+                    .to_string()
+            }
+            None => args
+                .release
+                .context("select a source package or --release")?,
+        };
+        return host
+            .run("application.deploy", &args.env, json!({"release":digest}))
+            .await;
+    }
     let platform = Platform::apply_from_env()?;
     let document =
         environment::document::EnvironmentDocument::read_deployed(&platform, &args.env, None)
@@ -59,6 +79,15 @@ pub async fn deploy(args: DeployArgs) -> anyhow::Result<()> {
 }
 
 pub async fn rollback(args: RollbackArgs) -> anyhow::Result<()> {
+    if let Some(host) = ControlHost::from_env()? {
+        return host
+            .run(
+                "application.rollback",
+                &args.env,
+                json!({"application":args.application, "release":args.release}),
+            )
+            .await;
+    }
     let platform = Platform::apply_from_env()?;
     print_analysis(
         environment::rollback::rollback(

@@ -6,6 +6,7 @@ version = 1
 exclusions = [
 ]
 targets = [
+  { workspace="root", package="wamn-ctl", target="test:control_operations", tier="contract" },
   { workspace="root", package="wamn-ctl", target="test:application_publication", tier="contract" },
   { workspace="root", package="wamn-ctl", target="test:source_deploy_live", tier="live-postgres" },
   { workspace="root", package="wamn-ctl", target="test:reset_lock_live", tier="live-postgres" },

@@ -58,11 +58,6 @@ async fn source_builds_only_selected_outputs_and_keeps_selection_on_failure() ->
             &json!({"auths": {"registry.invalid": {"username": "fixture", "password": "fixture"}}}),
         )?,
     )?;
-    let kubeconfig = scratch.path().join("kubeconfig");
-    std::fs::write(
-        &kubeconfig,
-        "apiVersion: v1\nkind: Config\ncurrent-context: source-test\ncontexts:\n- name: source-test\n  context: {cluster: source-test, user: source-test}\n",
-    )?;
     let file = scratch.path().join("environment.k");
     let document = EnvironmentDocument::from_json(&serde_json::to_vec(&json!({
         "org": "acme", "project": "source", "env": "dev", "target": "cloud", "policy": "dev",
@@ -85,8 +80,12 @@ async fn source_builds_only_selected_outputs_and_keeps_selection_on_failure() ->
             .arg("--env")
             .arg(&file)
             .env("DATABASE_URL", database.url())
-            .env("KUBECONFIG", &kubeconfig)
-            .env("WAMN_APPLY_DATABASE_URL", database.url())
+            .env("WAMN_CONTROL_URL", "http://127.0.0.1:0")
+            .env("WAMN_TOKEN", "caller-session")
+            .env_remove("KUBECONFIG")
+            .env_remove("WAMN_APPLY_DATABASE_URL")
+            .env_remove("WAMN_CONTROL_DATABASE_URL")
+            .env_remove("WAMN_SYSTEM_ADMIN_URL")
             .env("WAMN_RELEASE_ARTIFACT_BASE", "registry.invalid/releases")
             .env("WAMN_PACKAGE_ARTIFACT_BASE", "registry.invalid/packages")
             .env(
@@ -95,10 +94,7 @@ async fn source_builds_only_selected_outputs_and_keeps_selection_on_failure() ->
             )
             .env("WAMN_REGISTRY_AUTH_FILE", &auth)
             .env_remove("WAMN_OCI_CA_PATHS")
-            .env("WAMN_NATS_URL", "tls://unused.invalid:4222")
-            .env("WAMN_NATS_TLS_CA", &auth)
-            .env("WAMN_NATS_TLS_CERT", &auth)
-            .env("WAMN_NATS_TLS_KEY", scratch.path().join("registry.key"))
+            .env_remove("WAMN_RELEASE_HOST_GROUP")
             .output()?;
         eprintln!("{}", String::from_utf8_lossy(&output.stderr));
         ensure!(

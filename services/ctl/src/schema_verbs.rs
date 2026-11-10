@@ -4,9 +4,12 @@ use std::path::PathBuf;
 
 use anyhow::{Context as _, ensure};
 use clap::{Args, Subcommand};
+use serde_json::json;
 use wamn_environment_control::environment::{
     self, Platform, document::EnvironmentDocument, sql::schema,
 };
+
+use crate::operation_verbs::ControlHost;
 
 #[derive(Debug, Subcommand)]
 pub enum SchemaCommand {
@@ -78,6 +81,8 @@ pub async fn run(command: SchemaCommand) -> anyhow::Result<()> {
                     "{}",
                     serde_json::json!({"adopted": result, "sql_executed": false, "live_verified": false})
                 );
+            } else if let Some(host) = ControlHost::from_env()? {
+                return host.run("schema.adopt", &args.env, json!({})).await;
             } else {
                 let mut platform = Platform::apply_from_env()?;
                 let document =
@@ -88,6 +93,9 @@ pub async fn run(command: SchemaCommand) -> anyhow::Result<()> {
             return Ok(());
         }
         SchemaCommand::Reset(args) => {
+            if let Some(host) = ControlHost::from_env()? {
+                return host.run("schema.reset", &args.env, json!({})).await;
+            }
             let platform = Platform::apply_from_env()?;
             let result = Box::pin(environment::sql::reset::reset_deployed(
                 &platform, &args.env, None,
@@ -115,6 +123,36 @@ pub async fn run(command: SchemaCommand) -> anyhow::Result<()> {
         .await?;
         println!("{}", serde_json::to_string_pretty(&diffs)?);
         return Ok(());
+    }
+    let input = EnvironmentDocument::compile(&args.env)?;
+    let source = !input.applications.contains_key(&args.application)
+        && std::path::Path::new(&args.application).is_dir();
+    if (apply || !source)
+        && let Some(host) = ControlHost::from_env()?
+    {
+        let (application, release) = if source {
+            ensure!(
+                args.release.is_none(),
+                "a source schema operation does not select --release"
+            );
+            let (application, digest) =
+                crate::operation_verbs::publish(&input, std::path::Path::new(&args.application))
+                    .await?;
+            (application, Some(digest.to_string()))
+        } else {
+            (args.application, args.release)
+        };
+        let mut value = json!({"application":application, "release":release});
+        if let Some(resolution) = resolution {
+            value["resolve"] = resolution.to_string().into();
+        }
+        return host
+            .run(
+                if apply { "schema.apply" } else { "schema.diff" },
+                &args.env,
+                value,
+            )
+            .await;
     }
     let mut platform = if apply {
         Platform::apply_from_env()?
@@ -189,20 +227,11 @@ pub async fn run(command: SchemaCommand) -> anyhow::Result<()> {
 }
 
 async fn publish(args: PublishArgs) -> anyhow::Result<()> {
-    let platform = Platform::apply_from_env()?;
-    let document = EnvironmentDocument::read_deployed(&platform, &args.env, None).await?;
-    let database_url =
-        std::env::var("DATABASE_URL").context("set DATABASE_URL for disposable build databases")?;
-    let (application, digest) = wamn_dev_control::source_deploy::publish(
-        &platform,
-        &document,
-        &args.package,
-        &database_url,
-    )
-    .await?;
+    let document = EnvironmentDocument::compile(&args.env)?;
+    let (application, digest) = crate::operation_verbs::publish(&document, &args.package).await?;
     println!(
         "{}",
-        serde_json::json!({"application": application, "release": digest.as_str()})
+        json!({"application":application, "release":digest.as_str()})
     );
     Ok(())
 }

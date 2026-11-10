@@ -69,21 +69,15 @@ impl EnvironmentDocument {
         input: &Self,
         application: Option<&str>,
     ) -> anyhow::Result<Self> {
+        if platform.target.kubeconfig.as_os_str().is_empty() {
+            // SQL Jobs pass the mounted ConfigMap projection as their input document.
+            return Ok(input.clone());
+        }
         let name = name(input)?;
-        let document = if platform.target.kubeconfig.as_os_str().is_empty() {
-            // SQL Jobs read the ConfigMap projection without Kubernetes API credentials.
-            let document = Self::compile(Path::new(JOB_DOCUMENT))?;
-            ensure!(
-                document.triple() == input.triple(),
-                "environment ConfigMap coordinate differs"
-            );
-            document
-        } else {
-            let object = read(platform, &name).await?.with_context(|| {
-                format!("environment ConfigMap {DEFAULT_NAMESPACE}/{name} is absent; provision the environment with env apply first")
-            })?;
-            decode(&object, input)?
-        };
+        let object = read(platform, &name).await?.with_context(|| {
+            format!("environment ConfigMap {DEFAULT_NAMESPACE}/{name} is absent; provision the environment with env apply first")
+        })?;
+        let document = decode(&object, input)?;
         for warning in stale_warnings(input, &document, application)? {
             eprintln!(
                 "WARN stale --env input: {warning}; ConfigMap {DEFAULT_NAMESPACE}/{name} is authoritative"

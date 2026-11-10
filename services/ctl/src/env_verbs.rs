@@ -161,6 +161,17 @@ pub struct FileArgs {
 }
 
 pub async fn run(command: EnvCommand) -> anyhow::Result<()> {
+    if let EnvCommand::Rollback(args) = &command
+        && let Some(host) = crate::operation_verbs::ControlHost::from_env()?
+    {
+        return host
+            .run(
+                "application.rollback",
+                &args.file,
+                serde_json::json!({"application":args.application, "release":args.release}),
+            )
+            .await;
+    }
     if let EnvCommand::Show(args) = &command {
         print!(
             "{}",

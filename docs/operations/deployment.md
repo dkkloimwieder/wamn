@@ -169,14 +169,35 @@ Platform deployment stores immutable chart values and the image selection in a C
 Environment provisioning creates separate code and SQL ServiceAccounts and namespace Roles.
 
 
-Use direct kubeconfig and database access for trusted development and bootstrap.
-Authenticated WAMN control routes are the product target for both the CLI and UI.
-That target shares the operation owners below. This document does not claim that deployment control routes are complete.
+Set `WAMN_CONTROL_URL` to the deployed control host and `WAMN_TOKEN` to your password session token.
+With that URL, `wamn deploy`, `wamn rollback`, and `wamn-ctl env rollback` use the control routes.
+The published `wamn schema diff`, deployed `schema apply`, `schema reset`, and deployed `schema adopt` commands also use those routes.
+The CLI starts the Job and polls `operation.status`.
+It prints one line when the state changes and prints the log tail once when the Job ends.
+A refused route or failed Job exits nonzero.
+The CLI never retries a refused route through direct access.
+Remote operations need no kubeconfig, target database URL, or local chart.
+The environment file supplies the project and environment names.
+The server reads the canonical document and selects all runtime inputs.
+
+Source publication stays local and submits only its release digest.
+Source builds require `DATABASE_URL` for disposable build databases and the existing registry inputs.
+Set `WAMN_PACKAGE_ARTIFACT_BASE`, `WAMN_COMPONENT_ARTIFACT_BASE`, `WAMN_RELEASE_ARTIFACT_BASE`, and `WAMN_REGISTRY_AUTH_FILE` for publication.
+`WAMN_OCI_CA_PATHS` supplies optional registry certificates.
+For an HTTP registry, the existing `WAMN_RELEASE_HOST_GROUP` document supplies `--allow-insecure-registries` in `extraArgs`.
+`wamn schema publish` only publishes and starts no Job.
+
+Without `WAMN_CONTROL_URL`, application and schema commands use the trusted path for platform administrators.
+Unset that variable explicitly before trusted administration.
+That path uses the selected kubeconfig, database credentials, chart, and broker inputs below.
+Provisioning, `env apply`, internal SQL workers, platform schema commands, and status retain direct access.
+An adjacent `dev.json` keeps local source schema execution and adoption direct.
+Read-only source schema diff also stays direct.
 GCP coverage and upgrades of persistent system databases remain outside this rebuild.
 
 Prepare the platform first, as [building](building.md#local-platform-artifacts) describes.
-Use the selected kubeconfig and its current context.
-Supply the existing application inputs before these commands:
+For the trusted path, use the selected kubeconfig and its current context.
+Supply the existing application inputs before trusted commands:
 
 - Set `WAMN_APPLY_DATABASE_URL` for restricted system access during mutations.
 - Set `WAMN_CONTROL_DATABASE_URL` for read-only schema inspection and status.
