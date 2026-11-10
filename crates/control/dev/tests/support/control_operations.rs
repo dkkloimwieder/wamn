@@ -328,12 +328,17 @@ async fn denial(control: &Control<'_>, identity_url: &str, release: &str) -> any
     // A valid control session for another project reaches authorization, rather than failing authentication.
     outsider.call("control.mine", json!({})).await?;
     let before = jobs(control).await?;
+    // A control route denial is the documented 403 `permission-denied` delivery answer.
     let answer = outsider
         .request("application.deploy", json!({"release":release}))
-        .await?;
+        .await;
     ensure!(
-        answer["error"]["code"] == "permission_denied",
-        "cross-project deploy was not denied: {answer}"
+        answer
+            .as_ref()
+            .err()
+            .and_then(|error| error.downcast_ref::<reqwest::Error>()?.status())
+            == Some(reqwest::StatusCode::FORBIDDEN),
+        "cross-project deploy was not denied: {answer:?}"
     );
     ensure!(
         jobs(control).await? == before,
