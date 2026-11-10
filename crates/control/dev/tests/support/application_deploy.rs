@@ -26,12 +26,16 @@ mod schema_job;
 #[path = "platform_upgrade.rs"]
 mod platform_upgrade;
 
+#[path = "platform_schema.rs"]
+mod platform_schema;
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) enum Case {
     Application,
     SqlJob,
     Reset,
     PlatformUpgrade,
+    PlatformSchema,
 }
 
 struct Journey<'a> {
@@ -239,6 +243,9 @@ async fn exercise_inner(run: &Run, cases: &[Case], password: &str) -> anyhow::Re
     if cases.contains(&Case::PlatformUpgrade) {
         platform_upgrade::inputs(run)?;
     }
+    if cases.contains(&Case::PlatformSchema) {
+        platform_schema::inputs(run)?;
+    }
     success(Command::new("script").arg("--version")).await?;
     let id = uuid::Uuid::new_v4().simple().to_string();
     // The unique project keeps every environment fresh within the 63-byte name limit.
@@ -409,6 +416,7 @@ async fn exercise_inner(run: &Run, cases: &[Case], password: &str) -> anyhow::Re
             Case::Reset => reset(&journey, &artifacts).await,
             Case::Application => application(&journey, &sources["alpha"], &artifacts).await,
             Case::PlatformUpgrade => platform_upgrade::exercise(&journey, &artifacts).await,
+            Case::PlatformSchema => platform_schema::exercise(&journey, &artifacts["a0"]).await,
         };
         result?;
         journey.delete_environment().await?;
@@ -418,6 +426,9 @@ async fn exercise_inner(run: &Run, cases: &[Case], password: &str) -> anyhow::Re
 
 fn case_document(document: &EnvironmentDocument, case: Case) -> EnvironmentDocument {
     let mut document = document.clone();
+    if case == Case::PlatformSchema {
+        document.applications.retain(|name, _| name == "alpha");
+    }
     if case == Case::SqlJob {
         document.applications.retain(|name, _| name == "alpha");
         document
@@ -444,6 +455,11 @@ async fn prepare_artifacts(
             "a0",
             journey.publish("alpha", "1.0.0", &sources["alpha"]).await?,
         );
+    }
+    if cases
+        .iter()
+        .any(|case| !matches!(case, Case::SqlJob | Case::PlatformSchema))
+    {
         artifacts.insert(
             "b0",
             journey.publish("beta", "1.0.0", &sources["beta"]).await?,
@@ -1037,7 +1053,13 @@ async fn sources(
     let apps = checkout.join("apps");
     let mut roots = BTreeMap::new();
     if cases.iter().any(|case| *case != Case::SqlJob) {
-        roots.extend([("alpha", apps.join("alpha")), ("beta", apps.join("beta"))]);
+        roots.insert("alpha", apps.join("alpha"));
+    }
+    if cases
+        .iter()
+        .any(|case| !matches!(case, Case::SqlJob | Case::PlatformSchema))
+    {
+        roots.insert("beta", apps.join("beta"));
     }
     if cases.contains(&Case::SqlJob) {
         roots.insert("probe", apps.join("probe"));

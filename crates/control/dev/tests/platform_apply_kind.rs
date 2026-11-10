@@ -85,6 +85,15 @@ async fn platform_upgrade_kind() -> anyhow::Result<()> {
 }
 
 #[tokio::test]
+#[ignore = "requires: env:WAMN_TEST_CLUSTER, env:WAMN_RELEASE_CHART, env:WAMN_TEST_OWNER_PASSWORD"]
+async fn platform_schema_kind() -> anyhow::Result<()> {
+    wamn_test_postgres::require_ignored_prerequisites(
+        "requires: env:WAMN_TEST_CLUSTER, env:WAMN_RELEASE_CHART, env:WAMN_TEST_OWNER_PASSWORD",
+    );
+    focused(application_deploy::Case::PlatformSchema).await
+}
+
+#[tokio::test]
 #[ignore = "requires: bin:kind, bin:docker, bin:kubectl, bin:helm, bin:openssl, bin:script"]
 async fn sql_job_kind() -> anyhow::Result<()> {
     wamn_test_postgres::require_ignored_prerequisites(

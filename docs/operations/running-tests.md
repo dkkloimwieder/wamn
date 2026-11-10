@@ -703,6 +703,7 @@ Select each test by its exact name in the `platform_apply_kind` Cargo target:
 | `platform_install_recovery_kind` | Interrupt platform installation after its first Kubernetes write, retry, status, and owner sign-in | Creates one fresh kind cluster |
 | `application_deploy_kind` | Source and published code updates, interrupted installation and replacement recovery, reapply, rollback, missing artifacts, stale checkout, retained data, and independent applications | Attaches to an existing disposable kind platform |
 | `platform_upgrade_kind` | Independent control and identity updates, one application host update, code reapply, earlier runtime selection, and retained data | Attaches to an existing disposable kind platform |
+| `platform_schema_kind` | One system file and one selected project file through SQL Jobs, unchanged application rows and releases, and second-environment isolation | Attaches to an existing disposable kind platform |
 | `sql_job_kind` | One published data migration through the SQL Job, unchanged serving code, and data read through the deployed host | Attaches to an existing disposable kind platform |
 | `same_name_reset_kind` | Two initial application releases, data, published schema-change reset, interrupted same-name CNPG reset, reconnection, durable refusal, and environment isolation | Attaches to an existing disposable kind platform |
 | `platform_apply_kind` | Fresh-platform acceptance: normal and interrupted installation, plus application, SQL, and reset bodies on the normal platform | Creates two fresh kind clusters |
@@ -719,7 +720,7 @@ These tests can run in any order on the same platform.
 Application recovery belongs to the application body. Platform recovery publishes no applications.
 
 After a body succeeds, `wamn-ctl env delete <org/project/env> --data` deletes its environment, database, and roles.
-Reset also deletes its isolation environment after all assertions succeed.
+Reset and platform schema cases also delete their isolation environments after all assertions succeed.
 Failed bodies retain their resources and logs.
 Project deletion has no command or control route (`services/ctl/src/project_verbs.rs:10`, `crates/catalog/model/src/host_route.rs:192`).
 The `--data` confirmation requires a terminal (`services/ctl/src/env_verbs.rs:338`).
@@ -736,7 +737,8 @@ Reset still asserts old-event disposal and environment isolation.
 `wamn-alrvy.20` (temporary directory leak) and `wamn-alrvy.22` (uncovered lint requirements) remain open.
 The accepted Epic 2 items `wamn-xy404`, `wamn-1riwn`, and `wamn-c361p` remain open.
 `wamn-azv06` remains not reproduced. `wamn-fszfy`, `wamn-m4wnp`, and `wamn-ib8ej` also remain open.
-These test descriptions do not claim persistent system database upgrades or GCP coverage.
+The platform schema case covers explicit system and project SQL upgrades on kind.
+These tests provide no GCP coverage.
 
 
 All tests require Docker, kind, Helm, kubectl, OpenSSL, and a prepared KCL compiler selected by `WAMN_KCL`.
@@ -832,6 +834,24 @@ kind delete cluster --name wamn-test-dep3
 
 The journeys have no saved completion state or resume system.
 Retry product deployment with the same cluster document and prepared chart.
+
+#### Focused platform schema preparation
+
+Use the disposable platform, owner password, and publication inputs described above.
+Keep chart A, the installed chart, available and unchanged.
+In a scratch source tree, add one SQL file under each of `deploy/sql/migrations/system/` and `deploy/sql/migrations/project/`.
+Each file must create one probe table and insert one row.
+Keep the initialization SQL and existing migration files unchanged.
+Rebuild and publish only the `ctl` image from that tree.
+Use `build-platform` to stamp chart B with that image and every other image from chart A.
+Set `WAMN_RELEASE_CHART` to chart B.
+
+DEP5-06 adds `platform_schema_kind` with its body in `support/platform_schema.rs`.
+The case refuses equal `ctl` digests or a changed digest for any other image.
+It derives pending file names and checksums from `wamn platform schema diff` for chart B.
+The existing journey deploys one application release into two environments and deletes both environments after success.
+The case needs explicit owner approval to run.
+Approval must cover setup, both SQL applies, and cleanup on the disposable platform.
 
 #### Focused platform upgrade preparation
 
