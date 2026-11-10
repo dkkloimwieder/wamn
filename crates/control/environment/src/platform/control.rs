@@ -185,6 +185,8 @@ pub fn host_values(org: &str) -> Value {
     let mut values = json!({"runtime-operator": {"runtime": {
         "terminationGracePeriodSeconds": 70,
         "serviceAccount": {"create":true,"name":format!("wamn-control-{org}")},
+        // Control operation routes create their Jobs with this account's token.
+        "automountServiceAccountToken": true,
         "hostGroups": [{
             "name": name, "namespace": "hosts", "replicas": 1,
             "schedulerNatsUrl": "nats://wamn-nats.platform.svc.cluster.local:4222",
