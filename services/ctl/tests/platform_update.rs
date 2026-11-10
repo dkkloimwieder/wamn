@@ -108,7 +108,7 @@ if tool == 'kubectl':
             print(json.dumps({'active':state['active']}))
         elif name == 'platform-identity-check':
             print(json.dumps({'keys':[state['active']]}))
-        elif name == 'platform-owner-state-' + state['org']:
+        elif name.startswith('platform-owner-state-') and name == 'platform-owner-state-' + state['org']:
             print('t')
         elif name.startswith(('platform-identity-issuer', 'platform-control-credentials-')):
             obj = state['objects'][namespace + '/job/' + name]

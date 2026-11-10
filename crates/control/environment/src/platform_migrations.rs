@@ -98,19 +98,16 @@ pub async fn system_warnings(
         .iter()
         .zip(&planned.migrations.statements)
     {
-        let mutations = match inspect_migration_definition_mutations(
+        let Ok(mutations) = inspect_migration_definition_mutations(
             &file.relative_path,
             sql.sql.as_bytes(),
             &schemas,
-        ) {
-            Ok(mutations) => mutations,
-            Err(_) => {
-                warnings.push(format!(
-                    "SQL reference analysis is unavailable for {}. Inspect its SQL.",
-                    file.relative_path
-                ));
-                continue;
-            }
+        ) else {
+            warnings.push(format!(
+                "SQL reference analysis is unavailable for {}. Inspect its SQL.",
+                file.relative_path
+            ));
+            continue;
         };
         for mutation in mutations {
             if mutation.action() != DefinitionAction::Drop {
