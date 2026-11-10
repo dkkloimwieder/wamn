@@ -387,13 +387,15 @@ pub(super) fn resource_entry(
 /// Refuses missing or unreadable state within the complete call time limit.
 pub async fn require_keys(target: &Target, limit: std::time::Duration) -> anyhow::Result<()> {
     kubectl::with_timeout(limit, inspect_keys(target)).await.context(
-        "Cannot inspect identity signing state. Run platform deploy without --only to initialize identity. No resources changed.",
+        "Cannot inspect identity signing state. If no org control release is recorded, run platform deploy \
+         without --only to initialize identity. Otherwise restore a verified system database backup. \
+         No resources changed.",
     )
 }
 
 async fn inspect_keys(target: &Target) -> anyhow::Result<()> {
-    const RECOVERY: &str =
-        "Run platform deploy without --only to initialize identity. No resources changed.";
+    const RECOVERY: &str = "If no org control release is recorded, run platform deploy without --only \
+         to initialize identity. Otherwise restore a verified system database backup. No resources changed.";
     let cluster: Value = kubectl::get(
         &target.kubeconfig,
         &target.context,

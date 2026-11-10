@@ -33,6 +33,8 @@ Deployment creates or reuses `wamn-local` and connects its registry to the kind 
 It applies namespaces, certificates, NATS, the wasmCloud operator, and CloudNativePG PostgreSQL.
 Without a recorded org control release, deployment initializes `wamn_system`, the organization, identity, and control.
 Once that release exists, reapply applies resources and releases without initialization Jobs or initialization Secret writes.
+Reapply does not refresh credentials.
+It does not rewrite the registry pull Secret, the Resend key Secret, the control operator Secret, or the identity signing keys.
 The command returns success only when every required component is ready.
 An error preserves a nonzero exit and prints the status that remains observable.
 

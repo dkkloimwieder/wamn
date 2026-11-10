@@ -542,7 +542,8 @@ A ten-second call limit bounds the complete inspection through the existing kube
 It includes the Cluster read, exec call, and output read.
 A timeout stops the local kubectl process and refuses before resource changes.
 Missing or unreadable signing state refuses before resource changes.
-The error directs the operator to run platform deploy without `--only` to initialize identity.
+If no org control release is recorded, the error directs the operator to run platform deploy without `--only` to initialize identity.
+Otherwise it directs the operator to restore a verified system database backup, because reapply does not initialize identity.
 
 Both installation and updates call the same resource functions.
 Installation prepares control credentials before the control release waits for readiness. Targeted updates run no initialization and write no credential Secret.

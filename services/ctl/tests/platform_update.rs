@@ -948,9 +948,8 @@ async fn identity_signing_query_times_out_on_postgres_without_mutation() -> anyh
         "{error}"
     );
     assert!(
-        error.contains(
-            "Run platform deploy without --only to initialize identity. No resources changed."
-        ),
+        error
+            .contains("Otherwise restore a verified system database backup. No resources changed."),
         "{error}"
     );
     assert_operations(&calls, ("identity", "identity"), false);
