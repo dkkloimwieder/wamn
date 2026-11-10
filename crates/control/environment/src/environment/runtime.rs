@@ -47,25 +47,29 @@ pub(super) async fn resolve_target(
 pub async fn resolve_platform(platform: &mut Platform, org: &str) -> anyhow::Result<Value> {
     let target = &platform.target;
     crate::platform::edge::require_running(target).await?;
-    let installed = resources::helm(
-        target,
-        &[
-            "get".as_ref(),
-            "values".as_ref(),
-            "wamn".as_ref(),
-            "-n".as_ref(),
-            "platform".as_ref(),
-            "-o".as_ref(),
-            "json".as_ref(),
-        ],
-    )
-    .await?;
-    let installed: Value = serde_json::from_slice(&installed)?;
-    let chart = artifact_plan::select(Path::new(
-        installed["platform"]["chart"]
-            .as_str()
-            .context("installed platform has no selected chart")?,
-    ))?;
+    let chart = if platform.chart.as_os_str().is_empty() {
+        let installed = resources::helm(
+            target,
+            &[
+                "get".as_ref(),
+                "values".as_ref(),
+                "wamn".as_ref(),
+                "-n".as_ref(),
+                "platform".as_ref(),
+                "-o".as_ref(),
+                "json".as_ref(),
+            ],
+        )
+        .await?;
+        let installed: Value = serde_json::from_slice(&installed)?;
+        artifact_plan::select(Path::new(
+            installed["platform"]["chart"]
+                .as_str()
+                .context("installed platform has no selected chart")?,
+        ))?
+    } else {
+        artifact_plan::select(&platform.chart)?
+    };
     let control = resolve_registry(platform, org).await?;
     platform.target.namespace = "hosts".into();
     chart.directory().clone_into(&mut platform.chart);
@@ -183,6 +187,20 @@ pub(super) async fn resolve_application(
     )
     .await?;
     let shared: Value = serde_json::from_slice(&shared)?;
+    if let Some(events) = &mut platform.events {
+        let variables = shared["runtime-operator"]["runtime"]["hostGroups"][0]["env"]
+            .as_array()
+            .context("provisioned environment host variables")?;
+        let value = |name| {
+            variables
+                .iter()
+                .find(|variable| variable["name"] == name)
+                .and_then(|variable| variable["value"].as_str())
+                .with_context(|| format!("provisioned environment lacks {name}"))
+        };
+        events.stream_replicas = value("WAMN_EVT_STREAM_REPLICAS")?.parse()?;
+        events.dup_window_secs = value("WAMN_EVT_DUP_WINDOW_SECS")?.parse()?;
+    }
     let group = host_group(control, &shared, &component_base)?;
     let path = directory.join("application-host.yaml");
     std::fs::write(&path, serde_yaml::to_string(&group)?)?;

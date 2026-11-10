@@ -72,6 +72,7 @@ pub async fn provision_resources(
         issue_pat.then_some(pat_secret.as_path()),
     )
     .await?;
+    crate::platform::operations::provision(platform, document, &cluster).await?;
     ensure_credential_access(platform, document).await?;
     kubectl(
         platform,
@@ -734,6 +735,14 @@ pub async fn installed_manifests(
 ///
 /// When the event broker is absent or a substrate write fails.
 pub async fn ensure_cdc(platform: &Platform, document: &EnvironmentDocument) -> anyhow::Result<()> {
+    ensure_cdc_inputs(platform, document, None).await
+}
+
+pub(crate) async fn ensure_cdc_inputs(
+    platform: &Platform,
+    document: &EnvironmentDocument,
+    administrator: Option<&str>,
+) -> anyhow::Result<()> {
     let manifests = installed_manifests(platform, document).await?;
     let schemas = manifests
         .iter()
@@ -788,8 +797,15 @@ pub async fn ensure_cdc(platform: &Platform, document: &EnvironmentDocument) -> 
         &document.env,
         &instance,
     );
-    let mut admin_url =
-        url::Url::parse(&std::env::var("WAMN_SYSTEM_ADMIN_URL").context("CDC administrator URL")?)?;
+    let administrator_env;
+    let administrator = if let Some(url) = administrator {
+        url
+    } else {
+        administrator_env =
+            std::env::var("WAMN_SYSTEM_ADMIN_URL").context("CDC administrator URL")?;
+        &administrator_env
+    };
+    let mut admin_url = url::Url::parse(administrator)?;
     admin_url.set_path(&database);
     crate::enable_cdc_project_env::apply_cdc_sql(
         admin_url.as_str(),

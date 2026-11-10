@@ -1,0 +1,10 @@
+{
+  "operation": "wamn-control:schema/diff@0.9.0",
+  "type": "command",
+  "label": "Schema diff",
+  "grant": "wamn-control:schema/diff@0.9.0",
+  "permission_token": "schema.diff",
+  "result": "one",
+  "transaction": "explicit_per_input",
+  "visibility": "public"
+}

@@ -500,6 +500,17 @@ pub async fn reset_deployed(
     file: &std::path::Path,
     candidate: Option<(&str, &str)>,
 ) -> anyhow::Result<Value> {
+    let admin = std::env::var("WAMN_SYSTEM_ADMIN_URL").context("reset administrator URL")?;
+    Box::pin(reset_deployed_with_admin(platform, file, candidate, &admin)).await
+}
+
+/// Reset with the existing administrator credential protected by the worker manifest.
+pub async fn reset_deployed_with_admin(
+    platform: &Platform,
+    file: &std::path::Path,
+    candidate: Option<(&str, &str)>,
+    admin_url: &str,
+) -> anyhow::Result<Value> {
     let document = EnvironmentDocument::read_deployed(
         platform,
         file,
@@ -553,7 +564,7 @@ pub async fn reset_deployed(
         stop_users(&platform, &document).await?;
         completed.push("workloads stopped");
         if needs_recreation(&platform, &document).await? {
-            recreate(&platform, &document, &mut completed).await?;
+            recreate(&platform, &document, &mut completed, admin_url).await?;
         } else {
             completed.push("pinned initialization retained");
         }
@@ -580,7 +591,7 @@ pub async fn reset_deployed(
             state.initialization_identity.as_deref() == Some(&pending.initialization_identity),
             "database initialization changed before reconnect"
         );
-        let result = reconnect(&platform, &document, &mut completed).await;
+        let result = reconnect(&platform, &document, &mut completed, admin_url).await;
         lock.release().await;
         result
     }
@@ -667,6 +678,7 @@ async fn recreate(
     platform: &Platform,
     document: &EnvironmentDocument,
     completed: &mut Vec<&str>,
+    admin_url: &str,
 ) -> anyhow::Result<()> {
     let instance = crate::provision_project_env::read_project_env_instance(
         &platform.system_database_url,
@@ -691,8 +703,7 @@ async fn recreate(
                 == document.triple().to_string(),
         "Database resource has different ownership"
     );
-    let admin_url = std::env::var("WAMN_SYSTEM_ADMIN_URL").context("reset administrator URL")?;
-    let mut postgres = url::Url::parse(&admin_url)?;
+    let mut postgres = url::Url::parse(admin_url)?;
     postgres.set_path("postgres");
     let admin = connect(postgres.as_str()).await?;
     let capture = wamn_control_provision::cdc_object_name(
@@ -791,6 +802,7 @@ async fn reconnect(
     platform: &Platform,
     document: &EnvironmentDocument,
     completed: &mut Vec<&str>,
+    admin_url: &str,
 ) -> anyhow::Result<Value> {
     let pending = read_pending(platform, document).await?;
     let pending_value = serde_json::to_value(&pending)?;
@@ -801,8 +813,7 @@ async fn reconnect(
     .await?;
     let name = database(document, &instance);
     let mut system = connect(&platform.system_database_url).await?;
-    let admin_url = std::env::var("WAMN_SYSTEM_ADMIN_URL").context("reset administrator URL")?;
-    let mut project_admin = url::Url::parse(&admin_url)?;
+    let mut project_admin = url::Url::parse(admin_url)?;
     project_admin.set_path(&name);
     // The installed SQL image owns the substrate. Reconnect uses the current
     // credential owner even when that image predates credential restoration.
@@ -810,12 +821,12 @@ async fn reconnect(
     ensure::prepare_cdc(
         platform,
         document,
-        &connect(&admin_url).await?,
+        &connect(admin_url).await?,
         project_admin.as_str(),
     )
     .await?;
-    reconnect_capture_gap(platform, document, &admin_url).await?;
-    ensure::ensure_cdc(platform, document).await?;
+    reconnect_capture_gap(platform, document, admin_url).await?;
+    ensure::ensure_cdc_inputs(platform, document, Some(admin_url)).await?;
     completed.push("CDC rebuilt");
     let broker = platform
         .events
@@ -826,7 +837,7 @@ async fn reconnect(
     completed.push("old event backlog discarded");
     registry::finish_database(&mut system, &document.triple(), &pending_value).await?;
     completed.push("reset complete");
-    ensure::ensure_cdc(platform, document)
+    ensure::ensure_cdc_inputs(platform, document, Some(admin_url))
         .await
         .context("reset complete; reapply the unchanged selections to resume event processing")?;
     resume_users(platform, document)

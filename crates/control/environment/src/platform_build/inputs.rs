@@ -82,11 +82,11 @@ fn declared(target: &str) -> anyhow::Result<Declared> {
             apps_target: false,
         },
         "ctl" => Declared {
-            native: &["wamn-ctl", "wamn-scenario-worker"],
+            native: &["wamn-ctl", "wamn-scenario-worker", "wamn-runtime"],
             cases: none,
             components: COMPONENTS,
-            paths: &["tools/guest-rustflags"],
-            dropped: none,
+            paths: &["tools/guest-rustflags", "deploy"],
+            dropped: &["deploy/platform/release/Chart.yaml"],
             apps_target: false,
         },
         "identity" => Declared {
@@ -121,13 +121,12 @@ fn declared(target: &str) -> anyhow::Result<Declared> {
             apps_target: false,
         },
         "runner" => Declared {
-            native: &["wamn-ctl", "wamn-scenario-worker"],
+            native: &["wamn-ctl", "wamn-scenario-worker", "wamn-runtime"],
             cases: &["wamn-wms-tests", "wamn-receiving-tests"],
             components: COMPONENTS,
             paths: &["apps", "deploy", "tools"],
-            // The `runner-deploy` stage removes the release chart, whose
-            // version is the platform version (wamn-6qo7v).
-            dropped: &["deploy/platform/release"],
+            // The inherited worker chart takes its version from server inputs.
+            dropped: &["deploy/platform/release/Chart.yaml"],
             apps_target: true,
         },
         _ => bail!("{target} is not a platform build target"),

@@ -443,24 +443,7 @@ fn stamp_chart(
     }
     defaults["platformUi"] = platform_ui.unwrap_or_default().into();
     std::fs::write(path, serde_yaml::to_string(&defaults)?)?;
-    let platform = chart.join("platform");
-    std::fs::create_dir_all(platform.join("resources"))?;
-    for name in ["identity", "edge"] {
-        copy_package_output(
-            &request.repository.join("deploy/platform").join(name),
-            &platform.join(name),
-        )?;
-    }
-    for source in RESOURCES {
-        let source = request.repository.join(source);
-        std::fs::copy(
-            &source,
-            platform
-                .join("resources")
-                .join(source.file_name().context("resource basename")?),
-        )
-        .with_context(|| format!("package {}", source.display()))?;
-    }
+    prepare_payload(&request.repository, &chart)?;
     drop(stage);
     let build_record = PlatformBuildRecord {
         stage_durations_ms: durations.lock().expect("stage durations lock").clone(),
@@ -470,6 +453,29 @@ fn stamp_chart(
         canonical_json_bytes(&serde_json::to_value(&build_record)?),
     )?;
     Ok(chart)
+}
+
+/// Copy the product deployment payload from its source owner into a chart.
+pub(crate) fn prepare_payload(repository: &Path, chart: &Path) -> anyhow::Result<()> {
+    let platform = chart.join("platform");
+    std::fs::create_dir_all(platform.join("resources"))?;
+    for name in ["identity", "edge"] {
+        copy_package_output(
+            &repository.join("deploy/platform").join(name),
+            &platform.join(name),
+        )?;
+    }
+    for source in RESOURCES {
+        let source = repository.join(source);
+        std::fs::copy(
+            &source,
+            platform
+                .join("resources")
+                .join(source.file_name().context("resource basename")?),
+        )
+        .with_context(|| format!("package {}", source.display()))?;
+    }
+    Ok(())
 }
 
 /// The role component registry: the registry over OCI, or a fake in tests.
@@ -989,7 +995,7 @@ impl Drop for CloudSource {
     }
 }
 
-fn copy_package_output(from: &Path, to: &Path) -> anyhow::Result<()> {
+pub(crate) fn copy_package_output(from: &Path, to: &Path) -> anyhow::Result<()> {
     std::fs::create_dir(to)?;
     for entry in std::fs::read_dir(from)? {
         let entry = entry?;

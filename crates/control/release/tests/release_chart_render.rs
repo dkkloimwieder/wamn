@@ -675,3 +675,80 @@ fn two_environments_in_one_namespace_share_no_object_name() {
         }
     }
 }
+
+#[test]
+#[ignore = "requires: bin:helm"]
+fn control_bindings_select_the_rendered_org_account_and_job_permissions() {
+    wamn_test_postgres::require_ignored_prerequisites("requires: bin:helm");
+    let scratch = Scratch::new("control-operations");
+    let chart = stamped_chart(&scratch);
+    let mut values = render_values("prod");
+    values["org"] = "acme".into();
+    values["runtime-operator"]["runtime"]["serviceAccount"] =
+        serde_yaml::from_str("{create: true, name: wamn-control-acme}").unwrap();
+    let path = scratch.0.join("control-values.yaml");
+    std::fs::write(&path, serde_yaml::to_string(&values).unwrap()).unwrap();
+    let output = helm(&[
+        "template",
+        "control",
+        chart.to_str().unwrap(),
+        "--namespace",
+        "hosts",
+        "-f",
+        path.to_str().unwrap(),
+    ]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let yaml = String::from_utf8(output.stdout).unwrap();
+    let objects = serde_yaml::Deserializer::from_str(&yaml)
+        .map(Value::deserialize)
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
+    let account = objects
+        .iter()
+        .find(|object| object["kind"] == "ServiceAccount")
+        .unwrap();
+    let bindings: Vec<_> = objects
+        .iter()
+        .filter(|object| object["kind"] == "RoleBinding")
+        .collect();
+    assert!(!bindings.is_empty());
+    for binding in bindings {
+        for subject in binding["subjects"].as_sequence().unwrap() {
+            assert_eq!(subject["name"], account["metadata"]["name"]);
+            assert_eq!(
+                subject["namespace"].as_str().unwrap(),
+                account["metadata"]["namespace"].as_str().unwrap_or("hosts")
+            );
+        }
+        if binding["metadata"]["namespace"] == "platform" {
+            let role = objects
+                .iter()
+                .find(|object| {
+                    object["kind"] == "Role"
+                        && object["metadata"]["name"] == binding["roleRef"]["name"]
+                })
+                .unwrap();
+            assert!(
+                role["rules"]
+                    .as_sequence()
+                    .unwrap()
+                    .iter()
+                    .any(
+                        |rule| rule["resources"] == serde_yaml::to_value(["jobs"]).unwrap()
+                            && rule["verbs"] == serde_yaml::to_value(["create", "get"]).unwrap()
+                    )
+            );
+            assert!(!role["rules"].as_sequence().unwrap().iter().any(|rule| {
+                rule["resources"]
+                    .as_sequence()
+                    .unwrap()
+                    .iter()
+                    .any(|resource| resource == "secrets")
+            }));
+        }
+    }
+}

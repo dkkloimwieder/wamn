@@ -145,70 +145,45 @@ pub async fn run(command: SchemaCommand) -> anyhow::Result<()> {
         (args.application, args.release)
     };
     environment::runtime::resolve_platform(&mut platform, &document.org).await?;
-    let (application, release, candidates) = if document.applications.contains_key(&application) {
-        let (release, candidates) =
-            schema::release_candidates(&platform, &document, &application, release.as_deref())
-                .await?;
-        (application, Some(release), candidates)
-    } else {
-        ensure!(
-            release.is_none(),
-            "a source schema diff does not select --release"
-        );
-        ensure!(
-            std::path::Path::new(&application).is_dir(),
-            "application {application} is not declared and its source package directory is missing"
-        );
-        let (application, roots) = wamn_dev_control::source_deploy::sources(
-            &document,
-            std::path::Path::new(&application),
-        )?;
-        let candidates = roots
-            .into_iter()
-            .map(|path| {
-                schema::Candidate::source(wamn_package_control::apply_package::PackageRoot {
-                    path,
-                    artifact_digest: None,
-                })
+    if document.applications.contains_key(&application) {
+        let diff = environment::operation::schema(
+            &platform,
+            &args.env,
+            &application,
+            release.as_deref(),
+            apply,
+            resolution.as_ref(),
+            None,
+        )
+        .await?;
+        println!("{}", serde_json::to_string_pretty(&diff)?);
+        return Ok(());
+    }
+    ensure!(
+        release.is_none(),
+        "a source schema diff does not select --release"
+    );
+    ensure!(
+        std::path::Path::new(&application).is_dir(),
+        "application {application} is not declared and its source package directory is missing"
+    );
+    let (application, roots) =
+        wamn_dev_control::source_deploy::sources(&document, std::path::Path::new(&application))?;
+    let candidates = roots
+        .into_iter()
+        .map(|path| {
+            schema::Candidate::source(wamn_package_control::apply_package::PackageRoot {
+                path,
+                artifact_digest: None,
             })
-            .collect::<Result<_, _>>()?;
-        (application, None, candidates)
-    };
+        })
+        .collect::<Result<Vec<_>, _>>()?;
     let state = schema::state(&platform, &document).await?;
-    let diff = schema::plan(&document, &application, release, &candidates, &state)?;
+    let diff = schema::plan(&document, &application, None, &candidates, &state)?;
     println!("{}", serde_json::to_string_pretty(&diff)?);
     if resolution.is_none() && diff.requires_reset() && diff.disposable == Some(true) {
         // Resolve the complete retained set before reset can mutate the target.
         schema::reset_candidates(&platform, &diff, candidates).await?;
-    }
-    if apply {
-        let release = diff
-            .release
-            .as_deref()
-            .context("schema apply needs a published release")?;
-        wamn_package_control::apply_package::resolution_package(
-            resolution.as_ref(),
-            diff.packages
-                .keys()
-                .map(|id| (id.as_str(), state.migration_records(id))),
-        )?;
-        if resolution.is_none() && diff.requires_reset() {
-            Box::pin(environment::sql::reset::reset_deployed(
-                &platform,
-                &args.env,
-                Some((&application, release)),
-            ))
-            .await?;
-        } else {
-            environment::sql::apply_deployed(
-                &platform,
-                &document,
-                &application,
-                release,
-                resolution.as_ref(),
-            )
-            .await?;
-        }
     }
     Ok(())
 }

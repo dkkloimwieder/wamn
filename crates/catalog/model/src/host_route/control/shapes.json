@@ -94,6 +94,23 @@
     "member/grant.result.json",
     "member/revoke.result.json"
   ],
+  "operation.errors": [
+    "application/deploy.errors.json",
+    "application/rollback.errors.json",
+    "schema/diff.errors.json",
+    "schema/apply.errors.json",
+    "schema/reset.errors.json",
+    "schema/adopt.errors.json",
+    "operation/status.errors.json"
+  ],
+  "operation.started": [
+    "application/deploy.result.json",
+    "application/rollback.result.json",
+    "schema/diff.result.json",
+    "schema/apply.result.json",
+    "schema/reset.result.json",
+    "schema/adopt.result.json"
+  ],
   "org_admin.grant-revoke.result": [
     "org_admin/grant.result.json",
     "org_admin/revoke.result.json"

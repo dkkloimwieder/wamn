@@ -594,17 +594,39 @@ pub async fn adopt(
     document: &EnvironmentDocument,
     initialization_identity: &str,
 ) -> anyhow::Result<BTreeMap<String, Vec<String>>> {
+    adopt_application(platform, document, initialization_identity, None).await
+}
+
+/// Adopt only the requested application's published packages, or the complete environment.
+pub async fn adopt_application(
+    platform: &Platform,
+    document: &EnvironmentDocument,
+    initialization_identity: &str,
+    application: Option<&str>,
+) -> anyhow::Result<BTreeMap<String, Vec<String>>> {
+    let packages = application
+        .map(|name| {
+            document
+                .applications
+                .get(name)
+                .with_context(|| format!("application {name} is not declared"))
+        })
+        .transpose()?
+        .map(|selection| &selection.packages);
     let state = state(platform, document).await?;
     ensure!(
         state.initialization_identity.as_deref() == Some(initialization_identity),
         "database initialization changed before adoption"
     );
     let mut selected = BTreeMap::new();
-    for (application, selection) in &document.applications {
-        if matches!(selection.current, DeclaredRelease::None) {
+    for (application_name, selection) in &document.applications {
+        if application.is_some_and(|name| name != application_name)
+            || matches!(selection.current, DeclaredRelease::None)
+        {
             continue;
         }
-        let (_, candidates) = release_candidates(platform, document, application, None).await?;
+        let (_, candidates) =
+            release_candidates(platform, document, application_name, None).await?;
         for candidate in candidates {
             let manifest = PackageManifest::from_slice(&candidate.directory.manifest_bytes)?;
             if let Some(previous) = selected.get(&manifest.package.id) {
@@ -620,6 +642,9 @@ pub async fn adopt(
         }
     }
     for (id, installed) in &state.packages {
+        if packages.is_some_and(|packages| !packages.contains(id)) {
+            continue;
+        }
         if !selected.contains_key(id) {
             let artifact = installed
                 .artifact_digest

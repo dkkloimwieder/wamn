@@ -127,6 +127,48 @@ The deployment output names its work directory. Keep it while the cluster exists
 
 ## Application and schema operations
 
+The control host starts application operations as Kubernetes Jobs.
+A Job runs one command to completion.
+These routes require a password session and administrator authority for the requested project.
+The host supplies the organization.
+Every request supplies `project` and `env`.
+POST requests put those members under `value`.
+GET requests use the existing read query parameters.
+POST requests also supply `request_id` in the existing request envelope.
+
+`POST /wamn_control/application/deploy` takes a published `release` digest.
+It selects and deploys that release's declared application.
+`POST /wamn_control/application/rollback` takes `application` and an optional `release` digest.
+Both operations change code selections without running SQL.
+Initialize application SQL through the explicit schema operation before the first code deployment.
+
+`POST /wamn_control/schema/diff` and `POST /wamn_control/schema/apply` accept optional `application` and `release` members.
+Without `application`, they process the environment's selected applications.
+An explicit release requires an application.
+Apply also accepts the existing `resolve` migration choice.
+`POST /wamn_control/schema/reset` resets the whole disposable environment.
+`POST /wamn_control/schema/adopt` accepts an optional application.
+Without it, adoption covers the environment.
+These routes expose no system SQL operation.
+
+Each start response returns `job`, the Kubernetes Job name.
+`GET /wamn_control/operation/status` takes `project`, `env`, and that `job` reference.
+It returns `state` and a log tail of at most 100 lines and 32 KiB.
+States are `pending`, `running`, `succeeded`, and `failed`.
+Every read repeats project authorization and compares the Job's target with the request.
+Jobs stop after 15 minutes.
+Kubernetes removes completed Jobs after one hour.
+There is no operation history database.
+
+The server selects the image, command, namespace, actor, chart, and credential references.
+Deploy, rollback, and diff use the existing apply, registry, and NATS credentials.
+Apply, reset, and adopt also receive the existing CNPG administrator credential.
+Those SQL Jobs are privileged.
+The ctl image carries the chart templates and deployment resources.
+Platform deployment stores immutable chart values and the image selection in a ConfigMap.
+Environment provisioning creates separate code and SQL ServiceAccounts and namespace Roles.
+
+
 Use direct kubeconfig and database access for trusted development and bootstrap.
 Authenticated WAMN control routes are the product target for both the CLI and UI.
 That target shares the operation owners below. This document does not claim that deployment control routes are complete.
@@ -164,7 +206,8 @@ wamn rollback sample_app --release sha256:<release-digest> --env environments/de
 wamn status --env environments/dev/environment.k
 ```
 
-Publication needs no destination database. Initial deployment provisions the environment and initializes missing SQL through a Kubernetes Job.
+Publication needs no destination database.
+Provision the environment with `env apply` and apply its application SQL before the first code deployment.
 Each application owns its Helm release, host group, workloads, Services, and route ConfigMaps.
 The route ConfigMaps carry `wamn.route=true`. The edge reads that label.
 Code-only deploy, reapply, and rollback preserve installed SQL and other applications' data, permissions, routes, and workloads.
@@ -209,7 +252,8 @@ A deployed source apply builds and publishes first, then executes those immutabl
 For adjacent `dev.json` and a source directory, diff and apply use the local connection described in [development loop](development-loop.md).
 
 In `migrate`, explicit apply executes pending files in dependency order and preserves existing rows.
-The watcher and code deployment initialize absent packages but do not advance installed SQL.
+The watcher initializes absent packages but does not advance installed SQL.
+Code deployment preserves installed SQL.
 An ordinary migration file and its completion record commit together.
 `catalog.packages` stores each package's baseline, current fingerprint, version, and artifact source.
 `catalog.package_migrations` stores ordered paths, checksums, outcomes, and completion timestamps across code versions.
@@ -227,7 +271,7 @@ Resolve an uncertain `started` record before adoption.
 
 ### Reset scope and recovery
 
-If selected physical SQL changes in authorized `reset` mode, deploy or schema apply replaces the whole project-environment database.
+If selected physical SQL changes in authorized `reset` mode, schema apply replaces the whole project-environment database.
 Every application in that database loses its data, including stopped applications with retained schemas.
 Manual workflow definitions, queued runs, and other database-local state also disappear.
 An explicit schema reset performs that replacement even when the fingerprints match.
@@ -249,7 +293,7 @@ Existing owners restore grants, bindings, release caches, and CDC.
 The broker discards only that environment's obsolete events while writers remain stopped.
 WAMN clears the pending record before resuming unchanged application selections.
 
-After an interruption, repeat the same reset or schema-changing deploy.
+After an interruption, repeat the same reset or schema apply.
 Before the recreated database carries the pinned initialization identity, retry can repeat deletion and creation.
 After that identity exists, retry preserves the recreated database and resumes SQL restoration and cleanup.
 If workload resume fails after the pending record clears, reapply the affected application's release.
@@ -426,7 +470,8 @@ Platform deployment owns system initialization, the initial organization, and th
 Do not repeat the removed numbered installer or its initial application pass.
 
 Application publication is independent of the destination database.
-`wamn deploy` provisions missing shared resources, initializes absent application SQL, and then applies the targeted application release.
+`env apply` provisions shared environment resources.
+Apply application SQL before `wamn deploy` selects the targeted code release.
 Platform deployment performs no application pass.
 
 The optional `client` field pins an application web artifact: `client = {package = "wamn_receiving", web = "<full web digest>"}`.

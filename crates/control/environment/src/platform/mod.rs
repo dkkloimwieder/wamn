@@ -13,6 +13,7 @@ pub(crate) mod job;
 pub use job::system_schema;
 pub mod manifests;
 pub mod oauth;
+pub mod operations;
 pub mod pools;
 pub mod project;
 pub mod provider;

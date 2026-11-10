@@ -118,6 +118,8 @@ pub enum HostRouteSet {
 /// The host code that serves one host route.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum HostHandler {
+    /// Start or observe one authorized application deployment or schema Job.
+    OperationJob,
     /// Project integration and environment connection administration.
     IntegrationAdministration,
     /// The caller's effective permission set in this application.
@@ -271,6 +273,55 @@ const ROUTES: &[HostRoute] = &[
         type_: OperationType::Command,
         authority: HostRouteAuthority::Granted,
         handler: HostHandler::FileExpose,
+    },
+    HostRoute {
+        set: HostRouteSet::Control,
+        operation: "application.deploy",
+        type_: OperationType::Command,
+        authority: HostRouteAuthority::ProjectAdmin,
+        handler: HostHandler::OperationJob,
+    },
+    HostRoute {
+        set: HostRouteSet::Control,
+        operation: "application.rollback",
+        type_: OperationType::Command,
+        authority: HostRouteAuthority::ProjectAdmin,
+        handler: HostHandler::OperationJob,
+    },
+    HostRoute {
+        set: HostRouteSet::Control,
+        operation: "schema.diff",
+        type_: OperationType::Command,
+        authority: HostRouteAuthority::ProjectAdmin,
+        handler: HostHandler::OperationJob,
+    },
+    HostRoute {
+        set: HostRouteSet::Control,
+        operation: "schema.apply",
+        type_: OperationType::Command,
+        authority: HostRouteAuthority::ProjectAdmin,
+        handler: HostHandler::OperationJob,
+    },
+    HostRoute {
+        set: HostRouteSet::Control,
+        operation: "schema.reset",
+        type_: OperationType::Command,
+        authority: HostRouteAuthority::ProjectAdmin,
+        handler: HostHandler::OperationJob,
+    },
+    HostRoute {
+        set: HostRouteSet::Control,
+        operation: "schema.adopt",
+        type_: OperationType::Command,
+        authority: HostRouteAuthority::ProjectAdmin,
+        handler: HostHandler::OperationJob,
+    },
+    HostRoute {
+        set: HostRouteSet::Control,
+        operation: "operation.status",
+        type_: OperationType::Get,
+        authority: HostRouteAuthority::ProjectAdmin,
+        handler: HostHandler::OperationJob,
     },
     HostRoute {
         set: HostRouteSet::Control,

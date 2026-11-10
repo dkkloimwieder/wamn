@@ -165,6 +165,10 @@ COPY --from=build-native /native-output/docker-credential-wamn /usr/local/bin/do
 ENV HOME=/tmp
 ENTRYPOINT ["/usr/local/bin/wamn-host"]
 
+# The worker uses server-selected metadata, so a version bump changes no image bytes.
+FROM root-source AS ctl-deploy
+RUN rm /build/deploy/platform/release/Chart.yaml
+
 # ---- ctl image: the one-shot control-plane verbs (SR9) ----------------------
 FROM debian:trixie-slim AS ctl
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates && rm -rf /var/lib/apt/lists/*
@@ -176,6 +180,14 @@ COPY --from=build-native /native-output/wamn-scenario-worker /usr/local/bin/wamn
 # `wamn-ctl env` applies manifests with kubectl, pinned by version and its
 # published sha256 (wamn-zua8.3). wamn-iggi moves the pin to the GKE minor.
 ADD --chmod=0755 --checksum=sha256:629d3f410e09bf49b64ae7079f7f0bda1191efed311f7d37fdbab0ad5b0ec2b7 https://dl.k8s.io/release/v1.36.1/bin/linux/amd64/kubectl /usr/local/bin/kubectl
+ADD --checksum=sha256:9adafecab4d406853bba163a70e9f104f47dbbf65ce24b7653bae7e36150bcb6 https://get.helm.sh/helm-v4.2.2-linux-amd64.tar.gz /tmp/helm.tgz
+ADD --checksum=sha256:1cb3490c4df4c823ae6b76289797791c1077611f677d2b3a3d0bc292dc704f2e https://github.com/kcl-lang/cli/releases/download/v0.13.0/kcl-v0.13.0-linux-amd64.tar.gz /tmp/kcl.tgz
+RUN tar -xzf /tmp/helm.tgz -C /usr/local/bin --strip-components=1 linux-amd64/helm \
+ && tar -xzf /tmp/kcl.tgz -C /usr/local/bin kcl \
+ && rm /tmp/helm.tgz /tmp/kcl.tgz
+COPY --from=build-native /native-output/docker-credential-wamn /usr/local/bin/docker-credential-wamn
+ENV WAMN_KCL=/usr/local/bin/kcl
+COPY --from=ctl-deploy /build/deploy /usr/local/share/wamn/deploy
 ENV HOME=/tmp
 ENTRYPOINT ["/usr/local/bin/wamn-ctl"]
 
@@ -232,21 +244,15 @@ RUN mkdir /wit-output \
  && find crates -type d -name wit -prune -exec cp -r --parents {} /wit-output \;
 
 # ---- runner image: the qualification runner FROM ctl -----------------------
-# ctl is unchanged; the runner adds what `qualify-release` runs the cases with
+# The runner adds what `qualify-release` runs the cases with
 # (docs/operations/delivery.md#release-qualification): repository inputs
 # and cluster tools, each pinned by version
 # and its published sha256 (the Docker CLI by the sha256 of its archive).
 FROM ctl AS runner
 COPY --from=build-native /native-output/wamn /usr/local/bin/wamn
 ADD --checksum=sha256:5c0d19f31fece1accd0358bb8cff591fe25d7b6cba19f0fd412cbfdc07f75ff6 https://download.docker.com/linux/static/stable/x86_64/docker-28.5.1.tgz /tmp/docker.tgz
-ADD --checksum=sha256:9adafecab4d406853bba163a70e9f104f47dbbf65ce24b7653bae7e36150bcb6 https://get.helm.sh/helm-v4.2.2-linux-amd64.tar.gz /tmp/helm.tgz
-ADD --checksum=sha256:1cb3490c4df4c823ae6b76289797791c1077611f677d2b3a3d0bc292dc704f2e https://github.com/kcl-lang/cli/releases/download/v0.13.0/kcl-v0.13.0-linux-amd64.tar.gz /tmp/kcl.tgz
 RUN tar -xzf /tmp/docker.tgz -C /usr/local/bin --strip-components=1 docker/docker \
- && tar -xzf /tmp/helm.tgz -C /usr/local/bin --strip-components=1 linux-amd64/helm \
- && tar -xzf /tmp/kcl.tgz -C /usr/local/bin kcl \
- && rm /tmp/docker.tgz /tmp/helm.tgz /tmp/kcl.tgz
-# The cases compile package documents with this kcl, not tools/install-kcl.
-ENV WAMN_KCL=/usr/local/bin/kcl
+ && rm /tmp/docker.tgz
 ADD --chmod=0755 --checksum=sha256:50030de23cf40a18505f20426f6a8506bedf13c6e509244bd1fa9463721b0f54 https://github.com/kubernetes-sigs/kind/releases/download/v0.32.0/kind-linux-amd64 /usr/local/bin/kind
 # The cases run kubectl v1.36.2; ctl's own pin stays as it is.
 ADD --chmod=0755 --checksum=sha256:1e9045ec32bea85da43de85f0065358529ea7c7a152eca78154fba5b58c27d82 https://dl.k8s.io/release/v1.36.2/bin/linux/amd64/kubectl /usr/local/bin/kubectl

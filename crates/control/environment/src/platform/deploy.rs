@@ -103,6 +103,7 @@ pub async fn deploy(
         identity::initialize(target, document, &identity_chart, directory).await?;
         control::initialize(target, document).await?;
     }
+    super::operations::prepare(target, document, &platform_chart).await?;
     let entry = control::resource_entry(document, &control_chart, control_values.as_ref())?;
     resources::apply_release(target, &entry, directory).await?;
     let payload = chart.directory().join("platform/resources");

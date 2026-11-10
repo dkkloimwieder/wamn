@@ -161,3 +161,118 @@ fn platform_edge_uses_the_selected_image_and_existing_certificate() -> anyhow::R
     }
     Ok(())
 }
+
+#[test]
+fn operation_worker_bindings_use_their_own_accounts_and_namespace_resources() -> anyhow::Result<()>
+{
+    use wamn_environment_control::{
+        environment::document::EnvironmentDocument, platform::operations,
+    };
+    let document = EnvironmentDocument::from_json(&serde_json::to_vec(&json!({
+        "org":"acme","project":"billing","env":"dev","target":"cloud","policy":"dev","applications":{}
+    }))?)?;
+    let cluster = "database-owner";
+    let database = "recorded-environment-database";
+    let objects = operations::target_objects(&document, cluster, database)?;
+    for account in objects
+        .iter()
+        .filter(|object| object["kind"] == "ServiceAccount")
+    {
+        assert_eq!(account["metadata"]["namespace"], "platform");
+        let name = account["metadata"]["name"].as_str().unwrap();
+        let privileged = name.ends_with("-sql");
+        for binding in objects
+            .iter()
+            .filter(|object| object["kind"] == "RoleBinding" && object["metadata"]["name"] == name)
+        {
+            assert_eq!(binding["subjects"][0]["name"], name);
+            assert_eq!(
+                binding["subjects"][0]["namespace"],
+                account["metadata"]["namespace"]
+            );
+            let role = objects
+                .iter()
+                .find(|object| {
+                    object["kind"] == "Role"
+                        && object["metadata"]["name"] == binding["roleRef"]["name"]
+                        && object["metadata"]["namespace"] == binding["metadata"]["namespace"]
+                })
+                .unwrap();
+            assert!(matches!(
+                role["metadata"]["namespace"].as_str(),
+                Some("platform" | "hosts")
+            ));
+            for rule in role["rules"].as_array().unwrap() {
+                if role["metadata"]["namespace"] == "hosts" {
+                    let resources = rule["resources"].as_array().unwrap();
+                    let verbs = rule["verbs"].as_array().unwrap();
+                    if resources.iter().any(|resource| resource == "secrets") {
+                        assert!(!verbs.iter().any(|verb| verb == "watch"));
+                        if verbs.iter().any(|verb| verb == "patch") {
+                            assert!(privileged, "only SQL credential handoff patches Secrets");
+                        }
+                    }
+                    if resources.iter().any(|resource| resource == "configmaps")
+                        && verbs.iter().any(|verb| verb == "update")
+                    {
+                        assert!(!privileged, "SQL preserves the canonical selection");
+                        assert_eq!(
+                            rule["resourceNames"],
+                            json!([name.strip_suffix("-code").unwrap()])
+                        );
+                    }
+                }
+                for field in ["resources", "verbs", "apiGroups"] {
+                    assert!(
+                        !rule[field]
+                            .as_array()
+                            .unwrap()
+                            .iter()
+                            .any(|value| value == "*")
+                    );
+                }
+                if rule["apiGroups"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|group| group == "postgresql.cnpg.io")
+                {
+                    assert_eq!(rule["resourceNames"], json!([database]));
+                    assert!(
+                        !rule["verbs"]
+                            .as_array()
+                            .unwrap()
+                            .iter()
+                            .any(|verb| verb == "create" || verb == "delete")
+                    );
+                }
+                if role["metadata"]["namespace"] == "platform"
+                    && rule["resources"]
+                        .as_array()
+                        .unwrap()
+                        .iter()
+                        .any(|value| value == "secrets")
+                {
+                    assert!(
+                        privileged,
+                        "a code worker can read platform administrator Secrets"
+                    );
+                    assert!(
+                        rule["resourceNames"]
+                            .as_array()
+                            .unwrap()
+                            .iter()
+                            .any(|value| value == &format!("{cluster}-superuser"))
+                    );
+                }
+            }
+        }
+        assert_eq!(
+            objects.iter().any(|object| object["kind"] == "Role"
+                && object["metadata"]["namespace"] == "platform"
+                && object["metadata"]["name"] == name),
+            privileged
+        );
+    }
+    Ok(())
+}

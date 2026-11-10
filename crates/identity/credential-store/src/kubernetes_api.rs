@@ -18,6 +18,21 @@ pub struct KubernetesApi {
 }
 
 impl KubernetesApi {
+    /// Use an existing transport and endpoint, including a recorded API in tests.
+    pub fn with_client(
+        http: reqwest::Client,
+        base: String,
+        token: String,
+        namespace: String,
+    ) -> Self {
+        Self {
+            http,
+            base,
+            token,
+            namespace,
+        }
+    }
+
     /// Read the pod's API endpoint, token, CA and namespace.
     pub fn in_cluster() -> Result<Self, Error> {
         let host = std::env::var("KUBERNETES_SERVICE_HOST")
@@ -76,6 +91,79 @@ impl KubernetesApi {
             .await
             .map_err(|source| failure("read GET", &path, source))?;
         serde_json::from_slice(&body).map_err(|source| failure("decode GET", &path, source))
+    }
+
+    /// Submit one server-built Job without retries.
+    pub async fn create_job(&self, namespace: &str, job: &Value) -> Result<Value, Error> {
+        let path = format!("/apis/batch/v1/namespaces/{namespace}/jobs");
+        let response = self
+            .http
+            .post(format!("{}{path}", self.base))
+            .bearer_auth(&self.token)
+            .json(job)
+            .send()
+            .await
+            .map_err(|source| failure("create Job", &path, source))?;
+        successful_response(response, "create Job", &path)?
+            .json()
+            .await
+            .map_err(|source| failure("decode Job", &path, source))
+    }
+
+    /// Read one Job. The caller supplies validated Kubernetes names.
+    pub async fn get_job(&self, namespace: &str, name: &str) -> Result<Option<Value>, Error> {
+        let path = format!("/apis/batch/v1/namespaces/{namespace}/jobs/{name}");
+        let response = self
+            .http
+            .get(format!("{}{path}", self.base))
+            .bearer_auth(&self.token)
+            .send()
+            .await
+            .map_err(|source| failure("get Job", &path, source))?;
+        if response.status() == reqwest::StatusCode::NOT_FOUND {
+            return Ok(None);
+        }
+        successful_response(response, "get Job", &path)?
+            .json()
+            .await
+            .map(Some)
+            .map_err(|source| failure("decode Job", &path, source))
+    }
+
+    /// Read at most 32 KiB and 100 lines from one pod without following its log.
+    pub async fn pod_log(&self, namespace: &str, pod: &str) -> Result<String, Error> {
+        const LIMIT: usize = 32 * 1024;
+        let path = format!(
+            "/api/v1/namespaces/{namespace}/pods/{pod}/log?container=operation&tailLines=100&limitBytes={LIMIT}"
+        );
+        let response = self
+            .http
+            .get(format!("{}{path}", self.base))
+            .bearer_auth(&self.token)
+            .send()
+            .await
+            .map_err(|source| failure("pod log", &path, source))?;
+        let mut response = successful_response(response, "pod log", &path)?;
+        let mut bytes = Vec::new();
+        while bytes.len() < LIMIT {
+            let Some(chunk) = response
+                .chunk()
+                .await
+                .map_err(|source| failure("read log", &path, source))?
+            else {
+                break;
+            };
+            bytes.extend_from_slice(&chunk[..chunk.len().min(LIMIT - bytes.len())]);
+        }
+        let mut log = String::from_utf8_lossy(&bytes).into_owned();
+        if log.len() > LIMIT {
+            let mut end = LIMIT;
+            while !log.is_char_boundary(end) {
+                end -= 1;
+            }
+            log.truncate(end);
+        }
+        Ok(log)
     }
 }
 

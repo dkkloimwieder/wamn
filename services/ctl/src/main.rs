@@ -38,6 +38,9 @@ struct Cli {
 /// instead.
 #[derive(Subcommand)]
 enum Command {
+    /// Execute one server-authorized application operation in a worker Job.
+    #[command(hide = true)]
+    Operation(OperationArgs),
     /// Build and push the platform images and stamp them into the release
     /// chart's defaults.
     BuildPlatform(delivery_verbs::BuildPlatformArgs),
@@ -114,6 +117,24 @@ enum Command {
     Project(project_verbs::ProjectCommand),
 }
 
+#[derive(clap::Args)]
+struct OperationArgs {
+    #[arg(value_parser = ["deploy", "rollback", "diff", "apply", "reset", "adopt"])]
+    operation: String,
+    #[arg(long)]
+    org: String,
+    #[arg(long)]
+    project: String,
+    #[arg(long)]
+    env: String,
+    #[arg(long)]
+    application: Option<String>,
+    #[arg(long)]
+    release: Option<String>,
+    #[arg(long)]
+    resolve: Option<wamn_package_control::apply_package::MigrationResolution>,
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
@@ -132,6 +153,22 @@ async fn main() -> anyhow::Result<()> {
         .init();
 
     match cli.command {
+        Command::Operation(args) => {
+            let result = wamn_environment_control::environment::operation::run(
+                wamn_environment_control::environment::operation::Request {
+                    operation: &args.operation,
+                    org: &args.org,
+                    project: &args.project,
+                    env: &args.env,
+                    application: args.application.as_deref(),
+                    release: args.release.as_deref(),
+                    resolution: args.resolve.as_ref(),
+                },
+            )
+            .await?;
+            println!("{}", serde_json::to_string(&result)?);
+            Ok(())
+        }
         Command::BuildPlatform(args) => delivery_verbs::build_platform(args).await,
         Command::QualifyRelease(args) => delivery_verbs::qualify(args).await,
         Command::ProvisionSystem(args) => provisioning_verbs::provision_system(args).await,

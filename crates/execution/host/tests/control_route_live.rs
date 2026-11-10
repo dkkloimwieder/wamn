@@ -2036,3 +2036,6 @@ async fn delayed_grant_cannot_restore_revoked_admin() -> anyhow::Result<()> {
     std::fs::remove_dir_all(logins)?;
     Ok(())
 }
+
+#[path = "support/operation_jobs.rs"]
+mod operation_jobs;

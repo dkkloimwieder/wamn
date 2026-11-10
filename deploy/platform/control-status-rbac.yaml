@@ -1,19 +1,4 @@
-# The status and credential access of the control host
-# (docs/architecture/overview.md#environment-lifecycle, owner ruling 2026-10-13,
-# wamn-esnu9). Applied once per cluster by the platform install, into the
-# release namespace (`hosts` on GKE, `wamn-system` on kind):
-#
-#   kubectl -n <release namespace> apply -f deploy/platform/control-status-rbac.yaml
-#
-# No object states a namespace. The subject's namespace defaults to the
-# RoleBinding's namespace. The control host group runs as the one platform
-# service account `wamn-host` in the release namespace (docs/operations/gcp.md
-# section 3.23, wamn-okr8y). The control group mounts a projected token
-# (deploy/platform/release). Environment releases use separate ServiceAccounts.
-#
-# get, list and watch on pods, deployments and workloaddeployments in the
-# release namespace. Credential writes grant create, get and update on Secrets.
-# `crates/execution/host/src/environment_status.rs` tests these rules.
+# The control chart binds this namespace Role to each org control account.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
@@ -31,15 +16,6 @@ rules:
 - apiGroups: [""]
   resources: [secrets]
   verbs: [create, get, update]
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: wamn-control-status
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: Role
-  name: wamn-control-status
-subjects:
-- kind: ServiceAccount
-  name: wamn-host
+- apiGroups: [""]
+  resources: [configmaps]
+  verbs: [get]

@@ -215,6 +215,16 @@ Data, membership and role rows do not change with the status, and CDC stays atta
 `user.invite` calls identity `POST /users` and `POST /invitations` with the operator certificate of `--pat-issuer`, `--pat-client-cert`, `--pat-client-key` and `--pat-server-ca`, through [`wamn-identity-client`](../../crates/identity/client/src/lib.rs).
 It writes the membership and the grants between the two calls, and it calls `/invitations` only when the user has no password.
 The host refuses an email or a display name that the identity rules refuse before it calls identity, and answers `user_refused` when identity refuses the user.
+The control set also serves `application.deploy`, `application.rollback`, `schema.diff`, `schema.apply`, `schema.reset`, `schema.adopt`, and `operation.status`.
+Each route requires `ProjectAdmin` authority for `project` in the host's organization.
+The request names `project` and `env`.
+The server builds the command and credential references after it repeats authorization and resolves the target.
+The six start routes return a Kubernetes Job name.
+`operation.status` compares that Job's target and reads its state and bounded log tail.
+The host links no deployment library and keeps no operation history.
+The protected `WAMN_DEPLOY_ACTOR` input carries the authenticated principal to the worker.
+[Deployment routes](../operations/deployment.md#application-and-schema-operations) defines inputs, credential scope, deadlines, and result bounds.
+
 The contracts of the control routes live in [`host_route/control/contracts`](../../crates/catalog/model/src/host_route/control/contracts), and the generator projects them into the TypeScript client `@wamn/control-org-client` in `apps/target/wamn/wamn_control/control/client-ts`.
 The control set has its own client because both sets serve `user.list`.
 

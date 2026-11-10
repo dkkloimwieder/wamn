@@ -1,0 +1,10 @@
+{
+  "operation": "wamn-control:application/rollback@0.9.0",
+  "type": "command",
+  "label": "Application rollback",
+  "grant": "wamn-control:application/rollback@0.9.0",
+  "permission_token": "application.rollback",
+  "result": "one",
+  "transaction": "explicit_per_input",
+  "visibility": "public"
+}

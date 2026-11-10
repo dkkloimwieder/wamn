@@ -464,9 +464,6 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
         .await
         .is_err()
     );
-    let selected_b =
-        wamn_environment_control::environment::analyse::select_application(&document, Some("b"))?;
-    assert!(sql::needs_initialization(&platform, &selected_b).await?);
     // Inspect and install B's SQL before selecting or activating B's code.
     let b_current = std::mem::replace(
         &mut document.applications.get_mut("b").unwrap().current,
@@ -510,7 +507,6 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
     }
     assert_eq!(installed.packages["a"], state.packages["a"]);
     document.applications.get_mut("b").unwrap().current = b_current;
-    assert!(!sql::needs_initialization(&platform, &document).await?);
     let mut observer_url = admin_url;
     observer_url.set_path(&database_name);
     let observer = connect(observer_url.as_str()).await?;
@@ -674,7 +670,6 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
         wamn_environment_control::environment::document::DeclaredRelease::Digest(
             new_a.digest().as_str().into(),
         );
-    assert!(!sql::needs_initialization(&platform, &document).await?);
     document
         .applications
         .get_mut("a")

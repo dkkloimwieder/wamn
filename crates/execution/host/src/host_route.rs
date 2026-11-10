@@ -82,6 +82,7 @@ pub struct HostRouteDelivery {
     release: Arc<LoadedRelease>,
     #[cfg(feature = "test-util")]
     projection_pause: Option<Arc<crate::control_route::ProjectionPause>>,
+    operation_jobs: Option<wamn_credential_store::kubernetes_api::KubernetesApi>,
     handlers: HostRouteHandlers,
     next: Option<Arc<dyn RouteDelivery>>,
     files: Option<Arc<crate::file_route::FileRoutes>>,
@@ -109,6 +110,7 @@ impl HostRouteDelivery {
         Self {
             release,
             handlers,
+            operation_jobs: None,
             #[cfg(feature = "test-util")]
             projection_pause: None,
             next,
@@ -142,6 +144,15 @@ impl HostRouteDelivery {
         oauth: Option<Arc<wamn_runtime::oauth_authorization::Authorization>>,
     ) -> Self {
         self.oauth = oauth;
+        self
+    }
+
+    /// Use the process-owned Kubernetes client for operation Jobs.
+    pub fn with_operation_jobs(
+        mut self,
+        api: wamn_credential_store::kubernetes_api::KubernetesApi,
+    ) -> Self {
+        self.operation_jobs = Some(api);
         self
     }
 
@@ -304,6 +315,7 @@ impl HostRouteDelivery {
                     identity: identity.as_ref(),
                     administration: administration.as_deref(),
                     status: status.as_ref(),
+                    operation_jobs: self.operation_jobs.as_ref(),
                     org,
                     changes,
                     connection_health: self.connection_health.as_deref(),

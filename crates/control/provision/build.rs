@@ -5,9 +5,10 @@ fn main() {
         Path::new(&env::var("CARGO_MANIFEST_DIR").expect("Cargo supplies the manifest directory"))
             .join("../../../deploy/sql");
     let mut generated = String::new();
+    println!("cargo:rerun-if-changed=../../../deploy/sql/migrations/system");
+    println!("cargo:rerun-if-changed=../../../deploy/sql/migrations/project");
     for scope in ["system", "project"] {
         let directory = root.join("migrations").join(scope);
-        println!("cargo:rerun-if-changed={}", directory.display());
         let mut files = fs::read_dir(&directory)
             .expect("read migration directory")
             .map(|entry| entry.expect("read migration entry").path())
@@ -40,7 +41,6 @@ fn main() {
                     .escape_default()
             )
             .expect("write migration entry to String");
-            println!("cargo:rerun-if-changed={}", path.display());
         }
         generated.push_str("];\n");
     }

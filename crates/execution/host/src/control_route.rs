@@ -44,6 +44,7 @@
 
 mod connection_test;
 mod integration;
+mod operation_job;
 
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -137,6 +138,7 @@ pub(crate) struct ControlRoutes<'a> {
     pub(crate) administration: Option<&'a Path>,
     /// The runtime reader selected by the host mode.
     pub(crate) status: &'a dyn crate::environment_status::StatusSource,
+    pub(crate) operation_jobs: Option<&'a wamn_credential_store::kubernetes_api::KubernetesApi>,
     pub(crate) org: &'a str,
     /// Publishes each user row and status change of an environment.
     pub(crate) changes: &'a AuthChanges,
@@ -255,6 +257,7 @@ impl ControlRoutes<'_> {
             return Err(denied(attachment));
         }
         match attachment.route.handler {
+            HostHandler::OperationJob => self.operation_job(attachment, caller, payload).await,
             HostHandler::IntegrationAdministration => {
                 self.integration_administration(attachment, caller, payload)
                     .await

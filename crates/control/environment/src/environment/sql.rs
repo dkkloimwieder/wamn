@@ -86,21 +86,6 @@ impl ExpectedDatabase {
     }
 }
 
-/// Report whether a selected application has any absent package baseline.
-/// Version and schema differences never authorize SQL during code deployment.
-pub async fn needs_initialization(
-    platform: &Platform,
-    document: &EnvironmentDocument,
-) -> anyhow::Result<bool> {
-    let installed = stage::installed(platform, document).await?;
-    Ok(document.applications.values().any(|application| {
-        application
-            .packages
-            .iter()
-            .any(|id| !installed.contains_key(id))
-    }))
-}
-
 /// Initialize project state and absent package baselines after CNPG creates the database.
 /// Committed package records survive a later failure and prevent SQL replay.
 pub async fn initialize(

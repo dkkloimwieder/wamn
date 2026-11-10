@@ -13,7 +13,7 @@ pub struct DeployArgs {
     /// The published application release digest.
     #[arg(long)]
     pub release: Option<String>,
-    /// The target environment file. Changed physical SQL in authorized reset mode discards all application data.
+    /// The target environment file. Apply application SQL before deploying code.
     #[arg(long)]
     pub env: PathBuf,
 }
