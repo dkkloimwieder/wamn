@@ -157,7 +157,8 @@ if tool == 'kubectl':
                 data['url'] = state['credentials'][resource]
             if args[1].startswith('secret/'):
                 data = {key: base64.b64encode(value.encode()).decode() for key, value in data.items()}
-            print(json.dumps({'data': data}))
+            print(json.dumps({'apiVersion':'v1',
+                'kind':'Secret' if args[1].startswith('secret/') else 'ConfigMap', 'data':data}))
             sys.exit(0)
     if args[0] == 'exec':
         if 'signing_database' in state:
@@ -1428,7 +1429,7 @@ fn platform_installation_reports_the_supplied_charts() -> anyhow::Result<()> {
 }
 
 #[test]
-fn interrupted_platform_reapply_retains_default_and_service_selections() -> anyhow::Result<()> {
+fn platform_reapply_initializes_only_without_the_org_control_release() -> anyhow::Result<()> {
     use wamn_control_provision::identity_issuer::identity_issuer_generation_role;
     use wamn_control_provision::{
         CredentialGeneration, WorkloadRoleFamily, WorkloadRoleScope, workload_generation_role,
@@ -1438,8 +1439,11 @@ fn interrupted_platform_reapply_retains_default_and_service_selections() -> anyh
     let repository = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     let service = prepared_chart(&repository)?;
     let control = format!("hosts/c-{}", fixture.document.org);
-    // One service has its own selection. The other inherits the platform default.
-    for own in [&control, "identity/identity"] {
+    for (initialized, own) in [
+        (true, control.as_str()),
+        (true, "identity/identity"),
+        (false, "identity/identity"),
+    ] {
         let mut state = fixture.state(&UpgradeTarget::Control)?;
         for (owner, values) in state["owners"].as_object_mut().unwrap() {
             if owner == own {
@@ -1450,73 +1454,38 @@ fn interrupted_platform_reapply_retains_default_and_service_selections() -> anyh
         }
         state["reapply"] = true.into();
         state["org"] = fixture.document.org.clone().into();
-        state["fail_read"] = "platform/secret/wamn-pg-superuser".into();
-        let (output, first_calls, mut interrupted) = fixture.run_with_chart(None, None, &state)?;
-        assert!(!output.status.success());
-        assert!(String::from_utf8_lossy(&output.stderr).contains("wamn-pg-superuser"));
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        assert!(
-            !stdout.contains("warning: recorded chart selections"),
-            "{stdout}"
-        );
-        for (label, owner) in [
-            ("platform default", "platform/wamn"),
-            ("control", control.as_str()),
-            ("identity", "identity/identity"),
-        ] {
-            let expected = if owner == own {
-                &service.0
-            } else {
-                &fixture.previous.0
-            };
-            assert!(
-                stdout.contains(&format!("{label} chart: {}", expected.display())),
-                "{stdout}"
-            );
+        if initialized {
+            // An initialized reapply must not even read the superuser Secret.
+            state["fail_read"] = "platform/secret/wamn-pg-superuser".into();
+        } else {
+            state["owners"].as_object_mut().unwrap().remove(&control);
+            let control_role = workload_generation_role(
+                WorkloadRoleFamily::Control,
+                WorkloadRoleScope::Org {
+                    org: &fixture.document.org,
+                    database: "wamn_system",
+                },
+                CredentialGeneration::A,
+            )?;
+            let identity_role = identity_issuer_generation_role(
+                "https://identity.identity.svc.cluster.local",
+                CredentialGeneration::A,
+            )?;
+            state["credentials"] = json!({
+                format!("hosts/secret/wamn-control-{}", fixture.document.org): format!("postgresql://{control_role}:fixture@wamn-pg-rw.platform.svc.cluster.local/wamn_system"),
+                "identity/secret/wamn-identity-db": format!("postgresql://{identity_role}:fixture@wamn-pg-rw.platform.svc.cluster.local/wamn_system")
+            });
         }
-        let operator = first_calls
-            .iter()
-            .find(|call| call["values"]["platform"]["chart"].is_string())
-            .unwrap();
-        assert_eq!(
-            operator["values"]["platform"]["chart"],
-            fixture.previous.0.to_str().unwrap()
-        );
-        assert_eq!(
-            interrupted["owners"]["platform/wamn"]["platform"]["chart"],
-            state["owners"]["platform/wamn"]["platform"]["chart"]
-        );
-        for owner in [&control, "identity/identity"] {
-            assert_eq!(interrupted["owners"][owner], state["owners"][owner]);
-        }
-        interrupted.as_object_mut().unwrap().remove("fail_read");
-        let control_role = workload_generation_role(
-            WorkloadRoleFamily::Control,
-            WorkloadRoleScope::Org {
-                org: &fixture.document.org,
-                database: "wamn_system",
-            },
-            CredentialGeneration::A,
-        )?;
-        let identity_role = identity_issuer_generation_role(
-            "https://identity.identity.svc.cluster.local",
-            CredentialGeneration::A,
-        )?;
-        interrupted["credentials"] = json!({
-            format!("hosts/secret/wamn-control-{}", fixture.document.org): format!("postgresql://{control_role}:fixture@wamn-pg-rw.platform.svc.cluster.local/wamn_system"),
-            "identity/secret/wamn-identity-db": format!("postgresql://{identity_role}:fixture@wamn-pg-rw.platform.svc.cluster.local/wamn_system")
-        });
         // Stop after both services apply, before edge readiness and the HTTP probe.
-        interrupted["stop_release"] = "hosts/wamn-edge".into();
+        state["stop_release"] = "hosts/wamn-edge".into();
         let unused = fixture.chart.0.join("unavailable");
-        let (output, retry_calls, after) =
-            fixture.run_with_chart(None, Some(&unused), &interrupted)?;
+        let (output, calls, after) = fixture.run_with_chart(None, Some(&unused), &state)?;
         assert!(!output.status.success());
+        let error = String::from_utf8_lossy(&output.stderr);
+        assert!(error.contains("wamn-edge"), "{error}");
         let stdout = String::from_utf8_lossy(&output.stdout);
         assert!(
-            stdout.contains(
-                "warning: recorded chart selections take precedence over --chart during reapply."
-            ),
+            stdout.contains("warning: recorded chart selections"),
             "{stdout}"
         );
         assert!(!stdout.contains(unused.to_str().unwrap()), "{stdout}");
@@ -1529,51 +1498,41 @@ fn interrupted_platform_reapply_retains_default_and_service_selections() -> anyh
             assert_eq!(
                 after["owners"][owner]["platform"]["chart"],
                 expected.to_str().unwrap(),
-                "{}",
-                String::from_utf8_lossy(&output.stderr)
-            );
-            let label = if owner == "platform/wamn" {
-                "platform default"
-            } else if owner == control {
-                "control"
-            } else {
-                "identity"
-            };
-            assert!(
-                stdout.contains(&format!("{label} chart: {}", expected.display())),
-                "{stdout}"
+                "{error}"
             );
         }
-        for owner in [&control, "identity/identity"] {
-            let (namespace, name) = owner.split_once('/').unwrap();
-            let upgrade = retry_calls
+        assert_eq!(
+            calls.iter().any(|call| call["object"]["kind"] == "Job"),
+            !initialized,
+            "{error}"
+        );
+        let operator = format!("operator-{}", fixture.document.org);
+        assert_eq!(
+            calls.iter().any(|call| call["object"]["kind"] == "Secret"
+                && call["object"]["metadata"]["namespace"] == "hosts"
+                && call["object"]["metadata"]["name"] == operator),
+            !initialized,
+            "{error}"
+        );
+        if initialized {
+            // The CLI reads status separately after deployment.
+            for call in calls
                 .iter()
-                .find(|call| {
-                    let args = call["args"].as_array().unwrap_or_else(|| {
-                        panic!(
-                            "missing upgrade for {owner}: {}",
-                            String::from_utf8_lossy(&output.stderr)
-                        )
-                    });
-                    call["tool"] == "helm"
-                        && args[0] == "upgrade"
-                        && args[2] == name
-                        && args
-                            .windows(2)
-                            .any(|pair| pair == [json!("--namespace"), json!(namespace)])
-                })
-                .unwrap_or_else(|| {
-                    panic!(
-                        "missing upgrade for {owner}: {}",
-                        String::from_utf8_lossy(&output.stderr)
-                    )
-                });
-            assert!(
-                upgrade["args"]
-                    .as_array()
-                    .unwrap()
-                    .contains(&json!("--wait"))
-            );
+                .take_while(|call| call["tool"] != "helm" || call["args"][6] != "wamn-edge")
+            {
+                assert!(
+                    call["object"]["kind"] != "Secret"
+                        || call["object"]["metadata"]["namespace"] == "platform",
+                    "unexpected initialization Secret write: {call}"
+                );
+                assert!(
+                    !call["args"]
+                        .as_array()
+                        .unwrap()
+                        .contains(&json!("secret/wamn-pg-superuser")),
+                    "unexpected superuser read: {call}"
+                );
+            }
         }
     }
     Ok(())

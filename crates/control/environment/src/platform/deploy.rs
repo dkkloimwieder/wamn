@@ -15,7 +15,7 @@ use super::document::{ClusterDocument, Provider, UpgradeTarget};
 use super::{bootstrap, broker, control, edge, identity, manifests, provider, resources};
 use crate::kubectl;
 
-/// Apply platform resources, initialize the system, and start identity and control.
+/// Apply platform resources and initialize an installation without a control release.
 ///
 /// # Errors
 /// Returns resource, bootstrap, service, or endpoint failures.
@@ -93,11 +93,16 @@ pub async fn deploy(
     let target = &target;
     let chart = &platform_chart;
     infrastructure(document, chart, target, directory).await?;
-    initialize(document, chart, target, directory, output).await?;
+    // The org control release is recorded only after all initialization succeeds.
+    if control_values.is_none() {
+        initialize(document, chart, target, directory, output).await?;
+    }
     let entry = identity::resource_entry(document, &identity_chart)?;
     resources::apply_release(target, &entry, directory).await?;
-    identity::initialize(target, document, &identity_chart, directory).await?;
-    control::initialize(target, document).await?;
+    if control_values.is_none() {
+        identity::initialize(target, document, &identity_chart, directory).await?;
+        control::initialize(target, document).await?;
+    }
     let entry = control::resource_entry(document, &control_chart, control_values.as_ref())?;
     resources::apply_release(target, &entry, directory).await?;
     let payload = chart.directory().join("platform/resources");

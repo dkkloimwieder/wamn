@@ -31,7 +31,8 @@ wamn platform status deploy/kind/cluster.k
 
 Deployment creates or reuses `wamn-local` and connects its registry to the kind network.
 It applies namespaces, certificates, NATS, the wasmCloud operator, and CloudNativePG PostgreSQL.
-It initializes `wamn_system` and the initial organization, then starts identity and control.
+Without a recorded org control release, deployment initializes `wamn_system`, the organization, identity, and control.
+Once that release exists, reapply applies resources and releases without initialization Jobs or initialization Secret writes.
 The command returns success only when every required component is ready.
 An error preserves a nonzero exit and prints the status that remains observable.
 
