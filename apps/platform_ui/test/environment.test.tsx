@@ -4,7 +4,7 @@ import { createTransport } from "@wamn/web-runtime";
 import { Environment } from "../src/environment";
 import { controlHolds, Shell } from "../src/shell";
 import { controlSections, Project } from "../src/projects";
-import { CONTROL, identity } from "./fixtures";
+import { CONTROL, identity, input } from "./fixtures";
 
 function fixture(initial: "active" | "inactive" = "active", digest: string | null = "sha256:release", refuse = false) {
   let state = initial;
@@ -345,4 +345,175 @@ describe("Environment", () => {
       expect(session.state.calls).toEqual(["/password/renew", "/api/wamn_control/control/mine"]);
     },
   );
+});
+
+const operationContracts = import.meta.glob<{
+  fields: { path: string; nullable: boolean }[];
+}>("../../../crates/catalog/model/src/host_route/control/contracts/{application,schema}/*.input.json", {
+  eager: true,
+  import: "default",
+});
+const statusContract = import.meta.glob<{ fields: { path: string }[] }>(
+  "../../../crates/catalog/model/src/host_route/control/contracts/operation/status.input.json",
+  { eager: true, import: "default" },
+);
+const releaseDigest = `sha256:${"a".repeat(64)}`;
+
+function operationsFixture(options: { refuse?: boolean; states?: string[]; project?: string; admin?: boolean } = {}) {
+  const base = fixture();
+  const writes: { route: string; body: { request_id: string; value: Record<string, unknown> }[] }[] = [];
+  const reads: { params: URLSearchParams; signal: AbortSignal | null | undefined }[] = [];
+  const states = [...(options.states ?? ["succeeded"])];
+  const fetch: typeof globalThis.fetch = async (url, init) => {
+    const address = new URL(String(url), "http://localhost");
+    if (/\/(application|schema)\//.test(address.pathname)) {
+      const body = JSON.parse(String(init?.body));
+      writes.push({ route: address.pathname, body });
+      return new Response(
+        JSON.stringify([
+          options.refuse
+            ? { request_id: body[0].request_id, error: { code: "permission_denied", detail: { operation: "deploy" } } }
+            : { request_id: body[0].request_id, value: { job: "op-job" } },
+        ]),
+      );
+    }
+    if (address.pathname.endsWith("/operation/status")) {
+      reads.push({ params: address.searchParams, signal: init?.signal });
+      const state = states.length > 1 ? states.shift()! : states[0];
+      return new Response(JSON.stringify([{ value: { job: "op-job", state, log: `worker ${state}` } }]));
+    }
+    return base.fetch(url, init);
+  };
+  const mounted = render(() => (
+    <Environment
+      transport={createTransport({ baseUrl: "/api", fetch })}
+      holds={controlHolds({
+        orgAdmin: false,
+        projects: [{ project: options.project ?? "widgets", projectAdmin: options.admin ?? true }],
+      })}
+      params={{ aud: CONTROL, project: "widgets", env: "dev" }}
+      search={{}}
+      open={() => {}}
+      close={() => {}}
+    />
+  ));
+  return { writes, reads, ...mounted };
+}
+
+async function openOperation(action: string, withRelease = true) {
+  fireEvent.click(await screen.findByRole("button", { name: new RegExp(`^${action}\\b`, "i") }));
+  await screen.findByRole("button", { name: /^Start / });
+  const application = screen.queryByRole("textbox", { name: "Application" });
+  if (application) input(application, "receiving");
+  const release = screen.queryByRole("textbox", { name: /Release digest/ });
+  if (release && withRelease) input(release, releaseDigest);
+  fireEvent.click(screen.getByRole("button", { name: /^Start / }));
+}
+
+describe("environment operation controls", () => {
+  for (const [path, contract] of Object.entries(operationContracts)) {
+    const [family, filename] = path.split("/").slice(-2);
+    const action = filename!.split(".")[0]!;
+    const release = contract.fields.find((field) => field.path === "value.release");
+    for (const withRelease of release?.nullable ? [true, false] : [true]) {
+      it(`sends the contract fields for ${family}.${action}, explicit release=${withRelease}`, async () => {
+        const data = operationsFixture();
+        await openOperation(action, withRelease);
+        if (["reset", "apply", "rollback"].includes(action)) {
+          const dialog = within(await screen.findByRole("alertdialog"));
+          expect(data.writes).toEqual([]);
+          expect(dialog.getByText(/Project: widgets; environment: dev; application:/).textContent).toContain(
+            action === "reset" ? "all applications" : "receiving",
+          );
+          fireEvent.click(dialog.getByRole("button", { name: /^Confirm / }));
+        }
+        await screen.findByText("State: succeeded");
+        const write = data.writes[0]!;
+        expect(write.route).toBe(`/api/wamn_control/${family}/${action}`);
+        expect(Object.keys(write.body[0]!).sort()).toEqual(
+          [...new Set(contract.fields.map((field) => field.path.split(".")[0]))].sort(),
+        );
+        expect(write.body[0]!.request_id).toBeTruthy();
+        const expectedValues: Record<string, unknown> = {
+          project: "widgets",
+          env: "dev",
+          application: action === "adopt" ? null : "receiving",
+          release: withRelease ? releaseDigest : null,
+          resolve: null,
+        };
+        expect(write.body[0]!.value).toEqual(
+          Object.fromEntries(
+            contract.fields
+              .filter((field) => field.path.startsWith("value."))
+              .map((field) => {
+                const name = field.path.slice("value.".length);
+                return [name, expectedValues[name]];
+              }),
+          ),
+        );
+        expect(screen.getByLabelText("Log tail").textContent).toBe("worker succeeded");
+        expect([...data.reads[0]!.params.keys()].sort()).toEqual(
+          Object.values(statusContract)
+            .flatMap((entry) => entry.fields.map((field) => field.path))
+            .sort(),
+        );
+        expect(Object.fromEntries([...data.reads[0]!.params].map(([key, value]) => [key, JSON.parse(value)]))).toEqual({
+          project: "widgets",
+          env: "dev",
+          job: "op-job",
+        });
+      });
+    }
+  }
+
+  it("requires reset confirmation and cancellation sends nothing", async () => {
+    const data = operationsFixture();
+    await openOperation("reset");
+    const dialog = within(await screen.findByRole("alertdialog"));
+    expect(dialog.getByText(/All applications lose their data/)).toBeTruthy();
+    expect(data.writes).toEqual([]);
+    fireEvent.click(dialog.getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
+    expect(data.writes).toEqual([]);
+    expect(data.reads).toEqual([]);
+  });
+
+  it("shows a refusal code without polling a nonexistent Job", async () => {
+    const data = operationsFixture({ refuse: true });
+    await openOperation("deploy");
+    expect((await screen.findByRole("alert")).textContent).toContain("permission_denied");
+    expect(data.reads).toEqual([]);
+  });
+
+  it.each([{ project: "other" }, { admin: false }])(
+    "hides controls without authority for the target: %j",
+    async (options) => {
+      operationsFixture(options);
+      await screen.findByRole("region", { name: "Release profile" });
+      expect(screen.queryByRole("region", { name: "Deployment controls" })).toBeNull();
+    },
+  );
+
+  it.each(["succeeded", "failed"])("polls pending and running to %s, then stops", async (terminal) => {
+    const data = operationsFixture({ states: ["pending", "running", terminal] });
+    await openOperation("deploy");
+    await screen.findByText("worker pending");
+    await screen.findByText("worker running", {}, { timeout: 3000 });
+    await screen.findByText(`worker ${terminal}`, {}, { timeout: 3000 });
+    const reads = data.reads.length;
+    await new Promise((resolve) => setTimeout(resolve, 1100));
+    expect(data.reads.length).toBe(reads);
+  });
+
+  it("aborts status reads and clears polling when leaving the page", async () => {
+    const data = operationsFixture({ states: ["running"] });
+    await openOperation("deploy");
+    await screen.findByText("worker running");
+    const signal = data.reads[0]!.signal;
+    const reads = data.reads.length;
+    data.unmount();
+    expect(signal?.aborted).toBe(true);
+    await new Promise((resolve) => setTimeout(resolve, 1100));
+    expect(data.reads.length).toBe(reads);
+  });
 });

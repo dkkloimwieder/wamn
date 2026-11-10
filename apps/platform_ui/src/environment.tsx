@@ -1,13 +1,225 @@
-import { createSignal, onCleanup, Show, untrack } from "solid-js";
+import { createSignal, For, onCleanup, Show, untrack } from "solid-js";
 import type { JSX } from "@solidjs/web";
+import { AlertDialog } from "@wfe/components";
 import { Button, FieldError } from "@wfe/components/fields";
-import { environment, release } from "./generated/wamn_control_org/index.js";
+import { createForm } from "@wfe/form";
+import { FormView, type FormDescription } from "@wfe/generator";
+import { application, environment, operation, release, schema } from "./generated/wamn_control_org/index.js";
 import { MissingPage, Page } from "./page";
 import { DashboardPanel } from "@wfe/components/layout";
 import { EnvironmentTiles } from "./status-tiles";
 import { Records } from "./records";
 import { value } from "./outcome";
 import type { ScreenProps } from "./shell";
+
+const operationActions = {
+  deploy: { label: "Deploy release", route: application.APPLICATION_DEPLOY_ROUTE, effect: "" },
+  rollback: {
+    label: "Rollback application",
+    route: application.APPLICATION_ROLLBACK_ROUTE,
+    effect: "Replace the running application code with the selected or previous release. SQL is not reversed.",
+  },
+  diff: { label: "Diff schema", route: schema.SCHEMA_DIFF_ROUTE, effect: "" },
+  apply: {
+    label: "Apply schema",
+    route: schema.SCHEMA_APPLY_ROUTE,
+    effect: "Apply SQL changes to this application's database tables. Changes may remove data.",
+  },
+  reset: {
+    label: "Reset schema",
+    route: schema.SCHEMA_RESET_ROUTE,
+    effect:
+      "Delete and rebuild the whole environment database. All applications lose their data and stop during reset.",
+  },
+  adopt: { label: "Adopt schema", route: schema.SCHEMA_ADOPT_ROUTE, effect: "" },
+};
+
+function OperationControls(props: ScreenProps) {
+  const scope = untrack(() => ({ project: props.params.project!, env: props.params.env! }));
+  const [action, setAction] = createSignal<keyof typeof operationActions>();
+  const [observed, setObserved] = createSignal<operation.OperationStatusResult>();
+  const [busy, setBusy] = createSignal(false);
+  const [trouble, setTrouble] = createSignal<string>();
+  const controller = new AbortController();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  onCleanup(() => {
+    controller.abort();
+    clearTimeout(timer);
+  });
+  const poll = async (job: string) => {
+    try {
+      const next = value(await operation.status(props.transport, [{ ...scope, job }], { signal: controller.signal }));
+      if (controller.signal.aborted) return;
+      setObserved(next);
+      if (next.state === "pending" || next.state === "running") {
+        timer = setTimeout(() => void poll(job), 1000);
+      } else {
+        setBusy(false);
+      }
+    } catch (error) {
+      if (!controller.signal.aborted) {
+        setTrouble(String(error));
+        setBusy(false);
+      }
+    }
+  };
+  return (
+    <Show when={Object.values(operationActions).some((entry) => props.holds(entry.route.operation, scope.project))}>
+      <DashboardPanel role="region" aria-label="Deployment controls">
+        <h2>Application and schema operations</h2>
+        <For each={Object.entries(operationActions)}>
+          {([key, entry]) => (
+            <Show when={props.holds(entry.route.operation, scope.project)}>
+              <Button disabled={busy()} onClick={() => setAction(key as keyof typeof operationActions)}>
+                {entry.label}
+              </Button>
+            </Show>
+          )}
+        </For>
+        <Show when={action()} keyed>
+          {(selected) => {
+            const entry = operationActions[selected];
+            const defaults = { application: "", release: "" };
+            const [values, setValues] = createSignal(defaults);
+            const [confirmation, setConfirmation] = createSignal<typeof defaults>();
+            const needsApplication = selected === "rollback" || selected === "diff" || selected === "apply";
+            const needsRelease = selected === "deploy" || needsApplication;
+            const start = async (snapshot: typeof defaults) => {
+              if (busy() || controller.signal.aborted || !props.holds(entry.route.operation, scope.project)) return;
+              setBusy(true);
+              setTrouble(undefined);
+              setObserved(undefined);
+              setConfirmation(undefined);
+              const requestId = crypto.randomUUID();
+              const options = { signal: controller.signal };
+              const target = {
+                ...scope,
+                application: snapshot.application.trim(),
+                release: snapshot.release.trim() || null,
+              };
+              try {
+                const result = value(
+                  await (selected === "deploy"
+                    ? application.deploy(
+                        props.transport,
+                        [{ requestId, value: { ...scope, release: snapshot.release.trim() } }],
+                        options,
+                      )
+                    : selected === "rollback"
+                      ? application.rollback(props.transport, [{ requestId, value: target }], options)
+                      : selected === "diff"
+                        ? schema.diff(props.transport, [{ requestId, value: target }], options)
+                        : selected === "apply"
+                          ? schema.apply(props.transport, [{ requestId, value: { ...target, resolve: null } }], options)
+                          : selected === "reset"
+                            ? schema.reset(props.transport, [{ requestId, value: scope }], options)
+                            : schema.adopt(
+                                props.transport,
+                                [{ requestId, value: { ...scope, application: null } }],
+                                options,
+                              )),
+                );
+                if (controller.signal.aborted) return;
+                setObserved({ job: result.job, state: "pending", log: "" });
+                void poll(result.job);
+              } catch (error) {
+                if (!controller.signal.aborted) {
+                  setTrouble(String(error));
+                  setBusy(false);
+                }
+              }
+            };
+            const form = createForm({
+              values,
+              defaults: () => defaults,
+              onValuesChange: setValues,
+              validate: (snapshot) =>
+                needsApplication && !snapshot.application.trim()
+                  ? { form: "Enter an application." }
+                  : selected === "deploy" && !snapshot.release.trim()
+                    ? { form: "Enter a release digest." }
+                    : {},
+              onSubmit: async (snapshot) => {
+                if (entry.effect) setConfirmation(snapshot);
+                else await start(snapshot);
+                return { ok: true };
+              },
+            });
+            return (
+              <>
+                <p>
+                  Project: {scope.project}; environment: {scope.env}
+                </p>
+                <FormView
+                  description={
+                    {
+                      id: "environment-operation",
+                      title: entry.label,
+                      fields: [
+                        ...(needsApplication
+                          ? [{ field: "application", label: "Application", control: "text" } as const]
+                          : []),
+                        ...(needsRelease
+                          ? [
+                              {
+                                field: "release",
+                                label: selected === "deploy" ? "Release digest" : "Release digest (optional)",
+                                control: "text",
+                              } as const,
+                            ]
+                          : []),
+                      ],
+                      submit: { id: "start", label: `Start ${entry.label.toLowerCase()}` },
+                    } satisfies FormDescription<typeof defaults>
+                  }
+                  bindings={{ form, submitDisabled: busy }}
+                />
+                <AlertDialog
+                  open={!!confirmation()}
+                  onOpenChange={(open) => {
+                    if (!open) setConfirmation(undefined);
+                  }}
+                >
+                  <AlertDialog.Portal>
+                    <AlertDialog.Overlay />
+                    <AlertDialog.Content>
+                      <AlertDialog.Title>Confirm {entry.label.toLowerCase()}?</AlertDialog.Title>
+                      <AlertDialog.Description>
+                        Project: {scope.project}; environment: {scope.env}; application:{" "}
+                        {needsApplication ? confirmation()?.application : "all applications"}.
+                        {needsRelease && ` Release: ${confirmation()?.release || "configured or previous release"}. `}
+                        {entry.effect}
+                      </AlertDialog.Description>
+                      <AlertDialog.Cancel>Cancel</AlertDialog.Cancel>
+                      <AlertDialog.Action
+                        onClick={() => {
+                          const snapshot = confirmation();
+                          if (snapshot) void start(snapshot);
+                        }}
+                      >
+                        Confirm {entry.label.toLowerCase()}
+                      </AlertDialog.Action>
+                    </AlertDialog.Content>
+                  </AlertDialog.Portal>
+                </AlertDialog>
+              </>
+            );
+          }}
+        </Show>
+        <Show when={trouble()}>{(text) => <FieldError role="alert">{text()}</FieldError>}</Show>
+        <Show when={observed()}>
+          {(current) => (
+            <div role="region" aria-label="Operation status">
+              <p>Job: {current().job}</p>
+              <p role="status">State: {current().state}</p>
+              <pre aria-label="Log tail">{current().log}</pre>
+            </div>
+          )}
+        </Show>
+      </DashboardPanel>
+    </Show>
+  );
+}
 
 export function Environment(
   props: ScreenProps & {
@@ -95,6 +307,7 @@ export function Environment(
             <p>State: {state()}</p>
           </Show>
           <EnvironmentTiles status={status()} />
+          <OperationControls {...props} />
           <Show when={profile()}>
             {(current) => (
               <DashboardPanel role="region" aria-label="Release profile">

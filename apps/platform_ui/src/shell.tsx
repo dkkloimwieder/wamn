@@ -3,13 +3,16 @@ import type { JSX } from "@solidjs/web";
 import { DashboardPanel, type DashboardShellProps } from "@wfe/components/layout";
 import { permission } from "./generated/wamn_control/index.js";
 import {
+  application,
   control,
   environment,
   member,
+  operation,
   orgAdmin,
   project,
   projectAdmin,
   release,
+  schema,
   user,
 } from "./generated/wamn_control_org/index.js";
 import {
@@ -134,6 +137,13 @@ function applicationView(saved: SavedView, sections: readonly ShellSection[]): V
 
 export function controlHolds(mine: Pick<control.ControlMineResult, "orgAdmin" | "projects">): Holds {
   const projectOperations = new Set([
+    application.APPLICATION_DEPLOY_ROUTE.operation,
+    application.APPLICATION_ROLLBACK_ROUTE.operation,
+    schema.SCHEMA_DIFF_ROUTE.operation,
+    schema.SCHEMA_APPLY_ROUTE.operation,
+    schema.SCHEMA_RESET_ROUTE.operation,
+    schema.SCHEMA_ADOPT_ROUTE.operation,
+    operation.OPERATION_STATUS_ROUTE.operation,
     environment.ENVIRONMENT_LIST_ROUTE.operation,
     environment.ENVIRONMENT_STATUS_ROUTE.operation,
     release.RELEASE_PROFILE_ROUTE.operation,
