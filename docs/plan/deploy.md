@@ -621,8 +621,8 @@ The image embeds two kinds of SQL for each scope:
 
 | Scope | Initialization SQL (frozen) | Migration files (append-only) | Records in the target database |
 |---|---|---|---|
-| System | `CONTROL_BOOTSTRAP_SQL` | `deploy/sql/migrations/system/NNNN_name.sql` | `registry.schema_baseline`, `registry.schema_migrations` |
-| Project substrate | `CATALOG_SCHEMA_SQL`, then `APP_SCHEMA_SQL` | `deploy/sql/migrations/project/NNNN_name.sql` | `platform.schema_baseline`, `platform.schema_migrations` |
+| System | `CONTROL_BOOTSTRAP_SQL` | `deploy/sql/migrations/system/NNNN_name.sql` | `registry.schema_baseline`, `registry.schema_migration` |
+| Project substrate | `CATALOG_SCHEMA_SQL`, then `APP_SCHEMA_SQL` | `deploy/sql/migrations/project/NNNN_name.sql` | `platform.schema_baseline`, `platform.schema_migration` |
 
 The build embeds each migration directory from its directory listing, so the image cannot omit a file.
 A file's ID is its path below `deploy/sql/`, for example `migrations/system/0001_add_index.sql`. Its ordinal is the four-digit prefix.
@@ -634,22 +634,28 @@ Diff and apply run the same image in their Jobs and print its digest. So diff re
 Each target database keeps these facts in separate records:
 
 1. Initialization identity is the existing `schema_baseline` row: the digest of the initialization SQL and `installed_at`. Bootstrap or environment provisioning writes it once. No migration, retry or adoption changes it. Reset already pins `installed_at` as its initialization identity.
-2. Migration history is one immutable row for each file in `schema_migrations`: ordinal, path, checksum, outcome (`applied`, `adopted` or `started`) and `applied_at`. The rows use the guard and record-history stamps of `catalog.package_migrations`, without an environment, package or principal key. The existing provisioning actor stamps them.
-3. Installed SQL state is the initialization identity plus the history rows. It is a database fact. It does not depend on code selections or on the image that a later command runs.
+2. Migration history is one row for each file in `schema_migration`: ordinal, path, checksum, outcome (`started` or `applied`) and `applied_at`. The file identity and checksum of a row never change, and no row is deleted. The outcome can only change from `started` to `applied`. The rows use the guard pattern and record-history stamps of `catalog.package_migrations`, without an environment, package or principal key. The existing provisioning actor stamps them.
+3. Installed SQL state is derived from the initialization identity and the history rows. No third record stores it. It is a database fact. It does not depend on code selections or on the image that a later command runs.
 
 ##### Frozen initialization
 
-After Epic 5 lands, a WAMN schema change is a new migration file, and the initialization SQL stays the same.
+After Epic 5 lands, a change to WAMN-owned system or project substrate SQL is a new migration file, and the initialization SQL stays the same.
 A change to initialization SQL is a deliberate new baseline, which only an empty database accepts.
 An installed database with a different initialization digest is refused as `BaselineMismatch`.
-A fresh installation runs the initialization SQL and then every migration file of the selected image, through the same apply operation as an upgrade.
-So a fresh installation and an upgraded database run the same files.
+The freeze covers only the WAMN initialization SQL in the table above. Application packages keep their own schema authoring and migration files (section 4). The disposable reset workflow of section 4 stays the same.
+
+A fresh installation runs the initialization SQL and then the shared migration executor for every migration file of the selected image.
+So a fresh installation and an upgraded database run the same files through the same code.
+If a fresh installation stops after initialization or after some files, the command reports the completed and the remaining files.
+`wamn platform schema apply` for that scope runs the remaining files. A repeated fresh installation does not replay initialization.
 
 ##### Adoption of an existing baseline
 
-A database installed before Epic 5 has a `schema_baseline` row and no `schema_migrations` table.
+A database installed before Epic 5 has a `schema_baseline` row and no `schema_migration` table.
 If its initialization digest equals the digest of the image, the first mutating schema operation adopts it.
-Adoption creates the empty history table in the transaction of the first recorded file. It runs no initialization SQL and records no file as executed.
+Adoption creates the empty history table before any file runs. It runs no initialization SQL and writes no history row, so it claims no `applied` file.
+For a transactional first file, the table creation commits with that file and its row.
+For a nontransactional first file, the table creation commits before the committed `started` row of that file.
 All migration files of the image are then pending. Diff reports the adoption and writes nothing.
 If the digests differ, the operation refuses and names both digests.
 
@@ -657,7 +663,7 @@ If the digests differ, the operation refuses and names both digests.
 
 The section 4 [SQL execution](#sql-execution) rules apply to both scopes, with these differences:
 
-1. The rules come from the package migration owner, `crates/schema/control/src/package_migrations.rs`. The ordered prefix, gap, duplicate and drift checks, the `-- wamn:no-transaction` marker and the `started` record are the same. Package records, package ownership and principal authorization are not used.
+1. Both scopes and package apply call one shared executor. DEP5-02 moves the scope-independent prefix planning out of `plan_package_migrations` in `crates/schema/control/src/package_migrations.rs`, and the file loop and session lock out of `crates/control/package/src/apply_package.rs` and `apply_package/migration.rs`. The record table and its key are parameters. The ordered prefix, gap, duplicate and drift checks, the `-- wamn:no-transaction` marker and the `started` record are then the same code. Platform scopes use no package records, package ownership or principal authorization. No copy of these rules exists.
 2. Each transactional file commits with its history row. A retry skips committed files. A file whose bytes differ from its recorded checksum refuses and is never replayed.
 3. A marked file follows the `started` and `applied` steps of section 4. Its resolution is `wamn platform schema apply --scope <scope> ... --resolve <path>=applied|retry`.
 4. An operation that WAMN cannot run safely fails before any statement runs. An example is a marked file with more than one statement.
@@ -675,8 +681,8 @@ No command migrates all environments.
 
 These readers use the recorded installed state, not the platform-default image:
 
-1. Platform reapply sees completed initialization when the initialization digest matches. It runs no migration and does not replay bootstrap.
-2. An authorized application reset rebuilds the initialization SQL and then the recorded `applied` and `adopted` files in order. The executing image must carry each recorded file with an equal checksum, or the reset refuses before it changes the database. Pending files stay pending.
+1. Platform reapply sees completed initialization when the initialization digest matches. It runs no migration and does not replay bootstrap. Only a fresh installation and `platform schema apply` run migration files.
+2. An authorized application reset rebuilds the initialization SQL and then the recorded `applied` files in order, through the shared executor. The executing image must carry each recorded file with an equal checksum, or the reset refuses before it changes the database. Pending files stay pending.
 3. Status reports for each database the initialization identity, the installed files, the files pending for the selected image, and `started` files as uncertain. It reports them apart from the executable selections.
 
 The integrity checks stay: an initialization digest mismatch and a checksum mismatch still refuse.
@@ -983,9 +989,9 @@ The issues run in this order. The complexity column states the operations and co
 | Issue | Scope | Complexity | Completion condition |
 |---|---|---|---|
 | DEP5-01 SQL artifact and state ownership | Section 5.3.2 decisions | Adds no code. Deletes the plan statements that system upgrades are unsupported. | Each later issue is scoped from section 5.3.2 alone. |
-| DEP5-02 Minimal migration execution and recording | Migration directories, build-time embedding, `schema_migrations` records, and an executor in `crates/control/package/src/schema_baseline.rs`. The prefix checks move out of `package_migrations.rs` so that both owners use one copy. | Adds two directories, two record tables and one executor. Deletes the full-schema-only recording and its "migrations are deferred" comment. Adds no second prefix checker. | Real PostgreSQL shows ordered files, atomic file and record, skip on retry, refusal of an edited file, rollback of a failed file, `started` uncertainty, and refusal of an unsafe file before it runs. |
-| DEP5-03 Independent system SQL operation | `platform schema diff\|apply --scope system` in `services/ctl/src/platform_verbs.rs`, with one Job builder in `platform/job.rs` | Adds one verb with two actions and one Job builder. Changes no bootstrap code. | Diff and apply read the same image. Apply changes only system SQL records and objects. |
-| DEP5-04 Selected project-substrate SQL | `--scope project --env FILE` through the SQL Job and credential owners in `environment/sql.rs` | Adds one scope to the same verb. Adds no provisioning or activation path. | Only the substrate of the named environment changes. A second environment stays the same. |
+| DEP5-02 Minimal migration execution and recording | Migration directories, build-time embedding, `schema_migration` records, and the shared executor that section 5.3.2 names. Package apply calls the same executor. | Adds two directories, two record tables and one shared executor. Moves the package prefix planning, file loop and session lock into it. Deletes the full-schema-only recording and its "migrations are deferred" comment. | Real PostgreSQL shows ordered files, atomic file and record, skip on retry, refusal of an edited file, rollback of a failed file, `started` uncertainty, and refusal of an unsafe file before it runs. |
+| DEP5-03 Independent system SQL operation | `platform schema diff\|apply --scope system` in `services/ctl/src/platform_verbs.rs`, with one Job builder in `platform/job.rs` | Adds one verb with two actions and one Job builder. Changes fresh installation to run the shared executor after initialization and to report an interrupted completion. Platform reapply runs no migration. | Diff and apply read the same image. Apply changes only system SQL records and objects. `platform schema apply` resumes an interrupted fresh installation. |
+| DEP5-04 Selected project-substrate SQL | `--scope project --env FILE` through the SQL Job and credential owners in `environment/sql.rs` | Adds one scope to the same verb. Changes fresh environment provisioning to run the shared executor after the substrate initialization. Adds no provisioning or activation path. | Only the substrate of the named environment changes. A second environment stays the same. |
 | DEP5-05 Reapply, reset and status integration | `provision_system.rs`, `environment/sql/reset.rs`, `environment/analyse.rs`, `analyse/plan.rs`, and `platform/status.rs` | Replaces the three `project_baseline == project_sha256()` checks in `reset.rs` with the recorded-state check. Replaces the single-digest `BaselineDifference` and its unit test with the installed, pending and uncertain report. | Reapply after an upgrade runs no bootstrap. Reset rebuilds the recorded state. Status reports the three states. |
 | DEP5-06 Focused upgrade verification | Existing PostgreSQL test targets, then one deployed SQL Job case | Adds cases to existing targets. Adds no harness and no journey. | The PostgreSQL cases pass, then one owner-approved deployed case passes. |
 
