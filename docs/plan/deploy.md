@@ -86,7 +86,7 @@ The accepted Epic 2 record leaves `wamn-xy404`, `wamn-1riwn`, and `wamn-c361p` o
 It records `wamn-azv06` as not reproduced, not fixed.
 Epic 3 (`wamn-alrvy`) is closed. Its open gaps are `wamn-alrvy.19` (stale-event admission), `wamn-alrvy.20` (temporary directory leak), and `wamn-alrvy.22` (uncovered lint requirements).
 `wamn-fszfy`, `wamn-m4wnp`, and `wamn-ib8ej` also remain open.
-Epic 4 (section 7) implements section 5.3.1. Persistent platform SQL upgrades (section 5.3.2) are the following deployment epic.
+Epic 4 (section 7) implements section 5.3.1. Epic 5 (section 7) implements platform SQL upgrades (section 5.3.2).
 Platform UI artifact publication and GCP deployment remain later work.
 
 ## 3. Small deployment commands, not a scripted runbook
@@ -309,7 +309,7 @@ Execution and resolution use the same schema exclusion. The database worker hold
 
 No Atlas operator or additional SQL controller is required.
 
-The system database's initial setup is a separate SQL operation. `provision_system::install_control_store` installs the control store and baseline in one transaction. Existing incomplete state reports a repair action. Application schema mode never authorizes a system database reset.
+The system database's initial setup is a separate SQL operation. `provision_system::install_control_store` installs the control store and baseline in one transaction. Existing incomplete state reports a repair action. Application schema mode never authorizes a system database reset. Later system and project substrate SQL follows section 5.3.2.
 
 ## 5. Concrete deployment and upgrade use cases
 
@@ -411,9 +411,8 @@ Warnings identify schema differences, deprecated interfaces, and missing optiona
 
 ### 5.3 Platform upgrades: behavior, WAMN SQL, and infrastructure
 
-Epic 4 (section 7) implements section 5.3.1. Sections 5.3.2 and 5.3.3 remain later work.
-Control and identity targets apply their selected releases. Host targets remain unfinished. No `platform schema` command exists.
-Persistent system database upgrades are unsupported in this rebuild. Persistent platform SQL upgrades are the deployment epic after Epic 4.
+Epic 4 (section 7) implements section 5.3.1. Epic 5 implements section 5.3.2. Section 5.3.3 remains later work.
+Until Epic 5 lands, no `platform schema` command exists.
 
 **Intent:** Update one part of the platform without repeating initial installation or changing unrelated applications. Implement against an already running kind platform before introducing GCP-specific actions.
 
@@ -596,24 +595,97 @@ wamn platform deploy deploy/kind/cluster.k --chart /prepared/platform --only con
 
 #### 5.3.2 WAMN system or project schema change
 
+Epic 5 (section 7) implements this section on kind. The system scope comes first, then one explicitly selected project database.
+
 ```bash
-wamn platform schema diff --scope system
-wamn platform schema apply --scope system
+wamn platform schema diff --scope system --chart /prepared/platform
+wamn platform schema apply --scope system --chart /prepared/platform
 wamn platform deploy deploy/kind/cluster.k --chart /prepared/platform --only control
 
-# Independent project-substrate SQL targeting selected environments:
-wamn platform schema apply --scope project --env environments/dev/environment.k
+# Independent project-substrate SQL for one selected environment:
+wamn platform schema diff --scope project --env environments/dev/environment.k --chart /prepared/platform
+wamn platform schema apply --scope project --env environments/dev/environment.k --chart /prepared/platform
 ```
 
-1. Select the WAMN-owned SQL change and target databases; platform system SQL and project substrate SQL are different operations.
+1. Select the WAMN-owned SQL change and the target database. Platform system SQL and project substrate SQL are different operations.
 2. Display pending statements and inexpensive warnings about known SQL references, removed columns, and affected services. A hash difference alone is not a blanket refusal.
-3. Run the selected SQL through an in-cluster Job. In the system database, initial bootstrap and later SQL changes must have separate entry points; the application reset mode cannot reset the WAMN system database.
-4. Record completed SQL IDs/checksums and return actual errors. PostgreSQL statements requiring different transaction handling are reported distinctly.
-5. Allow the developer to deploy changed control-service code before or after SQL as the particular change requires. Do not impose one universal SQL/code sequence.
+3. Run the selected SQL through an in-cluster Job. In the system database, initial bootstrap and later SQL changes have separate entry points. The application reset mode cannot reset the WAMN system database.
+4. Record completed SQL IDs and checksums, and return actual errors. PostgreSQL statements that need different transaction handling are reported distinctly.
+5. Allow the developer to deploy changed control-service code before or after SQL as the particular change requires. Do not impose one universal SQL and code sequence.
+
+##### SQL artifact
+
+The `ctl` image of the prepared chart that `--chart` names is the only source of WAMN-owned SQL.
+Bootstrap Jobs already select that immutable image with `chart.image("ctl")`, so Epic 5 adds no publication system.
+The image embeds two kinds of SQL for each scope:
+
+| Scope | Initialization SQL (frozen) | Migration files (append-only) | Records in the target database |
+|---|---|---|---|
+| System | `CONTROL_BOOTSTRAP_SQL` | `deploy/sql/migrations/system/NNNN_name.sql` | `registry.schema_baseline`, `registry.schema_migrations` |
+| Project substrate | `CATALOG_SCHEMA_SQL`, then `APP_SCHEMA_SQL` | `deploy/sql/migrations/project/NNNN_name.sql` | `platform.schema_baseline`, `platform.schema_migrations` |
+
+The build embeds each migration directory from its directory listing, so the image cannot omit a file.
+A file's ID is its path below `deploy/sql/`, for example `migrations/system/0001_add_index.sql`. Its ordinal is the four-digit prefix.
+Its checksum is the `sha256:` digest of its exact bytes.
+Diff and apply run the same image in their Jobs and print its digest. So diff reads the same bytes that apply runs.
+
+##### Three kinds of state
+
+Each target database keeps these facts in separate records:
+
+1. Initialization identity is the existing `schema_baseline` row: the digest of the initialization SQL and `installed_at`. Bootstrap or environment provisioning writes it once. No migration, retry or adoption changes it. Reset already pins `installed_at` as its initialization identity.
+2. Migration history is one immutable row for each file in `schema_migrations`: ordinal, path, checksum, outcome (`applied`, `adopted` or `started`) and `applied_at`. The rows use the guard and record-history stamps of `catalog.package_migrations`, without an environment, package or principal key. The existing provisioning actor stamps them.
+3. Installed SQL state is the initialization identity plus the history rows. It is a database fact. It does not depend on code selections or on the image that a later command runs.
+
+##### Frozen initialization
+
+After Epic 5 lands, a WAMN schema change is a new migration file, and the initialization SQL stays the same.
+A change to initialization SQL is a deliberate new baseline, which only an empty database accepts.
+An installed database with a different initialization digest is refused as `BaselineMismatch`.
+A fresh installation runs the initialization SQL and then every migration file of the selected image, through the same apply operation as an upgrade.
+So a fresh installation and an upgraded database run the same files.
+
+##### Adoption of an existing baseline
+
+A database installed before Epic 5 has a `schema_baseline` row and no `schema_migrations` table.
+If its initialization digest equals the digest of the image, the first mutating schema operation adopts it.
+Adoption creates the empty history table in the transaction of the first recorded file. It runs no initialization SQL and records no file as executed.
+All migration files of the image are then pending. Diff reports the adoption and writes nothing.
+If the digests differ, the operation refuses and names both digests.
+
+##### Execution and retry
+
+The section 4 [SQL execution](#sql-execution) rules apply to both scopes, with these differences:
+
+1. The rules come from the package migration owner, `crates/schema/control/src/package_migrations.rs`. The ordered prefix, gap, duplicate and drift checks, the `-- wamn:no-transaction` marker and the `started` record are the same. Package records, package ownership and principal authorization are not used.
+2. Each transactional file commits with its history row. A retry skips committed files. A file whose bytes differ from its recorded checksum refuses and is never replayed.
+3. A marked file follows the `started` and `applied` steps of section 4. Its resolution is `wamn platform schema apply --scope <scope> ... --resolve <path>=applied|retry`.
+4. An operation that WAMN cannot run safely fails before any statement runs. An example is a marked file with more than one statement.
+5. The system scope takes its own session-level advisory lock. The project scope takes the existing schema exclusion of its environment, so it cannot run during a reset or an application schema apply.
+
+##### Separate operations
+
+`provision_system::install_control_store` stays the entry point for an empty system database.
+`platform schema apply --scope system` applies no service release, application package, credential rotation or system reset.
+`--scope project` changes only WAMN-owned substrate in the registry-resolved database of the named environment.
+It keeps application-owned schema and data, code selections and other environments. It runs no environment provisioning and no application activation.
+No command migrates all environments.
+
+##### Reapply, reset and status
+
+These readers use the recorded installed state, not the platform-default image:
+
+1. Platform reapply sees completed initialization when the initialization digest matches. It runs no migration and does not replay bootstrap.
+2. An authorized application reset rebuilds the initialization SQL and then the recorded `applied` and `adopted` files in order. The executing image must carry each recorded file with an equal checksum, or the reset refuses before it changes the database. Pending files stay pending.
+3. Status reports for each database the initialization identity, the installed files, the files pending for the selected image, and `started` files as uncertain. It reports them apart from the executable selections.
+
+The integrity checks stay: an initialization digest mismatch and a checksum mismatch still refuse.
 
 **Failure and retry:** A committed SQL change remains committed if a later control-service image fails. Reapplying the image or selecting its predecessor does not reverse SQL. If SQL partially commits, report exactly what completed and what requires manual repair or a corrective statement.
 
-**Useful warnings:** Old control executable may expect a removed database object; next executable requires an object not yet installed. A known impossible SQL operation is an execution failure, not merely a warning.
+**Useful warnings:** An old control executable can expect a removed database object. A new executable can need an object that is not installed yet. Status and diff warn when the history holds a file that the selected image lacks, or when the image has pending files. Authorization failures, unavailable inputs, unsafe operations and actual SQL failures are errors, not warnings.
+
+Epic 5 excludes SQL reversal, automatic migration across environments, a compatibility solver, a deployment controller, and completion markers other than the history rows.
 
 #### 5.3.3 PostgreSQL and operator upgrades
 
@@ -902,6 +974,31 @@ Epic 4 excludes these items:
 3. Platform UI publication and authenticated deployment routes.
 4. GCP integration and general project deletion.
 5. Unrelated testing follow-ups.
+
+### Epic 5: explicit platform SQL upgrades on kind
+
+Epic 5 implements section 5.3.2 on kind: system SQL first, then one explicitly selected project database.
+The issues run in this order. The complexity column states the operations and code that each issue adds and deletes.
+
+| Issue | Scope | Complexity | Completion condition |
+|---|---|---|---|
+| DEP5-01 SQL artifact and state ownership | Section 5.3.2 decisions | Adds no code. Deletes the plan statements that system upgrades are unsupported. | Each later issue is scoped from section 5.3.2 alone. |
+| DEP5-02 Minimal migration execution and recording | Migration directories, build-time embedding, `schema_migrations` records, and an executor in `crates/control/package/src/schema_baseline.rs`. The prefix checks move out of `package_migrations.rs` so that both owners use one copy. | Adds two directories, two record tables and one executor. Deletes the full-schema-only recording and its "migrations are deferred" comment. Adds no second prefix checker. | Real PostgreSQL shows ordered files, atomic file and record, skip on retry, refusal of an edited file, rollback of a failed file, `started` uncertainty, and refusal of an unsafe file before it runs. |
+| DEP5-03 Independent system SQL operation | `platform schema diff\|apply --scope system` in `services/ctl/src/platform_verbs.rs`, with one Job builder in `platform/job.rs` | Adds one verb with two actions and one Job builder. Changes no bootstrap code. | Diff and apply read the same image. Apply changes only system SQL records and objects. |
+| DEP5-04 Selected project-substrate SQL | `--scope project --env FILE` through the SQL Job and credential owners in `environment/sql.rs` | Adds one scope to the same verb. Adds no provisioning or activation path. | Only the substrate of the named environment changes. A second environment stays the same. |
+| DEP5-05 Reapply, reset and status integration | `provision_system.rs`, `environment/sql/reset.rs`, `environment/analyse.rs`, `analyse/plan.rs`, and `platform/status.rs` | Replaces the three `project_baseline == project_sha256()` checks in `reset.rs` with the recorded-state check. Replaces the single-digest `BaselineDifference` and its unit test with the installed, pending and uncertain report. | Reapply after an upgrade runs no bootstrap. Reset rebuilds the recorded state. Status reports the three states. |
+| DEP5-06 Focused upgrade verification | Existing PostgreSQL test targets, then one deployed SQL Job case | Adds cases to existing targets. Adds no harness and no journey. | The PostgreSQL cases pass, then one owner-approved deployed case passes. |
+
+The deployed case of DEP5-06 applies one system file and one project file, through the product commands.
+It makes sure that applications and data stay the same and that a second environment is untouched.
+It is not a platform upgrade, reset or aggregate journey. It needs a separate owner approval.
+
+Every Epic 5 issue follows [the testing strategy](../testing/strategy.md), the project instructions in `CLAUDE.md`, and [running tests](../operations/running-tests.md).
+The strategy owns test design. It does not replace the mutation, evidence and execution rules of the other two documents.
+The same change deletes the code and tests that it supersedes. Changed preparation and cleanup run before an expensive case.
+The issue records each uncovered requirement and keeps no obsolete assertion.
+
+Epic 5 excludes GCP, PostgreSQL and operator upgrades, UI work, build-system redesign, and the Epic 4 gaps: HTTP/2, shutdown transitions and automatic rollback.
 
 ### GCP scope after local success
 
