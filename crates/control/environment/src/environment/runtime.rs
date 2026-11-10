@@ -309,21 +309,27 @@ pub(super) async fn require_chart_references(
 }
 
 /// Rendered objects satisfy internal references. Only external objects need a cluster read.
-async fn require_references(
+pub(crate) async fn require_references(
     namespace: &str,
     objects: &[Value],
     mut get: impl AsyncFnMut(&str, &str, &str) -> anyhow::Result<Option<Value>>,
 ) -> anyhow::Result<()> {
+    use base64::Engine as _;
+
     let mut references = std::collections::BTreeMap::new();
     for object in objects {
-        if object["kind"] != "Deployment" {
-            continue;
-        }
+        let pod = match object["kind"].as_str() {
+            Some("Deployment" | "StatefulSet" | "DaemonSet" | "Job") => {
+                &object["spec"]["template"]["spec"]
+            }
+            Some("CronJob") => &object["spec"]["jobTemplate"]["spec"]["template"]["spec"],
+            _ => continue,
+        };
         let namespace = object["metadata"]["namespace"]
             .as_str()
             .unwrap_or(namespace);
         collect_references(
-            &object["spec"]["template"]["spec"],
+            pod,
             references
                 .entry(namespace)
                 .or_insert_with(std::collections::BTreeMap::new),
@@ -345,23 +351,35 @@ async fn require_references(
                 external = get(reference_namespace, &kind, &name)
                     .await?
                     .with_context(|| {
-                        format!("missing required {kind} {reference_namespace}/{name}")
+                        format!(
+                            "missing required {} {reference_namespace}/{name}. No resources changed.",
+                            kind.to_ascii_lowercase()
+                        )
                     })?;
                 &external
             };
             for key in keys {
-                ensure!(
+                let present = if kind == "Secret" {
+                    object["stringData"][&key]
+                        .as_str()
+                        .is_some_and(|value| !value.is_empty())
+                        || object["data"][&key].as_str().is_some_and(|value| {
+                            base64::engine::general_purpose::STANDARD
+                                .decode(value)
+                                .is_ok_and(|value| !value.is_empty())
+                        })
+                } else {
                     object["data"][&key]
                         .as_str()
                         .is_some_and(|value| !value.is_empty())
                         || object["binaryData"][&key]
                             .as_str()
                             .is_some_and(|value| !value.is_empty())
-                        || (kind == "Secret"
-                            && object["stringData"][&key]
-                                .as_str()
-                                .is_some_and(|value| !value.is_empty())),
-                    "required {kind} {reference_namespace}/{name} lacks {key}"
+                };
+                ensure!(
+                    present,
+                    "required {} {reference_namespace}/{name} lacks valid {key}. No resources changed.",
+                    kind.to_ascii_lowercase()
                 );
             }
         }
@@ -428,15 +446,33 @@ mod tests {
     #[tokio::test]
     async fn references_use_rendered_config_and_require_external_secret_keys() -> anyhow::Result<()>
     {
-        for (internal_key, external_exists, external_key, succeeds) in [
-            (true, true, true, true),
-            (true, false, false, false),
-            (true, true, false, false),
-            (false, true, true, false),
+        let env = json!({"env":[{"name":"TOKEN", "valueFrom":{"secretKeyRef":{"name":"credential","key":"token"}}}]});
+        let env_from = json!({"envFrom":[{"secretRef":{"name":"credential"}}]});
+        for (kind, container, internal_key, external_exists, external_key, succeeds) in [
+            (
+                "Deployment",
+                &env,
+                true,
+                true,
+                Some("Y3JlZGVudGlhbA=="),
+                true,
+            ),
+            ("Deployment", &env, true, false, None, false),
+            ("Deployment", &env, true, true, None, false),
+            (
+                "Deployment",
+                &env,
+                false,
+                true,
+                Some("Y3JlZGVudGlhbA=="),
+                false,
+            ),
+            ("StatefulSet", &env_from, true, false, None, false),
+            ("Deployment", &env, true, true, Some("!"), false),
         ] {
             let objects = [
-                json!({"kind":"Deployment", "metadata":{"namespace":"hosts"}, "spec":{"template":{"spec":{
-                    "containers":[{"env":[{"name":"TOKEN", "valueFrom":{"secretKeyRef":{"name":"credential","key":"token"}}}]}],
+                json!({"kind":kind, "metadata":{"namespace":"hosts"}, "spec":{"template":{"spec":{
+                    "containers":[container],
                     "volumes":[{"configMap":{"name":"host-config", "items":[{"key":"config","path":"config"}]}}]
                 }}}}),
                 json!({"kind":"ConfigMap", "metadata":{"name":"host-config"},
@@ -446,7 +482,7 @@ mod tests {
                 assert_eq!((namespace, kind, name), ("hosts", "Secret", "credential"));
                 Ok(external_exists.then(|| {
                     json!({"data":
-                        if external_key { json!({"token":"credential"}) } else { json!({}) }
+                        if let Some(value) = external_key { json!({"token":value}) } else { json!({}) }
                     })
                 }))
             })
@@ -724,7 +760,7 @@ mod tests {
             }
             let data: serde_json::Map<_, _> = references[&(kind.to_owned(), name.to_owned())]
                 .iter()
-                .map(|key| (key.to_owned(), json!("credential")))
+                .map(|key| (key.to_owned(), json!("Y3JlZGVudGlhbA==")))
                 .collect();
             Ok(Some(json!({"data":data})))
         })
