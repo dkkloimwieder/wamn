@@ -122,8 +122,10 @@ Run `wamn platform deploy deploy/kind/cluster.k --chart /tmp/wamn-platform-chart
 The new platform starts with zero applications. Redeploy each required application through `wamn deploy`.
 This procedure does not upgrade a persistent system database.
 
-Remove only the private access files and deployment work directory that this run created.
-The deployment output names its work directory. Keep it while the cluster exists because kind can mount files from it.
+Successful deployment removes its private work directory unless a new kind cluster mounts its registry files.
+Keep that mounted directory while the cluster exists. Reapply updates the original registry mount.
+Failed deployments without `--only` retain their named work directory for diagnostics.
+Remove only the retained files and directory that this run created after they are no longer needed.
 
 ## Application and schema operations
 

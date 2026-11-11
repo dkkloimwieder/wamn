@@ -394,29 +394,39 @@ pub(super) fn resource_entry(
 /// # Errors
 /// Refuses missing or unreadable state within the complete call time limit.
 pub async fn require_keys(target: &Target, limit: std::time::Duration) -> anyhow::Result<()> {
-    kubectl::with_timeout(limit, inspect_keys(target)).await.context(
+    inspect_keys(target, tokio::time::Instant::now() + limit).await.context(
         "Cannot inspect identity signing state. If no org control release is recorded, run platform deploy \
          without --only to initialize identity. Otherwise restore a verified system database backup. \
          No resources changed.",
     )
 }
 
-async fn inspect_keys(target: &Target) -> anyhow::Result<()> {
+async fn inspect_keys(target: &Target, deadline: tokio::time::Instant) -> anyhow::Result<()> {
     const RECOVERY: &str = "If no org control release is recorded, run platform deploy without --only \
          to initialize identity. Otherwise restore a verified system database backup. No resources changed.";
-    let cluster: Value = kubectl::get(
+    let cluster = kubectl::with_timeout(
+        deadline,
         &target.kubeconfig,
         &target.context,
         "platform",
-        "cluster.postgresql.cnpg.io",
-        "wamn-pg",
+        &[
+            "get",
+            "cluster.postgresql.cnpg.io/wamn-pg",
+            "-o",
+            "json",
+            "--ignore-not-found",
+        ],
     )
     .await
     .with_context(|| {
         format!("cannot read Cluster platform/wamn-pg for identity signing state. {RECOVERY}")
-    })?
-    .with_context(|| {
-        format!("missing Cluster platform/wamn-pg for identity signing state. {RECOVERY}")
+    })?;
+    ensure!(
+        !cluster.is_empty(),
+        "missing Cluster platform/wamn-pg for identity signing state. {RECOVERY}"
+    );
+    let cluster: Value = serde_json::from_str(&cluster).with_context(|| {
+        format!("cannot read Cluster platform/wamn-pg for identity signing state. {RECOVERY}")
     })?;
     let primary = cluster["status"]["currentPrimary"]
         .as_str()
@@ -432,7 +442,8 @@ async fn inspect_keys(target: &Target) -> anyhow::Result<()> {
          WHERE s.issuer = '{ISSUER}' \
          AND k.signing_cutoff IS NULL AND k.private_pkcs8 IS NOT NULL)); COMMIT;"
     );
-    let result = kubectl::kubectl(
+    let result = kubectl::with_timeout(
+        deadline,
         &target.kubeconfig,
         &target.context,
         "platform",
@@ -455,7 +466,6 @@ async fn inspect_keys(target: &Target) -> anyhow::Result<()> {
             "--command",
             &query,
         ],
-        None,
     )
     .await
     .with_context(|| {

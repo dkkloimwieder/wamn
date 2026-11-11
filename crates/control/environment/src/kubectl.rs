@@ -8,7 +8,7 @@ use std::process::Stdio;
 
 use anyhow::{Context as _, bail};
 use serde::{Serialize, de::DeserializeOwned};
-use tokio::io::AsyncWriteExt as _;
+use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
 use tokio::process::Command;
 
 /// kubectl could not reach the API server, so the request did not run.
@@ -58,23 +58,32 @@ pub async fn kubectl(
         arguments,
         input,
         input.is_none(),
+        None,
     )
     .await
 }
 
-/// Bound a complete inspection, including all kubectl calls and output reads.
-///
-/// Cancelling a kubectl future drops and kills its child process.
+/// Run an inspection call within its shared deadline, killing and reaping on timeout.
 ///
 /// # Errors
 /// Returns the operation error or a timeout error.
-pub async fn with_timeout<T>(
-    limit: std::time::Duration,
-    operation: impl std::future::Future<Output = anyhow::Result<T>>,
-) -> anyhow::Result<T> {
-    tokio::time::timeout(limit, operation)
-        .await
-        .with_context(|| format!("kubectl inspection timed out after {limit:?}"))?
+pub(crate) async fn with_timeout(
+    deadline: tokio::time::Instant,
+    kubeconfig: &Path,
+    context: &str,
+    namespace: &str,
+    arguments: &[&str],
+) -> anyhow::Result<String> {
+    run(
+        kubeconfig,
+        context,
+        namespace,
+        arguments,
+        None,
+        true,
+        Some(deadline),
+    )
+    .await
 }
 
 async fn run(
@@ -84,6 +93,7 @@ async fn run(
     arguments: &[&str],
     input: Option<&[u8]>,
     show_error: bool,
+    deadline: Option<tokio::time::Instant>,
 ) -> anyhow::Result<String> {
     let mut child = Command::new("kubectl")
         .arg("--kubeconfig")
@@ -100,17 +110,43 @@ async fn run(
         .kill_on_drop(true)
         .spawn()
         .context("start kubectl")?;
-    if let Some(input) = input {
-        let mut stdin = child.stdin.take().context("open the kubectl input")?;
-        stdin
-            .write_all(input)
+    let mut stdout = child.stdout.take().context("open kubectl output")?;
+    let mut stderr = child.stderr.take().context("open kubectl error output")?;
+    let mut output = Vec::new();
+    let mut errors = Vec::new();
+    let operation = async {
+        if let Some(input) = input {
+            let mut stdin = child.stdin.take().context("open the kubectl input")?;
+            stdin
+                .write_all(input)
+                .await
+                .context("write the kubectl input")?;
+        }
+        let (status, _, _) = tokio::try_join!(
+            child.wait(),
+            stdout.read_to_end(&mut output),
+            stderr.read_to_end(&mut errors),
+        )?;
+        anyhow::Ok(status)
+    };
+    let result = match deadline {
+        Some(deadline) => tokio::time::timeout_at(deadline, operation)
             .await
-            .context("write the kubectl input")?;
-        drop(stdin);
-    }
-    let output = child.wait_with_output().await.context("wait for kubectl")?;
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
+            .context("kubectl inspection timed out"),
+        None => Ok(operation.await),
+    };
+    let status = match result {
+        Ok(status) => status.context("wait for kubectl")?,
+        Err(error) => {
+            child
+                .kill()
+                .await
+                .context("kill and reap timed out kubectl")?;
+            return Err(error);
+        }
+    };
+    if !status.success() {
+        let stderr = String::from_utf8_lossy(&errors);
         if stderr.contains("Error from server (Conflict)")
             || stderr.contains("Error from server (AlreadyExists)")
         {
@@ -120,13 +156,13 @@ async fn run(
             bail!(
                 "kubectl {} exited {}",
                 arguments.first().copied().unwrap_or_default(),
-                output.status
+                status
             );
         }
         let message = format!(
             "kubectl {} exited {}: {}",
             arguments.join(" "),
-            output.status,
+            status,
             stderr.trim()
         );
         if unreachable(stderr.trim()) {
@@ -134,7 +170,7 @@ async fn run(
         }
         bail!(message);
     }
-    Ok(String::from_utf8(output.stdout)
+    Ok(String::from_utf8(output)
         .context("kubectl wrote text")?
         .trim()
         .to_owned())
@@ -165,6 +201,7 @@ pub async fn apply<T: Serialize>(
         &arguments,
         Some(&input),
         !secret,
+        None,
     )
     .await
     .map(drop)

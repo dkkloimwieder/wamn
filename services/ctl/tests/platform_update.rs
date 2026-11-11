@@ -39,7 +39,24 @@ if tool == 'kind':
         print('node')
         sys.exit(0)
     if args[:2] == ['export', 'kubeconfig']:
+        if state.get('probe') and pathlib.Path(args[args.index('--kubeconfig') + 1]).name == 'status-kubeconfig':
+            sys.exit(1)
+        pathlib.Path(args[args.index('--kubeconfig') + 1]).write_text('private kubeconfig')
         sys.exit(0)
+    if args[:2] == ['create', 'cluster']:
+        config = yaml.safe_load(pathlib.Path(args[args.index('--config') + 1]).read_text())
+        state['mounts'] = [{'Source': mount['hostPath'], 'Destination': mount['containerPath']}
+            for node in config['nodes'] for mount in node.get('extraMounts', [])]
+        state['cluster'] = args[args.index('--name') + 1]
+        (root / 'state.json').write_text(json.dumps(state))
+        pathlib.Path(args[args.index('--kubeconfig') + 1]).write_text('private kubeconfig')
+        sys.exit(0)
+if tool == 'gcloud' and args[:3] == ['container', 'clusters', 'get-credentials']:
+    kubeconfig = pathlib.Path(__import__('os').environ['KUBECONFIG'])
+    if state.get('probe') and kubeconfig.name == 'status-kubeconfig':
+        sys.exit(1)
+    kubeconfig.write_text('private kubeconfig')
+    sys.exit(0)
 if tool == 'helm':
     if args[0] == '--kubeconfig':
         args = args[4:]
@@ -71,7 +88,7 @@ if tool == 'docker':
         print('registry')
     elif args[0] == 'inspect':
         print(json.dumps([{'Id':'registry', 'Name':'/registry', 'State':{'Running':True},
-            'Config':{'Image':'registry:2'}, 'Mounts':[],
+            'Config':{'Image':'registry:2'}, 'Mounts':state.get('mounts', []) if args[1] == 'node' else [],
             'NetworkSettings':{'Ports':{'5000/tcp':[{'HostIp':'127.0.0.1','HostPort':'5001'}]},
                 'Networks':{'kind':{'IPAddress':'172.18.0.2'}}}}]))
     elif args[:2] == ['network', 'ls']:
@@ -81,9 +98,22 @@ if tool == 'kubectl':
     if args[:2] == ['config', 'current-context']:
         print('fixture-current-context')
         sys.exit(0)
+    if state.get('probe'):
+        assert pathlib.Path(args[1]).is_file(), 'kubeconfig removed before kubectl finished'
     namespace = args[args.index('-n') + 1]
     args = args[6:]
     if args[0] == 'port-forward':
+        if state.get('probe') and args[-1] == ':80':
+            import http.server
+            class Handler(http.server.BaseHTTPRequestHandler):
+                def do_GET(self):
+                    state['probed'] = True
+                    (root / 'state.json').write_text(json.dumps(state))
+                    self.send_response(401)
+                    self.end_headers()
+            server = http.server.HTTPServer(('127.0.0.1', 0), Handler)
+            print('Forwarding from 127.0.0.1:' + str(server.server_port) + ' -> 80', flush=True)
+            server.serve_forever()
         print('Forwarding from 127.0.0.1:' + str(state['database']['port']) + ' -> 5432', flush=True)
         time.sleep(120)
         sys.exit(0)
@@ -116,7 +146,11 @@ if tool == 'kubectl':
             print('["active","inactive"]' if 'json_build_array' in query else 't')
         sys.exit(0)
     if args[0] == 'get':
+        if state.get('probe') and args[1] == 'endpointslices':
+            print(json.dumps({'items':[{'endpoints':[{'conditions':{'ready':True}, 'addresses':['127.0.0.1']}]}]}))
+            sys.exit(0)
         if state.get('hang_read') == namespace + '/' + args[1]:
+            (root / 'exec.pid').write_text(str(__import__('os').getpid()))
             time.sleep(120)
         resource = namespace + '/' + args[1]
         if resource == state.get('fail_read'):
@@ -142,7 +176,7 @@ if tool == 'kubectl':
             sys.exit(0)
         if resource == state.get('missing'):
             sys.exit(0)
-        if args[1] == 'service/wamn-pg-rw':
+        if args[1] == 'service/wamn-pg-rw' or (state.get('probe') and args[1].startswith('service/')):
             print(json.dumps({'spec':{'selector':{'app':'postgres'}}}))
             sys.exit(0)
         if args[1] == 'cluster.postgresql.cnpg.io/wamn-pg':
@@ -414,7 +448,8 @@ impl Fixture {
         command
             .args(["platform", verb])
             .arg(&self.file)
-            .env("PATH", &self.path);
+            .env("PATH", &self.path)
+            .env("TMPDIR", &self.bin);
         if let Some(chart) = chart {
             command.arg("--chart").arg(chart);
         }
@@ -432,16 +467,6 @@ impl Fixture {
             .map(serde_json::from_str)
             .collect::<Result<Vec<_>, _>>()?;
         let after = serde_json::from_slice(&std::fs::read(self.bin.join("state.json"))?)?;
-        if selection.is_none() {
-            // The fake kind nodes mount nothing, so their retained work directory is disposable.
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            if let Some(directory) = stdout
-                .lines()
-                .find_map(|line| line.strip_prefix("work directory: "))
-            {
-                std::fs::remove_dir_all(directory)?;
-            }
-        }
         Ok((output, calls, after))
     }
 }
@@ -1943,6 +1968,106 @@ fn platform_targeted_reselection_and_retry_use_only_the_owner() -> anyhow::Resul
 }
 
 #[test]
+fn platform_deploy_cleans_only_successful_unmounted_work_directories() -> anyhow::Result<()> {
+    use wamn_environment_control::platform::document::Provider;
+
+    for (provider, fresh, fail) in [
+        (Provider::Kind, false, false),
+        (Provider::Gcp, false, false),
+        (Provider::Kind, true, false),
+        (Provider::Kind, false, true),
+    ] {
+        let mut fixture = Fixture::new()?;
+        fixture.document.provider = provider;
+        if provider == Provider::Gcp {
+            fixture.document.project_id = "fixture".into();
+            fixture.document.zone = "us-central1-a".into();
+            fixture.document.buckets.web = "fixture-web".into();
+            fixture.document.buckets.otel = "fixture-otel".into();
+            fixture.document.buckets.state = "fixture-state".into();
+        }
+        fixture.file = fixture.bin.join("cluster.k");
+        std::fs::write(&fixture.file, fixture.document.to_kcl())?;
+        let mut state = fixture.state(&UpgradeTarget::Control)?;
+        state["probe"] = true.into();
+        state["reapply"] = true.into();
+        state["org"] = fixture.document.org.as_str().into();
+        if fresh {
+            use wamn_control_provision::{
+                CredentialGeneration, WorkloadRoleFamily, WorkloadRoleScope,
+                workload_generation_role,
+            };
+            let control = workload_generation_role(
+                WorkloadRoleFamily::Control,
+                WorkloadRoleScope::Org {
+                    org: &fixture.document.org,
+                    database: "wamn_system",
+                },
+                CredentialGeneration::A,
+            )?;
+            let identity =
+                wamn_control_provision::identity_issuer::identity_issuer_generation_role(
+                    "https://identity.identity.svc.cluster.local",
+                    CredentialGeneration::A,
+                )?;
+            state["credentials"] = json!({
+                format!("hosts/secret/wamn-control-{}", fixture.document.org): format!("postgresql://{control}:fixture@wamn-pg-rw.platform.svc.cluster.local/wamn_system"),
+                "identity/secret/wamn-identity-db": format!("postgresql://{identity}:fixture@wamn-pg-rw.platform.svc.cluster.local/wamn_system")
+            });
+            state["cluster"] = "".into();
+            state["owners"] = json!({});
+        } else if provider == Provider::Kind {
+            let registry = fixture.bin.join("original-registry");
+            std::fs::create_dir(&registry)?;
+            state["mounts"] = json!([{"Source":registry,"Destination":"/etc/containerd/certs.d"}]);
+        }
+        if fail {
+            state["stop_release"] = "hosts/wamn-edge".into();
+        }
+        let (output, calls, after) = fixture.run(None, &state)?;
+        // Final status access is deliberately unavailable. Successful deployment
+        // still cleans its files; a failed deployment keeps its diagnostics.
+        assert_eq!(
+            after["probed"].as_bool().unwrap_or(false),
+            !fail,
+            "{}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let directory = Path::new(
+            stdout
+                .lines()
+                .find_map(|line| line.strip_prefix("work directory: "))
+                .unwrap(),
+        );
+        let mounts = after["mounts"].as_array().into_iter().flatten();
+        let mut mounted = false;
+        for mount in mounts {
+            let source = Path::new(mount["Source"].as_str().unwrap());
+            assert!(source.is_dir(), "removed live mount {}", source.display());
+            mounted |= source.starts_with(directory);
+        }
+        assert_eq!(
+            directory.exists(),
+            fail || mounted,
+            "{}",
+            directory.display()
+        );
+        for call in calls.iter().filter(|call| call.get("values").is_some()) {
+            let args = call["args"].as_array().unwrap();
+            let values = Path::new(
+                args[args.iter().position(|arg| arg == "-f").unwrap() + 1]
+                    .as_str()
+                    .unwrap(),
+            );
+            assert_eq!(values.exists(), fail || mounted, "{}", values.display());
+        }
+    }
+    Ok(())
+}
+
+#[test]
 fn identity_signing_inspection_stops_hung_kubectl_before_mutation() -> anyhow::Result<()> {
     const CHILD: &str = "WAMN_TEST_SIGNING_TIMEOUT";
     if let Some(directory) = std::env::var_os(CHILD) {
@@ -1961,6 +2086,13 @@ fn identity_signing_inspection_stops_hung_kubectl_before_mutation() -> anyhow::R
         let error = format!("{error:#}");
         assert!(error.contains("timed out"), "{error}");
         assert!(error.contains("platform deploy without --only"), "{error}");
+        let pid = std::fs::read_to_string(target.kubeconfig.parent().unwrap().join("exec.pid"))?;
+        let process = Path::new("/proc").join(pid).join("stat");
+        assert_eq!(
+            std::fs::read_to_string(&process).unwrap_err().kind(),
+            std::io::ErrorKind::NotFound,
+            "kubectl must be reaped before inspection returns"
+        );
         return Ok(());
     }
     let fixture = Fixture::new()?;
@@ -1995,13 +2127,6 @@ fn identity_signing_inspection_stops_hung_kubectl_before_mutation() -> anyhow::R
             .map(serde_json::from_str)
             .collect::<Result<Vec<Value>, _>>()?;
         assert_operations(&calls, ("identity", "identity"), false);
-        if field == "hang_exec" {
-            let pid = std::fs::read_to_string(fixture.bin.join("exec.pid"))?;
-            assert!(
-                !Path::new("/proc").join(pid).exists(),
-                "kubectl child survived the timeout"
-            );
-        }
         let after: Value = serde_json::from_slice(&std::fs::read(fixture.bin.join("state.json"))?)?;
         assert_eq!(after, state);
     }

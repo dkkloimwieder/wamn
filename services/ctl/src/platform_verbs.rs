@@ -289,7 +289,6 @@ async fn deploy(
         .with_context(|| format!("resolve cluster {}", args.file.display()))?;
     let document = ClusterDocument::compile(&file)?;
     writeln!(output, "cluster: {}", file.display())?;
-    // Kind nodes can mount files from this directory. Retain it for their lifetime.
     let directory = work_directory()?;
     writeln!(output, "work directory: {}", directory.display())?;
     output.flush()?;
@@ -341,7 +340,14 @@ async fn deploy(
     }
     let observed = report_status(&document, &directory, signals, &mut output).await;
     // A failed observation or output write must not replace the deployment error.
-    result.and(observed)
+    // Only a newly created kind cluster mounts this run's registry directory.
+    // Reapply repairs the original mount source, outside this work directory.
+    let cleanup = if result.is_ok() && !directory.join("kubeconfig.registry").exists() {
+        std::fs::remove_dir_all(directory).context("remove deployment directory")
+    } else {
+        Ok(())
+    };
+    result.and(observed).and(cleanup)
 }
 
 async fn report_status(
