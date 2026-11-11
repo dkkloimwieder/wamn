@@ -104,8 +104,9 @@ impl Journey<'_> {
         let output = self.run(label, command).await?;
         ensure!(
             output.status.success(),
-            "{label} failed; see {}",
-            self.run.directory.display()
+            "{label} failed; see {}: {}",
+            self.run.directory.display(),
+            String::from_utf8_lossy(&output.stderr)
         );
         Ok(())
     }
@@ -185,7 +186,11 @@ impl Journey<'_> {
                     .arg(&self.file),
             )
             .await?;
-        ensure!(output.status.success(), "publish {app}@{version} failed");
+        ensure!(
+            output.status.success(),
+            "publish {app}@{version} failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
         let published: Value = serde_json::from_slice(&output.stdout)?;
         let digest = published["release"]
             .as_str()
@@ -442,12 +447,18 @@ async fn exercise_inner(run: &Run, cases: &[Case], password: &str) -> anyhow::Re
             "http://127.0.0.1:{}",
             control.as_ref().context("kind control forward")?.port
         ),
-        Provider::Gcp => format!("https://{}", run.document.route_hosts.control),
+        // The public edge serves control routes under /api.
+        Provider::Gcp => format!("https://{}/api", run.document.route_hosts.control),
     };
     let operations = async {
-        let created: Value = identity_client
-        .post(format!("{control_url}/wamn_control/project/create"))
-        .header(reqwest::header::HOST, &run.document.route_hosts.control)
+        let create = identity_client.post(format!("{control_url}/wamn_control/project/create"));
+        let create = match run.document.provider {
+            Provider::Kind => {
+                create.header(reqwest::header::HOST, &run.document.route_hosts.control)
+            }
+            Provider::Gcp => create,
+        };
+        let created: Value = create
         .bearer_auth(access)
         .json(&json!([{"request_id":uuid::Uuid::new_v4().to_string(),"value":{"project":project}}]))
         .send()

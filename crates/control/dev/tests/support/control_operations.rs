@@ -70,11 +70,16 @@ impl Control<'_> {
                 .post(url)
                 .json(&json!([{"request_id":uuid::Uuid::new_v4().to_string(),"value":value}]))
         };
-        let response = request
-            .header(
+        // Only the kind port-forward URL needs the route host. The GKE URL
+        // already names it, and the load balancer refuses a second Host over HTTP/2.
+        let request = match self.journey.run.document.provider {
+            Provider::Kind => request.header(
                 reqwest::header::HOST,
                 &self.journey.run.document.route_hosts.control,
-            )
+            ),
+            Provider::Gcp => request,
+        };
+        let response = request
             .bearer_auth(self.credentials.bearer().await?)
             .send()
             .await?
