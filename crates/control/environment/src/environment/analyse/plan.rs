@@ -227,31 +227,5 @@ pub(crate) fn notices(
             ),
         });
     }
-    if let Some(release) = &authorities.release {
-        let cause = match &release.qualification {
-            Ok(Some(_)) => return notices,
-            Ok(None) => None,
-            Err(cause) => Some(cause.clone()),
-        };
-        notices.push(Notice {
-            application: application.to_owned(),
-            identity: release.digest.clone(),
-            observed: Observation::NotChecked {
-                cause,
-                image_set: std::collections::BTreeMap::from([
-                    ("host".into(), release.image_set.host.clone()),
-                    ("http".into(), release.image_set.http.clone()),
-                    (
-                        "materializer".into(),
-                        release.image_set.materializer.clone(),
-                    ),
-                ]),
-            },
-            next_action: format!(
-                "Run optional qualification for release {} on the selected image set",
-                release.digest
-            ),
-        });
-    }
     notices
 }

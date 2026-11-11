@@ -10,7 +10,7 @@ if [[ $action == build-native ]]; then
   mkdir -p -- "$target"
   target=$(cd -- "$target" && pwd -P)
   cd "$repository"
-  # One feature graph for candidate creation and qualification. Keep debug lines,
+  # One feature graph for native artifacts. Keep debug lines,
   # but remove the output directory from Rust and C compilation paths.
   flags=$'-C\x1flink-arg=-fuse-ld=mold\x1f--remap-path-prefix='"$target=/wamn-build"
   exec env -i PATH="$PATH" HOME="$HOME" \

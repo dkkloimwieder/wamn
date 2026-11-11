@@ -637,7 +637,6 @@ mod shared_resources {
                 http: format!("registry.example/http@sha256:{}", "e".repeat(64)),
                 materializer: image,
             },
-            None,
             &chart,
         )?;
         let file = scratch.path().join("values.yaml");

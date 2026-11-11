@@ -35,7 +35,7 @@ Cargo owns membership, dependencies, features, and targets. Application manifest
 | `wamn-catalog` | Component, wiring, and release facts |
 | `wamn-package-artifact` | Reading package artifacts from the registry and their component descriptors |
 | `wamn-package-control` | Package admission, artifacts, and application |
-| `wamn-release-control` | Release publication, qualification, and charts |
+| `wamn-release-control` | Release publication and charts |
 | `wamn-environment-control` | Environment provisioning, reconciliation, and platform operations |
 | `wamn-dev-control` | Development orchestration and process supervision |
 | `wamn-ctl` | Command-line client of the four control crates |
@@ -63,7 +63,6 @@ The environment crate's `ops` feature adds the user-creation, broker-advisory re
 `wamn-ctl` lives at `services/ctl` and owns the command line.
 It holds the clap argument definitions, the printed output, and the exit codes.
 Each verb parses its arguments, calls its owner, and prints the result.
-The qualification verb also reads application case declarations and runs their Docker commands.
 The `<area>_verbs.rs` modules hold that surface.
 The development commands in `services/ctl/src/dev/` own argument parsing, output, and process signals.
 `wamn-dev-control::dev` owns the watcher, session orchestration, environment setup, target reset, and child-process supervision.
@@ -112,19 +111,6 @@ Deployment supplies that digest and artifact location to the host.
 A rollout changes the serving release.
 Runtime requests resolve wiring from the supplied release, independently of mutable activation pointers and PostgreSQL notifications.
 Frozen candidate execution retains its own admitted facts throughout the traversal.
-
-`wamn-ctl qualify-release` pulls a published release by digest and reads each package's `tests/qualification.json` from the checkout.
-The build owner's `build_record::source_root` resolves package ids to their source directories.
-Each declaration names test executables, exact cases, and evidence variables. The application declaration is the authority.
-The verb runs their union in lexical order of executable, case name, then evidence variable, without duplicate entries.
-
-Missing or malformed declarations refuse. An explicit empty declaration contributes no cases, but an empty release union refuses.
-The ctl verb owns case execution and temporary results. The control library owns qualification artifacts and registry verification.
-
-When every case passes, it pushes a qualification artifact beside the release.
-The artifact is keyed by the release digest and the platform image set of the release chart.
-`env apply` refuses a release that has no qualification for that image set.
-The [delivery commands](../operations/delivery.md) describe qualification.
 
 ## Environment lifecycle
 

@@ -5,7 +5,7 @@ tools=$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
 fixture=$(mktemp -d "${TMPDIR:-/tmp}/wamn-test-revision-test.XXXXXXXX")
 trap 'status=$?; if ((status != 0)); then cat "$fixture/output" >&2 2>/dev/null || :; fi; rm -rf -- "$fixture"' EXIT
 mkdir -p "$fixture/bin" "$fixture/repo/tools" "$fixture/target/debug" \
-  "$fixture/repo/deploy/gcp/environments" "$fixture/repo/apps"
+  "$fixture/repo/apps"
 cp "$tools/test-changes" "$tools/require-test-result" \
   "$tools/test-revision" "$fixture/repo/tools/"
 # Exercise the real process boundary with children, without Cargo or services.
@@ -99,9 +99,6 @@ cp "$tools/../Dockerfile" "$fixture/repo/"
 unset WAMN_NATIVE_C_NATS_BIN
 export FAKE_STATE="$fixture" PATH="$fixture/bin:$PATH" CARGO="$fixture/bin/cargo"
 export CARGO_TARGET_DIR="$fixture/target" TMPDIR="$fixture"
-cat > "$fixture/repo/deploy/gcp/environments/test.json" <<'JSON'
-{"packages": []}
-JSON
 for app in platform_fixture platform_fixture_overlay edge_device client_acme_receiving wamn_receiving wamn_wms; do
   mkdir -p "$fixture/repo/apps/$app"
   : > "$fixture/repo/apps/$app/wamn.k"
@@ -153,7 +150,6 @@ elif [[ $1 == metadata ]]; then
       ["wamn-wms-tests", "apps/wamn_wms/tests"] else empty end
     | {name: .[0], id: .[0], manifest_path: ($root + "/" + .[1] + "/Cargo.toml"),
        targets: [{name: (.[0] | gsub("-"; "_")), kind: ["lib"]},
-         {name: "package_digest", kind: ["test"]},
          {name: "migration_policy", kind: ["test"]},
          {name: "apply_package_live", kind: ["test"]},
          {name: "environment_apply_kind", kind: ["test"]},
@@ -229,8 +225,6 @@ run_case docs/change.md
 grep -q '^selected: nothing$' "$fixture/output"
 ! grep -q '^repo-lint:' "$fixture/output"
 ! grep -q '^root:' "$fixture/output"
-run_case crates/schema/generator/src/change.rs
-grep -q '^package-digest:.*--test package_digest' "$fixture/output"
 run_case apps/platform_fixture/wamn.k
 grep -q '^suites:.*provision' "$fixture/output"
 run_case deploy/sql/catalog.sql

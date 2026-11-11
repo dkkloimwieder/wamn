@@ -21,7 +21,7 @@
     {
       "path": "value.application",
       "type": "text",
-      "nullable": true,
+      "nullable": false,
       "values": []
     },
     {

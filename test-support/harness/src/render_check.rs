@@ -170,7 +170,6 @@ pub fn template(values: &serde_yaml::Value, namespace: &str) -> anyhow::Result<V
             http: image.clone(),
             materializer: image,
         },
-        None,
         &work.path().join("chart"),
     )?;
     let file = work.path().join("values.yaml");

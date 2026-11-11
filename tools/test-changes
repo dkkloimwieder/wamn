@@ -611,10 +611,6 @@ if wamn_prerequisite fixture; then
   wamn_application apps/platform_fixture
   wamn_application apps/platform_fixture_overlay
 fi
-if wamn_prerequisite packages; then
-  while IFS= read -r app; do wamn_application "$app"; done \
-    < <(jq -r '.packages[]' deploy/gcp/environments/*.json | sort -u)
-fi
 
 wamn_expand_input() {
   local value="$1"

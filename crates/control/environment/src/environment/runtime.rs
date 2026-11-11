@@ -673,7 +673,6 @@ mod tests {
                 http: image.clone(),
                 materializer: image,
             },
-            None,
             &private.path("chart"),
         )?;
         let metadata: Value = serde_yaml::from_slice(&std::fs::read(chart.join("Chart.yaml"))?)?;

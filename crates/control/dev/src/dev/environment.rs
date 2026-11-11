@@ -265,16 +265,6 @@ impl JourneyScope {
     }
 }
 
-impl From<&wamn_release_control::delivery::ReleaseIdentity> for JourneyScope {
-    fn from(identity: &wamn_release_control::delivery::ReleaseIdentity) -> Self {
-        Self {
-            org: identity.org.clone(),
-            project: identity.project.clone(),
-            environment: identity.environment.clone(),
-        }
-    }
-}
-
 pub async fn connect(url: &str) -> anyhow::Result<(Arc<Client>, tokio::task::JoinHandle<()>)> {
     let (client, connection) = tokio_postgres::connect(url, NoTls)
         .await

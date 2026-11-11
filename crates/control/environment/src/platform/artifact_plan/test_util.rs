@@ -28,7 +28,6 @@ pub fn prepared_chart(repository: &Path) -> anyhow::Result<Chart> {
             http: format!("registry.example/components/http@sha256:{digest}"),
             materializer: format!("other.example/materializer:component-build@sha256:{digest}"),
         },
-        None,
         &chart.0,
     )?;
     crate::platform_build::prepare_payload(repository, &chart.0)?;

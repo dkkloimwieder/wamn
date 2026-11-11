@@ -4,7 +4,7 @@
 //! An application is one Helm release of `deploy/platform/release`: the pinned
 //! runtime-operator subchart, host-only, plus one WorkloadDeployment per role.
 //! This module derives the release name, renders the install values, stamps the
-//! platform image set and the qualification images into the chart's defaults,
+//! platform image set into the chart's defaults,
 //! reads them back, and runs the Helm install and uninstall.
 //!
 //! The platform image set lives only in the chart's default values (R15). The
@@ -62,31 +62,11 @@ pub fn read_platform_version(path: &Path) -> anyhow::Result<String> {
 
 pub use plan::ImageSet;
 
-pub use plan::QualificationImages;
-
-/// Copy `chart` to `out` with the image set, and the qualification images
-/// when given, written into its default values.
-///
-/// The platform build step stamps both; its chart's defaults are the one
-/// source of them. A case that copies the roles by digest into its own
-/// registry stamps a copy of that chart with the copied set and `None`, so
-/// the copy keeps the source's qualification images. `chart` must hold its
-/// built subchart archive.
-pub fn stamp(
-    chart: &Path,
-    set: &ImageSet,
-    qualification: Option<&QualificationImages>,
-    out: &Path,
-) -> anyhow::Result<PathBuf> {
+/// Copy `chart` to `out` with the image set written into its defaults.
+/// The chart must hold its built subchart archive.
+pub fn stamp(chart: &Path, set: &ImageSet, out: &Path) -> anyhow::Result<PathBuf> {
     let (repository, tag) = split_host_image(&set.host)?;
-    let mut pinned = vec![("http", &set.http), ("materializer", &set.materializer)];
-    if let Some(images) = qualification {
-        pinned.extend([
-            ("runner", &images.runner),
-            ("gates", &images.gates),
-            ("identity", &images.identity),
-        ]);
-    }
+    let pinned = [("http", &set.http), ("materializer", &set.materializer)];
     for (name, image) in pinned {
         ensure!(
             image.contains("@sha256:"),
@@ -106,11 +86,6 @@ pub fn stamp(
     let platform = &mut values["platform"];
     platform["roles"]["http"]["image"] = set.http.clone().into();
     platform["roles"]["materializer"]["image"] = set.materializer.clone().into();
-    if let Some(images) = qualification {
-        platform["runner"]["image"] = images.runner.clone().into();
-        platform["gates"]["image"] = images.gates.clone().into();
-        platform["identity"]["image"] = images.identity.clone().into();
-    }
     std::fs::write(&path, serde_yaml::to_string(&values)?)
         .with_context(|| format!("write {}", path.display()))?;
     Ok(out.to_owned())
@@ -149,17 +124,6 @@ pub async fn image_set(chart: &Path) -> anyhow::Result<ImageSet> {
         host,
         http: stamped(&roles["http"]["image"], "http image")?,
         materializer: stamped(&roles["materializer"]["image"], "materializer image")?,
-    })
-}
-
-/// Read the qualification images from the default values of `chart`.
-pub async fn qualification_images(chart: &Path) -> anyhow::Result<QualificationImages> {
-    let values = default_values(chart).await?;
-    let platform = &values["platform"];
-    Ok(QualificationImages {
-        runner: stamped(&platform["runner"]["image"], "runner image")?,
-        gates: stamped(&platform["gates"]["image"], "gates image")?,
-        identity: stamped(&platform["identity"]["image"], "identity image")?,
     })
 }
 

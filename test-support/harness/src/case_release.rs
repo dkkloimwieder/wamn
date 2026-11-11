@@ -8,13 +8,12 @@ use anyhow::{Context as _, ensure};
 use oci_client::client::{Certificate, CertificateEncoding, ClientConfig, ClientProtocol};
 use oci_client::manifest::{
     IMAGE_MANIFEST_LIST_MEDIA_TYPE, IMAGE_MANIFEST_MEDIA_TYPE, OCI_IMAGE_INDEX_MEDIA_TYPE,
-    OCI_IMAGE_MEDIA_TYPE, OciImageManifest,
+    OCI_IMAGE_MEDIA_TYPE,
 };
 use oci_client::secrets::RegistryAuth;
-use oci_client::{Client, Reference, RegistryOperation};
+use oci_client::{Client, Reference};
 use serde_yaml::{Mapping, Value};
 use wamn_package_artifact::registry_credentials::read_registry_credentials;
-use wamn_release_control::delivery::{Candidate, sibling_bases};
 
 /// The operator release's namespace, where every environment release and
 /// its hosts live (R6).
@@ -85,30 +84,6 @@ impl Registry {
             ca_paths: Vec::new(),
         })
     }
-
-    /// The registry that holds `image` of `candidate`: plain HTTP with no
-    /// login for a loopback authority, and otherwise the access of the
-    /// candidate's release registry, the pull credential and CAs that
-    /// `qualify-release` names and mounts in the runner (wamn-5v6ps).
-    ///
-    /// # Errors
-    ///
-    /// When the image or the release repository names no registry authority.
-    pub fn of(image: &str, candidate: &Candidate) -> anyhow::Result<Self> {
-        let authority = authority(image)?;
-        if is_loopback(authority) {
-            return Self::loopback(image);
-        }
-        let releases = Self::releases(candidate)?;
-        if releases.authority == authority {
-            return Ok(releases);
-        }
-        Ok(Self {
-            authority: authority.to_owned(),
-            insecure: false,
-            ..releases
-        })
-    }
 }
 
 fn authority(image: &str) -> anyhow::Result<&str> {
@@ -118,209 +93,8 @@ fn authority(image: &str) -> anyhow::Result<&str> {
         .with_context(|| format!("the image {image} names no registry"))
 }
 
-impl Registry {
-    /// The registry of the candidate's release repository, with its access.
-    ///
-    /// # Errors
-    ///
-    /// When the release repository names no registry authority.
-    pub fn releases(candidate: &Candidate) -> anyhow::Result<Self> {
-        let releases = &candidate.releases;
-        let (authority, _) = releases
-            .artifact_base
-            .split_once('/')
-            .context("the release repository names a registry")?;
-        Ok(Self {
-            authority: authority.to_owned(),
-            auth_file: Some(releases.registry_auth_file.clone()),
-            insecure: releases.insecure_registry,
-            ca_paths: releases.oci_ca_paths.clone(),
-        })
-    }
-}
-
 pub(crate) fn is_loopback(authority: &str) -> bool {
     matches!(authority.split(':').next(), Some("localhost" | "127.0.0.1"))
-}
-
-/// The `<container>:<port>` at which kind nodes reach a loopback registry
-/// `authority`, `localhost:<port>`: the container that publishes the port,
-/// on the kind network. `None` for any other authority, which the nodes reach
-/// as it is.
-///
-/// # Errors
-///
-/// When no container publishes the port, or it is not on the kind network.
-pub async fn registry_endpoint(authority: &str) -> anyhow::Result<Option<String>> {
-    if !is_loopback(authority) {
-        return Ok(None);
-    }
-    let port = authority
-        .rsplit_once(':')
-        .map(|(_, port)| port)
-        .with_context(|| format!("the loopback registry {authority} names no port"))?;
-    let names = docker(&[
-        "container",
-        "ls",
-        "--filter",
-        &format!("publish={port}"),
-        "--format",
-        "{{.Names}}",
-    ])
-    .await?;
-    let name = names
-        .lines()
-        .next()
-        .with_context(|| format!("no container publishes the registry port {port}"))?;
-    let settings: serde_json::Value = serde_json::from_str(
-        &docker(&[
-            "container",
-            "inspect",
-            "--format",
-            "{{json .NetworkSettings}}",
-            name,
-        ])
-        .await?,
-    )?;
-    ensure!(
-        settings["Networks"].get("kind").is_some(),
-        "the registry container {name} is not on the kind network"
-    );
-    let inner = settings["Ports"]
-        .as_object()
-        .and_then(|ports| {
-            ports.iter().find_map(|(inner, bindings)| {
-                bindings
-                    .as_array()?
-                    .iter()
-                    .any(|binding| binding["HostPort"] == port)
-                    .then(|| inner.trim_end_matches("/tcp").to_owned())
-            })
-        })
-        .with_context(|| format!("the container {name} publishes no port {port}"))?;
-    Ok(Some(format!("{name}:{inner}")))
-}
-
-/// The files that a cluster's lifecycle tool reads to pull `host_image` onto
-/// its nodes from the loopback registry that kind reaches at `endpoint`:
-/// `native-registry-authority`, `native-registry-hosts.toml` and
-/// `native-host-image`, in `work`.
-///
-/// # Errors
-///
-/// When the image names no registry or a file cannot be written.
-pub fn registry_files(endpoint: &str, host_image: &str, work: &Path) -> anyhow::Result<()> {
-    let (authority, _) = host_image
-        .split_once('/')
-        .context("the host image has a registry authority")?;
-    let endpoint = serde_json::to_string(&format!("http://{endpoint}"))?;
-    fs::write(work.join("native-registry-authority"), authority)?;
-    fs::write(
-        work.join("native-registry-hosts.toml"),
-        format!(
-            "server = {endpoint}\n[host.{endpoint}]\n  capabilities = [\"pull\", \"resolve\"]\n"
-        ),
-    )?;
-    fs::write(work.join("native-host-image"), host_image)?;
-    Ok(())
-}
-
-pub(crate) async fn docker(arguments: &[&str]) -> anyhow::Result<String> {
-    let output = tokio::process::Command::new("docker")
-        .args(arguments)
-        .kill_on_drop(true)
-        .output()
-        .await
-        .context("run docker")?;
-    ensure!(
-        output.status.success(),
-        "docker {} failed: {}",
-        arguments.join(" "),
-        String::from_utf8_lossy(&output.stderr)
-    );
-    Ok(String::from_utf8(output.stdout)?)
-}
-
-/// Copy the image `source` (`<authority>/<repository>@sha256:<hex>`) from
-/// `from` into `repository` of `to`, by digest, and return
-/// `<to authority>/<repository>@sha256:<hex>`. The manifest bytes are copied
-/// unchanged, so the digest is the source's.
-///
-/// # Errors
-///
-/// When the source has no digest, a registry refuses, or the bytes do not
-/// hash to the digest.
-pub async fn copy_image(
-    source: &str,
-    from: &Registry,
-    repository: &str,
-    to: &Registry,
-) -> anyhow::Result<String> {
-    let source_reference: Reference = source
-        .parse()
-        .with_context(|| format!("parse the image reference {source}"))?;
-    let digest = source_reference
-        .digest()
-        .with_context(|| format!("image {source} is not pinned by digest"))?
-        .to_owned();
-    let target =
-        Reference::with_digest(to.authority.clone(), repository.to_owned(), digest.clone());
-    let copied = copy(&source_reference, from, &target, to).await?;
-    ensure!(
-        copied == digest,
-        "the manifest of {source} does not hash to its digest"
-    );
-    Ok(format!("{}/{repository}@{digest}", to.authority))
-}
-
-/// Copy the manifest `source` of `from`, its config and its layers, to
-/// `target` of `to`, and return the manifest's digest. The manifest bytes are
-/// copied unchanged.
-async fn copy(
-    source: &Reference,
-    from: &Registry,
-    target: &Reference,
-    to: &Registry,
-) -> anyhow::Result<String> {
-    let client = client(&[from, to])?;
-    let (bytes, found) = client
-        .pull_manifest_raw(
-            source,
-            &from.auth()?,
-            &[OCI_IMAGE_MEDIA_TYPE, IMAGE_MANIFEST_MEDIA_TYPE],
-        )
-        .await
-        .with_context(|| format!("read the manifest of {source}"))?;
-    ensure!(
-        wamn_package_artifact::sha256_digest(&bytes) == found,
-        "the manifest of {source} does not hash to the digest the registry names"
-    );
-    let manifest: OciImageManifest = serde_json::from_slice(&bytes)
-        .with_context(|| format!("parse the manifest of {source}"))?;
-    client
-        .auth(target, &to.auth()?, RegistryOperation::Push)
-        .await
-        .with_context(|| format!("log in to registry {}", to.authority))?;
-    for blob in std::iter::once(&manifest.config).chain(&manifest.layers) {
-        let mut data = Vec::new();
-        client
-            .pull_blob(source, blob, &mut data)
-            .await
-            .with_context(|| format!("read blob {} of {source}", blob.digest))?;
-        client
-            .push_blob(target, data, &blob.digest)
-            .await
-            .with_context(|| format!("write blob {} to {}", blob.digest, to.authority))?;
-    }
-    let media_type = manifest
-        .media_type
-        .as_deref()
-        .unwrap_or(OCI_IMAGE_MEDIA_TYPE);
-    client
-        .push_manifest_raw(target, bytes, media_type.parse()?)
-        .await
-        .with_context(|| format!("write the manifest of {source} to {}", to.authority))?;
-    Ok(found)
 }
 
 /// The registry client that reaches each of `registries` with its CAs, and
@@ -347,41 +121,6 @@ fn client(registries: &[&Registry]) -> anyhow::Result<Client> {
         ..ClientConfig::default()
     })
     .context("build the registry client")
-}
-
-/// The archive in `work` of the image `<repository>[:<tag>]@sha256:<hex>`
-/// that a cluster's lifecycle tool imports on each node:
-/// `node-image-<hex>.tar`.
-fn node_image_archive(work: &Path, image: &str) -> anyhow::Result<PathBuf> {
-    let (_, hex) = image
-        .rsplit_once("@sha256:")
-        .with_context(|| format!("the image {image} is not pinned by digest"))?;
-    Ok(work.join(format!("node-image-{hex}.tar")))
-}
-
-/// Write each of `images`, pinned by digest in a registry that is not
-/// loopback, into its archive in `work` ([`node_image_archive`]), which the
-/// cluster's lifecycle tool imports on each node. The registry stays
-/// private: the archives are read with the access of [`Registry::of`], and
-/// no node gets a credential (docs/operations/gcp.md §3.13).
-///
-/// # Errors
-///
-/// When an image cannot be read or an archive cannot be written.
-pub async fn node_image_archives(
-    candidate: &Candidate,
-    images: &[&str],
-    work: &Path,
-) -> anyhow::Result<()> {
-    for image in images {
-        image_archive(
-            image,
-            &Registry::of(image, candidate)?,
-            &node_image_archive(work, image)?,
-        )
-        .await?;
-    }
-    Ok(())
 }
 
 /// The OCI media types of an image index and of an image manifest.
@@ -528,94 +267,6 @@ fn archive_index(
     }))
 }
 
-/// Copy the candidate's release manifest and every component it names from
-/// the release repository and the component repository beside it into
-/// `wamn/releases` and `wamn/components` of `to`, each under the tag of its
-/// digest, the references the hosts pull. The composed HTTP entry is copied
-/// by its manifest digest to the same path under `wamn/components` of `to`,
-/// because the manifest names it relative to the component artifact base.
-///
-/// # Errors
-///
-/// When an artifact cannot be copied.
-pub async fn copy_release(candidate: &Candidate, to: &Registry) -> anyhow::Result<()> {
-    let from = Registry::releases(candidate)?;
-    let (_, components) = sibling_bases(&candidate.releases.artifact_base)?;
-    let (manifest, digest) = candidate.manifest()?;
-    let artifacts = std::iter::once((
-        candidate.releases.artifact_base.as_str(),
-        "releases",
-        digest.as_str(),
-    ))
-    .chain(manifest.components.iter().map(|component| {
-        (
-            components.as_str(),
-            "components",
-            component.descriptor.component_digest.as_str(),
-        )
-    }));
-    for (base, repository, digest) in artifacts {
-        let source = tagged(base, digest)?;
-        let target = tagged(&format!("{}/wamn/{repository}", to.authority), digest)?;
-        copy(&source, &from, &target, to).await?;
-    }
-    if let Some(entry) = &manifest.composed_entry {
-        let joined = |base: &str| -> anyhow::Result<Reference> {
-            let reference =
-                wamn_catalog::composed_entry_start_reference(Some(base), &entry.reference)
-                    .map_err(|error| anyhow::anyhow!("{error}"))?;
-            reference
-                .parse()
-                .with_context(|| format!("parse the entry reference {reference}"))
-        };
-        let source = joined(&components)?;
-        let target = joined(&format!("{}/wamn/components", to.authority))?;
-        let copied = copy(&source, &from, &target, to).await?;
-        ensure!(
-            source.digest() == Some(copied.as_str()),
-            "the composed entry {source} does not hash to its digest"
-        );
-    }
-    Ok(())
-}
-
-/// The reference `<base>:<hex>` of the artifact that `digest` addresses.
-fn tagged(base: &str, digest: &str) -> anyhow::Result<Reference> {
-    let reference = wamn_catalog::component_artifact_reference(base, digest)
-        .map_err(|error| anyhow::anyhow!("{error}"))?;
-    Ok(Reference::with_tag(
-        reference.registry().to_owned(),
-        reference.repository().to_owned(),
-        reference.tag().to_owned(),
-    ))
-}
-
-/// Copy the candidate's http and materializer images by digest into
-/// `wamn/http` and `wamn/materializer` of `to`, and return the copies.
-///
-/// # Errors
-///
-/// When an image cannot be copied.
-pub async fn copy_roles(candidate: &Candidate, to: &Registry) -> anyhow::Result<(String, String)> {
-    let images = &candidate.images;
-    Ok((
-        copy_image(
-            &images.http,
-            &Registry::of(&images.http, candidate)?,
-            "wamn/http",
-            to,
-        )
-        .await?,
-        copy_image(
-            &images.materializer,
-            &Registry::of(&images.materializer, candidate)?,
-            "wamn/materializer",
-            to,
-        )
-        .await?,
-    ))
-}
-
 /// The host group body of the release chart: the one group of a rendered host
 /// overlay, less what the chart derives.
 ///
@@ -650,108 +301,6 @@ pub fn host_group(overlay: &str) -> anyhow::Result<Mapping> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use wamn_package_control::package_artifact::PackageRegistry;
-    use wamn_release_control::release_chart::ImageSet;
-
-    #[tokio::test]
-    async fn loopback_copy_uses_plain_http_without_credentials() {
-        use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
-
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let address = listener.local_addr().unwrap().to_string();
-        let blob = b"{}";
-        let blob_digest = wamn_package_artifact::sha256_digest(blob);
-        let manifest = serde_json::to_vec(&serde_json::json!({
-            "schemaVersion": 2,
-            "mediaType": OCI_IMAGE_MEDIA_TYPE,
-            "config": {"mediaType": "application/vnd.oci.image.config.v1+json", "digest": blob_digest, "size": blob.len()},
-            "layers": [{"mediaType": "application/vnd.wasm.content.layer.v1+wasm", "digest": blob_digest, "size": blob.len()}]
-        }))
-        .unwrap();
-        let digest = wamn_package_artifact::sha256_digest(&manifest);
-        let source = format!("{address}/source@{digest}");
-        let registry = Registry::loopback(&source).unwrap();
-        assert!(registry.auth_file.is_none());
-        assert!(matches!(registry.auth().unwrap(), RegistryAuth::Anonymous));
-        let expected = format!("{address}/copied@{digest}");
-        let server = tokio::spawn(async move {
-            let mut uploads = 0;
-            loop {
-                let (mut stream, _) = listener.accept().await.unwrap();
-                let mut request = Vec::new();
-                loop {
-                    let mut byte = [0];
-                    stream.read_exact(&mut byte).await.unwrap();
-                    request.push(byte[0]);
-                    if request.ends_with(b"\r\n\r\n") {
-                        break;
-                    }
-                }
-                let headers = String::from_utf8(request).unwrap();
-                assert!(!headers.to_ascii_lowercase().contains("authorization:"));
-                let length = headers
-                    .lines()
-                    .filter_map(|line| line.split_once(':'))
-                    .find(|(key, _)| key.eq_ignore_ascii_case("content-length"))
-                    .map_or(0, |(_, value)| value.trim().parse::<usize>().unwrap());
-                let mut body = vec![0; length];
-                stream.read_exact(&mut body).await.unwrap();
-                let mut words = headers.split_whitespace();
-                let method = words.next().unwrap();
-                let path = words.next().unwrap();
-                let done = method == "PUT" && path.starts_with("/v2/copied/manifests/");
-                let (status, content, location) = match (method, path) {
-                    ("GET", "/v2/") => (200, Vec::new(), String::new()),
-                    ("GET", path) if path.starts_with("/v2/source/manifests/") => {
-                        (200, manifest.clone(), String::new())
-                    }
-                    ("GET", path) if path == format!("/v2/source/blobs/{blob_digest}") => {
-                        (200, blob.to_vec(), String::new())
-                    }
-                    ("POST", "/v2/copied/blobs/uploads/") => {
-                        (202, Vec::new(), "/v2/copied/blobs/uploads/1".into())
-                    }
-                    ("PATCH", "/v2/copied/blobs/uploads/1") => {
-                        assert_eq!(body, blob);
-                        uploads += 1;
-                        (202, Vec::new(), "/v2/copied/blobs/uploads/1".into())
-                    }
-                    ("PUT", path) if path.starts_with("/v2/copied/blobs/uploads/1?") => {
-                        (201, Vec::new(), format!("/v2/copied/blobs/{blob_digest}"))
-                    }
-                    ("PUT", _) if done => {
-                        assert_eq!(body, manifest);
-                        assert_eq!(uploads, 2);
-                        (201, Vec::new(), format!("/v2/copied/manifests/{digest}"))
-                    }
-                    _ => panic!("unexpected registry request: {method} {path}"),
-                };
-                let response_digest = if path.contains("/blobs/") {
-                    &blob_digest
-                } else {
-                    &digest
-                };
-                let response = format!(
-                    "HTTP/1.1 {status} OK\r\nContent-Length: {}\r\nContent-Type: {OCI_IMAGE_MEDIA_TYPE}\r\nDocker-Content-Digest: {response_digest}\r\nLocation: {location}\r\nConnection: close\r\n\r\n",
-                    content.len()
-                );
-                stream.write_all(response.as_bytes()).await.unwrap();
-                stream.write_all(&content).await.unwrap();
-                if done {
-                    break;
-                }
-            }
-        });
-        let copied = tokio::time::timeout(
-            Duration::from_secs(10),
-            copy_image(&source, &registry, "copied", &registry),
-        )
-        .await
-        .unwrap()
-        .unwrap();
-        assert_eq!(copied, expected);
-        server.await.unwrap();
-    }
 
     #[test]
     fn the_host_group_keeps_only_what_the_chart_does_not_derive() {
@@ -767,49 +316,6 @@ mod tests {
                 .unwrap()
         );
         assert!(host_group("runtime: {hostGroups: []}").is_err());
-    }
-
-    /// A case reads a private image with the release registry's pull
-    /// credential, never a Docker login of the machine (wamn-5v6ps).
-    #[test]
-    fn a_private_image_is_read_with_the_release_registry_access() {
-        let image = |authority: &str| format!("{authority}/wamn/http@sha256:{}", "a".repeat(64));
-        let candidate = Candidate {
-            manifest_path: PathBuf::from("/manifest.json"),
-            releases: PackageRegistry {
-                artifact_base: "registry.example/acme/releases".to_owned(),
-                credentials: None,
-                registry_auth_file: PathBuf::from("/pull/config.json"),
-                insecure_registry: true,
-                oci_ca_paths: vec![PathBuf::from("/pull/ca.crt")],
-            },
-            images: ImageSet {
-                host: image("registry.example"),
-                http: image("registry.example"),
-                materializer: image("registry.example"),
-            },
-            qualification: wamn_release_control::release_chart::QualificationImages {
-                runner: image("registry.example"),
-                gates: image("registry.example"),
-                identity: image("registry.example"),
-            },
-        };
-        let same = Registry::of(&image("registry.example"), &candidate).unwrap();
-        assert_eq!(same.auth_file, Some(PathBuf::from("/pull/config.json")));
-        assert!(same.insecure);
-        let other = Registry::of(&image("other.example"), &candidate).unwrap();
-        assert_eq!(other.authority, "other.example");
-        assert_eq!(other.auth_file, Some(PathBuf::from("/pull/config.json")));
-        assert_eq!(other.ca_paths, [PathBuf::from("/pull/ca.crt")]);
-        assert!(!other.insecure);
-        let loopback = Registry::of(&image("localhost:5000"), &candidate).unwrap();
-        assert_eq!(loopback.auth_file, None);
-        assert!(loopback.insecure);
-        assert!(Registry::loopback(&image("registry.example")).is_err());
-        assert_eq!(
-            node_image_archive(Path::new("/work"), &image("registry.example")).unwrap(),
-            Path::new("/work").join(format!("node-image-{}.tar", "a".repeat(64)))
-        );
     }
 
     /// The archive names a tagged image by its tag and its pinned digest,

@@ -14,7 +14,7 @@ fn native_build_uses_fixed_inputs() {
     fs::write(&cargo, r#"#!/bin/bash
 printf '%s\n' "$@"
 printf 'flags=%s\nincremental=%s\ncc=%s\nepoch=%s\n' "$CARGO_ENCODED_RUSTFLAGS" "$CARGO_INCREMENTAL" "$CC" "$SOURCE_DATE_EPOCH"
-[[ -z ${RUSTFLAGS+x} && -z ${CARGO_FEATURES+x} && -z ${CARGO_PROFILE_DEV_OPT_LEVEL+x} && -z ${WAMN_DELIVERY_CANDIDATE+x} && -z ${DATABASE_URL+x} ]]
+[[ -z ${RUSTFLAGS+x} && -z ${CARGO_FEATURES+x} && -z ${CARGO_PROFILE_DEV_OPT_LEVEL+x} && -z ${DATABASE_URL+x} ]]
 "#).unwrap();
     fs::set_permissions(&cargo, fs::Permissions::from_mode(0o755)).unwrap();
     let target = scratch.join("target");
@@ -30,7 +30,6 @@ printf 'flags=%s\nincremental=%s\ncc=%s\nepoch=%s\n' "$CARGO_ENCODED_RUSTFLAGS" 
         .env("CARGO_ENCODED_RUSTFLAGS", "ambient-encoded-flags")
         .env("CARGO_FEATURES", "ops")
         .env("CARGO_PROFILE_DEV_OPT_LEVEL", "3")
-        .env("WAMN_DELIVERY_CANDIDATE", "ambient-candidate")
         .env("DATABASE_URL", "ambient-database")
         .env("CC", "ambient-compiler")
         .env("SOURCE_DATE_EPOCH", "999")

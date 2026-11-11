@@ -62,7 +62,6 @@ The stage checks the router pin, as the guest build of `wamn build` does.
 Control-client tests compose this pinned raw guest with an empty dispatcher and link operation calls without authority.
 `tools/test-changes --tier kind` runs no guest build.
 `tests/selection.toml` owns suite commands, tiers, prerequisites, and inputs beyond Cargo dependencies.
-Generator changes select `package_digest` in `wamn-package-control`.
 Platform fixture and catalog changes select `wamn-control-provision`.
 SQL changes select `wamn-ctl` with `ops`, including `protected_relations_live`.
 Control and platform deployment changes select the exact native host case.
@@ -385,7 +384,6 @@ For Docker fixtures, choose a new container name and an unused loopback port.
 Make sure that a real query succeeds through the same connection path that the command uses.
 
 The `wamn-test-postgres` runner binary in `wamn-test-infrastructure` serves delivery tooling and the manual generation commands below.
-Release qualification uses it for the server that `wamn build` uses.
 It starts a server, creates the named database, and optionally applies migrations and history tables.
 It removes inherited PostgreSQL variables, sets each `--url-env` variable to the database URL, and runs the command.
 It stops the command's process group and removes its server on completion, failure, or handled interruption.
@@ -576,7 +574,7 @@ Inside its child command, use `WAMN_RECEIVING_DEV_NATS_URL` for `WAMN_NATS_URL`.
 Use its `WAMN_DEV_ENV_NATS_TLS_CA`, `WAMN_DEV_ENV_NATS_TLS_CERT`, and `WAMN_DEV_ENV_NATS_TLS_KEY` for the corresponding platform variables.
 
 `production_operator_authentication_and_operation_authorization` keeps `identity.log` and `test.log` in a new `wamn-route-auth-*` directory under `${TMPDIR:-/var/tmp}`.
-A failure prints both paths; the Receiving qualification cases keep these logs in their existing results directory and print their paths on failure.
+A failure prints both paths.
 
 ### Record history retention test
 
@@ -941,7 +939,6 @@ This case explicitly reselects an earlier image and does not induce a rollout fa
 
 DEP2-02 removes the Receiving and WMS cluster suites and their duplicate installers.
 It also removes the RC runner and the separate identity/session cluster journey.
-Their deleted qualification cases have no placeholders.
 
 The historical Receiving cluster combinations covered command histories, membership revocation, postcommit delivery, and materialization.
 The WMS combinations covered deployed routes, label failures after commit, delivery, and host restart with compiled code reuse.

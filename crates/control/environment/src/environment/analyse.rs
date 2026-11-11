@@ -3,8 +3,7 @@
 //!
 //! Analysis compiles nothing new and writes nothing. It reads each authority
 //! once (§5): the policy and the environment row in the system database, the
-//! release manifest from OCI, the image set from the release chart, the
-//! qualification, the installed state in the project database, the newest
+//! release manifest from OCI, the installed state in the project database, the newest
 //! successful Helm revision and the live set. It then checks the document
 //! against them and returns the plan, or the refusals.
 
@@ -26,7 +25,6 @@ use wamn_runtime::release_manifest_source::ReleaseManifestSource;
 
 use super::Platform;
 use super::document::{DeclaredRelease, EnvironmentDocument};
-use wamn_release_control::delivery::qualification_artifact;
 use wamn_release_control::release_chart;
 
 /// The policy facts `apply` uses.
@@ -63,13 +61,11 @@ pub struct ProjectState {
     pub bindings: BTreeSet<(String, String, String, String)>,
 }
 
-/// The release the document names, as OCI and the chart hold it.
+/// The release the document names, as OCI holds it.
 #[derive(Debug, Clone)]
 pub struct ReleaseFacts {
     pub digest: String,
     pub manifest: ServingManifest,
-    pub image_set: release_chart::ImageSet,
-    pub qualification: Result<Option<String>, String>,
     /// The store aliases the release's components require.
     pub required_connections: BTreeSet<String>,
 }
@@ -135,10 +131,6 @@ pub enum Observation {
     SchemaDifference {
         installed: Option<String>,
         selected: String,
-    },
-    NotChecked {
-        cause: Option<String>,
-        image_set: BTreeMap<String, String>,
     },
 }
 
@@ -491,18 +483,6 @@ pub async fn pull_release_manifest(
 
 async fn read_release(platform: &Platform, digest: &str) -> anyhow::Result<ReleaseFacts> {
     let manifest = pull_release_manifest(platform, digest).await?;
-    let image_set = release_chart::image_set(&platform.chart).await?;
-    // R12: the key is the release digest and every digest of the chart's
-    // platform image set, the host and each role component. It is read from
-    // the registry (§8.2), never from Postgres.
-    let image_digests = qualification_artifact::image_set_digests(&image_set)?;
-    let qualification = async {
-        let releases = platform.registry(&platform.release_artifact_base).await?;
-        qualification_artifact::lookup(&releases, digest, &image_digests).await
-    }
-    .await
-    .map(|found| found.map(|found| found.digest))
-    .map_err(|error| error.to_string());
     // The admitted descriptors the manifest carries name the release's
     // connections (R2 (3)).
     let required_connections = manifest
@@ -514,8 +494,6 @@ async fn read_release(platform: &Platform, digest: &str) -> anyhow::Result<Relea
     Ok(ReleaseFacts {
         digest: digest.to_owned(),
         manifest,
-        image_set,
-        qualification,
         required_connections,
     })
 }

@@ -904,7 +904,7 @@ No status row means active. The application login reads that row from its select
 History keys contain no `tenant_id`. Environment history uses the key `{"id": true}`.
 The shared control, catalog, and run tables store the composed `org--project--env` key in `env_key`.
 The separate `environment` field stores the short name, such as `dev`.
-Qualification JSON, target JSON, catalog identities, run keys, and manifest scopes use `env_key`.
+Target JSON, catalog identities, run keys, and manifest scopes use `env_key`.
 Event fields and workload claims use `env_key`. Credential hashes frame that name.
 The management variable is `WAMN_MANAGEMENT_ENV_KEY`, and `flow-http.json` carries `wamn.env_key`.
 The event subject keeps its separate organization, project, and short environment tokens.

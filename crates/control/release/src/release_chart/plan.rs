@@ -343,7 +343,6 @@ pub(super) fn mapping<const N: usize>(entries: [(&str, String); N]) -> Value {
 }
 
 /// The platform image set: the host image and the role component images.
-/// It is the qualification key (R12).
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ImageSet {
@@ -353,16 +352,6 @@ pub struct ImageSet {
     pub http: String,
     /// `<repository>@sha256:<hex>`.
     pub materializer: String,
-}
-
-/// The images the chart's defaults pin outside the key: the qualification
-/// runner, gates and identity (R12, R15). Each is `<repository>[:<tag>]@sha256:<hex>`.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct QualificationImages {
-    pub runner: String,
-    pub gates: String,
-    pub identity: String,
 }
 
 /// One application HTTP workload with its configuration.

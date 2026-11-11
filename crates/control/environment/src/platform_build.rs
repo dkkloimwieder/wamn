@@ -397,7 +397,6 @@ fn stamp_chart(
             http,
             materializer,
         },
-        None,
         &request.out,
     )?;
     let path = chart.join("values.yaml");
@@ -1306,7 +1305,7 @@ async fn submit_cloud_build(
     }
 }
 
-/// The Docker CLI with buildx, the version that the runner image pins.
+/// The Docker CLI with buildx.
 const CLOUD_DOCKER_IMAGE: &str = "docker:28.5.1-cli";
 
 /// The Cloud SDK of the token step: the slim tag's digest, built 2026-11-03.

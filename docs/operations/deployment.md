@@ -343,7 +343,7 @@ Committed SQL stays after a failed rollout or executable rollback.
 ## Existing application operations
 
 Use an explicitly selected cluster, namespace, and environment for the commands below.
-[Repository delivery commands](delivery.md) describe the existing qualification, publication, and release-selection interfaces.
+[Repository delivery commands](delivery.md) describe the publication and release-selection interfaces.
 [Components](../architecture/components.md) defines their artifact boundary.
 
 ### Project integrations and environment connections
@@ -554,10 +554,6 @@ WAMN_RELEASE_ARTIFACT_BASE="$RELEASE_BASE" wamn-ctl publish-release \
   environments/dev/environment.k \
   --package "$PACKAGE_ID@$PACKAGE_VERSION" \
   --artifact-base "$PACKAGE_BASE" --registry-auth-file "$PUSH_DOCKERCONFIG"
-
-wamn-ctl qualify-release \
-  --release-digest "$RELEASE_DIGEST" --release-chart "$WAMN_RELEASE_CHART" \
-  --artifact-base "$RELEASE_BASE" --registry-auth-file "$PUSH_DOCKERCONFIG"
 ```
 
 `publish-release` records the release by its canonical manifest digest.
@@ -580,9 +576,6 @@ The separate `environment` field keeps the short name.
 The release also names no route host.
 The route host is only the `host` of the http workload config. The router matches routes under it.
 `publish-release` takes the same `--oci-ca-path` input as `push-package`.
-[Release qualification](delivery.md#release-qualification) remains a separate optional operation.
-Each package selects its cases through its own `tests/qualification.json` declaration.
-`qualify-release` pushes the qualification artifact after its cases pass. Deployment reports missing qualification as a warning.
 Use `wamn deploy --release` to select the published application.
 
 ## Web client files

@@ -6,8 +6,7 @@
 #   docker build --build-arg WAMN_CHECKOUT_KEY="$(printf '%s' "$(realpath .)" | sha256sum | cut -c1-16)" --target edge --output type=local,dest=target/edge .  # aarch64 edge box binary
 #   docker build --build-arg WAMN_CHECKOUT_KEY="$(printf '%s' "$(realpath .)" | sha256sum | cut -c1-16)" --target edge-web -t wamn-edge-web:dev .  # cluster web edge
 #   docker build --build-arg WAMN_CHECKOUT_KEY="$(printf '%s' "$(realpath .)" | sha256sum | cut -c1-16)" --target roles --output type=local,dest=DIR .  # http and materializer role components
-#   docker build --build-arg WAMN_CHECKOUT_KEY="$(printf '%s' "$(realpath .)" | sha256sum | cut -c1-16)" --build-context apps-target=apps/target/wamn --target runner -t wamn-runner:dev .  # qualification tooling
-# `wamn-ctl build-platform` builds host, runner, gates, identity, edge-web and roles, and
+# `wamn-ctl build-platform` builds host, ctl, identity, edge-web and roles, and
 # stamps their digests into the release chart's defaults (R15).
 # Later invocations reuse shared BuildKit registry and Git caches with locks
 # that prevent concurrent writes, and one locked native target cache per checkout.
@@ -47,8 +46,7 @@ COPY tools/submodule-check ./tools/submodule-check
 # component-toolchain need no wrapper binary. Local Cargo uses kache through
 # the personal ~/.cargo/config.toml.
 COPY .cargo/config.toml ./.cargo/config.toml
-# The canonical deploy DDL is consumed by the ctl reconcilers and exact package
-# runner -- single source of truth, no clones.
+# The canonical deploy DDL is consumed by the ctl reconcilers.
 COPY deploy ./deploy
 # wash-runtime resolves as a git dependency at the zero-delta fork revision
 # recorded in Cargo.toml and docs/architecture/native-alignment.md;
@@ -230,38 +228,6 @@ RUN wamn-component-composer --control-route /component-output/http_route.wasm --
 FROM scratch AS roles
 COPY --from=control-entry /component-output/control_http.wasm /http_route.wasm
 COPY --from=component-builder /component-output/materializer.wasm /materializer.wasm
-
-# The runner's deploy files without the release chart. The cases read the
-# stamped chart that WAMN_RELEASE_CHART names, so the runner does not change
-# with the platform version, the chart's `version` (wamn-6qo7v).
-FROM root-source AS runner-deploy
-RUN rm -r /build/deploy/platform/release
-
-# The build inputs of a package name the crates WIT that its guests bind, so
-# a case that checks a build against its tree needs those WIT trees (wamn-snwxh).
-FROM root-source AS runner-wit
-RUN mkdir /wit-output \
- && find crates -type d -name wit -prune -exec cp -r --parents {} /wit-output \;
-
-# ---- runner image: the qualification runner FROM ctl -----------------------
-# The runner adds what `qualify-release` runs the cases with
-# (docs/operations/delivery.md#release-qualification): repository inputs
-# and cluster tools, each pinned by version
-# and its published sha256 (the Docker CLI by the sha256 of its archive).
-FROM ctl AS runner
-COPY --from=build-native /native-output/wamn /usr/local/bin/wamn
-ADD --checksum=sha256:5c0d19f31fece1accd0358bb8cff591fe25d7b6cba19f0fd412cbfdc07f75ff6 https://download.docker.com/linux/static/stable/x86_64/docker-28.5.1.tgz /tmp/docker.tgz
-RUN tar -xzf /tmp/docker.tgz -C /usr/local/bin --strip-components=1 docker/docker \
- && rm /tmp/docker.tgz
-ADD --chmod=0755 --checksum=sha256:50030de23cf40a18505f20426f6a8506bedf13c6e509244bd1fa9463721b0f54 https://github.com/kubernetes-sigs/kind/releases/download/v0.32.0/kind-linux-amd64 /usr/local/bin/kind
-# The cases run kubectl v1.36.2; ctl's own pin stays as it is.
-ADD --chmod=0755 --checksum=sha256:1e9045ec32bea85da43de85f0065358529ea7c7a152eca78154fba5b58c27d82 https://dl.k8s.io/release/v1.36.2/bin/linux/amd64/kubectl /usr/local/bin/kubectl
-COPY --from=root-source /build/apps /build/apps
-COPY --from=runner-wit /wit-output/crates /build/crates
-COPY --from=root-source /build/wit /build/wit
-COPY --from=apps-target . /build/apps/target/wamn
-COPY --from=runner-deploy /build/deploy /build/deploy
-COPY tools /build/tools
 
 # ---- edge box artifact: the stripped aarch64 binary alone ------------------
 # The box runs no container; export the file with --output (header above).

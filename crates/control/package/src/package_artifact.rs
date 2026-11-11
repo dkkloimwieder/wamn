@@ -29,8 +29,7 @@
 pub(super) mod plan;
 pub(crate) use plan::component_connection_names;
 use plan::{
-    digest_refusal, image_manifest, package_coordinate, physical_path,
-    refuse_workflow_declarations, tar_layer,
+    image_manifest, package_coordinate, physical_path, refuse_workflow_declarations, tar_layer,
 };
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -316,27 +315,6 @@ pub fn record_package_digest(root: &Path) -> anyhow::Result<String> {
     let path = root.join(PACKAGE_DIGEST_FILE);
     std::fs::write(&path, &line).with_context(|| format!("write {}", path.display()))?;
     Ok(line)
-}
-
-/// Refuse a built package whose tag or digest differs from its committed
-/// [`PACKAGE_DIGEST_FILE`].
-///
-/// # Errors
-///
-/// When the package does not pack, the file is absent or malformed, the
-/// digest changed under the same tag, or the tag changed and the file was not
-/// written again.
-pub fn check_package_digest(root: &Path) -> anyhow::Result<()> {
-    let packed = pack_package(root)?;
-    let path = root.join(PACKAGE_DIGEST_FILE);
-    let recorded = std::fs::read_to_string(&path).with_context(|| {
-        format!(
-            "read {}; run wamn build --record-digest {}",
-            path.display(),
-            root.display()
-        )
-    })?;
-    digest_refusal(&path, &recorded, &packed.tag(), &packed.digest)
 }
 
 /// The package artifact digest of the package at `root`, the key of its stage
@@ -1387,30 +1365,6 @@ mod tests {
                 )
             })
             .collect()
-    }
-
-    #[test]
-    fn a_package_digest_refuses_new_bytes_under_the_same_tag_and_a_stale_record() {
-        let path = Path::new("apps/p/package.digest");
-        let refusal = |recorded: &str, tag: &str, digest: &str| {
-            digest_refusal(path, recorded, tag, digest)
-                .err()
-                .map(|error| error.to_string())
-        };
-        assert_eq!(refusal("p-1.0.0 sha256:a\n", "p-1.0.0", "sha256:a"), None);
-        let changed = refusal("p-1.0.0 sha256:a\n", "p-1.0.0", "sha256:b").unwrap();
-        assert!(
-            changed.contains("immutable") && changed.contains("bump the version"),
-            "{changed}"
-        );
-        let stale = refusal("p-1.0.0 sha256:a\n", "p-1.0.1", "sha256:b").unwrap();
-        assert!(
-            stale.contains("records p-1.0.0") && stale.contains("--record-digest"),
-            "{stale}"
-        );
-        let bumped = refusal("p-1.0.0 sha256:a\n", "p-1.0.1", "sha256:a").unwrap();
-        assert!(bumped.contains("--record-digest"), "{bumped}");
-        assert!(refusal("p-1.0.0 sha256:a", "p-1.0.0", "sha256:a").is_some());
     }
 
     #[tokio::test]

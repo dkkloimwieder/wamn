@@ -13,8 +13,7 @@ use serde::Deserialize as _;
 use serde_yaml::{Mapping, Value};
 use wamn_engine::release_manifest::release_label;
 use wamn_release_control::release_chart::{
-    ImageSet, QualificationImages, Role, RoleName, ValuesInput, image_set, qualification_images,
-    release_name, stamp, values,
+    ImageSet, Role, RoleName, ValuesInput, image_set, release_name, stamp, values,
 };
 
 const DIGEST: &str = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
@@ -58,20 +57,11 @@ fn image_set_fixture() -> ImageSet {
     }
 }
 
-fn qualification_images_fixture() -> QualificationImages {
-    QualificationImages {
-        runner: format!("localhost:5000/wamn-runner:dev@sha256:{}", "4".repeat(64)),
-        gates: format!("localhost:5000/wamn-gates:dev@sha256:{}", "5".repeat(64)),
-        identity: format!("localhost:5000/wamn-identity:dev@sha256:{}", "6".repeat(64)),
-    }
-}
-
 /// Stamp a copy of the chart with its committed subchart archive.
 fn stamped_chart(scratch: &Scratch) -> PathBuf {
     let chart = stamp(
         &repository_root().join("deploy/platform/release"),
         &image_set_fixture(),
-        Some(&qualification_images_fixture()),
         &scratch.0.join("chart"),
     )
     .expect("stamp the chart");
@@ -572,13 +562,6 @@ async fn the_release_chart_renders_one_host_group_and_its_role_workloads() {
     // Platform services use the chart set; HTTP uses the release's entry.
     let set = image_set(&chart).await.expect("the stamped image set");
     assert_eq!(set, image_set_fixture());
-    // R15 (4): the defaults also pin the runner, gates and identity images.
-    assert_eq!(
-        qualification_images(&chart)
-            .await
-            .expect("the stamped qualification images"),
-        qualification_images_fixture()
-    );
     assert_eq!(host["image"].as_str(), Some(set.host.as_str()));
     for document in documents
         .iter()

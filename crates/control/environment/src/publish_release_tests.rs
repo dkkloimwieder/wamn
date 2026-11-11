@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 use wamn_catalog::PackageCoordinate;
-use wamn_package_control::test_support::{DIGEST, closure_component, source_manifest};
+use wamn_package_control::test_support::{closure_component, source_manifest};
 use wamn_release_control::publish_release::{
     PublishReleaseManifest, ReleaseComponents, RouteContracts,
     publish_release_with_package_manifests,
@@ -82,12 +82,6 @@ fn application_packages_with_different_model_schemas_publish_and_pass_apply_anal
         release: Some(ReleaseFacts {
             digest: published.digest.to_string(),
             manifest: published.manifest,
-            image_set: wamn_release_control::release_chart::ImageSet {
-                host: DIGEST.to_owned(),
-                http: DIGEST.to_owned(),
-                materializer: DIGEST.to_owned(),
-            },
-            qualification: Ok(Some("fixture".to_owned())),
             required_connections: BTreeSet::new(),
         }),
         revision: None,
@@ -117,51 +111,20 @@ fn application_packages_with_different_model_schemas_publish_and_pass_apply_anal
             },
         );
     }
-    for qualification in [
-        Ok(None),
-        Err("unreadable optional result".into()),
-        Ok(Some("verified".into())),
-    ] {
-        authorities.release.as_mut().unwrap().qualification = qualification.clone();
-        assert!(refusals(&selected, &authorities).is_empty());
-        let notices = notices(&selected, "erp", &authorities, &fingerprints);
-        for package in &packages {
-            assert!(notices.iter().any(|notice| {
-                notice.application == "erp"
-                    && notice
-                        .identity
-                        .ends_with(&format!("/catalog.packages/{}", package.package_id()))
-                    && notice.observed
-                        == Observation::SchemaDifference {
-                            installed: Some("sha256:installed".into()),
-                            selected: "sha256:selected".into(),
-                        }
-                    && !notice.next_action.is_empty()
-            }));
-        }
-        let optional = notices
-            .iter()
-            .find(|notice| matches!(notice.observed, Observation::NotChecked { .. }));
-        match qualification {
-            Ok(Some(_)) => assert!(optional.is_none()),
-            other => {
-                let notice = optional.unwrap();
-                assert_eq!(notice.application, "erp");
-                assert_eq!(
-                    notice.identity,
-                    authorities.release.as_ref().unwrap().digest
-                );
-                let Observation::NotChecked { cause, image_set } = &notice.observed else {
-                    unreachable!()
-                };
-                assert_eq!(cause.as_ref(), other.as_ref().err());
-                assert_eq!(
-                    image_set["host"],
-                    authorities.release.as_ref().unwrap().image_set.host
-                );
-                assert!(!notice.next_action.is_empty());
-            }
-        }
+    let schema_notices = notices(&selected, "erp", &authorities, &fingerprints);
+    for package in &packages {
+        assert!(schema_notices.iter().any(|notice| {
+            notice.application == "erp"
+                && notice
+                    .identity
+                    .ends_with(&format!("/catalog.packages/{}", package.package_id()))
+                && notice.observed
+                    == Observation::SchemaDifference {
+                        installed: Some("sha256:installed".into()),
+                        selected: "sha256:selected".into(),
+                    }
+                && !notice.next_action.is_empty()
+        }));
     }
     for installed in authorities.project.as_mut().unwrap().installed.values_mut() {
         installed.physical_schema_fingerprint = "sha256:selected".into();

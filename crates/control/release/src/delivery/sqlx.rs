@@ -1,4 +1,4 @@
-//! Shared SQLx verifier commands for local generation and release qualification.
+//! Shared SQLx verifier commands for local generation.
 
 pub(super) mod plan;
 pub use plan::{require_cli_version, requires_verifier};

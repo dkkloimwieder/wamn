@@ -253,7 +253,6 @@ Record the result in the existing issue; unresolved checks remain incomplete rat
 
 Use real application and platform functions through existing Rust test owners.
 Generated claim tests complement full-command execution and do not replace it.
-The [repository delivery commands](../operations/delivery.md) invoke these existing owners for release qualification.
 Required checks must execute their named cases and pass.
 An absent case, ignored case, or explicit skip cannot establish success.
 Each guard must name the runner that executes it.

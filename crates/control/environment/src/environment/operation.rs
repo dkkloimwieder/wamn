@@ -184,34 +184,19 @@ pub async fn run(request: Request<'_>) -> anyhow::Result<Value> {
             Ok(json!({"notices":analysis.notices,"plan":analysis.plan}))
         }
         "diff" | "apply" => {
-            let applications = match request.application {
-                Some(application) => vec![application],
-                None => document.applications.keys().map(String::as_str).collect(),
-            };
-            let mut diffs = Vec::new();
-            for application in applications {
-                if request.application.is_none()
-                    && matches!(
-                        document.applications[application].current,
-                        super::document::DeclaredRelease::None
-                    )
-                {
-                    continue;
-                }
-                diffs.push(
-                    schema(
-                        &platform,
-                        file,
-                        application,
-                        request.release,
-                        request.operation == "apply",
-                        request.resolution,
-                        administrator.as_deref(),
-                    )
-                    .await?,
-                );
-            }
-            Ok(serde_json::to_value(diffs)?)
+            let diff = schema(
+                &platform,
+                file,
+                request
+                    .application
+                    .context("schema operation requires an application")?,
+                request.release,
+                request.operation == "apply",
+                request.resolution,
+                administrator.as_deref(),
+            )
+            .await?;
+            Ok(serde_json::to_value([diff])?)
         }
         "reset" => {
             Box::pin(sql::reset::reset_deployed_with_admin(

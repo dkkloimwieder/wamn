@@ -44,9 +44,6 @@ enum Command {
     /// Build and push the platform images and stamp them into the release
     /// chart's defaults.
     BuildPlatform(delivery_verbs::BuildPlatformArgs),
-    /// Qualify one published release, by its digest, on the release chart's
-    /// platform image set, and push the qualification beside the release.
-    QualifyRelease(delivery_verbs::QualifyReleaseArgs),
     /// Install the control store into an empty system database and record its platform domain
     ProvisionSystem(provisioning_verbs::ProvisionSystemArgs),
     /// Inspect or apply the system SQL embedded in this image.
@@ -127,7 +124,7 @@ struct OperationArgs {
     project: String,
     #[arg(long)]
     env: String,
-    #[arg(long)]
+    #[arg(long, required_if_eq_any = [("operation", "diff"), ("operation", "apply")])]
     application: Option<String>,
     #[arg(long)]
     release: Option<String>,
@@ -170,7 +167,6 @@ async fn main() -> anyhow::Result<()> {
             Ok(())
         }
         Command::BuildPlatform(args) => delivery_verbs::build_platform(args).await,
-        Command::QualifyRelease(args) => delivery_verbs::qualify(args).await,
         Command::ProvisionSystem(args) => provisioning_verbs::provision_system(args).await,
         Command::SystemSchema(command) => {
             platform_verbs::run_system_schema(command, std::io::stdout().lock()).await

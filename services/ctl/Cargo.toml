@@ -47,8 +47,6 @@ anyhow = { workspace = true }
 clap = { workspace = true, features = ["derive", "env", "string"] }
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "io-util", "net", "process", "signal", "sync", "time"] }
 serde_json = { workspace = true }
-ring = { workspace = true }
-hex = { workspace = true }
 rustix = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 url = { workspace = true }

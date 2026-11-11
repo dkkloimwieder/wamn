@@ -88,7 +88,7 @@ For native publication, set `WAMN_FLOW_HTTP_COMPONENT` to the built guest and `W
 Publication pushes the composed entry to `<component-artifact-base>/entries`.
 The manifest records only the path `entries@sha256:<manifest-digest>`, relative to the component artifact base.
 
-The workload guests `http-route` and `materializer` belong to no package. Release qualification and the cluster cases build each one with the same guest build, through `wamn_schema_generator::build::build_guest`.
+The workload guests `http-route` and `materializer` belong to no package.
 
 The Docker `roles` target exports the control HTTP entry as `http_route.wasm`.
 It composes the pinned route guest with an empty dispatcher at platform build time.
@@ -136,7 +136,7 @@ Application contracts lie under `wit/` in each package's build output, `apps/tar
 
 Artifact production runs separately from platform deployment and needs the source checkout.
 The producer builds `host`, `ctl`, and `identity` images plus the `http` and `materializer` role components.
-It needs no application package output, qualification image, or platform UI bundle.
+It needs no application package output or platform UI bundle.
 Deployment consumes these prepared artifacts and does not run a build.
 
 From the repository root, start or reuse the shared registry:
@@ -196,8 +196,7 @@ They need no source checkout, pnpm installation, or local UI bundle.
 
 `build-platform` builds only the platform images whose inputs changed since an earlier push.
 The local platform images are `host`, `ctl`, and `identity`.
-An explicit GCP cluster document selects the retained `host`, `runner`, `gates`, `identity`, and `edge-web` set.
-That application-test artifact path does not establish GCP deployment support.
+An explicit GCP cluster document selects the retained `host`, `ctl`, `identity`, and `edge-web` set.
 The command always builds the `roles` target, which holds the `http` and `materializer` role components.
 It then compares each role by its wasm layer. See [Unchanged role components](#unchanged-role-components).
 
@@ -227,7 +226,6 @@ A build script without such lines gets the same treatment as a procedural macro.
 | `identity` | `wamn-identity` | none |
 | `edge-web` | `wamn-edge` | none |
 | `gates` | `wamn-host`, `wamn-runtime`, `wamn-gates`, `wamn-ctl`, `wamn-cdc-reader`, and the five guests of the component builder | `tools/guest-rustflags` |
-| `runner` | `wamn-ctl`, `wamn-scenario-worker`, the five guests, and `wamn-wms-tests` and `wamn-receiving-tests` with their dev dependencies | `apps`, `deploy`, `tools`, and the `apps/target/wamn` context |
 
 The five guests are `http-route`, `materializer`, `busyloop`, `connection-http-standard`, and `sockprobe`.
 The command ignores a file that no `COPY` from the build context reaches, and a file that `.dockerignore` drops.
@@ -252,7 +250,7 @@ The chart version tag then points at the same manifest, with the same digest.
 The copies run after every build succeeds, so a failed build still pushes nothing.
 
 `wamn-ctl` reads the chart version at run time from the chart it uses: `build-platform` from the checkout's `deploy/platform/release/Chart.yaml`, `env apply` and the cases from the stamped chart.
-No binary embeds `Chart.yaml`, and the `runner` image drops `deploy/platform/release` in its `runner-deploy` stage.
+No binary embeds `Chart.yaml`.
 So a bump that changes no other input copies every image.
 
 A copied image keeps the base image packages from its first build.
@@ -267,7 +265,7 @@ For each role, the command finds the previous chart version in the registry.
 That version is the highest `x.y.z` tag of `<registry>/wamn/<role>` below the chart version.
 The command reads the manifest of that tag and compares its layer digest with the digest of the new wasm.
 If they are equal, it stores that manifest byte for byte under the chart version tag.
-The chart then pins the role by the previous manifest digest, so a qualification of that digest still applies.
+The chart then pins the role by the previous manifest digest.
 If they differ, or the lookup fails, the command pushes the role as before.
 
 The command prints one line for each compared role:
@@ -286,7 +284,6 @@ Local revision builds store their images in a registry on the build host.
 The build needs no GCP access or cluster document.
 Input-hash lookups and role copies read this same registry.
 The platform journey uses the local platform artifact set.
-The retained application journeys require additional qualification images and fixtures from their separate build path.
 The build still pulls public base images unless Docker already holds them.
 
 Prepare the checkout with `tools/lane-start` as described above.
@@ -475,7 +472,7 @@ Removing the web layer changes existing package digests.
 After rebuilding the packages, refresh their records with `wamn build --record-digest` before the package digest test.
 No version or format bump accompanies this greenfield change.
 
-Registry tags are immutable, so a package that changes under an unchanged version cannot be pushed to the GKE registry again. Each package that a file in `deploy/gcp/environments` names has a committed `package.digest` beside its `wamn.k`. The file holds one line, the tag and the digest that the built package packs to. The test `cargo test -p wamn-package-control --test package_digest` builds no package, so run `wamn build` first. It refuses when the digest changed and the tag did not, and when the tag changed and the file did not.
+Registry tags are immutable, so a package that changes under an unchanged version cannot be pushed to the GKE registry again.
 
 When you change such a package, bump its version in `wamn.k`. Then write the file again and commit it with the change:
 

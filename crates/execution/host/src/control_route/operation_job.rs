@@ -272,7 +272,11 @@ fn validate(operation: Operation, request: &Request) -> Result<(), Refusal> {
         Operation::Deploy if request.release.is_none() || request.application.is_some() => {
             return Err(invalid("release"));
         }
-        Operation::Rollback if request.application.is_none() => return Err(invalid("application")),
+        Operation::Rollback | Operation::Apply | Operation::Diff
+            if request.application.is_none() =>
+        {
+            return Err(invalid("application"));
+        }
         Operation::Reset if request.application.is_some() || request.release.is_some() => {
             return Err(invalid("application"));
         }
@@ -281,12 +285,6 @@ fn validate(operation: Operation, request: &Request) -> Result<(), Refusal> {
     }
     if !matches!(operation, Operation::Apply) && request.resolve.is_some() {
         return Err(invalid("resolve"));
-    }
-    if matches!(operation, Operation::Apply | Operation::Diff)
-        && request.application.is_none()
-        && request.release.is_some()
-    {
-        return Err(invalid("application"));
     }
     Ok(())
 }
@@ -483,6 +481,21 @@ mod tests {
             }
             _ => {}
         }
+    }
+
+    #[test]
+    fn schema_changes_require_one_application() {
+        let mut request: Request = serde_json::from_value(json!({
+            "project": "billing", "env": "dev"
+        }))
+        .unwrap();
+        for operation in [Operation::Apply, Operation::Diff] {
+            assert!(validate(operation, &request).is_err());
+            request.application = Some("billing".into());
+            assert!(validate(operation, &request).is_ok());
+            request.application = None;
+        }
+        assert!(validate(Operation::Reset, &request).is_ok());
     }
 
     #[test]

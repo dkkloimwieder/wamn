@@ -1,6 +1,6 @@
 use super::{
     BTreeMap, ComponentConnection, EMPTY_CONFIG, EMPTY_CONFIG_MEDIA_TYPE, PACKAGE_ARTIFACT_TYPE,
-    PackageManifest, PackedLayer, Path, PathBuf, bail, ensure, sha256_digest,
+    PackageManifest, PackedLayer, Path, PathBuf, ensure, sha256_digest,
 };
 use anyhow::Context as _;
 
@@ -25,34 +25,6 @@ pub(crate) fn component_connection_names(
         );
     }
     names.into_iter().collect()
-}
-
-pub(super) fn digest_refusal(
-    path: &Path,
-    recorded: &str,
-    tag: &str,
-    digest: &str,
-) -> anyhow::Result<()> {
-    let Some((recorded_tag, recorded_digest)) = recorded
-        .strip_suffix('\n')
-        .and_then(|line| line.split_once(' '))
-    else {
-        bail!("{} must hold one line `<tag> <digest>`", path.display());
-    };
-    ensure!(
-        recorded_tag != tag || recorded_digest == digest,
-        "package {tag} packs to {digest}, but {} records {recorded_digest} for the same tag; \
-         registry tags are immutable, so bump the version in wamn.k and run wamn build \
-         --record-digest",
-        path.display()
-    );
-    ensure!(
-        recorded_tag == tag,
-        "package {tag} packs to {digest}, but {} records {recorded_tag}; run wamn build \
-         --record-digest",
-        path.display()
-    );
-    Ok(())
 }
 
 /// The canonical image manifest bytes of `layers`.

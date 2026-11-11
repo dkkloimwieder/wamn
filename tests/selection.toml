@@ -79,7 +79,6 @@ targets = [
   { workspace="root", package="wamn-environment-control", target="test:netsuite_publication", tier="live-postgres" },
   { workspace="root", package="wamn-package-control", target="test:package_artifact_live", tier="live-postgres" },
   { workspace="root", package="wamn-environment-control", target="test:package_data_access_live", tier="live-postgres" },
-  { workspace="root", package="wamn-package-control", target="test:package_digest", tier="contract" },
   { workspace="root", package="wamn-environment-control", target="test:platform_grants_live", tier="live-postgres" },
   { workspace="root", package="wamn-environment-control", target="test:platform_render", tier="contract" },
   { workspace="root", package="wamn-environment-control", target="test:provision_org_admin_live", tier="live-postgres" },
@@ -88,7 +87,6 @@ targets = [
   { workspace="root", package="wamn-release-control", target="test:publish_release_live", tier="live-postgres" },
   { workspace="root", package="wamn-release-control", target="test:release_chart_render", tier="contract" },
   { workspace="root", package="wamn-release-control", target="test:release_permissions_live", tier="live-postgres" },
-  { workspace="root", package="wamn-release-control", target="test:release_qualification_live", tier="contract" },
   { workspace="root", package="wamn-environment-control", target="test:replica_identity_live", tier="live-postgres" },
   { workspace="root", package="wamn-environment-control", target="test:rest_connector_publication", tier="live-postgres" },
   { workspace="root", package="wamn-environment-control", target="test:run_plane_live", tier="live-postgres" },
@@ -283,7 +281,6 @@ root_features = ["wamn-environment-control/ops", "wamn-ctl/ops"]
   RESEND_API_KEY = "Credential for the selected mail service."
   RESEND_FROM = "Authorized sender of the selected mail service."
   WAMN_COMPONENT_ARTIFACT_BASE = "Registry address supplied by the parent publication test."
-  WAMN_DELIVERY_CANDIDATE = "Candidate release document that qualify-release names for a cluster case."
   WAMN_DEV_ENV_NATS_TLS_CA = "Credential or trust file for the operator-selected external service."
   WAMN_DEV_ENV_NATS_TLS_CERT = "Credential or trust file for the operator-selected external service."
   WAMN_DEV_ENV_NATS_TLS_KEY = "Credential or trust file for the operator-selected external service."
@@ -507,11 +504,6 @@ prerequisites = ["jsonata"]
 
 [[preparation]]
 packages = ["wamn-package-control"]
-target = ["test:package_digest"]
-prerequisites = ["packages", "fixture"]
-
-[[preparation]]
-packages = ["wamn-package-control"]
 target = ["lib:wamn_package_control"]
 prerequisites = ["fixture", "nats", "receiving-manifest"]
 
@@ -659,20 +651,6 @@ inputs = ["(^|/)Cargo\\.(toml|lock)$"]
 execution = "commands"
 mode = "local"
 commands = [["packages alone", "tools/check-packages-alone"]]
-resource_lock = ""
-
-[[suites]]
-id = "package-digest"
-tier = "contract"
-workspace = "root"
-package = "wamn-package-control"
-target = ["test:package_digest"]
-tests = []
-features = []
-prerequisites = ["packages", "fixture"]
-inputs = ["^crates/schema/generator/", "^deploy/gcp/environments/"]
-execution = "libtest"
-mode = "local"
 resource_lock = ""
 
 [[suites]]
