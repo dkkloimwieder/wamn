@@ -46,6 +46,7 @@ async fn registry(root: &Path, label: &str) -> (local_registry::LocalRegistry, P
     .unwrap();
     let configuration = PackageRegistry {
         artifact_base: format!("{}/wamn/integrations", registry.address),
+        credentials: None,
         registry_auth_file: auth,
         insecure_registry: true,
         oci_ca_paths: Vec::<PathBuf>::new(),

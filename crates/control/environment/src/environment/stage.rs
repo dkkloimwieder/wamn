@@ -12,9 +12,7 @@ use super::Platform;
 use super::analyse::{self, Installed};
 use super::document::EnvironmentDocument;
 use wamn_package_control::database::connect;
-use wamn_package_control::package_artifact::{
-    OpenedPackage, PackageRegistry, PackageSource, open_package_source,
-};
+use wamn_package_control::package_artifact::{OpenedPackage, PackageSource, open_package_source};
 
 /// Initialize absent package baselines in dependency order, without selecting a release.
 /// Existing baselines keep their SQL records even when the selected version changes.
@@ -617,12 +615,7 @@ pub(super) async fn open(
     };
     open_package_source(PackageSource::Artifact {
         tag: format!("{id}-{version}"),
-        registry: PackageRegistry {
-            artifact_base: base.clone(),
-            registry_auth_file: platform.registry_auth_file.clone(),
-            insecure_registry: platform.insecure_registry,
-            oci_ca_paths: platform.oci_ca_paths.clone(),
-        },
+        registry: platform.registry(base).await?,
     })
     .await
     .with_context(|| format!("open package artifact {id}@{version}"))

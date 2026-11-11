@@ -73,6 +73,7 @@ async fn push_package_refuses_stale_output_before_reading_its_manifest() -> anyh
         package: package.clone(),
         registry: PackageRegistry {
             artifact_base: "127.0.0.1:1/packages".into(),
+            credentials: None,
             registry_auth_file: scratch.path().join("absent-auth.json"),
             insecure_registry: true,
             oci_ca_paths: Vec::new(),
@@ -122,6 +123,7 @@ impl Fixture {
         .expect("write the registry credential");
         let registry = PackageRegistry {
             artifact_base: format!("{}/wamn/packages", local.address),
+            credentials: None,
             registry_auth_file: auth_file,
             insecure_registry: true,
             oci_ca_paths: Vec::new(),

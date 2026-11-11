@@ -96,6 +96,7 @@ pub fn fixture_registry(scratch: &ScratchRoot, server: &Server) -> PackageRegist
     .unwrap();
     PackageRegistry {
         artifact_base: format!("{}/web", server.reference.registry()),
+        credentials: None,
         registry_auth_file: auth,
         insecure_registry: true,
         oci_ca_paths: Vec::new(),

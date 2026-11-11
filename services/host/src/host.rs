@@ -1451,6 +1451,7 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
         Some((
             wamn_package_artifact::PackageRegistry {
                 artifact_base: base.clone(),
+                credentials: None,
                 registry_auth_file: args.registry_auth_file.clone().unwrap_or_default(),
                 insecure_registry: args.allow_insecure_registries,
                 oci_ca_paths: args.oci_ca_paths.clone(),
@@ -1783,6 +1784,7 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
                 },
                 None,
             )
+            .with_registry_token_metadata(args.registry_token_metadata)
             .with_connection_health(Arc::new(health))
             .with_oauth(oauth.clone()),
         ))));

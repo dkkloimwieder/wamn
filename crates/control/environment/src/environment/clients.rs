@@ -9,7 +9,6 @@ use anyhow::{Context as _, ensure};
 use super::Platform;
 use super::analyse::ReleaseFacts;
 use super::document::ApplicationSelection;
-use wamn_package_control::package_artifact::PackageRegistry;
 use wamn_package_control::web_artifact::{WebManifest, pull_web_artifact};
 
 pub(super) async fn analyse(
@@ -20,15 +19,14 @@ pub(super) async fn analyse(
     let Some(client) = selection.client.as_ref() else {
         return Ok(());
     };
-    let registry = PackageRegistry {
-        artifact_base: platform
-            .package_artifact_base
-            .clone()
-            .context("set WAMN_PACKAGE_ARTIFACT_BASE for the pinned web artifact")?,
-        registry_auth_file: platform.registry_auth_file.clone(),
-        insecure_registry: platform.insecure_registry,
-        oci_ca_paths: platform.oci_ca_paths.clone(),
-    };
+    let registry = platform
+        .registry(
+            platform
+                .package_artifact_base
+                .as_deref()
+                .context("set WAMN_PACKAGE_ARTIFACT_BASE for the pinned web artifact")?,
+        )
+        .await?;
     let web = pull_web_artifact(&registry, &client.web).await?;
     verify(
         selection,

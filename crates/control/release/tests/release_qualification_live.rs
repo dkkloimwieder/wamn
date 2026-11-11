@@ -62,6 +62,7 @@ async fn a_qualification_is_pushed_once_and_read_by_its_release_and_image_set() 
     .expect("write the registry credential");
     let releases = PackageRegistry {
         artifact_base: format!("{}/wamn/releases", local.address),
+        credentials: None,
         registry_auth_file: auth_file.clone(),
         insecure_registry: true,
         oci_ca_paths: Vec::new(),

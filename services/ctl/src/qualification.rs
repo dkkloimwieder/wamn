@@ -605,6 +605,7 @@ mod tests {
             manifest_path: "unused".into(),
             releases: PackageRegistry {
                 artifact_base: "registry.example/wamn/releases".to_owned(),
+                credentials: None,
                 registry_auth_file: "unused".into(),
                 insecure_registry: false,
                 oci_ca_paths: Vec::new(),

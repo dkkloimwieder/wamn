@@ -39,7 +39,7 @@ pub(super) async fn prepare(
     let inputs = format!("wamn-operation-{}-{}", document.org, &digest[7..23]);
     let object = json!({"apiVersion":"v1","kind":"ConfigMap","immutable":true,
         "metadata":{"name":inputs,"namespace":"platform"},"data":data});
-    let registry_json = if document.provider == Provider::Kind {
+    if document.provider == Provider::Kind {
         let secret: super::bootstrap::SecretData = crate::kubectl::get(
             &target.kubeconfig,
             &target.context,
@@ -49,12 +49,10 @@ pub(super) async fn prepare(
         )
         .await?
         .context("the platform registry credential is absent")?;
-        super::bootstrap::secret_text(&secret, ".dockerconfigjson")?
-    } else {
-        json!({"credHelpers":{document.registry.split('/').next().context("registry host")?:"wamn"}}).to_string()
-    };
-    resources::apply_object(target,&json!({"apiVersion":"v1","kind":"Secret","type":"Opaque",
-        "metadata":{"name":format!("wamn-operation-registry-{}",document.org),"namespace":"platform"},"stringData":{"config.json":registry_json}})).await?;
+        let registry_json = super::bootstrap::secret_text(&secret, ".dockerconfigjson")?;
+        resources::apply_object(target,&json!({"apiVersion":"v1","kind":"Secret","type":"Opaque",
+            "metadata":{"name":format!("wamn-operation-registry-{}",document.org),"namespace":"platform"},"stringData":{"config.json":registry_json}})).await?;
+    }
     resources::apply_object(target, &object).await?;
     resources::apply_object(
         target,

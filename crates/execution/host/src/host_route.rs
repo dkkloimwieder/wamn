@@ -82,6 +82,7 @@ pub struct HostRouteDelivery {
     release: Arc<LoadedRelease>,
     #[cfg(feature = "test-util")]
     projection_pause: Option<Arc<crate::control_route::ProjectionPause>>,
+    registry_token_metadata: bool,
     operation_jobs: Option<wamn_credential_store::kubernetes_api::KubernetesApi>,
     handlers: HostRouteHandlers,
     next: Option<Arc<dyn RouteDelivery>>,
@@ -111,6 +112,7 @@ impl HostRouteDelivery {
             release,
             handlers,
             operation_jobs: None,
+            registry_token_metadata: false,
             #[cfg(feature = "test-util")]
             projection_pause: None,
             next,
@@ -144,6 +146,12 @@ impl HostRouteDelivery {
         oauth: Option<Arc<wamn_runtime::oauth_authorization::Authorization>>,
     ) -> Self {
         self.oauth = oauth;
+        self
+    }
+
+    /// Carry the host's registry credential choice into operation Jobs.
+    pub fn with_registry_token_metadata(mut self, enabled: bool) -> Self {
+        self.registry_token_metadata = enabled;
         self
     }
 
@@ -316,6 +324,7 @@ impl HostRouteDelivery {
                     administration: administration.as_deref(),
                     status: status.as_ref(),
                     operation_jobs: self.operation_jobs.as_ref(),
+                    registry_token_metadata: self.registry_token_metadata,
                     org,
                     changes,
                     connection_health: self.connection_health.as_deref(),

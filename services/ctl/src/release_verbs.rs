@@ -51,6 +51,7 @@ pub async fn publish(args: PublishReleaseArgs) -> anyhow::Result<()> {
         .map_err(|_| anyhow::anyhow!("set WAMN_RELEASE_ARTIFACT_BASE to the release repository"))?;
     let registry = PackageRegistry {
         artifact_base: args.artifact_base,
+        credentials: None,
         registry_auth_file: args.registry_auth_file,
         insecure_registry: args.insecure_registry,
         oci_ca_paths: args.oci_ca_paths,

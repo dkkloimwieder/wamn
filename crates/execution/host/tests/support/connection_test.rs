@@ -137,6 +137,7 @@ async fn candidate_http_and_modbus_health_commit_nothing() -> anyhow::Result<()>
     )?;
     let configuration = PackageRegistry {
         artifact_base: format!("{}/wamn/components", registry.address),
+        credentials: None,
         registry_auth_file: auth_file.clone(),
         insecure_registry: true,
         oci_ca_paths: vec![],

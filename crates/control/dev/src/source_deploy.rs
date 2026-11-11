@@ -35,6 +35,7 @@ pub async fn publish(
             .as_ref()
             .context("set WAMN_PACKAGE_ARTIFACT_BASE for source deployment")?
             .to_owned(),
+        credentials: None,
         registry_auth_file: platform.registry_auth_file.clone(),
         insecure_registry: platform.insecure_registry,
         oci_ca_paths: platform.oci_ca_paths.clone(),
@@ -67,6 +68,7 @@ pub async fn publish_from_env(
     let insecure_registry = wamn_environment_control::platform_build::loopback(&artifact_base);
     let registry = PackageRegistry {
         artifact_base,
+        credentials: None,
         registry_auth_file: variable("WAMN_REGISTRY_AUTH_FILE")?.into(),
         insecure_registry,
         oci_ca_paths: std::env::var("WAMN_OCI_CA_PATHS")

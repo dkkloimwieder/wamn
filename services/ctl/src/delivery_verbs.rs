@@ -76,6 +76,7 @@ pub async fn qualify(args: QualifyReleaseArgs) -> anyhow::Result<()> {
         repository: repository(&std::env::current_dir()?)?,
         releases: PackageRegistry {
             artifact_base: args.artifact_base,
+            credentials: None,
             registry_auth_file: args.registry_auth_file,
             insecure_registry: args.insecure_registry,
             oci_ca_paths: args.oci_ca_paths,

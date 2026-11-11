@@ -66,16 +66,23 @@ impl Operation {
         matches!(self, Self::Apply | Self::Reset | Self::Adopt)
     }
 
-    fn needs(self, org: &str, cluster: &str) -> Vec<(String, &'static str, &'static str)> {
+    fn needs(
+        self,
+        org: &str,
+        cluster: &str,
+        metadata: bool,
+    ) -> Vec<(String, &'static str, &'static str)> {
         let mut needs = vec![
             ("wamn-apply".into(), "apply", "/credentials/apply"),
-            (
+            ("wamn-ctl-nats".into(), "nats", "/credentials/nats"),
+        ];
+        if !metadata {
+            needs.push((
                 format!("wamn-operation-registry-{org}"),
                 "registry",
                 "/credentials/registry",
-            ),
-            ("wamn-ctl-nats".into(), "nats", "/credentials/nats"),
-        ];
+            ));
+        }
         if self.privileged() {
             needs.push((
                 format!("{cluster}-superuser"),
@@ -219,6 +226,7 @@ impl ControlRoutes<'_> {
             image,
             &name,
             inputs,
+            self.registry_token_metadata,
         );
         let created = api
             .create_job(NAMESPACE, &job)
@@ -297,6 +305,7 @@ fn manifest(
     image: &str,
     name: &str,
     inputs: &str,
+    metadata: bool,
 ) -> Value {
     let mut arguments = vec![
         "operation",
@@ -325,7 +334,7 @@ fn manifest(
         json!({"name":"inputs","mountPath":"/operation-inputs","readOnly":true}),
         json!({"name":"work","mountPath":"/work"}),
     ];
-    for (secret, volume, path) in operation.needs(org, cluster) {
+    for (secret, volume, path) in operation.needs(org, cluster, metadata) {
         volumes.push(json!({"name":volume,"secret":{"secretName":secret}}));
         mounts.push(json!({"name":volume,"mountPath":path,"readOnly":true}));
     }
@@ -338,7 +347,11 @@ fn manifest(
                     "env":[{"name":"WAMN_DEPLOY_ACTOR","value":actor},
                         {"name":"KUBECONFIG","value":"/work/kubeconfig"},
                         {"name":"WAMN_RELEASE_CHART","value":"/work/chart"},
-                        {"name":"WAMN_REGISTRY_AUTH_FILE","value":"/credentials/registry/config.json"},
+                        if metadata {
+                            json!({"name":"WAMN_REGISTRY_TOKEN_METADATA","value":"true"})
+                        } else {
+                            json!({"name":"WAMN_REGISTRY_AUTH_FILE","value":"/credentials/registry/config.json"})
+                        },
                         {"name":"WAMN_NATS_URL","value":"nats://wamn-nats.platform.svc.cluster.local:4222"},
                         {"name":"WAMN_NATS_TLS_CA","value":"/credentials/nats/ca.crt"},
                         {"name":"WAMN_NATS_TLS_CERT","value":"/credentials/nats/tls.crt"},
@@ -482,45 +495,65 @@ mod tests {
             resolve: None,
             job: None,
         };
-        for (_, attachment) in
-            wamn_catalog::HostRouteSet::Control
-                .attachments()
-                .filter(|(_, attachment)| {
-                    attachment.route.handler == wamn_catalog::HostHandler::OperationJob
-                        && attachment.route.operation != "operation.status"
-                })
-        {
-            let route = attachment.route;
-            let operation = Operation::parse(route.operation)
-                .expect("every Job route declares its operation needs");
-            let job = manifest(
-                operation,
-                &request,
-                "org-a",
-                "authenticated-actor",
-                "coordinate",
-                "cnpg",
-                "registry/ctl@sha256:abc",
-                "op-test",
-                "selected-inputs",
-            );
-            let mut actual = BTreeSet::new();
-            secrets(&job, &mut actual);
-            let needs = operation.needs("org-a", "cnpg");
-            let expected: BTreeSet<_> = needs.iter().map(|(name, _, _)| name.as_str()).collect();
-            assert_eq!(actual, expected, "{}", route.operation);
-            match operation {
-                Operation::Deploy | Operation::Rollback | Operation::Diff => {
-                    assert!(!actual.contains("cnpg-superuser"));
+        for metadata in [false, true] {
+            for (_, attachment) in
+                wamn_catalog::HostRouteSet::Control
+                    .attachments()
+                    .filter(|(_, attachment)| {
+                        attachment.route.handler == wamn_catalog::HostHandler::OperationJob
+                            && attachment.route.operation != "operation.status"
+                    })
+            {
+                let route = attachment.route;
+                let operation = Operation::parse(route.operation)
+                    .expect("every Job route declares its operation needs");
+                let job = manifest(
+                    operation,
+                    &request,
+                    "org-a",
+                    "authenticated-actor",
+                    "coordinate",
+                    "cnpg",
+                    "registry/ctl@sha256:abc",
+                    "op-test",
+                    "selected-inputs",
+                    metadata,
+                );
+                let mut actual = BTreeSet::new();
+                secrets(&job, &mut actual);
+                let needs = operation.needs("org-a", "cnpg", metadata);
+                let expected: BTreeSet<_> =
+                    needs.iter().map(|(name, _, _)| name.as_str()).collect();
+                assert_eq!(actual, expected, "{}", route.operation);
+                assert_eq!(actual.contains("wamn-operation-registry-org-a"), !metadata);
+                let variables = job["spec"]["template"]["spec"]["containers"][0]["env"]
+                    .as_array()
+                    .unwrap();
+                assert_eq!(
+                    variables.iter().any(
+                        |v| v["name"] == "WAMN_REGISTRY_TOKEN_METADATA" && v["value"] == "true"
+                    ),
+                    metadata
+                );
+                assert_eq!(
+                    variables
+                        .iter()
+                        .any(|v| v["name"] == "WAMN_REGISTRY_AUTH_FILE"),
+                    !metadata
+                );
+                match operation {
+                    Operation::Deploy | Operation::Rollback | Operation::Diff => {
+                        assert!(!actual.contains("cnpg-superuser"));
+                    }
+                    Operation::Apply | Operation::Reset | Operation::Adopt => {
+                        assert!(actual.contains("cnpg-superuser"));
+                    }
                 }
-                Operation::Apply | Operation::Reset | Operation::Adopt => {
-                    assert!(actual.contains("cnpg-superuser"));
-                }
+                assert_eq!(
+                    job["spec"]["template"]["spec"]["containers"][0]["env"][0]["value"],
+                    "authenticated-actor"
+                );
             }
-            assert_eq!(
-                job["spec"]["template"]["spec"]["containers"][0]["env"][0]["value"],
-                "authenticated-actor"
-            );
         }
     }
 }

@@ -1742,6 +1742,7 @@ manifest.Package {
             package: root.clone(),
             registry: PackageRegistry {
                 artifact_base: "registry.invalid/wamn/packages".to_owned(),
+                credentials: None,
                 registry_auth_file: root.join("missing-auth.json"),
                 insecure_registry: false,
                 oci_ca_paths: Vec::new(),

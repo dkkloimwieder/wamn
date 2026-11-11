@@ -138,6 +138,7 @@ pub(crate) struct ControlRoutes<'a> {
     pub(crate) administration: Option<&'a Path>,
     /// The runtime reader selected by the host mode.
     pub(crate) status: &'a dyn crate::environment_status::StatusSource,
+    pub(crate) registry_token_metadata: bool,
     pub(crate) operation_jobs: Option<&'a wamn_credential_store::kubernetes_api::KubernetesApi>,
     pub(crate) org: &'a str,
     /// Publishes each user row and status change of an environment.

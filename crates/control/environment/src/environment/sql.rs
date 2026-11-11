@@ -498,15 +498,26 @@ pub async fn run_deployed(
             &mut job,
             &[("WAMN_RELEASE_HOST_GROUP", "/inputs/host.json")],
         );
-        let registry = pod_registry_credentials(
-            platform.insecure_registry,
-            serde_json::from_slice(&std::fs::read(&platform.registry_auth_file)?)?,
-        )?;
-        files.insert("registry.json".into(), serde_json::to_string(&registry)?);
-        job::environment(
-            &mut job,
-            &[("WAMN_REGISTRY_AUTH_FILE", "/inputs/registry.json")],
-        );
+        if platform.registry_token_metadata {
+            job::environment(&mut job, &[("WAMN_REGISTRY_TOKEN_METADATA", "true")]);
+            job["spec"]["template"]["spec"]["serviceAccountName"] =
+                wamn_credential_store::kubernetes::service_account_name(
+                    &document.org,
+                    &document.project,
+                    &document.env,
+                )
+                .into();
+        } else {
+            let registry = pod_registry_credentials(
+                platform.insecure_registry,
+                serde_json::from_slice(&std::fs::read(&platform.registry_auth_file)?)?,
+            )?;
+            files.insert("registry.json".into(), serde_json::to_string(&registry)?);
+            job::environment(
+                &mut job,
+                &[("WAMN_REGISTRY_AUTH_FILE", "/inputs/registry.json")],
+            );
+        }
         let mut ca_paths = Vec::new();
         for (index, path) in platform.oci_ca_paths.iter().enumerate() {
             let name = format!("registry-ca-{index}.crt");

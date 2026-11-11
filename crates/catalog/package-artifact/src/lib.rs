@@ -103,7 +103,10 @@ impl std::error::Error for ComponentArtifactCaError {
 pub struct PackageRegistry {
     /// Explicit `<registry>/<repository>` base for package artifacts.
     pub artifact_base: String,
-    /// `.dockerconfigjson` file carrying the registry credential.
+    /// A caller-resolved credential, held only in memory.
+    #[serde(skip)]
+    pub credentials: Option<RegistryCredentials>,
+    /// `.dockerconfigjson` file used when no caller-resolved credential is supplied.
     pub registry_auth_file: PathBuf,
     /// Use plain HTTP for exactly the registry in `artifact_base`.
     pub insecure_registry: bool,
@@ -261,9 +264,15 @@ impl Repository {
             ensure_tag(reference)?;
         }
         let base = parse_component_artifact_base(&registry.artifact_base)?;
-        let credentials = read_registry_credentials(&registry.registry_auth_file, base.registry())
-            .with_context(|| format!("load the credential for registry {}", base.registry()))?;
-        Self::with_auth(registry, reference, registry_auth(Some(&credentials)))
+        let from_file;
+        let credentials = if let Some(credentials) = &registry.credentials {
+            credentials
+        } else {
+            from_file = read_registry_credentials(&registry.registry_auth_file, base.registry())
+                .with_context(|| format!("load the credential for registry {}", base.registry()))?;
+            &from_file
+        };
+        Self::with_auth(registry, reference, registry_auth(Some(credentials)))
     }
 
     /// Open a repository with a host-resolved credential, including metadata tokens.

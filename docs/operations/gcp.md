@@ -364,7 +364,49 @@ gcloud compute backend-services list --project wamn-dev
 
 The teardown deletes the cluster `wamn` and every object in it, the CloudNativePG databases included. Run it only with the approval of the owner.
 
-List the disks before the delete. Write down the names of the `pvc-*` disks of the cluster:
+First remove the resources that the full OpenTofu apply creates in section 4.
+Use the directory, state bucket, and state prefix from that apply.
+Keep the cluster running until this step finishes because OpenTofu reads its network endpoint group.
+
+The rendered `main.tf.json` names the resources below.
+The CDN backend is `google_compute_backend_service.edge_https` with `enable_cdn = true`.
+OpenTofu orders the deletes from their references.
+It removes the forwarding rule before its proxy and address, then the URL map, backend, and health check.
+It removes the certificate map entry before the map and certificate, then the DNS authorization.
+
+```bash
+cd <existing OpenTofu directory>
+tofu init
+tofu output -raw edge_dns_authorization_name
+tofu output -raw edge_dns_authorization_data
+tofu plan -destroy \
+  -target=google_compute_global_forwarding_rule.edge \
+  -target=google_compute_target_https_proxy.edge \
+  -target=google_compute_url_map.edge \
+  -target=google_compute_backend_service.edge_https \
+  -target=google_compute_health_check.edge \
+  -target=google_compute_global_address.edge \
+  -target=google_certificate_manager_certificate_map_entry.edge \
+  -target=google_certificate_manager_certificate_map.edge \
+  -target=google_certificate_manager_certificate.edge \
+  -target=google_certificate_manager_dns_authorization.edge \
+  -out=teardown.tfplan
+```
+
+Make sure that the plan deletes only those resources.
+Apply the saved plan after the owner approves it:
+
+```bash
+tofu apply teardown.tfplan
+```
+
+The DNS owner removes the authorization CNAME printed above and the route records that point to the released `wamn-edge` address.
+Keep the DNS zone and the separate cert-manager challenge record.
+Keep all section 1 inputs, including buckets, IAM grants, APIs, quota preferences, secrets, and budgets.
+The targets also leave the kind registry and the guard state binding intact.
+Do not run an untargeted destroy.
+
+Next list the disks. Write down the names of the `pvc-*` disks of the cluster:
 
 ```bash
 gcloud compute disks list --project wamn-dev --format="table(name,sizeGb,users.basename(),description)"
@@ -381,15 +423,12 @@ Delete each one by name, one command for each disk:
 gcloud compute disks delete <pvc disk name> --project wamn-dev --zone us-central1-a --quiet
 ```
 
-The network endpoint group `wamn-edge` stays after the delete, because the backend service `wamn-edge` names it. The agent detaches and deletes the old group as `wamn-agent` with the approval of the teardown:
+If the network endpoint group `wamn-edge` remains after cluster deletion, delete it by name.
+The OpenTofu step already removes the backend service that references it.
 
 ```bash
-gcloud compute backend-services remove-backend wamn-edge --global \
-  --network-endpoint-group wamn-edge --network-endpoint-group-zone us-central1-a --project wamn-dev
 gcloud compute network-endpoint-groups delete wamn-edge --zone us-central1-a --project wamn-dev --quiet
 ```
-
-If the backend service names no group, `remove-backend` refuses, and the agent runs only the delete.
 
 ## Platform deployment boundary
 

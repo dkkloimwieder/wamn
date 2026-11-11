@@ -465,11 +465,18 @@ pub async fn pull_release_manifest(
     platform: &Platform,
     digest: &str,
 ) -> anyhow::Result<ServingManifest> {
-    let source = ReleaseManifestSource::new(
-        &platform.release_artifact_base,
-        platform.insecure_registry,
-        &platform.registry_auth_file,
-    )
+    let source = if platform.registry_token_metadata {
+        ReleaseManifestSource::with_registry_token_metadata(
+            &platform.release_artifact_base,
+            platform.insecure_registry,
+        )
+    } else {
+        ReleaseManifestSource::new(
+            &platform.release_artifact_base,
+            platform.insecure_registry,
+            &platform.registry_auth_file,
+        )
+    }
     .context("open the release manifest source")?
     .with_ca_paths(&platform.oci_ca_paths)
     .context("read the registry CA")?;
@@ -488,17 +495,14 @@ async fn read_release(platform: &Platform, digest: &str) -> anyhow::Result<Relea
     // R12: the key is the release digest and every digest of the chart's
     // platform image set, the host and each role component. It is read from
     // the registry (§8.2), never from Postgres.
-    let releases = wamn_package_artifact::PackageRegistry {
-        artifact_base: platform.release_artifact_base.clone(),
-        registry_auth_file: platform.registry_auth_file.clone(),
-        insecure_registry: platform.insecure_registry,
-        oci_ca_paths: platform.oci_ca_paths.clone(),
-    };
     let image_digests = qualification_artifact::image_set_digests(&image_set)?;
-    let qualification = qualification_artifact::lookup(&releases, digest, &image_digests)
-        .await
-        .map(|found| found.map(|found| found.digest))
-        .map_err(|error| error.to_string());
+    let qualification = async {
+        let releases = platform.registry(&platform.release_artifact_base).await?;
+        qualification_artifact::lookup(&releases, digest, &image_digests).await
+    }
+    .await
+    .map(|found| found.map(|found| found.digest))
+    .map_err(|error| error.to_string());
     // The admitted descriptors the manifest carries name the release's
     // connections (R2 (3)).
     let required_connections = manifest

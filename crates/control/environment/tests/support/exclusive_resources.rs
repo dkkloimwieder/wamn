@@ -48,6 +48,7 @@ impl Fixture {
         )?;
         let configuration = PackageRegistry {
             artifact_base: format!("{}/wamn/components", registry.address),
+            credentials: None,
             registry_auth_file: auth.clone(),
             insecure_registry: true,
             oci_ca_paths: vec![],

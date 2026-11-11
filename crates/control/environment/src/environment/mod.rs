@@ -48,6 +48,7 @@ pub struct Platform {
     /// `<registry>/<repository>` of release manifest artifacts.
     pub release_artifact_base: String,
     pub registry_auth_file: PathBuf,
+    pub registry_token_metadata: bool,
     pub oci_ca_paths: Vec<PathBuf>,
     /// Registry transport selected by the installed platform host.
     pub insecure_registry: bool,
@@ -158,6 +159,8 @@ impl Platform {
         let variable = |name: &str| {
             std::env::var(name).with_context(|| format!("set {name} for wamn-ctl env"))
         };
+        let registry_token_metadata =
+            std::env::var("WAMN_REGISTRY_TOKEN_METADATA").as_deref() == Ok("true");
         let host_group = if project_schema {
             None
         } else {
@@ -178,7 +181,8 @@ impl Platform {
             } else {
                 variable("WAMN_RELEASE_ARTIFACT_BASE")?
             },
-            registry_auth_file: if project_schema {
+            registry_token_metadata,
+            registry_auth_file: if project_schema || registry_token_metadata {
                 PathBuf::new()
             } else {
                 PathBuf::from(variable("WAMN_REGISTRY_AUTH_FILE")?)
@@ -223,6 +227,26 @@ impl Platform {
         })
     }
 
+    pub(crate) async fn registry(
+        &self,
+        base: &str,
+    ) -> anyhow::Result<wamn_package_artifact::PackageRegistry> {
+        let credentials = if self.registry_token_metadata {
+            let base = wamn_catalog::parse_component_artifact_base(base)?;
+            Some(wamn_package_artifact::registry_credentials::RegistryCredentialSource::MetadataServer
+                .credentials(base.registry()).await?)
+        } else {
+            None
+        };
+        Ok(wamn_package_artifact::PackageRegistry {
+            artifact_base: base.to_owned(),
+            credentials,
+            registry_auth_file: self.registry_auth_file.clone(),
+            insecure_registry: self.insecure_registry,
+            oci_ca_paths: self.oci_ca_paths.clone(),
+        })
+    }
+
     pub(crate) fn component_source(
         &self,
     ) -> anyhow::Result<
@@ -231,15 +255,18 @@ impl Platform {
         self.component_artifact_base
             .as_deref()
             .map(|base| -> anyhow::Result<_> {
-                Ok(
+                let source =
                     wamn_runtime::component_artifact_source::ComponentArtifactSourceConfig::new(
                         base,
                         self.insecure_registry,
                         std::time::Duration::from_secs(30),
-                    )?
-                    .with_registry_auth_file(&self.registry_auth_file)?
-                    .with_ca_paths(&self.oci_ca_paths)?,
-                )
+                    )?;
+                let source = if self.registry_token_metadata {
+                    source.with_registry_token_metadata()
+                } else {
+                    source.with_registry_auth_file(&self.registry_auth_file)?
+                };
+                Ok(source.with_ca_paths(&self.oci_ca_paths)?)
             })
             .transpose()
     }

@@ -701,6 +701,7 @@ async fn unavailable_environment_authority_never_substitutes_checkout_selections
         },
         chart: scratch.path().join("absent-chart"),
         release_artifact_base: "registry.invalid/releases".into(),
+        registry_token_metadata: false,
         registry_auth_file: scratch.path().join("absent-auth.json"),
         oci_ca_paths: Vec::new(),
         insecure_registry: false,

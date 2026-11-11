@@ -63,6 +63,7 @@ async fn reset_worker_waits_before_validation_and_pinning() -> anyhow::Result<()
         },
         chart: PathBuf::new(),
         release_artifact_base: "registry.invalid/releases".into(),
+        registry_token_metadata: false,
         registry_auth_file: scratch.path().join("registry.json"),
         oci_ca_paths: Vec::new(),
         insecure_registry: false,

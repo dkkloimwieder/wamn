@@ -691,6 +691,7 @@ async fn serve_inner(
         &scope.env_key,
         wamn_package_artifact::PackageRegistry {
             artifact_base: args.package_artifact_base.clone(),
+            credentials: None,
             registry_auth_file: args.registry_auth_file.clone(),
             insecure_registry: args.insecure_registry,
             oci_ca_paths: args.oci_ca_paths.clone(),

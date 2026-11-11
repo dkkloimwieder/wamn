@@ -71,6 +71,7 @@ impl RegistryArgs {
     pub(crate) fn registry(&self) -> PackageRegistry {
         PackageRegistry {
             artifact_base: self.artifact_base.clone(),
+            credentials: None,
             registry_auth_file: self.registry_auth_file.clone(),
             insecure_registry: self.insecure_registry,
             oci_ca_paths: self.oci_ca_paths.clone(),
@@ -141,6 +142,7 @@ pub async fn push(args: PushPackageArgs) -> anyhow::Result<()> {
         package: args.package,
         registry: PackageRegistry {
             artifact_base: args.artifact_base,
+            credentials: None,
             registry_auth_file: args.registry_auth_file,
             insecure_registry: args.insecure_registry,
             oci_ca_paths: args.oci_ca_paths,

@@ -68,6 +68,7 @@ fn platform(system_url: &str) -> Platform {
         },
         chart: PathBuf::new(),
         release_artifact_base: String::new(),
+        registry_token_metadata: false,
         registry_auth_file: PathBuf::new(),
         oci_ca_paths: Vec::new(),
         insecure_registry: false,

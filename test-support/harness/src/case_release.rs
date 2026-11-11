@@ -778,6 +778,7 @@ mod tests {
             manifest_path: PathBuf::from("/manifest.json"),
             releases: PackageRegistry {
                 artifact_base: "registry.example/acme/releases".to_owned(),
+                credentials: None,
                 registry_auth_file: PathBuf::from("/pull/config.json"),
                 insecure_registry: true,
                 oci_ca_paths: vec![PathBuf::from("/pull/ca.crt")],
