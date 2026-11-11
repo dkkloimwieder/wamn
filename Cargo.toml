@@ -290,7 +290,3 @@ split-debuginfo = "unpacked"
 [profile.dev.package."*"]
 debug = "line-tables-only"
 split-debuginfo = "unpacked"
-
-[patch."https://github.com/wasmCloud/wasmCloud"]
-# wamn-275sr.6: graceful connection retirement at ingress stop, on top of v2.11.0.
-wash-runtime = { git = "https://github.com/dkkloimwieder/wasmCloud", rev = "4f966aaffff1314ff43505a67672e0fc4879899d" }

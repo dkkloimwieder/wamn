@@ -9,8 +9,8 @@ This page owns those reasons. Other architecture pages own the behavior itself.
 
 The root [Cargo manifest](../../Cargo.toml) pins direct wasmCloud `v2.11.0` source at `bc5acfb8e15f7d6d199ca940354d82e590c2d5ff`.
 The resolved Wasmtime family is `48.0.7`.
-There are no carried wasmCloud patches, and upstream default providers remain disabled.
-The platform restores no retired fork patch.
+`wash-runtime` resolves directly to that upstream revision without a workspace patch.
+Upstream default providers remain disabled.
 
 Native loading and dispatch own compilation, linking, fresh and warm stores, epoch interruption, and guest cancellation.
 WAMN uses public `GuestCall`, `InstancePolicy::Ephemeral`, `InstancePolicy::Warm`, `ProbeState`, `Liveness`, and bounded flush operations.
@@ -57,7 +57,7 @@ The native operator can exit after an initial dial timeout to the one platform N
 Through a NATS outage, Kubernetes restarts the operator with a backoff of at most 5 minutes, and the operator recovers when NATS returns.
 A fault-time liveness delay remains. Supervised restarts do not remove it.
 
-The [lifecycle contract](execution.md#process-lifecycle) covers the combined host shutdown path.
+The [lifecycle contract](execution.md#process-lifecycle) covers the combined host shutdown path and its connection retirement limit.
 
 Tenant raw-socket admission is refused.
 The [HTTP capability](capabilities.md#outbound-http) has a separate policy owner.

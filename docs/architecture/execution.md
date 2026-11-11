@@ -1345,6 +1345,10 @@ Ingress failure, probe failure, or command-task failure follows the failure clea
 The process bounds plugin coordination, auxiliary task cleanup, telemetry flush, and final runtime shutdown.
 Cleanup timeout remains an error and can leave plugin cleanup incomplete.
 The HTTP-stop allowance bounds coordination and does not guarantee native completion.
+Upstream ingress stop ends the accept loop without gracefully retiring existing HTTP or HTTPS connections.
+It sends no stop-triggered HTTP/1 connection close or HTTP/2 GOAWAY.
+An edge connection can remain pinned to a draining host and receive 503 until it closes.
+Connection drain can therefore consume the shutdown budget even after admitted responses finish.
 
 Queue shutdown bounds its current turn and auxiliary cleanup.
 A turn beyond the budget retains the existing durable lease for recovery.
