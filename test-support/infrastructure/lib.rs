@@ -46,6 +46,3 @@ mod tests {
         assert!(!connection_refused(&denied));
     }
 }
-
-pub mod kubernetes_gate;
-pub mod kubernetes_gate_verdict;

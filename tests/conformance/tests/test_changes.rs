@@ -1217,6 +1217,142 @@ fn suite_preparation_sets_its_input_and_preserves_a_nonempty_override() {
 }
 
 #[test]
+fn publication_and_admission_targets_build_their_authored_applications_in_order() {
+    use std::collections::{BTreeMap, BTreeSet};
+
+    let repository = repository_root();
+    let mut authored = BTreeMap::new();
+    for parent in ["apps", "apps/platform"] {
+        for entry in fs::read_dir(repository.join(parent)).unwrap() {
+            let root = entry.unwrap().path();
+            if let Ok(manifest) = fs::read_to_string(root.join("wamn.k")) {
+                authored.insert(
+                    root.strip_prefix(&repository)
+                        .unwrap()
+                        .to_str()
+                        .unwrap()
+                        .to_owned(),
+                    manifest,
+                );
+            }
+        }
+    }
+    for (package, kind, name, application) in [
+        ("wamn-package-control", "lib", "wamn_package_control", None),
+        (
+            "wamn-environment-control",
+            "test",
+            "netsuite_publication",
+            Some("apps/netsuite"),
+        ),
+        (
+            "wamn-environment-control",
+            "test",
+            "rest_connector_publication",
+            Some("apps/rest_connector"),
+        ),
+        (
+            "wamn-environment-control",
+            "test",
+            "wamn_integration_live",
+            Some("apps/platform/wamn_integration"),
+        ),
+    ] {
+        let fixture = Fixture::new();
+        for (root, manifest) in &authored {
+            fixture.write(&format!("{root}/wamn.k"), manifest);
+        }
+        let mut member = fixture.package("crates/consumer", package, &[]);
+        member["targets"] =
+            json!([{"name": name, "kind": [kind], "test": true, "tier": "live-postgres"}]);
+        fixture.metadata(
+            "Cargo.toml",
+            "",
+            &[&member],
+            &[&member],
+            &[json!({"id": member["id"], "deps": []})],
+        );
+        fixture.add_suite(
+            json!({"package": package, "target": [format!("{kind}:{name}")], "tests": []}),
+        );
+        let target = fixture.directory.join("target");
+        fs::create_dir_all(target.join("debug")).unwrap();
+        executable(
+            &target.join("debug/wamn-test-postgres"),
+            "#!/usr/bin/env bash\nwhile [[ $1 != -- ]]; do shift; done\nshift\nexec \"$@\"\n",
+        );
+        executable(&target.join("debug/wamn"), FAKE_GUEST_BUILD);
+        let output = fixture
+            .tool_command(&["--suite", "fixture-exact"])
+            .env("CARGO_TARGET_DIR", &target)
+            .env("WAMN_NATIVE_C_NATS_BIN", "/bin/true")
+            .env("WAMN_FAKE_CARGO_LOG", fixture.directory.join("guest calls"))
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{name}: {output:?}");
+        let calls = fixture.guest_calls();
+        let (build_index, command) = calls
+            .iter()
+            .enumerate()
+            .find(|(_, call)| call[0] == "wamn" && call[1] == "build")
+            .expect("applications must build before the selected test");
+        assert!(
+            calls[build_index + 1..]
+                .iter()
+                .any(|call| call[0] == "test"),
+            "{name}: run the selected test after building its applications"
+        );
+        let built = &command[2..];
+        let mut expected: BTreeSet<&str> = match application {
+            Some(root) => BTreeSet::from([root]),
+            None => authored.keys().map(String::as_str).collect(),
+        };
+        loop {
+            let before = expected.len();
+            let dependencies: Vec<_> = expected
+                .iter()
+                .flat_map(|root| authored[*root].lines())
+                .filter_map(|line| {
+                    line.trim()
+                        .strip_prefix("package = \"")
+                        .and_then(|value| value.split('"').next())
+                })
+                .filter_map(|base| {
+                    authored
+                        .keys()
+                        .find(|root| Path::new(root).file_name().unwrap() == base)
+                })
+                .map(String::as_str)
+                .collect();
+            expected.extend(dependencies);
+            if expected.len() == before {
+                break;
+            }
+        }
+        assert_eq!(
+            built.iter().map(String::as_str).collect::<BTreeSet<_>>(),
+            expected,
+            "{name}"
+        );
+        assert_eq!(built.len(), expected.len(), "build each application once");
+        for (index, root) in built.iter().enumerate() {
+            for base in authored[root].lines().filter_map(|line| {
+                line.trim()
+                    .strip_prefix("package = \"")
+                    .and_then(|value| value.split('"').next())
+            }) {
+                assert!(
+                    built[..index]
+                        .iter()
+                        .any(|root| Path::new(root).file_name().unwrap() == base),
+                    "{name}: {base} must build before {root}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
 fn application_inputs_build_web_artifacts_after_packages() {
     let fixture = Fixture::new();
     fixture.write("apps/web_client/wamn.k", "");

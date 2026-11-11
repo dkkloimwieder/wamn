@@ -40,7 +40,6 @@ targets = [
   { workspace="root", package="wamn-conformance-tests", target="test:cranelift_dev", tier="contract" },
   { workspace="root", package="wamn-conformance-tests", target="test:delivery_native_build", tier="contract" },
   { workspace="root", package="wamn-conformance-tests", target="test:guest_workspace_closure", tier="contract" },
-  { workspace="root", package="wamn-conformance-tests", target="test:kubernetes_gate_runner", tier="contract" },
   { workspace="root", package="wamn-conformance-tests", target="test:otel_collector", tier="contract" },
   { workspace="root", package="wamn-conformance-tests", target="test:package_build", tier="live-postgres" },
   { workspace="root", package="wamn-conformance-tests", target="test:packages_alone", tier="contract" },
@@ -472,9 +471,8 @@ target = ["test:build_live"]
 prerequisites = ["client-acme"]
 
 [[preparation]]
-id = "receiving-manifest"
+id = "authored-applications"
 outputs = {}
-applications = ["apps/wamn_receiving"]
 prerequisites = ["web-install"]
 
 [[preparation]]
@@ -487,6 +485,36 @@ prerequisites = ["web-install"]
 id = "modbus-reader"
 outputs = {}
 applications = ["apps/modbus_reader"]
+
+[[preparation]]
+id = "netsuite"
+outputs = {}
+applications = ["apps/netsuite"]
+
+[[preparation]]
+id = "rest-connector"
+outputs = {}
+applications = ["apps/rest_connector"]
+
+[[preparation]]
+id = "wamn-integration"
+outputs = {}
+applications = ["apps/platform/wamn_integration"]
+
+[[preparation]]
+packages = ["wamn-environment-control"]
+target = ["test:netsuite_publication"]
+prerequisites = ["netsuite"]
+
+[[preparation]]
+packages = ["wamn-environment-control"]
+target = ["test:rest_connector_publication"]
+prerequisites = ["rest-connector"]
+
+[[preparation]]
+packages = ["wamn-environment-control"]
+target = ["test:wamn_integration_live"]
+prerequisites = ["wamn-integration"]
 
 [[preparation]]
 packages = ["wamn-package-control"]
@@ -508,7 +536,7 @@ prerequisites = ["jsonata"]
 [[preparation]]
 packages = ["wamn-package-control"]
 target = ["lib:wamn_package_control"]
-prerequisites = ["fixture", "nats", "receiving-manifest"]
+prerequisites = ["fixture", "nats", "authored-applications"]
 
 [[preparation]]
 packages = ["wamn-release-control"]

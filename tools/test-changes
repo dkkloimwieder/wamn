@@ -656,6 +656,11 @@ while IFS= read -r preparation; do
     continue
   fi
   [[ "$missing" == true ]] || continue
+  if [[ "$input_id" == authored-applications ]]; then
+    while IFS= read -r source; do
+      wamn_application "${source%/wamn.k}"
+    done < <(rg --files apps -g wamn.k | sort)
+  fi
   while IFS= read -r app; do wamn_application "$app"; done < <(jq -r '.applications[]?' <<<"$preparation")
   wamn_input_commands "$preparation" before_applications || exit 1
   if [[ "$(jq -r '.after_applications // false' <<<"$preparation")" == true ]]; then
