@@ -1,4 +1,4 @@
-//! Cancellation and retry of the product's final environment delete transaction.
+//! Environment deletion refusals and cancellation of the final transaction.
 
 use std::time::Duration;
 
@@ -13,9 +13,210 @@ use wamn_environment_control::{
     provision_project_env::provisioning_transaction,
 };
 use wamn_platform_identity::{
-    auth_changes::AuthDrops, connection_changes::ConnectionDrops, connections::administration,
+    auth_changes::{AuthChanges, AuthDrops},
+    connection_changes::ConnectionDrops,
+    connections::administration,
 };
 use wamn_test_infrastructure::scratch::ScratchRoot;
+
+#[tokio::test]
+async fn stranded_run_refusal_preserves_the_environment_before_uninstall() -> anyhow::Result<()> {
+    use std::{
+        os::unix::fs::PermissionsExt as _,
+        path::{Path, PathBuf},
+    };
+    use wamn_environment_control::environment::{Platform, delete::delete};
+    use wamn_environment_control::reconcile_run_plane::{
+        ReconcileRunPlaneRequest, reconcile_run_plane,
+    };
+
+    // Isolate PATH in a child test process; never change the test harness environment.
+    if !Path::new("delete-mutations").exists() {
+        let scratch = ScratchRoot::create()?;
+        std::fs::write(scratch.path().join("delete-mutations"), "")?;
+        for (name, body) in [
+            (
+                "kubectl",
+                r#"#!/bin/sh
+shift 6
+case "$1 $2" in
+  'get database') printf 'database/present\n' ;;
+  'get --raw'|'get pods') printf '{"items":[]}\n' ;;
+  get\ *) ;;
+  *) printf '%s\n' "$*" >> delete-mutations ;;
+esac
+"#,
+            ),
+            (
+                "helm",
+                r#"#!/bin/sh
+case "$1 $2" in
+  list\ *) cat releases.json ;;
+  'get values') cat values.json ;;
+  *) printf '%s\n' "$*" >> delete-mutations ;;
+esac
+"#,
+            ),
+        ] {
+            let path = scratch.path().join(name);
+            std::fs::write(&path, body)?;
+            std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755))?;
+        }
+        let status = tokio::process::Command::new(std::env::current_exe()?)
+            .args([
+                "--exact",
+                "stranded_run_refusal_preserves_the_environment_before_uninstall",
+                "--nocapture",
+            ])
+            .current_dir(scratch.path())
+            .env(
+                "PATH",
+                std::env::join_paths([scratch.path(), Path::new("/usr/bin"), Path::new("/bin")])?,
+            )
+            .status()
+            .await?;
+        assert!(status.success(), "environment deletion regression failed");
+        return Ok(());
+    }
+
+    let _lock = wamn_test_postgres::lock();
+    let database = wamn_control_provision::test_database::system();
+    let mut system = connect(database.url()).await?;
+    system.batch_execute("SET ROLE wamn_system").await?;
+    let triple = Triple::new("acme", "app", "dev");
+    let transaction = provisioning_transaction(&mut system).await?;
+    transaction
+        .batch_execute(
+            &wamn_control_provision::test_database::seed_org_project_env_sql(
+                &triple.org,
+                &triple.project,
+                &triple.env,
+            ),
+        )
+        .await?;
+    transaction.commit().await?;
+    wamn_environment_control::provision_system::set_platform_domain(&mut system, "example.invalid")
+        .await?;
+    system.batch_execute("RESET ROLE").await?;
+    let project_name = wamn_control_provision::project_env_database_name(
+        &triple.org,
+        &triple.project,
+        &triple.env,
+        "aaaaaaa1",
+    );
+    system
+        .batch_execute(&format!(
+            "CREATE DATABASE {} OWNER wamn_db_owner",
+            wamn_pg_core::quote_ident(&project_name)
+        ))
+        .await?;
+    let mut project_url = url::Url::parse(database.url())?;
+    project_url.set_path(&project_name);
+    reconcile_run_plane(ReconcileRunPlaneRequest {
+        system_database_url: database.url().into(),
+        admin_database_url: project_url.to_string(),
+        org: triple.org.clone(),
+        project: triple.project.clone(),
+        env: triple.env.to_string(),
+        schema: "wamn_run".into(),
+        dry_run: false,
+        changes: AuthChanges::default(),
+    })
+    .await?;
+    // The database-owner policy membership installed by environment::ensure.
+    system
+        .batch_execute("GRANT wamn_platform TO wamn_db_owner WITH INHERIT TRUE, SET FALSE")
+        .await?;
+    let mut project = connect(project_url.as_str()).await?;
+    let env_key =
+        wamn_control_provision::project_env_key(&triple.org, &triple.project, &triple.env);
+    let bytes = b"stranded release";
+    let digest = wamn_execution_contract::bytes_sha256(bytes);
+    let transaction = project.transaction().await?;
+    transaction
+        .batch_execute(&wamn_control_provision::bind_platform_principal_sql(
+            wamn_control_provision::PlatformComponent::Provisioning,
+        ))
+        .await?;
+    transaction.execute("INSERT INTO catalog.releases(env_key,manifest_digest,canonical_bytes) VALUES($1,$2,$3)", &[&env_key, &digest, &&bytes[..]]).await?;
+    transaction.execute("INSERT INTO wamn_run.runs(env_key,run_id,package_id,environment,status,manifest_digest,wiring_id,wiring_version,wiring_hash,binding_world_json) VALUES($1,'stranded-work','app',$2,'dispatched',$3,'work',1,$3,'[]')", &[&env_key, &triple.env.as_str(), &digest]).await?;
+    transaction.commit().await?;
+    let run_before: serde_json::Value = project
+        .query_one("SELECT to_jsonb(r) FROM wamn_run.runs r", &[])
+        .await?
+        .get(0);
+    let release = wamn_control_provision::environment_state::application_release_name(
+        &triple.org,
+        &triple.project,
+        &triple.env,
+        "app",
+    )?;
+    std::fs::write(
+        "releases.json",
+        serde_json::to_vec(&json!([{"name":release}]))?,
+    )?;
+    std::fs::write(
+        "values.json",
+        serde_json::to_vec(&json!({
+            "environment":triple.to_string(),
+            "applications":{"app":{"packages":["app"]}}
+        }))?,
+    )?;
+    let platform = Platform {
+        system_database_url: database.url().into(),
+        target: wamn_release_control::release_chart::Target {
+            kubeconfig: "unused".into(),
+            context: "stub".into(),
+            namespace: "hosts".into(),
+        },
+        chart: PathBuf::new(),
+        release_artifact_base: String::new(),
+        registry_auth_file: PathBuf::new(),
+        registry_token_metadata: false,
+        oci_ca_paths: Vec::new(),
+        insecure_registry: false,
+        package_artifact_base: None,
+        component_artifact_base: None,
+        database_namespace: "platform".into(),
+        database_host: None,
+        database_port: project_url.port().unwrap(),
+        host_group: None,
+        pat_issuer: wamn_identity_client::PatIssuerConfig::default(),
+        events: None,
+        auth_nats: None,
+    };
+    system.batch_execute("SET ROLE wamn_system").await?;
+    let before: serde_json::Value = system
+        .query_one("SELECT to_jsonb(e) FROM registry.project_envs e", &[])
+        .await?
+        .get(0);
+    let error = delete(&platform, &triple, false, database.url())
+        .await
+        .unwrap_err();
+    for field in ["run_id", "manifest_digest"] {
+        assert!(
+            error
+                .to_string()
+                .contains(run_before[field].as_str().unwrap()),
+            "{error:#}"
+        );
+    }
+    assert!(
+        std::fs::read("delete-mutations")?.is_empty(),
+        "refusal must precede every external mutation"
+    );
+    let after: serde_json::Value = system
+        .query_one("SELECT to_jsonb(e) FROM registry.project_envs e", &[])
+        .await?
+        .get(0);
+    assert_eq!(after, before);
+    let run_after: serde_json::Value = project
+        .query_one("SELECT to_jsonb(r) FROM wamn_run.runs r", &[])
+        .await?
+        .get(0);
+    assert_eq!(run_after, run_before);
+    Ok(())
+}
 
 async fn connect(url: &str) -> anyhow::Result<Client> {
     let (client, connection) = tokio_postgres::connect(url, tokio_postgres::NoTls).await?;

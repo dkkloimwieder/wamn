@@ -2,8 +2,8 @@
 //! (docs/architecture/overview.md#environment-lifecycle).
 //!
 //! Each step accepts absent resources so an interrupted delete can resume.
-//! Under the lifecycle lock, check ownership, uninstall application releases,
-//! drain their hosts, and refuse stranded runs unless `--data` is set.
+//! Under the lifecycle lock, check ownership and existing stranded runs before
+//! uninstalling application releases. Drain their hosts and check runs again.
 //! Delete and drain the CDC reader before removing credentials or replication.
 //! Remove the materializer, PATs, Secrets, control administration key, streams,
 //! event certificate, Publication CR, replication slot, and Database CR.
@@ -125,10 +125,6 @@ async fn delete_locked(
 
     resources::check_ownership(platform, triple, &database).await?;
     let applications = application_releases(platform, triple).await?;
-    for name in applications.values() {
-        release_chart::uninstall(&platform.target, name).await?;
-        lines.push(format!("uninstalled {name}"));
-    }
     let observed = wamn_control_provision::environment_state::observe_environment(
         &platform.target.namespace,
         &triple.to_string(),
@@ -144,22 +140,6 @@ async fn delete_locked(
         },
     )
     .await?;
-    // Pods can outlive their Helm record after an interrupted uninstall.
-    let mut groups: std::collections::BTreeSet<_> = applications.values().cloned().collect();
-    groups.extend(
-        wamn_control_provision::environment_state::application_states(&observed).into_keys(),
-    );
-    for name in groups {
-        let live = super::drain::wait(platform, &name, None).await?;
-        if !live.is_empty() {
-            bail!(
-                "application host group {name} is still live: {live:?}; shared resources were retained"
-            );
-        }
-    }
-    let live = std::collections::BTreeMap::new();
-
-    // A run pinned to a release with no pod.
     let cr_present = !kubectl(
         platform,
         &platform.database_namespace,
@@ -175,12 +155,43 @@ async fn delete_locked(
     )
     .await?
     .is_empty();
+    if cr_present && !data {
+        let url = project_url(platform, triple).await?;
+        let live = wamn_control_provision::environment_state::live_set(&observed.pods);
+        let stranded = super::drain::stranded(&url, &env_key, env, None, &live).await?;
+        anyhow::ensure!(
+            stranded.is_empty(),
+            "{}; apply a document that names their release to recover them, or delete \
+             with --data; nothing was deleted",
+            super::drain::describe(&stranded)
+        );
+    }
+    for name in applications.values() {
+        release_chart::uninstall(&platform.target, name).await?;
+        lines.push(format!("uninstalled {name}"));
+    }
+    // Pods can outlive their Helm record after an interrupted uninstall.
+    let mut groups: std::collections::BTreeSet<_> = applications.values().cloned().collect();
+    groups.extend(
+        wamn_control_provision::environment_state::application_states(&observed).into_keys(),
+    );
+    for name in groups {
+        let live = super::drain::wait(platform, &name, None).await?;
+        if !live.is_empty() {
+            bail!(
+                "application host group {name} is still live: {live:?}; shared resources were retained"
+            );
+        }
+    }
+    let live = std::collections::BTreeMap::new();
+
+    // Runtime state can change during the drain, outside lifecycle exclusion.
     if cr_present {
         let url = project_url(platform, triple).await?;
         match super::drain::stranded(&url, &env_key, env, None, &live).await {
             Ok(stranded) if !stranded.is_empty() && !data => bail!(
                 "{}; apply a document that names their release to recover them, or delete \
-                 with --data; nothing else was deleted",
+                 with --data; shared resources were retained",
                 super::drain::describe(&stranded)
             ),
             Ok(stranded) if !stranded.is_empty() => {
