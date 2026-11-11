@@ -1,6 +1,6 @@
 use super::{
-    BuildPlatformRequest, CLOUD_AUTH_SCRIPT, CLOUD_DOCKER_IMAGE, CLOUD_SDK_IMAGE, CloudBuild,
-    IMAGES, Path, PathBuf, Plan, ROLES,
+    BuildPlatformRequest, CLOUD_AUTH_SCRIPT, CLOUD_DOCKER_IMAGE, CLOUD_PUSH_SCRIPT,
+    CLOUD_SDK_IMAGE, CloudBuild, IMAGES, Path, PathBuf, Plan, ROLES,
 };
 use anyhow::Context as _;
 
@@ -160,10 +160,23 @@ pub(super) fn cloud_configuration(
             ]);
         }
         args.push(".".into());
-        steps.push(json!({
-            "name": CLOUD_DOCKER_IMAGE, "args": args,
+        let mut step = json!({
+            "name": CLOUD_DOCKER_IMAGE,
             "env": ["DOCKER_CONFIG=/cloud-auth"], "volumes": volume,
-        }));
+        });
+        if target != "roles" {
+            step["entrypoint"] = json!("sh");
+            args.splice(
+                0..0,
+                [
+                    "-c".into(),
+                    CLOUD_PUSH_SCRIPT.replace('$', "$$"),
+                    "sh".into(),
+                ],
+            );
+        }
+        step["args"] = json!(args);
+        steps.push(step);
     }
     steps.push(auth_step);
     for (file, role) in ROLES {

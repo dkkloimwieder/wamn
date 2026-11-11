@@ -1319,6 +1319,24 @@ auth=$(printf 'oauth2accesstoken:%s' "$token" | base64 -w0)
 printf '{"auths":{"%s":{"auth":"%s"}}}' "$1" "$auth" > /cloud-auth/config.json
 "#;
 
+/// Retry a push timeout once on the same BuildKit builder, retaining its cache.
+const CLOUD_PUSH_SCRIPT: &str = r#"set -eu
+set -o pipefail
+log=$(mktemp)
+trap 'rm -f "$log"' EXIT
+for attempt in 1 2; do
+    if docker "$@" 2>&1 | tee "$log"; then
+        exit 0
+    else
+        status=$?
+    fi
+    if [ "$attempt" -eq 2 ] || ! grep -Eq 'failed to (push|authorize).*DeadlineExceeded' "$log"; then
+        exit "$status"
+    fi
+    echo 'Retrying image push after DeadlineExceeded' >&2
+done
+"#;
+
 /// Run `command` and return its standard output; a failure names its error output.
 async fn output(command: &mut Command) -> anyhow::Result<String> {
     let program = command
@@ -1569,9 +1587,16 @@ mod tests {
         assert_eq!(config["options"]["logging"], "CLOUD_LOGGING_ONLY");
         let steps = config["steps"].as_array().unwrap();
         assert_eq!(steps[0]["args"][5], "docker-container");
+        let has = |step: &serde_json::Value, text: &str| {
+            step["args"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|arg| arg.as_str() == Some(text))
+        };
         let builds: Vec<_> = steps
             .iter()
-            .filter(|step| step["name"] == CLOUD_DOCKER_IMAGE && step["args"][3] == "build")
+            .filter(|step| step["name"] == CLOUD_DOCKER_IMAGE && has(step, "build"))
             .collect();
         assert_eq!(builds.len(), IMAGES.len() + 1);
         let pushes = |step: &serde_json::Value| {
@@ -1598,13 +1623,6 @@ mod tests {
             "no Cloud Build step runs python"
         );
         assert!(!steps.iter().any(|step| step["args"][0] == "push"));
-        let has = |step: &serde_json::Value, text: &str| {
-            step["args"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .any(|arg| arg.as_str() == Some(text))
-        };
         assert!(builds.iter().filter(|step| pushes(step)).all(|step| {
             IMAGES.iter().any(|target| {
                 has(
@@ -1632,12 +1650,105 @@ mod tests {
         let steps = config["steps"].as_array().unwrap();
         let builds: Vec<_> = steps
             .iter()
-            .filter(|step| step["name"] == CLOUD_DOCKER_IMAGE && step["args"][3] == "build")
+            .filter(|step| step["name"] == CLOUD_DOCKER_IMAGE && has(step, "build"))
             .collect();
         assert_eq!(builds.len(), IMAGES.len());
         assert!(!builds.iter().any(|step| has(step, "host")));
         assert!(builds.iter().any(|step| has(step, "roles")));
         assert_eq!(wash(steps), 2);
+    }
+
+    #[test]
+    fn cloud_image_push_retries_only_transient_timeouts_once() {
+        use std::os::unix::fs::PermissionsExt as _;
+        let request = BuildPlatformRequest {
+            repository: PathBuf::from("/nonexistent"),
+            registry: "registry.example/wamn".into(),
+            version: VERSION.into(),
+            out: PathBuf::from("/nonexistent"),
+            cluster: None,
+            cloud: true,
+        };
+        let plan = Plan {
+            hashes: IMAGES
+                .iter()
+                .map(|target| (*target, "hash".into()))
+                .collect(),
+            images: BTreeMap::new(),
+        };
+        let config = plan::cloud_configuration(&request, "head", &plan, "key").unwrap();
+        let directory =
+            std::env::temp_dir().join(format!("wamn-cloud-push-{}", std::process::id()));
+        std::fs::create_dir_all(&directory).unwrap();
+        let docker = directory.join("docker");
+        let path = format!("{}:{}", directory.display(), std::env::var("PATH").unwrap());
+        for step in config["steps"].as_array().unwrap().iter().filter(|step| {
+            step["args"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|arg| arg == "--push")
+        }) {
+            let args: Vec<_> = step["args"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|arg| arg.as_str().unwrap())
+                .collect();
+            assert_eq!(step["entrypoint"], "sh");
+            let script = args[1].replace("$$", "$");
+            let timeout = "failed to push image: failed to authorize: DeadlineExceeded: context deadline exceeded";
+            for (error, persistent, attempts, code) in [
+                (timeout, false, 2, 0),
+                (timeout, true, 2, 42),
+                (
+                    "failed to push image: denied: permission denied",
+                    false,
+                    1,
+                    42,
+                ),
+                (
+                    "failed to solve: DeadlineExceeded: build timed out",
+                    false,
+                    1,
+                    42,
+                ),
+            ] {
+                std::fs::write(
+                    &docker,
+                    format!(
+                        r#"#!/bin/sh
+printf '%s\n' "$@" >> arguments
+if [ ! -e attempted ] || {persistent}; then
+    touch attempted
+    echo '{error}' >&2
+    exit 42
+fi
+"#
+                    ),
+                )
+                .unwrap();
+                std::fs::set_permissions(&docker, std::fs::Permissions::from_mode(0o755)).unwrap();
+                // Alpine's sh in the Docker image and Bash both support pipefail.
+                let output = std::process::Command::new("bash")
+                    .args(["-c", &script, args[2]])
+                    .args(&args[3..])
+                    .current_dir(&directory)
+                    .env("PATH", &path)
+                    .output()
+                    .unwrap();
+                assert_eq!(output.status.code(), Some(code), "{error}: {output:?}");
+                let arguments = std::fs::read_to_string(directory.join("arguments")).unwrap();
+                assert_eq!(
+                    arguments.lines().collect::<Vec<_>>(),
+                    args[3..].repeat(attempts),
+                    "{error}"
+                );
+                std::fs::remove_file(directory.join("arguments")).unwrap();
+                std::fs::remove_file(directory.join("attempted")).unwrap();
+            }
+        }
+        std::fs::remove_dir_all(&directory).unwrap();
     }
 
     #[test]
