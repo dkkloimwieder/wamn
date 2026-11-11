@@ -241,7 +241,34 @@ pub(super) async fn exercise(
     artifacts: &BTreeMap<&str, String>,
 ) -> anyhow::Result<()> {
     let selected = inputs(journey.run)?;
+    journey
+        .apply(
+            "provision-upgrade-environment",
+            journey
+                .cli(
+                    &journey.run.binary.with_file_name("wamn-ctl"),
+                    &["env", "apply"],
+                )
+                .arg(&journey.file)
+                .args(["--application", "alpha"]),
+        )
+        .await?;
     for (app, key) in [("beta", "b0"), ("alpha", "a0")] {
+        journey
+            .apply(
+                &format!("initialize-{app}"),
+                journey
+                    .command(&[
+                        "schema",
+                        "apply",
+                        app,
+                        "--release",
+                        &artifacts[key],
+                        "--env",
+                    ])
+                    .arg(&journey.file),
+            )
+            .await?;
         journey
             .apply(
                 &format!("install-{app}"),
@@ -324,7 +351,7 @@ pub(super) async fn exercise(
                 "host update changed application workloads"
             );
             journey
-                .apply("reapply-alpha-code", &mut journey.reapply())
+                .apply("reapply-alpha-code", &mut journey.reapply().await?)
                 .await?;
             image_ready(journey, &alpha, image).await?;
         }

@@ -702,23 +702,23 @@ Select each test by its exact name in the `platform_apply_kind` Cargo target:
 | --- | --- | --- |
 | `control_operations_kind` | Authenticated Job credentials, cross-project denial without a Job, two-application selection isolation, rollback, schema mutation and artifact worker | Creates one fresh kind cluster; bounded to 45 minutes |
 | `platform_install_recovery_kind` | Interrupt platform installation after its first Kubernetes write, retry, status, and owner sign-in | Creates one fresh kind cluster |
-| `application_deploy_kind` | Source and published code updates, interrupted installation and replacement recovery, reapply, rollback, missing artifacts, stale checkout, retained data, and independent applications | Attaches to an existing disposable kind platform |
+| `application_recovery_kind` | Interrupted explicit provisioning and code installation, replacement recovery, canonical reapply, retained data, and application isolation | Attaches to an existing disposable kind platform |
 | `platform_upgrade_kind` | Independent control and identity updates, one application host update, code reapply, earlier runtime selection, and retained data | Attaches to an existing disposable kind platform |
 | `platform_schema_kind` | One system file and one selected project file through SQL Jobs, unchanged application rows and releases, and second-environment isolation | Attaches to an existing disposable kind platform |
-| `sql_job_kind` | One published data migration through the SQL Job, unchanged serving code, and data read through the deployed host | Attaches to an existing disposable kind platform |
 | `same_name_reset_kind` | Two initial application releases, data, published schema-change reset, interrupted same-name CNPG reset, reconnection, durable refusal, and environment isolation | Attaches to an existing disposable kind platform |
-| `platform_apply_kind` | Fresh-platform acceptance: normal and interrupted installation, plus application, SQL, and reset bodies on the normal platform | Creates two fresh kind clusters |
+| `platform_apply_kind` | Fresh-platform acceptance: normal and interrupted installation, plus application recovery and reset bodies on the normal platform | Creates two fresh kind clusters |
 
 The focused application and schema tests never install or rebuild the platform.
 Each focused application invocation creates a unique project, hostnames, and package versions.
 The aggregate journey prepares each immutable artifact once and reuses it across its focused bodies.
 Each body starts with an absent environment and installs only its required initial releases.
-The SQL body uses one counter model and no integration connection, code upgrade, or source deploy.
 The reset body installs no earlier code versions.
-Only the application body deploys from source.
 Artifact preparation uses the product build and publication operation before the focused bodies run.
 These tests can run in any order on the same platform.
-Application recovery belongs to the application body. Platform recovery publishes no applications.
+The recovery body provisions the environment with `env apply` and initializes SQL with `schema apply` before code deployment.
+The reset, platform runtime, and platform SQL bodies use those same explicit commands.
+Code reapply reads the canonical selection through `status`.
+Platform recovery publishes no applications.
 
 After a body succeeds, `wamn-ctl env delete <org/project/env> --data` deletes its environment, database, and roles.
 Reset and platform schema cases also delete their isolation environments after all assertions succeed.
@@ -747,8 +747,7 @@ Focused application bodies and fresh-platform acceptance also require `script` f
 Build the native `wamn` and `wamn-ctl` binaries beside the test executable in `$CARGO_TARGET_DIR/debug`.
 Use prepared artifacts from [local platform production](building.md#local-platform-artifacts).
 Keep the complete prepared chart directory and its pinned images unchanged after installation.
-Artifact preparation builds authored scratch packages from `apps/platform_fixture` and the minimal probe fixture through product commands.
-The SQL artifact contains only its counter model and generated create/get operations.
+Artifact preparation builds authored scratch packages from `apps/platform_fixture` through product commands.
 Focused application bodies and aggregate acceptance also require these publication inputs:
 
 - Set `DATABASE_URL` to a separate disposable PostgreSQL 18 server with permission to create and drop databases.
@@ -802,14 +801,14 @@ export WAMN_TEST_OWNER_PASSWORD
 Keep that password in your normal secret store.
 In later shells, load the same value into `WAMN_TEST_OWNER_PASSWORD` from that store.
 If the owner already has a password, supply that existing password.
-Run one focused SQL test against that platform:
+Run focused application recovery against that platform:
 
 ```bash
 WAMN_TEST_CLUSTER=/var/tmp/wamn-kind-dep3/cluster.k \
-  cargo test --locked --offline -p wamn-dev-control --test platform_apply_kind sql_job_kind -- --ignored --exact --nocapture
+  cargo test --locked --offline -p wamn-dev-control --test platform_apply_kind application_recovery_kind -- --ignored --exact --nocapture
 ```
 
-Select `application_deploy_kind` or `same_name_reset_kind` in the same command for the other focused tests.
+Select `same_name_reset_kind` in the same command for reset and CDC checks.
 Run fresh-platform acceptance with the prepared chart selected by `WAMN_RELEASE_CHART`:
 
 ```bash

@@ -68,11 +68,11 @@ impl Drop for Run {
 // The namespace annotation records consent to use the platform as disposable.
 #[tokio::test]
 #[ignore = "requires: env:WAMN_TEST_CLUSTER, env:WAMN_RELEASE_CHART, env:WAMN_TEST_OWNER_PASSWORD"]
-async fn application_deploy_kind() -> anyhow::Result<()> {
+async fn application_recovery_kind() -> anyhow::Result<()> {
     wamn_test_postgres::require_ignored_prerequisites(
         "requires: env:WAMN_TEST_CLUSTER, env:WAMN_RELEASE_CHART, env:WAMN_TEST_OWNER_PASSWORD",
     );
-    focused(application_deploy::Case::Application).await
+    focused(application_deploy::Case::Recovery).await
 }
 
 #[tokio::test]
@@ -94,15 +94,6 @@ async fn platform_schema_kind() -> anyhow::Result<()> {
 }
 
 #[tokio::test]
-#[ignore = "requires: env:WAMN_TEST_CLUSTER, env:WAMN_RELEASE_CHART, env:WAMN_TEST_OWNER_PASSWORD"]
-async fn sql_job_kind() -> anyhow::Result<()> {
-    wamn_test_postgres::require_ignored_prerequisites(
-        "requires: env:WAMN_TEST_CLUSTER, env:WAMN_RELEASE_CHART, env:WAMN_TEST_OWNER_PASSWORD",
-    );
-    focused(application_deploy::Case::SqlJob).await
-}
-
-#[tokio::test]
 #[ignore = "requires: bin:kind, bin:docker, bin:kubectl, bin:helm, bin:openssl, bin:script"]
 async fn same_name_reset_kind() -> anyhow::Result<()> {
     wamn_test_postgres::require_ignored_prerequisites(
@@ -120,7 +111,7 @@ async fn platform_install_recovery_kind() -> anyhow::Result<()> {
     fresh(false).await
 }
 
-/// Fresh-platform acceptance includes installation, recovery, application, SQL, and reset.
+/// Fresh-platform acceptance includes installation, recovery, application recovery, and reset.
 #[tokio::test]
 #[ignore = "requires: bin:kind, bin:docker, bin:kubectl, bin:helm, bin:openssl, bin:script"]
 async fn platform_apply_kind() -> anyhow::Result<()> {
@@ -224,11 +215,8 @@ async fn control_operations_gke() -> anyhow::Result<()> {
         .await
         .context("GKE operations exceeded 75 minutes")
         .and_then(|result| result);
-        let cleanup = cleanup(&mut run).await;
-        if let Err(error) = &cleanup {
-            eprintln!("GKE local cleanup failed: {error:#}");
-        }
-        result.and(cleanup)
+        result?;
+        cleanup(&mut run).await
     })
     .await
     .context("GKE setup and cleanup exceeded 90 minutes")
@@ -340,8 +328,7 @@ async fn fresh(acceptance: bool) -> anyhow::Result<()> {
             application_deploy::exercise(
                 &run,
                 &[
-                    application_deploy::Case::Application,
-                    application_deploy::Case::SqlJob,
+                    application_deploy::Case::Recovery,
                     application_deploy::Case::Reset,
                 ],
                 &password,

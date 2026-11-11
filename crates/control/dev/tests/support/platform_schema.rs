@@ -234,9 +234,6 @@ async fn database_effect(
 pub(super) async fn exercise(journey: &Journey<'_>, release: &str) -> anyhow::Result<()> {
     let selected = inputs(journey.run)?;
     let chart = selected.directory();
-    journey
-        .apply("install-schema-dev", &mut journey.deploy(release))
-        .await?;
     let mut document = EnvironmentDocument::compile(&journey.file)?;
     document.env = format!("isolated-{}", journey.environment);
     let application = document
@@ -256,9 +253,32 @@ pub(super) async fn exercise(journey: &Journey<'_>, release: &str) -> anyhow::Re
         environment: &document.env,
         ..*journey
     };
-    other
-        .apply("install-schema-isolation", &mut other.deploy(release))
-        .await?;
+    for environment in [journey, &other] {
+        environment
+            .apply(
+                "provision-schema-environment",
+                environment
+                    .cli(
+                        &environment.run.binary.with_file_name("wamn-ctl"),
+                        &["env", "apply"],
+                    )
+                    .arg(&environment.file)
+                    .args(["--application", "alpha"]),
+            )
+            .await?;
+        environment
+            .apply(
+                "initialize-schema-application",
+                &mut super::schema_command(environment, "apply", Some(release)),
+            )
+            .await?;
+        environment
+            .apply(
+                "install-schema-application",
+                &mut environment.deploy(release),
+            )
+            .await?;
+    }
     let mut rows = Vec::new();
     let mut before = Vec::new();
     for environment in [journey, &other] {

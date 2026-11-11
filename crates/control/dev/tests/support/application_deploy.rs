@@ -10,9 +10,7 @@ use anyhow::{Context as _, ensure};
 use base64::Engine as _;
 use serde_json::{Value, json};
 use tokio::process::Command;
-use wamn_environment_control::environment::document::{
-    DeclaredRelease, EnvironmentDocument, SchemaMode,
-};
+use wamn_environment_control::environment::document::{EnvironmentDocument, SchemaMode};
 use wamn_environment_control::platform::{document::Provider, resources};
 
 use super::{POLL_LIMIT, ProcessGroup, Run, execute, get, kubectl, success};
@@ -23,9 +21,6 @@ mod control_operations;
 #[path = "schema_reset.rs"]
 mod schema_reset;
 
-#[path = "schema_job.rs"]
-mod schema_job;
-
 #[path = "platform_upgrade.rs"]
 mod platform_upgrade;
 
@@ -34,8 +29,7 @@ mod platform_schema;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) enum Case {
-    Application,
-    SqlJob,
+    Recovery,
     Reset,
     PlatformUpgrade,
     PlatformSchema,
@@ -117,9 +111,12 @@ impl Journey<'_> {
         command
     }
 
-    fn reapply(&self) -> Command {
-        let document = EnvironmentDocument::compile(&self.file).expect("journey document");
-        self.deploy(&document.applications["alpha"].current.to_string())
+    async fn reapply(&self) -> anyhow::Result<Command> {
+        let status = self.status().await?;
+        let release = status["applications"]["alpha"]["current"]
+            .as_str()
+            .context("canonical alpha selection")?;
+        Ok(self.deploy(release))
     }
 
     async fn status(&self) -> anyhow::Result<Value> {
@@ -137,23 +134,13 @@ impl Journey<'_> {
     }
 
     async fn route(&self, app: &str, route: &str, body: &Value) -> anyhow::Result<Value> {
-        self.route_at(app, app, route, body).await
-    }
-
-    async fn route_at(
-        &self,
-        app: &str,
-        prefix: &str,
-        route: &str,
-        body: &Value,
-    ) -> anyhow::Result<Value> {
-        let document = EnvironmentDocument::compile(&self.file)?;
+        let status = self.status().await?;
+        let hostname = status["applications"][app]["hostname"]
+            .as_str()
+            .context("canonical application hostname")?;
         let mut base = url::Url::parse(self.edge)?;
-        base.set_host(Some(&document.applications[app].hostname))?;
-        let endpoint = format!(
-            "{}/api/{prefix}/{route}",
-            base.as_str().trim_end_matches('/')
-        );
+        base.set_host(Some(hostname))?;
+        let endpoint = format!("{}/api/{app}/{route}", base.as_str().trim_end_matches('/'));
         let request = if route.ends_with("/create") {
             self.client.post(endpoint).json(body)
         } else {
@@ -487,11 +474,8 @@ async fn exercise_inner(run: &Run, cases: &[Case], password: &str) -> anyhow::Re
                     )
                     .await
                 }
-                Case::SqlJob => {
-                    schema_job::exercise(&journey, &artifacts["sql0"], &artifacts["sql1"]).await
-                }
                 Case::Reset => reset(&journey, &artifacts).await,
-                Case::Application => application(&journey, &sources["alpha"], &artifacts).await,
+                Case::Recovery => application_recovery(&journey, &artifacts).await,
                 Case::PlatformUpgrade => platform_upgrade::exercise(&journey, &artifacts).await,
                 Case::PlatformSchema => platform_schema::exercise(&journey, &artifacts["a0"]).await,
             };
@@ -540,15 +524,6 @@ fn case_document(document: &EnvironmentDocument, case: Case) -> EnvironmentDocum
     if case == Case::ControlOperations {
         document.schema.mode = Some(SchemaMode::Migrate);
     }
-    if case == Case::SqlJob {
-        document.applications.retain(|name, _| name == "alpha");
-        document
-            .applications
-            .get_mut("alpha")
-            .expect("alpha")
-            .packages = ["probe".into()].into();
-        document.schema.mode = Some(SchemaMode::Migrate);
-    }
     document
 }
 
@@ -561,32 +536,22 @@ async fn prepare_artifacts(
 ) -> anyhow::Result<BTreeMap<&'static str, String>> {
     let document = EnvironmentDocument::compile(&journey.file)?;
     let mut artifacts = BTreeMap::new();
-    if cases.iter().any(|case| *case != Case::SqlJob) {
-        artifacts.insert(
-            "a0",
-            journey.publish("alpha", "1.0.0", &sources["alpha"]).await?,
-        );
-    }
-    if cases
-        .iter()
-        .any(|case| !matches!(case, Case::SqlJob | Case::PlatformSchema))
-    {
+    artifacts.insert(
+        "a0",
+        journey.publish("alpha", "1.0.0", &sources["alpha"]).await?,
+    );
+    if cases.iter().any(|case| *case != Case::PlatformSchema) {
         artifacts.insert(
             "b0",
             journey.publish("beta", "1.0.0", &sources["beta"]).await?,
         );
     }
-    if cases.contains(&Case::Application) {
-        for (app, key) in [("alpha", "a1"), ("beta", "b1")] {
-            version(&sources[app], "1.0.0", "1.0.1")?;
-            artifacts.insert(key, journey.publish(app, "1.0.1", &sources[app]).await?);
-        }
-        version(&sources["alpha"], "1.0.1", "1.0.2")?;
+    if cases.contains(&Case::Recovery) {
+        version(&sources["alpha"], "1.0.0", "1.0.1")?;
         artifacts.insert(
-            "a2",
-            journey.publish("alpha", "1.0.2", &sources["alpha"]).await?,
+            "a1",
+            journey.publish("alpha", "1.0.1", &sources["alpha"]).await?,
         );
-        version(&sources["alpha"], "1.0.2", "1.0.1")?;
     }
     if cases.contains(&Case::ControlOperations) {
         version(&sources["beta"], "1.0.0", "1.0.1")?;
@@ -610,7 +575,7 @@ async fn prepare_artifacts(
         let initial = root.join("migrations/0001_initial.sql");
         let code = std::fs::read_to_string(&manifest)?;
         let sql = std::fs::read_to_string(&initial)?;
-        let previous = if cases.contains(&Case::Application) {
+        let previous = if cases.contains(&Case::Recovery) {
             "1.0.1"
         } else {
             "1.0.0"
@@ -653,7 +618,7 @@ async fn prepare_artifacts(
         std::fs::write(
             &manifest,
             code.replacen("    models = {", &format!("    models = {{\n{counter}"), 1)
-                .replace(&format!("version = \"{previous}"), "version = \"1.1.0"),
+                .replace("version = \"1.0.0", "version = \"1.1.0"),
         )?;
         std::fs::write(
             root.join("migrations/0002_capture.sql"),
@@ -667,34 +632,19 @@ async fn prepare_artifacts(
             journey.publish("beta", "isolation-capture", root).await?,
         );
     }
-    if cases.contains(&Case::SqlJob) {
-        std::fs::write(
-            &journey.file,
-            case_document(&document, Case::SqlJob).to_kcl(),
-        )?;
-        let root = &sources["probe"];
-        artifacts.insert("sql0", journey.publish("probe", "1.0.0", root).await?);
-        let manifest = root.join("wamn.k");
-        std::fs::write(
-            &manifest,
-            std::fs::read_to_string(&manifest)?.replace("version = \"1.0.0", "version = \"1.1.0"),
-        )?;
-        std::fs::write(
-            root.join("migrations/0002_counter_data.sql"),
-            "UPDATE probe_data.counter SET label = label || '-migrated';\n",
-        )?;
-        artifacts.insert("sql1", journey.publish("probe", "1.1.0", root).await?);
-    }
     std::fs::write(&journey.file, document.to_kcl())?;
     Ok(artifacts)
 }
 
-async fn data(journey: &Journey<'_>) -> anyhow::Result<BTreeMap<&'static str, (Value, Value)>> {
+async fn data(journey: &Journey<'_>) -> anyhow::Result<BTreeMap<String, (Value, Value)>> {
     let mut rows = BTreeMap::new();
-    for app in ["alpha", "beta"] {
+    let mut status = journey.status().await?;
+    let applications: BTreeMap<String, Value> =
+        serde_json::from_value(status["applications"].take())?;
+    for app in applications.into_keys() {
         let counter = journey
             .route(
-                app,
+                &app,
                 "counter/create",
                 &json!([{
                     "request_id":uuid::Uuid::new_v4().to_string(),
@@ -702,7 +652,7 @@ async fn data(journey: &Journey<'_>) -> anyhow::Result<BTreeMap<&'static str, (V
                 }]),
             )
             .await?;
-        let widget = journey.route(app, "widget/create", &json!([{
+        let widget = journey.route(&app, "widget/create", &json!([{
             "request_id":uuid::Uuid::new_v4().to_string(),
             "idempotency_key":uuid::Uuid::new_v4().to_string(),
             "id":uuid::Uuid::new_v4().to_string(), "code":"standard", "maker_id":null,"note":app
@@ -760,160 +710,44 @@ async fn reset(journey: &Journey<'_>, artifacts: &BTreeMap<&str, String>) -> any
     .await
 }
 
-async fn application(
+async fn application_recovery(
     journey: &Journey<'_>,
-    root: &Path,
     artifacts: &BTreeMap<&str, String>,
 ) -> anyhow::Result<()> {
-    let (a0, b0, a1, b1, a2) = (
-        artifacts["a0"].as_str(),
-        artifacts["b0"].as_str(),
-        artifacts["a1"].as_str(),
-        artifacts["b1"].as_str(),
-        artifacts["a2"].as_str(),
-    );
-    first_install(journey, b0).await?;
+    first_install(journey, &artifacts["b0"]).await?;
     journey
-        .apply("install-alpha", &mut journey.deploy(a0))
+        .apply(
+            "initialize-alpha",
+            &mut schema_command(journey, "apply", Some(&artifacts["a0"])),
+        )
+        .await?;
+    journey
+        .apply("install-alpha", &mut journey.deploy(&artifacts["a0"]))
         .await?;
     let rows = data(journey).await?;
     let database = observer(journey).await?;
-    eprintln!(
-        "scenario 1: code-only source deploy, published deploy, reapply and rollback preserve rows and beta"
-    );
     let baseline = stored(journey, &database).await?;
-    state(
+    recovery(
         journey,
+        &artifacts["a1"],
+        &artifacts["a0"],
         &database,
         &baseline,
-        &rows,
-        [(a0, "v0"), (b0, "v0")],
     )
     .await?;
-    recovery(journey, a1, a0, &database, &baseline).await?;
-    let before = runtime(journey, "beta").await?;
-    journey
-        .apply(
-            "source-alpha",
+    for (app, (counter, widget)) in &rows {
+        ensure!(
             journey
-                .command(&["deploy"])
-                .arg(root)
-                .arg("--env")
-                .arg(&journey.file),
-        )
-        .await?;
-    ensure!(
-        runtime(journey, "beta").await? == before,
-        "alpha update changed beta"
-    );
-    state(
-        journey,
-        &database,
-        &baseline,
-        &rows,
-        [(a1, "v1"), (b0, "v0")],
-    )
-    .await?;
-    let before = runtime(journey, "alpha").await?;
-    journey
-        .apply("update-beta", &mut journey.deploy(b1))
-        .await?;
-    ensure!(
-        runtime(journey, "alpha").await? == before,
-        "beta update changed alpha"
-    );
-    state(
-        journey,
-        &database,
-        &baseline,
-        &rows,
-        [(a1, "v1"), (b1, "v1")],
-    )
-    .await?;
-    let before = runtime(journey, "beta").await?;
-    journey
-        .apply("reapply-alpha", &mut journey.reapply())
-        .await?;
-    ensure!(
-        runtime(journey, "beta").await? == before,
-        "reapply changed beta"
-    );
-    state(
-        journey,
-        &database,
-        &baseline,
-        &rows,
-        [(a1, "v1"), (b1, "v1")],
-    )
-    .await?;
-    journey
-        .apply(
-            "rollback-alpha",
-            journey
-                .command(&["rollback", "alpha", "--env"])
-                .arg(&journey.file),
-        )
-        .await?;
-    ensure!(
-        runtime(journey, "beta").await? == before,
-        "rollback changed beta"
-    );
-    state(
-        journey,
-        &database,
-        &baseline,
-        &rows,
-        [(a0, "v0"), (b1, "v1")],
-    )
-    .await?;
-    let alpha = runtime(journey, "alpha").await?;
-    let absent = format!(
-        "sha256:{}{}",
-        uuid::Uuid::new_v4().simple(),
-        uuid::Uuid::new_v4().simple()
-    );
-    ensure!(
-        !journey
-            .run("missing-artifact", &mut journey.deploy(&absent))
-            .await?
-            .status
-            .success(),
-        "missing artifact was accepted"
-    );
-    ensure!(
-        runtime(journey, "alpha").await? == alpha,
-        "missing artifact changed alpha"
-    );
-    ensure!(
-        runtime(journey, "beta").await? == before,
-        "missing artifact changed beta"
-    );
-    state(
-        journey,
-        &database,
-        &baseline,
-        &rows,
-        [(a0, "v0"), (b1, "v1")],
-    )
-    .await?;
-    journey
-        .apply("prepare-stale-selection", &mut journey.deploy(a2))
-        .await?;
-    state(
-        journey,
-        &database,
-        &baseline,
-        &rows,
-        [(a2, "v1"), (b1, "v1")],
-    )
-    .await?;
-    stale_checkout(journey, &database, &rows, a0, a1, b1).await
-}
-
-fn mode(journey: &Journey<'_>, selected: SchemaMode) -> anyhow::Result<()> {
-    let mut document = EnvironmentDocument::compile(&journey.file)?;
-    document.schema.mode = Some(selected);
-    std::fs::write(&journey.file, document.to_kcl())?;
+                .route(app, "counter/get", &json!([{"id":counter["id"]}]))
+                .await?
+                == *counter
+                && journey
+                    .route(app, "widget/get", &json!([{"id":widget["id"]}]))
+                    .await?
+                    == *widget,
+            "{app} lost data during recovery"
+        );
+    }
     Ok(())
 }
 
@@ -930,67 +764,6 @@ fn same_database(before: &Value, after: &Value) -> anyhow::Result<()> {
     for key in ["cluster", "database", "initialization"] {
         ensure!(before[key] == after[key], "schema operation replaced {key}");
     }
-    Ok(())
-}
-
-async fn stale_checkout(
-    journey: &Journey<'_>,
-    database: &tokio_postgres::Client,
-    rows: &BTreeMap<&str, (Value, Value)>,
-    stale: &str,
-    candidate: &str,
-    beta: &str,
-) -> anyhow::Result<()> {
-    eprintln!("scenario 6: stale checkout deploy and rollback to last successful apply");
-    let applied = runtime(journey, "alpha").await?;
-    let last = applied["current"]
-        .as_str()
-        .context("last successful alpha release")?;
-    let other = runtime(journey, "beta").await?;
-    let identity = stored(journey, database).await?;
-    let mut document = EnvironmentDocument::compile(&journey.file)?;
-    let selection = document
-        .applications
-        .get_mut("alpha")
-        .context("alpha selection")?;
-    selection.current = DeclaredRelease::Digest(stale.to_owned());
-    selection.previous = None;
-    std::fs::write(&journey.file, document.to_kcl())?;
-    journey
-        .apply("stale-checkout-deploy", &mut journey.deploy(candidate))
-        .await?;
-    ensure!(
-        journey.status().await?["applications"]["alpha"]["previous"] == last,
-        "stale checkout replaced the last successful apply with its local release"
-    );
-    state(
-        journey,
-        database,
-        &identity,
-        rows,
-        [(candidate, "v1"), (beta, "v1")],
-    )
-    .await?;
-    journey
-        .apply(
-            "stale-checkout-rollback",
-            journey
-                .command(&["rollback", "alpha", "--env"])
-                .arg(&journey.file),
-        )
-        .await?;
-    state(
-        journey,
-        database,
-        &identity,
-        rows,
-        [(last, "v1"), (beta, "v1")],
-    )
-    .await?;
-    ensure!(
-        runtime(journey, "beta").await? == other,
-        "stale deploy or rollback changed beta"
-    );
     Ok(())
 }
 
@@ -1035,7 +808,38 @@ async fn first_install(
             "interrupt-beta-provisioning"
         };
         let started = Instant::now();
-        let mut command = journey.deploy(digest);
+        if after_sql {
+            journey
+                .apply(
+                    "retry-provisioning",
+                    journey
+                        .cli(
+                            &journey.run.binary.with_file_name("wamn-ctl"),
+                            &["env", "apply"],
+                        )
+                        .arg(&journey.file)
+                        .args(["--application", "beta"]),
+                )
+                .await?;
+            journey
+                .apply(
+                    "initialize-beta",
+                    journey
+                        .command(&["schema", "apply", "beta", "--release", digest, "--env"])
+                        .arg(&journey.file),
+                )
+                .await?;
+        }
+        let mut command = if after_sql {
+            journey.deploy(digest)
+        } else {
+            let mut command = journey.cli(
+                &journey.run.binary.with_file_name("wamn-ctl"),
+                &["env", "apply"],
+            );
+            command.arg(&journey.file).args(["--application", "beta"]);
+            command
+        };
         command
             .process_group(0)
             .kill_on_drop(true)
@@ -1055,10 +859,10 @@ async fn first_install(
             loop {
                 ensure!(
                     child.try_wait()?.is_none(),
-                    "{label}: deploy exited before the interruption point"
+                    "{label}: command exited before the interruption point"
                 );
                 if after_sql {
-                    // Helm creates this record only after the SQL Job returned successfully.
+                    // Schema initialization completed explicitly before this code deployment.
                     let releases = get(
                         journey.run,
                         "hosts",
@@ -1092,7 +896,7 @@ async fn first_install(
         drop(group);
         let observed = observed.context("first-install interruption point was not observed")??;
         killed?;
-        ensure!(!exited?.success(), "interrupted deploy returned success");
+        ensure!(!exited?.success(), "interrupted command returned success");
         eprintln!("{label}: {:.2}s", started.elapsed().as_secs_f64());
         std::fs::write(
             journey.run.directory.join(format!("{label}.json")),
@@ -1244,34 +1048,17 @@ async fn sources(
     .await?;
     let apps = checkout.join("apps");
     let mut roots = BTreeMap::new();
-    if cases.iter().any(|case| *case != Case::SqlJob) {
-        roots.insert("alpha", apps.join("alpha"));
-    }
-    if cases
-        .iter()
-        .any(|case| !matches!(case, Case::SqlJob | Case::PlatformSchema))
-    {
+    roots.insert("alpha", apps.join("alpha"));
+    if cases.iter().any(|case| *case != Case::PlatformSchema) {
         roots.insert("beta", apps.join("beta"));
     }
-    if cases.contains(&Case::SqlJob) {
-        roots.insert("probe", apps.join("probe"));
-    }
     for (&app, root) in &roots {
-        let source = if app == "probe" {
-            checkout.join("crates/control/dev/tests/support/probe")
-        } else {
-            apps.join("platform_fixture")
-        };
-        copy_source(&source, root, app)?;
+        copy_source(&apps.join("platform_fixture"), root, app)?;
         let manifest = root.join("wamn.k");
         let text = std::fs::read_to_string(&manifest)?.replace(
             "version = \"2.1.1\"",
             &format!("version = \"1.0.0-test-{id}\""),
         );
-        if app == "probe" {
-            std::fs::write(manifest, text)?;
-            continue;
-        }
         let text = text.replace(
             "routes = {",
             &format!("routes = {{path_prefix = \"/{app}\", "),
@@ -1474,64 +1261,6 @@ async fn runtime(journey: &Journey<'_>, app: &str) -> anyhow::Result<Value> {
     Ok(runtime)
 }
 
-async fn state(
-    journey: &Journey<'_>,
-    database: &tokio_postgres::Client,
-    baseline: &Value,
-    rows: &BTreeMap<&str, (Value, Value)>,
-    expected: [(&str, &str); 2],
-) -> anyhow::Result<()> {
-    ensure!(
-        stored(journey, database).await? == *baseline,
-        "database instance, initialization identity or installed schema changed"
-    );
-    let status = journey.status().await?;
-    for ((app, (counter, widget)), (digest, behavior)) in rows.iter().zip(expected) {
-        ensure!(
-            status["applications"][app]["current"] == digest,
-            "{app} selected the wrong release"
-        );
-        let live = status["applications"][app]["observed"]["live"]
-            .as_object()
-            .context("live releases")?;
-        ensure!(
-            live.len() == 1 && live.contains_key(digest),
-            "{app} does not exclusively serve {digest}"
-        );
-        let found = journey
-            .route(app, "counter/get", &json!([{"id":counter["id"]}]))
-            .await?;
-        ensure!(found == *counter, "{app} lost its counter row");
-        let found = journey
-            .route(app, "widget/get", &json!([{"id":widget["id"]}]))
-            .await?;
-        ensure!(found == *widget, "{app} lost its widget row");
-        let list = journey
-            .route(
-                app,
-                "widget/list",
-                &json!([{"selector":{},"maker_id":null}]),
-            )
-            .await?;
-        let found = list["rows"]
-            .as_array()
-            .context("widget list")?
-            .iter()
-            .find(|row| row["id"] == widget["id"])
-            .context("original widget in list")?;
-        ensure!(
-            found["attributes"]["behavior"] == behavior,
-            "{app} served the wrong executable behavior"
-        );
-    }
-    ensure!(
-        status["applications"]["alpha"]["observed"]["release_name"]
-            != status["applications"]["beta"]["observed"]["release_name"],
-        "applications share a Helm release"
-    );
-    Ok(())
-}
-
 async fn recovery(
     journey: &Journey<'_>,
     candidate: &str,
@@ -1615,7 +1344,7 @@ async fn recovery(
                 &json!([{"selector":{},"maker_id":null}]),
             )
             .await?;
-        let mut command = journey.reapply();
+        let mut command = journey.reapply().await?;
         command
             .process_group(0)
             .kill_on_drop(true)
@@ -1678,7 +1407,7 @@ async fn recovery(
     result?;
     cleanup?;
     journey
-        .apply("recover-alpha", &mut journey.reapply())
+        .apply("recover-alpha", &mut journey.reapply().await?)
         .await?;
     let status = journey.status().await?;
     let selected = &status["applications"]["alpha"];

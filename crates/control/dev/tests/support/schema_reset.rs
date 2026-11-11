@@ -16,7 +16,8 @@ use wamn_environment_control::environment::document::{
 };
 
 use super::{
-    Journey, POLL_LIMIT, ProcessGroup, get, mode, observer, runtime, same_database, stored,
+    Journey, POLL_LIMIT, ProcessGroup, get, observer, runtime, same_database, schema_command,
+    stored,
 };
 
 pub(super) async fn designate(journey: &Journey<'_>) -> anyhow::Result<()> {
@@ -56,23 +57,23 @@ pub(super) async fn designate(journey: &Journey<'_>) -> anyhow::Result<()> {
         journey.status().await?["schema"]["disposable"] == true,
         "explicit provisioning did not record disposable authorization"
     );
-    mode(journey, SchemaMode::Reset)
+    Ok(())
 }
 
-// A published physical change must use the same CNPG reset as explicit reset.
+// Applying published SQL uses the same CNPG reset as explicit reset.
 pub(super) async fn published(
     journey: &Journey<'_>,
     candidate: &str,
-    rows: &mut BTreeMap<&str, (Value, Value)>,
+    rows: &mut BTreeMap<String, (Value, Value)>,
 ) -> anyhow::Result<()> {
     let database = observer(journey).await?;
     let before = stored(journey, &database).await?;
-    let beta = runtime(journey, "beta").await?;
+    let selections = journey.status().await?;
     drop(database);
     attempt(
         journey,
         "reset-from-release",
-        &mut journey.deploy(candidate),
+        &mut schema_command(journey, "apply", Some(candidate)),
         Stop::Complete,
         true,
     )
@@ -89,12 +90,19 @@ pub(super) async fn published(
         "SELECT EXISTS(SELECT FROM pg_index WHERE indexrelid=to_regclass('alpha_data.widget_note_idx') AND indisvalid)",
         &[]).await?.get::<_, bool>(0), "reset omitted the selected published index");
     let status = journey.status().await?;
-    ensure!(
-        status["applications"]["alpha"]["current"] == candidate
-            && status["applications"]["beta"]["current"] == beta["current"]
-            && status["applications"]["beta"]["previous"] == beta["previous"],
-        "published reset changed the wrong code selection"
-    );
+    for (app, selection) in selections["applications"]
+        .as_object()
+        .context("canonical application selections")?
+    {
+        ensure!(
+            status["applications"][app]["current"] == selection["current"]
+                && status["applications"][app]["previous"] == selection["previous"],
+            "schema reset changed {app}'s code selections"
+        );
+    }
+    journey
+        .apply("deploy-reset-schema-code", &mut journey.deploy(candidate))
+        .await?;
     refill(journey, rows).await
 }
 
@@ -117,7 +125,7 @@ fn recreated(before: &Value, after: &Value) -> anyhow::Result<()> {
 
 async fn refill(
     journey: &Journey<'_>,
-    rows: &mut BTreeMap<&str, (Value, Value)>,
+    rows: &mut BTreeMap<String, (Value, Value)>,
 ) -> anyhow::Result<()> {
     for (app, row) in rows.iter_mut() {
         let counter = journey
@@ -142,7 +150,7 @@ async fn refill(
 
 async fn removed(
     database: &tokio_postgres::Client,
-    rows: &BTreeMap<&str, (Value, Value)>,
+    rows: &BTreeMap<String, (Value, Value)>,
 ) -> anyhow::Result<()> {
     for (app, (_, widget)) in rows {
         let id = widget["id"].as_str().context("witness widget id")?;
@@ -352,7 +360,7 @@ pub(super) async fn recovery(
     journey: &Journey<'_>,
     digest: &str,
     capture: &str,
-    rows: &mut BTreeMap<&str, (Value, Value)>,
+    rows: &mut BTreeMap<String, (Value, Value)>,
 ) -> anyhow::Result<()> {
     eprintln!(
         "scenario 5: reset interruption before recreation and after restored SQL; isolate a non-disposable environment"
@@ -387,7 +395,7 @@ pub(super) async fn recovery(
             "provision-isolation",
             other
                 .cli(
-                    &journey.run.binary.with_file_name("wamn-ctl"),
+                    &other.run.binary.with_file_name("wamn-ctl"),
                     &["env", "apply"],
                 )
                 .arg(&other.file)
@@ -435,7 +443,6 @@ pub(super) async fn recovery(
     let other_runtime = runtime(&other, "beta").await?;
     let old_event = event(journey, &broker, "counter", "old-before-reset").await?;
     // The isolation target also observes item 4's refusal without another environment.
-    mode(&other, SchemaMode::Reset)?;
     let refused = other
         .run(
             "durable-reset-refused",
