@@ -1,7 +1,7 @@
 # Google Cloud
 
 GCP deployment support is unfinished. This page preserves external cloud prerequisites and operations for project `wamn-dev`.
-See [the deployment boundary](#platform-deployment-boundary) before deployment.
+See [the deployment boundary](#4-platform-deployment-boundary) before deployment.
 
 Set these variables before each command on this page.
 
@@ -430,7 +430,7 @@ The OpenTofu step already removes the backend service that references it.
 gcloud compute network-endpoint-groups delete wamn-edge --zone us-central1-a --project wamn-dev --quiet
 ```
 
-## Platform deployment boundary
+## 4. Platform deployment boundary
 
 GCP and kind use the same platform artifact set and prepared chart contract.
 `build-platform` builds and pins the shared images, including `ctl`, and the role components.
@@ -466,6 +466,72 @@ Use the existing infrastructure and platform owners in this order.
 Keep the cert-manager DNS challenge record and the load balancer's certificate authorization CNAME separate.
 The OpenTofu authorization uses a per-project DNS name.
 cert-manager uses `_acme-challenge` for the certificate mounted by the edge.
+
+### One approved GKE verification
+
+Get owner approval for one run and the section 3 teardown before you start.
+Complete the section 1 prerequisites with the dedicated cloud login and kubeconfig.
+Use a fresh disposable platform with no `journey` project.
+Prepare the GCP chart and images with [building](building.md#cloud-platform-builds).
+Upload its `platformUi` digest with `wamn web upload --platform-ui` as [web upload](web-upload.md#platform-ui) describes.
+
+Build `wamn` and `wamn-ctl` beside the test executable in `$CARGO_TARGET_DIR/debug`.
+Install the pinned KCL compiler, gcloud, `gke-gcloud-auth-plugin`, kubectl, Helm, OpenSSL, and `script`.
+Keep Git, Cargo, the `wasm32-wasip2` toolchain, and offline build dependencies available for fixture publication.
+Set these inputs:
+
+- `PATH` with the `debug` directory of `$CARGO_TARGET_DIR`.
+- `CLOUDSDK_CONFIG` and `KUBECONFIG` from this page.
+- `WAMN_TEST_CLUSTER` as the absolute path to `deploy/gcp/cluster.k`.
+- `WAMN_RELEASE_CHART` and `WAMN_KCL` as absolute paths to the prepared chart and pinned compiler.
+- `WAMN_TEST_OWNER_PASSWORD` as the enrolled owner's password from your secret store.
+- `DATABASE_URL` as a separate disposable PostgreSQL 18 server with permission to create and drop build databases.
+- `WAMN_FLOW_HTTP_COMPONENT` as the absolute path to the raw pinned `http_route.wasm`.
+- `WAMN_REGISTRY_AUTH_FILE` as a private credential file with Artifact Registry write access.
+  Its `auths` entry must supply `username` and `password` for `us-central1-docker.pkg.dev`.
+  Refresh this publishing credential before the run.
+
+Grant the section 1 worker permissions for organization `dkk`, project `journey`, and environment `dev` before the run.
+The environment coordinate is `e-dev-` followed by the first 20 hexadecimal SHA-256 digits of `dkk/journey/dev`.
+Use that coordinate for the code and SQL service accounts.
+The test creates those accounts through product provisioning and creates no IAM grants.
+It derives all artifact repository bases from the cluster document's registry.
+
+Run these steps in order:
+
+1. Follow the OpenTofu order above with the existing directory and state prefix.
+   Render the project and apply the approved node pool targets first.
+2. Run `wamn platform deploy "$WAMN_TEST_CLUSTER" --chart "$WAMN_RELEASE_CHART"`.
+   This creates the edge Service and its network endpoint group.
+3. Apply the approved full OpenTofu plan.
+   Publish the certificate authorization CNAME and point the route host at the load balancer address.
+   Wait for the edge and load balancer certificates to become valid.
+4. Enroll the owner through the hosted UI and load its password into `WAMN_TEST_OWNER_PASSWORD`.
+   Record disposable consent with `kubectl annotate namespace platform wamn.dev/disposable=true` in the dedicated kubeconfig.
+5. Run this exact case:
+
+   ```bash
+   cargo test --locked --offline -p wamn-dev-control --test platform_apply_kind \
+     control_operations_gke -- --ignored --exact --nocapture
+   ```
+
+6. Run section 3 after success or failure.
+   Remove the load balancer and certificate resources before the cluster, while its network endpoint group still exists.
+   Then delete the cluster, retained PVC disks, and any remaining network endpoint group.
+
+The case has a 90-minute bound.
+It reapplies the platform chart and requires readiness.
+It reuses `ControlOperations` for authenticated deploy, rollback, and schema apply through the public HTTPS control route.
+It makes one public HTTPS GET and requires the UI document with certificate validation enabled.
+Application requests use a TLS port-forward with hostnames under the document's control domain.
+The GKE body omits the kind-only outsider enrollment from the local mail file.
+
+The case attempts environment deletion and PAT revocation after operation success or failure.
+It removes its temporary publishing checkout and local private files.
+It leaves the platform running for section 3.
+Cluster deletion removes the project row, operation Jobs, and partial resources that product cleanup cannot remove.
+Fixture publication adds immutable packages, components, and releases under the configured registry.
+Section 3 keeps that registry, the uploaded UI, buckets, IAM grants, and other project inputs.
 
 ## 5. Operations
 

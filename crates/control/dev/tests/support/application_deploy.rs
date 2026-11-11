@@ -13,7 +13,7 @@ use tokio::process::Command;
 use wamn_environment_control::environment::document::{
     DeclaredRelease, EnvironmentDocument, SchemaMode,
 };
-use wamn_environment_control::platform::resources;
+use wamn_environment_control::platform::{document::Provider, resources};
 
 use super::{POLL_LIMIT, ProcessGroup, Run, execute, get, kubectl, success};
 
@@ -232,7 +232,7 @@ impl Journey<'_> {
 }
 
 pub(super) async fn exercise(run: &Run, cases: &[Case], password: &str) -> anyhow::Result<()> {
-    exercise_inner(run, cases, password).await?;
+    let result = exercise_inner(run, cases, password).await;
     if run.checkout.exists() {
         success(
             Command::new("git")
@@ -244,7 +244,7 @@ pub(super) async fn exercise(run: &Run, cases: &[Case], password: &str) -> anyho
         )
         .await?;
     }
-    Ok(())
+    result
 }
 
 async fn exercise_inner(run: &Run, cases: &[Case], password: &str) -> anyhow::Result<()> {
@@ -256,25 +256,39 @@ async fn exercise_inner(run: &Run, cases: &[Case], password: &str) -> anyhow::Re
     }
     success(Command::new("script").arg("--version")).await?;
     let id = uuid::Uuid::new_v4().simple().to_string();
-    // The unique project keeps every environment fresh within the 63-byte name limit.
-    let project = format!("journey-{}", &id[..8]);
+    let project = match run.document.provider {
+        Provider::Kind => format!("journey-{}", &id[..8]),
+        // External IAM grants name these service accounts before the approved run.
+        Provider::Gcp => "journey".to_owned(),
+    };
     let environment = "dev".to_owned();
-    let alpha_host = format!("alpha-{}.wamn.localhost", &id[..12]);
-    let beta_host = format!("beta-{}.wamn.localhost", &id[..12]);
-    let isolated_host = format!("isolated-{}.wamn.localhost", &id[..12]);
+    let (_, domain) = run
+        .document
+        .route_hosts
+        .control
+        .split_once('.')
+        .context("control domain")?;
+    let alpha_host = format!("alpha-{}.{domain}", &id[..12]);
+    let beta_host = format!("beta-{}.{domain}", &id[..12]);
+    let isolated_host = format!("isolated-{}.{domain}", &id[..12]);
     let sources = sources(&run.repository, &run.checkout, &id, cases).await?;
     let postgres =
         resources::port_forward(&run.target, "platform", "service/wamn-pg-rw", 5432).await?;
     let nats = resources::port_forward(&run.target, "platform", "service/wamn-nats", 4222).await?;
     let identity =
         resources::port_forward(&run.target, "identity", "service/identity", 443).await?;
-    let control = resources::port_forward(
-        &run.target,
-        "hosts",
-        &format!("service/c-{}-http", run.document.org),
-        80,
-    )
-    .await?;
+    let control = match run.document.provider {
+        Provider::Kind => Some(
+            resources::port_forward(
+                &run.target,
+                "hosts",
+                &format!("service/c-{}-http", run.document.org),
+                80,
+            )
+            .await?,
+        ),
+        Provider::Gcp => None,
+    };
     let edge = resources::port_forward(&run.target, "hosts", "service/wamn-edge", 443).await?;
     let identity_tls = get(run, "identity", "secret", "identity-tls").await?;
     let operator = get(
@@ -317,10 +331,18 @@ async fn exercise_inner(run: &Run, cases: &[Case], password: &str) -> anyhow::Re
             format!("tls://127.0.0.1:{}", nats.port),
         ),
     ]);
+    for (name, repository) in [
+        ("WAMN_PACKAGE_ARTIFACT_BASE", "packages"),
+        ("WAMN_COMPONENT_ARTIFACT_BASE", "components"),
+        ("WAMN_RELEASE_ARTIFACT_BASE", "releases"),
+    ] {
+        let value = match run.document.provider {
+            Provider::Kind => std::env::var(name).with_context(|| format!("set {name}"))?,
+            Provider::Gcp => format!("{}/wamn/{repository}", run.document.registry),
+        };
+        variables.insert(name.into(), value);
+    }
     for name in [
-        "WAMN_PACKAGE_ARTIFACT_BASE",
-        "WAMN_COMPONENT_ARTIFACT_BASE",
-        "WAMN_RELEASE_ARTIFACT_BASE",
         "WAMN_REGISTRY_AUTH_FILE",
         "DATABASE_URL",
         "WAMN_FLOW_HTTP_COMPONENT",
@@ -353,16 +375,29 @@ async fn exercise_inner(run: &Run, cases: &[Case], password: &str) -> anyhow::Re
         )
         .await?
         .get(0);
+    if run.document.provider == Provider::Gcp {
+        let exists: bool = system
+            .query_one(
+                "SELECT EXISTS(SELECT FROM registry.projects WHERE org=$1 AND id=$2)",
+                &[&run.document.org, &project],
+            )
+            .await?
+            .get(0);
+        ensure!(
+            !exists,
+            "GKE journey project already exists; use a fresh disposable platform"
+        );
+    }
     drop(system);
+    ensure!(
+        enrolled || run.document.provider == Provider::Kind,
+        "enroll the GCP owner through the hosted UI before this run"
+    );
     let login = super::owner_session(run, &identity_client, &endpoint, password, !enrolled).await?;
     let principal = login["sub"].as_str().context("owner session principal")?;
     let access = login["access_token"]
         .as_str()
         .context("owner control session")?;
-    let issued: Value = identity_client.post(format!("{endpoint}/pats"))
-        .json(&json!({"principal_id":principal,"label":"deployment journey","lifetime_seconds":14400}))
-        .send().await?.error_for_status()?.json().await?;
-    let token = issued["token"].as_str().context("owner PAT")?.to_owned();
     let file = run.directory.join("environments/environment.k");
     let document = EnvironmentDocument::from_json(&serde_json::to_vec(&json!({
         "org":run.document.org,"project":project,"env":environment,"target":"cloud","policy":"dev",
@@ -372,18 +407,25 @@ async fn exercise_inner(run: &Run, cases: &[Case], password: &str) -> anyhow::Re
         }
     }))?)?;
     std::fs::write(&file, document.to_kcl())?;
-    let edge_tls = get(run, "hosts", "secret", "wamn-edge-tls").await?;
-    let client = reqwest::Client::builder()
+    let mut client = reqwest::Client::builder()
         .no_proxy()
-        .timeout(Duration::from_secs(30))
-        .add_root_certificate(reqwest::Certificate::from_pem(&secret(
+        .timeout(Duration::from_secs(30));
+    if run.document.provider == Provider::Kind {
+        let edge_tls = get(run, "hosts", "secret", "wamn-edge-tls").await?;
+        client = client.add_root_certificate(reqwest::Certificate::from_pem(&secret(
             &edge_tls, "ca.crt",
-        )?)?)
+        )?)?);
+    }
+    let client = client
         .resolve(&alpha_host, ([127, 0, 0, 1], edge.port).into())
         .resolve(&beta_host, ([127, 0, 0, 1], edge.port).into())
         .resolve(&isolated_host, ([127, 0, 0, 1], edge.port).into())
         .build()?;
     let edge_url = format!("https://{alpha_host}:{}", edge.port);
+    let issued: Value = identity_client.post(format!("{endpoint}/pats"))
+        .json(&json!({"principal_id":principal,"label":"deployment journey","lifetime_seconds":14400}))
+        .send().await?.error_for_status()?.json().await?;
+    let token = issued["token"].as_str().context("owner PAT")?.to_owned();
     let journey = Journey {
         run,
         file,
@@ -395,11 +437,16 @@ async fn exercise_inner(run: &Run, cases: &[Case], password: &str) -> anyhow::Re
         client: &client,
         edge: &edge_url,
     };
-    let created: Value = identity_client
-        .post(format!(
-            "http://127.0.0.1:{}/wamn_control/project/create",
-            control.port
-        ))
+    let control_url = match run.document.provider {
+        Provider::Kind => format!(
+            "http://127.0.0.1:{}",
+            control.as_ref().context("kind control forward")?.port
+        ),
+        Provider::Gcp => format!("https://{}", run.document.route_hosts.control),
+    };
+    let operations = async {
+        let created: Value = identity_client
+        .post(format!("{control_url}/wamn_control/project/create"))
         .header(reqwest::header::HOST, &run.document.route_hosts.control)
         .bearer_auth(access)
         .json(&json!([{"request_id":uuid::Uuid::new_v4().to_string(),"value":{"project":project}}]))
@@ -408,39 +455,70 @@ async fn exercise_inner(run: &Run, cases: &[Case], password: &str) -> anyhow::Re
         .error_for_status()?
         .json()
         .await?;
-    ensure!(
-        created[0].get("value").is_some(),
-        "project creation refused: {created}"
-    );
+        ensure!(
+            created[0].get("value").is_some(),
+            "project creation refused: {created}"
+        );
 
-    let artifacts = prepare_artifacts(&journey, &sources, cases).await?;
-    for &case in cases {
-        let document = case_document(&document, case);
-        std::fs::write(&journey.file, document.to_kcl())?;
-        let result = match case {
-            Case::ControlOperations => {
-                control_operations::exercise(
-                    &journey,
-                    &artifacts,
-                    &identity_client,
-                    &endpoint,
-                    &format!("http://127.0.0.1:{}", control.port),
-                    password,
-                )
-                .await
-            }
-            Case::SqlJob => {
-                schema_job::exercise(&journey, &artifacts["sql0"], &artifacts["sql1"]).await
-            }
-            Case::Reset => reset(&journey, &artifacts).await,
-            Case::Application => application(&journey, &sources["alpha"], &artifacts).await,
-            Case::PlatformUpgrade => platform_upgrade::exercise(&journey, &artifacts).await,
-            Case::PlatformSchema => platform_schema::exercise(&journey, &artifacts["a0"]).await,
-        };
-        result?;
-        journey.delete_environment().await?;
+        let artifacts = prepare_artifacts(&journey, &sources, cases).await?;
+        for &case in cases {
+            let document = case_document(&document, case);
+            std::fs::write(&journey.file, document.to_kcl())?;
+            let result = match case {
+                Case::ControlOperations => {
+                    control_operations::exercise(
+                        &journey,
+                        &artifacts,
+                        &identity_client,
+                        &endpoint,
+                        &control_url,
+                        password,
+                    )
+                    .await
+                }
+                Case::SqlJob => {
+                    schema_job::exercise(&journey, &artifacts["sql0"], &artifacts["sql1"]).await
+                }
+                Case::Reset => reset(&journey, &artifacts).await,
+                Case::Application => application(&journey, &sources["alpha"], &artifacts).await,
+                Case::PlatformUpgrade => platform_upgrade::exercise(&journey, &artifacts).await,
+                Case::PlatformSchema => platform_schema::exercise(&journey, &artifacts["a0"]).await,
+            };
+            result?;
+            journey.delete_environment().await?;
+        }
+        Ok(())
+    };
+    let result = match run.document.provider {
+        Provider::Kind => operations.await,
+        // Return from a stalled case in time to run product cleanup within the GKE bound.
+        Provider::Gcp => tokio::time::timeout(Duration::from_mins(45), operations)
+            .await
+            .context("GKE application operations exceeded 45 minutes")
+            .and_then(|result| result),
+    };
+    // Publication and provisioning can fail after creating part of the environment.
+    if result.is_err()
+        && let Err(error) = journey.delete_environment().await
+    {
+        eprintln!("environment cleanup after failure failed: {error:#}");
     }
-    Ok(())
+    let prefix = issued["token_prefix"]
+        .as_str()
+        .context("owner PAT prefix")?;
+    let revoked = journey
+        .apply(
+            "revoke-journey-pat",
+            &mut journey.cli(
+                &run.binary.with_file_name("wamn-ctl"),
+                &["provision-project-env", "--revoke-pat-prefix", prefix],
+            ),
+        )
+        .await;
+    if let Err(error) = &revoked {
+        eprintln!("journey PAT cleanup failed: {error:#}");
+    }
+    result.and(revoked)
 }
 
 fn case_document(document: &EnvironmentDocument, case: Case) -> EnvironmentDocument {

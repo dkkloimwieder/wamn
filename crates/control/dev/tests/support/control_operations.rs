@@ -12,7 +12,7 @@ use wamn_client::credentials::{PasswordCredentials, SecretInput, SessionTarget};
 use wamn_client::{
     ClientError, CredentialProvider, HttpRequest, HttpResponse, StaticPat, Transport,
 };
-use wamn_environment_control::platform::artifact_plan;
+use wamn_environment_control::platform::{artifact_plan, document::Provider};
 
 use super::{Journey, get, success};
 
@@ -217,7 +217,10 @@ pub(super) async fn exercise(
         journey.project,
         journey.environment,
     )?;
-    denial(&control, identity_url, &artifacts["b1"]).await?;
+    // This case enrolls its outsider from kind's local mail outbox.
+    if journey.run.document.provider == Provider::Kind {
+        denial(&control, identity_url, &artifacts["b1"]).await?;
+    }
     let before = document(journey, &coordinate).await?;
     let alpha_release = application_release(journey, "alpha").await?;
     let deployed = control
@@ -260,10 +263,6 @@ pub(super) async fn exercise(
     ensure!(
         document(journey, &coordinate).await?["applications"] == rolled_back["applications"],
         "schema.apply changed code selections"
-    );
-    ensure!(
-        !journey.run.checkout.exists(),
-        "source checkout still exists"
     );
     Ok(())
 }

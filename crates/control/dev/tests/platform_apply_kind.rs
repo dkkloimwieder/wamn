@@ -67,10 +67,10 @@ impl Drop for Run {
 // The cluster document is the one target input authorized by wamn-alrvy.18.
 // The namespace annotation records consent to use the platform as disposable.
 #[tokio::test]
-#[ignore = "requires: bin:kind, bin:docker, bin:kubectl, bin:helm, bin:openssl, bin:script"]
+#[ignore = "requires: env:WAMN_TEST_CLUSTER, env:WAMN_RELEASE_CHART, env:WAMN_TEST_OWNER_PASSWORD"]
 async fn application_deploy_kind() -> anyhow::Result<()> {
     wamn_test_postgres::require_ignored_prerequisites(
-        "requires: bin:kind, bin:docker, bin:kubectl, bin:helm, bin:openssl, bin:script",
+        "requires: env:WAMN_TEST_CLUSTER, env:WAMN_RELEASE_CHART, env:WAMN_TEST_OWNER_PASSWORD",
     );
     focused(application_deploy::Case::Application).await
 }
@@ -94,10 +94,10 @@ async fn platform_schema_kind() -> anyhow::Result<()> {
 }
 
 #[tokio::test]
-#[ignore = "requires: bin:kind, bin:docker, bin:kubectl, bin:helm, bin:openssl, bin:script"]
+#[ignore = "requires: env:WAMN_TEST_CLUSTER, env:WAMN_RELEASE_CHART, env:WAMN_TEST_OWNER_PASSWORD"]
 async fn sql_job_kind() -> anyhow::Result<()> {
     wamn_test_postgres::require_ignored_prerequisites(
-        "requires: bin:kind, bin:docker, bin:kubectl, bin:helm, bin:openssl, bin:script",
+        "requires: env:WAMN_TEST_CLUSTER, env:WAMN_RELEASE_CHART, env:WAMN_TEST_OWNER_PASSWORD",
     );
     focused(application_deploy::Case::SqlJob).await
 }
@@ -162,6 +162,83 @@ async fn control_operations_kind() -> anyhow::Result<()> {
     .context("control operations exceeded 45 minutes")?
 }
 
+/// DEP7 uses the declared GKE cluster and leaves infrastructure teardown to its owner.
+#[tokio::test]
+#[ignore = "requires: env:WAMN_TEST_CLUSTER, env:WAMN_RELEASE_CHART, env:WAMN_TEST_OWNER_PASSWORD, env:WAMN_KCL, env:CLOUDSDK_CONFIG, env:DATABASE_URL, env:WAMN_FLOW_HTTP_COMPONENT, env:WAMN_REGISTRY_AUTH_FILE, bin:gcloud, bin:gke-gcloud-auth-plugin, bin:kubectl, bin:helm, bin:openssl, bin:script"]
+async fn control_operations_gke() -> anyhow::Result<()> {
+    wamn_test_postgres::require_ignored_prerequisites(
+        "requires: env:WAMN_TEST_CLUSTER, env:WAMN_RELEASE_CHART, env:WAMN_TEST_OWNER_PASSWORD, env:WAMN_KCL, env:CLOUDSDK_CONFIG, env:DATABASE_URL, env:WAMN_FLOW_HTTP_COMPONENT, env:WAMN_REGISTRY_AUTH_FILE, bin:gcloud, bin:gke-gcloud-auth-plugin, bin:kubectl, bin:helm, bin:openssl, bin:script",
+    );
+    let (repository, binary, kcl) = inputs()?;
+    let document = ClusterDocument::compile(Path::new(&std::env::var("WAMN_TEST_CLUSTER")?))?;
+    ensure!(
+        document.provider == Provider::Gcp,
+        "GKE case requires provider gcp"
+    );
+    let chart = PathBuf::from(std::env::var_os("WAMN_RELEASE_CHART").context("prepared chart")?)
+        .canonicalize()?;
+    artifact_plan::select(&chart)?;
+    let password = std::env::var("WAMN_TEST_OWNER_PASSWORD")?;
+    ensure!(!password.is_empty(), "WAMN_TEST_OWNER_PASSWORD is empty");
+    let mut run = prepare(&repository, &chart, &binary, &kcl, Some(document))?;
+    // Reserve fifteen minutes for local cleanup after the operation deadline.
+    let result = tokio::time::timeout(Duration::from_mins(90), async {
+        let result = tokio::time::timeout(Duration::from_mins(75), async {
+            run.target.context =
+                provider::existing_kubeconfig(&run.document, &run.target.kubeconfig).await?;
+            disposable(&run).await?;
+            deploy(&run, "gke-platform-deploy").await?;
+            ready(&run, "gke-platform-status").await?;
+            let response = reqwest::Client::builder()
+                .https_only(true)
+                .redirect(reqwest::redirect::Policy::none())
+                .timeout(Duration::from_secs(30))
+                .build()?
+                .get(format!("https://{}/", run.document.route_hosts.control))
+                .send()
+                .await?;
+            ensure!(
+                response.status() == reqwest::StatusCode::OK,
+                "public UI route returned {}",
+                response.status()
+            );
+            ensure!(
+                response
+                    .headers()
+                    .get(reqwest::header::CONTENT_TYPE)
+                    .and_then(|value| value.to_str().ok())
+                    .is_some_and(|value| value.starts_with("text/html")),
+                "public route did not serve an HTML document"
+            );
+            ensure!(
+                !response.bytes().await?.is_empty(),
+                "public route served an empty UI document"
+            );
+            application_deploy::exercise(
+                &run,
+                &[application_deploy::Case::ControlOperations],
+                &password,
+            )
+            .await
+        })
+        .await
+        .context("GKE operations exceeded 75 minutes")
+        .and_then(|result| result);
+        let cleanup = cleanup(&mut run).await;
+        if let Err(error) = &cleanup {
+            eprintln!("GKE local cleanup failed: {error:#}");
+        }
+        result.and(cleanup)
+    })
+    .await
+    .context("GKE setup and cleanup exceeded 90 minutes")
+    .and_then(|result| result);
+    eprintln!(
+        "Run docs/operations/gcp.md section 3 teardown, including the load balancer, after success or failure."
+    );
+    result
+}
+
 fn inputs() -> anyhow::Result<(PathBuf, PathBuf, PathBuf)> {
     let repository = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../..")
@@ -193,17 +270,17 @@ async fn focused(case: application_deploy::Case) -> anyhow::Result<()> {
     .canonicalize()?;
     let document = ClusterDocument::compile(&file)?;
     ensure!(
-        document.provider == Provider::Kind,
-        "focused tests require kind"
+        document.provider == Provider::Kind
+            || !matches!(
+                case,
+                application_deploy::Case::Reset | application_deploy::Case::PlatformSchema
+            ),
+        "this case requires kind for its additional isolated environment"
     );
     let mut run = prepare(&repository, Path::new(""), &binary, &kcl, Some(document))?;
     run.target.context =
         provider::existing_kubeconfig(&run.document, &run.target.kubeconfig).await?;
-    let namespace = get(&run, "", "namespace", "platform").await?;
-    ensure!(
-        namespace["metadata"]["annotations"]["wamn.dev/disposable"] == "true",
-        "platform is not recorded as disposable: annotate namespace platform wamn.dev/disposable=true"
-    );
+    disposable(&run).await?;
     // Helm records the exact prepared chart that the product installed.
     let values = success(
         Command::new("helm")
@@ -236,6 +313,15 @@ async fn focused(case: application_deploy::Case) -> anyhow::Result<()> {
     ensure!(!password.is_empty(), "WAMN_TEST_OWNER_PASSWORD is empty");
     application_deploy::exercise(&run, &[case], &password).await?;
     cleanup(&mut run).await
+}
+
+async fn disposable(run: &Run) -> anyhow::Result<()> {
+    let namespace = get(run, "", "namespace", "platform").await?;
+    ensure!(
+        namespace["metadata"]["annotations"]["wamn.dev/disposable"] == "true",
+        "platform is not recorded as disposable: annotate namespace platform wamn.dev/disposable=true"
+    );
+    Ok(())
 }
 
 async fn fresh(acceptance: bool) -> anyhow::Result<()> {
@@ -346,9 +432,13 @@ fn prepare(
         document
     };
     std::fs::write(directory.join("cluster.k"), document.to_kcl())?;
-    // Only deployment tools are visible. Cloud, package and build executables are absent.
+    // Expose only the selected provider's deployment tools.
     let path = std::env::var_os("PATH").context("PATH is required")?;
-    for tool in ["kind", "docker", "kubectl", "helm", "openssl"] {
+    let provider_tools: &[&str] = match document.provider {
+        Provider::Kind => &["kind", "docker"],
+        Provider::Gcp => &["gcloud", "gke-gcloud-auth-plugin"],
+    };
+    for tool in ["kubectl", "helm", "openssl"].iter().chain(provider_tools) {
         let executable = std::env::split_paths(&path)
             .map(|directory| directory.join(tool))
             .find(|file| file.is_file())
@@ -360,7 +450,10 @@ fn prepare(
         checkout: directory.join("checkout"),
         target: Target {
             kubeconfig: directory.join("kubeconfig"),
-            context: format!("kind-{}", document.cluster_name),
+            context: match document.provider {
+                Provider::Kind => format!("kind-{}", document.cluster_name),
+                Provider::Gcp => String::new(),
+            },
             namespace: "platform".into(),
         },
         directory,
@@ -377,11 +470,14 @@ fn product(run: &Run, verb: &str) -> Command {
     let mut command = Command::new(&run.binary);
     command
         .current_dir(&run.directory)
-        .env("PATH", run.directory.join("bin"))
         .env("WAMN_KCL", &run.kcl)
         .env("KUBECONFIG", &run.target.kubeconfig)
         .args(["platform", verb])
         .arg(run.directory.join("cluster.k"));
+    // gcloud and the GKE credential plugin need their normal host toolchain.
+    if run.document.provider == Provider::Kind {
+        command.env("PATH", run.directory.join("bin"));
+    }
     if verb == "deploy" {
         command.arg("--chart").arg(&run.chart);
     }
