@@ -351,6 +351,7 @@ async fn stopped(journey: &Journey<'_>, status: &Value) -> anyhow::Result<()> {
 pub(super) async fn recovery(
     journey: &Journey<'_>,
     digest: &str,
+    capture: &str,
     rows: &mut BTreeMap<&str, (Value, Value)>,
 ) -> anyhow::Result<()> {
     eprintln!(
@@ -382,6 +383,26 @@ pub(super) async fn recovery(
         edge: journey.edge,
     };
     other
+        .apply(
+            "provision-isolation",
+            other
+                .cli(
+                    &journey.run.binary.with_file_name("wamn-ctl"),
+                    &["env", "apply"],
+                )
+                .arg(&other.file)
+                .args(["--application", "beta"]),
+        )
+        .await?;
+    other
+        .apply(
+            "install-isolation-schema",
+            other
+                .command(&["schema", "apply", "beta", "--release", digest, "--env"])
+                .arg(&other.file),
+        )
+        .await?;
+    other
         .apply("install-isolation", &mut other.deploy(digest))
         .await?;
     ensure!(
@@ -391,11 +412,28 @@ pub(super) async fn recovery(
     let database = observer(journey).await?;
     let before = stored(journey, &database).await?;
     let other_database = observer(&other).await?;
-    let isolated = stored(&other, &other_database).await?;
     let other_runtime = runtime(&other, "beta").await?;
     let broker = broker(journey).await?;
-    let isolated_event = event(&other, &broker, "isolated-before-reset").await?;
-    let old_event = event(journey, &broker, "old-before-reset").await?;
+    let isolated_event = event(&other, &broker, "counter", "isolated-before-reset").await?;
+    other
+        .apply(
+            "add-isolation-schema",
+            other
+                .command(&["schema", "apply", "beta", "--release", capture, "--env"])
+                .arg(&other.file),
+        )
+        .await?;
+    ensure!(
+        runtime(&other, "beta").await? == other_runtime,
+        "schema apply changed the serving application"
+    );
+    other
+        .apply("deploy-isolation-capture", &mut other.deploy(capture))
+        .await?;
+    event(&other, &broker, "capture_counter", "added-schema").await?;
+    let isolated = stored(&other, &other_database).await?;
+    let other_runtime = runtime(&other, "beta").await?;
+    let old_event = event(journey, &broker, "counter", "old-before-reset").await?;
     // The isolation target also observes item 4's refusal without another environment.
     mode(&other, SchemaMode::Reset)?;
     let refused = other
@@ -574,7 +612,7 @@ pub(super) async fn recovery(
         "reset changed the other environment's data, database or workload"
     );
     refill(journey, rows).await?;
-    event(journey, &broker, "new-after-reset").await?;
+    event(journey, &broker, "counter", "new-after-reset").await?;
     drop(other_database);
     other.delete_environment().await
 }
@@ -600,6 +638,7 @@ struct Event {
 async fn event(
     journey: &Journey<'_>,
     broker: &async_nats::jetstream::Context,
+    model: &str,
     label: &str,
 ) -> anyhow::Result<Event> {
     let document = EnvironmentDocument::compile(&journey.file)?;
@@ -610,7 +649,7 @@ async fn event(
     let row = journey
         .route(
             "beta",
-            "counter/create",
+            &format!("{model}/create"),
             &json!([{
                 "request_id":uuid::Uuid::new_v4().to_string(),
                 "idempotency_key":uuid::Uuid::new_v4().to_string(),"label":label

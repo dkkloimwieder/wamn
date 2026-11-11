@@ -636,6 +636,36 @@ async fn prepare_artifacts(
                 .publish("beta", "isolation", &sources["beta"])
                 .await?,
         );
+        let root = &sources["beta"];
+        let manifest = root.join("wamn.k");
+        let code = std::fs::read_to_string(&manifest)?;
+        let start = code
+            .find("        counter = manifest.Model")
+            .context("counter model")?;
+        let end = code[start..]
+            .find("        numbered_label =")
+            .context("next model")?
+            + start;
+        let counter = code[start..end].replace(
+            "counter = manifest.Model(\"counter\", _schema)",
+            "capture_counter = manifest.Model(\"capture_counter\", \"beta_capture\")",
+        );
+        std::fs::write(
+            &manifest,
+            code.replacen("    models = {", &format!("    models = {{\n{counter}"), 1)
+                .replace(&format!("version = \"{previous}"), "version = \"1.1.0"),
+        )?;
+        std::fs::write(
+            root.join("migrations/0002_capture.sql"),
+            "CREATE TABLE beta_capture.counter (\n\
+             id bigint GENERATED ALWAYS AS IDENTITY CONSTRAINT counter_id_pkey PRIMARY KEY,\n\
+             label text NOT NULL, edit_version int4 NOT NULL DEFAULT 1,\n\
+             created_at timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP);\n",
+        )?;
+        artifacts.insert(
+            "isolation_capture",
+            journey.publish("beta", "isolation-capture", root).await?,
+        );
     }
     if cases.contains(&Case::SqlJob) {
         std::fs::write(
@@ -684,15 +714,50 @@ async fn data(journey: &Journey<'_>) -> anyhow::Result<BTreeMap<&'static str, (V
 
 async fn reset(journey: &Journey<'_>, artifacts: &BTreeMap<&str, String>) -> anyhow::Result<()> {
     journey
-        .apply("install-beta", &mut journey.deploy(&artifacts["b0"]))
+        .apply(
+            "provision-reset-environment",
+            journey
+                .cli(
+                    &journey.run.binary.with_file_name("wamn-ctl"),
+                    &["env", "apply"],
+                )
+                .arg(&journey.file)
+                .args(["--application", "beta"]),
+        )
         .await?;
-    journey
-        .apply("install-alpha", &mut journey.deploy(&artifacts["a0"]))
-        .await?;
+    for (application, key) in [("beta", "b0"), ("alpha", "a0")] {
+        journey
+            .apply(
+                &format!("install-{application}-schema"),
+                journey
+                    .command(&[
+                        "schema",
+                        "apply",
+                        application,
+                        "--release",
+                        &artifacts[key],
+                        "--env",
+                    ])
+                    .arg(&journey.file),
+            )
+            .await?;
+        journey
+            .apply(
+                &format!("install-{application}"),
+                &mut journey.deploy(&artifacts[key]),
+            )
+            .await?;
+    }
     let mut rows = data(journey).await?;
     schema_reset::designate(journey).await?;
     schema_reset::published(journey, &artifacts["reset"], &mut rows).await?;
-    schema_reset::recovery(journey, &artifacts["isolation"], &mut rows).await
+    schema_reset::recovery(
+        journey,
+        &artifacts["isolation"],
+        &artifacts["isolation_capture"],
+        &mut rows,
+    )
+    .await
 }
 
 async fn application(

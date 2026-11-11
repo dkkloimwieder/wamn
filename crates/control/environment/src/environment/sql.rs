@@ -543,9 +543,11 @@ pub async fn run_deployed(
     let output = job::run(&target, directory, &mut job, &mut secrets).await?;
     match operation {
         Operation::Provision | Operation::Reset { .. } => {}
-        Operation::ApplySchema { .. }
-        | Operation::AdoptSchema
-        | Operation::ProjectSchema { .. } => print!("{output}"),
+        Operation::ApplySchema { .. } => {
+            print!("{output}");
+            ensure::ensure_cdc(platform, document).await?;
+        }
+        Operation::AdoptSchema | Operation::ProjectSchema { .. } => print!("{output}"),
         Operation::Initialize => ensure::ensure_cdc(platform, document).await?,
     }
     database_resource(operation, &output)

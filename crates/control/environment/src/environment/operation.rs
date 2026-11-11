@@ -61,6 +61,7 @@ pub async fn schema(
             let lock = expected.lock(platform, &document, false).await?;
             sql::schema::apply(platform, &document, application, release, admin, resolution)
                 .await?;
+            super::ensure::ensure_cdc_inputs(platform, &document, Some(admin)).await?;
             lock.release().await;
         } else {
             sql::apply_deployed(platform, &document, application, release, resolution).await?;
