@@ -365,6 +365,8 @@ gcloud compute backend-services list --project wamn-dev
 The teardown deletes the cluster `wamn` and every object in it, the CloudNativePG databases included. Run it only with the approval of the owner.
 
 First remove the resources that the full OpenTofu apply creates in section 4.
+These load balancer and certificate resources are project resources, not cluster resources.
+A cluster delete leaves them in place, and the forwarding rule and the reserved address continue to bill.
 Use the directory, state bucket, and state prefix from that apply.
 Keep the cluster running until this step finishes because OpenTofu reads its network endpoint group.
 
@@ -428,6 +430,18 @@ The OpenTofu step already removes the backend service that references it.
 
 ```bash
 gcloud compute network-endpoint-groups delete wamn-edge --zone us-central1-a --project wamn-dev --quiet
+```
+
+Last, make sure that no load balancer resource remains.
+Each line must show an empty list:
+
+```bash
+for r in "compute forwarding-rules" "compute target-https-proxies" "compute url-maps" \
+  "compute backend-services" "compute health-checks" "compute addresses" \
+  "compute network-endpoint-groups" "certificate-manager certificates" \
+  "certificate-manager maps" "certificate-manager dns-authorizations"; do
+  echo "$r: $(gcloud $r list --project wamn-dev --format='value(name)')"
+done
 ```
 
 ## 4. Platform deployment boundary
