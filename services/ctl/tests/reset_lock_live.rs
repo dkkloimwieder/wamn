@@ -148,7 +148,15 @@ async fn reset_worker_waits_before_validation_and_pinning() -> anyhow::Result<()
         String::from_utf8_lossy(&output.stderr)
     );
     let pinned: serde_json::Value = admin.query_one("SELECT pending_database FROM registry.project_envs WHERE org='acme' AND project='apps' AND env='dev'", &[]).await?.get(0);
-    assert_eq!(pinned["inputs"]["project_baseline"], baseline);
+    assert_eq!(
+        pinned["inputs"]["substrate"]["initialization_sha256"],
+        baseline
+    );
+    let installed = wamn_package_control::schema_baseline::observe_project(&project_admin).await?;
+    assert_eq!(
+        pinned["inputs"]["substrate"]["applied"],
+        serde_json::to_value(installed.installed)?
+    );
     assert!(pinned["initialization_identity"].is_string());
     Ok(())
 }

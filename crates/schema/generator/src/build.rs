@@ -887,10 +887,24 @@ async fn create_history_tables(
         )
         .await
         .context("create the application role")?;
-    client
-        .batch_execute(RECORD_HISTORY_SQL)
-        .await
-        .context("apply record-history.sql")?;
+    let history = client.batch_execute(RECORD_HISTORY_SQL).await;
+    // The frozen bootstrap's advisory lock is database-local, but roles are
+    // cluster-wide. A concurrent creator has committed before this collision
+    // returns; the failed implicit transaction left no history DDL behind.
+    if history
+        .as_ref()
+        .err()
+        .and_then(tokio_postgres::Error::as_db_error)
+        .is_some_and(|error| {
+            error.code() == &tokio_postgres::error::SqlState::UNIQUE_VIOLATION
+                && error.constraint() == Some("pg_authid_rolname_index")
+        })
+    {
+        client.batch_execute(RECORD_HISTORY_SQL).await
+    } else {
+        history
+    }
+    .context("apply record-history.sql")?;
     client
         .batch_execute(RECORD_HISTORY_APP_GRANTS_SQL)
         .await

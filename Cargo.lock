@@ -5741,6 +5741,7 @@ dependencies = [
  "wamn-fixture-package",
  "wamn-gate-harness",
  "wamn-run-state",
+ "wamn-runtime",
  "wamn-schema-generator",
  "wamn-test-infrastructure",
  "wamn-test-postgres",

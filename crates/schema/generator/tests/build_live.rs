@@ -16,6 +16,63 @@ use wamn_schema_generator::build::{
 };
 use wamn_schema_generator::build_record;
 
+#[tokio::test(flavor = "current_thread")]
+async fn concurrent_builds_initialize_history_on_one_server() -> anyhow::Result<()> {
+    use std::time::Duration;
+
+    let mut server = wamn_test_postgres::start(&[])?;
+    let first = server.create_database("first")?;
+    let second = server.create_database("second")?;
+    let (admin, connection) = tokio_postgres::connect(first.url(), tokio_postgres::NoTls).await?;
+    let connection = tokio::spawn(connection);
+    admin.batch_execute("CREATE ROLE wamn_app NOLOGIN").await?;
+    // Hold both creators after their absence checks, before either role insert.
+    admin
+        .batch_execute("BEGIN; LOCK TABLE pg_catalog.pg_authid IN SHARE MODE")
+        .await?;
+    let first_workspace = Workspace::new("concurrent-first");
+    let second_workspace = Workspace::new("concurrent-second");
+    let first_package = first_workspace.package();
+    let second_package = second_workspace.package();
+    let first_output = first_workspace.root.join("target/wamn");
+    let second_output = second_workspace.root.join("target/wamn");
+    let first_request = BuildRequest::new(&first_package, &first_output, first.url());
+    let second_request = BuildRequest::new(&second_package, &second_output, second.url());
+    let unlock = async {
+        let waiting = tokio::time::timeout(Duration::from_secs(30), async {
+            loop {
+                let waiting: i64 = admin
+                    .query_one(
+                        "SELECT count(*) FROM pg_locks WHERE relation='pg_catalog.pg_authid'::regclass \
+                         AND mode='RowExclusiveLock' AND NOT granted",
+                        &[],
+                    )
+                    .await?
+                    .get(0);
+                if waiting == 2 {
+                    return Ok::<_, anyhow::Error>(());
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await;
+        admin.batch_execute("COMMIT").await?;
+        waiting??;
+        Ok::<_, anyhow::Error>(())
+    };
+    let (first_result, second_result, unlocked) = tokio::join!(
+        generate_package(&first_request),
+        generate_package(&second_request),
+        unlock,
+    );
+    unlocked?;
+    first_result?;
+    second_result?;
+    drop(admin);
+    connection.await??;
+    Ok(())
+}
+
 /// A test-owned copy of the fixture and its overlay, side by side.
 struct Workspace {
     root: PathBuf,

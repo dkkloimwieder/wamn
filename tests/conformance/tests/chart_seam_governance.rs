@@ -359,6 +359,69 @@ fn assert_events_overlay_remains_namespace_scoped(root: &Path) {
 
 #[test]
 #[ignore = "requires: bin:helm"]
+fn the_host_key_reader_accepts_the_rendered_secret_permissions() {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    wamn_test_postgres::require_ignored_prerequisites("requires: bin:helm");
+    let (objects, name) = render_host_objects(&repository_root());
+    let deployment = rendered_object(&objects, DEPLOYMENT, &name, "platform");
+    let pod = &deployment["spec"]["template"]["spec"];
+    let container = host_container(deployment);
+    let key = container["env"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|entry| entry["name"] == "WAMN_OAUTH_KEY_FILE")
+        .expect("the local host declares its OAuth key file")["value"]
+        .as_str()
+        .unwrap();
+    let (mount, relative) = container["volumeMounts"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find_map(|mount| {
+            Path::new(key)
+                .strip_prefix(mount["mountPath"].as_str().unwrap())
+                .ok()
+                .map(|relative| (mount, relative))
+        })
+        .expect("the host key file is mounted");
+    let secret = &pod["volumes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|volume| volume["name"] == mount["name"])
+        .expect("the key mount names a volume")["secret"];
+    assert!(secret.is_object(), "the host key comes from a Secret");
+    let item_mode = secret["items"].as_array().map(|items| {
+        &items
+            .iter()
+            .find(|item| item["path"].as_str() == relative.to_str())
+            .expect("the Secret projects the host key file")["mode"]
+    });
+    // Secret volumes default to 0644. For fsGroup the kubelet ORs 0440
+    // into read-only volume files, including files with an explicit mode.
+    let mut mode = item_mode
+        .and_then(Value::as_u64)
+        .or_else(|| secret["defaultMode"].as_u64())
+        .unwrap_or(0o644);
+    if pod["securityContext"]["fsGroup"].as_u64().is_some() {
+        mode |= 0o440;
+    }
+    let work = RenderDirectory::create();
+    let path = work.path().join("key");
+    fs::write(&path, [7; 32]).expect("write representative Secret key bytes");
+    fs::set_permissions(
+        &path,
+        fs::Permissions::from_mode(u32::try_from(mode).unwrap()),
+    )
+    .expect("apply the kubelet's file mode");
+    wamn_runtime::oauth_encryption::Envelope::from_file(&path)
+        .unwrap_or_else(|error| panic!("rendered key {key} with mode {mode:o}: {error}"));
+}
+
+#[test]
+#[ignore = "requires: bin:helm"]
 fn the_host_tier_renders_the_native_host_controls() {
     wamn_test_postgres::require_ignored_prerequisites("requires: bin:helm");
     let root = repository_root();
