@@ -177,7 +177,7 @@ async fn operations_authorize_before_jobs_and_bound_status_to_the_target() -> an
             "application.deploy" => {
                 value["release"] = format!("sha256:{}", "a".repeat(64)).into();
             }
-            "application.rollback" => {
+            "application.rollback" | "schema.apply" | "schema.diff" => {
                 value["application"] = "billing_app".into();
             }
             "operation.status" => {

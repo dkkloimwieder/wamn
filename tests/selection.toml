@@ -278,6 +278,8 @@ root_features = ["wamn-environment-control/ops", "wamn-ctl/ops"]
 
 # Operator inputs select external services, comparison artifacts, or parent-owned fixtures.
 [operator_inputs]
+  CLOUDSDK_CONFIG = "gcloud configuration directory of the operator-selected GKE agent identity."
+  DATABASE_URL = "Address of the operator-selected disposable PostgreSQL server for publication."
   RESEND_API_KEY = "Credential for the selected mail service."
   RESEND_FROM = "Authorized sender of the selected mail service."
   WAMN_COMPONENT_ARTIFACT_BASE = "Registry address supplied by the parent publication test."
@@ -298,6 +300,7 @@ root_features = ["wamn-environment-control/ops", "wamn-ctl/ops"]
   WAMN_HOTROUTE_COMPONENT_WASM = "Exact component bytes selected by the operator for an artifact comparison."
   WAMN_HTTP_REUSE_ARTIFACT_BASE = "Address of the operator-selected external service or artifact registry."
   WAMN_HTTP_REUSE_COMPONENT_WASM = "Exact component bytes selected by the operator for an artifact comparison."
+  WAMN_KCL = "KCL executable supplied by the operator for the cluster document."
   WAMN_LOCAL_DEV_EDIT_ROOT = "Disposable checkout that the saved-edit test can modify."
   WAMN_NATIVE_C_NATS_URL = "Address of the operator-selected external service or artifact registry."
   WAMN_NATS_TLS_CA = "Credential or trust file for the operator-selected external service."
