@@ -112,12 +112,11 @@ fn resend_secret(key: &str) -> anyhow::Result<Value> {
     }))
 }
 
-pub async fn initialize(
-    target: &Target,
-    document: &ClusterDocument,
-    chart: &SelectedChart,
-    directory: &Path,
-) -> anyhow::Result<()> {
+/// Write the mail Secret that the identity release mounts, before that release starts.
+///
+/// # Errors
+/// Returns an error if the provider key or the cluster Secret is absent or invalid.
+pub async fn mail(target: &Target, document: &ClusterDocument) -> anyhow::Result<()> {
     // Where the provider keeps the key, the verb writes the cluster Secret
     // from it, so a teardown loses nothing the owner made (wamn-ie1j2).
     if document.provider == Provider::Kind {
@@ -144,6 +143,15 @@ pub async fn initialize(
         .await?;
         resend(owner.as_ref())?;
     }
+    Ok(())
+}
+
+pub async fn initialize(
+    target: &Target,
+    document: &ClusterDocument,
+    chart: &SelectedChart,
+    directory: &Path,
+) -> anyhow::Result<()> {
     let identity = Target {
         kubeconfig: target.kubeconfig.clone(),
         context: target.context.clone(),

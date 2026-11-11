@@ -97,6 +97,9 @@ pub async fn deploy(
     if control_values.is_none() {
         initialize(document, chart, target, directory, output).await?;
     }
+    if control_values.is_none() {
+        identity::mail(target, document).await?;
+    }
     let entry = identity::resource_entry(document, &identity_chart)?;
     resources::apply_release(target, &entry, directory).await?;
     if control_values.is_none() {
