@@ -335,7 +335,7 @@ pub async fn reconcile_run_plane_with_migrations(
         drop(system);
         let _ = connection.await;
         let env_key_identity = identity_result?;
-        if env_key_identity.app_schema_installed || reset_sources.is_some() {
+        if !args.dry_run && (env_key_identity.app_schema_installed || reset_sources.is_some()) {
             crate::platform_migrations::initialize_project(
                 &mut client,
                 reset_sources.as_deref().unwrap_or(sources),

@@ -17,7 +17,7 @@ async fn seed_target_guard_registry(su: &Client) {
          CREATE TABLE registry.project_envs ( \
            org text NOT NULL, project text NOT NULL, env text NOT NULL, \
            secret_name text NOT NULL, secret_namespace text, \
-           instance_suffix text NOT NULL, policy_name text NOT NULL, \
+           instance_suffix text NOT NULL, pending_database jsonb, policy_name text NOT NULL, \
            PRIMARY KEY (org, project, env)); \
          INSERT INTO registry.project_envs \
            (org,project,env,secret_name,instance_suffix,policy_name) VALUES \

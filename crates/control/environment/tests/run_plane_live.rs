@@ -66,7 +66,7 @@ async fn seed_system_env_policy(su: &Client, durability_class: &str) {
          CREATE TABLE registry.project_envs ( \
            org text NOT NULL, project text NOT NULL, env text NOT NULL, \
            secret_name text NOT NULL, secret_namespace text, \
-           instance_suffix text NOT NULL, policy_name text NOT NULL, \
+           instance_suffix text NOT NULL, pending_database jsonb, policy_name text NOT NULL, \
            PRIMARY KEY (org, project, env)); \
          RESET ROLE",
     )
@@ -400,6 +400,12 @@ async fn recreate_database(su: &Client, database: &str) {
     su.batch_execute(&provision_sql::create_database_named_sql(database))
         .await
         .expect("create target database");
+    su.batch_execute(provision_sql::ensure_db_owner_role_sql())
+        .await
+        .expect("create the project database owner role");
+    su.batch_execute(&provision_sql::set_database_owner_sql(database))
+        .await
+        .expect("set the project database owner");
 }
 
 async fn drop_database(su: &Client, database: &str) {
@@ -703,7 +709,9 @@ async fn environment_identity_leg(
     seed_system_env_policy(system_su, "standard").await;
     let schema = schema();
 
+    su.batch_execute("SET ROLE wamn_db_owner").await.unwrap();
     install_current_run_plane(su).await;
+    su.batch_execute("RESET ROLE").await.unwrap();
 
     // The REAL CLI path (arg validation + connect + apply).
     reconcile_run_plane::reconcile_run_plane(ReconcileRunPlaneRequest {

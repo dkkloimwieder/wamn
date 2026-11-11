@@ -10,7 +10,7 @@ use url::Url;
 use wamn_control_provision::tenant_key::{authority_derivations_bootstrap_sql, tenant_key};
 use wamn_control_provision::{
     APP_ROLE, CredentialGeneration, DB_OWNER_ROLE, MANAGEMENT_ADMITTER_ROLE, PLATFORM_GROUP_ROLE,
-    WorkloadRoleFamily, WorkloadRoleScope, management_admitter_secret_name,
+    WorkloadRoleFamily, WorkloadRoleScope, WorkloadRoleScopeKind, management_admitter_secret_name,
     parse_management_admission_url, project_env_database_name, project_env_guest_secret_name,
     render_management_admitter_secret_manifest, sql, workload_generation_role,
 };
@@ -398,6 +398,95 @@ fn expected_stable_acl() -> BTreeSet<String> {
         expected.insert(format!("relation:catalog:{relation}:SELECT"));
     }
     expected
+}
+
+#[tokio::test]
+async fn prepare_verifies_grants_against_applied_system_and_project_schemas() {
+    let server = wamn_test_postgres::start(&[]).unwrap();
+    let system = server.database("postgres").unwrap();
+    let catalog = connect(system.url()).await;
+    catalog.batch_execute(&role_posture_sql()).await.unwrap();
+    catalog
+        .batch_execute(&sql::ensure_control_author_acl_role_sql())
+        .await
+        .unwrap();
+    catalog
+        .batch_execute(&format!(
+            "CREATE ROLE wamn_system NOLOGIN; ALTER DATABASE postgres OWNER TO wamn_system; \
+             SET ROLE wamn_system; {} {} RESET ROLE;",
+            wamn_control_provision::SYSTEM_SCHEMA_SQL,
+            wamn_control_provision::CONTROL_PORTABLE_STORE_SQL,
+        ))
+        .await
+        .expect("apply the full control schema as its owner");
+    catalog
+        .batch_execute(
+            &wamn_control_provision::test_database::seed_org_project_env_sql(
+                ORG,
+                PROJECT,
+                ENVIRONMENT,
+            ),
+        )
+        .await
+        .expect("record the project environment");
+    let instance: String = catalog
+        .query_one("SELECT instance_suffix FROM registry.project_envs", &[])
+        .await
+        .unwrap()
+        .get(0);
+    let database = project_env_database_name(ORG, PROJECT, ENVIRONMENT, &instance);
+    apply_documented_order(&catalog, &database).await;
+    catalog
+        .batch_execute(&privilege_sql("postgres"))
+        .await
+        .unwrap();
+    let target = server.database(&database).unwrap();
+    let project = connect(target.url()).await;
+    wamn_environment_control::reconcile_run_plane::ensure_runtime_roles(&project)
+        .await
+        .unwrap();
+    project
+        .batch_execute(&format!(
+            "SET ROLE {DB_OWNER_ROLE}; {} {} {} {} {} RESET ROLE;",
+            wamn_catalog::CATALOG_SCHEMA_SQL,
+            include_str!("../../../../deploy/sql/run-state.sql"),
+            include_str!("../../../../deploy/sql/run-queue.sql"),
+            wamn_control_provision::APP_SCHEMA_SQL,
+            wamn_control_provision::audit_retention::reconcile_audit_retention_grants_sql(),
+        ))
+        .await
+        .expect("apply the full project schema as its owner");
+    let scratch = ScratchRoot::create().unwrap();
+    let endpoint = Url::parse(system.url()).unwrap();
+    for family in WorkloadRoleFamily::project_env_families() {
+        let request = WorkloadActionRequest {
+            org: ORG.into(),
+            project: PROJECT.into(),
+            env: ENVIRONMENT.into(),
+            system_database_url: Some(system.url().into()),
+            namespace: "wamn-system".into(),
+            target_admin_database_url: (family.scope_kind() != WorkloadRoleScopeKind::Control)
+                .then(|| target.url().into()),
+            cluster: None,
+            cluster_namespace: "wamn-system".into(),
+            db_host: endpoint.host_str().map(str::to_owned),
+            db_port: endpoint.port().unwrap(),
+            action: WorkloadGenerationAction {
+                family,
+                verb: WorkloadActionVerb::Prepare,
+                generation: CredentialGeneration::A,
+            },
+            secret: Some(scratch.path().join(format!("{}.json", family.acl_role()))),
+            emit_role_sql: None,
+            control_administration_patch: (family == WorkloadRoleFamily::Administration)
+                .then(|| scratch.path().join("control-patch.json")),
+        };
+        provision_project_env::run_workload_action(&request)
+            .await
+            .unwrap_or_else(|error| {
+                panic!("{family:?} prepare against applied schemas: {error:#}")
+            });
+    }
 }
 
 #[tokio::test]
