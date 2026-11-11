@@ -1,4 +1,4 @@
-//! Read application runtime inputs from the installed platform.
+//! Read host runtime inputs from the installed platform.
 
 use std::path::Path;
 
@@ -201,7 +201,7 @@ pub(super) async fn resolve_application(
         events.stream_replicas = value("WAMN_EVT_STREAM_REPLICAS")?.parse()?;
         events.dup_window_secs = value("WAMN_EVT_DUP_WINDOW_SECS")?.parse()?;
     }
-    let group = host_group(control, &shared, &component_base)?;
+    let group = host_group(control, Some(&shared), &component_base)?;
     let path = directory.join("application-host.yaml");
     std::fs::write(&path, serde_yaml::to_string(&group)?)?;
     platform.host_group = Some(path);
@@ -209,12 +209,13 @@ pub(super) async fn resolve_application(
 }
 
 /// Keep the installed platform's shared runtime references without its control authority.
+/// Omit shared event settings before provisioning derives them from the environment.
 ///
 /// # Errors
 /// Returns an error when identity or the installed control host is absent.
 pub fn host_group(
     control: &Value,
-    shared: &Value,
+    shared: Option<&Value>,
     component_base: &str,
 ) -> anyhow::Result<serde_yaml::Mapping> {
     let groups = control["runtime-operator"]["runtime"]["hostGroups"]
@@ -257,23 +258,25 @@ pub fn host_group(
             "installed platform lacks {name}"
         );
     }
-    let shared = shared["runtime-operator"]["runtime"]["hostGroups"][0]["env"]
-        .as_array()
-        .context("provisioned environment host variables")?;
-    for name in [
-        "WAMN_EVT_ORG",
-        "WAMN_EVT_PROJECT",
-        "WAMN_EVT_ENV",
-        "WAMN_EVT_STREAM_REPLICAS",
-        "WAMN_EVT_DUP_WINDOW_SECS",
-    ] {
-        variables.push(
-            shared
-                .iter()
-                .find(|entry| entry["name"] == name)
-                .with_context(|| format!("provisioned environment lacks {name}"))?
-                .clone(),
-        );
+    if let Some(shared) = shared {
+        let shared = shared["runtime-operator"]["runtime"]["hostGroups"][0]["env"]
+            .as_array()
+            .context("provisioned environment host variables")?;
+        for name in [
+            "WAMN_EVT_ORG",
+            "WAMN_EVT_PROJECT",
+            "WAMN_EVT_ENV",
+            "WAMN_EVT_STREAM_REPLICAS",
+            "WAMN_EVT_DUP_WINDOW_SECS",
+        ] {
+            variables.push(
+                shared
+                    .iter()
+                    .find(|entry| entry["name"] == name)
+                    .with_context(|| format!("provisioned environment lacks {name}"))?
+                    .clone(),
+            );
+        }
     }
     variables.push(json!({"name":"WAMN_COMPONENT_ARTIFACT_BASE", "value":component_base}));
     let mut group = json!({"replicas":1, "http":{"enabled":true,"port":80}, "env":variables});
@@ -594,7 +597,7 @@ mod tests {
         let shared = crate::environment::ensure::materializer_host_values(
             &document, 70, 1, 120, None, false, None,
         )?;
-        let group = host_group(&control, &shared, &component_base)?;
+        let group = host_group(&control, Some(&shared), &component_base)?;
         let path = private.path("host.yaml");
         std::fs::write(&path, serde_yaml::to_string(&group)?)?;
         let manifest = serde_json::from_value(json!({
@@ -606,7 +609,7 @@ mod tests {
         cloud.project_id = "project-one".into();
         cloud.zone = "us-east1-b".into();
         let cloud_control = crate::platform::control::release_values(&cloud, &json!({}))?;
-        let cloud_group = host_group(&cloud_control, &shared, "remote.example/components")?;
+        let cloud_group = host_group(&cloud_control, Some(&shared), "remote.example/components")?;
         let cloud_path = private.path("cloud-host.yaml");
         std::fs::write(&cloud_path, serde_yaml::to_string(&cloud_group)?)?;
         let (cloud_values, _) = write::release_values(

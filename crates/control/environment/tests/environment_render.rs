@@ -316,8 +316,15 @@ fn reset_stops_workloads_and_reapply_restores_them() -> anyhow::Result<()> {
 
     // The separate materializer is deleted before its host is stopped, then
     // ordinary provisioning renders it again with its running replica count.
-    let mut shared =
-        ensure::materializer_host_values(&document, 70, 1, 120, Some(&group), false, None)?;
+    let mut shared = ensure::materializer_host_values(
+        &document,
+        70,
+        1,
+        120,
+        Some(serde_yaml::from_str(&std::fs::read_to_string(&group)?)?),
+        false,
+        None,
+    )?;
     reset::stop_values(&mut shared)?;
     let shared = template(&serde_yaml::to_value(&shared)?, NAMESPACE)?;
     assert!(
@@ -337,7 +344,7 @@ fn reset_stops_workloads_and_reapply_restores_them() -> anyhow::Result<()> {
             70,
             1,
             120,
-            Some(&group),
+            Some(serde_yaml::from_str(&std::fs::read_to_string(&group)?)?),
             false,
             None,
         )?)?,

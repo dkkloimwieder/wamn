@@ -881,7 +881,14 @@ async fn resume_users(platform: &Platform, document: &EnvironmentDocument) -> an
         .with_context(|| format!("resume application {application}: readiness budget expired"))?
         .with_context(|| format!("resume application {application}"))?;
     }
-    ensure::provision_materializer(platform, document).await?;
+    let control = crate::platform::resources::release_values(
+        &platform.target,
+        &platform.target.namespace,
+        &format!("c-{}", document.org),
+    )
+    .await?
+    .context("installed control host")?;
+    ensure::provision_materializer(platform, &control, document).await?;
     Ok(())
 }
 

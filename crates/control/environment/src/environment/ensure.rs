@@ -41,6 +41,7 @@ const APPLIED_TIMEOUT: &str = "--timeout=120s";
 /// When an ensure fails. A rerun repairs a partial run.
 pub async fn provision_resources(
     platform: &Platform,
+    control: &serde_json::Value,
     document: &EnvironmentDocument,
     packages: &[wamn_catalog::manifest::PackageManifest],
     admin_url: &str,
@@ -195,7 +196,7 @@ pub async fn provision_resources(
     }
     prepare_cdc(platform, document, &admin, &project_admin).await?;
     ensure_streams(platform, document, &[]).await?;
-    provision_materializer(platform, document).await?;
+    provision_materializer(platform, control, document).await?;
     Ok(())
 }
 
@@ -237,7 +238,7 @@ pub fn materializer_host_values(
     drain_bound_seconds: u32,
     stream_replicas: usize,
     dup_window_secs: u64,
-    host_group: Option<&Path>,
+    host_group: Option<serde_yaml::Mapping>,
     insecure_registry: bool,
     installed: Option<&serde_json::Value>,
 ) -> anyhow::Result<serde_json::Value> {
@@ -247,12 +248,14 @@ pub fn materializer_host_values(
         drain_bound_seconds > release_chart::MATERIALIZER_DRAIN_BOUND_SECONDS,
         "the environment host drain bound must exceed the materializer drain bound"
     );
-    let mut group = serde_json::to_value(super::write::host_group(
-        host_group,
+    let group = super::write::plan::host_group(
+        host_group.unwrap_or_default(),
         &document.org,
         &document.project,
         &document.env,
-    )?)?;
+    )?;
+    let registry_arguments = super::write::plan::registry_arguments(&group);
+    let mut group = serde_json::to_value(group)?;
     let name = environment_host_name(&document.org, &document.project, &document.env)?;
     for field in [
         "name",
@@ -269,6 +272,7 @@ pub fn materializer_host_values(
     }
     group["name"] = name.into();
     let mut arguments = vec![format!("--environment={}", document.env)];
+    arguments.extend(registry_arguments);
     if insecure_registry {
         arguments.push("--allow-insecure-registries".into());
     }
@@ -388,6 +392,7 @@ pub fn materializer_workload(
 
 pub(super) async fn provision_materializer(
     platform: &Platform,
+    control: &serde_json::Value,
     document: &EnvironmentDocument,
 ) -> anyhow::Result<()> {
     use wamn_release_control::release_chart;
@@ -404,12 +409,20 @@ pub(super) async fn provision_materializer(
         &name,
     )
     .await?;
+    let component_base = super::runtime::pod_artifact_base(
+        platform.insecure_registry,
+        platform
+            .component_artifact_base
+            .as_deref()
+            .context("missing component registry")?,
+    )?;
+    let group = super::runtime::host_group(control, None, &component_base)?;
     let desired = materializer_host_values(
         document,
         u32::try_from(policy.drain_bound_seconds)?,
         events.stream_replicas,
         events.dup_window_secs,
-        platform.host_group.as_deref(),
+        Some(group),
         platform.insecure_registry,
         installed.as_ref(),
     )?;
@@ -1237,6 +1250,94 @@ mod tests {
     use super::*;
 
     #[test]
+    fn fresh_shared_host_consumes_installed_provider_runtime() -> anyhow::Result<()> {
+        use crate::platform::{control, document::ClusterDocument, resources};
+        use serde_json::json;
+        let document = EnvironmentDocument::from_json(br#"{"org":"acme","project":"apps","env":"dev","target":"cloud","policy":"dev","applications":{}}"#)?;
+        let repository = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
+        let chart = crate::platform::artifact_plan::test_util::prepared_chart(&repository)?;
+        for provider in ["gcp", "kind"] {
+            let cluster: ClusterDocument = serde_json::from_value(json!({
+                "provider":provider,
+                "project_id":if provider == "gcp" { "selected-project" } else { "" },
+                "zone":if provider == "gcp" { "us-east1-b" } else { "" },
+                "cluster_name":"selected", "org":document.org, "owner_email":"owner@example.com",
+                "registry":"registry.example", "buckets":{"web":"", "otel":"", "state":""},
+                "route_hosts":{"control":"control.example.com"}, "resend_from":"owner@example.com"
+            }))?;
+            let control = control::release_values(&cluster, &json!({}))?;
+            let insecure = super::super::runtime::insecure_registry(
+                &control["runtime-operator"]["runtime"]["hostGroups"][0],
+            );
+            let runtime =
+                super::super::runtime::host_group(&control, None, "registry.example/components")?;
+            let expected = serde_json::to_value(&runtime)?;
+            let desired =
+                materializer_host_values(&document, 70, 1, 120, Some(runtime), insecure, None)?;
+            let entry = json!({"chart":chart.0,
+                "version":crate::platform::artifact_plan::select(&chart.0)?.version,
+                "name":environment_host_name(&document.org, &document.project, &document.env)?,
+                "namespace":"hosts", "values":desired});
+            let objects = resources::helm_template(&entry)?;
+            let deployment = objects
+                .iter()
+                .find(|object| object["kind"] == "Deployment")
+                .context("shared host Deployment")?;
+            let pod = &deployment["spec"]["template"]["spec"];
+            let host = &pod["containers"][0];
+            let variables = host["env"].as_array().context("shared host variables")?;
+            for variable in expected["env"]
+                .as_array()
+                .context("platform runtime variables")?
+            {
+                assert!(variables.contains(variable), "{provider}: {variable}");
+                let argument = match variable["name"].as_str() {
+                    Some("WAMN_REGISTRY_AUTH_FILE") => Some(format!(
+                        "--registry-auth-file={}",
+                        variable["value"].as_str().unwrap()
+                    )),
+                    Some("WAMN_REGISTRY_TOKEN_METADATA") => {
+                        Some("--registry-token-metadata".into())
+                    }
+                    _ => None,
+                };
+                if let Some(argument) = argument {
+                    assert!(host["args"].as_array().unwrap().contains(&json!(argument)));
+                }
+            }
+            for (field, rendered) in [
+                ("volumes", &pod["volumes"]),
+                ("volumeMounts", &host["volumeMounts"]),
+            ] {
+                for entry in expected[field]
+                    .as_array()
+                    .context("platform runtime mounts")?
+                {
+                    assert!(
+                        rendered.as_array().unwrap().contains(entry),
+                        "{provider}: {entry}"
+                    );
+                }
+            }
+            assert_eq!(
+                variables
+                    .iter()
+                    .any(|variable| variable["name"] == "WAMN_OAUTH_KEY_FILE"),
+                provider == "kind"
+            );
+            assert_eq!(
+                pod["volumes"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|volume| volume["secret"]["secretName"] == "wamn-oauth"),
+                provider == "kind"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
     fn shared_host_reapply_keeps_only_its_named_host_image() -> anyhow::Result<()> {
         use serde_json::json;
         let document = EnvironmentDocument::from_json(br#"{"org":"acme","project":"apps","env":"dev","target":"cloud","policy":"dev","applications":{}}"#)?;
@@ -1286,8 +1387,6 @@ mod tests {
         use crate::platform::resources::{LOCAL_REGISTRY, POD_REGISTRY};
         use serde_json::json;
         let document = EnvironmentDocument::from_json(br#"{"org":"acme","project":"apps","env":"dev","target":"cloud","policy":"dev","applications":{}}"#)?;
-        let private = PrivateDirectory::create()?;
-        let overlay = private.path("host.yaml");
         for (insecure_registry, registry, pod_registry) in [
             (true, LOCAL_REGISTRY, POD_REGISTRY),
             (false, "registry.example", "registry.example"),
@@ -1297,13 +1396,14 @@ mod tests {
                 ("WAMN_PACKAGE_ARTIFACT_BASE", "packages"),
                 ("WAMN_RELEASE_ARTIFACT_BASE", "releases"),
             ].map(|(name, repository)| json!({"name":name, "value":format!("{registry}/wamn/{repository}")}));
-            std::fs::write(&overlay, serde_yaml::to_string(&json!({"env":variables}))?)?;
             let values = materializer_host_values(
                 &document,
                 30,
                 1,
                 120,
-                Some(&overlay),
+                Some(serde_yaml::from_value(serde_yaml::to_value(
+                    json!({"env":variables}),
+                )?)?),
                 insecure_registry,
                 None,
             )?;

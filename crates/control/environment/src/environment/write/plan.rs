@@ -4,7 +4,7 @@ use super::{
 };
 use anyhow::Context as _;
 
-pub(super) fn host_group(
+pub(in crate::environment) fn host_group(
     mut group: Mapping,
     org: &str,
     project: &str,
@@ -64,6 +64,25 @@ pub(super) fn host_group(
     Ok(serde_yaml::from_value(serde_yaml::to_value(group)?)?)
 }
 
+/// Derive registry arguments from the platform host's environment variables.
+pub(in crate::environment) fn registry_arguments(host_group: &Mapping) -> Vec<String> {
+    host_group
+        .get("env")
+        .and_then(Value::as_sequence)
+        .into_iter()
+        .flatten()
+        .filter_map(|variable| match variable["name"].as_str() {
+            Some("WAMN_REGISTRY_AUTH_FILE") => variable["value"]
+                .as_str()
+                .map(|path| format!("--registry-auth-file={path}")),
+            Some("WAMN_REGISTRY_TOKEN_METADATA") if variable["value"].as_str() == Some("true") => {
+                Some("--registry-token-metadata".into())
+            }
+            _ => None,
+        })
+        .collect()
+}
+
 /// Build release values from the document, artifact, policy, and host overlay.
 #[expect(
     clippy::too_many_arguments,
@@ -103,21 +122,7 @@ pub(super) fn release_values(
     let local_registry = local_components.is_some();
     let pod_artifact_base =
         super::super::runtime::pod_artifact_base(local_registry, artifact_base)?;
-    let registry_arguments: Vec<String> = host_group
-        .get("env")
-        .and_then(Value::as_sequence)
-        .into_iter()
-        .flatten()
-        .filter_map(|variable| match variable["name"].as_str() {
-            Some("WAMN_REGISTRY_AUTH_FILE") => variable["value"]
-                .as_str()
-                .map(|path| format!("--registry-auth-file={path}")),
-            Some("WAMN_REGISTRY_TOKEN_METADATA") if variable["value"].as_str() == Some("true") => {
-                Some("--registry-token-metadata".into())
-            }
-            _ => None,
-        })
-        .collect();
+    let registry_arguments = registry_arguments(&host_group);
     let mut rendered = release_chart::values(&ValuesInput {
         org: document.org.clone(),
         project: document.project.clone(),

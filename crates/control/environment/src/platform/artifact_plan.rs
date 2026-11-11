@@ -600,7 +600,7 @@ mod tests {
             70,
             1,
             120,
-            Some(&overlay),
+            Some(serde_yaml::from_str(&std::fs::read_to_string(&overlay)?)?),
             false,
             None,
         )?);

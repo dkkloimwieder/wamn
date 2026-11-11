@@ -456,6 +456,7 @@ async fn apply_selection(
                     .context("set WAMN_SYSTEM_ADMIN_URL for environment provisioning")?;
                 Box::pin(ensure::provision_resources(
                     &platform,
+                    &control,
                     &document,
                     &[],
                     &admin,
