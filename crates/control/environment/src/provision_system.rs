@@ -18,15 +18,17 @@ pub(super) mod plan;
 use plan::scram_sha256_verifier;
 
 use std::fmt;
+use std::io;
 use std::num::NonZeroU32;
 use std::path::PathBuf;
+use std::time::Duration;
 
 use anyhow::{Context as _, ensure};
 use base64::engine::general_purpose::STANDARD;
 use ring::rand::{SecureRandom as _, SystemRandom};
 use ring::{digest, hmac, pbkdf2};
 use serde_json::json;
-use tokio_postgres::{Client, GenericClient, NoTls};
+use tokio_postgres::{Client, Connection, GenericClient, NoTls, Socket, tls::NoTlsStream};
 use url::Url;
 use wamn_control_provision::provisioner::{PROVISIONER_ROLE, provisioner_statement_sql};
 
@@ -49,7 +51,7 @@ pub struct ProvisionSystemRequest {
 /// Install the control store and record the platform domain.
 pub async fn provision_system(request: &ProvisionSystemRequest) -> anyhow::Result<()> {
     validate_platform_domain(&request.platform_domain).context("check the platform domain")?;
-    let (mut client, connection) = tokio_postgres::connect(&request.system_database_url, NoTls)
+    let (mut client, connection) = connect_system_database(&request.system_database_url)
         .await
         .context("connect to the system database")?;
     let connection = tokio::spawn(connection);
@@ -66,6 +68,35 @@ pub async fn provision_system(request: &ProvisionSystemRequest) -> anyhow::Resul
     drop(client);
     let _ = connection.await;
     result
+}
+
+// Allow 30 seconds for the CNPG service to accept TCP after Cluster Ready,
+// well inside the platform Job's 15-minute deadline. Never replay initialization.
+const CONNECT_RETRIES: u32 = 30;
+const CONNECT_RETRY_DELAY: Duration = Duration::from_secs(1);
+
+async fn connect_system_database(
+    url: &str,
+) -> anyhow::Result<(Client, Connection<Socket, NoTlsStream>)> {
+    let mut retries = 0;
+    loop {
+        match tokio_postgres::connect(url, NoTls).await {
+            Ok(connection) => return Ok(connection),
+            Err(error) => {
+                let error = anyhow::Error::new(error);
+                let refused = error.chain().any(|cause| {
+                    cause
+                        .downcast_ref::<io::Error>()
+                        .is_some_and(|error| error.kind() == io::ErrorKind::ConnectionRefused)
+                });
+                if !refused || retries == CONNECT_RETRIES {
+                    return Err(error);
+                }
+                retries += 1;
+                tokio::time::sleep(CONNECT_RETRY_DELAY).await;
+            }
+        }
+    }
 }
 
 /// Record the deployment domain with the provisioning actor.
@@ -385,4 +416,79 @@ pub fn emit_provisioner_credential(request: &EmitProvisionerRequest) -> anyhow::
     let statement = provisioner_statement_sql(&scram_sha256_verifier(&password, &salt));
     std::fs::write(&request.emit_provisioner_sql, statement)
         .with_context(|| format!("write {}", request.emit_provisioner_sql.display()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use tokio::net::{TcpListener, TcpStream};
+    use tokio::task::JoinSet;
+
+    #[tokio::test]
+    async fn initial_connect_retries_only_connection_refusal() -> anyhow::Result<()> {
+        let database = wamn_test_postgres::database();
+        let mut url = Url::parse(database.url())?;
+        let upstream = (url.host_str().unwrap().to_owned(), url.port().unwrap());
+        let reserved = TcpListener::bind("127.0.0.1:0").await?;
+        let address = reserved.local_addr()?;
+        url.set_port(Some(address.port())).unwrap();
+        drop(reserved);
+
+        let attempts = Arc::new(AtomicUsize::new(0));
+        let mut proxy = JoinSet::new();
+        let (client, connection) = {
+            let connecting = connect_system_database(url.as_str());
+            tokio::pin!(connecting);
+            tokio::select! {
+                result = &mut connecting => panic!("connect completed before the listener existed: {:?}", result.err()),
+                () = tokio::time::sleep(Duration::from_millis(100)) => {}
+            }
+
+            let listener = TcpListener::bind(address).await?;
+            proxy.spawn({
+                let attempts = Arc::clone(&attempts);
+                async move {
+                    let mut connections = JoinSet::new();
+                    loop {
+                        let (mut incoming, _) = listener.accept().await.unwrap();
+                        attempts.fetch_add(1, Ordering::Relaxed);
+                        let mut outgoing = TcpStream::connect((upstream.0.as_str(), upstream.1))
+                            .await
+                            .unwrap();
+                        connections.spawn(async move {
+                            tokio::io::copy_bidirectional(&mut incoming, &mut outgoing).await
+                        });
+                    }
+                }
+            });
+            connecting.await?
+        };
+        let connection = tokio::spawn(connection);
+        let row = client.query_one("SELECT current_database()", &[]).await?;
+        assert_eq!(row.get::<_, String>(0), database.name());
+        drop(client);
+        connection.await??;
+
+        // PostgreSQL accepts the TCP connection but refuses an absent database.
+        url.set_path(&format!("/{}_absent", database.name()));
+        let Err(error) = connect_system_database(url.as_str()).await else {
+            panic!("an absent database must refuse the connection");
+        };
+        assert_eq!(
+            error
+                .downcast_ref::<tokio_postgres::Error>()
+                .unwrap()
+                .code(),
+            Some(&tokio_postgres::error::SqlState::INVALID_CATALOG_NAME)
+        );
+        assert_eq!(
+            attempts.load(Ordering::Relaxed),
+            2,
+            "one TCP connection per PostgreSQL handshake"
+        );
+        proxy.shutdown().await;
+        Ok(())
+    }
 }
