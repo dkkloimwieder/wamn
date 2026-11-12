@@ -101,7 +101,7 @@ pub async fn read_target(
 }
 
 async fn owner_values(target: &Target, namespace: &str, name: &str) -> Result<Option<Value>, ()> {
-    let releases = helm_json(target, &["list", "-a", "-n", namespace, "-o", "json"])
+    let releases = helm_json(target, &["list", "-n", namespace, "-o", "json"])
         .await
         .map_err(|_| ())?;
     let releases = releases.as_array().ok_or(())?;
