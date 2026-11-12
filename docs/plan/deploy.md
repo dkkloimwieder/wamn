@@ -3,7 +3,7 @@
 This plan describes the shipped deployment and explicit SQL operations.
 [Deployment](../operations/deployment.md) owns operational inputs, repair, and cleanup.
 [Google Cloud](../operations/gcp.md#4-platform-deployment-boundary) owns cloud prerequisites and infrastructure operations.
-Section 9 records the retained run evidence. Final verification and the completion point remain pending.
+Section 9 records the retained run evidence. The epic closed without a final GKE run, by owner ruling.
 
 The command definitions live in [services/ctl](../../services/ctl/src/bin/wamn.rs).
 [Application commands](../../services/ctl/src/application_verbs.rs), [schema commands](../../services/ctl/src/schema_verbs.rs), and [platform commands](../../services/ctl/src/platform_verbs.rs) call their control owners.
@@ -628,6 +628,7 @@ The wash-runtime fork is removed at `45e2227f2`.
 `cfdb1badd` selects wasmCloud v2.12.1, removes the declared-world linker, and defaults socket egress to Enforce.
 The earlier run logs do not verify these later changes.
 
-Final GKE verification (wamn-8h4h6.4): pending
+Final GKE verification (wamn-8h4h6.4): not run. On 2026-11-12 the owner closed the epic without it.
+The kind stage passed at `b94833fd3`: registry-image-kind, control_operations_kind, platform_apply_kind, and platform_upgrade_kind.
 
-Completion point: pending
+Completion point: epic/dep7 merged to main on 2026-11-12.
