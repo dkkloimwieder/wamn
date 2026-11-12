@@ -1347,7 +1347,7 @@ Cleanup timeout remains an error and can leave plugin cleanup incomplete.
 The HTTP-stop allowance bounds coordination and does not guarantee native completion.
 Upstream ingress stop ends the accept loop without gracefully retiring existing HTTP or HTTPS connections.
 It sends no stop-triggered HTTP/1 connection close or HTTP/2 GOAWAY.
-An edge connection can remain pinned to a draining host and receive 503 until it closes.
+The platform edge closes each upstream connection after its response, so the next request selects a current Service endpoint.
 Connection drain can therefore consume the shutdown budget even after admitted responses finish.
 
 Queue shutdown bounds its current turn and auxiliary cleanup.

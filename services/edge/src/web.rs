@@ -25,6 +25,9 @@ use tokio::sync::RwLock;
 const IMMUTABLE: &str = "public, max-age=31536000, immutable";
 const SERVICE_ACCOUNT: &str = "/var/run/secrets/kubernetes.io/serviceaccount";
 
+#[cfg(test)]
+mod rollout_tests;
+
 /// The platform installer supplies the listener and bucket in a mounted file.
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -401,6 +404,12 @@ async fn respond(
         };
         *request.uri_mut() = format!("{}{path}", upstream.trim_end_matches('/')).parse()?;
         remove_hop_headers(request.headers_mut());
+        // Upstream ingress does not retire pooled connections when its host drains.
+        // Select a current Service endpoint for each request, without replaying it.
+        request.headers_mut().insert(
+            hyper::header::CONNECTION,
+            hyper::header::HeaderValue::from_static("close"),
+        );
         request.headers_mut().insert(HOST, host.parse()?);
         let mut response = proxy.request(request).await?;
         remove_hop_headers(response.headers_mut());
