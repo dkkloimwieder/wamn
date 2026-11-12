@@ -1363,7 +1363,7 @@ impl HostPlugin for FlowHttpRouting {
         if !interfaces.contains("wamn", "flow-http-routing", &["routing"]) {
             return Ok(());
         }
-        add_to_linker(item.linker())?;
+        add_to_linker(item.linker()?)?;
         Ok(())
     }
 

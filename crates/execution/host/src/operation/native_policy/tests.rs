@@ -552,11 +552,11 @@ impl HostPlugin for Observe {
         item: &mut WorkloadItem<'a>,
         _interfaces: WitInterfaces<'_>,
     ) -> anyhow::Result<()> {
-        item.linker().instance("wamn:node/types@0.1.0")?;
+        item.linker()?.instance("wamn:node/types@0.1.0")?;
         let policy = Arc::clone(&self.policy);
         let events = Arc::clone(&self.events);
         let entered = Arc::clone(&self.entered);
-        item.linker().instance(OBSERVE)?.func_wrap(
+        item.linker()?.instance(OBSERVE)?.func_wrap(
             "record",
             move |mut store: wash_runtime::wasmtime::StoreContextMut<'_, SharedCtx>,
                   (phase,): (u32,)| {

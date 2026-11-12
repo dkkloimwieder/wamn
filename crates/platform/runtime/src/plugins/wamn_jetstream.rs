@@ -745,7 +745,7 @@ impl HostPlugin for WamnJetstream {
             project.as_deref(),
             environment.as_deref(),
         );
-        add_to_linker(item.linker())?;
+        add_to_linker(item.linker()?)?;
         Ok(())
     }
 }

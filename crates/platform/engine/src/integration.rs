@@ -223,7 +223,7 @@ impl HostPlugin for IntegrationBinding {
         let authority = self.authority.to_string();
         let credential = self.credential.clone();
         let parameters = self.parameters.clone();
-        let mut bound = item.linker().instance(BOUND)?;
+        let mut bound = item.linker()?.instance(BOUND)?;
         bound.func_wrap("authority", move |_, ()| Ok((authority.clone(),)))?;
         bound.func_wrap("parameters", move |_, ()| Ok((parameters.clone(),)))?;
         bound.func_wrap("credential", move |_, ()| Ok((credential.clone(),)))?;
@@ -556,7 +556,7 @@ impl IntegrationImports {
             let ComponentItem::ComponentInstance(import) = import.ty else {
                 anyhow::bail!("connection import is not an interface: {label}")
             };
-            let mut instance = item.linker().instance(label)?;
+            let mut instance = item.linker()?.instance(label)?;
             for (function, export) in import.exports(engine) {
                 match export.ty {
                     ComponentItem::ComponentFunc(function_type) => {

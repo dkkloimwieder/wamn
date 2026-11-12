@@ -17,8 +17,8 @@ use wash_runtime::sockets::resolved_names::ResolvedNames;
 use wash_runtime::sockets::{AddrDecision, DenyReason, SocketAddrUse};
 use wash_runtime::types::LocalResources;
 
-pub(super) const EXPECTED_VERSION: &str = "2.11.0";
-pub(super) const EXPECTED_REVISION: &str = "bc5acfb8e15f7d6d199ca940354d82e590c2d5ff";
+pub(super) const EXPECTED_VERSION: &str = "2.12.1";
+pub(super) const EXPECTED_REVISION: &str = "8b0e24cb6610642783e3f16f5f1eac45ff2cb5aa";
 
 #[derive(Debug, Deserialize)]
 struct CargoMetadata {
@@ -175,7 +175,7 @@ fn local_resources_default_is_an_empty_deny_all_lookup_policy() {
 }
 
 #[test]
-fn pinned_runtime_is_direct_upstream_v2_11_0() {
+fn pinned_runtime_is_direct_upstream_v2_12_1() {
     let package = runtime_package();
     assert_eq!(package.version, EXPECTED_VERSION);
     assert_eq!(
@@ -183,7 +183,7 @@ fn pinned_runtime_is_direct_upstream_v2_11_0() {
         format!(
             "git+https://github.com/wasmCloud/wasmCloud?tag=v{EXPECTED_VERSION}#{EXPECTED_REVISION}"
         ),
-        "wash-runtime must resolve directly to upstream v2.11.0 revision {EXPECTED_REVISION}"
+        "wash-runtime must resolve directly to upstream v2.12.1 revision {EXPECTED_REVISION}"
     );
 }
 

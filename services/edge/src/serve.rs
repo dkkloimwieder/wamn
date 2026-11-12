@@ -168,7 +168,7 @@ fn edge_engine(release: &EdgeRelease, db: &Path) -> anyhow::Result<wash_runtime:
         &[],
         host_memory_budgets(EDGE_MEMORY_CAP_BYTES, core_instances)?,
         GuestMemoryMode::Count,
-        EgressMode::Count,
+        EgressMode::Enforce,
         &compile_cache_dir(db)?,
     )
 }

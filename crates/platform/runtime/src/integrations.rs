@@ -304,7 +304,6 @@ impl Integrations {
         &self,
         item: &mut wash_runtime::engine::workload::WorkloadItem<'_>,
         owners: &[(&str, &str)],
-        declared: Option<&[String]>,
     ) -> anyhow::Result<()> {
         let mut routes = HashMap::new();
         let mut interfaces = HashSet::new();
@@ -321,9 +320,6 @@ impl Integrations {
                     .push(Arc::clone(&imports));
             }
             interfaces.extend(imports.interfaces().map(str::to_owned));
-        }
-        if let Some(declared) = declared {
-            interfaces.retain(|interface| declared.contains(interface));
         }
         let names = routes.keys().cloned().collect();
         let imports = Arc::new(IntegrationImports::from_dispatch(
@@ -437,6 +433,6 @@ impl wash_runtime::plugin::HostPlugin for IntegrationIngress {
                 )
             })
             .collect::<Vec<_>>();
-        self.integrations.add_to_linker(item, &owners, None).await
+        self.integrations.add_to_linker(item, &owners).await
     }
 }

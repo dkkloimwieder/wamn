@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-const REVISION: &str = "bc5acfb8e15f7d6d199ca940354d82e590c2d5ff";
+const REVISION: &str = "8b0e24cb6610642783e3f16f5f1eac45ff2cb5aa";
 
 fn repository_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -51,7 +51,7 @@ shift 2
 case "$*" in
   'rev-parse --is-inside-work-tree') echo true ;;
   'remote get-url origin') echo "${WAMN_TEST_ORIGIN:-https://github.com/wasmCloud/wasmCloud}" ;;
-  'rev-parse v2.11.0^{commit}') echo "${WAMN_TEST_TAG:-$WAMN_TEST_REVISION}" ;;
+  'rev-parse v2.12.1^{commit}') echo "${WAMN_TEST_TAG:-$WAMN_TEST_REVISION}" ;;
   'rev-parse HEAD') echo "${WAMN_TEST_HEAD:-$WAMN_TEST_REVISION}" ;;
   'status --porcelain --untracked-files=all')
     printf '%s' "${WAMN_TEST_DIRTY:-}"

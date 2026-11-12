@@ -215,7 +215,7 @@ impl NamedProject {
             wamn_control_registry::identifiers::valid_project(project),
             "invalid project {project:?} for named wamn:postgres import {name:?}"
         );
-        Ok(Self(Arc::from(project.as_str())))
+        Ok(Self(Arc::from(project)))
     }
 }
 
@@ -557,7 +557,7 @@ impl HostPlugin for WamnPostgres {
         // The wash host path: one workload, one bind, both halves in order.
         self.register_workload_scope(item.id(), &item.local_resources().config, &interfaces)?;
         let component = item.component().clone();
-        self.add_linker_entries(item.linker(), &component, &interfaces)
+        self.add_linker_entries(item.linker()?, &component, &interfaces)
     }
 
     /// R31: on workload teardown, reap the per-component claim registries
@@ -590,7 +590,8 @@ mod tests {
             config: std::collections::HashMap::from([(
                 NAMED_PROJECT_CONFIG_KEY.to_string(),
                 project.to_string(),
-            )]),
+            )])
+            .into(),
             name: Some(name.to_string()),
         }
     }

@@ -124,7 +124,7 @@ impl HostPlugin for EdgeOperation {
         if !interfaces.contains("wamn", "operation", &["operation"]) {
             return Ok(());
         }
-        operation::add_to_linker::<_, EdgeOperationHost>(item.linker(), extract_active_ctx)?;
+        operation::add_to_linker::<_, EdgeOperationHost>(item.linker()?, extract_active_ctx)?;
         Ok(())
     }
 }

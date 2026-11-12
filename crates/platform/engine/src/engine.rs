@@ -50,7 +50,7 @@ pub fn host_memory_budgets(
 ) -> anyhow::Result<HostMemoryBudgets> {
     let default_heap_memory = u64::try_from(memory_cap_bytes)
         .map_err(|_| anyhow::anyhow!("pool memory cap does not fit in a u64 byte count"))?;
-    HostMemoryBudgets::resolve(None, Some(default_heap_memory), Some(core_instances))
+    HostMemoryBudgets::resolve(None, Some(default_heap_memory), None, Some(core_instances))
         .map_err(anyhow::Error::msg)
 }
 
@@ -82,14 +82,13 @@ pub fn default_host_memory_budgets() -> HostMemoryBudgets {
 /// wasmCloud enables epoch interruption and owns its ticker. WAMN configures
 /// only its manual stores' deadlines.
 pub fn build_engine(proposals: &[WasmProposal]) -> anyhow::Result<Engine> {
-    build_engine_with_socket_policy(proposals, host_socket_policy(EgressMode::Count))
+    build_engine_with_socket_policy(proposals, host_socket_policy(EgressMode::Enforce))
 }
 
 /// The host-level socket policy every wamn engine installs.
 ///
 /// The host's `--socket-egress` selects the mode. The owner ruling of
-/// 2026-10-21 for `wamn-upgrade-2.11` makes Count the default: it records
-/// egress refusals and allows traffic while operators size policy. WAMN
+/// 2026-11-11 makes Enforce the default: it blocks refused traffic. WAMN
 /// admission still rejects tenant components importing `wasi:sockets`.
 ///
 /// The address policy keeps private and special ranges outside the allowed
@@ -653,9 +652,9 @@ interface tcp-create-socket {
         code
     }
 
-    /// Every production builder passes the Count policy to guest stores.
+    /// Every production builder passes the Enforce policy to guest stores.
     #[tokio::test]
-    async fn every_production_engine_allows_an_unlisted_guest_connect() {
+    async fn every_production_engine_refuses_an_unlisted_guest_connect() {
         let cache_dir = cache_test_path();
         let engines = [
             ("build_engine", build_engine(&[]).expect("build_engine")),
@@ -665,7 +664,7 @@ interface tcp-create-socket {
                     &[],
                     default_host_memory_budgets(),
                     GuestMemoryMode::Count,
-                    EgressMode::Count,
+                    EgressMode::Enforce,
                 )
                 .expect("build_engine_with_host_memory"),
             ),
@@ -675,7 +674,7 @@ interface tcp-create-socket {
                     &[],
                     default_host_memory_budgets(),
                     GuestMemoryMode::Count,
-                    EgressMode::Count,
+                    EgressMode::Enforce,
                     &cache_dir,
                 )
                 .expect("build_engine_with_host_memory_and_compilation_cache"),
@@ -688,8 +687,8 @@ interface tcp-create-socket {
         drop(engines);
         for (builder, code) in results {
             assert_eq!(
-                code, 0,
-                "{builder}: Count must allow start-connect; 0x1xx is a connect error, 0x2xx is a creation error"
+                code, 0x101,
+                "{builder}: Enforce must refuse start-connect with access-denied; 0x1xx is a connect error, 0x2xx is a creation error"
             );
         }
     }
@@ -730,7 +729,11 @@ interface tcp-create-socket {
         let engine = build_engine(&[]).expect("the production pooling engine");
         assert_memory_ceiling(&engine, MEMORY_CAP_BYTES);
         assert_eq!(engine.host_memory(), default_host_memory_budgets());
-        assert_eq!(engine.total_core_instances(), Some(DEFAULT_CORE_INSTANCES));
+        assert_eq!(engine.total_memories(), Some(DEFAULT_CORE_INSTANCES));
+        assert_eq!(
+            engine.pool_usage().map(|usage| usage.core_instances.total),
+            Some(u64::from(DEFAULT_CORE_INSTANCES))
+        );
     }
 
     #[test]
@@ -782,7 +785,11 @@ interface tcp-create-socket {
                 .expect("a resized pooling engine");
         assert_memory_ceiling(&engine, cap_bytes);
         assert_eq!(engine.host_memory(), budgets);
-        assert_eq!(engine.total_core_instances(), Some(4));
+        assert_eq!(engine.total_memories(), Some(4));
+        assert_eq!(
+            engine.pool_usage().map(|usage| usage.core_instances.total),
+            Some(4)
+        );
     }
 
     /// The other half of the sizing: slots bound CONCURRENCY, so a one-slot
@@ -810,8 +817,13 @@ interface tcp-create-socket {
     }
 
     fn memory_budgets(pages: u64) -> HostMemoryBudgets {
-        HostMemoryBudgets::resolve(Some(pages * PAGE as u64), Some(4 * PAGE as u64), Some(4))
-            .expect("nonzero guest budgets")
+        HostMemoryBudgets::resolve(
+            Some(pages * PAGE as u64),
+            Some(4 * PAGE as u64),
+            None,
+            Some(4),
+        )
+        .expect("nonzero guest budgets")
     }
 
     fn memory_store(engine: &Engine) -> (Store<SharedCtx>, Memory) {

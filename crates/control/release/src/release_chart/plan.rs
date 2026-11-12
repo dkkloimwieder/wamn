@@ -488,6 +488,5 @@ pub(super) const REFUSED_VARIABLES: [&str; 9] = [
 ];
 
 /// The host group's raw-socket egress mode. Chart 2.11.0 defaults it to
-/// enforce. The owner ruling of 2026-10-21 (wamn-upgrade-2.11) keeps count
-/// unless the host group body names a mode.
-pub const SOCKET_EGRESS: &str = "count";
+/// enforce, as does WAMN unless the host group body names a mode.
+pub const SOCKET_EGRESS: &str = "enforce";

@@ -8,10 +8,9 @@ use std::process::Command;
 use std::sync::OnceLock;
 
 const CRATES_IO_SOURCE: &str = "registry+https://github.com/rust-lang/crates.io-index";
-// The lockfile resolution and the workspace requirement are separate facts.
-// Upstream 2.11.0 requires 48.0.7, above the compatible workspace requirement.
-const WASMTIME_RESOLVED: &str = "48.0.7";
-const WASMTIME_REQUIREMENT: &str = "48.0.5";
+// Pin the shared type universe to the wasmCloud v2.12.1 release.
+const WASMTIME_RESOLVED: &str = "48.0.8";
+const WASMTIME_REQUIREMENT: &str = "=48.0.8";
 const ASYNC_NATS_VERSION: &str = "0.49.1";
 
 #[derive(Debug, Deserialize)]
@@ -220,7 +219,7 @@ fn workspace_owns_canonical_wasmtime_source_contract() {
     assert_eq!(
         workspace.get("wasmtime").map(String::as_str),
         Some(
-            "{version=\"48.0.5\",default-features=false,features=[\"cache\",\"parallel-compilation\"]}"
+            "{version=\"=48.0.8\",default-features=false,features=[\"cache\",\"parallel-compilation\"]}"
         ),
         "workspace must own the cache-enabled canonical `wasmtime` requirement"
     );
@@ -286,7 +285,7 @@ fn resolved_wasmtime_type_universe_is_single_and_canonical() {
 fn resolved_async_nats_universe_is_single_and_canonical() {
     let root = repository();
     let workspace = dependency_declarations(&root.join("Cargo.toml"), "workspace.dependencies");
-    let expected = format!("{{version=\"{ASYNC_NATS_VERSION}\",default-features=false}}");
+    let expected = format!("{{version=\"={ASYNC_NATS_VERSION}\",default-features=false}}");
     assert_eq!(
         workspace.get("async-nats").map(String::as_str),
         Some(expected.as_str()),

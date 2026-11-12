@@ -95,7 +95,7 @@ impl HostPlugin for Observer {
         item: &mut WorkloadItem<'a>,
         _interfaces: WitInterfaces<'_>,
     ) -> anyhow::Result<()> {
-        let mut instance = item.linker().instance(OBSERVE)?;
+        let mut instance = item.linker()?.instance(OBSERVE)?;
         let starts = Arc::clone(&self.starts);
         let allocated_starts = Arc::clone(&self.allocated_starts);
         let engine = Arc::clone(&self.engine);

@@ -387,9 +387,9 @@ Pool capacity does not limit request admission or total memory.
 A chart host derives its guest memory budget from its cgroup: three quarters of the 768Mi limit, which is 576 MiB.
 A process memory guard at 90 percent of the limit refuses guest growth and new workloads in every mode.
 The guard samples resident memory once per second, so it is not a hard allocation cap.
-The host runs guest memory and raw-socket egress in count mode ([native alignment](native-alignment.md#retained-wamn-implementations)).
-Count records growth past the budget and connections that the socket policy refuses, and allows them.
-The host flags `--guest-memory-mode` and `--socket-egress` select enforce.
+The host runs guest memory in count mode and raw-socket egress in enforce mode ([native alignment](native-alignment.md#retained-wamn-implementations)).
+Guest memory count mode records growth past the budget and allows it. Socket enforce mode blocks traffic refused by policy.
+The host flags `--guest-memory-mode` and `--socket-egress` each accept count or enforce.
 Each linear memory keeps its 256 MiB ceiling.
 Existing route and queue admission limits and deployment memory limits remain independent.
 Wasmtime's pooling allocator remains enabled under its separate resource limits.

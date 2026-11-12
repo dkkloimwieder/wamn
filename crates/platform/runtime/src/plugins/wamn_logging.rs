@@ -716,7 +716,7 @@ impl HostPlugin for WamnLogging {
     ) -> anyhow::Result<()> {
         // The wash host path: one workload, one bind, both halves in order.
         self.register_workload_scope(item.id(), &item.local_resources().config, &interfaces);
-        self.add_linker_entries(item.linker(), &interfaces)
+        self.add_linker_entries(item.linker()?, &interfaces)
     }
 }
 

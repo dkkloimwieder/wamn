@@ -128,7 +128,6 @@ fn served_component<'a>(
 pub struct NativePolicy {
     resources: Arc<NativePolicyResources>,
     components: Arc<BTreeMap<String, ServedPolicies>>,
-    entry: Option<String>,
     bindings: Arc<RwLock<BTreeMap<String, ServedPolicies>>>,
     /// The scopes of calls that are still active.
     invocations: Arc<Mutex<BTreeSet<String>>>,
@@ -211,7 +210,6 @@ pub(super) fn new_native_policy(
     Ok(Arc::new(NativePolicy {
         resources: Arc::new(resources),
         components: Arc::new(facts),
-        entry: entry.map(|entry| native_entry_name(&entry.digest)),
         bindings: Arc::default(),
         invocations: Arc::default(),
         traces: Arc::default(),
@@ -309,14 +307,6 @@ impl InvocationPolicy for NativePolicy {
     type Facts = NativeFacts;
     type Authority = NativeAuthorityGuard;
     type Transaction = OperationTransaction;
-
-    async fn bind_application(
-        &self,
-        item: &mut WorkloadItem<'_>,
-        fact: &AdmittedComponent,
-    ) -> anyhow::Result<()> {
-        self.bind_component(item, Some(fact)).await
-    }
 
     /// Begin the request element's transaction under the claims of the call, on a scope
     /// of its own that ends after the transaction captures its claims, when the
@@ -586,11 +576,7 @@ impl Drop for NativeAuthorityGuard {
 }
 
 impl NativePolicy {
-    async fn bind_component(
-        &self,
-        item: &mut WorkloadItem<'_>,
-        declared: Option<&AdmittedComponent>,
-    ) -> anyhow::Result<()> {
+    async fn bind_component(&self, item: &mut WorkloadItem<'_>) -> anyhow::Result<()> {
         let name = match &*item {
             WorkloadItem::Component(component) => component.name(),
             WorkloadItem::Service(_) => anyhow::bail!("native-operation-service-not-admitted"),
@@ -599,34 +585,7 @@ impl NativePolicy {
             .components
             .get(name)
             .context("native binding does not name an admitted component")?;
-        let imports = match declared {
-            Some(fact) => {
-                let supported = self.world();
-                let world = item.world();
-                let mut imports = HashSet::new();
-                for import in &fact.imports {
-                    let declared = WitInterface::from(import.as_str());
-                    if !supported
-                        .imports
-                        .iter()
-                        .any(|provided| provided.contains(&declared))
-                    {
-                        continue;
-                    }
-                    for actual in &world.imports {
-                        if declared.same_package(actual)
-                            && actual.interfaces.is_superset(&declared.interfaces)
-                        {
-                            let mut interface = declared.clone();
-                            interface.name.clone_from(&actual.name);
-                            imports.insert(interface);
-                        }
-                    }
-                }
-                imports
-            }
-            None => item.world().imports,
-        };
+        let imports = item.world().imports;
         let imports: HashSet<_> = imports
             .into_iter()
             .map(|mut interface| {
@@ -643,7 +602,7 @@ impl NativePolicy {
             .collect();
         let interfaces = WitInterfaces::new(&imports);
         let component = item.component().clone();
-        let linker = item.linker();
+        let linker = item.linker()?;
         // No native call binds an operation entry, so each `wamn:operation`
         // call of the entry's route layer refuses as on an unbound entry.
         self.resources
@@ -666,27 +625,7 @@ impl NativePolicy {
             "blobstore",
             &["types", "container", "blobstore"],
         ) {
-            if declared.is_none() {
-                blobstore::add_to_linker(linker)?;
-            } else {
-                use wamn_runtime::plugins::wamn_blobstore::bindings::wasmcloud::blobstore;
-                use wash_runtime::engine::ctx::{SharedCtx, extract_active_ctx};
-                if interfaces.contains("wasmcloud", "blobstore", &["types"]) {
-                    blobstore::types::add_to_linker::<_, SharedCtx>(linker, extract_active_ctx)?;
-                }
-                if interfaces.contains("wasmcloud", "blobstore", &["container"]) {
-                    blobstore::container::add_to_linker::<_, SharedCtx>(
-                        linker,
-                        extract_active_ctx,
-                    )?;
-                }
-                if interfaces.contains("wasmcloud", "blobstore", &["blobstore"]) {
-                    blobstore::blobstore::add_to_linker::<_, SharedCtx>(
-                        linker,
-                        extract_active_ctx,
-                    )?;
-                }
-            }
+            blobstore::add_to_linker(linker)?;
         }
         if let Some(integrations) = &self.resources.integrations {
             let owners = policy
@@ -698,9 +637,7 @@ impl NativePolicy {
                     )
                 })
                 .collect::<Vec<_>>();
-            integrations
-                .add_to_linker(item, &owners, declared.map(|fact| fact.imports.as_slice()))
-                .await?;
+            integrations.add_to_linker(item, &owners).await?;
         }
         item.add_plugin(INVOCATION_TRACES_ID, Arc::clone(&self.traces) as _);
         item.add_plugin(WAMN_POSTGRES_ID, Arc::clone(&self.resources.postgres) as _);
@@ -717,7 +654,7 @@ impl NativePolicy {
             .write()
             .expect("native component bindings lock poisoned")
             .insert(item.id().to_owned(), Arc::clone(policy));
-        // The owning loader installs this policy plugin after binding succeeds.
+        // Native resolution installs this policy plugin after binding succeeds.
         // No invocation registries are populated during binding or initialization.
         Ok(())
     }
@@ -762,21 +699,7 @@ impl HostPlugin for NativePolicy {
         item: &mut WorkloadItem<'a>,
         _interfaces: WitInterfaces<'_>,
     ) -> anyhow::Result<()> {
-        if let WorkloadItem::Component(component) = &*item
-            && self.entry.as_deref() != Some(component.name())
-        {
-            // The loader binds applications after it replaces their WASI linker.
-            let policy = self
-                .components
-                .get(component.name())
-                .context("native binding does not name an admitted component")?;
-            self.bindings
-                .write()
-                .expect("native component bindings lock poisoned")
-                .insert(item.id().to_owned(), Arc::clone(policy));
-            return Ok(());
-        }
-        self.bind_component(item, None).await
+        self.bind_component(item).await
     }
 
     async fn on_workload_unbind(

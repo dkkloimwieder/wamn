@@ -47,19 +47,19 @@
 # The host groups use these native passthrough keys for registry credentials:
 #   runtime.hostGroups[].volumes      -> {{- with .volumes }}
 #   runtime.hostGroups[].volumeMounts -> {{- with .volumeMounts }}
-# Both expressions remain in templates/runtime/deployment.yaml:178,457 at upstream
-# bc5acfb8e15f7d6d199ca940354d82e590c2d5ff, the v2.11.0 release commit.
-# The same source passes group env entries through unchanged (:266-268). Resource blocks
-# replace the chart-wide block (:35) and remove defaultHeapMemory, coreInstances,
-# guestMemoryMode and maxConcurrentStarts before rendering Kubernetes resources (:475).
-# The four fields reach the host through their native WASH_* environment names (:239-265).
+# Both expressions remain in templates/runtime/deployment.yaml:179,499 at upstream
+# 8b0e24cb6610642783e3f16f5f1eac45ff2cb5aa, the v2.12.1 release commit.
+# The same source passes group env entries through unchanged (:305-307). Resource blocks
+# replace the chart-wide block (:36) and remove defaultHeapMemory, coreInstances,
+# guestMemoryMode and maxConcurrentStarts before rendering Kubernetes resources (:517).
+# The four fields reach the host through their native WASH_* environment names (:249-291).
 #
 # Historical records at 735b5798 and 2eadd937 inspected the v2.8.0 chart through
 # a fork checkout. The current dependency points directly to upstream and
 # carries no fork patches. Release manifests arrive over OCI, not ConfigMaps.
 #
 # Reinspect the exact source:
-#   git -C "$WASMCLOUD_CHECKOUT" grep -n 'with \.volumes\|with \.volumeMounts' bc5acfb8e15f7d6d199ca940354d82e590c2d5ff -- charts/runtime-operator/templates/runtime/deployment.yaml
+#   git -C "$WASMCLOUD_CHECKOUT" grep -n 'with \.volumes\|with \.volumeMounts' 8b0e24cb6610642783e3f16f5f1eac45ff2cb5aa -- charts/runtime-operator/templates/runtime/deployment.yaml
 # Distributed render and image identity requirements: wamn-0h0g.15.54.
 # Live stage 4 tests remain separate and unexecuted by this source inspection.
 

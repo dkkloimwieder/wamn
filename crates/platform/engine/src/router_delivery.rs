@@ -94,7 +94,7 @@ impl HostPlugin for RouterDelivery {
         if !interfaces.contains("wamn", "router-delivery", &["delivery"]) {
             return Ok(());
         }
-        add_to_linker(item.linker())?;
+        add_to_linker(item.linker()?)?;
         Ok(())
     }
 }

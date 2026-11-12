@@ -4,7 +4,7 @@
 //!
 //! Application admission rejects every P2 or P3 `wasi:sockets` interface before
 //! publication. WAMN installs the runtime's `SocketPolicy` with
-//! `EgressMode::Count`, which records policy refusals and allows traffic.
+//! `EgressMode::Enforce`, which blocks traffic refused by policy.
 //! Tenant artifacts never reach that path because admission rejects the
 //! package outright. The integration profile admits pinned sockets and refuses
 //! every other effect. Integration stores enforce their bound authority.

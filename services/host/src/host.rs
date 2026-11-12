@@ -288,11 +288,11 @@ pub struct HostArgs {
     )]
     pub guest_memory_mode: GuestMemoryMode,
 
-    /// Raw-socket egress mode. Count records policy refusals and allows the
-    /// connection. The chart renders this flag from `networking.socketEgress`.
+    /// Raw-socket egress mode. Enforce blocks traffic refused by policy.
+    /// The chart renders this flag from `networking.socketEgress`.
     #[arg(
         long,
-        default_value = "count",
+        default_value = "enforce",
         value_parser = clap::builder::PossibleValuesParser::new(["count", "enforce"])
             .map(|mode| if mode == "enforce" { EgressMode::Enforce } else { EgressMode::Count })
     )]
@@ -682,10 +682,10 @@ fn plugin_bindings(args: &HostArgs, source: &str) -> anyhow::Result<plugin::Plug
             Some(other) => anyhow::bail!("plugin {} has workloadConfig {other:?}", entry.id),
         };
         let mut set = plugin::PluginBindingSet::new(entry.id.clone())
-            .with_base(entry.config)
+            .with_base(entry.config.into())
             .with_workload_config(policy);
         for (name, binding) in entry.bindings {
-            set = set.with_binding(name, binding.config);
+            set = set.with_binding(name, binding.config.into());
         }
         if entry.id == plugin::wasmcloud_nats::PLUGIN_NATS_ID {
             let mut bundle = vec![(
@@ -732,6 +732,7 @@ fn host_memory(args: &HostArgs) -> anyhow::Result<HostMemoryBudgets> {
     HostMemoryBudgets::resolve_strs(
         args.max_guest_memory.as_deref(),
         Some(&args.default_heap_memory),
+        None,
         Some(args.core_instances),
     )
     .map_err(anyhow::Error::msg)
@@ -2862,17 +2863,20 @@ host:
         let native = plugin::wasmcloud_nats::WasmcloudNats::new();
         native.validate_bindings(&declared).unwrap();
         let narrows = |key: &str, ceiling: &str, value: &str| native.narrows(key, ceiling, value);
-        let resolve = |name: &str, overrides: &HashMap<String, String>| {
+        let resolve = |name: &str, overrides: &wash_runtime::wit::Config| {
             declared.resolve(name, overrides, &schema, &narrows)
         };
-        let events = resolve("events", &HashMap::new()).unwrap();
+        let events = resolve("events", &wash_runtime::wit::Config::new()).unwrap();
         assert_eq!(
-            events["servers"],
-            "nats://wamn-nats.platform.svc.cluster.local:4222"
+            events.get("servers"),
+            Some("nats://wamn-nats.platform.svc.cluster.local:4222")
         );
-        assert_eq!(events["tls-cert"], "/data-cert/tls.crt");
-        assert_eq!(events["stream-allow"], "EVT_7_fixture_7_widgets_4_prod");
-        assert!(resolve("foreign", &HashMap::new()).is_err());
+        assert_eq!(events.get("tls-cert"), Some("/data-cert/tls.crt"));
+        assert_eq!(
+            events.get("stream-allow"),
+            Some("EVT_7_fixture_7_widgets_4_prod")
+        );
+        assert!(resolve("foreign", &wash_runtime::wit::Config::new()).is_err());
         // R6: workloadConfig deny refuses a workload's connection or wider grant.
         for (key, value) in [
             ("servers", "nats://foreign.invalid:4222"),
@@ -2881,7 +2885,7 @@ host:
             ("stream-allow", ">"),
             ("subject-allow", ">"),
         ] {
-            let overrides = HashMap::from([(key.to_owned(), value.to_owned())]);
+            let overrides = [(key, value)].into_iter().collect();
             let error = resolve("events", &overrides).unwrap_err().to_string();
             assert!(error.contains(key), "{error}");
         }
@@ -3890,13 +3894,13 @@ host:
         );
         let error = parse(["wamn-host", "--guest-memory-mode=off"]).unwrap_err();
         assert!(error.to_string().contains("--guest-memory-mode"));
-        assert_eq!(cli.args.socket_egress, EgressMode::Count);
+        assert_eq!(cli.args.socket_egress, EgressMode::Enforce);
         assert_eq!(
-            parse(["wamn-host", "--socket-egress=enforce"])
+            parse(["wamn-host", "--socket-egress=count"])
                 .unwrap()
                 .args
                 .socket_egress,
-            EgressMode::Enforce
+            EgressMode::Count
         );
         let error = parse(["wamn-host", "--socket-egress=off"]).unwrap_err();
         assert!(error.to_string().contains("--socket-egress"));
@@ -3905,6 +3909,7 @@ host:
             HostMemoryBudgets {
                 max_guest_memory: 512 << 20,
                 default_heap_memory: 64 << 20,
+                max_memories: 7,
                 core_instances: 7,
             },
             "all native memory settings must reach the engine"

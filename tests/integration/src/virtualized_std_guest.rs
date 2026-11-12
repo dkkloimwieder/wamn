@@ -537,7 +537,7 @@ mod tests {
         wash_runtime::engine::guest_memory::install_memory_limiter(&mut store);
         store.set_epoch_deadline(u64::MAX / 2);
         let compiled = workload.component().clone();
-        let service = Service::instantiate_async(&mut store, &compiled, workload.linker())
+        let service = Service::instantiate_async(&mut store, &compiled, workload.linker()?)
             .await
             .map_err(|error| anyhow::anyhow!("instantiate the shipped flow-http guest: {error}"))?;
 
