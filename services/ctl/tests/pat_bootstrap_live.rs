@@ -572,3 +572,138 @@ async fn development_identity_survives_target_recreation_and_owned_teardown() {
     password_driver.abort();
     driver.abort();
 }
+
+#[tokio::test]
+async fn reset_worker_restores_a_recreated_database() -> anyhow::Result<()> {
+    use wamn_environment_control::environment::{
+        Platform,
+        document::EnvironmentDocument,
+        ensure,
+        sql::{self, ExpectedDatabase},
+    };
+
+    let scratch = wamn_test_infrastructure::scratch::ScratchRoot::create()?;
+    let mut postgres = wamn_test_postgres::start(&[])?;
+    let system = postgres.create_database("wamn_system")?;
+    let admin = wamn_package_control::database::connect(system.url()).await?;
+    admin
+        .batch_execute(
+            "CREATE ROLE wamn_system NOLOGIN; ALTER DATABASE wamn_system OWNER TO wamn_system",
+        )
+        .await?;
+    wamn_environment_control::provision_system::provision_system(
+        &wamn_environment_control::provision_system::ProvisionSystemRequest {
+            system_database_url: system.url().into(),
+            platform_domain: "example.invalid".into(),
+        },
+    )
+    .await?;
+    admin.batch_execute(&format!(
+        "BEGIN; SET LOCAL ROLE wamn_system; {} UPDATE registry.project_envs SET disposable=true; COMMIT;",
+        wamn_control_provision::test_database::seed_org_project_env_sql("acme", "apps", "dev"),
+    )).await?;
+    let document = EnvironmentDocument::from_json(br#"{"org":"acme","project":"apps","env":"dev","target":"cloud","policy":"dev","applications":{}}"#)?;
+    let instance = wamn_environment_control::provision_project_env::read_project_env_instance(
+        system.url(),
+        &document.triple(),
+    )
+    .await?;
+    let name = wamn_control_provision::project_env_database_name("acme", "apps", "dev", &instance);
+    let admin_url = url::Url::parse(system.url())?;
+    let credential = scratch.path().join("apply.json");
+    wamn_environment_control::provision_system::emit_apply_credential(
+        system.url(),
+        admin_url.host_str().expect("test PostgreSQL host"),
+        admin_url.port().expect("test PostgreSQL port"),
+        &credential,
+    )
+    .await?;
+    let credential: serde_json::Value = serde_json::from_slice(&std::fs::read(credential)?)?;
+    let platform = Platform {
+        system_database_url: credential["stringData"]["url"]
+            .as_str()
+            .expect("emitted apply URL")
+            .into(),
+        target: wamn_release_control::release_chart::Target {
+            kubeconfig: PathBuf::new(),
+            context: String::new(),
+            namespace: "hosts".into(),
+        },
+        chart: PathBuf::new(),
+        release_artifact_base: "registry.invalid/releases".into(),
+        registry_token_metadata: false,
+        registry_auth_file: scratch.path().join("registry.json"),
+        oci_ca_paths: Vec::new(),
+        insecure_registry: false,
+        package_artifact_base: None,
+        component_artifact_base: None,
+        database_namespace: "platform".into(),
+        database_host: None,
+        database_port: 5432,
+        host_group: None,
+        pat_issuer: wamn_identity_client::PatIssuerConfig::default(),
+        events: None,
+        auth_nats: None,
+    };
+    admin
+        .batch_execute(&format!(
+            "CREATE DATABASE {} OWNER wamn_db_owner",
+            wamn_pg_core::quote_ident(&name)
+        ))
+        .await?;
+    ensure::ensure_project_database(&platform, &document, &[], &admin, system.url()).await?;
+    sql::reset::prepare_retained(&platform, &document, system.url()).await?;
+    let expected_database = ExpectedDatabase::read(&platform, &document).await?;
+    let file = scratch.path().join("environment.json");
+    let expected = scratch.path().join("database.json");
+    std::fs::write(&file, document.canonical_json()?)?;
+    std::fs::write(&expected, serde_json::to_vec(&expected_database)?)?;
+    // CNPG supplies an empty database; the SQL worker must restore its pinned inputs.
+    admin
+        .batch_execute(&format!(
+            "DROP DATABASE {} WITH (FORCE)",
+            wamn_pg_core::quote_ident(&name),
+        ))
+        .await?;
+    admin
+        .batch_execute(&format!(
+            "CREATE DATABASE {} OWNER wamn_db_owner",
+            wamn_pg_core::quote_ident(&name)
+        ))
+        .await?;
+    let nats = start_platform_nats(&scratch.path().join("nats"));
+    wamn_platform_identity::kv_memory::create_buckets(&nats.client.connect(&nats.url).await?)
+        .await?;
+    let output = tokio::process::Command::new(env!("CARGO_BIN_EXE_wamn-ctl"))
+        .args(["env", "reset"])
+        .arg(&file)
+        .arg(&expected)
+        .env("WAMN_APPLY_DATABASE_URL", &platform.system_database_url)
+        .env("WAMN_SYSTEM_ADMIN_URL", system.url())
+        .env(
+            "WAMN_RELEASE_ARTIFACT_BASE",
+            &platform.release_artifact_base,
+        )
+        .env("WAMN_REGISTRY_AUTH_FILE", &platform.registry_auth_file)
+        .env("WAMN_NATS_URL", &nats.url)
+        .env("WAMN_NATS_TLS_CA", &nats.client.ca)
+        .env("WAMN_NATS_TLS_CERT", &nats.client.cert)
+        .env("WAMN_NATS_TLS_KEY", &nats.client.key)
+        .env_remove("WAMN_RELEASE_HOST_GROUP")
+        .stdin(Stdio::null())
+        .kill_on_drop(true)
+        .output()
+        .await?;
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let state = sql::schema::state(&platform, &document).await?;
+    assert_eq!(
+        state.initialization_identity.as_deref(),
+        expected_database.pending.as_deref(),
+        "the worker must restore the pending initialization before reconnect"
+    );
+    Ok(())
+}
