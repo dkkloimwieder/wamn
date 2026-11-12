@@ -10,7 +10,8 @@
 //! Remove control logins and, with `--data`, the instance roles.
 //! Remove the credential store Secret and its account before the final transaction.
 //! That transaction retains connection references until credential files are gone.
-//! Delete the environment row last and commit. A retained database keeps its rows.
+//! Remove the canonical environment ConfigMap, then delete the environment row
+//! last and commit. A retained database keeps its rows.
 //!
 //! The CR keeps `databaseReclaimPolicy: retain`, so the database and its data
 //! stay on the cluster, with the roles that own them, for manual recovery.
@@ -467,6 +468,17 @@ async fn delete_locked(
     }
     // Resolve the publisher before the final commit, while retry inputs remain.
     let changes = platform.auth_changes().await?;
+    let deleted = kubectl(
+        platform,
+        super::DEFAULT_NAMESPACE,
+        &["delete", "configmap", &shared, "--ignore-not-found"],
+        None,
+    )
+    .await
+    .context("delete the canonical environment ConfigMap")?;
+    if !deleted.is_empty() {
+        lines.push(deleted);
+    }
     lines.extend(delete_registry_rows(&mut system, triple, &instance, None).await?);
     let mut drops = wamn_platform_identity::connection_changes::ConnectionDrops::default();
     drops.env_key(&env_key);
