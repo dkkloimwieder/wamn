@@ -82,37 +82,47 @@ pub async fn read_target(
     let default = if !matches!(selection, UpgradeTarget::Host { .. })
         && values
             .as_ref()
+            .ok()
+            .and_then(Option::as_ref)
             .is_some_and(|v| v.pointer("/platform/chart").is_none())
     {
         owner_values(target, "platform", "wamn").await
     } else {
-        None
+        Ok(None)
     };
     target_status(
         document,
         target,
         selection,
-        values.as_ref(),
-        default.as_ref(),
+        values.as_ref().map(Option::as_ref).map_err(|error| *error),
+        default.as_ref().map(Option::as_ref).map_err(|error| *error),
     )
     .await
 }
 
-async fn owner_values(target: &Target, namespace: &str, name: &str) -> Option<Value> {
+async fn owner_values(target: &Target, namespace: &str, name: &str) -> Result<Option<Value>, ()> {
+    let releases = helm_json(target, &["list", "-a", "-n", namespace, "-o", "json"])
+        .await
+        .map_err(|_| ())?;
+    let releases = releases.as_array().ok_or(())?;
+    if !releases.iter().any(|release| release["name"] == name) {
+        return Ok(None);
+    }
     helm_json(
         target,
         &["get", "values", name, "-n", namespace, "-o", "json"],
     )
     .await
-    .ok()
+    .map(Some)
+    .map_err(|_| ())
 }
 
 async fn target_status(
     document: &ClusterDocument,
     target: &Target,
     selection: &UpgradeTarget,
-    values: Option<&Value>,
-    default: Option<&Value>,
+    values: Result<Option<&Value>, ()>,
+    default: Result<Option<&Value>, ()>,
 ) -> TargetStatus {
     let (name, namespace) = selection.owner(document);
     let label = match selection {
@@ -124,10 +134,20 @@ async fn target_status(
         UpgradeTarget::Host { group, .. } => {
             let mut selected = observation(
                 "selected artifact",
-                Category::Unknown,
-                "Restore access to the owning Helm release values",
+                if matches!(values, Ok(None)) {
+                    Category::Incomplete
+                } else {
+                    Category::Unknown
+                },
+                if matches!(values, Ok(None)) {
+                    "Rerun platform deploy"
+                } else {
+                    "Restore access to the owning Helm release values"
+                },
             );
-            if let Some(image) = crate::environment::runtime::host_image(values, group) {
+            if let Some(image) =
+                crate::environment::runtime::host_image(values.ok().flatten(), group)
+            {
                 let registry = image["registry"].as_str().unwrap_or_default();
                 if let (Some(repository), Some(tag)) =
                     (image["repository"].as_str(), image["tag"].as_str())
@@ -146,11 +166,10 @@ async fn target_status(
             }
             selected
         }
-        _ => selected_chart(
-            values
-                .filter(|v| v.pointer("/platform/chart").is_some())
-                .or(default),
-        ),
+        _ => selected_chart(match values {
+            Ok(Some(values)) if values.pointer("/platform/chart").is_none() => default,
+            values => values,
+        }),
     };
     selected.source = format!("Helm/{namespace}/{name}/selected");
     let (deployment, selector) = match selection {
@@ -265,12 +284,8 @@ fn combined(categories: impl IntoIterator<Item = Category>) -> Category {
 ///
 /// Query errors become `unknown` observations. This operation never provisions a resource or credential.
 pub async fn read(document: &ClusterDocument, target: &Target) -> anyhow::Result<PlatformStatus> {
-    let values = helm_json(
-        target,
-        &["get", "values", "wamn", "-n", "platform", "-o", "json"],
-    )
-    .await;
-    let mut selected = selected_chart(values.as_ref().ok());
+    let values = owner_values(target, "platform", "wamn").await;
+    let selected = selected_chart(values.as_ref().map(Option::as_ref).map_err(|error| *error));
     let mut targets = Vec::new();
     for selection in [UpgradeTarget::Control, UpgradeTarget::Identity] {
         targets.push(read_target(document, target, &selection).await);
@@ -293,21 +308,29 @@ pub async fn read(document: &ClusterDocument, target: &Target) -> anyhow::Result
         }
         let installed = owner_values(target, "hosts", name).await;
         // An unreadable owner cannot establish whether it has an explicit override.
-        if installed.is_none() {
+        if !matches!(installed, Ok(Some(_))) {
+            let mut selected = selected_chart(
+                installed
+                    .as_ref()
+                    .map(Option::as_ref)
+                    .map_err(|error| *error),
+            );
+            selected.source = format!("Helm/hosts/{name}/selected");
+            if installed.is_err() {
+                selected.next = Some("Restore access to the owning Helm release values".into());
+            }
             targets.push(TargetStatus {
                 name: format!("host:{name}"),
-                selected: observation(
-                    &format!("Helm/hosts/{name}/selected"),
-                    Category::Unknown,
-                    "Restore access to the owning Helm release values",
-                ),
+                category: selected.category,
+                selected,
                 warnings: vec![],
-                category: Category::Unknown,
                 observations: vec![],
             });
         }
         for group in installed
             .as_ref()
+            .ok()
+            .and_then(Option::as_ref)
             .and_then(|v| v.pointer("/runtime-operator/runtime/hostGroups"))
             .and_then(Value::as_array)
             .into_iter()
@@ -320,8 +343,17 @@ pub async fn read(document: &ClusterDocument, target: &Target) -> anyhow::Result
                 release: name.into(),
                 group: group_name.into(),
             };
-            let observed =
-                target_status(document, target, &selection, installed.as_ref(), None).await;
+            let observed = target_status(
+                document,
+                target,
+                &selection,
+                installed
+                    .as_ref()
+                    .map(Option::as_ref)
+                    .map_err(|error| *error),
+                Ok(None),
+            )
+            .await;
             if group.get("image").is_some() {
                 targets.push(observed);
             } else {
@@ -360,13 +392,6 @@ pub async fn read(document: &ClusterDocument, target: &Target) -> anyhow::Result
         )
         .await;
         observations.push(helm_status(namespace, name, result.as_ref().ok()));
-    }
-    // A missing operator release is known, so its chart value is missing, not unknown.
-    if observations
-        .iter()
-        .any(|item| item.source == "Helm/platform/wamn" && item.category == Category::Incomplete)
-    {
-        selected.category = Category::Incomplete;
     }
     let control_http = format!("{control}-http");
     let control_certificate = format!("wamn-nats-control-{}", document.org);
@@ -577,13 +602,20 @@ async fn list(
     Ok(serde_json::from_str(&body)?)
 }
 
-fn selected_chart(values: Option<&Value>) -> Observation {
+fn selected_chart(values: Result<Option<&Value>, ()>) -> Observation {
     let mut result = observation(
         "Helm/platform/wamn/platform.chart",
         Category::Unknown,
         "Restore access to the exact chart path recorded in Helm, or deploy an explicitly selected prepared chart",
     );
+    if matches!(values, Ok(None)) {
+        result.category = Category::Incomplete;
+        result.next = Some("Rerun platform deploy".into());
+        return result;
+    }
     let Some(path) = values
+        .ok()
+        .flatten()
         .and_then(|value| value.pointer("/platform/chart"))
         .and_then(Value::as_str)
     else {
@@ -1196,6 +1228,32 @@ mod tests {
     use serde_json::json;
 
     #[test]
+    fn namespace_without_releases_is_an_incomplete_platform() {
+        let namespace = json!({"kind":"Namespace","metadata":{"name":"platform"}});
+        let releases = json!([]);
+        let pods = json!({"items":[]});
+        let mut observations = vec![
+            helm_status(
+                namespace["metadata"]["name"].as_str().unwrap(),
+                "wamn",
+                Some(&releases),
+            ),
+            selected_chart(Ok(None)),
+            resource("platform/Deployment/runtime-operator", Ok(None)),
+        ];
+        for selection in [UpgradeTarget::Control, UpgradeTarget::Identity] {
+            let mut selected = selected_chart(Ok(None));
+            selected.source = format!("{selection:?}/selected");
+            observations.push(selected);
+        }
+        append_resources(&mut observations, "platform/pods", Some(&pods));
+        assert_eq!(
+            combined(observations.iter().map(|item| item.category)),
+            Category::Incomplete
+        );
+    }
+
+    #[test]
     fn helm_distinguishes_missing_failed_pending_and_unreadable_releases() {
         for (state, expected) in [
             ("deployed", Category::Ready),
@@ -1489,12 +1547,16 @@ mod tests {
                 &image
             );
         }
-        let selected = selected_chart(Some(
+        let selected = selected_chart(Ok(Some(
             &json!({"platform":{"chart":"/nonexistent/dep-08a-selected-chart"}}),
-        ));
+        )));
         assert_eq!(selected.category, Category::Unknown);
         assert!(selected.images.is_empty());
-        assert_eq!(selected_chart(None).category, Category::Unknown);
+        assert_eq!(selected_chart(Err(())).category, Category::Unknown);
+        assert_eq!(
+            selected_chart(Ok(Some(&json!({})))).category,
+            Category::Unknown
+        );
     }
 
     #[test]
@@ -1584,7 +1646,7 @@ mod tests {
             category: Category::Failed,
             targets: vec![TargetStatus {
                 name: "control".into(),
-                selected: selected_chart(None),
+                selected: selected_chart(Err(())),
                 category: Category::Failed,
                 warnings: vec![],
                 observations: vec![resource("hosts/Deployment/control", Ok(Some(&object)))],
