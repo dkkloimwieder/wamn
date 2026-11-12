@@ -257,6 +257,9 @@ fn kind_nodes_import_the_pinned_digest_and_hold_no_credential() {
             .args(["ec_paramgen_curve:prime256v1", "-nodes", "-days", "1"])
             .args(["-subj", "/CN=localhost", "-addext"])
             .arg("subjectAltName=DNS:localhost,IP:127.0.0.1")
+            // OpenSSL 3 marks a self-signed certificate CA:TRUE, which rustls
+            // refuses as a server certificate (CaUsedAsEndEntity).
+            .args(["-addext", "basicConstraints=critical,CA:FALSE"])
             .arg("-keyout")
             .arg(work.join("certs/key.pem"))
             .arg("-out")
