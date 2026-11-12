@@ -611,10 +611,13 @@ async fn prepare_artifacts(
             .find("        numbered_label =")
             .context("next model")?
             + start;
-        let counter = code[start..end].replace(
-            "counter = manifest.Model(\"counter\", _schema)",
-            "capture_counter = manifest.Model(\"capture_counter\", \"beta_capture\")",
-        );
+        // A package has one runtime schema, and its relations need distinct table names.
+        let counter = code[start..end]
+            .replace(
+                "counter = manifest.Model(\"counter\", _schema)",
+                "capture_counter = manifest.Model(\"capture_counter\", _schema)",
+            )
+            .replace("table = \"counter\"", "table = \"capture_counter\"");
         std::fs::write(
             &manifest,
             code.replacen("    models = {", &format!("    models = {{\n{counter}"), 1)
@@ -622,8 +625,8 @@ async fn prepare_artifacts(
         )?;
         std::fs::write(
             root.join("migrations/0002_capture.sql"),
-            "CREATE TABLE beta_capture.counter (\n\
-             id bigint GENERATED ALWAYS AS IDENTITY CONSTRAINT counter_id_pkey PRIMARY KEY,\n\
+            "CREATE TABLE beta_data.capture_counter (\n\
+             id bigint GENERATED ALWAYS AS IDENTITY CONSTRAINT capture_counter_id_pkey PRIMARY KEY,\n\
              label text NOT NULL, edit_version int4 NOT NULL DEFAULT 1,\n\
              created_at timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP);\n",
         )?;
