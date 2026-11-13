@@ -35,7 +35,7 @@ Supply the other flags below as the session needs them.
 Render the local collector before starting the session:
 
 ```bash
-tools/dev-collector "$WAMN_DEV_ENV_DIR"
+cargo xtask dev-collector "$WAMN_DEV_ENV_DIR"
 docker compose -f "$WAMN_DEV_ENV_DIR/local-artifacts/otel/compose.json" up --pull never --detach
 ```
 
@@ -201,7 +201,7 @@ Activation sets HOME to `/tmp`, the same value that the runtime-operator chart t
 The parity test compares HOME directly, so a change on either side fails the test.
 
 The chart's `runtime.env` list also supplies allocator residency, the bytes that each slot retains after use.
-Application and control hosts read this list, including those started by `tools/bench/local.sh`.
+Application and control hosts read this list, including those started by `cargo xtask bench-local`.
 `WASMTIME_POOLING_LINEAR_MEMORY_KEEP_RESIDENT` is `65536`. A release probe measured the 1179648-byte initial Receiving memory as slower, because the drop clears the kept range with memset.
 `WASMTIME_POOLING_TABLE_KEEP_RESIDENT` is `4096`, one host page covering the largest Receiving table of 3,360 bytes.
 `WASMTIME_POOLING_ASYNC_STACK_KEEP_RESIDENT` is `8192`, the two resident stack pages measured during Receiving instantiation.

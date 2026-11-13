@@ -73,7 +73,7 @@ The native runtime refuses absent membership at the existing guest error boundar
 The generator supplies fixed protocol rules and rejects authored fields for them.
 Receiving, Acme, and WMS use the same declaration format.
 
-Every package under `apps/` authors its manifest in `wamn.k`, a KCL file, and `tools/repo-lint` refuses a `wamn.json` at its root. Test fixtures outside `apps/` keep a hand-written `wamn.json`.
+Every package under `apps/` authors its manifest in `wamn.k`, a KCL file, and `cargo xtask repo-lint` refuses a `wamn.json` at its root. Test fixtures outside `apps/` keep a hand-written `wamn.json`.
 `wamn build` compiles it to `wamn.json` in the package's build output, and every reader reads that compiled file.
 The author states a fact once, in the place that owns it.
 The schema module fills authoring defaults, and generation adds each member that the table below marks derived, so the compiled file states what an authored `wamn.json` states.

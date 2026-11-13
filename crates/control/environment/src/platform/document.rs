@@ -101,7 +101,7 @@ impl UpgradeTarget {
 pub struct Buckets {
     pub web: String,
     pub otel: String,
-    /// The OpenTofu state bucket. `build-platform` keeps its daily counter below `build/`.
+    /// The OpenTofu state bucket.
     pub state: String,
 }
 

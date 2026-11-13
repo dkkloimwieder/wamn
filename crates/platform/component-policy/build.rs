@@ -11,9 +11,6 @@ use std::process::Command;
 use serde_json::Value;
 
 fn main() {
-    // platform_build::inputs::declared_reads needs literal directives. The
-    // lock file names the resolved wasmtime-wasi, and a registry source never
-    // changes under one version.
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-changed=../../../Cargo.lock");
 

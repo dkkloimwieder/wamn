@@ -11,14 +11,14 @@ The guest workspaces are `apps/Cargo.toml` and `apps/platform/no-std/Cargo.toml`
 Before a lane or test run, prepare the checkout once from its repository root:
 
 ```bash
-eval "$(tools/lane-start "$PWD")"
+eval "$(cargo xtask lane-start "$PWD")"
 ```
 
-The script initializes submodules and selects the Cargo cache directory.
+The command initializes submodules and selects the Cargo cache directory.
 It runs no builds, web installation, or database.
 Build the artifacts required by the selected command.
 For tests, [the selection file](../../tests/selection.toml) binds preparation to its consuming targets and suites.
-The script prints two exports.
+The command prints two exports.
 `CARGO_TARGET_DIR` is `$HOME/.cache/wamn-target/<key>`, and `WAMN_CHECKOUT_KEY` is the key.
 Cargo writes its output to `CARGO_TARGET_DIR`, so commands in this repository use `$CARGO_TARGET_DIR` and not `target/` or `apps/target`.
 `wamn build` still writes package output to `apps/target/wamn`.
@@ -26,9 +26,12 @@ Cargo writes its output to `CARGO_TARGET_DIR`, so commands in this repository us
 Platform installations use the full schema files under `deploy/sql/`.
 These files own each schema.
 
-## Platform version procedure
+## Platform version
 
-Every merged PR that changes a file that `wamn-ctl build-platform` reads bumps the platform patch version once, not once per commit (owner ruling 2026-10-20): `version` and `appVersion` of `deploy/platform/release/Chart.yaml`, its one owner (owner ruling 2026-10-14, `wamn-i69qo`, R15). `wamn-ctl` reads it at run time from the chart it uses, so no binary or image input changes with it (owner ruling 2026-10-23, `wamn-6qo7v`). A stale version is a findings-first failure.
+The platform version lives in `deploy/platform/release/Chart.yaml`.
+Keep `version` and `appVersion` equal.
+`cargo xtask build-platform` reads this version to tag images and role components.
+BuildKit decides which layers need to run again.
 
 ## Compile cache
 
@@ -75,7 +78,7 @@ Cargo writes the guests to `CARGO_TARGET_DIR`. If that variable is unset, it wri
 [`tools/guest-rustflags`](../../tools/guest-rustflags) sets the RUSTFLAGS of every guest build.
 It maps the repository to `/wamn` and the Cargo home to `/cargo`, so no guest carries a local path.
 It also maps the toolchain's `rust-src` tree to `/rustc/<commit-hash>`, so a toolchain with and without `rust-src` gives one digest.
-`wamn build` and the Dockerfile `component-builder` stage call it.
+`wamn build` calls it. The platform producer uses that same component builder.
 The build refuses a built guest that contains `/home/`, the Cargo home, or the repository path.
 A guest crate can hold a pin file beside its `Cargo.toml`, named for the artifact, for example `http_route.wasm.sha256`.
 The build and the Dockerfile stage refuse a guest that does not match its pin.
@@ -131,247 +134,55 @@ The router owns `wamn:node`. The runtime owns PostgreSQL, connection, JetStream,
 The execution host owns router delivery. The materializer owns the shared WASI CLI and clock packages.
 Application contracts lie under `wit/` in each package's build output, `apps/target/wamn/<package>/wit`, which `wamn build` writes. Do not copy platform WIT into application directories.
 
-## Local platform artifacts
+## Platform artifacts
 
-Artifact production runs separately from platform deployment and needs the source checkout.
-The producer builds `host`, `ctl`, and `identity` images plus the `http` and `materializer` role components.
-It needs no application package output or platform UI bundle.
-Deployment consumes these prepared artifacts and does not run a build.
+`cargo xtask build-platform` builds, pushes, and stamps the platform artifacts.
+It builds `host`, `ctl`, `identity`, and `edge-web` through Docker BuildKit.
+The two role components use the package component builder.
+Each guest gets its own Cargo invocation.
+The HTTP role composes the control entry after the component builder checks its pin.
+The ctl image receives the same checked HTTP component through a named BuildKit context.
 
-From the repository root, start or reuse the shared registry:
-
-```bash
-tools/local-registry
-```
-
-The helper uses `wamn-local-registry` with its persistent volume and publishes port 5001 on loopback.
-Make sure that its reported port matches `deploy/kind/cluster.k`, which selects `localhost:5001`.
-Keep the registry for later builds and deployments.
-Then produce the artifacts and a prepared chart at a path that does not exist:
+The registry must already be available and authenticated through the Docker configuration.
+For local deployment, use the registry address in `deploy/kind/cluster.k`.
+The output directory must not exist.
 
 ```bash
-wamn-ctl build-platform --registry localhost:5001 --out /tmp/wamn-platform-chart
+cargo xtask build-platform --registry localhost:5001 --out /var/tmp/wamn-platform-chart
 ```
 
-The command reuses unchanged published images when their inputs match.
-If the registry contains every selected artifact for the chart version, stamp a new chart:
+Each image uses the registry cache `<registry>/wamn-<image>:buildcache`.
+BuildKit imports that cache and exports all build stages after a successful build.
+The command runs on the machine where you call it.
+It does not choose another machine or manage a cloud spending counter.
+A failure stops publication at that step. Images already pushed remain in the registry.
+
+To stamp artifacts that already exist, run:
 
 ```bash
-wamn-ctl build-platform --stamp-only --registry localhost:5001 --out /tmp/wamn-platform-chart-restamped
+cargo xtask build-platform --stamp-only --registry localhost:5001 --out /var/tmp/wamn-platform-chart-restamped
 ```
 
-Both commands require the source checkout for the chart and deployment resources.
-Stamping refuses a missing selected artifact.
-The output includes pinned image references, the operator archive, the identity chart, and authored deployment resources under `platform/`.
-Copy the whole output directory when transferring it to another deployment host.
-[Local deployment](deployment.md#local-platform) uses this directory through an explicit `--chart` path and needs no source checkout.
+Stamping reads every selected digest from the registry and refuses a missing artifact.
+The chart holds the pinned images and role components in `values.yaml`.
+The output also carries the runtime operator archive, the identity and edge charts, and deployment resources under `platform/`.
+Transfer the whole output directory to another deployment machine.
+[Local deployment](deployment.md#local-platform) consumes it through `--chart`.
 
-The command writes stage start and end lines to stderr, with UTC timestamps and elapsed seconds.
-`platform-build.json` records elapsed milliseconds in `stage_durations_ms`.
-An end line marks stage exit, including failure. The command exit status reports success or failure.
+An explicit `--cluster` document with a web bucket selects the platform UI.
+Install web dependencies with `pnpm install --offline` first.
+The producer builds `@wamn/platform-ui` and publishes `<registry>/wamn/platform-ui:<platform version>`.
+The chart records its digest in `platformUi`.
+With `--stamp-only`, the command reads the published UI without a local bundle.
 
-## Platform UI
+## Repository tasks and tools
 
-The local platform build does not select the UI.
-An explicit `--cluster` document with a nonempty `buckets.web` selects it.
-For that separate path, install workspace dependencies with `pnpm install --offline` before the build.
-The producer then runs `pnpm --filter @wamn/platform-ui build`.
-The platform UI has no `wamn.k` or application package artifact.
-
-The producer publishes one deterministic OCI artifact under `<registry>/wamn/platform-ui:<platform version>`.
-The artifact contains only `dist/` and canonical `web.json` with the platform version.
-It uses the web archive format and the artifact type `application/vnd.wamn.platform-ui.v1`.
-It contains no organization configuration or application package.
-The prepared chart pins its manifest digest in `values.yaml` as `platformUi`.
-An empty value means that the build selects no UI.
-`platform-build.json` records only stage durations.
-
-With UI selection, `--stamp-only` resolves the published artifact tag from the registry.
-It reads no local UI output and publishes nothing.
-Deployment and [upload](deployment.md#platform-ui-files) use the published artifact.
-They need no source checkout, pnpm installation, or local UI bundle.
-
-## Unchanged platform images
-
-`build-platform` builds only the platform images whose inputs changed since an earlier push.
-The local platform images are `host`, `ctl`, and `identity`.
-An explicit GCP cluster document selects the retained `host`, `ctl`, `identity`, and `edge-web` set.
-The command always builds the `roles` target, which holds the `http` and `materializer` role components.
-It then compares each role by its wasm layer. See [Unchanged role components](#unchanged-role-components).
-
-The command calculates an input hash for each selected image.
-The input hash is a SHA-256 digest of the target name, the Docker build arguments, and a list of input files.
-The list records the path, the SHA-256 digest, and the mode of each file, or the target of a symbolic link.
-
-These files are inputs of every image:
-
-- `Dockerfile` and `.dockerignore`.
-- `Cargo.toml`, `Cargo.lock`, `.cargo/config.toml`, `apps/Cargo.toml`, and `apps/Cargo.lock`.
-- The `Cargo.toml` of every local package in the root and `apps` workspaces. One Cargo command builds many packages, and the features of all of them apply to each one.
-
-Each image also hashes the local packages that its binaries compile.
-The command reads them from `cargo metadata --all-features`, with normal and build dependencies.
-For each package, it hashes the whole package directory.
-It also hashes each path outside that directory that a source file names in a file-reading macro.
-These macros are `include_str!`, `include_bytes!`, `include!`, `#[path]`, `bindgen!`, and `generate!`.
-If a package has a procedural macro, the image hashes every file that the Dockerfile copies.
-If a package has a build script, the image hashes the paths that the script names in `cargo:rerun-if-changed` lines.
-A build script without such lines gets the same treatment as a procedural macro.
-
-| Image | Packages | Other inputs |
-| --- | --- | --- |
-| `host` | `wamn-host`, `wamn-runtime`, `wamn-cdc-reader` | none |
-| `ctl` | `wamn-ctl` and the two guests | `tools/guest-rustflags` |
-| `identity` | `wamn-identity` | none |
-| `edge-web` | `wamn-edge` | none |
-
-The two guests are `http-route` and `materializer`.
-The command ignores a file that no `COPY` from the build context reaches, and a file that `.dockerignore` drops.
-The `wamn.dev/source-head` label is not an input.
-
-The command prints one line for each image, with the hash and the action:
-
-```text
-build-platform <image> input-<hash> build
-build-platform <image> input-<hash> copy
-```
-
-Each built image gets a second tag, `input-<hash>`, and the label `wamn.dev/input-hash=<hash>`.
-Before it builds, the command looks for the `input-<hash>` tag of each image in the destination registry.
-The lookups for selected images run at the same time.
-If the tag is not found, the command builds the image as before.
-If the lookup fails for another reason, such as a network timeout, the command tries it once more.
-If the second lookup also fails, the command prints `build-platform <image> input-<hash> lookup failed: <error>` and builds the image.
-If the tag exists, the command does not build the image.
-It runs `docker buildx imagetools create --prefer-index=false` instead.
-The chart version tag then points at the same manifest, with the same digest.
-The copies run after every build succeeds, so a failed build still pushes nothing.
-
-`wamn-ctl` reads the chart version at run time from the chart it uses: `build-platform` from the checkout's `deploy/platform/release/Chart.yaml`, `env apply` and the cases from the stamped chart.
-No binary embeds `Chart.yaml`.
-So a bump that changes no other input copies every image.
-
-A copied image keeps the base image packages from its first build.
-To build every image again, change the `Dockerfile` or delete the `input-<hash>` tags.
-
-### Unchanged role components
-
-A role component has one layer, the wasm file. The layer digest is the SHA-256 digest of the wasm bytes.
-The manifest digest also covers a creation time, so the command never compares manifest digests.
-
-For each role, the command finds the previous chart version in the registry.
-That version is the highest `x.y.z` tag of `<registry>/wamn/<role>` below the chart version.
-The command reads the manifest of that tag and compares its layer digest with the digest of the new wasm.
-If they are equal, it stores that manifest byte for byte under the chart version tag.
-The chart then pins the role by the previous manifest digest.
-If they differ, or the lookup fails, the command pushes the role as before.
-
-The command prints one line for each compared role:
-
-```text
-build-platform <role> layer <digest> copy <previous version>
-build-platform <role> layer <digest> differs from <previous version>
-```
-
-The manifest copy uses no credential for a loopback registry.
-For other registries, it reads the credential from the Docker configuration or its credential helper.
-
-## Local revision builds
-
-Local revision builds store their images in a registry on the build host.
-The build needs no GCP access or cluster document.
-Input-hash lookups and role copies read this same registry.
-The platform journey uses the local platform artifact set.
-The build still pulls public base images unless Docker already holds them.
-
-Prepare the checkout with `tools/lane-start` as described above.
-Then run these commands from the repository root:
-
-```bash
-export TMPDIR=/var/tmp
-export DOCKER_CONFIG=$(mktemp -d /var/tmp/wamn-test-revision-docker.XXXXXX)
-printf '{}\n' > "$DOCKER_CONFIG/config.json"
-registry=$(tools/local-registry)
-revision_out=$(mktemp -d /var/tmp/wamn-test-revision.XXXXXX)
-cargo build --locked --offline -p wamn-ctl --bin wamn-ctl
-"$CARGO_TARGET_DIR/debug/wamn-ctl" build-platform \
-  --registry "$registry" --out "$revision_out/release-chart"
-export WAMN_RELEASE_CHART="$revision_out/release-chart"
-```
-
-The empty Docker configuration prevents Docker and wash from calling credential helpers.
-`tools/local-registry` starts or reuses only its labeled `wamn-local-registry` container.
-It prints `127.0.0.1:<port>` after the registry responds over HTTP.
-The container uses `registry:2` and keeps images in the `wamn-local-registry-data` volume.
-Platform deployment connects a reused registry to the kind network when needed.
-Keep it between revision runs so that unchanged images remain available.
-
-A loopback build stays local even when another builder runs.
-Do not pass `--cloud` for a loopback registry.
-Cloud Build cannot reach it, so the command refuses that combination.
-Run the [platform kind case](running-tests.md#platform-and-environment-apply-on-kind) with the exported chart and Docker configuration.
-Remove the temporary Docker configuration after the case finishes.
-A push to Artifact Registry is a separate artifact-production operation that requires an explicit owner request.
-
-## Cloud platform builds
-
-For a remote registry, `build-platform` reads the process list before a Docker build starts.
-If another `wamn-ctl build-platform` process builds images, the command uses Google Cloud Build.
-It ignores its own process and processes with `--stamp-only`.
-When no other build runs, it uses the local Docker build path.
-With `--cloud`, it uses Google Cloud Build even when no other build runs, under the same daily cap.
-A `--cloud` build runs no Docker build on this machine, so other builds do not count it as busy.
-For authorized artifact production in a remote registry, use `--cloud` to avoid waiting for another local build.
-GCP deployment integration remains unfinished.
-
-The cloud path requires `--cluster <cluster.k>`.
-It reads the project, `buckets.state` and `build_cloud_cap_usd` from that document.
-The cap defaults to USD 3 per UTC day.
-All existing flags keep their meaning, including the destination `--registry`.
-
-```bash
-# Only for explicitly requested cloud artifact production.
-wamn-ctl build-platform --cloud --cluster deploy/gcp/cluster.k --registry us-central1-docker.pkg.dev/wamn-dev/wamn --out /var/tmp/wamn-release-chart
-```
-
-The command submits the same Dockerfile targets with `gcloud builds submit` in `us-central1`, on `E2_HIGHCPU_8`.
-It stages the source in `gs://<buckets.state>/build/source/`, so Cloud Build needs no staging bucket of its own.
-Each image build runs `docker buildx build` in `docker:28.5.1-cli` on a `docker-container` builder.
-Cloud Build writes the build log to Cloud Logging only.
-Read a failed build with `gcloud logging read 'resource.type="build" AND resource.labels.build_id="<id>"' --project wamn-dev`.
-If gcloud fails, the command prints the last 20 lines of its stderr.
-Each image build pushes its image with `--push` when it finishes, with a fresh registry token. After the role export, the two role components are pushed under the same registry tag.
-The cloud path uses the same input hashes. Cloud Build builds only the images that have no `input-<hash>` tag, and pushes each of them under both tags.
-Cloud Build always builds the roles and pushes each one once under the chart version tag.
-After Cloud Build succeeds, the command copies the other images from this machine.
-Then it compares the layer of each pushed role with the previous chart version.
-If the layers are equal, it copies the previous manifest under the chart version tag.
-The command waits for Cloud Build, then reads the pushed digests and stamps the chart.
-If the cluster document selects UI storage, the UI build and recorded digest follow the local path.
-The `cloud-submit` stage prints start and end lines, including elapsed time.
-
-The root `.gcloudignore` excludes the `.dockerignore` paths and every target directory.
-Cloud and local platform builds use the same artifact set.
-Application build output and Cargo target caches stay outside the cloud upload.
-
-Before submission, the command reads `gs://<buckets.state>/build/<YYYY-MM-DD>.json` for the UTC submission day.
-For wamn-dev, `buckets.state` is the OpenTofu state bucket `wamn-dev-tofu-state`.
-An absent object means zero spend.
-Before each counter read or write, the command runs `gcloud auth print-access-token` with the agent `CLOUDSDK_CONFIG` and uses that token.
-It needs no application default credentials and no key file.
-At or above the cap, it refuses the cloud build and prints the spend and cap.
-The local path does not use the cloud cap.
-
-After a successful or failed cloud build, the command calculates elapsed minutes from its start and finish times, rounded up.
-Each minute adds USD 0.0156, the [e2-highcpu-8 default-pool rate for US regions](https://cloud.google.com/build/pricing).
-The counter records `cloud_minutes` and `spend_usd` against the submission day, including builds that finish after midnight.
-A generation precondition requires the object version read by the writer.
-If another writer changes it, the command reads the new value and retries the addition.
-
-The cap controls submissions, and it does not cancel a running build or reserve spend for one.
-Builds that run at the same time can take the total above the cap.
-The counter covers build minutes, not storage or network charges.
-The [owner inputs](gcp.md#1-owner-inputs) supply access and the separate monthly budget.
+`cargo xtask --help` lists repository tasks. The `justfile` calls those commands.
+[mise.toml](../../mise.toml) pins Helm, KCL, OpenTofu, and wash with download checksums.
+Run `mise install` to install them, then activate mise or use `mise exec -- <command>`.
+The pins retain the Linux x86_64 artifacts used by the former installers.
+Docker receives its Helm and KCL download pins from that same file.
+The [mise HTTP backend](https://mise.jdx.dev/dev-tools/backends/http.html) verifies those checksums.
 
 ## Package manifests
 
@@ -573,7 +384,7 @@ It compiles every native package in one `cargo build`, so features unify once.
 The `edge-web` image has its own stage, `build-edge-web`. It shares the target cache of `build-native`.
 A second invocation in the same stage builds only `wamn-ctl-ops` with the `ops` feature, because that feature reaches shared code and the shipped `wamn-ctl` builds without it.
 The key uses the first 16 hexadecimal characters of the SHA-256 hash of the canonical absolute checkout path, with no trailing newline.
-[`tools/lane-start`](../../tools/lane-start) sets `CARGO_TARGET_DIR=$HOME/.cache/wamn-target/<key>` and exports the key as `WAMN_CHECKOUT_KEY`.
+`cargo xtask lane-start` sets `CARGO_TARGET_DIR=$HOME/.cache/wamn-target/<key>` and exports the key as `WAMN_CHECKOUT_KEY`.
 Pass that key as Docker's `WAMN_CHECKOUT_KEY` build argument.
 A new checkout starts with a cold host build.
 
@@ -591,7 +402,7 @@ The cache mounts are not in the image. The stage copies each binary out of the t
 
 To bump the platform version, change `version` and `appVersion` in `deploy/platform/release/Chart.yaml` to the same new value.
 No other file holds the version.
-A bump alone gives every image the same input hash, so `build-platform` builds no image and copies each one to the new version tag.
+A version change runs the same BuildKit build with new output tags. BuildKit reuses unchanged layers.
 
 These changes make Cargo rebuild more:
 

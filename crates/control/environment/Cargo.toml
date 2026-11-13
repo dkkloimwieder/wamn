@@ -44,8 +44,6 @@ base64 = { workspace = true }
 chrono = { workspace = true, features = ["clock"] }
 hex = { workspace = true }
 oci-client = { workspace = true }
-docker_credential = "=1.4.0"
-object_store = { workspace = true, features = ["gcp"] }
 reqwest = { workspace = true, features = ["rustls"] }
 ring = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
@@ -74,6 +72,7 @@ wamn-package-control = { workspace = true }
 wamn-release-control = { workspace = true }
 
 [dev-dependencies]
+object_store.workspace = true
 wamn-package-artifact = { workspace = true, features = ["test-util"] }
 wamn-runtime = { workspace = true, features = ["test-util"] }
 wamn-execution-host = { workspace = true }
