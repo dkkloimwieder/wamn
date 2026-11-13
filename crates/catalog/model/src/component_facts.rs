@@ -264,11 +264,13 @@ pub struct ComponentSqlStatement {
     pub sql: String,
     pub binds: Vec<ComponentSqlField>,
     pub columns: Vec<ComponentSqlField>,
+    /// Relation effects recorded by the compiler for these SQL bytes.
+    pub relations: Vec<crate::profile::RelationProfile>,
     /// Whether this statement NEEDS A TRANSACTION, as PostgreSQL itself reports
     /// it at build time: the generic plan contains a `ModifyTable` node (it
     /// writes, including a data-modifying CTE) or a `LockRows` node (it takes a
     /// row lock, which autocommit would drop the instant the statement
-    /// returned). Never inferred from SQL text.
+    /// returned). Authored routine calls also require a transaction.
     pub transactional: bool,
 }
 
@@ -1790,6 +1792,7 @@ mod tests {
                 sql: sql.to_owned(),
                 // A SELECT fixture: PostgreSQL classifies it as needing no
                 // transaction.
+                relations: Vec::new(),
                 transactional: false,
                 binds: vec![ComponentSqlField {
                     name: "id".to_owned(),

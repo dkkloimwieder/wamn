@@ -21,16 +21,14 @@ fn value(name: &str, ty: SqlValueType, nullable: bool) -> StaticSqlValueDeclarat
 }
 
 /// Add the snapshot statements and the host data function for one authored read.
-pub(super) fn prepare(
-    files: &mut BTreeMap<String, Vec<u8>>,
+pub(super) fn prepare_sql(
     corpus: &mut BTreeMap<String, Vec<u8>>,
     catalog: &CatalogIr,
-    manifest: &crate::manifest::PackageManifest,
     name: &str,
     operation: &CustomOperationDeclaration,
-) -> Result<Option<CustomOperationDeclaration>, GenerateError> {
+) -> Option<CustomOperationDeclaration> {
     if operation.feed != Some(true) {
-        return Ok(None);
+        return None;
     }
     let source = operation
         .feed_source
@@ -41,9 +39,7 @@ pub(super) fn prepare(
         .values()
         .next()
         .expect("validated authored statement");
-    let text = std::str::from_utf8(&corpus[&statement.path])
-        .expect("validated authored SQL")
-        .to_owned();
+    let text = std::str::from_utf8(&corpus[&statement.path]).expect("validated authored SQL");
     let fields = statement
         .row
         .iter()
@@ -64,20 +60,19 @@ pub(super) fn prepare(
     let page_path = format!("generated/sql/{stem}/feed_page.sql");
     let changes_path = format!("generated/sql/{stem}/feed_changes.sql");
     for (path, text) in [
-        (&page_path, sql::authored_page(&text, &fields)),
+        (&page_path, sql::authored_page(text, &fields)),
         (
             &changes_path,
             sql::authored_changes(
                 catalog,
                 source,
-                &text,
+                text,
                 key,
                 &fields,
                 statement.parameters.len() + 1,
             ),
         ),
     ] {
-        insert_bytes(files, path, text.as_bytes().to_vec())?;
         corpus.insert(path.clone(), text.into_bytes());
     }
     let mut prepared = contract(operation);
@@ -125,9 +120,31 @@ pub(super) fn prepare(
             .collect(),
         },
     );
+    Some(prepared)
+}
+
+pub(super) fn emit(
+    files: &mut BTreeMap<String, Vec<u8>>,
+    manifest: &crate::manifest::PackageManifest,
+    name: &str,
+    operation: &CustomOperationDeclaration,
+) -> Result<(), GenerateError> {
+    if operation.feed != Some(true) {
+        return Ok(());
+    }
+    let key = &operation.lists.as_ref().expect("validated list").key_field[0];
+    let key_type = operation
+        .statements
+        .values()
+        .next()
+        .expect("validated statement")
+        .row
+        .iter()
+        .find(|field| &field.name == key)
+        .expect("validated key")
+        .ty;
     emit_data(files, &manifest.package, name, operation, key_type)?;
-    emit_component(files, &manifest.package.id, name, operation, key_type)?;
-    Ok(Some(prepared))
+    emit_component(files, &manifest.package.id, name, operation, key_type)
 }
 
 fn member(name: &str) -> String {

@@ -73,6 +73,7 @@ wamn-release-control = { workspace = true }
 
 [dev-dependencies]
 object_store.workspace = true
+sqlx = { workspace = true, features = ["postgres", "runtime-tokio"] }
 wamn-package-artifact = { workspace = true, features = ["test-util"] }
 wamn-runtime = { workspace = true, features = ["test-util"] }
 wamn-execution-host = { workspace = true }

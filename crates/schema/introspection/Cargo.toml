@@ -10,10 +10,11 @@ wamn-scalar.workspace = true
 wamn-catalog = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
-tokio-postgres.workspace = true
+sqlx = { workspace = true, features = ["postgres", "runtime-tokio"] }
 wamn-record-history = { workspace = true }
 
 [dev-dependencies]
+tokio-postgres.workspace = true
 wamn-fixture-package = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 wamn-test-postgres = { workspace = true }

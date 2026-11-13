@@ -764,8 +764,6 @@ fn quoted_constraint_names_remain_fail_loud_at_the_truncation_boundary() {
 fn refuses_every_documented_ruled_object_class() {
     for sql in [
         "CREATE EXTENSION pgcrypto;",
-        "CREATE FUNCTION inventory.f() RETURNS trigger LANGUAGE plpgsql AS $$BEGIN RETURN NEW; END$$;",
-        "CREATE PROCEDURE inventory.p() LANGUAGE SQL AS $$SELECT 1$$;",
         "CREATE TRIGGER t BEFORE INSERT ON inventory.item EXECUTE FUNCTION inventory.f();",
         "CREATE RULE r AS ON INSERT TO inventory.item DO NOTHING;",
         "CREATE EVENT TRIGGER e ON ddl_command_start EXECUTE FUNCTION inventory.f();",

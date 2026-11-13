@@ -1,16 +1,15 @@
 //! Filesystem and PostgreSQL-backed package materialization.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::fmt::Write as _;
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 #[cfg(test)]
 use wamn_scalar::SqlValueType;
 
 use anyhow::{Context as _, Result, ensure};
-use tokio_postgres::NoTls;
+use sqlx::{AssertSqlSafe, Row as _, SqlSafeStr as _};
 use wamn_schema_introspection::ir::CatalogIr;
-use wamn_schema_introspection::postgres::{DATA_ACCESS_ROLE, read_catalog_excluding_relations};
+use wamn_schema_introspection::postgres::read_catalog_excluding_relations;
 
 use crate::StatementTransactionality;
 use crate::authoring::{
@@ -20,10 +19,6 @@ use crate::client_component::emit_ts_components;
 use crate::client_ir::{ClientContractIr, published_routes};
 use crate::client_plan::ClientPlan;
 use crate::client_ts::{emit_ts_client, emit_ts_package_json};
-use crate::data_access::{
-    DATA_ACCESS_OVERLAY_PATH, DataAccessOverlay, DataAccessRelationFields, application_schemas,
-    derive_effective_data_access, render_effective_data_access_sql,
-};
 use crate::generate::GeneratedFile;
 use crate::manifest::{CONTROL_OWNED_RELATION_TABLES, PackageManifest};
 use crate::{AuthoredSql, GeneratedPackage, GenerationInput};
@@ -48,21 +43,50 @@ pub async fn materialize_package(database_url: &str, package_root: &Path) -> Res
 /// Introspect the package-owned schemas in one already-migrated PostgreSQL database.
 pub async fn introspect_package(database_url: &str, package_root: &Path) -> Result<CatalogIr> {
     let (_, manifest) = load_manifest(package_root)?;
-    introspect_with_manifest(database_url, &manifest).await
+    let sources = load_authored_sql(package_root, &manifest)?;
+    let authored = sources
+        .iter()
+        .map(|source| AuthoredSql::new(&source.path, &source.bytes))
+        .collect::<Vec<_>>();
+    introspect_with_manifest(database_url, &manifest, &authored).await
 }
 
 /// Introspect the schemas that `manifest` names, as [`introspect_package`] does.
 pub(crate) async fn introspect_with_manifest(
     database_url: &str,
     manifest: &PackageManifest,
+    authored_sql: &[AuthoredSql<'_>],
 ) -> Result<CatalogIr> {
     let schemas = application_schemas(manifest).context("resolve application schemas")?;
 
-    let (client, connection) = tokio_postgres::connect(database_url, NoTls)
+    let client = sqlx::PgPool::connect(database_url)
         .await
-        .context("connect to the already-migrated PostgreSQL database")?;
-    let connection_task = tokio::spawn(connection);
+        .context("connect to the migrated database")?;
     let schema_names = schemas.iter().map(String::as_str).collect::<Vec<_>>();
+    let mut selected = manifest
+        .models
+        .values()
+        .map(|model| model.table.clone())
+        .chain(
+            manifest
+                .internal_relations
+                .values()
+                .map(|relation| relation.table.clone()),
+        )
+        .collect::<BTreeSet<_>>();
+    for source in authored_sql {
+        let sql = std::str::from_utf8(source.bytes())
+            .with_context(|| format!("{} is not UTF-8", source.path()))?;
+        let parsed = pg_query::parse(sql).with_context(|| format!("parse {}", source.path()))?;
+        selected.extend(parsed.tables.into_iter().map(|(table, _)| table));
+    }
+    let selected = selected.into_iter().collect::<Vec<_>>();
+    let unselected = sqlx::query(AssertSqlSafe("SELECT n.nspname::text, c.relname::text FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = ANY($1::text[]) AND c.relname <> ALL($2::text[]) AND c.relkind IN ('r', 'v')".to_owned()).into_sql_str())
+        .bind(&schemas).bind(selected).fetch_all(&client).await.context("select the package's catalog relations")?;
+    let unselected = unselected
+        .iter()
+        .map(|row| (row.get::<String, _>(0), row.get::<String, _>(1)))
+        .collect::<Vec<_>>();
     let excluded_relations = schema_names
         .iter()
         .flat_map(|schema| {
@@ -70,250 +94,82 @@ pub(crate) async fn introspect_with_manifest(
                 .iter()
                 .map(move |table| (*schema, *table))
         })
-        .collect::<Vec<_>>();
-    let catalog_result = async {
-        read_catalog_excluding_relations(&client, &schema_names, &excluded_relations)
-            .await
-            .context("introspect package schemas")
-    }
-    .await;
-    drop(client);
-    connection_task
-        .await
-        .context("join PostgreSQL connection task")?
-        .context("drive PostgreSQL connection")?;
-    let catalog = catalog_result.context("introspect package schemas")?;
-    for view in catalog.views() {
-        for table in view.base_tables() {
-            if !schemas.iter().any(|schema| schema == table.schema()) {
-                anyhow::bail!(
-                    "view `{}.{}` reads relation `{}.{}` outside the application schemas. \
-                     External reads require data access derivation, which runs after introspection",
-                    view.schema(),
-                    view.name(),
-                    table.schema(),
-                    table.name(),
-                );
-            }
-        }
-    }
-    Ok(catalog)
-}
-
-/// Ask PostgreSQL which of these statements need a transaction.
-///
-/// `EXPLAIN (GENERIC_PLAN, FORMAT JSON)` plans a PARAMETERISED statement
-/// without executing it and without supplying binds -- which is the whole
-/// reason it exists (PostgreSQL 16+). A statement needs a transaction when its
-/// plan carries a `ModifyTable` node (it writes; a data-modifying CTE appears
-/// as a ModifyTable inside the CTE subplan) or a `LockRows` node (it takes a
-/// row lock, and autocommit would drop that lock the instant the statement
-/// returned).
-///
-/// The verdict is the SERVER'S. Nothing here reads SQL text.
-///
-/// Planning also tests authority. Every statement plans as `wamn_app` under
-/// exactly the grants that the package declaration derives, in one transaction
-/// that rolls back. PostgreSQL tests column privileges at plan time. A
-/// statement that reads a column outside those grants therefore fails here,
-/// and so does every whole-row reference that the grants do not cover. The
-/// error lists each refused statement with its path, SQLSTATE, and message.
-pub(crate) async fn classify_statements(
-    client: &mut tokio_postgres::Client,
-    corpus: &std::collections::BTreeMap<String, Vec<u8>>,
-    schemas: &[String],
-    grants: &str,
-) -> Result<StatementTransactionality> {
-    let transaction = client
-        .transaction()
-        .await
-        .context("begin the statement admission test transaction")?;
-    transaction
-        .batch_execute(&application_role_sql(schemas, grants))
-        .await
-        .context("apply the derived grants to the application role before planning")?;
-    classify_statements_in_transaction(
-        transaction,
-        corpus,
-        "the grants that the package declaration derives",
-    )
-    .await
-}
-
-/// Plan under current grants while retaining the caller's surrounding transaction.
-///
-/// A savepoint contains the role and search-path changes and is rolled back after
-/// planning, so the caller keeps its locks and its original session authority.
-pub async fn classify_statements_with_existing_grants_in_transaction(
-    transaction: &mut tokio_postgres::Transaction<'_>,
-    corpus: &BTreeMap<String, Vec<u8>>,
-    schema: &str,
-) -> Result<StatementTransactionality> {
-    let savepoint = transaction
-        .savepoint("upgrade_statement_admission")
-        .await
-        .context("begin the statement admission test savepoint")?;
-    classify_with_existing_grants(savepoint, corpus, schema).await
-}
-
-async fn classify_with_existing_grants(
-    transaction: tokio_postgres::Transaction<'_>,
-    corpus: &BTreeMap<String, Vec<u8>>,
-    schema: &str,
-) -> Result<StatementTransactionality> {
-    let search_path = postgres_protocol::escape::escape_identifier(schema);
-    transaction
-        .query_one(
-            "SELECT set_config('search_path', $1, true)",
-            &[&search_path],
+        .chain(
+            unselected
+                .iter()
+                .map(|(schema, table)| (schema.as_str(), table.as_str())),
         )
+        .collect::<Vec<_>>();
+    let result = read_catalog_excluding_relations(&client, &schema_names, &excluded_relations)
         .await
-        .context("select the runtime application schema before planning")?;
-    transaction
-        .batch_execute("SET LOCAL ROLE wamn_app")
-        .await
-        .context("select the application role without changing its grants")?;
-    classify_statements_in_transaction(transaction, corpus, "the existing grants").await
+        .context("introspect package schemas");
+    client.close().await;
+    result
 }
 
-async fn classify_statements_in_transaction(
-    mut transaction: tokio_postgres::Transaction<'_>,
+/// Classify effects without executing statements. Authored routine calls are writes.
+pub(crate) async fn classify_statements(
+    database_url: &str,
     corpus: &BTreeMap<String, Vec<u8>>,
-    grant_context: &str,
+    schemas: &[String],
 ) -> Result<StatementTransactionality> {
-    let mut verdicts = std::collections::BTreeMap::new();
-    let mut refusals = Vec::new();
+    use sqlx::Connection as _;
+    let calls = corpus
+        .iter()
+        .map(|(path, bytes)| {
+            let calls = crate::sql_analysis::called_routines(bytes)
+                .map_err(|detail| anyhow::anyhow!("{path}: {detail}"))?;
+            Ok((path.as_str(), calls))
+        })
+        .collect::<Result<BTreeMap<_, _>>>()?;
+    let referenced = calls
+        .values()
+        .flatten()
+        .filter_map(|name| name.rsplit('.').next())
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect::<Vec<_>>();
+    let mut connection = sqlx::PgConnection::connect(database_url)
+        .await
+        .context("connect to plan statements")?;
+    let routines = sqlx::query(AssertSqlSafe("SELECT n.nspname::text, p.proname::text FROM pg_catalog.pg_proc p JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace WHERE n.nspname = ANY($1::text[]) AND p.proname = ANY($2::text[])".to_owned()).into_sql_str())
+        .bind(schemas).bind(referenced).fetch_all(&mut connection).await.context("read called authored routine names")?;
+    let names = routines
+        .iter()
+        .flat_map(|row| {
+            let schema: String = row.get(0);
+            let name: String = row.get(1);
+            [format!("{schema}.{name}"), name]
+        })
+        .collect::<BTreeSet<_>>();
+    let mut paths = BTreeMap::new();
     for (path, bytes) in corpus {
         let sql =
             std::str::from_utf8(bytes).with_context(|| format!("statement {path} is not UTF-8"))?;
-        let statement = transaction
-            .savepoint("statement_admission")
-            .await
-            .with_context(|| format!("open a savepoint for statement {path}"))?;
-        // simple_query, NOT query_one: the statement carries $1..$n, and the
-        // extended protocol would treat those as parameters OF THE EXPLAIN and
-        // refuse with "expected N parameters but got 0". GENERIC_PLAN exists
-        // precisely so the planner supplies its own placeholders.
-        let planned = statement
-            .simple_query(&format!("EXPLAIN (GENERIC_PLAN, FORMAT JSON) {sql}"))
-            .await;
-        let messages = match planned {
-            Ok(messages) => {
-                statement
-                    .commit()
-                    .await
-                    .with_context(|| format!("release the savepoint of statement {path}"))?;
-                messages
-            }
-            Err(error) => {
-                let refusal = error.as_db_error().with_context(|| {
-                    format!("plan statement {path} against the migrated database")
-                })?;
-                refusals.push(format!(
-                    "{path}: {} {}",
-                    refusal.code().code(),
-                    refusal.message()
-                ));
-                statement
-                    .rollback()
-                    .await
-                    .with_context(|| format!("roll back the savepoint of statement {path}"))?;
-                continue;
-            }
-        };
-        let rendered = messages
-            .iter()
-            .find_map(|message| match message {
-                tokio_postgres::SimpleQueryMessage::Row(row) => row.get(0),
-                _ => None,
-            })
-            .with_context(|| format!("planning {path} returned no plan"))?;
-        let plan: serde_json::Value = serde_json::from_str(rendered)
-            .with_context(|| format!("parse the plan PostgreSQL returned for {path}"))?;
-        verdicts.insert(path.clone(), plan_needs_transaction(&plan));
-    }
-    transaction
-        .rollback()
-        .await
-        .context("roll back the statement admission test transaction")?;
-    ensure!(
-        refusals.is_empty(),
-        "PostgreSQL refused these statements as {DATA_ACCESS_ROLE} under {grant_context}:\n{}",
-        refusals.join("\n")
-    );
-    Ok(StatementTransactionality::from_paths(verdicts))
-}
-
-/// SQL that makes the application role hold exactly the derived grants and
-/// then plans as that role.
-///
-/// A fresh generation database has no `wamn_app`, so the transaction creates
-/// it with the production attributes. The rollback removes the role, the
-/// revocations, and the grants.
-fn application_role_sql(schemas: &[String], grants: &str) -> String {
-    let quote = postgres_protocol::escape::escape_identifier;
-    let role = quote(DATA_ACCESS_ROLE);
-    let mut sql = format!(
-        "DO $application_role$ BEGIN \
-           IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = '{DATA_ACCESS_ROLE}') THEN \
-             CREATE ROLE {role} NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE \
-               NOINHERIT NOREPLICATION NOBYPASSRLS; \
-           END IF; \
-         END $application_role$;\n"
-    );
-    // The derived grants revoke only the relations that the package catalog
-    // names. A shared database holds other relations in the same schemas.
-    for schema in schemas {
-        writeln!(
-            sql,
-            "REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA {} FROM PUBLIC, {role};",
-            quote(schema)
+        if calls[path.as_str()].iter().any(|name| names.contains(name)) {
+            paths.insert(path.clone(), true);
+            continue;
+        }
+        // The simple protocol lets PostgreSQL's generic planner supply the placeholders.
+        let mut rows = sqlx::raw_sql(
+            AssertSqlSafe(format!("EXPLAIN (GENERIC_PLAN, FORMAT JSON) {sql}")).into_sql_str(),
         )
-        .expect("writing SQL to a String cannot fail");
+        .fetch_all(&mut connection)
+        .await
+        .with_context(|| format!("plan statement {path}"))?;
+        let row = rows
+            .pop()
+            .with_context(|| format!("planning {path} returned no plan"))?;
+        let plan: serde_json::Value = row
+            .try_get(0)
+            .with_context(|| format!("read the plan of {path}"))?;
+        paths.insert(path.clone(), plan_needs_transaction(&plan));
     }
-    sql.push_str(grants);
-    // Plan with the SAME search_path the guest runs under, or an unqualified
-    // relation the package owns cannot be resolved and every statement
-    // referencing it fails to plan.
-    // A package with no SQL has no schema, and plans nothing under public.
-    let search_path = schemas
-        .iter()
-        .map(|schema| quote(schema))
-        .chain(["public".to_owned()])
-        .collect::<Vec<_>>()
-        .join(", ");
-    writeln!(
-        sql,
-        "SET LOCAL search_path TO {search_path};\nSET LOCAL ROLE {role};"
-    )
-    .expect("writing SQL to a String cannot fail");
-    sql
-}
-
-/// The `wamn_app` grant SQL that the package declaration derives.
-///
-/// It renders the generated data-access contribution alone, through the same
-/// derivation that reconciles an installed package set.
-fn derived_grants(package: &GeneratedPackage) -> Result<String> {
-    let contribution = package
-        .file(DATA_ACCESS_OVERLAY_PATH)
-        .context("generation produced no data-access contribution")?;
-    let overlay = DataAccessOverlay::from_slice(contribution.bytes())
-        .context("parse the generated data-access contribution")?;
-    let relation_fields = overlay
-        .relations()
-        .iter()
-        .map(|relation| {
-            DataAccessRelationFields::new(
-                relation.schema(),
-                relation.table(),
-                relation.all_fields().to_vec(),
-            )
-        })
-        .collect::<Vec<_>>();
-    let effective = derive_effective_data_access(&relation_fields, &[overlay])
-        .context("derive the package data access")?;
-    render_effective_data_access_sql(&effective).context("render the package data access")
+    connection
+        .close()
+        .await
+        .context("close the planning connection")?;
+    Ok(StatementTransactionality::from_paths(paths))
 }
 
 /// Walk a plan tree for the two node types that require a transaction.
@@ -337,16 +193,16 @@ fn plan_needs_transaction(plan: &serde_json::Value) -> bool {
 /// This stage reads the package's manifest and authored SQL, but performs no
 /// database access. The supplied catalog is the sole schema input.
 pub fn materialize_package_from_catalog(catalog: &CatalogIr, package_root: &Path) -> Result<()> {
-    materialize_package_classified(catalog, package_root, &StatementTransactionality::default())
+    materialize_package_classified(
+        catalog,
+        package_root,
+        &StatementTransactionality::from_paths(BTreeMap::new()),
+    )
 }
 
 /// Materialize with PostgreSQL's verdict on which statements need a transaction.
 ///
-/// Generation runs TWICE. The first pass exists only to obtain the SQL corpus:
-/// the statements are generated from the catalog, so they cannot be planned
-/// before they exist. The second pass emits the contracts carrying the verdicts
-/// the server gave for that corpus. The bit is contract-only and never reaches
-/// SQL bytes, so both passes produce an identical corpus.
+/// This entry point shares the SQL preparation path with the package build.
 pub fn materialize_package_classified(
     catalog: &CatalogIr,
     package_root: &Path,
@@ -476,47 +332,6 @@ pub(crate) fn generate_from_manifest(
     .context("generate package artifacts")
 }
 
-/// Every statement this package will admit, keyed by the path its contracts
-/// name: authored SQL at the package root, generated SQL under `generated/`.
-/// The second value is the grant SQL that the package declaration derives.
-fn statement_corpus(
-    package_root: &Path,
-    catalog: &CatalogIr,
-) -> Result<(std::collections::BTreeMap<String, Vec<u8>>, String)> {
-    let (manifest_bytes, manifest) = load_compiled_manifest(package_root, catalog)?;
-    statement_corpus_from_manifest(catalog, &manifest_bytes, &manifest, package_root)
-}
-
-/// The statement corpus and derived grants of compiled manifest bytes that the
-/// caller holds, as [`statement_corpus`] gives them.
-pub(crate) fn statement_corpus_from_manifest(
-    catalog: &CatalogIr,
-    manifest_bytes: &[u8],
-    manifest: &PackageManifest,
-    package_root: &Path,
-) -> Result<(std::collections::BTreeMap<String, Vec<u8>>, String)> {
-    let mut corpus = std::collections::BTreeMap::new();
-    for source in load_authored_sql(package_root, manifest)? {
-        corpus.insert(source.path.clone(), source.bytes.clone());
-    }
-    let discovery = generate_from_manifest(
-        catalog,
-        manifest_bytes,
-        manifest,
-        package_root,
-        &StatementTransactionality::default(),
-    )?;
-    for file in discovery.files() {
-        if std::path::Path::new(file.path())
-            .extension()
-            .is_some_and(|extension| extension == "sql")
-        {
-            corpus.insert(file.path().to_owned(), file.bytes().to_vec());
-        }
-    }
-    Ok((corpus, derived_grants(&discovery)?))
-}
-
 async fn materialize_after_introspection<F>(package_root: &Path, introspection: F) -> Result<()>
 where
     F: std::future::Future<Output = Result<CatalogIr>>,
@@ -544,23 +359,25 @@ pub async fn materialize_package_verified_with_catalog(
     database_url: &str,
     package_root: &Path,
 ) -> Result<()> {
-    let (corpus, grants) = statement_corpus(package_root, catalog)?;
-
-    let (mut client, connection) = tokio_postgres::connect(database_url, NoTls)
-        .await
-        .context("connect to plan the package statements")?;
-    let connection_task = tokio::spawn(connection);
-    let (_, manifest) = load_manifest(package_root)?;
-    let schemas = application_schemas(&manifest).context("resolve application schemas")?;
-    let verdicts = classify_statements(&mut client, &corpus, &schemas, &grants).await;
-    drop(client);
-    connection_task
-        .await
-        .context("join PostgreSQL connection task")?
-        .context("drive PostgreSQL connection")?;
-    let verdicts = verdicts?;
-
-    materialize_package_classified(catalog, package_root, &verdicts)
+    let (manifest_bytes, manifest) = load_compiled_manifest(package_root, catalog)?;
+    let sources = load_authored_sql(package_root, &manifest)?;
+    let authored = sources
+        .iter()
+        .map(|source| AuthoredSql::new(&source.path, &source.bytes))
+        .collect::<Vec<_>>();
+    let preliminary = StatementTransactionality::from_paths(BTreeMap::new());
+    let input = GenerationInput::new(catalog, &manifest_bytes, &authored, &preliminary);
+    let corpus = crate::generate::sql_corpus(&input, &manifest)?;
+    let schemas = application_schemas(&manifest)?;
+    let mut verdicts = classify_statements(database_url, &corpus.statements, &schemas).await?;
+    verdicts.described =
+        crate::describe::describe_statements(database_url, &corpus.statements).await?;
+    let input = GenerationInput::new(catalog, &manifest_bytes, &authored, &verdicts);
+    let package = crate::generate::generate_described(&input, &manifest, &corpus)?;
+    write_files(
+        &crate::output_root(package_root),
+        &expected_files(&package)?,
+    )
 }
 
 /// The manifest bytes and their parse. A package authored in `wamn.k` compiles
@@ -1090,27 +907,6 @@ mod tests {
         }
     }
 
-    #[tokio::test]
-    async fn introspection_refuses_a_view_over_an_unread_external_relation() {
-        let package = TestPackage::new("external-view");
-        let (_, manifest) = load_manifest(&package.root).unwrap();
-        let database = wamn_test_postgres::database();
-        database
-            .execute(&["CREATE SCHEMA application;
-             CREATE SCHEMA external;
-             CREATE TABLE application.thing (id uuid);
-             CREATE TABLE external.item (id bigint);
-             CREATE VIEW application.item_view AS SELECT id FROM external.item"])
-            .unwrap();
-        let error = introspect_with_manifest(database.url(), &manifest)
-            .await
-            .unwrap_err();
-        let message = format!("{error:#}");
-        assert!(message.contains("application.item_view"), "{message}");
-        assert!(message.contains("external.item"), "{message}");
-        assert!(message.contains("data access"), "{message}");
-    }
-
     fn consumer(package: &TestPackage) -> PathBuf {
         fs::write(
             package.scratch.join("pnpm-workspace.yaml"),
@@ -1315,4 +1111,38 @@ mod tests {
         assert_ne!(mtime(), old, "a changed byte was not rewritten");
         assert_eq!(&fs::read(&path).expect("read the rewritten file"), original);
     }
+}
+
+pub(crate) fn application_schemas(
+    manifest: &PackageManifest,
+) -> Result<Vec<String>, crate::ManifestError> {
+    let schemas = manifest
+        .models
+        .values()
+        .map(|model| model.schema.clone())
+        .chain(manifest.custom_operations.values().flat_map(|operation| {
+            operation
+                .relations
+                .iter()
+                .map(|relation| relation.schema.clone())
+        }))
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect::<Vec<_>>();
+    // A composition with only stateless wrappers owns no SQL schema. Its bases
+    // own the SQL and contribute their grants when the release is applied.
+    if schemas.is_empty() && (manifest.declares_no_sql() || manifest.uses_only_base_sql()) {
+        return Ok(schemas);
+    }
+    if schemas.is_empty()
+        || !schemas
+            .iter()
+            .all(|schema| crate::manifest::validate_identifier(schema, "schema").is_ok())
+    {
+        return Err(crate::ManifestError::new(
+            crate::ManifestErrorType::InvalidManifest,
+            "manifest must name at least one valid application schema",
+        ));
+    }
+    Ok(schemas)
 }

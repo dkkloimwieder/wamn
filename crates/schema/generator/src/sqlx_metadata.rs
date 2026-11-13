@@ -10,8 +10,8 @@ use std::process::Command;
 use anyhow::{Context as _, Result, ensure};
 use serde_json::Value;
 
-use crate::data_access_schemas;
 use crate::manifest::PackageManifest;
+use crate::materialize::application_schemas;
 
 const SQLX_VERSION: &str = "0.9.0";
 
@@ -88,17 +88,13 @@ pub fn prepare_sqlx_metadata(package_root: &Path, database_url: &str) -> Result<
 
 /// Add the package schemas to PostgreSQL's existing connection options.
 pub fn package_database_url(database_url: &str, manifest: &PackageManifest) -> Result<String> {
-    let schemas = data_access_schemas(&serde_json::to_vec(manifest)?)
-        .context("resolve the package SQLx schemas")?;
-    let connection = database_url
-        .parse::<tokio_postgres::Config>()
-        .context("parse SQLx connection options")?;
+    let schemas = application_schemas(manifest).context("resolve the package SQLx schemas")?;
     let mut url = url::Url::parse(database_url).context("parse the SQLx database URL")?;
-    let options = format!(
-        "{} -csearch_path={},public",
-        connection.get_options().unwrap_or_default(),
-        schemas.join(",")
-    );
+    let existing = url
+        .query_pairs()
+        .find_map(|(key, value)| (key == "options").then(|| value.into_owned()))
+        .unwrap_or_default();
+    let options = format!("{existing} -csearch_path={},public", schemas.join(","));
     let encoded = url::form_urlencoded::Serializer::new(String::new())
         .append_pair("options", options.trim())
         .finish()

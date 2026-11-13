@@ -263,13 +263,6 @@ async fn stale_and_clean_builds_give_identical_outputs_and_build_records() {
         "wamn.json is not canonical"
     );
     let digest = build_record_first.outputs.manifest.clone();
-    let data_access: Value =
-        serde_json::from_slice(&files[Path::new("platform-policy/data-access.json")]).unwrap();
-    assert_eq!(
-        data_access.as_object().unwrap().keys().collect::<Vec<_>>(),
-        ["contract", "package", "relations", "role", "schemas"],
-        "the data-access overlay carries no package identity"
-    );
     assert_eq!(
         build_record_first.outputs.files.len(),
         files.len() - 1,
@@ -973,4 +966,31 @@ async fn overlay_builds_inherit_owner_fields_from_manifests_with_build_records()
             .contains("manifest differs from its build record"),
         "{error:#}"
     );
+}
+
+/// PostgreSQL describes the accessor's binds at the build interface.
+#[tokio::test]
+async fn a_statement_takes_exactly_the_parameters_its_accessor_binds() {
+    let database = wamn_test_postgres::database();
+    for (label, path, sql) in [
+        (
+            "list-binds",
+            "query/widget_list.sql",
+            "SELECT id, code, edit_version, to_jsonb(widget) AS attributes FROM widget WHERE id = $1 ORDER BY id",
+        ),
+        (
+            "archive-binds",
+            "command/widget/archive.sql",
+            "SELECT id, edit_version, note FROM widget WHERE id = $1 AND edit_version = $2 FOR UPDATE",
+        ),
+    ] {
+        let workspace = Workspace::new(label);
+        fs::write(workspace.package().join(path), sql).unwrap();
+        let request = BuildRequest::new(
+            &workspace.package(),
+            &workspace.root.join("output"),
+            database.url(),
+        );
+        assert!(generate_package(&request).await.is_err());
+    }
 }

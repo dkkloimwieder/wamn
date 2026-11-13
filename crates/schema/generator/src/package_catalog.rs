@@ -2,7 +2,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use wamn_schema_introspection::ir::{CatalogIr, Table};
+use wamn_schema_introspection::ir::{CatalogIr, ConstraintType, Table};
 
 use crate::manifest::PackageManifest;
 
@@ -140,5 +140,12 @@ pub fn project_package_catalog(
                 .with_exclusions(exclusions),
         );
     }
-    Ok(CatalogIr::new(tables))
+    let referencing = catalog.tables().iter().flat_map(Table::constraints)
+        .chain(catalog.referencing_constraints())
+        .filter(|constraint| {
+            !tables.iter().any(|table| table.constraints().contains(constraint))
+                && matches!(constraint.constraint_type(), ConstraintType::ForeignKey { referenced_schema, referenced_table, .. }
+                    if tables.iter().any(|table| table.schema() == referenced_schema.as_ref() && table.name() == referenced_table.as_ref()))
+        }).cloned().collect();
+    Ok(CatalogIr::new(tables).with_referencing_constraints(referencing))
 }

@@ -1,7 +1,7 @@
 //! `wamn build`: the two-pass package build (docs/operations/building.md#wamn-build).
 //!
 //! Pass one compiles `wamn.k` to its authored form, migrates a fresh
-//! verification database, describes every authored statement through SQLx,
+//! verification database, describes every statement through SQLx,
 //! derives the statement types and relations, and emits the canonical
 //! `wamn.json` (RFC 8785, hashed once). Pass two generates every consumer from
 //! those bytes and writes them, with `build.json`, to the package's build
@@ -21,7 +21,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use anyhow::{Context as _, Result, bail, ensure};
 use serde_json::{Map, Value};
-use tokio_postgres::NoTls;
+use sqlx::{AssertSqlSafe, Row as _, SqlSafeStr as _};
 use wamn_digest::canonical_json_bytes;
 use wamn_schema_introspection::ir::CatalogIr;
 use wamn_schema_introspection::postgres::authored_object_name;
@@ -33,12 +33,11 @@ use crate::build_record::{
     BuildRecord,
 };
 pub use crate::components::{build_components, build_guest};
-use crate::data_access::application_schemas;
 use crate::describe::{DescribedStatement, column_type, describe_statements};
 use crate::manifest::{CrudAction, PackageManifest, ResultClass, canonical_operation_identity};
+use crate::materialize::application_schemas;
 use crate::materialize::{
-    classify_statements, client_bindings, expected_files, generate_from_manifest,
-    introspect_with_manifest, statement_corpus_from_manifest, write_files,
+    classify_statements, client_bindings, expected_files, introspect_with_manifest, write_files,
 };
 use wamn_digest::bytes_sha256;
 
@@ -281,25 +280,25 @@ async fn pass_one_and_two(
     // Pass one.
     migrate(database_url, package_root, provisional).await?;
     let sources = provisional.load_sql(package_root)?;
-    let corpus = sources
-        .iter()
-        .map(|source| (source.path.clone(), source.bytes.clone()))
-        .collect::<BTreeMap<_, _>>();
-    let described = describe_statements(database_url, &corpus).await?;
+    let described = describe_statements(
+        database_url,
+        sources.iter().map(|source| (&source.path, &source.bytes)),
+    )
+    .await?;
     apply_statement_types(authored, &described)?;
     let typed = serde_json::to_vec(authored).context("serialize the typed manifest")?;
     let mut manifest =
         PackageManifest::parse_authored(&typed).context("parse the typed manifest")?;
-    let catalog = introspect_with_manifest(database_url, &manifest).await?;
+    let authored_sql = sources
+        .iter()
+        .map(|source| AuthoredSql::new(&source.path, &source.bytes))
+        .collect::<Vec<_>>();
+    let catalog = introspect_with_manifest(database_url, &manifest, &authored_sql).await?;
     // The build refuses correctness only (owner ruling 2026-10-18): a missing
     // pagination index is a warning.
     for warning in missing_paged_query_indexes(database_url, &catalog, &manifest).await? {
         eprintln!("warning: {warning}");
     }
-    let authored_sql = sources
-        .iter()
-        .map(|source| AuthoredSql::new(&source.path, &source.bytes))
-        .collect::<Vec<_>>();
     crate::generate::derive_model(&catalog, &mut manifest, &authored_sql, bases)
         .context("derive the statement relations")?;
     let canonical = canonical_json_bytes(&serde_json::to_value(&manifest)?);
@@ -312,21 +311,20 @@ async fn pass_one_and_two(
             }
         }
     }
-    let (corpus, grants) =
-        statement_corpus_from_manifest(&catalog, &canonical, &manifest, package_root)?;
+    let preliminary = crate::StatementTransactionality::from_paths(BTreeMap::new());
+    let input = crate::GenerationInput::new(&catalog, &canonical, &authored_sql, &preliminary);
+    let corpus = crate::generate::sql_corpus(&input, &manifest)?;
+    let remaining = corpus
+        .statements
+        .iter()
+        .filter(|(path, _)| !described.contains_key(*path));
+    let remaining = describe_statements(database_url, remaining).await?;
     let schemas = application_schemas(&manifest).context("resolve application schemas")?;
-    let (mut client, connection) = tokio_postgres::connect(database_url, NoTls)
-        .await
-        .context("connect to plan the package statements")?;
-    let connection_task = tokio::spawn(connection);
-    let verdicts = classify_statements(&mut client, &corpus, &schemas, &grants).await;
-    drop(client);
-    connection_task
-        .await
-        .context("join PostgreSQL connection task")?
-        .context("drive PostgreSQL connection")?;
-    let package =
-        generate_from_manifest(&catalog, &canonical, &manifest, package_root, &verdicts?)?;
+    let mut verdicts = classify_statements(database_url, &corpus.statements, &schemas).await?;
+    verdicts.described = described;
+    verdicts.described.extend(remaining);
+    let input = crate::GenerationInput::new(&catalog, &canonical, &authored_sql, &verdicts);
+    let package = crate::generate::generate_described(&input, &manifest, &corpus)?;
     let client = client_bindings(package_root, &manifest, &package)?;
     let mut files = expected_files(&package)?
         .into_iter()
@@ -338,8 +336,23 @@ async fn pass_one_and_two(
             .with_context(|| format!("client binding escaped output root: {}", file.path()))?;
         files.insert(relative.to_owned(), file.bytes().to_vec());
     }
-    record_view_columns(&mut files, &described)?;
     let physical = physical_schema(database_url, package_root, &manifest).await?;
+    if !physical.columns.is_empty() {
+        let history = wamn_schema_control::physical_schema::render(
+            &(&manifest).into(),
+            &[],
+            &physical.columns,
+        )?;
+        let history = history
+            .into_iter()
+            .map(|statement| statement.sql)
+            .collect::<Vec<_>>()
+            .join(";\n");
+        files.insert(
+            PathBuf::from("migrations/record_history.sql"),
+            history.into_bytes(),
+        );
+    }
     files.insert(
         PathBuf::from("physical-schema.json"),
         canonical_json_bytes(&serde_json::to_value(physical)?),
@@ -371,17 +384,19 @@ async fn physical_schema(
             }
         }
     }
-    let (client, connection) = tokio_postgres::connect(database_url, NoTls).await?;
-    let task = tokio::spawn(connection);
+    let client = sqlx::PgPool::connect(database_url).await?;
     let result = async {
         let mut columns = BTreeMap::new();
         for (id, model) in &manifest.models {
             if model.owner != manifest.package.id {
                 continue;
             }
-            let rows = client
-                .query(SELECT_RELATION_COLUMNS_SQL, &[&model.schema, &model.table])
-                .await?;
+            let rows =
+                sqlx::query(AssertSqlSafe((SELECT_RELATION_COLUMNS_SQL).to_owned()).into_sql_str())
+                    .bind(&model.schema)
+                    .bind(&model.table)
+                    .fetch_all(&client)
+                    .await?;
             columns.insert(
                 id.clone(),
                 rows.iter()
@@ -400,53 +415,8 @@ async fn physical_schema(
         })
     }
     .await;
-    drop(client);
-    task.await??;
+    client.close().await;
     result
-}
-
-fn record_view_columns(
-    files: &mut BTreeMap<PathBuf, Vec<u8>>,
-    described: &BTreeMap<String, DescribedStatement>,
-) -> Result<()> {
-    for (path, bytes) in files {
-        if !path.starts_with("source-map") {
-            continue;
-        }
-        let mut map: Value = serde_json::from_slice(bytes)?;
-        let columns = map
-            .get("statements")
-            .and_then(Value::as_object)
-            .into_iter()
-            .flatten()
-            .filter_map(|(name, statement)| {
-                let description = described.get(statement.get("path")?.as_str()?)?;
-                let columns = description
-                    .columns
-                    .iter()
-                    .filter(|column| column.view_column)
-                    .map(|column| column.name.clone())
-                    .collect::<Vec<_>>();
-                (!columns.is_empty()).then(|| (name.clone(), columns))
-            })
-            .collect::<BTreeMap<_, _>>();
-        if columns.is_empty() {
-            continue;
-        }
-        if let Some(accessors) = map.get_mut("wamn_accessors").and_then(Value::as_array_mut) {
-            for accessor in accessors {
-                if let Some(columns) = accessor
-                    .get("name")
-                    .and_then(Value::as_str)
-                    .and_then(|name| columns.get(name))
-                {
-                    accessor["sqlx_view_columns"] = serde_json::to_value(columns)?;
-                }
-            }
-        }
-        *bytes = canonical_json_bytes(&map);
-    }
-    Ok(())
 }
 
 /// One warning for each allowed sort of a paged query without its
@@ -500,31 +470,23 @@ async fn missing_paged_query_indexes(
             }
             // The normalized IR sorts columns by name. PostgreSQL retains the
             // definition order that the authored naming rule requires.
-            let (client, connection) = tokio_postgres::connect(database_url, NoTls)
+            let client = sqlx::PgPool::connect(database_url)
                 .await
                 .context("connect to name the missing pagination index")?;
-            let task = tokio::spawn(connection);
-            let columns = client
-                .query(
-                    "SELECT attribute.attname::text
+            let columns = sqlx::query(AssertSqlSafe(("SELECT attribute.attname::text
                      FROM pg_catalog.pg_attribute AS attribute
                      JOIN pg_catalog.pg_class AS relation ON relation.oid = attribute.attrelid
                      JOIN pg_catalog.pg_namespace AS namespace ON namespace.oid = relation.relnamespace
                      WHERE namespace.nspname = $1 AND relation.relname = $2
                        AND attribute.attnum > 0 AND NOT attribute.attisdropped
                        AND attribute.attname::text = ANY($3::text[])
-                     ORDER BY attribute.attnum",
-                    &[&model.schema, &model.table, &vec![field, tie_breaker]],
-                )
+                     ORDER BY attribute.attnum").to_owned()).into_sql_str()).bind(&model.schema).bind(&model.table).bind(vec![field, tie_breaker]).fetch_all(&client)
                 .await;
-            drop(client);
-            task.await
-                .context("join the index naming connection")?
-                .context("drive the index naming connection")?;
+            client.close().await;
             let columns = columns
                 .context("read the pagination index columns in table-definition order")?
                 .iter()
-                .map(|row| row.get::<_, String>(0))
+                .map(|row| row.get::<String, _>(0))
                 .collect::<Vec<_>>();
             let name = authored_object_name(table.name(), &columns, "idx");
             warnings.push(format!(
@@ -771,10 +733,9 @@ async fn migrate(
     schemas.dedup();
     directories.push(package_root.join("migrations"));
 
-    let (client, connection) = tokio_postgres::connect(database_url, NoTls)
+    let client = sqlx::PgPool::connect(database_url)
         .await
         .context("connect to the verification database")?;
-    let task = tokio::spawn(connection);
     let result = async {
         if !schemas.is_empty() {
             let quoted = schemas
@@ -792,14 +753,13 @@ async fn migrate(
                 quoted.join(", ")
             )
             .expect("writing to a String cannot fail");
-            client
-                .batch_execute(&sql)
+            sqlx::raw_sql(AssertSqlSafe(sql.clone()).into_sql_str()).execute(&client)
                 .await
                 .context("create the package schemas")?;
         }
         // Public platform identity keys support application foreign keys.
         // These verification relations contain no system database or registry data.
-        client.batch_execute("CREATE SCHEMA IF NOT EXISTS platform; CREATE TABLE IF NOT EXISTS platform.external_system (id uuid PRIMARY KEY); CREATE TABLE IF NOT EXISTS platform.file (id uuid PRIMARY KEY)").await.context("create platform references for package verification")?;
+        sqlx::raw_sql(AssertSqlSafe(("CREATE SCHEMA IF NOT EXISTS platform; CREATE TABLE IF NOT EXISTS platform.external_system (id uuid PRIMARY KEY); CREATE TABLE IF NOT EXISTS platform.file (id uuid PRIMARY KEY)").to_owned()).into_sql_str()).execute(&client).await.context("create platform references for package verification")?;
         for directory in directories {
             if !directory.exists() {
                 continue;
@@ -814,8 +774,7 @@ async fn migrate(
             for file in files {
                 let sql = fs::read_to_string(&file)
                     .with_context(|| format!("read migration {}", file.display()))?;
-                client
-                    .batch_execute(&sql)
+                sqlx::raw_sql(AssertSqlSafe(sql.clone()).into_sql_str()).execute(&client)
                     .await
                     .with_context(|| format!("apply migration {}", file.display()))?;
             }
@@ -823,18 +782,12 @@ async fn migrate(
         create_history_tables(&client, manifest).await
     }
     .await;
-    drop(client);
-    task.await
-        .context("join the migration connection")?
-        .context("drive the migration connection")?;
+    client.close().await;
     result
 }
 
 /// Create the history table of each relation the package keeps a log of.
-async fn create_history_tables(
-    client: &tokio_postgres::Client,
-    manifest: &ManifestSources,
-) -> Result<()> {
+async fn create_history_tables(client: &sqlx::PgPool, manifest: &ManifestSources) -> Result<()> {
     let logged = manifest
         .models
         .values()
@@ -843,46 +796,57 @@ async fn create_history_tables(
     if logged.is_empty() {
         return Ok(());
     }
-    client
-        .batch_execute(
-            "DO $application_role$ BEGIN \
+    sqlx::raw_sql(
+        AssertSqlSafe(
+            ("DO $application_role$ BEGIN \
                IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = 'wamn_app') THEN \
                  CREATE ROLE wamn_app NOLOGIN; \
                END IF; \
              EXCEPTION WHEN duplicate_object OR unique_violation THEN NULL; \
-             END $application_role$",
+             END $application_role$")
+                .to_owned(),
         )
-        .await
-        .context("create the application role")?;
-    let history = client.batch_execute(RECORD_HISTORY_SQL).await;
+        .into_sql_str(),
+    )
+    .execute(client)
+    .await
+    .context("create the application role")?;
+    let history = sqlx::raw_sql(AssertSqlSafe((RECORD_HISTORY_SQL).to_owned()).into_sql_str())
+        .execute(client)
+        .await;
     // The frozen bootstrap's advisory lock is database-local, but roles are
     // cluster-wide. A concurrent creator has committed before this collision
     // returns; the failed implicit transaction left no history DDL behind.
     if history
         .as_ref()
         .err()
-        .and_then(tokio_postgres::Error::as_db_error)
+        .and_then(sqlx::Error::as_database_error)
         .is_some_and(|error| {
-            error.code() == &tokio_postgres::error::SqlState::UNIQUE_VIOLATION
+            error.code().as_deref() == Some("23505")
                 && error.constraint() == Some("pg_authid_rolname_index")
         })
     {
-        client.batch_execute(RECORD_HISTORY_SQL).await
+        sqlx::raw_sql(AssertSqlSafe((RECORD_HISTORY_SQL).to_owned()).into_sql_str())
+            .execute(client)
+            .await
     } else {
         history
     }
     .context("apply record-history.sql")?;
-    client
-        .batch_execute(RECORD_HISTORY_APP_GRANTS_SQL)
+    sqlx::raw_sql(AssertSqlSafe((RECORD_HISTORY_APP_GRANTS_SQL).to_owned()).into_sql_str())
+        .execute(client)
         .await
         .context("apply record-history-app-grants.sql")?;
     for model in logged {
-        client
-            .batch_execute(&wamn_schema_control::physical_schema::history_table_sql(
+        sqlx::raw_sql(
+            AssertSqlSafe(wamn_schema_control::physical_schema::history_table_sql(
                 &model.into(),
             ))
-            .await
-            .with_context(|| format!("create history table of {}.{}", model.schema, model.table))?;
+            .into_sql_str(),
+        )
+        .execute(client)
+        .await
+        .with_context(|| format!("create history table of {}.{}", model.schema, model.table))?;
     }
     Ok(())
 }
@@ -943,16 +907,14 @@ impl VerificationDatabase {
 }
 
 async fn execute_on_server(server_url: &str, sql: &str) -> Result<()> {
-    let (client, connection) = tokio_postgres::connect(server_url, NoTls)
+    let client = sqlx::PgPool::connect(server_url)
         .await
         .context("connect to the PostgreSQL server")?;
-    let task = tokio::spawn(connection);
-    let result = client.batch_execute(sql).await;
-    drop(client);
-    task.await
-        .context("join the server connection")?
-        .context("drive the server connection")?;
-    result.with_context(|| format!("execute {sql}"))
+    let result = sqlx::raw_sql(AssertSqlSafe((sql).to_owned()).into_sql_str())
+        .execute(&client)
+        .await;
+    client.close().await;
+    result.map(|_| ()).with_context(|| format!("execute {sql}"))
 }
 
 /// Write the build output: every generated file, the canonical `wamn.json`,
@@ -1053,20 +1015,19 @@ mod tests {
         .await;
         fs::remove_dir_all(root).unwrap();
         result.expect("the verification database permits a platform.file foreign key");
-        let (client, connection) = tokio_postgres::connect(database.url(), NoTls)
-            .await
-            .unwrap();
-        let task = tokio::spawn(connection);
+        let client = sqlx::PgPool::connect(database.url()).await.unwrap();
         wamn_schema_introspection::postgres::read_catalog(&client, &["files_fixture"])
             .await
             .unwrap();
-        let error = client.batch_execute("INSERT INTO files_fixture.attachment(id, file_id) VALUES (gen_random_uuid(), gen_random_uuid())").await.unwrap_err();
+        let error = sqlx::raw_sql(AssertSqlSafe(("INSERT INTO files_fixture.attachment(id, file_id) VALUES (gen_random_uuid(), gen_random_uuid())").to_owned()).into_sql_str()).execute(&client).await.unwrap_err();
         assert_eq!(
-            error.code(),
-            Some(&tokio_postgres::error::SqlState::FOREIGN_KEY_VIOLATION)
+            error
+                .as_database_error()
+                .and_then(|error| error.code())
+                .as_deref(),
+            Some("23503")
         );
-        drop(client);
-        task.await.unwrap().unwrap();
+        client.close().await;
     }
 
     #[tokio::test]
@@ -1253,7 +1214,7 @@ mod tests {
         )
         .await
         .expect("migrate the test package");
-        let catalog = introspect_with_manifest(database.url(), manifest)
+        let catalog = introspect_with_manifest(database.url(), manifest, &[])
             .await
             .expect("introspect the migrated package");
         missing_paged_query_indexes(database.url(), &catalog, manifest)
@@ -1380,31 +1341,6 @@ mod tests {
                 "{error:#}"
             );
         }
-    }
-
-    #[test]
-    fn view_column_evidence_reaches_only_its_statement_accessor() {
-        let path = PathBuf::from("source-map/adjust.json");
-        let mut files = BTreeMap::from([(
-            path.clone(),
-            serde_json::to_vec(&json!({
-                "statements": {
-                    "select_quantity": {"path": "command/adjust/select_quantity.sql"},
-                    "table_read": {"path": "query/table.sql"}
-                },
-                "wamn_accessors": [{"name": "select_quantity"}, {"name": "table_read"}]
-            }))
-            .unwrap(),
-        )]);
-        let mut description = described(Some(true));
-        description.values_mut().next().unwrap().columns[0].view_column = true;
-        record_view_columns(&mut files, &description).unwrap();
-        let map: Value = serde_json::from_slice(&files[&path]).unwrap();
-        assert_eq!(
-            map["wamn_accessors"][0]["sqlx_view_columns"],
-            json!(["quantity"])
-        );
-        assert!(map["wamn_accessors"][1].get("sqlx_view_columns").is_none());
     }
 }
 

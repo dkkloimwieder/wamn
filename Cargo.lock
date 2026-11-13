@@ -6114,6 +6114,7 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_yaml",
+ "sqlx",
  "tar",
  "tokio",
  "tokio-postgres",
@@ -6789,6 +6790,7 @@ version = "0.1.0"
 dependencies = [
  "serde",
  "serde_json",
+ "sqlx",
  "tokio",
  "tokio-postgres",
  "wamn-catalog",

@@ -14,8 +14,6 @@ mod route_identity;
 pub mod schema;
 mod serving_manifest;
 mod signed_file_read;
-#[doc(hidden)]
-pub mod sql_lex;
 mod wiring;
 mod wiring_compatibility;
 mod workflow_condition;

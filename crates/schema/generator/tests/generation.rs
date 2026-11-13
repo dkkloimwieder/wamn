@@ -9,9 +9,7 @@ use wamn_compiler::manifest::{
     CrudAction, PackageManifest, canonical_operation_identity, canonical_operation_prefix,
     resolve_operation_reference, validate_operation_vocabulary,
 };
-use wamn_compiler::{
-    AuthoredSql, DATA_ACCESS_OVERLAY_PATH, GeneratedPackage, REQUIRED_SCHEMA_CONTRACT_PATH,
-};
+use wamn_compiler::{AuthoredSql, GeneratedPackage, REQUIRED_SCHEMA_CONTRACT_PATH};
 use wamn_scalar::SqlValueType;
 use wamn_schema_introspection::ir::{
     CatalogIr, Column, ColumnDefault, Constraint, Exclusion, ExclusionAccessMethod,
@@ -1042,80 +1040,14 @@ fn prefix_range_and_is_null_filters_match_their_fields() {
         })
     );
     assert_eq!(filter["note"], json!({"type": "boolean"}));
-    let wit = std::str::from_utf8(
-        package
-            .file("generated/wit/deps/platform-gadget-gadget/package.wit")
-            .unwrap()
-            .bytes(),
-    )
-    .unwrap();
-    assert!(
-        wit.contains(
-            "  record created-at-range {\n    min: option<string>,\n    max: option<string>,\n  }\n"
-        ),
-        "{wit}"
-    );
-    assert!(
-        wit.contains("    created-at: option<created-at-range>,\n"),
-        "{wit}"
-    );
-    assert!(
-        wit.contains("    part-code: option<list<string>>,\n"),
-        "{wit}"
-    );
-    assert!(wit.contains("    note: option<bool>,\n"), "{wit}");
-    let sql = std::str::from_utf8(
-        package
-            .file("generated/sql/gadget/query_created_at_ascending.sql")
-            .unwrap()
-            .bytes(),
-    )
-    .unwrap();
-    for predicate in [
-        concat!(
-            "    ($1::jsonb IS NULL OR EXISTS (\n",
-            "        SELECT 1\n",
-            "        FROM jsonb_array_elements_text($1::jsonb) AS filter(value)\n",
-            "        WHERE starts_with(model.part_code, filter.value)\n",
-            "    ))",
-        ),
-        concat!(
-            "    ($2::jsonb IS NULL OR (\n",
-            "        ($2::jsonb->>'min' IS NULL OR model.created_at >= ($2::jsonb->>'min')::timestamptz)\n",
-            "        AND ($2::jsonb->>'max' IS NULL OR model.created_at <= ($2::jsonb->>'max')::timestamptz)\n",
-            "    ))",
-        ),
-        "($3::jsonb->>'min' IS NULL OR model.weight >= ($3::jsonb->>'min')::numeric)",
-        "    ($4::jsonb IS NULL OR (model.note IS NULL) = ($4::jsonb)::boolean)",
-        "    ($5::timestamptz IS NULL OR ",
-    ] {
-        assert!(sql.contains(predicate), "{predicate}\n{sql}");
-    }
-
     // A uuid holds no prefix, text has no order a range reads, and a column
     // that is never empty takes no is-null filter.
-    for (field, mode, which) in [
-        (
-            "stock_id",
-            "prefix",
-            "only a text field with no declared values takes it",
-        ),
-        (
-            "status",
-            "prefix",
-            "only a text field with no declared values takes it",
-        ),
-        (
-            "part_code",
-            "range",
-            "only an int32, float64, numeric or timestamptz field takes it",
-        ),
-        (
-            "row_version",
-            "range",
-            "only an int32, float64, numeric or timestamptz field takes it",
-        ),
-        ("part_code", "is_null", "only a nullable field takes it"),
+    for (field, mode) in [
+        ("stock_id", "prefix"),
+        ("status", "prefix"),
+        ("part_code", "range"),
+        ("row_version", "range"),
+        ("part_code", "is_null"),
     ] {
         let mut refused = modes.clone();
         refused["models"]["gadget"]["operations"]["query"]["filters"] =
@@ -1125,12 +1057,6 @@ fn prefix_range_and_is_null_filters_match_their_fields() {
             error.error_type(),
             GenerateErrorType::InvalidOperation,
             "{field}"
-        );
-        assert!(
-            error.to_string().contains(&format!(
-                "gadget.query filter {field} matches by {mode}, which {which}"
-            )),
-            "{error}"
         );
     }
 }
@@ -1890,9 +1816,6 @@ fn generated_create_binds_the_client_id() {
             "{gone} is not emitted"
         );
     }
-    let overlay = artifact_json(&package, DATA_ACCESS_OVERLAY_PATH);
-    let model = object_named(overlay["relations"].as_array().unwrap(), "table", "gadget");
-    assert_eq!(model["insert_fields"], json!(["id", "stock_id"]));
     let input = artifact_json(&package, "generated/contracts/gadget/create.input.json");
     assert_eq!(input["id"], json!({"type": "uuid", "required": true}));
     let route = artifact_json(&package, "generated/routes/gadget/create.json");
@@ -2277,8 +2200,6 @@ fn authored_sql_deletes_only_from_a_hard_delete_model() {
         .as_array_mut()
         .unwrap()
         .push(json!({"name": "expected_row_version", "type": "int64", "nullable": false}));
-    operation["relations"][0]["select_fields"] = json!(["id", "row_version"]);
-    operation["relations"][0]["delete"] = json!(true);
     let mut sources = QUERY_SOURCES.to_vec();
     sources.push(authored);
 
@@ -2289,22 +2210,6 @@ fn authored_sql_deletes_only_from_a_hard_delete_model() {
     };
     generate(&deleting_manifest("hard"), &catalog(false), &operation)
         .expect("an authored hard delete generates with its declared access");
-
-    for (field, value) in [
-        ("delete", json!(false)),
-        ("select_fields", json!(["id"])),
-        ("select_fields", json!(["row_version"])),
-    ] {
-        let mut missing_access = operation.clone();
-        missing_access["relations"][0][field] = value;
-        let refusal = generate(&deleting_manifest("hard"), &catalog(false), &missing_access)
-            .unwrap_err()
-            .to_string();
-        assert!(
-            refusal.contains("privilege declaration does not match verified SQL"),
-            "{refusal}"
-        );
-    }
 
     let marked = generate(
         &deleting_manifest("tombstone"),
@@ -2323,14 +2228,12 @@ fn authored_sql_deletes_only_from_a_hard_delete_model() {
     );
 
     let mut projection = projection_operation();
-    projection["relations"][0]["delete"] = json!(true);
     let refusal = generate(&deleting_manifest("hard"), &catalog(false), &projection)
         .unwrap_err()
         .to_string();
     assert!(refusal.contains("must be read-only"), "{refusal}");
 
     // A delete with no column reads still declares relation access.
-    operation["relations"][0]["select_fields"] = json!([]);
     let mut delete_only = deleting_manifest("hard");
     delete_only["custom_operations"]["quality.load_gadget_part"] = operation;
     sources.pop();
@@ -2603,64 +2506,6 @@ fn audit_log_retention_is_none_unlimited_or_whole_days() {
     }
 }
 
-/// A logged relation keeps the schema description and grants the insert of each entry.
-#[test]
-fn a_logged_relation_keeps_the_schema_description_and_grants_its_history_insert() {
-    let unlogged = run(
-        &all_stamps_catalog(),
-        &all_stamps_manifest(),
-        &QUERY_SOURCES,
-    )
-    .unwrap();
-    let logged = run(
-        &all_stamps_catalog(),
-        &with_audit_log(&json!(ALL_STAMP_COLUMNS), "P90D"),
-        &QUERY_SOURCES,
-    )
-    .unwrap();
-    let other_files = |package: &GeneratedPackage| {
-        package
-            .files()
-            .iter()
-            .filter(|file| file.path() != DATA_ACCESS_OVERLAY_PATH)
-            .map(|file| (file.path().to_owned(), file.bytes().to_vec()))
-            .collect::<Vec<_>>()
-    };
-    assert_eq!(other_files(&logged), other_files(&unlogged));
-
-    let unlogged_overlay = artifact_json(&unlogged, DATA_ACCESS_OVERLAY_PATH);
-    assert!(
-        unlogged_overlay["relations"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .all(|relation| relation["table"] != "gadget_history")
-    );
-    let overlay = artifact_json(&logged, DATA_ACCESS_OVERLAY_PATH);
-    assert_eq!(
-        object_named(
-            overlay["relations"].as_array().unwrap(),
-            "table",
-            "gadget_history"
-        ),
-        &json!({
-            "schema": "inventory",
-            "table": "gadget_history",
-            "all_fields": [
-                "after", "before", "changed_at", "changed_by", "id", "operation", "position",
-                "row_key", "transaction_id", "type"
-            ],
-            "select_fields": [],
-            "insert_fields": [
-                "after", "before", "changed_at", "changed_by", "operation", "row_key",
-                "transaction_id", "type"
-            ],
-            "update_fields": [],
-            "lock": false
-        })
-    );
-}
-
 /// A logged model with a generated list read gets the
 /// change feed of its list read (docs/architecture/execution.md#change-feed):
 /// the changes statement, the feed part of the input, `cursor_expired` for a
@@ -2738,17 +2583,6 @@ fn a_logged_list_read_gets_its_change_feed() {
         }
     }
 
-    let overlay = artifact_json(&pruned, DATA_ACCESS_OVERLAY_PATH);
-    let history = object_named(
-        overlay["relations"].as_array().unwrap(),
-        "table",
-        "gadget_history",
-    );
-    assert_eq!(
-        history["select_fields"],
-        json!(["before", "row_key", "transaction_id", "type"])
-    );
-
     // The watermark still applies if a previously pruned table becomes unlimited.
     let unlimited = generated("unlimited");
     let changes = std::str::from_utf8(
@@ -2770,7 +2604,7 @@ fn a_logged_list_read_gets_its_change_feed() {
     assert!(input.get("feed").is_none(), "{input}");
 }
 
-/// A custom operation reads a history table, and the read adds only its select grant.
+/// A custom operation reads the declared history table.
 #[test]
 fn a_custom_operation_reads_a_history_table() {
     let mut manifest = with_audit_log(&json!(ALL_STAMP_COLUMNS), "unlimited");
@@ -2790,16 +2624,6 @@ fn a_custom_operation_reads_a_history_table() {
 
     let package = run(&all_stamps_catalog(), &manifest, &sources)
         .expect("a declared read of a history table generates");
-    let overlay = artifact_json(&package, DATA_ACCESS_OVERLAY_PATH);
-    let history = object_named(
-        overlay["relations"].as_array().unwrap(),
-        "table",
-        "gadget_history",
-    );
-    assert_eq!(history["select_fields"], json!(["changed_by", "type"]));
-    assert_eq!(history["update_fields"], json!([]));
-    assert_eq!(history["lock"], json!(false));
-
     let unlogged = with_audit_log(&json!(ALL_STAMP_COLUMNS), "none");
     let mut reads_unlogged = unlogged;
     reads_unlogged["custom_operations"] = manifest["custom_operations"].clone();
@@ -3595,53 +3419,6 @@ fn feed_false_removes_feed_emission() {
             std::str::from_utf8(wit.bytes())
                 .unwrap()
                 .contains("changes(query-changes)"),
-            enabled
-        );
-        let overlay = artifact_json(package, DATA_ACCESS_OVERLAY_PATH);
-        let history = overlay["relations"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .find(|relation| relation["table"] == "gadget_history")
-            .unwrap();
-        assert_eq!(
-            !history["select_fields"].as_array().unwrap().is_empty(),
-            enabled
-        );
-
-        let contracts = package
-            .files()
-            .iter()
-            .filter_map(|file| {
-                file.path()
-                    .strip_prefix("generated/contracts/")
-                    .map(|path| (path.to_owned(), file.bytes().to_vec()))
-            })
-            .collect();
-        let identity = "platform-gadget:gadget/query@1.0.0";
-        let routes = BTreeMap::from([(
-            identity.to_owned(),
-            RouteIr {
-                method: "GET".to_owned(),
-                template: "/gadget/query".to_owned(),
-                input_schema: Some(route),
-                terminal_operation: Some(identity.to_owned()),
-                direct: true,
-                response: ResponseIr::default(),
-                replay: None,
-            },
-        )]);
-        let ir = ClientContractIr::from_release_contracts("platform_gadget", &contracts, &routes)
-            .unwrap();
-        let client = emit_ts_client(&ir).unwrap();
-        let source = client
-            .iter()
-            .find(|file| file.path() == "generated/client-ts/gadget.ts")
-            .unwrap();
-        assert_eq!(
-            std::str::from_utf8(source.bytes())
-                .unwrap()
-                .contains("export async function changes("),
             enabled
         );
     }

@@ -3,8 +3,8 @@
 //! SQL executed in PostgreSQL.
 
 use serde_json::{Value, json};
+use wamn_compiler::GeneratedPackage;
 use wamn_compiler::ManifestErrorType as GenerateErrorType;
-use wamn_compiler::{DATA_ACCESS_OVERLAY_PATH, GeneratedPackage};
 use wamn_scalar::SqlValueType;
 use wamn_schema_introspection::ir::{CatalogIr, Column, Constraint};
 
@@ -506,31 +506,9 @@ fn live_generated_inserts_and_updates_stamp_only_changed_rows() {
             created_by uuid NOT NULL, updated_by uuid NOT NULL, updated_at timestamptz NOT NULL DEFAULT now());
             GRANT USAGE ON SCHEMA inventory TO wamn_app;
             GRANT SELECT ON inventory.gadget TO wamn_app;"]).unwrap();
-        let access = artifact_json(&package, DATA_ACCESS_OVERLAY_PATH);
-        let model = object_named(access["relations"].as_array().unwrap(), "table", "gadget");
-        assert_eq!(
-            model["insert_fields"],
-            json!(["created_by", "id", "part_code", "stock_id", "updated_by"])
-        );
-        assert_eq!(
-            model["update_fields"],
-            json!(["row_version", "stock_id", "updated_by"])
-        );
-        let columns = |name: &str| {
-            model[name]
-                .as_array()
-                .unwrap()
-                .iter()
-                .map(|value| value.as_str().unwrap())
-                .collect::<Vec<_>>()
-                .join(", ")
-        };
-        let grants = format!(
-            "GRANT INSERT ({}) ON inventory.gadget TO wamn_app; GRANT UPDATE ({}) ON inventory.gadget TO wamn_app;",
-            columns("insert_fields"),
-            columns("update_fields")
-        );
-        database.execute(&[&grants]).unwrap();
+        database
+            .execute(&["GRANT INSERT, UPDATE ON inventory.gadget TO wamn_app"])
+            .unwrap();
         let first = "00000000-0000-4000-8000-000000000001";
         let second = "00000000-0000-4000-8000-000000000002";
         let stock = "00000000-0000-4000-8000-000000000003";

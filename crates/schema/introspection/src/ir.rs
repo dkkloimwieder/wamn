@@ -13,6 +13,9 @@ use serde::{Deserialize, Serialize};
 /// A normalized application catalog.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CatalogIr {
+    /// Foreign keys from unselected relations into selected tables.
+    #[serde(default, skip_serializing_if = "<[Constraint]>::is_empty")]
+    referencing_constraints: Box<[Constraint]>,
     tables: Box<[Table]>,
     #[serde(default, skip_serializing_if = "<[View]>::is_empty")]
     views: Box<[View]>,
@@ -26,6 +29,7 @@ impl CatalogIr {
         }
         tables.sort();
         Self {
+            referencing_constraints: Box::default(),
             tables: tables.into_boxed_slice(),
             views: Box::default(),
         }
@@ -37,6 +41,19 @@ impl CatalogIr {
         views.sort();
         self.views = views.into_boxed_slice();
         self
+    }
+
+    /// Attach inbound foreign key facts without reading unrelated column types.
+    #[must_use]
+    pub fn with_referencing_constraints(mut self, mut constraints: Vec<Constraint>) -> Self {
+        constraints.sort();
+        self.referencing_constraints = constraints.into_boxed_slice();
+        self
+    }
+
+    /// Foreign keys on unselected relations that can refuse a selected delete.
+    pub fn referencing_constraints(&self) -> &[Constraint] {
+        &self.referencing_constraints
     }
 
     /// Ordinary application tables, ordered by schema and table name.
@@ -806,23 +823,11 @@ impl std::error::Error for IrError {}
 
 /// Map a PostgreSQL catalog type spelling to the frozen transport vocabulary.
 pub fn postgres_type(postgres_name: &str) -> Result<SqlValueType, IrError> {
-    match postgres_name {
-        "boolean" => Ok(SqlValueType::Boolean),
-        "integer" => Ok(SqlValueType::Int32),
-        "bigint" => Ok(SqlValueType::Int64),
-        "double precision" => Ok(SqlValueType::Float64),
-        "text" => Ok(SqlValueType::Text),
-        "bytea" => Ok(SqlValueType::Bytes),
-        "numeric" => Ok(SqlValueType::Numeric),
-        "timestamp with time zone" => Ok(SqlValueType::Timestamptz),
-        "jsonb" => Ok(SqlValueType::Json),
-        "uuid" => Ok(SqlValueType::Uuid),
-        unsupported => Err(IrError {
-            type_: IrErrorType::UnsupportedType,
-            input: unsupported.into(),
-            column_type: None,
-        }),
-    }
+    wamn_scalar::postgres_type(postgres_name).ok_or_else(|| IrError {
+        type_: IrErrorType::UnsupportedType,
+        input: postgres_name.into(),
+        column_type: None,
+    })
 }
 
 /// Exact typed server expressions shared by defaults and staged expression tests.

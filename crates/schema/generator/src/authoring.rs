@@ -325,7 +325,7 @@ manifest.Package {
         fs::remove_dir_all(&root).unwrap();
         let bytes = compiled.unwrap();
         let catalog = CatalogIr::new(Vec::new());
-        let transactions = StatementTransactionality::unclassified();
+        let transactions = StatementTransactionality::from_paths(std::collections::BTreeMap::new());
         let package =
             generate(&GenerationInput::new(&catalog, &bytes, &[], &transactions)).unwrap();
         let result: CustomOperationResultDeclaration = serde_json::from_slice(

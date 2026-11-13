@@ -31,8 +31,8 @@ use crate::manifest::{
     PackageManifest, RecordHistoryColumn, StaticSqlFetch, TombstoneColumn,
 };
 use crate::sql;
+use crate::sql_analysis::contains_schema_qualified_reference;
 use crate::{ManifestError as GenerateError, ManifestErrorType as GenerateErrorType};
-use wamn_catalog::sql_lex::contains_schema_qualified_reference;
 
 const QUERY_LIMIT: u32 = 100;
 const CURSOR_VERSION: u8 = 1;
@@ -77,30 +77,26 @@ impl<'a> AuthoredSql<'a> {
 /// generation time against the already-migrated database; nothing here reads
 /// SQL text.
 ///
-/// Generation runs TWICE: once to obtain the corpus with every verdict absent,
-/// then again with the verdicts the server gave for that corpus. The bit is
-/// contract-only and never reaches SQL bytes, so the corpus is identical across
-/// both passes.
-#[derive(Debug, Clone, Default)]
+/// SQL is emitted once. Build describes and classifies that corpus before
+/// any consumer reads these facts.
+#[derive(Debug, Clone)]
 pub struct StatementTransactionality {
     paths: BTreeMap<String, bool>,
+    pub(crate) described: BTreeMap<String, crate::describe::DescribedStatement>,
 }
 
 impl StatementTransactionality {
     /// Build from the server's verdicts, keyed by corpus path.
     #[must_use]
     pub const fn from_paths(paths: BTreeMap<String, bool>) -> Self {
-        Self { paths }
+        Self {
+            paths,
+            described: BTreeMap::new(),
+        }
     }
 
-    /// Absent verdicts, for the corpus-discovery pass.
-    #[must_use]
-    pub fn unclassified() -> Self {
-        Self::from_paths(BTreeMap::new())
-    }
-
-    /// The server's verdict for one corpus path. An unclassified path reads
-    /// `false` ONLY during the discovery pass, whose contracts are discarded.
+    /// The effect of one statement. Pure callers may supply their own facts;
+    /// the package build supplies a verdict for every corpus member.
     #[must_use]
     pub fn needs_transaction(&self, path: &str) -> bool {
         self.paths.get(path).copied().unwrap_or(false)
@@ -278,12 +274,6 @@ pub(crate) fn derive_model(
             validation::derive_relations(catalog, manifest, authored_sql, name, operation)?,
         );
     }
-    for (name, model) in &manifest.models {
-        let Some(table) = relation(catalog, model) else {
-            continue;
-        };
-        model_enum_fields(name, model, table)?;
-    }
     let mut feed_sources = BTreeMap::new();
     for (name, operation) in &manifest.custom_operations {
         if let Some(source) = crate::feed::derive(catalog, manifest, authored_sql, name, operation)?
@@ -305,7 +295,7 @@ pub(crate) fn derive_model(
             .expect("declared operation")
             .feed_source = Some(source);
     }
-    complete_enum_fields(catalog, manifest);
+    complete_enum_fields(catalog, manifest)?;
     manifest.validate()?;
     Ok(())
 }
@@ -315,28 +305,156 @@ pub(crate) fn derive_model(
 /// The one child process is `rustfmt`, which formats each emitted `.rs`
 /// artifact. It reads and writes only the bytes it is handed.
 pub fn generate(input: &GenerationInput<'_>) -> Result<GeneratedPackage, GenerateError> {
-    let mut manifest = PackageManifest::from_slice(input.manifest_json)?;
+    let manifest = PackageManifest::from_slice(input.manifest_json)?;
     manifest.validate()?;
-    complete_enum_fields(input.catalog, &mut manifest);
     generate_compiled(input, &manifest)
+}
+
+#[derive(Debug)]
+pub(crate) struct SqlCorpus {
+    pub(crate) statements: BTreeMap<String, Vec<u8>>,
+    pub(crate) relations: BTreeMap<String, Vec<wamn_catalog::profile::RelationProfile>>,
+    model_paths: BTreeMap<String, BTreeMap<String, Vec<String>>>,
+    custom_operations: BTreeMap<String, crate::manifest::CustomOperationDeclaration>,
+}
+
+pub(crate) fn sql_corpus(
+    input: &GenerationInput<'_>,
+    manifest: &PackageManifest,
+) -> Result<SqlCorpus, GenerateError> {
+    validate(input, manifest)?;
+    let mut statements = authored_sql_map(input.authored_sql)?;
+    let mut model_paths = BTreeMap::new();
+    for (name, model) in &manifest.models {
+        let table = relation(input.catalog, model).expect("validated relation");
+        let mut operations = BTreeMap::new();
+        for (action, operation) in &model.operations {
+            operations.insert(
+                action.as_str().to_owned(),
+                contracts::emit_operation_sql(
+                    &mut statements,
+                    name,
+                    table,
+                    *action,
+                    operation,
+                    model,
+                )?,
+            );
+        }
+        model_paths.insert(name.clone(), operations);
+    }
+    let mut custom_operations = BTreeMap::new();
+    for (name, operation) in &manifest.custom_operations {
+        if let Some(prepared) =
+            authored_feed::prepare_sql(&mut statements, input.catalog, name, operation)
+        {
+            custom_operations.insert(name.clone(), prepared);
+        }
+    }
+    let mut available = input
+        .catalog
+        .tables()
+        .iter()
+        .map(|table| {
+            (
+                table.name().to_owned(),
+                table
+                    .columns()
+                    .iter()
+                    .map(|column| column.name().to_owned())
+                    .collect::<BTreeSet<_>>(),
+            )
+        })
+        .chain(input.catalog.views().iter().map(|view| {
+            (
+                view.name().to_owned(),
+                view.columns()
+                    .iter()
+                    .map(|column| column.name().to_owned())
+                    .collect(),
+            )
+        }))
+        .collect::<BTreeMap<_, _>>();
+    for (_, table) in logged_history_tables(manifest) {
+        available.insert(
+            table,
+            wamn_record_history::HISTORY_COLUMNS
+                .iter()
+                .map(|(name, _)| (*name).to_owned())
+                .collect(),
+        );
+    }
+    available.insert(
+        "wamn_history.pruning_watermarks".into(),
+        BTreeSet::from(["history_table".into(), "transaction_id".into()]),
+    );
+    let relations = statements
+        .iter()
+        .map(|(path, bytes)| {
+            let effects =
+                crate::sql_analysis::relation_access(bytes, &available).map_err(|detail| {
+                    GenerateError::for_path(
+                        GenerateErrorType::InvalidOperation,
+                        detail,
+                        path.as_str(),
+                    )
+                })?;
+            Ok((
+                path.clone(),
+                effects
+                    .into_iter()
+                    .map(|(table, access)| wamn_catalog::profile::RelationProfile {
+                        table,
+                        reads: access.select_fields.into_iter().collect(),
+                        writes: access
+                            .insert_fields
+                            .union(&access.update_fields)
+                            .cloned()
+                            .collect(),
+                        deletes: access.delete,
+                        locks: access.lock,
+                    })
+                    .collect(),
+            ))
+        })
+        .collect::<Result<BTreeMap<_, _>, GenerateError>>()?;
+    Ok(SqlCorpus {
+        statements,
+        relations,
+        model_paths,
+        custom_operations,
+    })
 }
 
 pub(crate) fn generate_compiled(
     input: &GenerationInput<'_>,
     manifest: &PackageManifest,
 ) -> Result<GeneratedPackage, GenerateError> {
-    validate(input, manifest)?;
+    let corpus = sql_corpus(input, manifest)?;
+    generate_described(input, manifest, &corpus)
+}
 
+pub(crate) fn generate_described(
+    input: &GenerationInput<'_>,
+    manifest: &PackageManifest,
+    corpus: &SqlCorpus,
+) -> Result<GeneratedPackage, GenerateError> {
     let mut files = BTreeMap::<String, Vec<u8>>::new();
-    let mut sql_corpus = authored_sql_map(input.authored_sql)?;
+    let sql_corpus = &corpus.statements;
+    for (path, bytes) in sql_corpus {
+        if path.starts_with("generated/") {
+            insert_bytes(&mut files, path, bytes.clone())?;
+        }
+    }
     emit_cursor_contract(&mut files)?;
 
     for (model_name, model) in &manifest.models {
         let table = relation(input.catalog, model).expect("validation resolved every relation");
         emit_model(
             &mut files,
-            &mut sql_corpus,
+            corpus,
             input.transactional,
+            &corpus.model_paths[model_name],
             input.catalog,
             manifest,
             model_name,
@@ -345,25 +463,23 @@ pub(crate) fn generate_compiled(
         )?;
     }
     for (operation_name, operation) in &manifest.custom_operations {
+        authored_feed::emit(&mut files, manifest, operation_name, operation)?;
         emit_custom_operation(
             &mut files,
-            &mut sql_corpus,
+            corpus,
             input.transactional,
             input.catalog,
             manifest,
             operation_name,
-            operation,
+            corpus
+                .custom_operations
+                .get(operation_name)
+                .unwrap_or(operation),
         )?;
     }
     data::emit_package_data(&mut files, manifest)?;
     component::emit_package_component(&mut files, manifest)?;
     publication::emit_package_publication(&mut files, manifest)?;
-    let data_access = crate::data_access::derive_data_access_overlay(input.catalog, manifest)?;
-    insert_canonical_json(
-        &mut files,
-        crate::data_access::DATA_ACCESS_OVERLAY_PATH,
-        &data_access,
-    )?;
     insert_canonical_json(
         &mut files,
         REQUIRED_SCHEMA_CONTRACT_PATH,
@@ -399,7 +515,7 @@ fn custom_operation_constraint_origin(
     catalog: &CatalogIr,
     operation: &CustomOperationDeclaration,
     name: &str,
-) -> Option<&'static str> {
+) -> Option<AccessOperationErrorLiteral> {
     for relation in &operation.relations {
         if !relation
             .constraints
@@ -417,14 +533,14 @@ fn custom_operation_constraint_origin(
             .iter()
             .find(|constraint| constraint.name() == name)
         {
-            return Some(constraint_error(constraint.constraint_type()));
+            return Some(constraint_error_code(constraint.constraint_type()));
         }
         if table
             .exclusions()
             .iter()
             .any(|exclusion| exclusion.name() == name)
         {
-            return Some("exclusion_violation");
+            return Some(AccessOperationErrorLiteral::ExclusionViolation);
         }
     }
     None
@@ -625,7 +741,7 @@ fn min_length_check(field: &str, minimum: u32) -> String {
 fn guards_min_length(constraint: &Constraint, model: &ModelDeclaration) -> bool {
     matches!(constraint.constraint_type(), ConstraintType::Check { expression }
     if model.min_lengths.iter().any(|(field, minimum)| {
-        **expression == *min_length_check(field, *minimum)
+        guards_length(expression, field, *minimum)
     }))
 }
 
@@ -639,6 +755,7 @@ fn inbound_foreign_keys<'a>(catalog: &'a CatalogIr, table: &'a Table) -> Vec<&'a
         .tables()
         .iter()
         .flat_map(Table::constraints)
+        .chain(catalog.referencing_constraints())
         .filter(|constraint| match constraint.constraint_type() {
             ConstraintType::ForeignKey {
                 referenced_schema,
@@ -815,6 +932,7 @@ struct StatementContract {
     path: String,
     binds: Vec<StatementValueContract>,
     columns: Vec<StatementValueContract>,
+    relations: Vec<wamn_catalog::profile::RelationProfile>,
     /// PostgreSQL's own verdict, from the statement's generic plan against the
     /// migrated database: a `ModifyTable` node (it writes, data-modifying CTEs
     /// included) or a `LockRows` node (it takes a row lock, which autocommit
@@ -823,11 +941,11 @@ struct StatementContract {
 }
 
 #[derive(Debug, Clone, Serialize)]
-struct StatementValueContract {
-    name: String,
+pub(crate) struct StatementValueContract {
+    pub(crate) name: String,
     #[serde(rename = "type")]
-    ty: SqlValueType,
-    nullable: bool,
+    pub(crate) ty: SqlValueType,
+    pub(crate) nullable: bool,
 }
 
 #[derive(Debug, Clone, Copy, Serialize)]
@@ -865,26 +983,18 @@ fn relation<'a>(catalog: &'a CatalogIr, model: &ModelDeclaration) -> Option<&'a 
 /// Give each model the value set of every text column whose CHECK has the form
 /// `col IN ('a', ...)`, unless the manifest states a list for that column.
 ///
-/// The schema owns these sets, so the compiled manifest carries only the
-/// authored lists, and [`derive_manifest`] has refused an authored list that
-/// widens a set or states it again.
-fn complete_enum_fields(catalog: &CatalogIr, manifest: &mut PackageManifest) {
-    for model in manifest.models.values_mut() {
-        let Some(table) = relation(catalog, model) else {
-            continue;
-        };
-        for constraint in table.constraints() {
-            let ConstraintType::Check { expression } = constraint.constraint_type() else {
-                continue;
-            };
-            if let Some((field, values)) = check_value_set(expression).filter(|(field, _)| {
-                column(table, field)
-                    .is_some_and(|column| column.column_type() == SqlValueType::Text)
-            }) {
-                model.enum_fields.entry(field).or_insert(values);
-            }
+/// The compiled manifest carries the effective sets. Authored lists can narrow
+/// a database set but cannot repeat or widen it.
+fn complete_enum_fields(
+    catalog: &CatalogIr,
+    manifest: &mut PackageManifest,
+) -> Result<(), GenerateError> {
+    for (name, model) in &mut manifest.models {
+        if let Some(table) = relation(catalog, model) {
+            model.enum_fields = model_enum_fields(name, model, table)?;
         }
     }
+    Ok(())
 }
 
 /// The value set of each text column of the model's table, read from its
@@ -960,33 +1070,114 @@ fn model_enum_fields(
     Ok(values)
 }
 
-/// The column and values of `(col = ANY (ARRAY['a'::text, ...]))`, the one
-/// stored form of `col IN ('a', ...)`, or `None` for any other expression.
+/// Parse a CHECK as an expression, without matching PostgreSQL's printed SQL.
+fn check_expression(expression: &str) -> Option<pg_query::NodeEnum> {
+    let parsed = pg_query::parse(&format!("SELECT 1 WHERE {expression}")).ok()?;
+    let pg_query::NodeEnum::SelectStmt(statement) =
+        parsed.protobuf.stmts.into_iter().next()?.stmt?.node?
+    else {
+        return None;
+    };
+    statement.where_clause?.node
+}
+
+fn node_string(node: &pg_query::protobuf::Node) -> Option<&str> {
+    match node.node.as_ref()? {
+        pg_query::NodeEnum::String(value) => Some(&value.sval),
+        _ => None,
+    }
+}
+
+/// The selected column and literal text values of an IN or ANY expression.
 fn check_value_set(expression: &str) -> Option<(String, Vec<String>)> {
-    let expression = expression
-        .strip_prefix('(')
-        .and_then(|inner| inner.strip_suffix(')'))
-        .unwrap_or(expression);
-    let (field, items) = expression
-        .strip_suffix("])")?
-        .split_once(" = ANY (ARRAY[")?;
-    if field.is_empty()
-        || !field
-            .bytes()
-            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_')
+    use pg_query::{NodeEnum, protobuf::AExprKind, protobuf::a_const::Val};
+    let NodeEnum::AExpr(expression) = check_expression(expression)? else {
+        return None;
+    };
+    if expression.kind != AExprKind::AexprOpAny as i32
+        && expression.kind != AExprKind::AexprIn as i32
     {
         return None;
     }
-    let values = items
-        .split(", ")
-        .map(|item| {
-            item.strip_prefix('\'')?
-                .strip_suffix("'::text")
-                .filter(|value| !value.is_empty() && !value.contains('\''))
-                .map(str::to_owned)
+    if expression.name.first().and_then(node_string) != Some("=") {
+        return None;
+    }
+    let NodeEnum::ColumnRef(column) = expression.lexpr?.node? else {
+        return None;
+    };
+    let [field] = column.fields.as_slice() else {
+        return None;
+    };
+    let field = node_string(field)?.to_owned();
+    let elements = match expression.rexpr?.node? {
+        NodeEnum::AArrayExpr(array) => array.elements,
+        NodeEnum::List(list) => list.items,
+        _ => return None,
+    };
+    let values = elements
+        .into_iter()
+        .map(|node| {
+            let expression = match node.node? {
+                NodeEnum::TypeCast(cast) => {
+                    if cast.type_name?.names.last().and_then(node_string) != Some("text") {
+                        return None;
+                    }
+                    cast.arg?.node?
+                }
+                expression => expression,
+            };
+            let NodeEnum::AConst(value) = expression else {
+                return None;
+            };
+            let Val::Sval(value) = value.val? else {
+                return None;
+            };
+            Some(value.sval)
         })
         .collect::<Option<Vec<_>>>()?;
-    Some((field.to_owned(), values))
+    Some((field, values))
+}
+
+fn guards_length(expression: &str, field: &str, minimum: u32) -> bool {
+    use pg_query::{NodeEnum, protobuf::a_const::Val};
+    let Some(NodeEnum::AExpr(expression)) = check_expression(expression) else {
+        return false;
+    };
+    if expression.name.first().and_then(node_string) != Some(">=") {
+        return false;
+    }
+    let Some(NodeEnum::FuncCall(length)) = expression.lexpr.and_then(|node| node.node) else {
+        return false;
+    };
+    if length.funcname.last().and_then(node_string) != Some("char_length") {
+        return false;
+    }
+    let [arg] = length.args.as_slice() else {
+        return false;
+    };
+    let Some(NodeEnum::FuncCall(trim)) = &arg.node else {
+        return false;
+    };
+    if trim.funcname.last().and_then(node_string) != Some("btrim") {
+        return false;
+    }
+    let [arg] = trim.args.as_slice() else {
+        return false;
+    };
+    let Some(NodeEnum::ColumnRef(column)) = &arg.node else {
+        return false;
+    };
+    if column.fields.len() != 1 || column.fields.first().and_then(node_string) != Some(field) {
+        return false;
+    }
+    let Some(NodeEnum::AConst(value)) = expression.rexpr.and_then(|node| node.node) else {
+        return false;
+    };
+    match value.val {
+        Some(Val::Ival(value)) => u32::try_from(value.ival).ok() == Some(minimum),
+        Some(Val::Fval(value)) => value.fval.parse::<u32>().ok() == Some(minimum),
+        _ => false,
+    }
 }
 
 fn column<'a>(table: &'a Table, name: &str) -> Option<&'a Column> {
@@ -1079,17 +1270,9 @@ fn omission_refused(column: &Column) -> bool {
     !column.nullable() && column.default().is_none() && column.generation().is_none()
 }
 
-fn constraint_error(type_: &ConstraintType) -> &'static str {
-    match type_ {
-        ConstraintType::PrimaryKey { .. } | ConstraintType::Unique { .. } => "unique_violation",
-        ConstraintType::ForeignKey { .. } => "foreign_key_violation",
-        ConstraintType::Check { .. } => "check_violation",
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{Column, Constraint, Table, check_value_set, model_enum_fields};
+    use super::{Column, Constraint, Table, model_enum_fields};
     use crate::ManifestErrorType as GenerateErrorType;
     use crate::manifest::ModelDeclaration;
     use wamn_scalar::SqlValueType;
@@ -1139,42 +1322,42 @@ mod tests {
             compiled.models["record"].fields["created_by"].role,
             Some(FieldRole::Actor)
         );
-        super::generate(&super::GenerationInput::new(
+        let generated = super::generate(&super::GenerationInput::new(
             &catalog,
             &bytes,
             &[],
-            &super::StatementTransactionality::default(),
+            &super::StatementTransactionality::from_paths(std::collections::BTreeMap::new()),
         ))
         .unwrap();
+        let contract: serde_json::Value = serde_json::from_slice(
+            generated
+                .file("generated/contracts/record/get.operation.json")
+                .unwrap()
+                .bytes(),
+        )
+        .unwrap();
+        let relations: Vec<wamn_catalog::profile::RelationProfile> =
+            serde_json::from_value(contract["statements"][0]["relations"].clone()).unwrap();
+        assert_eq!(
+            relations[0]
+                .reads
+                .iter()
+                .map(String::as_str)
+                .collect::<Vec<_>>(),
+            catalog.tables()[0]
+                .columns()
+                .iter()
+                .map(|column| column.name())
+                .collect::<Vec<_>>()
+        );
+        assert!(relations[0].writes.is_empty());
+        assert!(!relations[0].deletes);
         assert_eq!(
             super::derive_manifest(&catalog, &authored, &[], &[])
                 .unwrap_err()
                 .error_type(),
             GenerateErrorType::InvalidModel
         );
-    }
-
-    #[test]
-    fn only_the_stored_in_form_is_a_value_set() {
-        let set = |values: &[&str]| values.iter().map(|value| (*value).to_owned()).collect();
-        assert_eq!(
-            check_value_set("(status = ANY (ARRAY['open'::text, 'complete'::text]))"),
-            Some(("status".to_owned(), set(&["open", "complete"])))
-        );
-        assert_eq!(
-            check_value_set("code = ANY (ARRAY['priority'::text])"),
-            Some(("code".to_owned(), set(&["priority"])))
-        );
-        for other in [
-            "((status = 'open'::text) OR (status = 'complete'::text))",
-            "(status <> ''::text)",
-            "((type)::text = ANY (ARRAY['a'::text]))",
-            "(\"Status\" = ANY (ARRAY['a'::text]))",
-            "(status = ANY (ARRAY['it''s'::text]))",
-            "(status = ANY (ARRAY['a'::character varying]))",
-        ] {
-            assert_eq!(check_value_set(other), None, "{other}");
-        }
     }
 
     #[test]
@@ -1201,14 +1384,5 @@ mod tests {
         .expect("model");
         let error = model_enum_fields("widget", &model, &table).expect_err("refused");
         assert_eq!(error.error_type(), GenerateErrorType::InvalidModel);
-        assert_eq!(
-            error.object(),
-            Some("application.widget.widget_status_check")
-        );
-        assert!(
-            error.context().contains("CHECK widget_status_check"),
-            "{}",
-            error.context()
-        );
     }
 }

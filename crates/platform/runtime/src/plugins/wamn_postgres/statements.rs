@@ -22,7 +22,7 @@ pub struct VerifiedStatement {
     pub binds: Box<[StatementField]>,
     pub columns: Box<[StatementField]>,
     /// PostgreSQL's build-time verdict: this statement writes or takes a row
-    /// lock, so it must run inside a transaction. A statement that does neither
+    /// lock or calls an authored routine, so it must run inside a transaction. A statement that does neither
     /// runs autocommit -- one flight, no identity binding, no COMMIT.
     pub transactional: bool,
 }
@@ -436,21 +436,7 @@ fn statement_type_for_value(value: &SqlValue) -> Option<SqlValueType> {
     })
 }
 
-fn statement_type_for_postgres(type_name: &str) -> Option<SqlValueType> {
-    Some(match type_name {
-        "bool" => SqlValueType::Boolean,
-        "int2" | "int4" => SqlValueType::Int32,
-        "int8" => SqlValueType::Int64,
-        "float4" | "float8" => SqlValueType::Float64,
-        "text" | "varchar" | "bpchar" | "name" | "unknown" => SqlValueType::Text,
-        "bytea" => SqlValueType::Bytes,
-        "numeric" => SqlValueType::Numeric,
-        "timestamptz" => SqlValueType::Timestamptz,
-        "json" | "jsonb" => SqlValueType::Json,
-        "uuid" => SqlValueType::Uuid,
-        _ => return None,
-    })
-}
+use wamn_scalar::postgres_type as statement_type_for_postgres;
 
 fn normalized_postgres_name(type_name: &str) -> String {
     statement_type_for_postgres(type_name).map_or_else(
