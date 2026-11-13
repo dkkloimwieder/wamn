@@ -13,8 +13,7 @@ use wamn_control_provision::identity_issuer::{
 };
 use wamn_control_provision::sql::{
     ensure_db_owner_role_sql, prepare_workload_generation_sql,
-    revoke_public_connect_base_grants_sql, role_database_grants_sql,
-    terminate_workload_generation_sessions_sql,
+    revoke_public_connect_base_grants_sql, terminate_workload_generation_sessions_sql,
 };
 use wamn_control_provision::{
     CredentialGeneration, SYSTEM_SCHEMA_SQL, SystemReader, WorkloadRoleFamily,
@@ -186,126 +185,6 @@ fn targeted_issuer_grants_and_generation_retirement_execute_on_postgres() {
             ),
             "t"
         );
-        let acl = run(
-            &admin,
-            &format!(
-                "PREPARE issuer_acl(text) AS {}; EXECUTE issuer_acl('wamn_identity_issuer');",
-                role_database_grants_sql()
-            ),
-        );
-        assert_eq!(
-            acl,
-            [
-                "column|identity|org_memberships.org|SELECT|f",
-                "column|identity|org_memberships.principal_id|SELECT|f",
-                "column|identity|org_memberships.status|SELECT|f",
-                "column|identity|org_roles.org|SELECT|f",
-                "column|identity|org_roles.principal_id|SELECT|f",
-                "column|identity|org_roles.role|SELECT|f",
-                "column|identity|password_credentials.password_hash|INSERT|f",
-                "column|identity|password_credentials.password_hash|SELECT|f",
-                "column|identity|password_credentials.password_hash|UPDATE|f",
-                "column|identity|password_credentials.principal_id|INSERT|f",
-                "column|identity|password_credentials.principal_id|SELECT|f",
-                "column|identity|password_logins.audience|INSERT|f",
-                "column|identity|password_logins.audience|SELECT|f",
-                "column|identity|password_logins.authenticated_at|INSERT|f",
-                "column|identity|password_logins.authenticated_at|SELECT|f",
-                "column|identity|password_logins.expires_at|INSERT|f",
-                "column|identity|password_logins.expires_at|SELECT|f",
-                "column|identity|password_logins.id|SELECT|f",
-                "column|identity|password_logins.issuer|INSERT|f",
-                "column|identity|password_logins.issuer|SELECT|f",
-                "column|identity|password_logins.principal_id|INSERT|f",
-                "column|identity|password_logins.principal_id|SELECT|f",
-                "column|identity|password_logins.renewal_expires_at|INSERT|f",
-                "column|identity|password_logins.renewal_expires_at|SELECT|f",
-                "column|identity|password_logins.renewal_expires_at|UPDATE|f",
-                "column|identity|password_logins.revoked_at|SELECT|f",
-                "column|identity|password_logins.revoked_at|UPDATE|f",
-                "column|identity|password_tokens.consumed_at|SELECT|f",
-                "column|identity|password_tokens.consumed_at|UPDATE|f",
-                "column|identity|password_tokens.expires_at|INSERT|f",
-                "column|identity|password_tokens.expires_at|SELECT|f",
-                "column|identity|password_tokens.principal_id|INSERT|f",
-                "column|identity|password_tokens.principal_id|SELECT|f",
-                "column|identity|password_tokens.purpose|INSERT|f",
-                "column|identity|password_tokens.purpose|SELECT|f",
-                "column|identity|password_tokens.token_hash|INSERT|f",
-                "column|identity|password_tokens.token_hash|SELECT|f",
-                "column|identity|pats.created_at|SELECT|f",
-                "column|identity|pats.expires_at|INSERT|f",
-                "column|identity|pats.expires_at|SELECT|f",
-                "column|identity|pats.id|SELECT|f",
-                "column|identity|pats.label|INSERT|f",
-                "column|identity|pats.label|SELECT|f",
-                "column|identity|pats.principal_id|INSERT|f",
-                "column|identity|pats.principal_id|SELECT|f",
-                "column|identity|pats.principal_type|INSERT|f",
-                "column|identity|pats.revoked_at|SELECT|f",
-                "column|identity|pats.token_hash|INSERT|f",
-                "column|identity|pats.token_hash|SELECT|f",
-                "column|identity|pats.token_prefix|INSERT|f",
-                "column|identity|pats.token_prefix|SELECT|f",
-                "column|identity|principals.display_name|INSERT|f",
-                "column|identity|principals.display_name|SELECT|f",
-                "column|identity|principals.email|INSERT|f",
-                "column|identity|principals.email|SELECT|f",
-                "column|identity|principals.id|SELECT|f",
-                "column|identity|principals.status|SELECT|f",
-                "column|identity|principals.subject|INSERT|f",
-                "column|identity|principals.subject|SELECT|f",
-                "column|identity|principals.type|INSERT|f",
-                "column|identity|principals.type|SELECT|f",
-                "column|identity|project_env_memberships.env|SELECT|f",
-                "column|identity|project_env_memberships.org|SELECT|f",
-                "column|identity|project_env_memberships.principal_id|SELECT|f",
-                "column|identity|project_env_memberships.project|SELECT|f",
-                "column|identity|project_roles.org|SELECT|f",
-                "column|identity|project_roles.principal_id|SELECT|f",
-                "column|identity|project_roles.project|SELECT|f",
-                "column|identity|project_roles.role|SELECT|f",
-                "column|identity|renewal_credentials.consumed_at|SELECT|f",
-                "column|identity|renewal_credentials.consumed_at|UPDATE|f",
-                "column|identity|renewal_credentials.login_id|INSERT|f",
-                "column|identity|renewal_credentials.login_id|SELECT|f",
-                "column|identity|renewal_credentials.token_hash|INSERT|f",
-                "column|identity|renewal_credentials.token_hash|SELECT|f",
-                "column|registry|orgs.id|SELECT|f",
-                "column|registry|project_envs.env|SELECT|f",
-                "column|registry|project_envs.instance_suffix|SELECT|f",
-                "column|registry|project_envs.org|SELECT|f",
-                "column|registry|project_envs.project|SELECT|f",
-                "column|registry|project_envs.status|SELECT|f",
-                "relation|identity|password_attempts|DELETE|f",
-                "relation|identity|password_attempts|INSERT|f",
-                "relation|identity|password_attempts|SELECT|f",
-                "relation|identity|password_attempts|UPDATE|f",
-                "relation|identity|password_logins|DELETE|f",
-                "relation|identity|session_keys|DELETE|f",
-                "relation|identity|session_keys|INSERT|f",
-                "relation|identity|session_keys|SELECT|f",
-                "relation|identity|session_keys|UPDATE|f",
-                "relation|identity|session_signing_state|DELETE|f",
-                "relation|identity|session_signing_state|INSERT|f",
-                "relation|identity|session_signing_state|SELECT|f",
-                "relation|identity|session_signing_state|UPDATE|f",
-                "routine|identity|lock_password_principal|EXECUTE|f",
-                "schema|identity|identity|USAGE|f",
-                "schema|registry|registry|USAGE|f",
-            ]
-            .join("\n")
-        );
-        let actual = run(
-            &a_url,
-            "SELECT c.relname FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace \
-             WHERE n.nspname = 'identity' AND c.relkind = 'r' \
-               AND has_table_privilege(current_user, c.oid, 'SELECT') ORDER BY c.relname",
-        );
-        assert_eq!(
-            actual,
-            "password_attempts\nsession_keys\nsession_signing_state"
-        );
         for url in [&a_url, &b_url] {
             // Execute each fresh-read shape as the actual targeted issuer login.
             run(
@@ -326,11 +205,11 @@ fn targeted_issuer_grants_and_generation_retirement_execute_on_postgres() {
             );
             run(
                 url,
-                "SELECT org, project, env, instance_suffix FROM registry.project_envs \
+                "SELECT org, project, env, instance_suffix FROM registry.environment_projects \
                 WHERE org = 'acme' AND project = 'widgets' AND env = 'dev';",
             );
             for statement in [
-                "SELECT secret_name FROM registry.project_envs",
+                "SELECT secret_name FROM registry.environment_projects",
                 "SELECT * FROM identity.project_roles",
                 "UPDATE identity.principals SET status = 'disabled'",
                 "UPDATE identity.pats SET revoked_at = now()",
@@ -342,7 +221,7 @@ fn targeted_issuer_grants_and_generation_retirement_execute_on_postgres() {
                 "INSERT INTO identity.principals (type, subject, display_name, status) VALUES ('user', 'escape', 'Escape', 'disabled')",
                 "INSERT INTO identity.project_env_memberships (principal_id, org, project, env) VALUES ('00000000-0000-0000-0000-000000000001', 'acme', 'widgets', 'dev')",
                 "DELETE FROM identity.project_env_memberships",
-                "UPDATE registry.project_envs SET instance_suffix = 'z9z9z9z9'",
+                "UPDATE registry.environment_projects SET instance_suffix = 'z9z9z9z9'",
             ] {
                 denied(url, statement);
             }

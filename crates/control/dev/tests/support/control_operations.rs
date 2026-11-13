@@ -422,7 +422,7 @@ async fn worker(journey: &Journey<'_>, pods: &Value) -> anyhow::Result<()> {
         journey.run,
         "platform",
         "configmap",
-        &format!("wamn-operation-{}", journey.run.document.org),
+        &wamn_registry::name::operation(&journey.run.document.org),
     )
     .await?;
     let inputs = selector["data"]["inputs"]

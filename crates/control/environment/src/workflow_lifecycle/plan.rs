@@ -14,7 +14,7 @@ pub struct WorkflowVersion<'a> {
 impl WorkflowVersion<'_> {
     /// The composed environment key derived from the environment coordinate.
     pub fn project_env_key(&self) -> String {
-        wamn_control_registry::project_env_key(self.org, self.project, self.environment)
+        wamn_registry::project_env_key(self.org, self.project, self.environment)
     }
 }
 

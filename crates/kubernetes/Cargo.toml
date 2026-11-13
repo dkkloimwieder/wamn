@@ -23,7 +23,7 @@ serde_json = { workspace = true }
 serde_yaml = { workspace = true }
 tokio = { workspace = true, features = ["fs", "io-util", "rt", "time", "process"] }
 uuid = { workspace = true, features = ["v4"] }
-wamn-control-registry = { workspace = true }
+wamn-registry = { workspace = true }
 
 [dev-dependencies]
 hyper = { workspace = true, features = ["server", "http1"] }

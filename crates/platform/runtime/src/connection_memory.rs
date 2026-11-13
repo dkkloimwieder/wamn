@@ -304,7 +304,7 @@ pub fn replicate<H: AsRef<ConnectionMemory> + Send + Sync + 'static>(
     holder: Arc<H>,
 ) -> Publisher {
     let filters = match project_env_key {
-        Some(project_env_key) => vec![format!("{project_env_key}.>")],
+        Some(project_env_key) => vec![wamn_registry::name::nats_subject(&[project_env_key, ">"])],
         None => vec![">".to_owned()],
     };
     crate::kv_memory::spawn_watch(client, BUCKET, filters, holder, |holder| {

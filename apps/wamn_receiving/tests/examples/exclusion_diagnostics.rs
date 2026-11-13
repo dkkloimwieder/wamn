@@ -1,7 +1,7 @@
 //! Generate real exclusion diagnostics and run the Receiving error-mapping test.
 
 use std::collections::BTreeSet;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use anyhow::{Context as _, ensure};
@@ -169,7 +169,15 @@ async fn main() -> anyhow::Result<()> {
     drop(client);
     task.await??;
     server.stop()?;
-    let status = Command::new(root.join("tools/require-test-result"))
+    let task_target =
+        std::env::var_os("CARGO_TARGET_DIR").map_or_else(|| root.join("target"), PathBuf::from);
+    let task_target = if task_target.is_absolute() {
+        task_target
+    } else {
+        root.join(task_target)
+    };
+    let status = Command::new(task_target.join("debug/xtask"))
+        .args(["require-test-result", "--"])
         .current_dir(scratch.path())
         .env("WAMN_EXCLUSION_DIAGNOSTICS", &diagnostics)
         .env("CARGO_TARGET_DIR", scratch.path().join("target"))

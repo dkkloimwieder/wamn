@@ -25,11 +25,12 @@ pub struct ExpectedDatabase {
 impl ExpectedDatabase {
     pub async fn read(platform: &Platform, document: &EnvironmentDocument) -> anyhow::Result<Self> {
         let client = wamn_package_control::database::connect(&platform.system_database_url).await?;
-        let row = client.query_opt(
-            "SELECT instance_suffix, pending_database->>'initialization_identity' FROM registry.project_envs \
-             WHERE org=$1 AND project=$2 AND env=$3",
-            &[&document.org, &document.project, &document.env],
-        ).await?;
+        let row = client
+            .query_opt(
+                wamn_registry::sql::CONTROL_ENVIRONMENT_SRC_ENVIRONMENT_SQL_READ,
+                &[&document.org, &document.project, &document.env],
+            )
+            .await?;
         Ok(match row {
             Some(row) => Self {
                 active: Some(row.get(0)),
@@ -502,7 +503,7 @@ pub async fn run_deployed(
         if platform.registry_token_metadata {
             job::environment(&mut job, &[("WAMN_REGISTRY_TOKEN_METADATA", "true")]);
             job["spec"]["template"]["spec"]["serviceAccountName"] =
-                wamn_control_registry::service_account_name(
+                wamn_registry::service_account_name(
                     &document.org,
                     &document.project,
                     &document.env,

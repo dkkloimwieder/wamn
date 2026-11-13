@@ -137,11 +137,7 @@ pub(super) async fn run(scenario: &str) -> anyhow::Result<()> {
         // This PAT fixture has no registered session instance or identity service.
         // The browser's mocked session uses this test-only instance suffix.
         let audience = wamn_control_provision::session_target::session_audience(
-            &wamn_control_registry::Triple::new(
-                target.org.clone(),
-                target.project.clone(),
-                target.environment.as_str(),
-            ),
+            &wamn_registry::Triple::new(target.org.clone(), target.environment.as_str(), target.project.clone()),
             "localapp",
         )?;
         crate::business_fixture::seed_fixture(&admin, 1).await?;

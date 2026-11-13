@@ -38,7 +38,7 @@ async fn seed(client: &mut tokio_postgres::Client) {
         )
         .await
         .unwrap();
-    client.batch_execute(&format!("BEGIN; {} INSERT INTO registry.target(name,type,status) VALUES('cloud','cloud','active') ON CONFLICT DO NOTHING; UPDATE registry.meta SET platform_domain='example.invalid'; UPDATE registry.project_envs SET target_id=(SELECT id FROM registry.target WHERE name='cloud'); COMMIT;",wamn_control_provision::bind_platform_principal_sql(wamn_control_provision::PlatformComponent::Provisioning))).await.unwrap();
+    client.batch_execute(&format!("BEGIN; {} INSERT INTO registry.target(name,type,status) VALUES('cloud','cloud','active') ON CONFLICT DO NOTHING; UPDATE registry.meta SET platform_domain='example.invalid'; UPDATE registry.environments SET target_id=(SELECT id FROM registry.target WHERE name='cloud'); COMMIT;",wamn_control_provision::bind_platform_principal_sql(wamn_control_provision::PlatformComponent::Provisioning))).await.unwrap();
     let tx = client.transaction().await.unwrap();
     tx.batch_execute("SET LOCAL ROLE wamn_control")
         .await
@@ -299,8 +299,8 @@ async fn administration_refuses_values_incompatible_with_a_retained_release_vers
         .get(0);
     // The sha256 of the canonical bytes `{}`, which catalog.releases tests.
     let digest = "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a";
-    environment.execute("INSERT INTO catalog.releases(project_env_key,manifest_digest,canonical_bytes) VALUES('acme--one--dev',$1,$2)",&[&digest,&b"{}".as_slice()]).await.unwrap();
-    environment.execute("INSERT INTO catalog.release_connection(project_env_key,manifest_digest,connection_id,version) VALUES('acme--one--dev',$1,$2::text::uuid,2)",&[&digest,&connection]).await.unwrap();
+    environment.execute("INSERT INTO catalog.releases(project_env_key,manifest_digest,canonical_bytes) VALUES('acme--dev--one',$1,$2)",&[&digest,&b"{}".as_slice()]).await.unwrap();
+    environment.execute("INSERT INTO catalog.release_connection(project_env_key,manifest_digest,connection_id,version) VALUES('acme--dev--one',$1,$2::text::uuid,2)",&[&digest,&connection]).await.unwrap();
     environment.batch_execute("COMMIT").await.unwrap();
     let request = json!({"project":"one","env":"dev","name":"erp","parameters":{"primary-authority":"https://erp.example/","tls-verification":"disabled"}}).to_string();
     let source = system.transaction().await.unwrap();
@@ -699,9 +699,9 @@ async fn project_observation_preserves_the_baseline_and_refuses_unknown_state() 
         ))
         .await
         .unwrap();
-    client.execute("INSERT INTO catalog.packages (project_env_key, package_id, package_version, artifact_digest, physical_schema_fingerprint) VALUES ('acme--one--dev', 'fixture', '1.0.0', $1, $1)", &[&fingerprint]).await.unwrap();
+    client.execute("INSERT INTO catalog.packages (project_env_key, package_id, package_version, artifact_digest, physical_schema_fingerprint) VALUES ('acme--dev--one', 'fixture', '1.0.0', $1, $1)", &[&fingerprint]).await.unwrap();
     client.batch_execute("COMMIT").await.unwrap();
-    let observed = analyse::read_project(database.url(), "acme--one--dev")
+    let observed = analyse::read_project(database.url(), "acme--dev--one")
         .await
         .unwrap()
         .unwrap();
@@ -715,14 +715,14 @@ async fn project_observation_preserves_the_baseline_and_refuses_unknown_state() 
         .await
         .unwrap();
     assert!(
-        analyse::read_project(database.url(), "acme--one--dev")
+        analyse::read_project(database.url(), "acme--dev--one")
             .await
             .is_err()
     );
     let mut missing = url::Url::parse(database.url()).unwrap();
     missing.set_path(&format!("/{}_absent", database.name()));
     assert!(
-        analyse::read_project(missing.as_str(), "acme--one--dev")
+        analyse::read_project(missing.as_str(), "acme--dev--one")
             .await
             .unwrap()
             .is_none()

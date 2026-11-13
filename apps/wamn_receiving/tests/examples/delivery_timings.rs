@@ -18,7 +18,7 @@ use serde_json::json;
 use tokio::process::Command;
 use tokio::signal::unix::{SignalKind, signal};
 use wamn_broker::events::{advisory_stream_config, source_stream_config};
-use wamn_control_registry::Triple;
+use wamn_registry::Triple;
 use wamn_test_infrastructure::event_broker;
 
 /// The MinIO root user of the label store. The password is random per run.
@@ -263,7 +263,7 @@ async fn main() -> anyhow::Result<()> {
         project: format!("wamn-delivery-timings-{}", hex::encode(&nonce[..8])),
         minio_password: hex::encode(&nonce[8..24]),
     };
-    let coordinate = Triple::new("acme", "receiving", "dev");
+    let coordinate = Triple::new("acme", "dev", "receiving");
     let source = source_stream_config(&coordinate, 1, Duration::from_secs(120));
     let advisory = advisory_stream_config(&coordinate, 1);
     // The broker admits the materializer consumers of the packages that the
@@ -297,8 +297,13 @@ async fn main() -> anyhow::Result<()> {
             "healthcheck":{"test":["CMD-SHELL","wget -qO- http://127.0.0.1:8222/healthz | grep -q ok"],"interval":"1s","timeout":"2s","retries":60}
         }}}))?,
     )?;
-    require_success(Command::new(repository.join("tools/dev-collector")).arg(&compose.environment))
-        .await?;
+    require_success(
+        Command::new("cargo")
+            .current_dir(repository)
+            .args(["xtask", "dev-collector"])
+            .arg(&compose.environment),
+    )
+    .await?;
     ensure!(
         require_success(compose.command().args(["ps", "--all", "--quiet"]))
             .await?

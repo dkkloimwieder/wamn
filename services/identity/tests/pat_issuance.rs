@@ -31,7 +31,6 @@ use wamn_control_provision::{
     CredentialGeneration, PlatformComponent, SYSTEM_SCHEMA_SQL, WorkloadRoleFamily,
     project_env_database_name,
 };
-use wamn_control_registry::Triple;
 use wamn_identity::tls_config_with_operator_ca;
 use wamn_identity_protocol::PrincipalId;
 use wamn_identity_protocol::token::SessionClaims;
@@ -40,6 +39,7 @@ use wamn_platform_identity::session_token::sign_session_token;
 use wamn_platform_identity::{
     authenticate_pat, create_service, create_user, disable_principal, revoke_pat,
 };
+use wamn_registry::Triple;
 
 const ISSUER: &str = "https://identity.pat-test.internal";
 const PASSWORD: &str = "operator-pat-disposable-fixture-password";
@@ -785,8 +785,13 @@ fn unused_target(admin: &url::Url) -> SessionTarget {
     url.set_path(&database);
     url.set_query(None);
     url.set_fragment(None);
-    SessionTarget::new(&triple, "pattest1", "pat-project", url.as_str())
-        .expect_redacted("unused configured audience")
+    SessionTarget::new(
+        &triple,
+        "pattest1",
+        &wamn_registry::project_env_key(&triple.org, &triple.project, triple.env.as_str()),
+        url.as_str(),
+    )
+    .expect_redacted("unused configured audience")
 }
 
 async fn start(

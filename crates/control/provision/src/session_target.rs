@@ -6,7 +6,7 @@
 use std::fmt;
 
 use serde::{Deserialize, Serialize};
-use wamn_control_registry::{Triple, identifiers::valid_project_env_key};
+use wamn_registry::{Triple, identifiers::valid_project_env_key};
 
 use crate::name::{project_env_database_name, validate_instance_suffix, validate_project_env};
 use crate::session_role_reader::{SessionRoleReaderConnection, parse_session_role_reader_url};
@@ -32,7 +32,7 @@ fn refused(context: &'static str) -> SessionTargetError {
     SessionTargetError { context }
 }
 
-/// Apply the existing project-identity spelling, without creating another identity format.
+/// Validate the registry coordinate spelling.
 pub fn validate_session_project_env_key(project_env_key: &str) -> Result<(), SessionTargetError> {
     if !valid_project_env_key(project_env_key) {
         return Err(refused("session target project refused"));
@@ -49,9 +49,11 @@ pub fn session_audience(
         .map_err(|_| refused("session target coordinates refused"))?;
     validate_instance_suffix(instance_suffix)
         .map_err(|_| refused("session target instance refused"))?;
-    Ok(format!(
-        "urn:wamn:project-env:{}:{}:{}:{instance_suffix}",
-        triple.org, triple.project, triple.env
+    Ok(wamn_registry::name::project_audience(
+        &triple.org,
+        &triple.project,
+        triple.env.as_str(),
+        instance_suffix,
     ))
 }
 
@@ -96,6 +98,11 @@ impl SessionTarget {
     ) -> Result<Self, SessionTargetError> {
         let audience = session_audience(triple, instance_suffix)?;
         validate_session_project_env_key(project_env_key)?;
+        if project_env_key
+            != wamn_registry::project_env_key(&triple.org, &triple.project, triple.env.as_str())
+        {
+            return Err(refused("session target coordinate mismatch"));
+        }
         let database = project_env_database_name(
             &triple.org,
             &triple.project,

@@ -84,5 +84,5 @@ services:
     entrypoint: [/usr/bin/mc, --config-dir, /tmp/mc]
     environment:
       MC_HOST_store: http://${WAMN_RECEIVING_DEV_MINIO_USER:-wamn-labels-store}:${WAMN_RECEIVING_DEV_MINIO_PASSWORD:-probe-labels-store}@receiving-dev-minio:9000
-  # tools/dev-collector renders the collector service and its deployed image.
+  # cargo xtask dev-collector renders the collector service and its deployed image.
   # Add <dev-root>/local-artifacts/otel/compose.json when starting local telemetry.

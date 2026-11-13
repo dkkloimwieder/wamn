@@ -22,7 +22,7 @@ struct RecordingStore(Mutex<Vec<Vec<u8>>>);
 impl Store for RecordingStore {
     async fn put(
         &self,
-        _target: &wamn_control_registry::Triple,
+        _target: &wamn_registry::Triple,
         id: uuid::Uuid,
         value: &[u8],
     ) -> Result<StoreVersion, wamn_kubernetes::Error> {
@@ -120,7 +120,7 @@ async fn every_connection_writer_deletes_exactly_its_connection_keys() {
             .await
             .unwrap();
     }
-    client.batch_execute("UPDATE registry.project_envs SET target_id=(SELECT id FROM registry.target WHERE name='cloud'); COMMIT").await.unwrap();
+    client.batch_execute("UPDATE registry.environments SET target_id=(SELECT id FROM registry.target WHERE name='cloud'); COMMIT").await.unwrap();
     // A new integration has no connection, so it deletes no key.
     let (_, drops) = execute(
         &mut client,
@@ -147,12 +147,12 @@ async fn every_connection_writer_deletes_exactly_its_connection_keys() {
                 .unwrap(),
         );
     }
-    let dev = connection_key("acme--app--dev", &ids[0]);
-    let prod = connection_key("acme--app--prod", &ids[1]);
-    let release = release_key("acme--app--dev", &format!("sha256:{}", "ab".repeat(32)));
-    let other = connection_key("acme--other--dev", &ids[0]);
-    let dev_map = connections_key("acme--app--dev");
-    let prod_map = connections_key("acme--app--prod");
+    let dev = connection_key("acme--dev--app", &ids[0]);
+    let prod = connection_key("acme--prod--app", &ids[1]);
+    let release = release_key("acme--dev--app", &format!("sha256:{}", "ab".repeat(32)));
+    let other = connection_key("acme--dev--other", &ids[0]);
+    let dev_map = connections_key("acme--dev--app");
+    let prod_map = connections_key("acme--prod--app");
     let keys = [&dev, &prod, &release, &other, &dev_map, &prod_map];
 
     let cases: [(&str, Value, &[&String]); 9] = [

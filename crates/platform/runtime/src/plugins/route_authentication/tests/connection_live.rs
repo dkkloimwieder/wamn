@@ -86,7 +86,7 @@ async fn external_signature_uses_the_service_principal_and_only_admin_granted_ro
         wamn_broker::Publisher::default(),
         Arc::new(fixture.reader("host-project").await),
         Arc::clone(&postgres),
-        "acme--host-project--dev",
+        "acme--dev--host-project",
         "host-project",
         "dev",
     ));

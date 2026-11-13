@@ -45,7 +45,7 @@ async fn both_applications_publish_with_exact_dependencies_and_private_state() -
         ),
     ];
     let target = ComponentPackageCoordinate {
-        project_env_key: "rest--publication--test".into(),
+        project_env_key: "rest--test--publication".into(),
         package_id: "rest_connector".into(),
         package_version: "0.1.1".into(),
     };

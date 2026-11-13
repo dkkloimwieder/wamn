@@ -186,7 +186,7 @@ impl Application {
         let mut declaration =
             wamn_package_control::component_declaration::render_declaration_document(
                 &package.join("publication/components/modbus_reader.json.in"),
-                "acme--one--dev",
+                "acme--dev--one",
             )?;
         declaration["target"]["package-version"] = json!("0.1.0");
         let operation = declaration["operations"]
@@ -378,7 +378,7 @@ fn loaded_release(
     wamn_engine::release_manifest::LoadedRelease::load_canonical_bytes(
         &manifest.canonical_bytes(),
         "connection read fixture",
-        wamn_engine::release_manifest::ReleaseTarget::new("acme--one--dev", "dev")
+        wamn_engine::release_manifest::ReleaseTarget::new("acme--dev--one", "dev")
             .with_applications(
                 [(
                     application.to_owned(),
@@ -427,7 +427,7 @@ async fn apply(
         let bindings = bindings::analyse(&source, &selected, packages).await?;
         source.commit().await?;
         let release = loaded_release(document, application)?;
-        let project_env_key = "acme--one--dev";
+        let project_env_key = "acme--dev--one";
         let digest = release.release().manifest_digest.as_str();
         wamn_environment_control::environment::stage::write_release(
             project_url,
@@ -489,7 +489,7 @@ async fn application_releases_keep_independent_integration_versions() -> anyhow:
             wamn_control_provision::test_database::seed_org_project_env_sql("acme", "one", "dev")
         ))
         .await?;
-    admin.batch_execute(&format!("BEGIN; {} UPDATE registry.meta SET platform_domain='example.invalid'; UPDATE registry.project_envs SET target_id=(SELECT id FROM registry.target WHERE name='cloud'); COMMIT",wamn_control_provision::bind_platform_principal_sql(wamn_control_provision::PlatformComponent::Provisioning))).await?;
+    admin.batch_execute(&format!("BEGIN; {} UPDATE registry.meta SET platform_domain='example.invalid'; UPDATE registry.environments SET target_id=(SELECT id FROM registry.target WHERE name='cloud'); COMMIT",wamn_control_provision::bind_platform_principal_sql(wamn_control_provision::PlatformComponent::Provisioning))).await?;
     let registry = local_registry::LocalRegistry::start("modbus-restart");
     registry.ready().await;
     let auth = scratch.path().join("auth.json");
@@ -577,7 +577,7 @@ async fn application_releases_keep_independent_integration_versions() -> anyhow:
     let login = format!("c9_integration_{}", std::process::id());
     database.execute(&[
         &sql::grant_connection_reader_surface_sql(),
-        &format!("CREATE ROLE {login} LOGIN PASSWORD 'fixture'; GRANT wamn_conn_reader TO {login}; GRANT CONNECT ON DATABASE \"{}\" TO {login}; BEGIN; SET LOCAL ROLE wamn_system; {} INSERT INTO wamn_authority.author_login_projects(login_identity,project_env_key,org_id,project_id,environment) VALUES ('{login}','acme--one--dev','acme','one','dev'); COMMIT;", database.name(), bind_platform_principal_sql(PlatformComponent::Provisioning)),
+        &format!("CREATE ROLE {login} LOGIN PASSWORD 'fixture'; GRANT wamn_conn_reader TO {login}; GRANT CONNECT ON DATABASE \"{}\" TO {login}; BEGIN; SET LOCAL ROLE wamn_system; {} INSERT INTO wamn_authority.author_login_projects(login_identity,project_env_key,org_id,project_id,environment) VALUES ('{login}','acme--dev--one','acme','one','dev'); COMMIT;", database.name(), bind_platform_principal_sql(PlatformComponent::Provisioning)),
     ])?;
     let mut reader_url = url::Url::parse(database.url())?;
     reader_url.set_username(&login).unwrap();
@@ -624,7 +624,7 @@ async fn application_releases_keep_independent_integration_versions() -> anyhow:
         wamn_broker::Publisher::default(),
         Arc::clone(&credentials),
         Arc::clone(&postgres),
-        "acme--one--dev",
+        "acme--dev--one",
         "one",
         "dev",
     ));

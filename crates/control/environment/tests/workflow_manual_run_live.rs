@@ -32,7 +32,6 @@ use wamn_catalog::{
 use wamn_control_provision::{
     CredentialGeneration, WorkloadRoleFamily, WorkloadRoleIdentity, sql, workload_generation_role,
 };
-use wamn_control_registry::Triple;
 use wamn_engine::artifact_source::{LocalComponentSource, local_component_path};
 use wamn_engine::component_admission::{ComponentAdmissionRequest, validate_component_admission};
 use wamn_engine::engine::build_engine;
@@ -49,6 +48,7 @@ use wamn_execution_host::{
 };
 use wamn_identity_protocol::PlatformComponent;
 use wamn_identity_protocol::PrincipalId;
+use wamn_registry::Triple;
 use wamn_runtime::connection_credentials::ConnectionCredentials;
 use wamn_runtime::plugins::connection_http::transport::HttpTransport;
 use wamn_runtime::plugins::wamn_jetstream::WamnJetstream;
@@ -60,7 +60,7 @@ use wamn_runtime::plugins::wamn_postgres::{
 use wamn_schema_control::BareSchemaName;
 use wamn_workflow::{QueueService, QueueServiceConfig, RouterDriver};
 
-const PROJECT_ENV_KEY: &str = "manual-live--default--dev";
+const PROJECT_ENV_KEY: &str = "manual-live--dev--default";
 const PROJECT: &str = "default";
 const ENVIRONMENT: &str = "dev";
 const APPLICATION: &str = "orders";
@@ -550,7 +550,7 @@ impl Fixture {
     async fn enable(&mut self, version: u32, enabler: &str) {
         enable_workflow(
             &self.url,
-            &Triple::new("acme", APPLICATION, ENVIRONMENT),
+            &Triple::new("acme", ENVIRONMENT, APPLICATION),
             &mut self.admin,
             &WorkflowVersion {
                 org: "manual-live",

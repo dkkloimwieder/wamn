@@ -130,14 +130,14 @@ Any other payload answers 400 `delivery-invalid-payload`.
 | `wamn-control:number-counter/set@0.9.0` | Authority `Granted`. Takes `application`, `sequence`, `counter`, `key` and the `int64` `value`, and sets that counter. Answers `next_number`. Refusals: `invalid_input`, `sequence_not_found`, `counter_not_found`, `counter_assigned_per_key`, `number_live` and `idempotency_conflict`. |
 | `wamn-control:workflow/start@0.9.0` | Authority `Granted`. Takes `workflow_id`, `input_json` and `idempotency_key`, and admits one run of the enabled version of that [environment workflow](#environment-workflows). Answers `run_id`. Refusals: `invalid_input`, `active_role_required`, `workflow_not_enabled`, `workflow_not_served` and `idempotency_conflict`. |
 | `wamn-control:connection/authorize@0.9.0` | ProjectAdmin authority. Takes `project`, `env`, and `name`. Returns `authorization_url` for an authorization code connection. |
-| `wamn-control:control/mine@0.9.0` | `org_admin`, and the projects of the org that the caller administers: every project for an `org-admin`, else the projects where the caller holds `project-admin`. |
+| `wamn-control:control/mine@0.9.0` | `org_admin`, and projects reached by the current org, environment or project grants. `project_admin` marks authority over the whole project. |
 | `wamn-control:user/list@0.9.0` | `users`: each member of the org with `principal_id`, `email`, `display_name`, the org-local `status` and `org_admin`. An `org-admin` reads it, and so does a `project-admin` of any project of the org. |
 | `wamn-control:user/invite@0.9.0` | Takes `email`, `display_name` and the optional `org_admin`, `project_admins` and `memberships` (`project`, `env`). Answers `principal_id`, `enrolled` and `invited`. |
 | `wamn-control:user/activate@0.9.0` | Takes `principal_id` and makes the org membership active. It restores no access. |
 | `wamn-control:user/deactivate@0.9.0` | Takes `principal_id`, removes the member's environment memberships, project roles and org roles in the org, then makes the membership inactive. |
 | `wamn-control:project/list@0.9.0` | `projects`: projects of the org as `{name, state}`. |
-| `wamn-control:org-admin/grant@0.9.0` | Takes `principal_id` of an active member and writes `org-admin`, `project-admin` in every project of the org and a membership in every environment of the org. |
-| `wamn-control:org-admin/revoke@0.9.0` | Takes `principal_id` and removes `project-admin` throughout the org, then `org-admin`. Memberships stay. |
+| `wamn-control:org-admin/grant@0.9.0` | Takes `principal_id` of an active member and writes only the explicit `org-admin` grant. Authorization derives access below it. |
+| `wamn-control:org-admin/revoke@0.9.0` | Takes `principal_id` and removes only `org-admin`. Other explicit grants stay. |
 | `wamn-control:environment/list@0.9.0` | Takes `project`. Answers `environments`: environments of the project as `{name, state}`. |
 | `wamn-control:environment/status@0.9.0` | Answers the digest, rollout, workload conditions, and live set of one environment. Adds nullable counts `users_with_role`, `roles`, and `memberships`. |
 | `wamn-control:connection/test@0.9.0` | Requires project-admin authority. Takes `project`, `env`, integration `name`, candidate `parameters`, optional `credential`, and optional `version`. Answers `{ok: true}` or `{ok: false, error}`. Writes nothing and stops after ten seconds. |
@@ -145,8 +145,8 @@ Any other payload answers 400 `delivery-invalid-payload`.
 | `wamn-control:release/profile@0.9.0` | Takes `project`, `env` and the `digest` of a release installed in that environment. Answers `operations`: for each export of the release's components, the members it `reaches`, each with the exports it holds, `imprecise` when it is a base member's whole statement set, and per statement the relations it reads, writes, deletes and locks, derived from the release's SQL over the environment's relation columns, and `roles`: each role of the environment with the `operations` it holds, `admin` every operation of the release. A view read reports the view columns and each base table with the columns that the view depends on through `pg_depend`. Writes nothing. |
 | `wamn-control:member/list@0.9.0` | Takes `project` and an optional `environment`. Answers `members`: each user with a membership or `project-admin` in the project, with `principal_id`, `email`, `display_name`, `org_admin`, `project_admin` and `environments`. |
 | `wamn-control:member/grant@0.9.0` | Takes `project`, `env` and `principal_id` of an active member, and writes the membership of that environment. |
-| `wamn-control:member/revoke@0.9.0` | Takes `project`, `env` and `principal_id`, and removes the membership of that environment. It refuses while `org-admin` or `project-admin` covers the environment. |
-| `wamn-control:project-admin/grant@0.9.0` | Takes `project` and `principal_id` of an active member, and writes `project-admin` and a membership in every environment of the project. |
+| `wamn-control:member/revoke@0.9.0` | Takes `project`, `env` and `principal_id`, and removes the membership of that environment. It refuses while org, environment or project administration covers the membership. |
+| `wamn-control:project-admin/grant@0.9.0` | Takes `project` and `principal_id` of an active member, and writes only the explicit `project-admin` grant. |
 | `wamn-control:project-admin/revoke@0.9.0` | Takes `project` and `principal_id`, and removes `project-admin` in the project. It refuses while the user holds `org-admin`. Memberships stay. |
 | `wamn-control:environment/activate@0.9.0` | Takes `project` and `env`, and makes the environment active. Answers `project`, `env` and `status`. |
 | `wamn-control:environment/inactivate@0.9.0` | Takes `project` and `env`, and makes the environment inactive. Answers `project`, `env` and `status`. |
@@ -170,7 +170,7 @@ An application route runs under the administration credential, in a host-owned R
 A host-run write stamps that sealed operation id in its history entries.
 A role or permission write first takes the project lock that `wamn-ctl` and release reconciliation take.
 The writes are the functions of [`wamn_platform_identity::application`](../../crates/identity/platform/src/application.rs), which the role verbs of `wamn-ctl` also call.
-`user_role.revoke` reads `project-admin` through the identity reader of the host, because `org-admin` writes `project-admin` in every project of the org.
+`user_role.revoke` reads current inherited administration through the host’s identity reader. It derives the answer from the org, environment and project grants.
 `permission.grant` writes one permission row. A row the serving release does not serve grants nothing.
 An application refusal is a declared error of its route, with `field` in its detail: `admin_fixed`, `invalid_input`, `role_not_found`, `operation_not_served`, `operation_not_grantable`, `permission_not_held`, `user_not_found` or `admin_covered`.
 The contracts of the application routes live in [`host_route/contracts`](../../crates/catalog/model/src/host_route/contracts), and the generator projects them into the TypeScript client `@wamn/control-client` in `apps/target/wamn/wamn_control/client-ts`, which Git does not hold ([building](../operations/building.md#host-route-clients)).
@@ -209,7 +209,7 @@ It commits the application write before releasing that system lock.
 If an environment fails, the route answers `application_write_incomplete` with that environment and the environments that completed.
 The system mutation remains committed.
 The next system mutation or `env apply` repairs application rows from current authority.
-The four status routes need `org-admin`, and they write `registry.project_envs.status` through the `control` family, which holds `UPDATE` on that column only.
+The four status routes need `org-admin`, and they write `registry.environments.status` through the `control` family, which holds `UPDATE` on that column only.
 Each status route also writes the status into the one row of `platform.environment` in each environment, with the same administration login.
 An inactivation writes the environments first and commits its system rows last, and an activation commits its system rows first.
 Data, membership and role rows do not change with the status, and CDC stays attached.
@@ -532,7 +532,7 @@ Replicas use the same key, so concurrent admissions return one run.
 The run executes as the `workflow` user with its execution role, or with `admin` for type `invoker`.
 
 Apply creates one service principal per application that composes `wamn_integration`, in each environment.
-Its subject is `wamn-app-<org>--<project>--<env>--<package id>`.
+Its subject is `wamn-app-<org>--<env>--<project>--<package id>`.
 The project service row uses `<subject>@<platform-domain>` as its email.
 Repeated applies retain its identity and grants.
 
@@ -723,9 +723,9 @@ The identity service and `wamn-ctl` read the connection from `WAMN_NATS_URL`, `W
 `WAMN_NATS_TLS_SERVER_NAME` names the server certificate when a port-forward reaches the server.
 A lost delete waits for the 60 seconds.
 
-The exact audience is `urn:wamn:project-env:{org}:{project}:{env}:{instance_suffix}`.
+The exact audience is `urn:wamn:project-env:{org}:{env}:{project}:{instance_suffix}`.
 The configured environment supplies its current suffix.
-Identity offers and mints no audience of an environment whose `registry.project_envs.status` is `inactive`, so the shell does not list it.
+Identity offers and mints no audience of an environment whose `registry.environments.status` is `inactive`, so the shell does not list it.
 
 Session tokens use Ed25519 keys with `alg=EdDSA` and `typ=wamn-session+jwt`.
 They require `iss`, `sub`, `org`, `aud`, `roles`, `exp`, `iat`, `jti`, and `authority`.
@@ -907,7 +907,7 @@ An `env delete` deletes every key of the environment.
 ### Control sessions
 
 Every org in `registry.orgs` has the control audience `urn:wamn:control:<org>`, and nothing configures it.
-Discovery offers it to a user who holds `org-admin` in that org or `project-admin` in a project of that org, also when the request names a project, so an application shell offers it beside the environments.
+Discovery offers it to a user with an org, environment or project administration grant in that org, also when the request names a project, so an application shell offers it beside the environments.
 A control session comes from a password login.
 It carries no roles.
 For each request, the control host reads the password login of the session, the active principal and its `org-admin` and `project-admin` roles in the org.

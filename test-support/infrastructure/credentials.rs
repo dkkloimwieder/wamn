@@ -10,7 +10,7 @@ pub struct ReferencedCredentials<'a>(pub &'a StoreVersion);
 impl Store for ReferencedCredentials<'_> {
     async fn put(
         &self,
-        _: &wamn_control_registry::Triple,
+        _: &wamn_registry::Triple,
         _: uuid::Uuid,
         _: &[u8],
     ) -> Result<StoreVersion, Error> {

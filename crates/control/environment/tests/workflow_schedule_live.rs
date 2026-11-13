@@ -329,7 +329,7 @@ async fn no_enabled_schedule_version_refuses_with_no_row() {
         .expect("enable the schedule workflow");
     wamn_environment_control::workflow_lifecycle::disable_workflow(
         &fixture.url,
-        &Triple::new("acme", APPLICATION, ENVIRONMENT),
+        &Triple::new("acme", ENVIRONMENT, APPLICATION),
         &mut fixture.admin,
         &WorkflowVersion {
             org: "schedule-live",

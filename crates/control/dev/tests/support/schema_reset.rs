@@ -284,7 +284,7 @@ async fn attempt(
                 eprintln!("{label} CNPG present: {found}");
                 present = true;
             }
-            pending = system.query_one("SELECT pending_database FROM registry.project_envs WHERE org=$1 AND project=$2 AND env=$3", &[&journey.run.document.org, &journey.project, &journey.environment]).await?.get::<_, Option<Value>>(0).unwrap_or(Value::Null);
+            pending = system.query_one("SELECT pending_database FROM registry.environment_projects WHERE org=$1 AND project=$2 AND env=$3", &[&journey.run.document.org, &journey.project, &journey.environment]).await?.get::<_, Option<Value>>(0).unwrap_or(Value::Null);
             if !pending.is_null() && stop == Stop::Pinned {
                 eprintln!("{label} pinned reset: {pending}");
                 break Ok(pending);

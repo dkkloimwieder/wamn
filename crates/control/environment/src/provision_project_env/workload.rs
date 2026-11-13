@@ -117,8 +117,7 @@ pub(crate) async fn restore_database_access(
     let passwords =
         GenerationPasswords::connect(&named_database_config(system_url, "system database")?)
             .await?;
-    let project_env_key =
-        wamn_control_registry::project_env_key(&triple.org, &triple.project, &triple.env);
+    let project_env_key = wamn_registry::project_env_key(&triple.org, &triple.project, &triple.env);
     for family in WorkloadRoleFamily::project_env_families()
         .filter(|family| family.identity_type() != WorkloadRoleIdentityType::Control)
     {
@@ -338,8 +337,7 @@ pub(crate) async fn run_workload_action_with_admin(
             );
             None
         };
-    let project_env_key =
-        wamn_control_registry::project_env_key(&args.org, &args.project, &args.env);
+    let project_env_key = wamn_registry::project_env_key(&args.org, &args.project, &args.env);
     let project_env_key = project_env_key.as_str();
     let identity = workload_action_identity(args)?;
     let WorkloadActionIdentity {
@@ -350,7 +348,7 @@ pub(crate) async fn run_workload_action_with_admin(
     if family == WorkloadRoleFamily::SessionRoleReader {
         validate_session_project_env_key(project_env_key)?;
     }
-    let triple = Triple::new(org, project, environment);
+    let triple = Triple::new(org, environment, project);
     let system_url = args
         .system_database_url
         .as_deref()

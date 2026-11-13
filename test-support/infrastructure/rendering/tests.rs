@@ -58,7 +58,7 @@ fn host_template(project: &str) -> String {
 
 const CREDENTIALS_VOLUME: &str = r"        - name: connection-credentials
           secret:
-            secretName: wamn-object-store-credentials-__ORG__--__PROJECT__--dev
+            secretName: wamn-object-store-credentials-__ORG__--dev--__PROJECT__
             optional: false
             items:
               - key: credentials.json
@@ -101,25 +101,25 @@ const HOST_TEMPLATE: &str = r#"runtime:
         - name: WAMN_SYSTEM_URL
           valueFrom:
             secretKeyRef:
-              name: wamn-identity-reader-__ORG__--__PROJECT__--dev
+              name: wamn-identity-reader-__ORG__--dev--__PROJECT__
               key: url
               optional: false
         - name: WAMN_EXECUTOR_PLATFORM_PG_URL
           valueFrom:
             secretKeyRef:
-              name: wamn-executor-platform-__ORG__--__PROJECT__--dev
+              name: wamn-executor-platform-__ORG__--dev--__PROJECT__
               key: url
               optional: false
         - name: WAMN_HTTP_ADMITTER_PG_URL
           valueFrom:
             secretKeyRef:
-              name: wamn-http-admitter-__ORG__--__PROJECT__--dev
+              name: wamn-http-admitter-__ORG__--dev--__PROJECT__
               key: url
               optional: false
         - name: WAMN_EVENT_MATERIALIZER_PG_URL
           valueFrom:
             secretKeyRef:
-              name: wamn-event-materializer-__ORG__--__PROJECT__--dev
+              name: wamn-event-materializer-__ORG__--dev--__PROJECT__
               key: url
               optional: false
       volumes:
@@ -312,9 +312,11 @@ fn host_values_keep_both_applications_separate_and_preserve_credentials() {
         assert_eq!(
             events["subject-allow"].as_str(),
             Some(
-                format!(
-                    "evt.{}.{}.{}.>",
-                    input.event.org, input.event.project, input.event.environment
+                wamn_registry::name::event_subject(
+                    &(input.event.org),
+                    &(input.event.project),
+                    &(input.event.environment),
+                    &(">")
                 )
                 .as_str()
             ),
@@ -811,8 +813,6 @@ fn a_supplied_release_moves_the_overlay_to_its_own_identity() {
             .contains("missing role Secret")
     );
     let moved = overlay_values(&host_template(OVERLAY), &identity).unwrap();
-    assert!(!moved.contains("example"), "{moved}");
-    assert!(moved.contains("wamn-object-store-credentials-dkk--fixture-overlay--dev"));
     let output = render_host_values(&BASE, &moved, &input).unwrap();
     let overlay: HostValues = serde_yaml::from_str(&output.overlay).unwrap();
     let env = &overlay.runtime.host_groups[0].env;

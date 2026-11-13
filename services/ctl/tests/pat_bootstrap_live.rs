@@ -596,7 +596,7 @@ async fn reset_worker_restores_a_recreated_database() -> anyhow::Result<()> {
     )
     .await?;
     admin.batch_execute(&format!(
-        "BEGIN; SET LOCAL ROLE wamn_system; {} UPDATE registry.project_envs SET disposable=true; COMMIT;",
+        "BEGIN; SET LOCAL ROLE wamn_system; {} UPDATE registry.environments SET disposable=true; COMMIT;",
         wamn_control_provision::test_database::seed_org_project_env_sql("acme", "apps", "dev"),
     )).await?;
     let document = EnvironmentDocument::from_json(br#"{"org":"acme","project":"apps","env":"dev","target":"cloud","policy":"dev","applications":{}}"#)?;

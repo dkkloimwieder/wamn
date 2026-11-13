@@ -29,7 +29,7 @@ async fn reset_worker_waits_before_validation_and_pinning() -> anyhow::Result<()
     )
     .await?;
     admin.batch_execute(&format!(
-        "BEGIN; SET LOCAL ROLE wamn_system; {} UPDATE registry.project_envs SET disposable=true; COMMIT;",
+        "BEGIN; SET LOCAL ROLE wamn_system; {} UPDATE registry.environments SET disposable=true; COMMIT;",
         wamn_control_provision::test_database::seed_org_project_env_sql("acme", "apps", "dev"),
     )).await?;
     admin
@@ -133,7 +133,7 @@ async fn reset_worker_waits_before_validation_and_pinning() -> anyhow::Result<()
             tokio::time::sleep(Duration::from_millis(20)).await;
         }
     }).await.context("wait for the worker's exclusive lock attempt")??;
-    assert!(admin.query_one("SELECT pending_database IS NULL FROM registry.project_envs WHERE org='acme' AND project='apps' AND env='dev'", &[]).await?.get::<_, bool>(0));
+    assert!(admin.query_one("SELECT pending_database IS NULL FROM registry.environment_projects WHERE org='acme' AND project='apps' AND env='dev'", &[]).await?.get::<_, bool>(0));
     project_admin
         .execute(
             "UPDATE platform.schema_baseline SET sha256=$1",
@@ -147,7 +147,7 @@ async fn reset_worker_waits_before_validation_and_pinning() -> anyhow::Result<()
         "{}",
         String::from_utf8_lossy(&output.stderr)
     );
-    let pinned: serde_json::Value = admin.query_one("SELECT pending_database FROM registry.project_envs WHERE org='acme' AND project='apps' AND env='dev'", &[]).await?.get(0);
+    let pinned: serde_json::Value = admin.query_one("SELECT pending_database FROM registry.environment_projects WHERE org='acme' AND project='apps' AND env='dev'", &[]).await?.get(0);
     assert_eq!(
         pinned["inputs"]["substrate"]["initialization_sha256"],
         baseline

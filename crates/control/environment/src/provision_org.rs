@@ -7,10 +7,10 @@
 //! An imperative CLI, run as a Job or from a runbook. It:
 //!
 //! 1. looks up the `--template` preset (`trials` / `standard` / `dedicated` —
-//!    the `Tier` successor) and builds the org's [`Placement`](wamn_control_registry::Placement)
+//!    the `Tier` successor) and builds the org's [`Placement`](wamn_control_provision::Placement)
 //!    (`trials` places on the shared `--pool`); validates the org id, placement,
 //!    and stamped policy set by running the one-org registry through
-//!    `wamn-control-registry`'s validator;
+//!    `wamn-registry`'s validator;
 //! 2. records the org in the T1 `wamn_system` DB (when a system-DB URL and an
 //!    admin email are given): the placement row (idempotent upsert) plus the
 //!    template's policy rows — **insert-if-absent**, so re-provisioning keeps
@@ -42,7 +42,7 @@
 //! (`deploy/gcp/cnpg-cluster.yaml` `wamn-pg`), so it owns no clusters — there is
 //! nothing to render; only its registry rows are recorded. `.7`
 //! `provision-project-env` then reads that placement and derives the pool
-//! cluster via [`cluster_of`](wamn_control_registry::cluster_of).
+//! cluster via [`cluster_of`](wamn_control_provision::cluster_of).
 
 pub(super) mod plan;
 
@@ -54,7 +54,8 @@ use tokio_postgres::NoTls;
 use crate::env_policies::read_env_policies;
 use wamn_control_provision::org::OrgClusters;
 use wamn_control_provision::{PlatformComponent, bind_platform_principal_sql};
-use wamn_control_registry::{EnvPolicy, Org, OrgEnvPolicy, Registry, SCHEMA_VERSION, Template};
+
+use wamn_control_provision::{EnvPolicy, Org, OrgEnvPolicy, Template};
 use wamn_platform_identity::{
     create_or_reuse_user,
     org::{activate_org_membership, grant_org_admin},
@@ -155,10 +156,10 @@ pub async fn provision_org_with_changes(
 
     let clusters = match &org.placement {
         // Pooled: no cluster set — the org shares the pool.
-        wamn_control_registry::Placement::Pooled { .. } => None,
+        wamn_control_provision::Placement::Pooled { .. } => None,
         // Dedicated: render one cluster per recovery-domain owner, sized by the
         // org's policy for the owner env.
-        wamn_control_registry::Placement::Dedicated => Some(
+        wamn_control_provision::Placement::Dedicated => Some(
             wamn_control_provision::org::render_org_cluster_set(
                 &org,
                 &policies,
@@ -247,7 +248,7 @@ async fn record_org_rows(
     let pool = org.placement.pool();
     client
         .execute(
-            wamn_control_registry::sql::upsert_org_sql(),
+            wamn_registry::sql::upsert_org_sql(),
             &[&org.id, &placement_type, &pool],
         )
         .await
@@ -258,7 +259,7 @@ async fn record_org_rows(
         let recovery = serde_json::to_string(&p.recovery_domain).context("recovery json")?;
         client
             .execute(
-                wamn_control_registry::sql::stamp_env_policy_sql(),
+                wamn_registry::sql::stamp_env_policy_sql(),
                 &[
                     &row.org,
                     &name,
@@ -340,17 +341,6 @@ async fn record_admin_rows(
 mod tests {
     use super::*;
 
-    fn one_org_registry(template: &Template, org_id: &str) -> Registry {
-        let (org, stamped) = template.stamp(org_id, "wamn-pg");
-        Registry {
-            schema_version: SCHEMA_VERSION.to_string(),
-            env_policies: stamped,
-            orgs: vec![org],
-            projects: Vec::new(),
-            project_envs: Vec::new(),
-        }
-    }
-
     /// A trials org places on the shared pool (record-only); the dedicated
     /// templates own per-recovery-domain clusters rendered from their policies —
     /// `standard`'s canary collapses onto prod (2 clusters), `dedicated`'s canary
@@ -361,11 +351,7 @@ mod tests {
         let (pooled, _) = Template::trials().stamp("trialco", "wamn-pg");
         assert_eq!(pooled.placement.type_str(), "pooled");
         assert_eq!(pooled.placement.pool(), Some("wamn-pg"));
-        assert!(
-            one_org_registry(&Template::trials(), "trialco")
-                .validate()
-                .is_ok()
-        );
+        assert!(plan::stamped_org(&Template::trials(), "trialco", "wamn-pg").is_ok());
         // A pooled org owns no clusters (the render path errors — record-only).
         assert!(
             wamn_control_provision::org::render_org_cluster_set(
@@ -412,8 +398,7 @@ mod tests {
         for name in Template::NAMES {
             let t = Template::by_name(name).expect("a shipped preset");
             assert_eq!(t.name, name);
-            let reg = one_org_registry(&t, "acme");
-            assert!(reg.validate().is_ok(), "{name}: {:?}", reg.issues());
+            assert!(plan::stamped_org(&t, "acme", "wamn-pg").is_ok());
         }
     }
 
@@ -421,15 +406,9 @@ mod tests {
     fn reserved_org_id_is_rejected() {
         // The `provision-org` id path runs through the same validator the registry
         // uses, so a reserved-prefix org id is refused before any effect.
+        assert!(plan::stamped_org(&Template::standard(), "wamn-corp", "wamn-pg").is_err());
         assert!(
-            one_org_registry(&Template::standard(), "wamn-corp")
-                .validate()
-                .is_err()
-        );
-        assert!(
-            one_org_registry(&Template::standard(), "Acme")
-                .validate()
-                .is_err(),
+            plan::stamped_org(&Template::standard(), "Acme", "wamn-pg").is_err(),
             "an uppercase id is not a slug"
         );
     }

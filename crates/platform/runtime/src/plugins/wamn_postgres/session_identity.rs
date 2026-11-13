@@ -14,11 +14,9 @@ use tokio_postgres::types::ToSql;
 use tracing::Instrument as _;
 
 use wamn_catalog::ManifestDigest;
-use wamn_control_registry::identifiers::{
-    valid_project, valid_project_env_key, valid_runner, valid_schema,
-};
 use wamn_engine::release_manifest::LoadedRelease;
 use wamn_event_wire::Causation;
+use wamn_registry::identifiers::{valid_project, valid_project_env_key};
 use wamn_run_state::AuthorityClass;
 
 use crate::plugins::connection_http::ConnectionInvocation;
@@ -55,8 +53,6 @@ const PRINCIPAL_GRANTS_SQL: &str = "SELECT u.status = 'active', r.role_name, p.p
 const PROVISIONED_PRINCIPAL_SQL: &str = "SELECT 1 FROM platform.\"user\" \
     WHERE id = $1::text::uuid";
 
-/// Each role that the active user holds, with each permission of that
-/// role.
 const USER_OPERATION_PERMISSIONS_SQL: &str = "SELECT user_role.role_name, permission.permission \
     FROM platform.\"user\" AS \"user\" \
     JOIN platform.user_role AS user_role \
@@ -353,6 +349,7 @@ pub struct WamnPostgres {
     /// The auth facts this host keeps
     /// (docs/architecture/execution.md#auth-memory).
     auth: crate::auth_cache::AuthCache,
+    hierarchy_reader: std::sync::RwLock<Option<Arc<tokio_postgres::Client>>>,
 }
 
 /// The release a pod carries — the manifest digest derived from the verified
@@ -1114,7 +1111,7 @@ fn valid_application(application: &str) -> bool {
 
 /// A caller's `app.user_id`: the canonical `8-4-4-4-12` hex uuid a `users.id`
 /// renders as. Local rather than imported because this identity is a uuid, not one
-/// of the `[A-Za-z0-9_-]` identities `wamn-control-registry` owns. Since R2 it
+/// of the `[A-Za-z0-9_-]` identities `wamn-registry` owns. Since R2 it
 /// is not the injection boundary (the value binds as `$6`); it fails closed on a
 /// value the compiled `NULLIF(…, '')::uuid` coercion would raise 22P02 on inside
 /// every ownership predicate.
@@ -1227,7 +1224,60 @@ impl WamnPostgres {
             destroyed: Arc::new(AtomicU64::new(0)),
             bind_counters: super::BindCounters::default(),
             auth: crate::auth_cache::AuthCache::default(),
+            hierarchy_reader: std::sync::RwLock::default(),
         }
+    }
+
+    /// Bind the host's existing identity reader for inherited authorization.
+    pub fn set_hierarchy_reader(&self, reader: Arc<tokio_postgres::Client>) {
+        *self
+            .hierarchy_reader
+            .write()
+            .expect("hierarchy reader lock poisoned") = Some(reader);
+    }
+
+    async fn inherited_grants(
+        &self,
+        key: &str,
+        principal: &wamn_identity_protocol::PrincipalId,
+        mut grants: crate::auth_cache::PrincipalGrants,
+    ) -> anyhow::Result<crate::auth_cache::PrincipalGrants> {
+        if self.inherits_administration(key, principal).await? {
+            grants.present = true;
+            grants.active = true;
+            grants.user = Some(true);
+            grants
+                .roles
+                .entry(wamn_identity_protocol::ADMIN_ROLE.to_owned())
+                .or_default();
+        }
+        Ok(grants)
+    }
+
+    async fn inherits_administration(
+        &self,
+        key: &str,
+        principal: &wamn_identity_protocol::PrincipalId,
+    ) -> anyhow::Result<bool> {
+        let reader = self
+            .hierarchy_reader
+            .read()
+            .expect("hierarchy reader lock poisoned")
+            .as_ref()
+            .map(Arc::clone);
+        let Some(reader) = reader else {
+            return Ok(false);
+        };
+        let coordinate = wamn_registry::name::parse_project_env_key(key)
+            .ok_or_else(|| anyhow::anyhow!("invalid project deployment coordinate"))?;
+        Ok(wamn_platform_identity::control::is_project_admin(
+            reader.as_ref(),
+            principal,
+            &coordinate.org,
+            &coordinate.project,
+            Some(coordinate.env.as_str()),
+        )
+        .await?)
     }
 
     /// The auth facts this host keeps. A message on
@@ -1307,7 +1357,7 @@ impl WamnPostgres {
     ) -> anyhow::Result<()> {
         anyhow::ensure!(
             valid_project_env_key(project_env_key),
-            "invalid project_env_key {project_env_key:?}: 1-64 chars of [A-Za-z0-9_-] required"
+            "invalid project_env_key {project_env_key:?}: canonical org--environment--project coordinates required"
         );
         self.project_env_keys
             .write()
@@ -2416,7 +2466,11 @@ impl WamnPostgres {
             .auth
             .grants(project_env_key, principal.to_string().as_str())
         {
-            Ok(grants) => return Ok(grants),
+            Ok(grants) => {
+                return self
+                    .inherited_grants(project_env_key, principal, grants)
+                    .await;
+            }
             Err(ticket) => ticket,
         };
         let (connection, _policy) = self
@@ -2444,7 +2498,8 @@ impl WamnPostgres {
                 grants.clone(),
             )
             .await;
-        Ok(grants)
+        self.inherited_grants(project_env_key, principal, grants)
+            .await
     }
 
     /// The application roles and stored permissions a caller holds, read by a
@@ -2474,7 +2529,18 @@ impl WamnPostgres {
                 },
             )
             .await??;
-        HeldOperationGrants::from_rows(&rows).context("decode held operation grant")
+        let mut held =
+            HeldOperationGrants::from_rows(&rows).context("decode held operation grant")?;
+        if self
+            .inherits_administration(project_env_key, principal_id)
+            .await?
+        {
+            held.admin = true;
+            held.user = true;
+            held.roles
+                .insert(wamn_identity_protocol::ADMIN_ROLE.to_owned());
+        }
+        Ok(held)
     }
 
     /// Run `work` in a host-owned READ COMMITTED transaction under the
@@ -2650,3 +2716,33 @@ impl AsRef<crate::auth_cache::AuthCache> for WamnPostgres {
 
 #[cfg(test)]
 pub(in crate::plugins::wamn_postgres) mod tests;
+
+/// A durable-queue lease owner. An identity-format contract: bounded
+/// `[A-Za-z0-9_-]`, no quotes/backslashes. Since R2 this is NO LONGER the
+/// injection boundary on the plugin path — the runner binds as a parameter into
+/// `IDENTITY_SQL`, so a quote/backslash is inert data — but a malformed owner still
+/// fails closed.
+pub fn valid_runner(runner: &str) -> bool {
+    !runner.is_empty()
+        && runner.len() <= 128
+        && runner
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+}
+
+/// A `search_path` schema name. Stricter than a project: no hyphens. Since R2 the
+/// value binds as a parameter into `IDENTITY_SQL` on the plugin path rather than
+/// being spliced into SQL — but the no-hyphen rule still matters where a schema
+/// name is quoted into DDL elsewhere (e.g. the migrate / copy paths), and a
+/// malformed schema still fails closed.
+pub fn valid_schema(schema: &str) -> bool {
+    !schema.is_empty()
+        && schema.len() <= 63
+        && schema
+            .chars()
+            .next()
+            .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
+        && schema
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_')
+}

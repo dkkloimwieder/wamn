@@ -72,7 +72,7 @@ pub(crate) fn failure(
 pub trait Store: Send + Sync + fmt::Debug {
     async fn put(
         &self,
-        target: &wamn_control_registry::Triple,
+        target: &wamn_registry::Triple,
         credential_id: uuid::Uuid,
         value: &[u8],
     ) -> Result<StoreVersion, Error>;

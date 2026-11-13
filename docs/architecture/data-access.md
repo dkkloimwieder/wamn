@@ -77,7 +77,7 @@ The native runtime refuses absent membership at the existing guest error boundar
 The generator supplies fixed protocol rules and rejects authored fields for them.
 Receiving, Acme, and WMS use the same declaration format.
 
-Every package under `apps/` authors its manifest in `wamn.k`, a KCL file, and `tools/repo-lint` refuses a `wamn.json` at its root. Test fixtures outside `apps/` keep a hand-written `wamn.json`.
+Every package under `apps/` authors its manifest in `wamn.k`, a KCL file, and `cargo xtask repo-lint` refuses a `wamn.json` at its root. Test fixtures outside `apps/` keep a hand-written `wamn.json`.
 `wamn build` compiles it to `wamn.json` in the package's build output, and every reader reads that compiled file.
 The author states a fact once, in the place that owns it.
 The schema module fills authoring defaults, and generation adds each member that the table below marks derived, so the compiled file states what an authored `wamn.json` states.
@@ -899,7 +899,7 @@ Their foreign keys reference one column. `api_key` keys on `id`, and `key_hash` 
 `environment` uses a boolean `id` primary key constrained to `true`. Its default is `true`, so it holds at most one status row.
 No status row means active. The application login reads that row from its selected environment database.
 History keys contain no `project_id`. Environment history uses the key `{"id": true}`.
-The shared control, catalog, and run tables store the composed `org--project--env` key in `project_env_key`.
+The shared control, catalog, and run tables store the composed `org--env--project` key in `project_env_key`.
 The separate `environment` field stores the short name, such as `dev`.
 Target JSON, catalog identities, run keys, and manifest targets use `project_env_key`.
 Event fields and workload identity use `project_env_key`. Credential hashes frame that name.
@@ -1034,9 +1034,9 @@ An environment stores its target identity on first apply. The target cannot chan
 The system database (`wamn_system`) stamps its identity authority relations.
 These relations are `identity.principals`, `identity.org_memberships`, `identity.org_roles`, `identity.project_roles`, `identity.project_env_memberships`, and `identity.pats`.
 Each relation carries the four stamp columns as `NOT NULL` with no default, and a static `wamn_record_history_stamp` trigger.
-The full system schema also stamps `registry.meta`, `orgs`, `env_policies`, `projects`, `project_envs`, `retired_project_envs`, `capture_gap`, and `generation_passwords`.
+The full system schema also stamps `registry.meta`, `orgs`, `env_policies`, `environments`, `projects`, `environment_projects`, `retired_project_envs`, `capture_gap`, and `generation_passwords`.
 It stamps `identity.session_keys`, `session_signing_state`, and `password_attempts` too.
-The full control schema stamps the control store relations `catalog.project_environments` and `wamn_authority.author_login_projects`.
+The full control schema stamps registry declarations and `wamn_authority.author_login_projects`.
 The system operations tables carry no stamps.
 In the system database, the actor is an `identity.principals` id.
 The system identity tables record the actor only. A control route binds `app.operation` to its sealed operation id, and no column stores it.
@@ -1128,7 +1128,7 @@ The stage writes its project service row without assigning a role or permission.
 It reads the platform domain from `registry.meta.platform_domain`, and it refuses while that value is unset.
 It creates the `platform.number_sequence` row of each sequence that the packages declare, as [Numbering](#numbering) describes.
 It writes a user row for each user with a membership in that project environment, and removes a user row whose membership is gone.
-It writes the `admin` row of each member who holds `project-admin` in the project.
+Authorization derives a user’s administration from the current org, environment and project grants. The application database stores no copy of these inherited grants.
 `wamn-ctl-ops create-user` creates that user in `identity.principals`, and it is the only path that creates one.
 The verb ships in the operational binary, and only a platform operator runs it.
 One email address names one principal for the whole platform.
@@ -1227,7 +1227,7 @@ Catalog bootstrap installs this function after its tables. Application schema in
 Provisioning grants execution to `wamn_administration`.
 Each function is `SECURITY DEFINER`, is owned by `wamn_system`, and pins `search_path` to `pg_catalog`.
 PUBLIC holds no execute grant. Only the control or administration role receives the execute grant that it needs.
-Registry reads and writes remain unavailable through direct control table grants.
+Control logins can read hierarchy rows and write their declared identity and lifecycle fields. Postgres row security limits these operations to the authenticated login’s org. Connection writes still use the restricted functions.
 
 ### Application connection bindings
 

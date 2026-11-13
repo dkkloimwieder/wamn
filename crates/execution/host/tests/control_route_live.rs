@@ -977,7 +977,7 @@ async fn statuses(admin: &Client, billing: &Client, shop: &Client) -> Vec<String
     let mut statuses: Vec<String> = admin
         .query(
             "SELECT 'system ' || project || '/' || env || ' ' || status \
-               FROM registry.project_envs WHERE org = $1 ORDER BY project, env",
+               FROM registry.environment_projects WHERE org = $1 ORDER BY project, env",
             &[&ORG],
         )
         .await
@@ -1192,9 +1192,13 @@ async fn status_routes_mirror_the_status_into_each_environment_leaves_first() ->
         "an inactivation commits the system row after every environment"
     );
     admin.execute(
-        "INSERT INTO registry.project_envs (org, project, env, secret_name, instance_suffix, policy_name, status) \
-         SELECT org, project, 'other', secret_name, instance_suffix, policy_name, 'inactive' \
-         FROM registry.project_envs WHERE org = $1 AND project = 'billing' AND env = 'dev'",
+        "WITH parent_environment AS ( \
+             INSERT INTO registry.environments (org, env, policy_name, status) \
+             SELECT org, 'other', policy_name, 'inactive' FROM registry.environments \
+             WHERE org=$1 AND env='dev' \
+         ) INSERT INTO registry.environment_projects (org, env, project, secret_name, instance_suffix) \
+         SELECT org, 'other', project, secret_name, instance_suffix \
+         FROM registry.environment_projects WHERE org=$1 AND project='billing' AND env='dev'",
         &[&ORG],
     ).await?;
     assert_eq!(
@@ -1697,7 +1701,7 @@ async fn connection_routes_refuse_mismatches_and_project_only_enabled_rows() -> 
         },
         None,
     );
-    admin.batch_execute(&format!("BEGIN; {} UPDATE registry.project_envs SET target_id=(SELECT id FROM registry.target WHERE name='cloud'); COMMIT",wamn_control_provision::bind_platform_principal_sql(wamn_control_provision::PlatformComponent::Provisioning))).await?;
+    admin.batch_execute(&format!("BEGIN; {} UPDATE registry.environments SET target_id=(SELECT id FROM registry.target WHERE name='cloud'); COMMIT",wamn_control_provision::bind_platform_principal_sql(wamn_control_provision::PlatformComponent::Provisioning))).await?;
     let external = json!({"project":"billing","name":"erp"});
     assert!(
         call(
@@ -1844,8 +1848,8 @@ async fn connection_routes_refuse_mismatches_and_project_only_enabled_rows() -> 
         .await?;
     // The sha256 of the canonical bytes `{}`, which catalog.releases tests.
     let digest = "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a";
-    billing.execute("INSERT INTO catalog.releases(project_env_key,manifest_digest,canonical_bytes) VALUES($1,$2,$3)",&[&wamn_control_registry::project_env_key(ORG,"billing","dev"),&digest,&b"{}".as_slice()]).await?;
-    billing.execute("INSERT INTO catalog.release_connection(project_env_key,manifest_digest,connection_id,version) VALUES($1,$2,$3::text::uuid,1)",&[&wamn_control_registry::project_env_key(ORG,"billing","dev"),&digest,&identity]).await?;
+    billing.execute("INSERT INTO catalog.releases(project_env_key,manifest_digest,canonical_bytes) VALUES($1,$2,$3)",&[&wamn_registry::project_env_key(ORG,"billing","dev"),&digest,&b"{}".as_slice()]).await?;
+    billing.execute("INSERT INTO catalog.release_connection(project_env_key,manifest_digest,connection_id,version) VALUES($1,$2,$3::text::uuid,1)",&[&wamn_registry::project_env_key(ORG,"billing","dev"),&digest,&identity]).await?;
     billing.batch_execute("COMMIT").await?;
     assert!(
         call(
@@ -2013,7 +2017,7 @@ async fn delayed_grant_cannot_restore_revoked_admin() -> anyhow::Result<()> {
             .await
         });
         tokio::time::timeout(std::time::Duration::from_secs(10), pause.entered()).await?;
-        let project_env_key = wamn_control_registry::project_env_key(ORG, "billing", "dev");
+        let project_env_key = wamn_registry::project_env_key(ORG, "billing", "dev");
         bucket
             .put(
                 wamn_broker::auth_changes::principal_key(&project_env_key, user.as_str()),
@@ -2055,7 +2059,7 @@ async fn delayed_grant_cannot_restore_revoked_admin() -> anyhow::Result<()> {
         assert!(rows.iter().all(|row| !row.contains("admin")), "{rows:?}");
         let count: i64 = admin.query_one("SELECT count(*) FROM identity.project_roles WHERE principal_id=$1::text::uuid AND role='project-admin'", &[&user.as_str()]).await?.get(0);
         assert_eq!(count, 0);
-        let project_env_key = wamn_control_registry::project_env_key(ORG, "billing", "dev");
+        let project_env_key = wamn_registry::project_env_key(ORG, "billing", "dev");
         assert!(
             bucket
                 .get(wamn_broker::auth_changes::principal_key(

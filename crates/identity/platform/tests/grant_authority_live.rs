@@ -130,7 +130,7 @@ async fn inactive_membership_serializes_grants_and_refuses_sessions() -> anyhow:
         .await?
     );
     assert!(
-        !wamn_platform_identity::control::is_project_admin(&first, &user, "acme", "billing")
+        !wamn_platform_identity::control::is_project_admin(&first, &user, "acme", "billing", None)
             .await?
     );
     Ok(())
@@ -167,7 +167,7 @@ async fn service_admin_projects_without_user_membership_and_stale_admin_is_remov
         org: "acme",
         project: "billing",
         env: "dev",
-        project_env_key: "acme--billing--dev",
+        project_env_key: "acme--dev--billing",
     };
     for expected in [true, false] {
         let tx = system.transaction().await?;

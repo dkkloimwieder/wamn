@@ -10,7 +10,7 @@ use plan::authoritative_environment_policy;
 
 use anyhow::Context as _;
 use tokio_postgres::NoTls;
-use wamn_control_registry::EnvPolicy;
+use wamn_control_provision::EnvPolicy;
 
 pub use plan::AuthoritativeEnvironmentPolicy;
 
@@ -48,7 +48,8 @@ pub async fn read_authoritative_environment_policy(
 
 #[cfg(test)]
 mod tests {
-    use wamn_control_registry::{Env, EnvPolicy, RecoveryDomain};
+    use wamn_control_provision::{EnvPolicy, RecoveryDomain};
+    use wamn_registry::Env;
 
     use super::authoritative_environment_policy;
 

@@ -16,7 +16,7 @@ use wamn_test_infrastructure::locked_database;
 
 const CATALOG_SCHEMA: &str = wamn_catalog::CATALOG_SCHEMA_SQL;
 const APP_SCHEMA: &str = include_str!("../../../../deploy/sql/app-schema.sql");
-const PROJECT_ENV_KEY: &str = "package-data-access-live--fixture--dev";
+const PROJECT_ENV_KEY: &str = "package-data-access-live--dev--fixture";
 const PASSWORD: &str = "package-data-access-live-password";
 /// The relation maps apply-package writes beside the application tables.
 const APPLIER_OWNED_RELATIONS: [&str; 2] = ["wamn_entities", "wamn_cdc_exclusions"];

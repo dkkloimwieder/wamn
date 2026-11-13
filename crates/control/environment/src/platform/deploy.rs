@@ -48,7 +48,12 @@ pub async fn deploy(
     let platform_chart = artifact_plan::platform_chart(operator_values.as_ref(), chart)?;
     let (control_values, identity_values) = if existing {
         (
-            resources::release_values(&target, "hosts", &format!("c-{}", document.org)).await?,
+            resources::release_values(
+                &target,
+                "hosts",
+                &wamn_registry::name::control_resource(&document.org),
+            )
+            .await?,
             resources::release_values(&target, "identity", "identity").await?,
         )
     } else {
@@ -215,7 +220,7 @@ async fn installed_values(target: &Target, name: &str) -> anyhow::Result<Value> 
 fn host_target<'a>(
     values: &'a Value,
     group: &str,
-) -> anyhow::Result<(wamn_control_registry::Triple, Option<&'a str>)> {
+) -> anyhow::Result<(wamn_registry::Triple, Option<&'a str>)> {
     let application = match values.get("applications") {
         Some(applications) => {
             let applications = applications
@@ -231,10 +236,10 @@ fn host_target<'a>(
     };
     let triple = if let Some(environment) = values["environment"].as_str() {
         let parts: Vec<_> = environment.split('/').collect();
-        let [org, project, env] = parts.as_slice() else {
+        let [org, env, project] = parts.as_slice() else {
             anyhow::bail!("installed release has no environment coordinate");
         };
-        wamn_control_registry::Triple::new(*org, *project, *env)
+        wamn_registry::Triple::new(*org, *env, *project)
     } else {
         let group = values["runtime-operator"]["runtime"]["hostGroups"]
             .as_array()
@@ -252,10 +257,10 @@ fn host_target<'a>(
                 .and_then(|variable| variable["value"].as_str())
                 .context("installed host has no environment coordinate")
         };
-        wamn_control_registry::Triple::new(
+        wamn_registry::Triple::new(
             variable("WAMN_EVT_ORG")?,
-            variable("WAMN_EVT_PROJECT")?,
             variable("WAMN_EVT_ENV")?,
+            variable("WAMN_EVT_PROJECT")?,
         )
     };
     Ok((triple, application))
@@ -484,7 +489,7 @@ mod tests {
         let file = incoming.0.join("values.yaml");
         let mut defaults: Value = serde_yaml::from_slice(&std::fs::read(&file)?)?;
         defaults["runtime-operator"]["runtime"]["hostGroups"] = json!([{
-            "name":format!("c-{}", document.org), "replicas":2,
+            "name":wamn_registry::name::control_resource(&document.org), "replicas":2,
             "resources":{"limits":{"memory":"3Gi"}}
         }]);
         std::fs::write(file, serde_yaml::to_string(&defaults)?)?;

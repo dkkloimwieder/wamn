@@ -253,7 +253,7 @@ If observation fails, WAMN retains those facts. Retry the same selection after r
 A schema fingerprint identifies the complete physical SQL, including authored and generated definitions.
 It excludes code versions, release digests, ordinary queries, and web files.
 `schema.mode` accepts `reset` and `migrate`.
-If omitted, the mode is `reset` only when `registry.project_envs.disposable` is true. Otherwise, it is `migrate`.
+If omitted, the mode is `reset` only when `registry.environments.disposable` is true. Otherwise, it is `migrate`.
 An environment name or explicit `reset` mode grants no authority to discard data.
 Editing the mode alone executes no SQL and changes no application selection.
 
@@ -307,7 +307,7 @@ Resolve any project file with a `started` outcome before reset:
 `wamn platform schema apply --target project --env FILE --chart DIR --resolve <path>=applied|retry`.
 Inspect the file's database effects before choosing its resolution.
 The environment lock excludes application deployment during reset.
-`registry.project_envs.pending_database` pins the complete inputs and a new initialization identity outside the database being replaced.
+`registry.environment_projects.pending_database` pins the complete inputs and a new initialization identity outside the database being replaced.
 CNPG sets the existing Database to `ensure: absent`, waits, then sets `ensure: present` under the same name and waits again.
 The SQL Job runs initialization SQL, then the pinned applied project files in order through the shared executor.
 Files pending for the image stay pending after reset. Retries retain the pinned initialization identity and applied file set.
@@ -573,7 +573,7 @@ The credential of `--registry-auth-file` must pull the packages and push to the 
 Each component of the release carries its admitted descriptor from the package artifact.
 Set `RELEASE_DIGEST` to it.
 The manifest names no environment key and no environment, so one release has one digest in every environment.
-The composed `project_env_key` is `<org>--<project>--<environment>`.
+The composed `project_env_key` is `<org>--<environment>--<project>`.
 The separate `environment` field keeps the short name.
 The release also names no route host.
 The route host is only the `host` of the http workload config. The router matches routes under it.
@@ -712,7 +712,7 @@ The verbs refuse direct assignment or removal of `admin`.
 Grant or revoke system project-admin or org-admin to change application administration.
 The target needs an existing application user or service row.
 The HTTP owner refuses unknown users. A grant also refuses a missing role.
-The operator service of an environment, `wamn-operator-<org>--<project>--<env>`, has the email `<subject>@<platform domain>`.
+The operator service of an environment, `wamn-operator-<org>--<env>--<project>`, has the email `<subject>@<platform domain>`.
 `env apply` writes its PAT Secret when it can reach identity. GCP deployment integration for a missing operator PAT remains unfinished.
 
 ### Authored roles

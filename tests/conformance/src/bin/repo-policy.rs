@@ -1,6 +1,6 @@
 //! Run the repository policy lints over the repository at the given root.
 //!
-//! `tools/repo-lint` runs this binary as one leg and passes the repository root.
+//! `cargo xtask repo-lint` runs this binary as one leg and passes the repository root.
 
 use std::path::PathBuf;
 use std::process::ExitCode;

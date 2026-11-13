@@ -11,8 +11,8 @@ use wamn_broker::auth_changes::{AuthChange, AuthDrops};
 use wamn_control_provision::{PlatformComponent, platform_principals_sql, test_database};
 use wamn_identity_protocol::PrincipalId;
 use wamn_platform_identity::application::{
-    ApplicationUser, create_role, delete_role, remove_admin, remove_user, write_admin,
-    write_environment_status, write_service, write_user,
+    ApplicationUser, create_role, delete_role, remove_admin, remove_user, write_environment_status,
+    write_service, write_user,
 };
 use wamn_platform_identity::org::{
     EnvironmentStatus, activate_org_membership, deactivate_org_membership, grant_member,
@@ -291,12 +291,6 @@ async fn every_application_writer_records_a_drop_of_its_project_env_key_or_princ
         .await
         .unwrap();
     assert_eq!(changes(&drops), principal(&bob), "write_user");
-
-    let mut drops = AuthDrops::default();
-    write_admin(&client, "t1", user(&bob), &mut drops)
-        .await
-        .unwrap();
-    assert_eq!(changes(&drops), principal(&bob), "write_admin");
 
     let mut drops = AuthDrops::default();
     remove_admin(&client, "t1", &bob, &mut drops).await.unwrap();

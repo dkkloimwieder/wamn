@@ -7,7 +7,7 @@ use serde_json::Value;
 
 use super::document::{ClusterDocument, UpgradeTarget};
 
-// The portable payload emitted by platform_build (DEP-02).
+// The portable payload emitted by cargo xtask build-platform (DEP-02).
 const PAYLOAD_FILES: &[&str] = &[
     "platform/resources/registry.yaml",
     "platform/resources/letsencrypt.yaml",
@@ -113,7 +113,7 @@ impl SelectedChart {
             }
             UpgradeTarget::Host { release, group } => {
                 ensure!(
-                    release != &format!("c-{}", document.org),
+                    release != &wamn_registry::name::control_resource(&document.org),
                     "select the control service with --only control"
                 );
                 let groups = installed
@@ -329,6 +329,66 @@ fn validate_platform_images(value: &Value) -> anyhow::Result<()> {
             }
         }
         _ => {}
+    }
+    Ok(())
+}
+
+const RESOURCES: &[&str] = &[
+    "deploy/kind/registry.yaml",
+    "deploy/gcp/letsencrypt.yaml",
+    "deploy/infra/cert-manager.yaml",
+    "deploy/infra/cnpg-operator.yaml",
+    "deploy/infra/nats-certificates.yaml",
+    "deploy/infra/cnpg-cluster.yaml",
+    "deploy/infra/nats-jetstream.yaml",
+    "deploy/platform/values-operator.yaml",
+    "deploy/infra/values-wamn.yaml",
+    "deploy/platform/identity-operator-ca.yaml",
+    "deploy/platform/identity-certificate.yaml",
+    "deploy/platform/wamn-host-serviceaccount.yaml",
+    "deploy/platform/registry-helper.yaml",
+    "deploy/platform/runtime-operator-events-rbac.example.yaml",
+    "deploy/platform/control-status-rbac.yaml",
+    "deploy/platform/control-service.yaml",
+];
+
+/// Copy the product deployment payload from its source owner into a chart.
+pub fn prepare_payload(repository: &Path, chart: &Path) -> anyhow::Result<()> {
+    let platform = chart.join("platform");
+    std::fs::create_dir_all(platform.join("resources"))?;
+    for name in ["identity", "edge"] {
+        copy_package_output(
+            &repository.join("deploy/platform").join(name),
+            &platform.join(name),
+        )?;
+    }
+    for source in RESOURCES {
+        let source = repository.join(source);
+        std::fs::copy(
+            &source,
+            platform
+                .join("resources")
+                .join(source.file_name().context("resource basename")?),
+        )
+        .with_context(|| format!("package {}", source.display()))?;
+    }
+    Ok(())
+}
+
+pub(crate) fn copy_package_output(from: &Path, to: &Path) -> anyhow::Result<()> {
+    std::fs::create_dir(to)?;
+    for entry in std::fs::read_dir(from)? {
+        let entry = entry?;
+        let destination = to.join(entry.file_name());
+        if entry.file_type()?.is_dir() {
+            copy_package_output(&entry.path(), &destination)?;
+        } else {
+            ensure!(
+                entry.file_type()?.is_file(),
+                "package output must contain regular files"
+            );
+            std::fs::copy(entry.path(), destination)?;
+        }
     }
     Ok(())
 }
@@ -635,7 +695,8 @@ mod tests {
             let mut after = wamn_kubernetes::helm::template(&entry)?;
             let deployment = |object: &&Value| {
                 object["kind"] == "Deployment"
-                    && object["metadata"]["name"] == format!("hostgroup-{group}")
+                    && object["metadata"]["name"]
+                        == wamn_registry::name::resource_suffix("hostgroup", group)
             };
             let previous = before
                 .iter()

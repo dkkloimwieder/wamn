@@ -500,11 +500,11 @@ async fn assert_user_environment_membership(
     .await?;
     let server = session_fixture::Server::start().await;
     let suffix: String = admin.query_one(
-        "SELECT instance_suffix FROM registry.project_envs WHERE org=$1 AND project=$2 AND env=$3",
+        "SELECT instance_suffix FROM registry.environment_projects WHERE org=$1 AND project=$2 AND env=$3",
         &[&ORG, &PROJECT, &ENVIRONMENT],
     ).await?.get(0);
     let audience = wamn_control_provision::session_target::session_audience(
-        &wamn_control_registry::Triple {
+        &wamn_registry::Triple {
             org: ORG.into(),
             project: PROJECT.into(),
             env: ENVIRONMENT.into(),
@@ -550,10 +550,7 @@ async fn assert_user_environment_membership(
          INSERT INTO registry.env_policies \
            (org, name, recovery_domain, promotion_rank, instances, storage, cpu, memory, image) \
          VALUES ('other-org', 'dev', '\"own\"'::jsonb, 1, 1, '1Gi', '1', '1Gi', 'postgres:18'); \
-         INSERT INTO registry.project_envs (org, project, env, secret_name, secret_namespace, instance_suffix, policy_name) \
-         VALUES ('acme', 'receiving', 'prod', 'membership-prod', 'wamn-system', 'member01', 'prod'), \
-                ('other-org', 'receiving', 'dev', 'membership-other', 'wamn-system', 'member02', 'dev'), \
-                ('acme', 'other', 'dev', 'membership-project', 'wamn-system', 'member03', 'dev');"
+         WITH parent_environment AS (INSERT INTO registry.environments (org,env,policy_name) VALUES ('acme','prod','prod'),('other-org','dev','dev'),('acme','dev','dev') ON CONFLICT (org,env) DO NOTHING) INSERT INTO registry.environment_projects (org,project,env,secret_name,secret_namespace,instance_suffix) VALUES ('acme','receiving','prod','membership-prod','wamn-system','member01'),('other-org','receiving','dev','membership-other','wamn-system','member02'),('acme','other','dev','membership-project','wamn-system','member03');"
     ).await?;
     project
         .execute(

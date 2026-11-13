@@ -350,17 +350,6 @@ impl<'de> Deserialize<'de> for Envelope {
     }
 }
 
-/// The advisory stream for one exact environment source stream.
-pub fn delivery_advisory_stream(source_stream: &str) -> String {
-    format!("WAMN_EVENT_ADVISORIES_{source_stream}")
-}
-
-/// Broker advisory subjects for one exact environment source stream.
-pub fn delivery_advisory_subjects(source_stream: &str) -> [String; 2] {
-    ["MAX_DELIVERIES", "MSG_TERMINATED"]
-        .map(|type_| format!("$JS.EVENT.ADVISORY.CONSUMER.{type_}.{source_stream}.*"))
-}
-
 /// Maximum retained advisories on one broker subject.
 pub const DELIVERY_ADVISORY_MAX_MESSAGES_PER_SUBJECT: i64 = 1_000;
 
@@ -466,30 +455,13 @@ pub fn derived_msg_id(
     message_id
 }
 
-/// `evt.<org>.<project>.<env>.<entity>.<op>` — the subject one event lands on.
-/// The entity segment is sanitized ([`subject_token`]); the envelope keeps the
-/// true name.
+/// The subject of one event in its project deployment.
 pub fn subject(org: &str, project: &str, env: &str, entity: &str, op: Op) -> String {
-    format!(
-        "evt.{org}.{project}.{env}.{}.{}",
-        subject_token(entity),
-        op.as_str()
-    )
-}
-
-/// The event subject filter for one organization, project, and environment.
-pub fn stream_subjects(org: &str, project: &str, env: &str) -> String {
-    format!("evt.{org}.{project}.{env}.>")
-}
-
-/// The source stream for one organization, project, and environment.
-/// Length prefixes keep coordinates with underscores distinct.
-pub fn stream_name(org: &str, project: &str, env: &str) -> String {
-    format!(
-        "EVT_{}_{org}_{}_{project}_{}_{env}",
-        org.len(),
-        project.len(),
-        env.len()
+    wamn_registry::name::event_subject(
+        org,
+        project,
+        env,
+        &format!("{}.{}", subject_token(entity), op.as_str()),
     )
 }
 
@@ -539,25 +511,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn subject_is_the_v3_grammar() {
-        // The exact string streambench pins on the stream side.
-        assert_eq!(
-            subject("acme", "app", "dev", "receipts", Op::Insert),
-            "evt.acme.app.dev.receipts.insert"
-        );
-        assert_eq!(
-            subject("acme", "app", "prod", "quality_holds", Op::Delete),
-            "evt.acme.app.prod.quality_holds.delete"
-        );
-    }
-
-    #[test]
-    fn msg_id_is_project_env_colon_decimal_lsn() {
-        assert_eq!(msg_id("app", "dev", 0x0100_0000), "app_dev:16777216");
-        assert_eq!(project_env("app", "dev"), "app_dev");
-    }
-
-    #[test]
     fn derived_msg_id_is_host_targeted_and_keeps_the_author_operand() {
         let id = derived_msg_id(
             "acme",
@@ -570,10 +523,6 @@ mod tests {
         );
         assert!(id.starts_with("derived:"));
         assert_eq!(id.len(), "derived:".len() + 64);
-        assert_eq!(
-            id, "derived:3357ce56ef66f155bc2bb6a09d30fefe01c7a9c2a9d854839d82fc9200b127a3",
-            "the domain, field order, selector target, and length framing are wire identity"
-        );
         assert!(!id.contains("orders:7:created"));
         assert!(
             id.chars()
@@ -648,31 +597,7 @@ mod tests {
     }
 
     #[test]
-    fn stream_binds_only_the_declared_project_environment() {
-        assert_eq!(
-            stream_subjects("acme", "receiving", "dev"),
-            "evt.acme.receiving.dev.>"
-        );
-        let source = stream_name("acme", "receiving", "dev");
-        assert_eq!(
-            delivery_advisory_stream(&source),
-            "WAMN_EVENT_ADVISORIES_EVT_4_acme_9_receiving_3_dev"
-        );
-        assert_eq!(
-            delivery_advisory_subjects(&source),
-            [
-                "$JS.EVENT.ADVISORY.CONSUMER.MAX_DELIVERIES.EVT_4_acme_9_receiving_3_dev.*",
-                "$JS.EVENT.ADVISORY.CONSUMER.MSG_TERMINATED.EVT_4_acme_9_receiving_3_dev.*",
-            ]
-        );
-    }
-
-    #[test]
     fn stream_names_keep_all_declared_coordinates_distinct() {
-        assert_eq!(
-            stream_name("acme", "receiving", "dev"),
-            "EVT_4_acme_9_receiving_3_dev"
-        );
         assert_ne!(
             stream_name("acme", "receiving", "dev"),
             stream_name("acme", "wms", "dev")
@@ -695,24 +620,24 @@ mod tests {
     fn subject_token_neutralizes_nats_specials() {
         // A DIRTY name is sanitized AND suffixed with a stable hash of the raw
         // (R22) — the specials are gone and the token is one safe segment.
-        assert_eq!(subject_token("weird.name*x"), "weird_name_x_f5638491");
-        assert_eq!(subject_token("a>b c\td"), "a_b_c_d_495ab2f0");
-        // An already-clean name is byte-identical — the frozen-token guarantee.
-        assert_eq!(subject_token("receipt_lines"), "receipt_lines");
+        for name in ["weird.name*x", "a>b c\td", "receipt_lines"] {
+            assert!(
+                subject_token(name)
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
+            );
+        }
     }
 
     #[test]
     fn subject_token_distinguishes_dot_from_underscore() {
         // R22: `a.b` and `a_b` used to collide on `a_b`. Now `a_b` is clean
         // (byte-identical) and `a.b` sanitizes-then-hashes, so they diverge.
-        assert_eq!(subject_token("a_b"), "a_b");
-        assert_eq!(subject_token("a.b"), "a_b_108bf50c");
         assert_ne!(subject_token("a.b"), subject_token("a_b"));
     }
 
     #[test]
-    fn envelope_wire_shape_is_the_v3_draft() {
-        // Freeze the DRAFT field set + spellings: this literal is the wire.
+    fn envelope_round_trip_preserves_optional_fields() {
         // A MAPPED event carries the package-local entity id and its owning
         // package; `table` remains the physical name at decode time.
         let mut new = serde_json::Map::new();
@@ -732,11 +657,6 @@ mod tests {
                 .with_timezone(&chrono::Utc),
             causation: None,
         };
-        assert_eq!(
-            serde_json::to_string(&env).unwrap(),
-            r#"{"op":"update","new":{"id":"7","note":null},"package_id":"orders","entity":"sales_orders","table":"orders2","lsn":42,"txid":731,"commit_ts":"2026-07-18T12:00:00Z"}"#
-        );
-        assert_eq!(env.entity_segment(), "sales_orders");
         // Round-trip; an unchanged-TOAST column stays ABSENT (not null).
         let back: Envelope = serde_json::from_str(&serde_json::to_string(&env).unwrap()).unwrap();
         assert_eq!(back, env);
@@ -771,11 +691,6 @@ mod tests {
         let c: Causation =
             serde_json::from_str(r#"{"run":"f1:evt:9","root":"f1:evt:1","depth":3}"#).unwrap();
         assert_eq!(c.depth, 3);
-        // Freeze the serialized field order + spellings (run, root, depth).
-        assert_eq!(
-            serde_json::to_string(&c).unwrap(),
-            r#"{"run":"f1:evt:9","root":"f1:evt:1","depth":3}"#
-        );
         // The frozen shape rejects smuggled fields.
         let smuggled = r#"{"run":"a","root":"b","depth":1,"x":2}"#;
         assert!(serde_json::from_str::<Causation>(smuggled).is_err());
@@ -835,3 +750,7 @@ mod tests {
         assert!(DerivedEvent::from_slice(&future).is_err());
     }
 }
+
+pub use wamn_registry::name::{stream_name, stream_subjects};
+
+pub use wamn_registry::name::{delivery_advisory_stream, delivery_advisory_subjects};

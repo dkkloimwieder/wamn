@@ -1,141 +1,28 @@
-//! Identifier naming + the connection-URL composer.
-//!
-//! A project id is a K8s-friendly lowercase slug (`[a-z0-9-]`, start/end
-//! alphanumeric) — the same shape the platform uses for flow ids (wi4). It is a
-//! component of the database and Secret names under `wamn-db-`. Hyphenated names are
-//! quoted in DDL (see [`crate::sql`]) and are unreserved in a connection URL
-//! path, so one slug serves both the K8s (hyphen) and Postgres (quoted) domains
-//! without translation.
-
-use std::fmt::Write as _;
-
-use sha2::{Digest as _, Sha256};
+//! Provisioning validation and credential URL composition.
 
 use crate::error::ProvisionError;
 use crate::workload_role::WorkloadRoleFamily;
+use std::fmt::Write as _;
 
-/// The single shared, cluster-global application role. Every generated project
-/// minimum and hand-written schema grants to it. It holds no database `CONNECT`:
-/// every App generation inherits it, so provisioning revokes that privilege and
-/// grants `CONNECT` to each generation on its own database instead.
+/// The shared role of generated application statements.
 pub const APP_ROLE: &str = "wamn_app";
-
-/// The NOLOGIN owner of project-environment databases and platform objects.
-/// Package objects belong to their separate [`package_owner_role`].
-/// Runtime application logins inherit [`APP_ROLE`], never this owner role.
-/// The provisioning principal holds this role for trusted platform writes.
+/// The owner of project databases and platform tables.
 pub const DB_OWNER_ROLE: &str = "wamn_db_owner";
+pub use wamn_registry::identifiers::MAX_PROJECT_ID_LEN;
+pub use wamn_registry::name::{
+    CDC_OBJECT_PREFIX, CDC_SECRET_PREFIX, DB_PREFIX, GUEST_SECRET_PREFIX, INSTANCE_SUFFIX_LEN,
+    MAX_DB_NAME_LEN, MAX_NAMESPACE_LEN, MAX_NAMESPACE_STEM_LEN, NAMESPACE_PREFIX, cdc_object_name,
+    control_administration_key, control_administration_secret_name, package_owner_role,
+    project_env_cdc_secret_name, project_env_database_name, project_env_namespace,
+    project_env_namespace_stem, project_env_secret_name,
+};
+pub use wamn_registry::project_env_key;
 
-/// The NOLOGIN owner of one package's SQL objects, independent of its version.
-/// A 40-digit SHA-256 prefix follows the workload role naming convention and
-/// keeps every package identifier within PostgreSQL's 63-byte name limit.
-pub fn package_owner_role(package: &str) -> String {
-    format!(
-        "wamn_package_owner_{}",
-        &hex::encode(Sha256::digest(package.as_bytes()))[..40]
-    )
-}
-
-/// Prefix for the targeted per-project guest-SQL URL Secret (`wamn-0h0g.22.6.4`).
-///
-/// It mirrors the family's Postgres generation prefix in the hyphenated K8s
-/// convention. The Secret is
-/// targeted to the project-environment, not to the project key: one management
-/// instance serves exactly one `(org, project, environment)` and that target's
-/// single project. The project travels in the manifest's labels, never in the
-/// name — a project id may be 64 bytes and carry characters a DNS-1123 name
-/// cannot.
-pub const GUEST_SECRET_PREFIX: &str = "wamn-guest-";
-
-/// Prefix for the per-project-env database **and** Secret names: `wamn-db-<org>--…`.
-/// It is under the platform-reserved `wamn` prefix (wamn-66x) on purpose — the
-/// platform mints it, and project ids in that space are rejected.
-pub const DB_PREFIX: &str = "wamn-db-";
-
-/// Max project-id length, owned by the registry since wamn-0h0g.9.16 and
-/// re-exported here so the composition helpers below keep one spelling of it.
-/// The registry records the derivation from [`MAX_DB_NAME_LEN`].
-pub use wamn_control_registry::identifiers::MAX_PROJECT_ID_LEN;
-
-/// Max length (bytes) of a provisioned database / K8s resource name: Postgres's
-/// identifier limit (63) — also within the DNS-1123 **label** limit (63) that the
-/// CNPG `Database` resource name must satisfy. Per-project-env names encode the
-/// full triple, so the assembled length is validated (see [`validate_project_env`]).
-pub const MAX_DB_NAME_LEN: usize = 63;
-
-/// Prefix for the per-project-env Kubernetes **namespace**:
-/// `wamn-<org>--<project>--<env>--<instance>` (wamn-0h0g.15.3). Under the
-/// platform-reserved `wamn` prefix like every other minted name, and carrying the
-/// same `--` separated triple as the database's identity stem.
-pub const NAMESPACE_PREFIX: &str = "wamn-";
-
-/// Max length (bytes) of the per-project-env namespace: the DNS-1123 **label**
-/// limit a Kubernetes namespace name must satisfy. The triple is NEVER truncated
-/// or hash-suffixed to fit — a breaching triple is refused at provisioning
-/// (see [`validate_project_env`]).
-pub const MAX_NAMESPACE_LEN: usize = 63;
-
-/// Length (bytes) of the provision-minted **instance suffix** every per-project-env
-/// namespace carries: 8 characters over `[a-z0-9]` — the form settled in
-/// `docs/archive/PLAN/PLAN.md`, ~41 bits.
-///
-/// It exists for REUSE AFTER DELETION: delete an environment and recreate it
-/// under the same triple, and without a fresh suffix the new one inherits the old
-/// namespace and whatever survived inside it. Randomness is the whole uniqueness
-/// mechanism — no naming registry, no retry loop, no derivation (wamn-0h0g.13.57).
-/// The mint belongs to the effect driver (`wamn-ctl provision-project-env`, which
-/// stores it on `registry.project_envs`); this crate is pure and only derives.
-pub const INSTANCE_SUFFIX_LEN: usize = 8;
-
-/// Separator between the identity triple and the instance suffix — the same `--`
-/// the triple's own components use. Components admit no `--` run and the suffix
-/// admits no hyphen at all, so the assembled namespace stays an unambiguous
-/// `--`-joined sequence.
-const INSTANCE_SUFFIX_SEPARATOR: &str = "--";
-
-/// Max length (bytes) of the namespace's identity **stem**
-/// `wamn-<org>--<project>--<env>`: [`MAX_NAMESPACE_LEN`] less the separator and
-/// the [`INSTANCE_SUFFIX_LEN`] suffix every provisioned namespace carries. This —
-/// not [`MAX_NAMESPACE_LEN`] — is what a triple is refused against, because the
-/// triple never gets the whole label.
-pub const MAX_NAMESPACE_STEM_LEN: usize =
-    MAX_NAMESPACE_LEN - INSTANCE_SUFFIX_SEPARATOR.len() - INSTANCE_SUFFIX_LEN;
-
-/// Prefix for the per-project-env CDC **credential Secret**:
-/// `wamn-cdc-<org>--<project>--<env>` (wamn-l5i9.9, D19 v3) — the hyphenated K8s
-/// convention, a sibling of the `wamn-db-…` query-credential Secret and the
-/// registration's `replication_secret_name` reference.
-pub const CDC_SECRET_PREFIX: &str = "wamn-cdc-";
-
-/// Prefix for the per-project-env CDC **Postgres objects** — the publication,
-/// the failover replication slot, and the replication role share one name:
-/// `wamn_cdc_<org>__<project>__<env>__<instance>` with slug hyphens mapped to `_`.
-/// Underscored because a replication **slot** name admits only `[a-z0-9_]`
-/// (slots are not identifiers and cannot be quoted); the publication and role
-/// reuse it so the whole CDC surface carries one name.
-pub const CDC_OBJECT_PREFIX: &str = "wamn_cdc_";
-
-/// The shared slug discipline for a provisioned-name identity component.
-///
-/// The registry owns this rule since wamn-0h0g.9.16, so this reads it rather
-/// than restating it. The org and the env are held to the same shape as the
-/// project id, because all three separate on `--` in
-/// [`project_env_database_name`] and on `__` in [`cdc_object_name`]. Only the
-/// project carries the extra reserved-`wamn` rule, which
-/// [`validate_project_id`] applies on top.
 fn slug_reason(id: &str) -> Option<&'static str> {
-    wamn_control_registry::identifiers::project_id_reason(id)
+    wamn_registry::identifiers::project_id_reason(id)
 }
 
-/// Validate a project id against the one registry-owned rule: a non-empty
-/// lowercase slug `[a-z0-9-]`, starting and ending alphanumeric, with no
-/// consecutive hyphens, at most [`MAX_PROJECT_ID_LEN`] bytes, and not under the
-/// reserved `wamn` prefix.
-///
-/// This is the boundary that translates the registry's rejection reason into
-/// this crate's [`ProvisionError`]. The registry reports why an id is wrong and
-/// carries no error type of its own, so nothing from the registry leaks out of
-/// provisioning and there is exactly one project-id taxonomy on the wire.
+/// Refuse invalid or reserved project identifiers.
 pub fn validate_project_id(id: &str) -> Result<(), ProvisionError> {
     if let Some(reason) = slug_reason(id) {
         return Err(ProvisionError::InvalidProjectId {
@@ -143,123 +30,31 @@ pub fn validate_project_id(id: &str) -> Result<(), ProvisionError> {
             reason,
         });
     }
-    if wamn_control_registry::identifiers::project_id_is_reserved(id) {
+    if wamn_registry::identifiers::project_id_is_reserved(id) {
         return Err(ProvisionError::ReservedProjectId { id: id.to_string() });
     }
     Ok(())
 }
-
 fn is_alnum(b: u8) -> bool {
     b.is_ascii_lowercase() || b.is_ascii_digit()
 }
 
-/// The per-project-env database name:
-/// `wamn-db-<org>--<project>--<env>--<instance>`
-/// (wamn-q3n.7).
-///
-/// The **org** is encoded — unlike the retired 2.3 project-only name — because the shared
-/// T3 trials pool hosts many orgs (two orgs' identically-named projects would
-/// otherwise collide on one cluster), and because every cluster's CNPG `Database`
-/// resources share the one K8s namespace, so the resource name must be unique
-/// there. `--` separates the identity components (the `Triple::host_label`
-/// convention). Validate the assembled length with [`validate_project_env`]
-/// before use; quote it in DDL (it contains hyphens) via [`crate::sql`].
-pub fn project_env_database_name(org: &str, project: &str, env: &str, instance: &str) -> String {
-    format!(
-        "{}{INSTANCE_SUFFIX_SEPARATOR}{instance}",
-        project_env_database_stem(org, project, env)
-    )
-}
-
-fn project_env_database_stem(org: &str, project: &str, env: &str) -> String {
-    format!("{DB_PREFIX}{org}--{project}--{env}")
-}
-
-/// The per-project-env credential Secret name:
-/// `wamn-db-<org>--<project>--<env>`. It stays triple-only because its namespace
-/// carries the instance identity; its URL names the suffixed Postgres database.
-pub fn project_env_secret_name(org: &str, project: &str, env: &str) -> String {
-    project_env_database_stem(org, project, env)
-}
-
-/// The project of a project environment, owned by the registry beside
-/// [`wamn_control_registry::Triple`].
-pub use wamn_control_registry::project_env_key;
-
-/// ONE workload credential Secret name, for any family (`wamn-0h0g.22.16`).
-///
-/// Replaces the four copy-pasted per-family helpers. The name is
-/// `<family secret prefix><org>--<project>--<env>`: triple-only for the same
-/// reason [`project_env_secret_name`] is — the URL inside names the suffixed
-/// Postgres database, so the Secret name does not have to. An admitted family
-/// gets its Secret name from this derivation with no edit here.
+/// Use the registry name for a project workload credential.
 pub fn workload_secret_name(
     family: WorkloadRoleFamily,
     org: &str,
     project: &str,
     env: &str,
 ) -> String {
-    format!("{}{org}--{project}--{env}", family.secret_prefix())
+    wamn_registry::name::workload_secret_name(&family.secret_prefix(), org, project, env)
 }
 
-/// The credential Secret name of an org-targeted family:
-/// `<family secret prefix><org>`, for example `wamn-control-<org>`.
+/// Use the registry name for an org workload credential.
 pub fn org_workload_secret_name(family: WorkloadRoleFamily, org: &str) -> String {
-    format!("{}{org}", family.secret_prefix())
+    wamn_registry::name::org_workload_secret_name(&family.secret_prefix(), org)
 }
 
-/// The Secret of an org's control host that holds the administration login of
-/// every environment of the org (docs/plan/platform-ui.md §4.4):
-/// `wamn-control-administration-<org>`.
-pub fn control_administration_secret_name(org: &str) -> String {
-    format!("wamn-control-administration-{org}")
-}
-
-/// The key of one environment in [`control_administration_secret_name`]:
-/// `<project>--<env>`, the file name the mounted Secret shows.
-pub fn control_administration_key(project: &str, env: &str) -> String {
-    format!("{project}--{env}")
-}
-
-/// The per-project-env Kubernetes namespace:
-/// `wamn-<org>--<project>--<env>--<instance>`.
-///
-/// One wamn environment `(org, project, env)` is one namespace (wamn-0h0g.15.3),
-/// so every environment-targeted resource — the credential Secrets, the release
-/// manifest, the environment's hosts — is addressed by DERIVING this name from
-/// the triple and the environment's minted instance suffix. It is never
-/// configured alongside the triple and never parsed back out of a resource.
-///
-/// `instance` is the environment's stored `registry.project_envs.instance_suffix`,
-/// NOT a fresh draw: minting is the effect driver's job, and re-deriving under a
-/// new suffix would orphan every resource the old one named. The suffix is what
-/// makes delete-and-recreate safe — the recreated environment lands in a
-/// different namespace and cannot inherit the deleted one's contents.
-///
-/// Validate the triple's assembled length with [`validate_project_env`] and the
-/// suffix with [`validate_instance_suffix`] before use; a triple that does not
-/// fit is refused, not shortened.
-pub fn project_env_namespace(org: &str, project: &str, env: &str, instance: &str) -> String {
-    format!(
-        "{}{INSTANCE_SUFFIX_SEPARATOR}{instance}",
-        project_env_namespace_stem(org, project, env)
-    )
-}
-
-/// The namespace's identity stem `wamn-<org>--<project>--<env>` — the part the
-/// triple contributes, bounded by [`MAX_NAMESPACE_STEM_LEN`].
-fn project_env_namespace_stem(org: &str, project: &str, env: &str) -> String {
-    format!("{NAMESPACE_PREFIX}{org}--{project}--{env}")
-}
-
-/// Validate a minted instance suffix: exactly [`INSTANCE_SUFFIX_LEN`] bytes over
-/// `[a-z0-9]`.
-///
-/// The charset is narrower than a component slug's on purpose. The suffix is
-/// APPENDED to a DNS-1123 label, so it decides that label's last byte and a
-/// DNS-1123 label must end alphanumeric; admitting `-` would let a stored suffix
-/// mint a namespace Kubernetes refuses. Call it on the value read back from
-/// `registry.project_envs` — the registry is a trust boundary, not the minter.
+/// Refuse a suffix that cannot identify a provisioned database.
 pub fn validate_instance_suffix(instance: &str) -> Result<(), ProvisionError> {
     let reason = if instance.len() != INSTANCE_SUFFIX_LEN {
         "must be exactly 8 bytes"
@@ -275,43 +70,25 @@ pub fn validate_instance_suffix(instance: &str) -> Result<(), ProvisionError> {
     })
 }
 
-/// The targeted per-project guest-SQL credential Secret name.
+/// Use the application workload name for guest SQL credentials.
 pub fn project_env_guest_secret_name(org: &str, project: &str, env: &str) -> String {
     workload_secret_name(WorkloadRoleFamily::App, org, project, env)
 }
 
-/// Validate that a `(org, project, env)` yields safe provisioned names: **all
-/// three** identity components are slugs, the assembled suffixed database name
-/// fits [`MAX_DB_NAME_LEN`] — a legal Postgres identifier and a legal DNS-1123
-/// label for the CNPG `Database` resource — and the namespace's identity stem
-/// fits [`MAX_NAMESPACE_STEM_LEN`], the budget left once the instance suffix
-/// takes its share of the DNS-1123 label.
-///
-/// Both assembled names are bounded here, and neither is ever truncated or
-/// hash-suffixed to fit: a triple that does not fit is REFUSED, at the one point
-/// that can mint it. The namespace carries its own bound rather than inheriting
-/// the database one — the two are not related by a fixed offset, and the
-/// namespace-per-environment mapping must not rest on a coincidence.
-///
-/// The database test runs first because its `wamn-db-` prefix is three bytes
-/// longer than the namespace's `wamn-` prefix: after both spend the separator
-/// plus eight-byte suffix, the database leaves 41 component bytes and the
-/// namespace leaves 44. The namespace test remains explicit so each
-/// physical-name formula owns its bound.
-///
-/// Every component is slug-validated (wamn-R27): the org and env — not only the
-/// project — separate on `--`/`__` into the derived database and CDC object
-/// names, so a malformed component (a consecutive-hyphen run above all) is an
-/// identity-collision vector, not merely the registry's concern. The project
-/// carries the extra reserved-`wamn` rule ([`validate_project_id`]); org and env
-/// are not reserved (an env may be any slug; the org's reserved-prefix rule is
-/// the registry's at org creation), so they get the plain slug discipline.
+/// Refuse coordinates whose database or namespace name exceeds its limit.
 pub fn validate_project_env(org: &str, project: &str, env: &str) -> Result<(), ProvisionError> {
     if let Some(reason) = slug_reason(org) {
         return Err(ProvisionError::InvalidComponent {
             component: "org",
             value: org.to_string(),
             reason,
+        });
+    }
+    if wamn_registry::identifiers::project_id_is_reserved(org) {
+        return Err(ProvisionError::InvalidComponent {
+            component: "org",
+            value: org.to_owned(),
+            reason: "reserved platform prefix",
         });
     }
     validate_project_id(project)?;
@@ -340,46 +117,7 @@ pub fn validate_project_env(org: &str, project: &str, env: &str) -> Result<(), P
     Ok(())
 }
 
-/// The per-project-env CDC credential Secret name:
-/// `wamn-cdc-<org>--<project>--<env>` (wamn-l5i9.9). Distinct from the
-/// `wamn-db-…` query-credential Secret — the replication credential is a
-/// separate, higher-privilege tier (R8b), so a leaked query credential never
-/// implies the WAL and vice versa.
-pub fn project_env_cdc_secret_name(org: &str, project: &str, env: &str) -> String {
-    format!("{CDC_SECRET_PREFIX}{org}--{project}--{env}")
-}
-
-/// The shared name of the per-project-env CDC Postgres objects — publication,
-/// failover replication slot, and replication role:
-/// `wamn_cdc_<org>__<project>__<env>__<instance>`, slug hyphens mapped to `_`
-/// and `__` as the separator (a slot name admits only `[a-z0-9_]`). Since slugs cannot
-/// contain `_`, the mapping keeps distinct triples distinct except for the same
-/// consecutive-hyphen ambiguity the `--` database-name separator already
-/// carries; identity always travels in the registration row / Secret labels,
-/// never parsed back out of a name. Validate the assembled length with
-/// [`validate_project_env_cdc`] before use.
-pub fn cdc_object_name(org: &str, project: &str, env: &str, instance: &str) -> String {
-    format!("{}__{instance}", cdc_object_name_stem(org, project, env))
-}
-
-fn cdc_object_name_stem(org: &str, project: &str, env: &str) -> String {
-    let flat = |s: &str| s.replace('-', "_");
-    format!(
-        "{CDC_OBJECT_PREFIX}{}__{}__{}",
-        flat(org),
-        flat(project),
-        flat(env)
-    )
-}
-
-/// Validate that a `(org, project, env)` yields safe CDC names: the base
-/// project-env validation ([`validate_project_env`]) plus the assembled
-/// `wamn_cdc_…` object name — one prefix byte longer than the database name —
-/// fitting Postgres's 63-byte limit (a slot/publication/role name; the
-/// like-sized `wamn-cdc-…` Secret name is comfortably within the K8s bound).
-///
-/// The extra bound is reachable: a triple can put the suffixed database exactly
-/// at 63 bytes while the suffixed CDC object reaches 64.
+/// Refuse coordinates whose CDC object name exceeds the database limit.
 pub fn validate_project_env_cdc(org: &str, project: &str, env: &str) -> Result<(), ProvisionError> {
     validate_project_env(org, project, env)?;
     let probe = "0".repeat(INSTANCE_SUFFIX_LEN);
@@ -393,9 +131,7 @@ pub fn validate_project_env_cdc(org: &str, project: &str, env: &str) -> Result<(
     Ok(())
 }
 
-/// Compose a libpq connection URL. Userinfo and the database path segment are
-/// percent-encoded, so a password with URL-reserved characters is carried
-/// safely (tokio_postgres percent-decodes them).
+/// Encode credentials and a database name into a Postgres URL.
 pub fn compose_url(user: &str, password: &str, host: &str, port: u16, database: &str) -> String {
     format!(
         "postgres://{}:{}@{}:{}/{}",
@@ -406,8 +142,6 @@ pub fn compose_url(user: &str, password: &str, host: &str, port: u16, database: 
         pct(database),
     )
 }
-
-/// Percent-encode everything outside the URL unreserved set `[A-Za-z0-9-._~]`.
 fn pct(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     for b in s.bytes() {
@@ -558,7 +292,7 @@ mod tests {
             "wamning",
         ] {
             assert_eq!(
-                wamn_control_registry::identifiers::valid_project(id),
+                wamn_registry::identifiers::valid_project(id),
                 validate_project_id(id).is_ok(),
                 "the two sides disagree about {id:?}"
             );
@@ -569,14 +303,7 @@ mod tests {
     fn project_env_names_encode_the_full_triple() {
         // The org is encoded (unlike the 2.3 project-only name) so identically
         // named projects across orgs never collide on the shared T3 pool.
-        assert_eq!(
-            project_env_database_name("acme", "billing", "dev", INSTANCE),
-            "wamn-db-acme--billing--dev--k3m9x2p7"
-        );
-        assert_eq!(
-            project_env_database_name("acme", "billing", "prod", INSTANCE),
-            "wamn-db-acme--billing--prod--k3m9x2p7"
-        );
+
         // canary and prod are distinct names (they co-reside on <org>-prod, so the
         // env MUST be in the name to keep them apart).
         assert_ne!(
@@ -592,10 +319,6 @@ mod tests {
         assert_ne!(
             project_env_secret_name("acme", "billing", "dev"),
             project_env_database_name("acme", "billing", "dev", INSTANCE)
-        );
-        assert_eq!(
-            project_env_secret_name("acme", "billing", "dev"),
-            "wamn-db-acme--billing--dev"
         );
     }
 
@@ -640,10 +363,7 @@ mod tests {
         // One environment = one namespace (wamn-0h0g.15.3): the same `--`
         // separated triple the database name carries, under the `wamn-` prefix,
         // plus the provision-minted instance suffix (wamn-0h0g.13.57).
-        assert_eq!(
-            project_env_namespace("acme", "billing", "dev", "k3m9x2p7"),
-            "wamn-acme--billing--dev--k3m9x2p7"
-        );
+
         // canary and prod are distinct namespaces, as they are distinct databases.
         assert_ne!(
             project_env_namespace("acme", "billing", "canary", "k3m9x2p7"),
@@ -735,7 +455,10 @@ mod tests {
         // One more component byte is refused only because the separator and
         // eight-byte instance suffix consume ten bytes of the identifier budget.
         let over_database = "o".repeat(38);
-        assert!(project_env_database_stem(&over_database, "pp", "de").len() <= MAX_DB_NAME_LEN);
+        assert!(
+            wamn_registry::name::project_env_database_stem(&over_database, "pp", "de").len()
+                <= MAX_DB_NAME_LEN
+        );
         assert_eq!(
             project_env_database_name(&over_database, "pp", "de", INSTANCE).len(),
             MAX_DB_NAME_LEN + 1
@@ -791,15 +514,6 @@ mod tests {
         // derive `wamn-db-a--x--p--dev` (and `wamn_cdc_a__x__p__dev`). The
         // derivations still alias — that is why the VALIDATOR is the fix: both
         // triples are now rejected before they can be provisioned.
-        assert_eq!(
-            project_env_database_name("a", "x--p", "dev", INSTANCE),
-            project_env_database_name("a--x", "p", "dev", INSTANCE),
-            "the derivations still alias — rejection is what closes the collision"
-        );
-        assert_eq!(
-            cdc_object_name("a", "x--p", "dev", INSTANCE),
-            cdc_object_name("a--x", "p", "dev", INSTANCE)
-        );
         // Project carries the `--`: rejected via validate_project_id.
         assert!(matches!(
             validate_project_env("a", "x--p", "dev"),
@@ -911,20 +625,10 @@ mod tests {
     #[test]
     fn cdc_names_encode_the_triple_in_both_domains() {
         // The Secret keeps the hyphenated K8s convention…
-        assert_eq!(
-            project_env_cdc_secret_name("acme", "billing", "dev"),
-            "wamn-cdc-acme--billing--dev"
-        );
+
         // …while the Postgres objects (slot charset `[a-z0-9_]`) are underscored,
         // slug hyphens mapped to `_`, `__` as the separator.
-        assert_eq!(
-            cdc_object_name("acme", "billing", "dev", INSTANCE),
-            "wamn_cdc_acme__billing__dev__k3m9x2p7"
-        );
-        assert_eq!(
-            cdc_object_name("org-a", "demo", "dev", INSTANCE),
-            "wamn_cdc_org_a__demo__dev__k3m9x2p7"
-        );
+
         // A hyphen inside a slug maps to a SINGLE `_`, the separator is DOUBLE —
         // ("org-a","demo") and ("org","a-demo") stay distinct.
         assert_ne!(

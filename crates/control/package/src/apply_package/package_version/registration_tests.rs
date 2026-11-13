@@ -3,7 +3,7 @@ use crate::apply_package::{ApplyPackageRequest, apply_package, apply_package_sch
 use std::path::Path;
 use tokio_postgres::{Client, NoTls};
 
-const PROJECT_ENV_KEY: &str = "schema-records--fixture--dev";
+const PROJECT_ENV_KEY: &str = "schema-records--dev--fixture";
 
 fn request(root: &Path, database_url: &str) -> ApplyPackageRequest {
     ApplyPackageRequest {

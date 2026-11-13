@@ -8,7 +8,7 @@
 //! [EVT-READER]).
 //!
 //! Stands up the REAL substrate (system schema + registration rows via the
-//! wamn-control-registry builders; role/publication/slot/grants via the wamn-control-provision
+//! wamn-registry builders; role/publication/slot/grants via the wamn-control-provision
 //! builders) and drives `event_reader::run_with_shutdown` — the service body the
 //! subcommand runs — through the load-bearing drills:
 //!
@@ -41,10 +41,10 @@ use wamn_control_provision::{
     CredentialGeneration, SystemReader, WorkloadRoleFamily, cdc_object_name, sql,
     system_reader_generation_role,
 };
-use wamn_control_registry::sql::{
-    upsert_event_reader_sql, upsert_org_sql, upsert_project_env_sql, upsert_project_sql,
-};
 use wamn_event_wire::{Causation, Envelope, Op, msg_id, subject};
+use wamn_registry::sql::{
+    upsert_event_reader_sql, upsert_org_sql, upsert_project_env_with_policy_sql, upsert_project_sql,
+};
 
 const SYSTEM_SCHEMA: &str = wamn_control_provision::SYSTEM_SCHEMA_SQL;
 const CATALOG_SCHEMA: &str = wamn_catalog::CATALOG_SCHEMA_SQL;
@@ -419,7 +419,7 @@ async fn reader_streams_one_project_env_to_the_evt_stream() {
         .await
         .expect("project row");
     sys.execute(
-        wamn_control_registry::sql::stamp_env_policy_sql(),
+        wamn_registry::sql::stamp_env_policy_sql(),
         &[
             &ORG,
             &ENV,
@@ -439,20 +439,22 @@ async fn reader_streams_one_project_env_to_the_evt_stream() {
     .await
     .expect("env-policy row (the project_envs FK target)");
     sys.execute(
-        upsert_project_env_sql(),
+        upsert_project_env_with_policy_sql(),
         &[
             &ORG,
             &PROJECT,
             &ENV,
-            &"wamn-db-rl0--app--dev",
+            &"wamn-db-rl0--dev--app",
             &None::<&str>,
             &INSTANCE,
             &false,
+            &ENV,
+            &Option::<String>::None,
         ],
     )
     .await
     .expect("project-env row");
-    let secret = format!("wamn-cdc-{ORG}--{PROJECT}--{ENV}");
+    let secret = wamn_registry::name::project_env_cdc_secret_name(ORG, PROJECT, ENV);
     let register = |enabled: bool, schema: Option<&'static str>| {
         let (sys, cdc, stream, secret) = (&sys, &cdc_name, &stream_name, &secret);
         async move {
@@ -562,7 +564,7 @@ async fn reader_streams_one_project_env_to_the_evt_stream() {
         js.get_stream(&stream_name).await.is_err(),
         "reader must not create its missing stream"
     );
-    let coordinate = wamn_control_registry::Triple::new(ORG, PROJECT, ENV);
+    let coordinate = wamn_registry::Triple::new(ORG, ENV, PROJECT);
     let source_config =
         wamn_broker::events::source_stream_config(&coordinate, 1, Duration::from_secs(120));
     let advisory_config = wamn_broker::events::advisory_stream_config(&coordinate, 1);

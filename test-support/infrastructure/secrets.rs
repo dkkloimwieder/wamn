@@ -438,25 +438,25 @@ mod tests {
         - name: WAMN_SYSTEM_URL
           valueFrom:
             secretKeyRef:
-              name: wamn-identity-reader-example--fixture--dev
+              name: wamn-identity-reader-example--dev--fixture
               key: url
               optional: false
         - name: WAMN_EXECUTOR_PLATFORM_PG_URL
           valueFrom:
             secretKeyRef:
-              name: wamn-executor-platform-example--fixture--dev
+              name: wamn-executor-platform-example--dev--fixture
               key: url
               optional: false
         - name: WAMN_HTTP_ADMITTER_PG_URL
           valueFrom:
             secretKeyRef:
-              name: wamn-http-admitter-example--fixture--dev
+              name: wamn-http-admitter-example--dev--fixture
               key: url
               optional: false
         - name: WAMN_EVENT_MATERIALIZER_PG_URL
           valueFrom:
             secretKeyRef:
-              name: wamn-event-materializer-example--fixture--dev
+              name: wamn-event-materializer-example--dev--fixture
               key: url
               optional: false
       volumes: []

@@ -166,7 +166,7 @@ async fn drive(browser_run: Browser) -> anyhow::Result<()> {
             .and_then(|entry| entry["url"].as_str()).context("Receiving URL")?;
         let config: Value = serde_json::from_slice(&std::fs::read(root.join("dev.json"))?)?;
         let target = config["target_database_url"].as_str().context("target database URL")?;
-        let project_env_key = wamn_control_registry::project_env_key(ORG, PROJECT, ENVIRONMENT);
+        let project_env_key = wamn_registry::project_env_key(ORG, PROJECT, ENVIRONMENT);
         reconcile_journey_run_plane(&JourneyTarget { org: ORG.to_owned(), project: PROJECT.to_owned(), environment: ENVIRONMENT.to_owned() }, system.url(), target).await?;
         let (business, business_driver) = tokio_postgres::connect(target, tokio_postgres::NoTls).await?;
         let business_driver = tokio::spawn(business_driver);

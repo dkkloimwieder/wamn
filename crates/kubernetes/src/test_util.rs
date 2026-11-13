@@ -1,7 +1,7 @@
 //! An in-memory credential fixture. It is never selected by deployed code.
 use crate::{Error, Store, StoreVersion, failure};
 use std::{collections::BTreeMap, sync::Mutex};
-use wamn_control_registry::{Triple, credential_secret_name};
+use wamn_registry::{Triple, credential_secret_name};
 #[derive(Debug, Default)]
 pub struct MemoryStore(Mutex<BTreeMap<(String, String), Vec<u8>>>);
 #[async_trait::async_trait]

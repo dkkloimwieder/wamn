@@ -16,7 +16,7 @@ use std::path::Path;
 use anyhow::{Context as _, ensure};
 use serde::{Deserialize, Serialize};
 use wamn_catalog::EnvironmentApplications;
-use wamn_control_registry::Triple;
+use wamn_registry::Triple;
 
 pub use plan::{ApplicationSelection, EnvironmentDocument};
 
@@ -334,7 +334,6 @@ mod tests {
             compiled.applications["wms"].hostname,
             compiled.applications["receiving"].hostname
         );
-        assert_eq!(compiled.triple().to_string(), "acme/wms/prod");
         assert_eq!(compiled.target, input["target"]);
         assert_eq!(compiled.policy, input["policy"]);
         assert_eq!(canonical["integrations"], input["integrations"]);

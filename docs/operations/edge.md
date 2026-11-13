@@ -15,7 +15,7 @@ The `[target]` keys name the org, the project and the environment of the box.
 The org and the project also take the variables `WAMN_ORG` and `WAMN_PROJECT` that the cloud host reads.
 The environment has no variable. The edge reads it only from the file.
 The release names no environment key.
-The edge derives `project_env_key` as `<org>--<project>--<environment>` from that coordinate.
+The edge derives `project_env_key` as `<org>--<environment>--<project>` from that coordinate.
 
 ## Read the status of a running edge
 

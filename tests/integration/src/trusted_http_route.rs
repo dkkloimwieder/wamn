@@ -171,7 +171,7 @@ async fn credential_fixture(
             ),
         )
         .await?;
-    admin.batch_execute(&format!("BEGIN; {} INSERT INTO registry.target(name,type,status) VALUES('cloud','cloud','active') ON CONFLICT DO NOTHING; UPDATE registry.meta SET platform_domain='example.invalid'; UPDATE registry.project_envs SET target_id=(SELECT id FROM registry.target WHERE name='cloud'); COMMIT",wamn_control_provision::bind_platform_principal_sql(wamn_control_provision::PlatformComponent::Provisioning))).await?;
+    admin.batch_execute(&format!("BEGIN; {} INSERT INTO registry.target(name,type,status) VALUES('cloud','cloud','active') ON CONFLICT DO NOTHING; UPDATE registry.meta SET platform_domain='example.invalid'; UPDATE registry.environments SET target_id=(SELECT id FROM registry.target WHERE name='cloud'); COMMIT",wamn_control_provision::bind_platform_principal_sql(wamn_control_provision::PlatformComponent::Provisioning))).await?;
     let credential_store = Arc::new(wamn_test_infrastructure::credentials::MemoryStore::default());
     let tx = admin.transaction().await?;
     tx.batch_execute("SET LOCAL ROLE wamn_control").await?;
@@ -184,7 +184,7 @@ async fn credential_fixture(
             wamn_catalog::parse_org_credential_handle(handle).map_err(anyhow::Error::msg)?;
         let stored = credential_store
             .put(
-                &wamn_control_registry::Triple::new("acme", PROJECT, ENVIRONMENT),
+                &wamn_registry::Triple::new("acme", ENVIRONMENT, PROJECT),
                 uuid::Uuid::new_v4(),
                 secret.as_bytes(),
             )

@@ -25,7 +25,7 @@ pub fn release_name(
 /// release `release_name`: `<release>-<role>`. The http role's Service has
 /// the same name.
 pub fn workload_name(release_name: &str, role: RoleName) -> String {
-    format!("{release_name}-{}", role.as_str())
+    wamn_registry::name::resource_suffix(release_name, role.as_str())
 }
 
 /// The application HTTP role exists when the manifest has an HTTP route attachment.
@@ -85,16 +85,17 @@ pub(super) fn applications_argument(
 /// `servers`, so it inherits the data connection and its certificate (R5).
 /// `workloadConfig: deny` keeps every connection key and grant here.
 pub fn events_plugin(org: &str, project: &str, env: &str) -> anyhow::Result<Value> {
-    let target = wamn_control_registry::Triple::new(org, project, env);
+    let target = wamn_registry::Triple::new(org, env, project);
     let source = wamn_broker::events::source_stream_config(&target, 1, Duration::from_secs(120));
-    let project_env_key = wamn_control_registry::project_env_key(org, project, env);
+    let project_env_key = wamn_registry::project_env_key(org, project, env);
     let config = mapping([
         (
             "inbox-prefix",
-            format!(
-                "_INBOX_{}",
-                wamn_control_registry::environment_nats_user(&project_env_key)
-            ),
+            wamn_registry::name::nats_subject(&[&wamn_registry::name::nats_token(
+                "_INBOX_",
+                (wamn_registry::environment_nats_user(&project_env_key)).as_ref(),
+                "",
+            )]),
         ),
         ("stream-allow", source.name),
         ("subject-allow", source.subjects.join(",")),
@@ -134,7 +135,7 @@ pub fn values(input: &ValuesInput) -> anyhow::Result<Value> {
             "the host group body sets `{key}`, which the release chart derives"
         );
     }
-    let environment = format!("{}/{}/{}", input.org, input.project, input.env);
+    let environment = wamn_registry::name::host_status(&input.org, &input.project, &input.env);
     let mut group = input.host_group.clone();
     group.insert("name".into(), name.into());
     let variables = group
@@ -261,7 +262,7 @@ pub fn values(input: &ValuesInput) -> anyhow::Result<Value> {
     let mut account = Mapping::new();
     account.insert(
         "name".into(),
-        wamn_control_registry::service_account_name(&input.org, &input.project, &input.env).into(),
+        wamn_registry::service_account_name(&input.org, &input.project, &input.env).into(),
     );
     account.insert("create".into(), false.into());
     runtime.insert("serviceAccount".into(), Value::Mapping(account));
@@ -292,12 +293,14 @@ pub fn values(input: &ValuesInput) -> anyhow::Result<Value> {
     values.insert("runtime-operator".into(), Value::Mapping(operator));
     // The host's data connection is the environment's NATS user
     // (docs/plan/alignment.md R5).
-    let project_env_key =
-        wamn_control_registry::project_env_key(&input.org, &input.project, &input.env);
+    let project_env_key = wamn_registry::project_env_key(&input.org, &input.project, &input.env);
     let mut global = Mapping::new();
     global.insert(
         "certificates".into(),
-        mapping([("dataCertSecretName", format!("wamn-nats-{project_env_key}"))]),
+        mapping([(
+            "dataCertSecretName",
+            wamn_registry::name::nats_certificate(&project_env_key),
+        )]),
     );
     values.insert("global".into(), Value::Mapping(global));
     Ok(Value::Mapping(values))

@@ -102,6 +102,7 @@ edition = "2024"
 license = "Apache-2.0"
 
 [workspace.dependencies]
+wamn-registry = { path = "../crates/control/registry", version = "0.1.0" }
 wamn-digest = { path = "../crates/platform/digest", version = "0.1.0" }
 wamn-scalar = { path = "../crates/platform/scalar", version = "0.1.0" }
 wamn-catalog = { path = "../crates/catalog/model", version = "0.1.0" }

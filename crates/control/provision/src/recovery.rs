@@ -24,8 +24,9 @@
 //! **Pure** (SR3 / house rule 1): manifest renderers over the env policy. No K8s
 //! client, no clock. `docs/operations/backup-and-recovery.md` is the runbook.
 
+use crate::{EnvPolicy, Org};
 use serde_json::{Value, json};
-use wamn_control_registry::{Env, EnvPolicy, Org};
+use wamn_registry::Env;
 
 use crate::backup::{BACKUP_PLUGIN_NAME, object_store_name};
 use crate::error::ProvisionError;
@@ -102,7 +103,7 @@ pub fn render_recovery_cluster(
     namespace: &str,
     target_time: Option<&str>,
 ) -> Result<RecoveredCluster, ProvisionError> {
-    if let wamn_control_registry::Placement::Pooled { pool } = &org.placement {
+    if let crate::Placement::Pooled { pool } = &org.placement {
         return Err(ProvisionError::OrgIsPooled { pool: pool.clone() });
     }
     let policy = policies.iter().find(|p| &p.name == owner).ok_or_else(|| {
@@ -110,7 +111,7 @@ pub fn render_recovery_cluster(
             name: owner.to_string(),
         }
     })?;
-    let source = format!("{}-{}", org.id, owner);
+    let source = wamn_registry::name::cluster(&org.id, owner.as_str());
     if target == source {
         return Err(ProvisionError::RecoveryIntoSourceCluster { cluster: source });
     }
@@ -155,7 +156,7 @@ pub fn render_recovery_cluster(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use wamn_control_registry::Template;
+    use crate::Template;
 
     fn dedicated_org() -> Org {
         Template::dedicated().stamp("acme", "wamn-pg").0

@@ -81,7 +81,7 @@ pub struct PublishReleaseManifest<'a> {
 impl PublishReleaseManifest<'_> {
     /// The composed environment key derived from the environment coordinate.
     pub fn project_env_key(&self) -> String {
-        wamn_control_registry::project_env_key(self.org, self.project, self.environment)
+        wamn_registry::project_env_key(self.org, self.project, self.environment)
     }
 }
 
@@ -270,7 +270,7 @@ pub struct PublishReleaseRequest {
 impl PublishReleaseRequest {
     /// The composed environment key derived from the environment coordinate.
     pub fn project_env_key(&self) -> String {
-        wamn_control_registry::project_env_key(&self.org, &self.project, &self.environment)
+        wamn_registry::project_env_key(&self.org, &self.project, &self.environment)
     }
 }
 
@@ -320,7 +320,7 @@ pub async fn publish_local(
     )
     .await?;
     ensure!(
-        read_projected_environment_disposable(target.control_database_url, &args.project_env_key())
+        read_environment_disposable(target.control_database_url, &args.org, &args.environment)
             .await?,
         "local candidates require a provisioned disposable environment"
     );
@@ -768,27 +768,17 @@ pub(crate) async fn read_projected_environment_policy(
         .map_err(|error| storage("read the provisioned environment policy", error))
 }
 
-/// Whether provisioning marked this project's environment disposable.
-///
-/// The same projection the admit path reads (wamn-10yt.38), from the same
-/// control store, read ONCE per release publish rather than once per fact. An
-/// absent relation is a stale store and says so rather than defaulting
-/// quietly. A project with no projected row
-/// is DURABLE, which is what keeps the change additive.
-const SELECT_ENVIRONMENT_DISPOSABLE_SQL: &str = "SELECT coalesce((\
-         SELECT disposable FROM catalog.project_environments WHERE project_env_key = $1\
-     ), false)";
-
-async fn read_projected_environment_disposable(
+/// Read the environment's lifecycle setting from its registry row.
+async fn read_environment_disposable(
     control_database_url: &str,
-    project_env_key: &str,
+    org: &str,
+    env: &str,
 ) -> anyhow::Result<bool> {
     on_control_plane(control_database_url, async |control| {
-        let row = control
-            .query_one(SELECT_ENVIRONMENT_DISPOSABLE_SQL, &[&project_env_key])
-            .await
-            .context("read the projected environment's disposable marker")?;
-        Ok(row.get(0))
+        Ok(control
+            .query_one(wamn_registry::sql::ENVIRONMENT_DISPOSABLE, &[&org, &env])
+            .await?
+            .get(0))
     })
     .await
 }
@@ -1815,8 +1805,8 @@ mod tests {
             assert_eq!(fact.target.project_env_key, project_env_key);
             project_serving_component(fact, components.connections(fact).unwrap()).unwrap()
         };
-        let first = project("acme--plant--dev");
-        let second = project("acme--plant--prod");
+        let first = project("acme--dev--plant");
+        let second = project("acme--prod--plant");
         assert_eq!(first, second);
         assert_eq!(
             wamn_digest::canonical_json_bytes(&serde_json::to_value(&first.descriptor).unwrap()),
@@ -2138,7 +2128,7 @@ mod tests {
         let stale_hash = format!("sha256:{}", "b".repeat(64));
         let source_policy = AuthoritativeEnvironmentPolicy {
             source_policy_org: "demo".into(),
-            policy: wamn_control_registry::EnvPolicy::prod(),
+            policy: wamn_control_provision::EnvPolicy::prod(),
             source_policy_hash: authoritative_hash.clone().into_boxed_str(),
         };
         let release = ReleaseTarget::new("org-a", "prod");

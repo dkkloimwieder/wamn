@@ -5,7 +5,6 @@
 //! compiler dependency and performs no filesystem, database, clock, or network
 //! I/O. Effect shells execute each returned plan in one database transaction.
 
-mod environment;
 pub mod exposure;
 pub mod migrations;
 mod model;
@@ -15,10 +14,6 @@ mod replica_identity;
 mod run_plane;
 pub mod sql;
 
-pub use environment::{
-    ENVIRONMENT_INSTANCE_WITHOUT_PROJECTION, EnvironmentInstanceAssignmentError,
-    assign_environment_instance_sql, require_environment_instance_assignment,
-};
 pub use exposure::{ExposureError, HttpRoute, canonical_http_route_template, normalize_http_route};
 pub use model::{SqlStatement, Value};
 pub use package_migrations::{

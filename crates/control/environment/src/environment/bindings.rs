@@ -85,7 +85,7 @@ pub async fn analyse(
     }) {
         let row = system
             .query_opt(
-                "SELECT * FROM registry.resolve_environment_connection($1,$2,$3,$4,$5,$6)",
+                wamn_registry::sql::CONTROL_ENVIRONMENT_SRC_ENVIRONMENT_BINDINGS_ANALYSE,
                 &[
                     &document.org,
                     &document.project,

@@ -12,7 +12,7 @@ use super::{
     read_package_attachments, read_package_manifests, resolve_route_methods,
 };
 
-const PROJECT_ENV_KEY: &str = "effective-release-poc--fixture--dev";
+const PROJECT_ENV_KEY: &str = "effective-release-poc--dev--fixture";
 const ENVIRONMENT: &str = "dev";
 const BASE_WASM_ENV: &str = "WAMN_EFFECTIVE_RELEASE_BASE_COMPONENT_WASM";
 const OVERLAY_WASM_ENV: &str = "WAMN_EFFECTIVE_RELEASE_OVERLAY_COMPONENT_WASM";

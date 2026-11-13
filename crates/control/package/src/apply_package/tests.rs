@@ -90,13 +90,13 @@ async fn auth_drops_apply_package_publishes_the_committed_admin_role_drop() {
     owner_url.set_password(Some("authdrops")).unwrap();
     let (_server, nats) = nats().await;
     let cache = Arc::new(AuthCache::with_ttl(Duration::from_secs(3600)));
-    let changes = watched(&nats, Some("apply-drops--fixture--dev"), Arc::clone(&cache)).await;
+    let changes = watched(&nats, Some("apply-drops--dev--fixture"), Arc::clone(&cache)).await;
     let ticket = cache
-        .grants("apply-drops--fixture--dev", "principal")
+        .grants("apply-drops--dev--fixture", "principal")
         .unwrap_err();
     cache
         .keep_grants(
-            "apply-drops--fixture--dev",
+            "apply-drops--dev--fixture",
             "principal",
             ticket,
             PrincipalGrants {
@@ -107,7 +107,7 @@ async fn auth_drops_apply_package_publishes_the_committed_admin_role_drop() {
         .await;
     assert!(
         cache
-            .grants("apply-drops--fixture--dev", "principal")
+            .grants("apply-drops--dev--fixture", "principal")
             .is_ok()
     );
     let shipped = std::env::temp_dir().join(format!("wamn-local-shipped-{}", std::process::id()));
@@ -125,7 +125,7 @@ async fn auth_drops_apply_package_publishes_the_committed_admin_role_drop() {
     .unwrap();
     until("package apply publishes the admin role drop", || {
         cache
-            .grants("apply-drops--fixture--dev", "principal")
+            .grants("apply-drops--dev--fixture", "principal")
             .is_err()
     })
     .await;

@@ -11,7 +11,7 @@ use wamn_environment_control::environment::stage::{
 use wamn_runtime::plugins::route_authentication::queued_run_caller;
 use wamn_schema_control::BareSchemaName;
 
-const PROJECT_ENV_KEY: &str = "acme--erp--dev";
+const PROJECT_ENV_KEY: &str = "acme--dev--erp";
 const OPERATION: &str = "consumer:item/import@1.0.0";
 
 async fn connect(url: &str) -> anyhow::Result<Client> {

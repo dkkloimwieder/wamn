@@ -20,7 +20,7 @@ use wamn_runtime::plugins::wamn_postgres::{
     AuthorityClass, ClassCredentials, ProjectConfig, StaticCredentialProvider, WamnPostgres,
 };
 
-const PROJECT_ENV_KEY: &str = "rest--publication--test";
+const PROJECT_ENV_KEY: &str = "rest--test--publication";
 const OPERATION: &str = "rest-consumer-fixture:item/record@0.1.1";
 const PASSWORD: &str = "rest-consumer-live-test";
 /// The execution role of the rest_connector item: exactly the operation its
@@ -242,7 +242,7 @@ pub async fn schedule_run(
     .await?;
     enable_workflow(
         database.url(),
-        &wamn_control_registry::Triple::new("rest", application, "test"),
+        &wamn_registry::Triple::new("rest", "test", application),
         &mut project,
         &WorkflowVersion {
             org: "rest",

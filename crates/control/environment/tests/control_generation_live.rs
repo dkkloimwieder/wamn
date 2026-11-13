@@ -148,7 +148,10 @@ async fn the_control_login_reads_the_control_authority_of_its_org_and_nothing_el
         serde_json::from_slice(&std::fs::read(&secret).expect("read the Secret"))
             .expect("parse the Secret");
     std::fs::remove_file(&secret).expect("remove the Secret");
-    assert_eq!(manifest["metadata"]["name"], format!("wamn-control-{ORG}"));
+    assert_eq!(
+        manifest["metadata"]["name"],
+        wamn_registry::name::control_nats_user(ORG)
+    );
     assert_eq!(manifest["metadata"]["namespace"], "hosts");
     let control_url = manifest["stringData"]["url"]
         .as_str()

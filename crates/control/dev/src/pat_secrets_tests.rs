@@ -1,13 +1,13 @@
 use tokio_postgres::{Client, NoTls};
 use wamn_broker::Publisher;
 use wamn_broker::auth_changes::AuthDrops;
-use wamn_control_registry::Triple;
 use wamn_environment_control::provision_project_env::pat_secrets::{
     MANAGEMENT_AUTHOR, assign_pat_role, mint_pat, resolve_or_create_service,
 };
 use wamn_environment_control::provision_project_env::provisioning_transaction;
 use wamn_identity_client::PatClient;
 use wamn_platform_identity::authenticate_pat;
+use wamn_registry::Triple;
 
 const PRINCIPAL: &str = "a792950e-150c-4c6e-8000-000000000004";
 
@@ -46,7 +46,7 @@ async fn auth_drops_mint_pat_records_the_committed_project_role_drop() {
     let mut url = url::Url::parse(system.url()).unwrap();
     url.set_path("/wamn_system");
     let mut client = system_client(url.as_str()).await;
-    let triple = Triple::new("org", "project", "prod");
+    let triple = Triple::new("org", "prod", "project");
     let principal = resolve_or_create_service(
         &mut client,
         &MANAGEMENT_AUTHOR.subject(&triple).unwrap(),
@@ -56,7 +56,7 @@ async fn auth_drops_mint_pat_records_the_committed_project_role_drop() {
     .await
     .unwrap();
     let tx = provisioning_transaction(&mut client).await.unwrap();
-    tx.batch_execute("INSERT INTO registry.orgs (id, placement_type, pool_cluster) VALUES ('org', 'pooled', 'test'); INSERT INTO registry.projects (org, id) VALUES ('org', 'project')").await.unwrap();
+    tx.batch_execute(wamn_registry::sql::CONTROL_DEV_SRC_PAT_SECRETS_TESTS_AUTH_DROPS_MINT_PAT_RECORDS_THE_COMMITTED_PROJECT_ROLE_DROP).await.unwrap();
     tx.commit().await.unwrap();
     let tx = provisioning_transaction(&mut client).await.unwrap();
     let drops = assign_pat_role(&tx, &principal, &triple, MANAGEMENT_AUTHOR)

@@ -318,7 +318,14 @@ impl ApplicationRoutes<'_> {
                     let mut listed = Vec::new();
                     for user in application_users(client).await? {
                         let id: PrincipalId = user.id.parse()?;
-                        let covered = is_project_admin(identity, &id, org, self.project).await?;
+                        let covered = is_project_admin(
+                            identity,
+                            &id,
+                            org,
+                            self.project,
+                            Some(self.release.target().environment.as_str()),
+                        )
+                        .await?;
                         listed.push(json!({
                             "id": user.id,
                             "email": user.email,

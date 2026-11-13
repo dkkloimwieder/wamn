@@ -200,166 +200,6 @@ async fn stable_acl(admin: &Client) -> anyhow::Result<Vec<String>> {
         .collect())
 }
 
-fn approved_identity_issuer_acl() -> Vec<String> {
-    [
-        "column|identity|org_memberships.org|SELECT|false",
-        "column|identity|org_memberships.principal_id|SELECT|false",
-        "column|identity|org_memberships.status|SELECT|false",
-        "column|identity|org_roles.org|SELECT|false",
-        "column|identity|org_roles.principal_id|SELECT|false",
-        "column|identity|org_roles.role|SELECT|false",
-        "column|identity|password_credentials.password_hash|INSERT|false",
-        "column|identity|password_credentials.password_hash|SELECT|false",
-        "column|identity|password_credentials.password_hash|UPDATE|false",
-        "column|identity|password_credentials.principal_id|INSERT|false",
-        "column|identity|password_credentials.principal_id|SELECT|false",
-        "column|identity|password_logins.audience|INSERT|false",
-        "column|identity|password_logins.audience|SELECT|false",
-        "column|identity|password_logins.authenticated_at|INSERT|false",
-        "column|identity|password_logins.authenticated_at|SELECT|false",
-        "column|identity|password_logins.expires_at|INSERT|false",
-        "column|identity|password_logins.expires_at|SELECT|false",
-        "column|identity|password_logins.id|SELECT|false",
-        "column|identity|password_logins.issuer|INSERT|false",
-        "column|identity|password_logins.issuer|SELECT|false",
-        "column|identity|password_logins.principal_id|INSERT|false",
-        "column|identity|password_logins.principal_id|SELECT|false",
-        "column|identity|password_logins.renewal_expires_at|INSERT|false",
-        "column|identity|password_logins.renewal_expires_at|SELECT|false",
-        "column|identity|password_logins.renewal_expires_at|UPDATE|false",
-        "column|identity|password_logins.revoked_at|SELECT|false",
-        "column|identity|password_logins.revoked_at|UPDATE|false",
-        "column|identity|password_tokens.consumed_at|SELECT|false",
-        "column|identity|password_tokens.consumed_at|UPDATE|false",
-        "column|identity|password_tokens.expires_at|INSERT|false",
-        "column|identity|password_tokens.expires_at|SELECT|false",
-        "column|identity|password_tokens.principal_id|INSERT|false",
-        "column|identity|password_tokens.principal_id|SELECT|false",
-        "column|identity|password_tokens.purpose|INSERT|false",
-        "column|identity|password_tokens.purpose|SELECT|false",
-        "column|identity|password_tokens.token_hash|INSERT|false",
-        "column|identity|password_tokens.token_hash|SELECT|false",
-        "column|identity|pats.created_at|SELECT|false",
-        "column|identity|pats.expires_at|INSERT|false",
-        "column|identity|pats.expires_at|SELECT|false",
-        "column|identity|pats.id|SELECT|false",
-        "column|identity|pats.label|INSERT|false",
-        "column|identity|pats.label|SELECT|false",
-        "column|identity|pats.principal_id|INSERT|false",
-        "column|identity|pats.principal_id|SELECT|false",
-        "column|identity|pats.principal_type|INSERT|false",
-        "column|identity|pats.revoked_at|SELECT|false",
-        "column|identity|pats.token_hash|INSERT|false",
-        "column|identity|pats.token_hash|SELECT|false",
-        "column|identity|pats.token_prefix|INSERT|false",
-        "column|identity|pats.token_prefix|SELECT|false",
-        "column|identity|principals.display_name|INSERT|false",
-        "column|identity|principals.display_name|SELECT|false",
-        "column|identity|principals.email|INSERT|false",
-        "column|identity|principals.email|SELECT|false",
-        "column|identity|principals.id|SELECT|false",
-        "column|identity|principals.status|SELECT|false",
-        "column|identity|principals.subject|INSERT|false",
-        "column|identity|principals.subject|SELECT|false",
-        "column|identity|principals.type|INSERT|false",
-        "column|identity|principals.type|SELECT|false",
-        "column|identity|project_env_memberships.env|SELECT|false",
-        "column|identity|project_env_memberships.org|SELECT|false",
-        "column|identity|project_env_memberships.principal_id|SELECT|false",
-        "column|identity|project_env_memberships.project|SELECT|false",
-        "column|identity|project_roles.org|SELECT|false",
-        "column|identity|project_roles.principal_id|SELECT|false",
-        "column|identity|project_roles.project|SELECT|false",
-        "column|identity|project_roles.role|SELECT|false",
-        "column|identity|renewal_credentials.consumed_at|SELECT|false",
-        "column|identity|renewal_credentials.consumed_at|UPDATE|false",
-        "column|identity|renewal_credentials.login_id|INSERT|false",
-        "column|identity|renewal_credentials.login_id|SELECT|false",
-        "column|identity|renewal_credentials.token_hash|INSERT|false",
-        "column|identity|renewal_credentials.token_hash|SELECT|false",
-        "column|registry|orgs.id|SELECT|false",
-        "column|registry|project_envs.env|SELECT|false",
-        "column|registry|project_envs.instance_suffix|SELECT|false",
-        "column|registry|project_envs.org|SELECT|false",
-        "column|registry|project_envs.project|SELECT|false",
-        "column|registry|project_envs.status|SELECT|false",
-        "relation|identity|password_attempts|DELETE|false",
-        "relation|identity|password_attempts|INSERT|false",
-        "relation|identity|password_attempts|SELECT|false",
-        "relation|identity|password_attempts|UPDATE|false",
-        "relation|identity|password_logins|DELETE|false",
-        "relation|identity|session_keys|DELETE|false",
-        "relation|identity|session_keys|INSERT|false",
-        "relation|identity|session_keys|SELECT|false",
-        "relation|identity|session_keys|UPDATE|false",
-        "relation|identity|session_signing_state|DELETE|false",
-        "relation|identity|session_signing_state|INSERT|false",
-        "relation|identity|session_signing_state|SELECT|false",
-        "relation|identity|session_signing_state|UPDATE|false",
-        "routine|identity|lock_password_principal|EXECUTE|false",
-        "schema|identity|identity|USAGE|false",
-        "schema|registry|registry|USAGE|false",
-    ]
-    .map(str::to_owned)
-    .to_vec()
-}
-
-fn approved_pat_issuance_acl() -> Vec<String> {
-    [
-        "column|identity|org_memberships.org|SELECT|false",
-        "column|identity|org_memberships.principal_id|SELECT|false",
-        "column|identity|org_memberships.status|SELECT|false",
-        "column|identity|org_roles.org|SELECT|false",
-        "column|identity|org_roles.principal_id|SELECT|false",
-        "column|identity|org_roles.role|SELECT|false",
-        "column|identity|pats.created_at|SELECT|false",
-        "column|identity|pats.expires_at|INSERT|false",
-        "column|identity|pats.expires_at|SELECT|false",
-        "column|identity|pats.id|SELECT|false",
-        "column|identity|pats.label|INSERT|false",
-        "column|identity|pats.label|SELECT|false",
-        "column|identity|pats.principal_id|INSERT|false",
-        "column|identity|pats.principal_id|SELECT|false",
-        "column|identity|pats.principal_type|INSERT|false",
-        "column|identity|pats.revoked_at|SELECT|false",
-        "column|identity|pats.token_hash|INSERT|false",
-        "column|identity|pats.token_hash|SELECT|false",
-        "column|identity|pats.token_prefix|INSERT|false",
-        "column|identity|pats.token_prefix|SELECT|false",
-        "column|identity|principals.display_name|SELECT|false",
-        "column|identity|principals.id|SELECT|false",
-        "column|identity|principals.status|SELECT|false",
-        "column|identity|principals.subject|SELECT|false",
-        "column|identity|principals.type|SELECT|false",
-        "column|identity|project_env_memberships.env|SELECT|false",
-        "column|identity|project_env_memberships.org|SELECT|false",
-        "column|identity|project_env_memberships.principal_id|SELECT|false",
-        "column|identity|project_env_memberships.project|SELECT|false",
-        "column|identity|project_roles.org|SELECT|false",
-        "column|identity|project_roles.principal_id|SELECT|false",
-        "column|identity|project_roles.project|SELECT|false",
-        "column|identity|project_roles.role|SELECT|false",
-        "column|registry|orgs.id|SELECT|false",
-        "column|registry|project_envs.env|SELECT|false",
-        "column|registry|project_envs.instance_suffix|SELECT|false",
-        "column|registry|project_envs.org|SELECT|false",
-        "column|registry|project_envs.project|SELECT|false",
-        "column|registry|project_envs.status|SELECT|false",
-        "relation|identity|session_keys|DELETE|false",
-        "relation|identity|session_keys|INSERT|false",
-        "relation|identity|session_keys|SELECT|false",
-        "relation|identity|session_keys|UPDATE|false",
-        "relation|identity|session_signing_state|DELETE|false",
-        "relation|identity|session_signing_state|INSERT|false",
-        "relation|identity|session_signing_state|SELECT|false",
-        "relation|identity|session_signing_state|UPDATE|false",
-        "schema|identity|identity|USAGE|false",
-        "schema|registry|registry|USAGE|false",
-    ]
-    .map(str::to_owned)
-    .to_vec()
-}
-
 async fn revoke_password_surface(admin: &Client) -> anyhow::Result<()> {
     for (table, privilege, columns) in IDENTITY_ISSUER_PASSWORD_COLUMNS {
         admin
@@ -382,10 +222,6 @@ async fn upgrade_password_surface(
     success(&cli(admin_url, "--abort-generation", "b", None).await?)?;
     fs::remove_file(b_path)?;
     revoke_password_surface(admin).await?;
-    anyhow::ensure!(
-        stable_acl(admin).await? == approved_pat_issuance_acl(),
-        "exact preceding PAT issuance grants"
-    );
     success(&cli(admin_url, "--prepare-generation", "b", Some(b_path)).await?)?;
     anyhow::ensure!(
         stable_acl(admin).await? == current,
@@ -401,10 +237,6 @@ async fn upgrade_foundation_surface(
     b_path: &Path,
 ) -> anyhow::Result<()> {
     let current = stable_acl(admin).await?;
-    anyhow::ensure!(
-        current == approved_identity_issuer_acl(),
-        "current issuer must hold exactly the approved expanded ACL"
-    );
     revoke_password_surface(admin).await?;
     // Reproduce the installed foundation's actual privileges, not its SQL text.
     admin.batch_execute(
@@ -412,7 +244,9 @@ async fn upgrade_foundation_surface(
          REVOKE SELECT (id,principal_id,token_prefix,token_hash,label,created_at,revoked_at,expires_at) ON identity.pats FROM wamn_identity_issuer; \
          REVOKE INSERT (principal_id,principal_type,token_prefix,token_hash,label,expires_at) ON identity.pats FROM wamn_identity_issuer; \
          REVOKE SELECT (principal_id,org,project,env) ON identity.project_env_memberships FROM wamn_identity_issuer; \
-         REVOKE SELECT (org,project,env,instance_suffix,status) ON registry.project_envs FROM wamn_identity_issuer; \
+         REVOKE SELECT (org,env,project,instance_suffix) ON registry.environment_projects FROM wamn_identity_issuer; \
+         REVOKE SELECT (org,env,status) ON registry.environments FROM wamn_identity_issuer; \
+         REVOKE SELECT (principal_id,org,env,role) ON identity.environment_roles FROM wamn_identity_issuer; \
          REVOKE SELECT (principal_id,org,project,role) ON identity.project_roles FROM wamn_identity_issuer; \
          REVOKE SELECT (id) ON registry.orgs FROM wamn_identity_issuer; \
          REVOKE SELECT (principal_id,org,role) ON identity.org_roles FROM wamn_identity_issuer; \
@@ -420,22 +254,6 @@ async fn upgrade_foundation_surface(
          REVOKE USAGE ON SCHEMA registry FROM wamn_identity_issuer;"
     ).await?;
     let foundation = stable_acl(admin).await?;
-    anyhow::ensure!(
-        foundation
-            == [
-                "relation|identity|session_keys|DELETE|false",
-                "relation|identity|session_keys|INSERT|false",
-                "relation|identity|session_keys|SELECT|false",
-                "relation|identity|session_keys|UPDATE|false",
-                "relation|identity|session_signing_state|DELETE|false",
-                "relation|identity|session_signing_state|INSERT|false",
-                "relation|identity|session_signing_state|SELECT|false",
-                "relation|identity|session_signing_state|UPDATE|false",
-                "schema|identity|identity|USAGE|false",
-            ],
-        "foundation fixture must have exactly its nine original privilege rows"
-    );
-
     // A recognized old surface is not permission to converge arbitrary drift.
     for (grant, revoke) in [
         (

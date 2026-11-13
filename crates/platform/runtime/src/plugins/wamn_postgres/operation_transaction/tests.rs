@@ -29,7 +29,7 @@ use wamn_engine::engine::build_engine;
 
 const OPERATION_OWNER: &str = "operation-transaction-owner";
 const OWNER_OPERATION: &str = "base:widget/record@1.0.0";
-const PROJECT_ENV_KEY: &str = "operationtxn";
+const PROJECT_ENV_KEY: &str = "test--dev--operationtxn";
 
 fn invocation(operation: &str, package_id: &str) -> ConnectionInvocation {
     ConnectionInvocation {

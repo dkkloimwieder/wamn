@@ -105,7 +105,7 @@ pub async fn set_platform_domain(client: &mut Client, domain: &str) -> anyhow::R
     let transaction = crate::provision_project_env::provisioning_transaction(client).await?;
     transaction
         .execute(
-            "UPDATE registry.meta SET platform_domain = $1 WHERE platform_domain IS DISTINCT FROM $1",
+            wamn_registry::sql::CONTROL_ENVIRONMENT_SRC_PROVISION_SYSTEM_SET_PLATFORM_DOMAIN,
             &[&domain],
         )
         .await
@@ -159,7 +159,7 @@ pub async fn system_state(client: &(impl GenericClient + Sync)) -> anyhow::Resul
     }
     let baseline: bool = client
         .query_one(
-            "SELECT to_regclass('registry.schema_baseline') IS NOT NULL",
+            wamn_registry::sql::CONTROL_ENVIRONMENT_SRC_PROVISION_SYSTEM_SYSTEM_STATE_2,
             &[],
         )
         .await
@@ -169,7 +169,10 @@ pub async fn system_state(client: &(impl GenericClient + Sync)) -> anyhow::Resul
         return Ok(SystemState::Incomplete);
     }
     let Some(row) = client
-        .query_opt("SELECT sha256 FROM registry.schema_baseline", &[])
+        .query_opt(
+            wamn_registry::sql::CONTROL_ENVIRONMENT_SRC_PROVISION_SYSTEM_SYSTEM_STATE,
+            &[],
+        )
         .await
         .context("read the system schema baseline")?
     else {

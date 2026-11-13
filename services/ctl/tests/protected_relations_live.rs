@@ -202,9 +202,8 @@ async fn install_project_database(client: &Client, url: &str) {
 /// manufactured the seven-relation drift this list retires.
 const CONTROL_ONLY_PORTABLE_RELATIONS: [&str; 2] = [
     // The projected environment identity is a CONTROL fact: the project plane
-    // has no `registry.project_envs` to project from, and its own catalog is
+    // has no `registry.environment_projects` to project from, and its own catalog is
     // recreated per run (wamn-10yt.38).
-    "catalog.project_environments",
     "wamn_authority.author_login_projects",
 ];
 

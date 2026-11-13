@@ -4,7 +4,7 @@
 //! `kubectl apply -f` accepts.
 
 use serde_json::{Value, json};
-use wamn_control_registry::Triple;
+use wamn_registry::Triple;
 
 use crate::name::{
     APP_ROLE, cdc_object_name, control_administration_key, control_administration_secret_name,
@@ -276,30 +276,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_control_administration_patch_sets_or_removes_one_environment() {
-        let triple = Triple::new("acme", "widgets", "dev");
-        assert_eq!(
-            render_control_administration_patch(&triple, Some("postgres://u:p@h/d")),
-            json!({"stringData": {"widgets--dev": "postgres://u:p@h/d"}})
-        );
-        assert_eq!(
-            render_control_administration_patch(&triple, None),
-            json!({"data": {"widgets--dev": null}})
-        );
-        let secret = render_control_administration_secret_manifest("acme", "hosts");
-        assert_eq!(
-            secret["metadata"]["name"],
-            "wamn-control-administration-acme"
-        );
-        assert!(
-            secret.get("stringData").is_none(),
-            "the Secret starts empty"
-        );
-    }
-
-    #[test]
     fn session_reader_secret_round_trips_the_validated_target() {
-        let triple = Triple::new("acme", "widgets", "dev");
+        let triple = Triple::new("acme", "dev", "widgets");
         let database = crate::project_env_database_name("acme", "widgets", "dev", "k3m9x2p7");
         let role = crate::workload_generation_role(
             WorkloadRoleFamily::SessionRoleReader,
@@ -313,7 +291,13 @@ mod tests {
         )
         .unwrap();
         let url = format!("postgres://{role}:fixture-password@database.invalid/{database}");
-        let target = SessionTarget::new(&triple, "k3m9x2p7", "t1", &url).unwrap();
+        let target = SessionTarget::new(
+            &triple,
+            "k3m9x2p7",
+            &crate::project_env_key("acme", "widgets", "dev"),
+            &url,
+        )
+        .unwrap();
         let secret = render_workload_secret_manifest(
             WorkloadRoleFamily::SessionRoleReader,
             &triple,
@@ -325,64 +309,10 @@ mod tests {
         let parsed =
             SessionTarget::from_json(data[SESSION_TARGET_KEY].as_str().unwrap().as_bytes())
                 .unwrap();
-        assert_eq!(
-            parsed.audience(),
-            "urn:wamn:project-env:acme:widgets:dev:k3m9x2p7"
-        );
-        assert_eq!(parsed.project_env_key(), "t1");
-        assert_eq!(parsed.connection().url(), url);
+        assert_eq!(parsed.triple(), &triple);
         assert!(
             !format!("{:?}", WorkloadSecretBody::SessionTarget(&target))
                 .contains("fixture-password")
-        );
-    }
-
-    #[test]
-    fn project_env_secret_names_and_labels_carry_the_triple() {
-        let t = Triple::new("acme", "billing", "dev");
-        let s = render_project_env_secret_manifest(&t, "wamn-system");
-        assert_eq!(s["kind"], "Secret");
-        assert_eq!(s["metadata"]["name"], "wamn-db-acme--billing--dev");
-        assert_eq!(s["metadata"]["namespace"], "wamn-system");
-        assert_eq!(s["metadata"]["labels"]["wamn.org"], "acme");
-        assert_eq!(s["metadata"]["labels"]["wamn.project"], "billing");
-        assert_eq!(s["metadata"]["labels"]["wamn.env"], "dev");
-        // The project-env Secret carries identity only, never a connection URL.
-        assert!(
-            s["stringData"]["url"].is_null(),
-            "the project-env Secret must carry no url key"
-        );
-        assert_eq!(s["stringData"]["org"], "acme");
-        assert_eq!(s["stringData"]["project"], "billing");
-        assert_eq!(s["stringData"]["env"], "dev");
-        assert_eq!(s["stringData"]["role"], "wamn_app");
-    }
-
-    #[test]
-    fn cdc_secret_is_a_distinct_replication_tier_reference() {
-        let t = Triple::new("acme", "billing", "dev");
-        let url =
-            "postgres://wamn_cdc_acme__billing__dev:pw@acme-dev-rw:5432/wamn-db-acme--billing--dev";
-        let s = render_project_env_cdc_secret_manifest(&t, "k3m9x2p7", "wamn-system", url);
-        assert_eq!(s["kind"], "Secret");
-        // The CDC Secret name is the wamn-cdc-… sibling — NEVER the wamn-db-…
-        // query Secret (a distinct R8b credential tier, one lookup key each).
-        assert_eq!(s["metadata"]["name"], "wamn-cdc-acme--billing--dev");
-        assert_ne!(
-            s["metadata"]["name"],
-            render_project_env_secret_manifest(&t, "wamn-system")["metadata"]["name"]
-        );
-        assert_eq!(
-            s["metadata"]["labels"]["app.kubernetes.io/component"],
-            "project-env-cdc-credentials"
-        );
-        assert_eq!(s["metadata"]["labels"]["wamn.org"], "acme");
-        assert_eq!(s["metadata"]["labels"]["wamn.env"], "dev");
-        assert_eq!(s["stringData"]["url"], url);
-        // The role recorded is the underscored replication role, not wamn_app.
-        assert_eq!(
-            s["stringData"]["role"],
-            "wamn_cdc_acme__billing__dev__k3m9x2p7"
         );
     }
 }

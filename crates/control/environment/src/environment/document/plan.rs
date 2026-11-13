@@ -256,7 +256,7 @@ impl EnvironmentDocument {
 
     /// The coordinate.
     pub fn triple(&self) -> Triple {
-        Triple::new(self.org.as_str(), self.project.as_str(), self.env.as_str())
+        Triple::new(self.org.as_str(), self.env.as_str(), self.project.as_str())
     }
 
     /// The canonical bytes: RFC 8785 JSON.

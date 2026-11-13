@@ -37,7 +37,7 @@ impl Fixture {
         let database = wamn_control_provision::test_database::system();
         let project_database = wamn_platform_identity::test_database::project_platform();
         let mut admin = connect(database.url()).await?;
-        admin.batch_execute(&format!("SET ROLE wamn_system; BEGIN; {} {} UPDATE registry.meta SET platform_domain='example.invalid'; UPDATE registry.project_envs SET target_id=(SELECT id FROM registry.target WHERE name='cloud'); COMMIT",
+        admin.batch_execute(&format!("SET ROLE wamn_system; BEGIN; {} {} UPDATE registry.meta SET platform_domain='example.invalid'; UPDATE registry.environments SET target_id=(SELECT id FROM registry.target WHERE name='cloud'); COMMIT",
             bind_platform_principal_sql(PlatformComponent::Provisioning),
             wamn_control_provision::test_database::seed_org_project_env_sql("acme", "one", "dev"))).await?;
         let registry = local_registry::LocalRegistry::start("exclusive-resources");
@@ -117,7 +117,7 @@ impl Fixture {
         );
         let login = format!("exclusive_{}", database.name());
         database.execute(&[&sql::grant_connection_reader_surface_sql(), &format!(
-            "CREATE ROLE {login} LOGIN PASSWORD 'fixture'; GRANT wamn_conn_reader TO {login}; GRANT CONNECT ON DATABASE \"{}\" TO {login}; BEGIN; SET LOCAL ROLE wamn_system; {} INSERT INTO wamn_authority.author_login_projects(login_identity,project_env_key,org_id,project_id,environment) VALUES ('{login}','acme--one--dev','acme','one','dev'); COMMIT;",
+            "CREATE ROLE {login} LOGIN PASSWORD 'fixture'; GRANT wamn_conn_reader TO {login}; GRANT CONNECT ON DATABASE \"{}\" TO {login}; BEGIN; SET LOCAL ROLE wamn_system; {} INSERT INTO wamn_authority.author_login_projects(login_identity,project_env_key,org_id,project_id,environment) VALUES ('{login}','acme--dev--one','acme','one','dev'); COMMIT;",
             database.name(), bind_platform_principal_sql(PlatformComponent::Provisioning)
         )])?;
         let mut reader_url = url::Url::parse(database.url())?;
@@ -219,7 +219,7 @@ impl Fixture {
         .await?;
         let mut drops = ConnectionDrops::default();
         drops.release(
-            "acme--one--dev",
+            "acme--dev--one",
             self.release.release().manifest_digest.as_str(),
         );
         changes.publish(drops).await;
@@ -232,7 +232,7 @@ impl Fixture {
             Arc::new(ConnectionMemory::default().with_resource_leases(Arc::clone(&leases)));
         let changes = wamn_runtime::connection_memory::replicate(
             nats,
-            Some("acme--one--dev"),
+            Some("acme--dev--one"),
             Arc::clone(&memory),
         );
         until("the exclusive host watches connections", || {
@@ -244,7 +244,7 @@ impl Fixture {
             changes,
             Arc::clone(&self.credentials),
             Arc::clone(&self.postgres),
-            "acme--one--dev",
+            "acme--dev--one",
             "one",
             "dev",
         ));
@@ -349,7 +349,7 @@ async fn exclusive_calls_wait_serialize_and_transfer_to_replacement() -> anyhow:
         .change("meter", "connection.disable", &changes)
         .await?;
     until("the old host drops X", || {
-        a.memory.connection("acme--one--dev", &id).is_err()
+        a.memory.connection("acme--dev--one", &id).is_err()
     })
     .await;
     assert!(
@@ -377,7 +377,7 @@ async fn exclusive_calls_wait_serialize_and_transfer_to_replacement() -> anyhow:
     );
     assert!(disabled.elapsed() < Duration::from_secs(60));
     assert_eq!(
-        a.memory.connection("acme--one--dev", &id).unwrap().status,
+        a.memory.connection("acme--dev--one", &id).unwrap().status,
         wamn_runtime::connection_memory::ConnectionStatus::Disabled
     );
     a.leases.shutdown().await;

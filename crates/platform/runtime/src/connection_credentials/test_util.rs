@@ -37,7 +37,7 @@ impl Fixture {
                 .await
                 .unwrap();
         }
-        admin.batch_execute("INSERT INTO registry.integration_type_auth VALUES ('http','custom'); INSERT INTO registry.target(name,type,status) VALUES ('fixture','local','active'); UPDATE registry.project_envs SET target_id=(SELECT id FROM registry.target WHERE name='fixture'); RESET ROLE").await.unwrap();
+        admin.batch_execute("INSERT INTO registry.integration_type_auth VALUES ('http','custom'); INSERT INTO registry.target(name,type,status) VALUES ('fixture','local','active'); UPDATE registry.environments SET target_id=(SELECT id FROM registry.target WHERE name='fixture'); RESET ROLE").await.unwrap();
         let store = Arc::new(MemoryStore::default());
         Self {
             database,
@@ -106,7 +106,7 @@ impl Fixture {
             let stored = self
                 .store
                 .put(
-                    &wamn_control_registry::Triple::new("acme", *project, "dev"),
+                    &wamn_registry::Triple::new("acme", "dev", *project),
                     uuid::Uuid::new_v4(),
                     value.as_bytes(),
                 )
@@ -140,7 +140,7 @@ impl Fixture {
                 wamn_control_provision::sql::upsert_control_author_project_env_key_mapping_sql(),
                 &[
                     &role,
-                    &format!("acme--{project}--dev"),
+                    &wamn_registry::project_env_key("acme", project, "dev"),
                     &"acme",
                     &project,
                     &"dev",

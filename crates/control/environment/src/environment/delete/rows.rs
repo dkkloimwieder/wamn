@@ -1,7 +1,7 @@
 //! The final delete transaction retains retry inputs until credential cleanup ends.
 
 use anyhow::Context as _;
-use wamn_control_registry::Triple;
+use wamn_registry::Triple;
 
 /// Remove the environment's registry rows last.
 /// The caller holds the lifecycle lock and removes external resources first.
@@ -12,7 +12,7 @@ use wamn_control_registry::Triple;
 pub async fn delete_registry_rows(
     system: &mut tokio_postgres::Client,
     triple: &Triple,
-    instance: &str,
+    _instance: &str,
 ) -> anyhow::Result<Vec<String>> {
     let (org, project, env) = (
         triple.org.as_str(),
@@ -33,30 +33,12 @@ pub async fn delete_registry_rows(
         .context("bind the project identity")?;
     let credentials: i64 = transaction
         .query_one(
-            wamn_control_registry::sql::delete_environment_connections_sql(),
+            wamn_registry::sql::delete_environment_connections_sql(),
             &[&org, &project, &env],
         )
         .await
         .context("delete the environment's connections")?
         .get(0);
-    let project_env_key_table: bool = transaction
-        .query_one(
-            "SELECT to_regclass('catalog.project_environments') IS NOT NULL",
-            &[],
-        )
-        .await
-        .context("probe catalog.project_environments")?
-        .get(0);
-    if project_env_key_table {
-        transaction
-            .execute(
-                "DELETE FROM catalog.project_environments \
-                  WHERE org = $1 AND project = $2 AND env = $3 AND instance_suffix = $4",
-                &[&org, &project, &env, &instance],
-            )
-            .await
-            .context("delete the catalog.project_environments row")?;
-    }
     transaction
         .execute(
             "DELETE FROM wamn_authority.author_login_projects \
@@ -67,11 +49,11 @@ pub async fn delete_registry_rows(
         .context("delete the environment's control login mappings")?;
     transaction
         .execute(
-            "DELETE FROM registry.project_envs WHERE org = $1 AND project = $2 AND env = $3",
+            wamn_registry::sql::CONTROL_ENVIRONMENT_SRC_ENVIRONMENT_DELETE_ROWS_DELETE_REGISTRY_ROWS,
             &[&org, &project, &env],
         )
         .await
-        .context("delete the registry.project_envs row")?;
+        .context("delete the registry.environment_projects row")?;
     transaction
         .commit()
         .await

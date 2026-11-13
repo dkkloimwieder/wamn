@@ -30,10 +30,10 @@ use wamn_test_infrastructure::locked_database;
 const RUN_STATE_SQL: &str = include_str!("../../../deploy/sql/run-state.sql");
 const RUN_QUEUE_SQL: &str = include_str!("../../../deploy/sql/run-queue.sql");
 const SCHEMA: &str = "wamn_run";
-const PROJECT_ENV_KEY: &str = "run-retention-t--fixture--dev";
+const PROJECT_ENV_KEY: &str = "run-retention-t--dev--fixture";
 /// A second project with history of its own. Without it the cross-project
 /// refusal could not be told from a match of nothing.
-const OTHER_PROJECT_ENV_KEY: &str = "run-retention-other--fixture--dev";
+const OTHER_PROJECT_ENV_KEY: &str = "run-retention-other--dev--fixture";
 const PACKAGE_ID: &str = "run_retention_fixture";
 /// The release every seeded run pins: the digest of the bytes `{}`.
 const RELEASE_DIGEST: &str =

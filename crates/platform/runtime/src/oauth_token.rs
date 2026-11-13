@@ -160,7 +160,7 @@ where
 async fn lock(tx: &tokio_postgres::Transaction<'_>, request: &Request<'_>) -> anyhow::Result<()> {
     let generation: Option<i64> = tx
         .query_one(
-            "SELECT registry.lock_oauth_connection($1,$2,$3,$4)",
+            wamn_registry::sql::PLATFORM_RUNTIME_SRC_OAUTH_TOKEN_LOCK,
             &[
                 &request.reader.org()?,
                 &request.project,

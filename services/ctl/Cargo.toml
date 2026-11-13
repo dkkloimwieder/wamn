@@ -75,7 +75,7 @@ wamn-package-artifact = { workspace = true }
 # rendering.
 wamn-control-provision = { workspace = true }
 # wamn-q3n.6 provision-org: the control-plane registry model + registry SQL.
-wamn-control-registry = { workspace = true }
+wamn-registry = { workspace = true }
 # MVP management authentication: stable service principals, project roles, and
 # independently issued/revoked PATs for provision-project-env.
 wamn-platform-identity = { workspace = true }

@@ -8,10 +8,7 @@ VALUES ('acme', 'dev', '"own"', 0, 1, '1Gi', '1', '1Gi', 'postgres:18'),
 INSERT INTO registry.target (id, name, type, status)
 VALUES ('00000000-0000-0000-0000-000000000051', 'first', 'local', 'active'),
        ('00000000-0000-0000-0000-000000000052', 'second', 'local', 'active');
-INSERT INTO registry.project_envs
-    (org, project, env, secret_name, instance_suffix, policy_name, target_id)
-VALUES ('acme', 'app', 'dev', 'test-dev', 'aaaaaaa1', 'dev', '00000000-0000-0000-0000-000000000051'),
-       ('acme', 'app', 'prod', 'test-prod', 'aaaaaaa2', 'prod', NULL);
+WITH parent_environment AS (INSERT INTO registry.environments (org,env,policy_name,target_id) VALUES ('acme','dev','dev','00000000-0000-0000-0000-000000000051'),('acme','prod','prod',NULL) ON CONFLICT (org,env) DO NOTHING) INSERT INTO registry.environment_projects (org,project,env,secret_name,instance_suffix) VALUES ('acme','app','dev','test-dev','aaaaaaa1'),('acme','app','prod','test-prod','aaaaaaa2');
 INSERT INTO identity.principals (id, type, subject, display_name)
 VALUES ('00000000-0000-0000-0000-000000000001', 'service', 'first', 'First'),
        ('00000000-0000-0000-0000-000000000002', 'service', 'second', 'Second'),

@@ -43,7 +43,7 @@ wamn-dev-control = { workspace = true, features = ["test-util"] }
 wamn-platform-identity = { workspace = true }
 wamn-identity-protocol = { workspace = true }
 wamn-control-provision = { workspace = true, features = ["ops"] }
-wamn-control-registry = { workspace = true }
+wamn-registry = { workspace = true }
 wamn-cdc-reader = { workspace = true }
 wamn-event-wire = { workspace = true }
 wamn-integration-tests = { workspace = true }

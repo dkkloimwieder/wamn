@@ -13,7 +13,7 @@ use anyhow::{Context as _, ensure};
 use async_nats::jetstream::Context;
 use async_nats::jetstream::consumer::pull;
 use async_nats::jetstream::context::ConsumerInfoErrorKind;
-use wamn_control_registry::Triple;
+use wamn_registry::Triple;
 
 /// Read the publication-order boundary from stream info without changing broker state.
 pub async fn last_published_sequence(
@@ -125,10 +125,10 @@ mod tests {
 
     #[test]
     fn provision_refuses_foreign_consumers_before_connecting() {
-        let target = Triple::new("example", "fixture", "dev");
+        let target = Triple::new("example", "dev", "fixture");
         let expected = materializer_consumer_config(
             "mat_t_pkg_r1",
-            "evt.example.fixture.dev.widget.>",
+            "evt.example.dev.fixture.widget.>",
             Duration::from_secs(30),
             5,
         );
@@ -140,8 +140,8 @@ mod tests {
         )
         .unwrap();
         for filter in [
-            "evt.example.other.dev.widget.>",
-            "evt.example.fixture.prod.widget.>",
+            "evt.example.dev.other.widget.>",
+            "evt.example.prod.fixture.widget.>",
             "evt.example.fixture.dev",
         ] {
             let config = pull::Config {
@@ -163,10 +163,10 @@ mod tests {
 
     #[test]
     fn provision_refuses_implicit_or_unbounded_delivery_inputs() {
-        let target = Triple::new("example", "fixture", "dev");
+        let target = Triple::new("example", "dev", "fixture");
         let config = materializer_consumer_config(
             "mat_t_pkg_r1",
-            "evt.example.fixture.dev.widget.>",
+            "evt.example.dev.fixture.widget.>",
             Duration::from_secs(30),
             5,
         );

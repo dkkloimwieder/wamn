@@ -36,8 +36,8 @@ use wamn_control_provision::{
     CredentialGeneration, cdc_object_name, control_administration_secret_name,
     project_env_database_name, render_control_administration_patch,
 };
-use wamn_control_registry::Triple;
 use wamn_event_wire::delivery_advisory_stream;
+use wamn_registry::Triple;
 
 use super::Platform;
 use super::analyse::application_releases;
@@ -96,8 +96,7 @@ async fn delete_locked(
         .context("SET ROLE wamn_system")?;
     let Some(row) = system
         .query_opt(
-            "SELECT instance_suffix, policy_name FROM registry.project_envs \
-              WHERE org = $1 AND project = $2 AND env = $3",
+            wamn_registry::sql::CONTROL_ENVIRONMENT_SRC_ENVIRONMENT_DELETE_DELETE_LOCKED,
             &[&org, &project, &env],
         )
         .await
@@ -204,7 +203,7 @@ async fn delete_locked(
         &[
             "delete",
             "workloaddeployment",
-            &format!("{shared}-materializer"),
+            &wamn_registry::name::resource_suffix(&shared, "materializer"),
             "--ignore-not-found",
             "--wait=true",
             "--timeout=600s",
@@ -227,7 +226,7 @@ async fn delete_locked(
     let namespace = platform.target.namespace.as_str();
     let pat_secrets = [
         management_author_pat_name(triple),
-        format!("wamn-pat-operator-{org}--{project}--{env}"),
+        wamn_registry::name::operator_secret(org, project, env),
     ];
     for secret in &pat_secrets {
         let prefix = kubectl(
@@ -433,8 +432,8 @@ async fn delete_locked(
     transaction.commit().await?;
 
     // Keep the registry inputs until the credential store and its account are gone.
-    let account = wamn_control_registry::service_account_name(org, project, env);
-    let secret = wamn_control_registry::credential_secret_name(org, project, env);
+    let account = wamn_registry::service_account_name(org, project, env);
+    let secret = wamn_registry::credential_secret_name(org, project, env);
     for (resource, object) in [
         ("secret", &secret),
         ("rolebinding", &account),
@@ -481,7 +480,7 @@ mod tests {
     #[test]
     fn the_instance_roles_are_the_cdc_role_then_a_and_b_of_each_family() {
         let roles =
-            instance_roles(&Triple::new("dkk", "receiving", "dev"), "zf7o454t", "dev").unwrap();
+            instance_roles(&Triple::new("dkk", "dev", "receiving"), "zf7o454t", "dev").unwrap();
         assert_eq!(roles.len(), 1 + instance_families().count() * 2);
         assert!(roles.iter().all(|role| role.len() <= 63));
     }

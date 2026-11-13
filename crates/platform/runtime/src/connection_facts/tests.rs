@@ -10,7 +10,7 @@ use crate::connection_credentials::test_util::Fixture;
 use crate::connection_memory::replicate;
 use crate::plugins::wamn_postgres::WamnPostgresConfig;
 
-const PROJECT_ENV_KEY: &str = "acme--project-a--dev";
+const PROJECT_ENV_KEY: &str = "acme--dev--project-a";
 
 async fn write(fixture: &mut Fixture, password: &str) -> ConnectionDrops {
     let tx = fixture.admin.transaction().await.unwrap();

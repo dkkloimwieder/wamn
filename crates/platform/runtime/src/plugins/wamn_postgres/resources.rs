@@ -1861,7 +1861,7 @@ mod tests {
         })
         .expect("an offline postgres plugin opens no connection");
         plugin
-            .set_project_env_key(COMPONENT_ID, "org-a")
+            .set_project_env_key(COMPONENT_ID, "org--dev--a")
             .expect("the project identity is valid");
         plugin
     }
@@ -2005,7 +2005,7 @@ mod tests {
         assert_eq!(
             harness.attributes("wamn.postgres"),
             expected_attributes(
-                ["org-a", "project-a", COMPONENT_ID],
+                ["org--dev--a", "project-a", COMPONENT_ID],
                 [
                     "package_a",
                     "orders",
@@ -2045,7 +2045,7 @@ mod tests {
         assert_eq!(
             harness.attributes("wamn.postgres"),
             expected_attributes(
-                ["org-a", "project-a", COMPONENT_ID],
+                ["org--dev--a", "project-a", COMPONENT_ID],
                 ["", "", "0", "", "0", "", "", ""],
                 &[("db.system", "postgresql"), ("db.operation", "query")],
             ),

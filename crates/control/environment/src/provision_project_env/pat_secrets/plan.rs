@@ -83,23 +83,27 @@ impl PatPurpose {
             return operator_subject(&triple.org, &triple.project, triple.env.as_str())
                 .context("derive the canonical operator subject");
         }
-        Ok(format!(
-            "{}-{}--{}--{}",
-            self.subject_stem, triple.org, triple.project, triple.env
+        Ok(wamn_registry::name::service_resource(
+            self.subject_stem,
+            &triple.org,
+            &triple.project,
+            triple.env.as_str(),
         ))
     }
 
     pub(in super::super) fn display_name(self, triple: &Triple) -> String {
         format!(
             "{} {}/{}/{}",
-            self.display_stem, triple.org, triple.project, triple.env
+            self.display_stem, triple.org, triple.env, triple.project
         )
     }
 
     pub(super) fn secret_name(self, triple: &Triple) -> String {
-        format!(
-            "{}-{}--{}--{}",
-            self.secret_stem, triple.org, triple.project, triple.env
+        wamn_registry::name::service_resource(
+            self.secret_stem,
+            &triple.org,
+            &triple.project,
+            triple.env.as_str(),
         )
     }
 }

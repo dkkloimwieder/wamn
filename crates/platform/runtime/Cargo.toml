@@ -34,7 +34,7 @@ wasmtime = { workspace = true }
 wamn-catalog = { workspace = true }
 # Registry credentials and OCI trust roots.
 wamn-package-artifact = { workspace = true }
-wamn-control-registry = { workspace = true }
+wamn-registry = { workspace = true }
 wamn-event-wire = { workspace = true }
 wamn-materializer = { workspace = true }
 wamn-platform-identity = { workspace = true }

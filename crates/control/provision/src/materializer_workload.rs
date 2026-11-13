@@ -218,7 +218,7 @@ mod tests {
                 project: "fixture".into(),
                 environment: "dev".into(),
             },
-            event_stream: "EVT_7_example_7_fixture_3_dev".into(),
+            event_stream: "EVT_7_example_3_dev_7_fixture".into(),
             fetch_ms: 500,
             sweep_ms: 500,
         }
@@ -235,7 +235,7 @@ mod tests {
                 project: "quay9".into(),
                 environment: "stage7".into(),
             },
-            event_stream: "EVT_7_zamboni_5_quay9_6_stage7".into(),
+            event_stream: "EVT_7_zamboni_6_stage7_5_quay9".into(),
             fetch_ms: 131,
             sweep_ms: 137,
             ..first.clone()

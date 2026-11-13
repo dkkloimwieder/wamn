@@ -17,7 +17,6 @@ use opentelemetry::trace::TraceContextExt as _;
 use tracing::Instrument as _;
 use tracing_opentelemetry::OpenTelemetrySpanExt as _;
 use wamn_catalog::{AdmittedComponent, ComponentSqlField, ServingComponent, ServingRoute};
-use wamn_control_registry::identifiers::valid_runner;
 use wamn_engine::artifact_source::ArtifactSource;
 use wamn_engine::flow_http_routing::AuthenticatedCaller;
 use wamn_engine::release_manifest::{LoadedRelease, validate_component_in_release};
@@ -33,6 +32,7 @@ use wamn_runtime::plugins::connection_http::{
 };
 use wamn_runtime::plugins::wamn_blobstore::plugin::WamnBlobstore;
 use wamn_runtime::plugins::wamn_logging::WamnLogging;
+use wamn_runtime::plugins::wamn_postgres::valid_runner;
 use wamn_runtime::plugins::wamn_postgres::{
     PreparedStatementMembers, PreparedStatementSet, ReleaseIdentity, SessionIdentity,
     StatementField, VerifiedStatement, VerifiedStatementSet, WamnPostgres, WriteLogStore,

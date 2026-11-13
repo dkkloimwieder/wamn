@@ -18,7 +18,7 @@ pub async fn bind(
     system.batch_execute("SET ROLE wamn_system").await?;
     if system
         .query_opt(
-            "SELECT env FROM registry.project_envs WHERE org=$1 AND project=$2 AND env=$3",
+            "SELECT env FROM registry.environment_projects WHERE org=$1 AND project=$2 AND env=$3",
             &[&document.org, &document.project, &document.env],
         )
         .await?
@@ -76,11 +76,7 @@ pub async fn bind(
     };
     let referenced = cluster_credential(
         platform,
-        &wamn_control_registry::credential_secret_name(
-            &document.org,
-            &document.project,
-            &document.env,
-        ),
+        &wamn_registry::credential_secret_name(&document.org, &document.project, &document.env),
         credential.to_string().as_bytes(),
     )
     .await?;

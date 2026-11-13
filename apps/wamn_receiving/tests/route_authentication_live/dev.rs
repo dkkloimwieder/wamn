@@ -412,10 +412,10 @@ pub(super) async fn assert_dev_command(
     let durable_acl_before = current_database_acl(project.as_ref()).await?;
     // The first run recreates the target, which closes this connection.
     project_task.abort();
-    let event_target = wamn_control_registry::Triple {
+    let event_target = wamn_registry::Triple {
         org: environment.identity.org.clone(),
         project: environment.identity.project.clone(),
-        env: wamn_control_registry::Env::new(environment.identity.environment.clone()),
+        env: wamn_registry::Env::new(environment.identity.environment.clone()),
     };
     wamn_broker::streams::provision(
         &async_nats::jetstream::new(event_provisioning.clone()),

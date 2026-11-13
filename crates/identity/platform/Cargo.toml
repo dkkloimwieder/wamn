@@ -9,7 +9,7 @@ license.workspace = true
 test-util = ["dep:wamn-test-postgres", "wamn-catalog/test-util"]
 
 [dependencies]
-wamn-control-registry = { workspace = true }
+wamn-registry = { workspace = true }
 wamn-broker = { workspace = true }
 wamn-kubernetes = { workspace = true }
 wamn-test-postgres = { workspace = true, optional = true }

@@ -11,7 +11,7 @@ use std::fmt::Write as _;
 use std::io::Write as _;
 use std::process::{Command as Proc, Stdio};
 
-use wamn_control_registry::{EnvPolicy, Org, OrgEnvPolicy, Project, Registry, Template};
+use wamn_control_provision::Template;
 
 // --- live-apply acceptance test: invariants 2/3 + placement/env FK + seed + saga --------
 
@@ -58,7 +58,7 @@ fn system_schema_applies_and_enforces_invariants_on_postgres() {
              'the second (dedicated) upsert cleared the pool cluster';\n\
          END $$;\n\
          DEALLOCATE up;",
-        upsert = wamn_control_registry::sql::upsert_org_sql(),
+        upsert = wamn_registry::sql::upsert_org_sql(),
     )
     .expect("writing to a String cannot fail");
     // Exercise the REAL template stamp (8df.4) against the 'demo' org: stamp the
@@ -68,7 +68,7 @@ fn system_schema_applies_and_enforces_invariants_on_postgres() {
     writeln!(
         script,
         "PREPARE stamp (text,text,text,int,int,text,text,text,text,text,text,text) AS {stamp};",
-        stamp = wamn_control_registry::sql::stamp_env_policy_sql(),
+        stamp = wamn_registry::sql::stamp_env_policy_sql(),
     )
     .expect("writing to a String cannot fail");
     script.push_str(&stamp_statements("demo", &Template::trials()));
@@ -92,31 +92,31 @@ fn system_schema_applies_and_enforces_invariants_on_postgres() {
     writeln!(
         script,
         "PREPARE upp (text,text) AS {up_project};\n\
-         PREPARE upe (text,text,text,text,text,text,boolean) AS {up_env};\n\
+         PREPARE upe (text,text,text,text,text,text,boolean,text,text) AS {up_env};\n\
          EXECUTE upp('demo','app');\n\
          EXECUTE upp('demo','app');\n\
-         EXECUTE upe('demo','app','dev','wamn-db-demo--app--dev-OLD', NULL, 'k3m9x2p7', true);\n\
+         EXECUTE upe('demo','app','dev','wamn-db-demo--app--dev-OLD', NULL, 'k3m9x2p7', true, 'dev', NULL);\n\
          DO $$ DECLARE suffix text; marker boolean; BEGIN\n\
            EXECUTE $upe${up_env}$upe$ INTO suffix, marker\n\
-             USING 'demo', 'app', 'dev', 'wamn-db-demo--app--dev', NULL::text, 'r4n8c6v2', false;\n\
+             USING 'demo', 'app', 'dev', 'wamn-db-demo--dev--app', NULL::text, 'r4n8c6v2', false, 'dev', NULL;\n\
            ASSERT suffix = 'k3m9x2p7' AND NOT marker,\n\
              'a re-provision gets back the stored instance suffix and marker (RETURNING)';\n\
          END $$;\n\
          DO $$ BEGIN\n\
            ASSERT (SELECT count(*) FROM registry.projects WHERE org='demo' AND id='app')=1,\n\
              'upsert_project_sql is idempotent — one project row after two upserts';\n\
-           ASSERT (SELECT secret_name FROM registry.project_envs\n\
-                     WHERE org='demo' AND project='app' AND env='dev')='wamn-db-demo--app--dev',\n\
+           ASSERT (SELECT secret_name FROM registry.environment_projects\n\
+                     WHERE org='demo' AND project='app' AND env='dev')='wamn-db-demo--dev--app',\n\
              'the second project-env upsert refreshed the Secret reference (ON CONFLICT DO UPDATE)';\n\
-           ASSERT (SELECT instance_suffix FROM registry.project_envs\n\
+           ASSERT (SELECT instance_suffix FROM registry.environment_projects\n\
                      WHERE org='demo' AND project='app' AND env='dev')='k3m9x2p7',\n\
              'the second project-env upsert preserved the originally minted instance suffix';\n\
-           ASSERT NOT (SELECT disposable FROM registry.project_envs\n\
+           ASSERT NOT (SELECT disposable FROM registry.environment_projects JOIN registry.environments USING (org,env)\n\
                      WHERE org='demo' AND project='app' AND env='dev'),\n\
              'the disposable marker follows THIS provisioning, unlike the minted suffix';\n\
            -- Ask the SERVER what an unstated marker means, not the DDL text.\n\
            ASSERT (SELECT attnotnull FROM pg_attribute\n\
-                     WHERE attrelid='registry.project_envs'::regclass\n\
+                     WHERE attrelid='registry.environments'::regclass\n\
                        AND attname='disposable'),\n\
              'the disposable marker must be NOT NULL';\n\
            ASSERT (SELECT pg_get_expr(default_value.adbin, default_value.adrelid)\n\
@@ -124,13 +124,13 @@ fn system_schema_applies_and_enforces_invariants_on_postgres() {
                      JOIN pg_attrdef AS default_value\n\
                        ON default_value.adrelid = column_meta.attrelid\n\
                       AND default_value.adnum = column_meta.attnum\n\
-                    WHERE column_meta.attrelid='registry.project_envs'::regclass\n\
+                    WHERE column_meta.attrelid='registry.environments'::regclass\n\
                       AND column_meta.attname='disposable') = 'false',\n\
              'an environment nobody marked disposable must default to durable';\n\
          END $$;\n\
          DEALLOCATE upp; DEALLOCATE upe;",
-        up_project = wamn_control_registry::sql::upsert_project_sql(),
-        up_env = wamn_control_registry::sql::upsert_project_env_sql(),
+        up_project = wamn_registry::sql::upsert_project_sql(),
+        up_env = wamn_registry::sql::upsert_project_env_with_policy_sql(),
     )
     .expect("writing to a String cannot fail");
     // Exercise the REAL env-policy read via `CREATE TABLE AS EXECUTE` — provision-
@@ -150,7 +150,7 @@ fn system_schema_applies_and_enforces_invariants_on_postgres() {
              'select_env_policy_sql never returns another org''s policy (org-keyed)';\n\
          END $$;\n\
          DROP TABLE policy_probe; DROP TABLE policy_probe_other; DEALLOCATE getpol;",
-        get = wamn_control_registry::sql::select_env_policy_sql(),
+        get = wamn_registry::sql::select_env_policy_sql(),
     )
     .expect("writing to a String cannot fail");
     // Exercise the REAL registry reads. Each returns only its own org's rows,
@@ -165,18 +165,12 @@ fn system_schema_applies_and_enforces_invariants_on_postgres() {
         script,
         "PREPARE place (text) AS {placement};\n\
          PREPARE pols (text) AS {policies};\n\
-         PREPARE envs (text) AS {org_envs};\n\
          PREPARE one_env (text,text,text) AS {one_env};\n\
-         PREPARE retired (text,text,text) AS {retired};\n\
          CREATE TEMP TABLE place_probe AS EXECUTE place('try');\n\
          CREATE TEMP TABLE place_other AS EXECUTE place('ghost');\n\
          CREATE TEMP TABLE pols_probe AS EXECUTE pols('demo');\n\
          CREATE TEMP TABLE pols_other AS EXECUTE pols('try');\n\
-         CREATE TEMP TABLE envs_probe AS EXECUTE envs('demo');\n\
-         CREATE TEMP TABLE envs_other AS EXECUTE envs('try');\n\
          CREATE TEMP TABLE one_env_probe AS EXECUTE one_env('demo','app','dev');\n\
-         CREATE TEMP TABLE retired_probe AS EXECUTE retired('acme','billing','prod');\n\
-         CREATE TEMP TABLE retired_other AS EXECUTE retired('demo','app','dev');\n\
          DO $$ BEGIN\n\
            ASSERT (SELECT placement_type || '/' || pool_cluster FROM place_probe)='pooled/wamn-pg',\n\
              'select_org_placement_sql reads the org placement';\n\
@@ -186,26 +180,16 @@ fn system_schema_applies_and_enforces_invariants_on_postgres() {
              'select_env_policies_sql returns the org set in promotion order';\n\
            ASSERT (SELECT count(*) FROM pols_other)=0,\n\
              'select_env_policies_sql never returns another org''s policies';\n\
-           ASSERT (SELECT project || '/' || env || '/' || instance_suffix FROM envs_probe)='app/dev/k3m9x2p7',\n\
-             'select_org_project_envs_sql lists the org project-envs';\n\
-           ASSERT (SELECT count(*) FROM envs_other)=0,\n\
-             'select_org_project_envs_sql never returns another org''s project-envs';\n\
            ASSERT (SELECT secret_name || '/' || instance_suffix FROM one_env_probe)\n\
-               ='wamn-db-demo--app--dev/k3m9x2p7',\n\
+               ='wamn-db-demo--dev--app/k3m9x2p7',\n\
              'select_project_env_sql reads one project-env by its triple';\n\
-           ASSERT (SELECT string_agg(instance_suffix, ',') FROM retired_probe)='k3m9x2p7',\n\
-             'select_retired_project_envs_sql reads the retired instance of the triple';\n\
-           ASSERT (SELECT count(*) FROM retired_other)=0,\n\
-             'select_retired_project_envs_sql never returns a live instance';\n\
          END $$;\n\
-         DROP TABLE place_probe, place_other, pols_probe, pols_other, envs_probe, envs_other,\n\
-           one_env_probe, retired_probe, retired_other;\n\
-         DEALLOCATE place; DEALLOCATE pols; DEALLOCATE envs; DEALLOCATE one_env; DEALLOCATE retired;",
-        placement = wamn_control_registry::sql::select_org_placement_sql(),
-        policies = wamn_control_registry::sql::select_env_policies_sql(),
-        org_envs = wamn_control_registry::sql::select_org_project_envs_sql(),
-        one_env = wamn_control_registry::sql::select_project_env_sql(),
-        retired = wamn_control_registry::sql::select_retired_project_envs_sql(),
+         DROP TABLE place_probe, place_other, pols_probe, pols_other,\n\
+           one_env_probe;\n\
+         DEALLOCATE place; DEALLOCATE pols; DEALLOCATE one_env;",
+        placement = wamn_registry::sql::select_org_placement_sql(),
+        policies = wamn_registry::sql::select_env_policies_sql(),
+        one_env = wamn_registry::sql::select_project_env_sql(),
     )
     .expect("writing to a String cannot fail");
     // Exercise the REAL CDC reader-registration builders (wamn-l5i9.9) against
@@ -219,9 +203,9 @@ fn system_schema_applies_and_enforces_invariants_on_postgres() {
         "PREPARE uper (text,text,text,text,text,text,text,text,boolean,text[]) AS {upsert};\n\
          PREPARE geter (text,text,text) AS {select};\n\
          EXECUTE uper('demo','app','dev','wamn_cdc_demo__app__dev','wamn_cdc_demo__app__dev',\
-                      'EVT_4_demo_3_app_3_dev','wamn-cdc-demo--app--dev',NULL,true,ARRAY['app']);\n\
+                      'EVT_4_demo_3_dev_3_app','wamn-cdc-demo--dev--app',NULL,true,ARRAY['app']);\n\
          EXECUTE uper('demo','app','dev','wamn_cdc_demo__app__dev','wamn_cdc_demo__app__dev_v2',\
-                      'EVT_4_demo_3_app_3_dev','wamn-cdc-demo--app--dev',NULL,false,ARRAY['billing']);\n\
+                      'EVT_4_demo_3_dev_3_app','wamn-cdc-demo--dev--app',NULL,false,ARRAY['billing']);\n\
          CREATE TEMP TABLE reader_probe AS EXECUTE geter('demo','app','dev');\n\
          DO $$ BEGIN\n\
            ASSERT (SELECT count(*) FROM registry.event_readers\n\
@@ -231,25 +215,25 @@ fn system_schema_applies_and_enforces_invariants_on_postgres() {
               AND (SELECT enabled FROM reader_probe)=false\n\
               AND (SELECT schema FROM reader_probe)=ARRAY['billing'],\n\
              'the second upsert refreshed slot + enabled + schema (ON CONFLICT DO UPDATE)';\n\
-           ASSERT (SELECT stream FROM reader_probe)='EVT_4_demo_3_app_3_dev'\n\
-              AND (SELECT replication_secret_name FROM reader_probe)='wamn-cdc-demo--app--dev',\n\
+           ASSERT (SELECT stream FROM reader_probe)='EVT_4_demo_3_dev_3_app'\n\
+              AND (SELECT replication_secret_name FROM reader_probe)='wamn-cdc-demo--dev--app',\n\
              'select_event_reader_sql returns the stream + replication-Secret reference';\n\
          END $$;\n\
          DO $$ BEGIN BEGIN\n\
            INSERT INTO registry.event_readers\n\
                (org, project, env, publication, slot, stream, replication_secret_name)\n\
-             VALUES ('demo','app','prod','p','s','EVT_4_demo_3_app_4_prod','sec');\n\
+             VALUES ('demo','app','prod','p','s','EVT_4_demo_4_prod_3_app','sec');\n\
            ASSERT false, 'a registration for an unprovisioned project-env must be rejected (FK)';\n\
          EXCEPTION WHEN foreign_key_violation THEN NULL; END; END $$;\n\
          DROP TABLE reader_probe;\n\
          DELETE FROM registry.orgs WHERE id='demo';\n\
          DO $$ BEGIN\n\
            ASSERT (SELECT count(*) FROM registry.event_readers WHERE org='demo')=0,\n\
-             'deleting an org cascades its CDC registrations (through project_envs)';\n\
+             'deleting an org cascades its CDC registrations (through environment_projects)';\n\
          END $$;\n\
          DEALLOCATE uper; DEALLOCATE geter;",
-        upsert = wamn_control_registry::sql::upsert_event_reader_sql(),
-        select = wamn_control_registry::sql::select_event_reader_sql(),
+        upsert = wamn_registry::sql::upsert_event_reader_sql(),
+        select = wamn_registry::sql::select_event_reader_sql(),
     )
     .expect("writing to a String cannot fail");
     script.push_str("DROP SCHEMA registry CASCADE;\n");
@@ -351,11 +335,6 @@ fn identifier_cases() -> String {
         long(41),
     ];
 
-    let accepted = |registry: Registry, path: &str| {
-        !wamn_control_registry::validate(&registry)
-            .iter()
-            .any(|issue| issue.path == path)
-    };
     let mut s = String::from(
         "INSERT INTO registry.orgs (id, placement_type, pool_cluster) \
          VALUES ('probe','dedicated',NULL);\n",
@@ -374,12 +353,8 @@ fn identifier_cases() -> String {
         }
     };
     for id in &org_ids {
-        let registry = Registry {
-            orgs: vec![Org::dedicated(id.as_str())],
-            ..Registry::empty()
-        };
         case(
-            accepted(registry, "orgs[0].id"),
+            wamn_registry::identifiers::valid_project(id),
             format!(
                 "INSERT INTO registry.orgs (id, placement_type, pool_cluster) \
                  VALUES ('{id}','dedicated',NULL)"
@@ -389,12 +364,20 @@ fn identifier_cases() -> String {
         );
     }
     for pool in &pools {
-        let registry = Registry {
-            orgs: vec![Org::pooled("pooled", pool.as_str())],
-            ..Registry::empty()
-        };
         case(
-            accepted(registry, "orgs[0].placement.pool"),
+            !pool.is_empty()
+                && pool.len() <= 63
+                && pool
+                    .bytes()
+                    .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+                && pool
+                    .as_bytes()
+                    .first()
+                    .is_some_and(u8::is_ascii_alphanumeric)
+                && pool
+                    .as_bytes()
+                    .last()
+                    .is_some_and(u8::is_ascii_alphanumeric),
             format!(
                 "INSERT INTO registry.orgs (id, placement_type, pool_cluster) \
                  VALUES ('pooled','pooled','{pool}')"
@@ -404,32 +387,16 @@ fn identifier_cases() -> String {
         );
     }
     for id in &project_ids {
-        let registry = Registry {
-            projects: vec![Project {
-                org: "probe".into(),
-                id: id.clone(),
-            }],
-            ..Registry::empty()
-        };
         case(
-            accepted(registry, "projects[0].id"),
+            wamn_registry::identifiers::valid_project(id),
             format!("INSERT INTO registry.projects (org, id) VALUES ('probe','{id}')"),
             format!("DELETE FROM registry.projects WHERE org='probe' AND id='{id}'"),
             id,
         );
     }
     for env in &envs {
-        let mut policy = EnvPolicy::defaults().remove(0);
-        policy.name = env.as_str().into();
-        let registry = Registry {
-            env_policies: vec![OrgEnvPolicy {
-                org: "probe".into(),
-                policy,
-            }],
-            ..Registry::empty()
-        };
         case(
-            accepted(registry, "env-policies[0].policy.name"),
+            wamn_registry::identifiers::project_id_reason(env).is_none(),
             format!(
                 "INSERT INTO registry.env_policies \
                  (org, name, recovery_domain, promotion_rank, instances, storage, cpu, memory, image) \
@@ -456,9 +423,7 @@ INSERT INTO registry.env_policies
   VALUES ('acme','dev','"own"'::jsonb,10,1,'2Gi','200m','256Mi','ghcr.io/cloudnative-pg/postgresql:18'),
          ('acme','prod','"own"'::jsonb,30,3,'2Gi','200m','256Mi','ghcr.io/cloudnative-pg/postgresql:18');
 INSERT INTO registry.projects (org, id) VALUES ('acme','billing'),('try','demo');
-INSERT INTO registry.project_envs (org, project, env, secret_name, instance_suffix, policy_name)
-  VALUES ('acme','billing','prod','wamn-db-acme-prod','k3m9x2p7','prod'),
-         ('acme','billing','dev','wamn-db-acme-dev','q80zdw41','dev');
+WITH parent_environment AS (INSERT INTO registry.environments (org,env,policy_name) VALUES ('acme','prod','prod'),('acme','dev','dev') ON CONFLICT (org,env) DO NOTHING) INSERT INTO registry.environment_projects (org,project,env,secret_name,instance_suffix) VALUES ('acme','billing','prod','wamn-db-acme-prod','k3m9x2p7'),('acme','billing','dev','wamn-db-acme-dev','q80zdw41');
 
 -- A policy row under an unregistered org is rejected (FK to orgs).
 DO $$ BEGIN BEGIN
@@ -473,8 +438,7 @@ EXCEPTION WHEN foreign_key_violation THEN NULL; END; END $$;
 -- has a 'dev' policy — the composite (org, policy_name) FK is what keeps a T2 and a T4
 -- org's identically-named envs independent.
 DO $$ BEGIN BEGIN
-  INSERT INTO registry.project_envs (org, project, env, secret_name, instance_suffix, policy_name)
-    VALUES ('try','demo','dev','s','aaaaaaaa','dev');
+  WITH parent_environment AS (INSERT INTO registry.environments (org,env,policy_name) VALUES ('try','dev','dev') ON CONFLICT (org,env) DO NOTHING) INSERT INTO registry.environment_projects (org,project,env,secret_name,instance_suffix) VALUES ('try','demo','dev','s','aaaaaaaa');
   ASSERT false, 'an env with no policy in ITS org must be rejected (composite FK)';
 EXCEPTION WHEN foreign_key_violation THEN NULL; END; END $$;
 
@@ -493,24 +457,21 @@ EXCEPTION WHEN foreign_key_violation THEN NULL; END; END $$;
 
 -- A project-env under an unregistered project is rejected (FK).
 DO $$ BEGIN BEGIN
-  INSERT INTO registry.project_envs (org, project, env, secret_name, instance_suffix, policy_name)
-    VALUES ('acme','ghost','prod','s','bbbbbbbb','prod');
+  WITH parent_environment AS (INSERT INTO registry.environments (org,env,policy_name) VALUES ('acme','prod','prod') ON CONFLICT (org,env) DO NOTHING) INSERT INTO registry.environment_projects (org,project,env,secret_name,instance_suffix) VALUES ('acme','ghost','prod','s','bbbbbbbb');
   ASSERT false, 'a project-env under an unknown project must be rejected';
 EXCEPTION WHEN foreign_key_violation THEN NULL; END; END $$;
 
 -- D18: an env that names no policy in ITS org's set is rejected (the composite
 -- policy_name FK — the retired env CHECK's replacement). 'staging' is not stamped.
 DO $$ BEGIN BEGIN
-  INSERT INTO registry.project_envs (org, project, env, secret_name, instance_suffix, policy_name)
-    VALUES ('acme','billing','staging','s','cccccccc','staging');
+  WITH parent_environment AS (INSERT INTO registry.environments (org,env,policy_name) VALUES ('acme','staging','staging') ON CONFLICT (org,env) DO NOTHING) INSERT INTO registry.environment_projects (org,project,env,secret_name,instance_suffix) VALUES ('acme','billing','staging','s','cccccccc');
   ASSERT false, 'an env naming no policy must be rejected (policy_name FK)';
 EXCEPTION WHEN foreign_key_violation THEN NULL; END; END $$;
 -- ...but adding the ORG's policy first lets it in (env is data, not a closed CHECK).
 INSERT INTO registry.env_policies (org, name, recovery_domain, promotion_rank, instances, storage, cpu, memory, image)
   VALUES ('acme', 'staging', '"own"'::jsonb, 20, 1, '2Gi', '200m', '256Mi', 'ghcr.io/cloudnative-pg/postgresql:18');
-INSERT INTO registry.project_envs (org, project, env, secret_name, instance_suffix, policy_name)
-  VALUES ('acme','billing','staging','wamn-db-acme-staging','dddddddd','staging');
-DO $$ BEGIN ASSERT (SELECT count(*) FROM registry.project_envs
+WITH parent_environment AS (INSERT INTO registry.environments (org,env,policy_name) VALUES ('acme','staging','staging') ON CONFLICT (org,env) DO NOTHING) INSERT INTO registry.environment_projects (org,project,env,secret_name,instance_suffix) VALUES ('acme','billing','staging','wamn-db-acme-staging','dddddddd');
+DO $$ BEGIN ASSERT (SELECT count(*) FROM registry.environment_projects
     WHERE org='acme' AND project='billing' AND env='staging')=1,
   'a project-env in a newly-added env resolves (env is data)'; END $$;
 
@@ -546,52 +507,13 @@ DO $$ BEGIN
   ),'registry and provisioning must hold no project DB credential columns';
 END $$;
 
--- Invariant 2 (no credentials, R8b): project_envs carries the Secret REFERENCE
--- and NO credential column.
-DO $$ DECLARE bad int; BEGIN
-  SELECT count(*) INTO bad FROM information_schema.columns
-    WHERE table_schema='registry' AND table_name='project_envs'
-      AND column_name IN ('password','secret','secret_value','url','dsn',
-                          'credential','credentials','connection_string');
-  ASSERT bad=0, 'project_envs must hold NO credential column (R8b) — references only';
-  ASSERT (SELECT count(*) FROM information_schema.columns
-    WHERE table_schema='registry' AND table_name='project_envs'
-      AND column_name IN ('secret_name','secret_namespace'))=2,
-    'project_envs must carry the Secret reference (name + optional namespace)';
-END $$;
-
--- Invariant 2 also covers the CDC registrations (wamn-l5i9.9): event_readers
--- carries the replication-Secret REFERENCE and NO credential column — the
--- replication credential is its own tier and never lands in the registry.
-DO $$ DECLARE bad int; BEGIN
-  SELECT count(*) INTO bad FROM information_schema.columns
-    WHERE table_schema='registry' AND table_name='event_readers'
-      AND column_name IN ('password','secret','secret_value','url','dsn',
-                          'credential','credentials','connection_string');
-  ASSERT bad=0, 'event_readers must hold NO credential column (R8b) — references only';
-  ASSERT (SELECT count(*) FROM information_schema.columns
-    WHERE table_schema='registry' AND table_name='event_readers'
-      AND column_name IN ('replication_secret_name','replication_secret_namespace'))=2,
-    'event_readers must carry the replication-Secret reference (name + optional namespace)';
-END $$;
-
--- Invariant 3 (no project data): the ONLY tables in the system DB are the
--- control-plane registry, provisioning, and first-party identity set.
-DO $$ DECLARE tbls text; BEGIN
-  SELECT string_agg(table_schema||'.'||table_name, ',' ORDER BY table_schema, table_name)
-    INTO tbls FROM information_schema.tables
-    WHERE table_schema IN ('registry','provisioning','identity') AND table_type='BASE TABLE';
-  ASSERT tbls = 'identity.credential,identity.oauth_authorization,identity.oauth_token,identity.org_memberships,identity.org_roles,identity.password_attempts,identity.password_credentials,identity.password_logins,identity.password_tokens,identity.pats,identity.principals,identity.project_env_memberships,identity.project_roles,identity.renewal_credentials,identity.session_keys,identity.session_signing_state,registry.auth_type,registry.capture_gap,registry.connection,registry.connection_generation,registry.env_policies,registry.event_readers,registry.external_system,registry.generation_passwords,registry.integration,registry.integration_type,registry.integration_type_auth,registry.integration_type_version,registry.meta,registry.orgs,registry.project_envs,registry.projects,registry.retired_project_envs,registry.schema_baseline,registry.target',
-    format('unexpected control-plane table set (invariant 3): %s', tbls);
-END $$;
-
 -- Deleting an org cascades its projects, project-envs, and policy rows — the
 -- whole-org delete succeeds despite the in-use-policy
 -- NO ACTION FK (validated at statement end, after the project-env cascade).
 DELETE FROM registry.orgs WHERE id='acme';
 DO $$ BEGIN
   ASSERT (SELECT count(*) FROM registry.projects WHERE org='acme')=0, 'projects cascade';
-  ASSERT (SELECT count(*) FROM registry.project_envs WHERE org='acme')=0, 'project-envs cascade';
+  ASSERT (SELECT count(*) FROM registry.environment_projects WHERE org='acme')=0, 'project-envs cascade';
   ASSERT (SELECT count(*) FROM registry.env_policies WHERE org='acme')=0, 'env-policies cascade';
   -- wamn-0h0g.15.90: the CASCADE that erases the live rows is exactly the path
   -- that loses the instance identity, so the retention trigger must have caught

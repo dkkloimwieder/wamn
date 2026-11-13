@@ -19,12 +19,10 @@ use wamn_platform_identity::{
 
 use crate::{ConfiguredTarget, Inner, connect_database, response};
 
-const REGISTERED_ORG_SQL: &str = "SELECT EXISTS (SELECT 1 FROM registry.orgs WHERE id = $1)";
+const REGISTERED_ORG_SQL: &str = wamn_registry::sql::IDENTITY_SRC_SESSION_REGISTERED_ORG_SQL;
 // An inactive environment offers and mints no audience
 // (docs/architecture/execution.md#routing-and-availability).
-const CURRENT_TARGET_SQL: &str = "SELECT EXISTS (SELECT 1 FROM registry.project_envs \
-    WHERE org = $1 AND project = $2 AND env = $3 AND instance_suffix = $4 \
-    AND status = 'active')";
+const CURRENT_TARGET_SQL: &str = wamn_registry::sql::IDENTITY_SRC_SESSION_CURRENT_TARGET_SQL;
 const ENVIRONMENT_ROLES_SQL: &str = "SELECT r.role_name FROM platform.\"user\" u \
     JOIN platform.user_role r ON r.user_id = u.id \
     WHERE u.id = $1::text::uuid AND u.status = 'active' \
@@ -207,6 +205,19 @@ pub(super) async fn authorized_roles(
         .get(0);
     if !current {
         return Err(refused());
+    }
+
+    if wamn_platform_identity::control::is_project_admin(
+        &database.client,
+        principal.id(),
+        &triple.org,
+        &triple.project,
+        Some(triple.env.as_str()),
+    )
+    .await
+    .map_err(|_| failed())?
+    {
+        return Ok(vec![wamn_identity_protocol::ADMIN_ROLE.to_owned()]);
     }
 
     // Take the connection out while it is in use. Cancellation or a failed

@@ -61,7 +61,7 @@ async fn project_admin_authorize_and_public_pkce_callback() -> anyhow::Result<()
             })).await.unwrap();
         }
     });
-    admin.batch_execute(&format!("SET app.user_id='{}'; UPDATE registry.meta SET platform_domain='example.test'; INSERT INTO registry.target(name,type,status) VALUES('oauth-fixture','local','active'); UPDATE registry.project_envs SET target_id=(SELECT id FROM registry.target WHERE name='oauth-fixture')",PlatformComponent::Provisioning.principal_id())).await?;
+    admin.batch_execute(&format!("SET app.user_id='{}'; UPDATE registry.meta SET platform_domain='example.test'; INSERT INTO registry.target(name,type,status) VALUES('oauth-fixture','local','active'); UPDATE registry.environments SET target_id=(SELECT id FROM registry.target WHERE name='oauth-fixture')",PlatformComponent::Provisioning.principal_id())).await?;
     let tx = admin.transaction().await?;
     wamn_test_infrastructure::credentials::define(&tx,ORG,&json!({"project":"billing","env":"dev","name":"oauth","integration_type":"http","auth_type":"oauth2_authorization_code","parameters":{"primary-authority":provider_base,"tls-verification":"disabled","auth":{"client_id":"admin-client","authorize_url":"https://provider.example/authorize?existing=a%2Bb","token_url":token_url,"scopes":["read+","write"]}},"credential":json!({"client_secret":"private-secret"}).to_string()}),store.as_ref()).await?;
     wamn_test_infrastructure::credentials::define(&tx, ORG, &json!({"project":"billing","env":"dev","name":"other","integration_type":"http","auth_type":"none","parameters":{"primary-authority":provider_base,"tls-verification":"disabled"}}), store.as_ref()).await?;

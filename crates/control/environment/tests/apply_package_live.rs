@@ -13,7 +13,7 @@ use wamn_test_infrastructure::locked_database;
 
 const CATALOG_SCHEMA: &str = wamn_catalog::CATALOG_SCHEMA_SQL;
 const APP_SCHEMA: &str = include_str!("../../../../deploy/sql/app-schema.sql");
-const PROJECT_ENV_KEY: &str = "package-runner-live--fixture--dev";
+const PROJECT_ENV_KEY: &str = "package-runner-live--dev--fixture";
 /// The test principal that the fixture seed writes as.
 const FIXTURE_PRINCIPAL: &str = "00000000-0000-4000-8000-0000000000f1";
 
@@ -660,7 +660,7 @@ async fn apply_for_project_env_key(
 }
 
 async fn assert_concurrent_package_grants_share_one_carrier(url: &str) {
-    const RACE_PROJECT_ENV_KEY: &str = "package-runner-race--fixture--dev";
+    const RACE_PROJECT_ENV_KEY: &str = "package-runner-race--dev--fixture";
     let alpha =
         fixture_root().with_file_name(format!("apply-package-race-alpha-{}", std::process::id()));
     let beta =

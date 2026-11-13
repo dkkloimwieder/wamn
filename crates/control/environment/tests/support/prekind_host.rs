@@ -36,7 +36,7 @@ async fn credential_secrets(
     system_url: &str,
     coordinate: &Triple,
 ) -> anyhow::Result<Vec<Value>> {
-    let project_env_key = wamn_control_registry::project_env_key(ORG, PROJECT, "http");
+    let project_env_key = wamn_registry::project_env_key(ORG, PROJECT, "http");
     let mut secrets = render_fixture::credential_secrets(coordinate, NAMESPACE);
     for credential in wamn_control_provision::host_credentials::HOST_CREDENTIALS {
         let (client, url) = match credential.database {
@@ -368,8 +368,8 @@ async fn prekind_http_host_runs_and_rejects_respond_without_caller() -> anyhow::
     let work = ScratchRoot::create()?;
     let directory = work.path();
     let repository = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
-    let project_env_key = wamn_control_registry::project_env_key(ORG, PROJECT, "http");
-    let coordinate = Triple::new(ORG, PROJECT, "http");
+    let project_env_key = wamn_registry::project_env_key(ORG, PROJECT, "http");
+    let coordinate = Triple::new(ORG, "http", PROJECT);
     let database = wamn_test_postgres::database();
     let control = wamn_control_provision::test_database::system();
     let (project, project_task) = connect(database.url()).await?;
@@ -433,10 +433,10 @@ async fn prekind_http_host_runs_and_rejects_respond_without_caller() -> anyhow::
             &[&ORG, &PROJECT],
         )
         .await?;
-    let policy = wamn_control_registry::EnvPolicy::dev();
+    let policy = wamn_control_provision::EnvPolicy::dev();
     system
         .execute(
-            wamn_control_registry::sql::stamp_env_policy_sql(),
+            wamn_registry::sql::stamp_env_policy_sql(),
             &[
                 &ORG,
                 &POLICY,
@@ -462,7 +462,7 @@ async fn prekind_http_host_runs_and_rejects_respond_without_caller() -> anyhow::
         .get(0);
     system
         .query_one(
-            wamn_control_registry::sql::upsert_project_env_with_policy_sql(),
+            wamn_registry::sql::upsert_project_env_with_policy_sql(),
             &[
                 &ORG,
                 &PROJECT,
@@ -744,7 +744,7 @@ async fn prekind_http_host_runs_and_rejects_respond_without_caller() -> anyhow::
     secrets.push(render_fixture::prerequisite(
         &format!(
             "wamn-nats-{}",
-            wamn_control_registry::project_env_key(
+            wamn_registry::project_env_key(
                 &coordinate.org,
                 &coordinate.project,
                 coordinate.env.as_str()

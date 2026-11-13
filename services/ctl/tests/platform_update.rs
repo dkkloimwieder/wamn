@@ -1147,13 +1147,13 @@ fn platform_updates_use_recovered_values() -> anyhow::Result<()> {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn platform_host_update_refuses_a_held_application_or_environment_lock() -> anyhow::Result<()>
 {
-    use wamn_control_registry::Triple;
     use wamn_environment_control::environment::lock::LifecycleLock;
+    use wamn_registry::Triple;
 
     let fixture = Fixture::new()?;
     let mut postgres = wamn_test_postgres::start(&[])?;
     let database = postgres.create_database("wamn_system")?;
-    let triple = Triple::new(&fixture.document.org, "fixture", "dev");
+    let triple = Triple::new(&fixture.document.org, "dev", "fixture");
     for (selection, application) in [
         ("host:alpha/alpha", Some("alpha")),
         ("host:alpha/alpha", None),

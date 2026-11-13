@@ -9,7 +9,7 @@
 //! into [`RecoveryDomain`] via serde.
 
 use anyhow::Context as _;
-use wamn_control_registry::EnvPolicy;
+use wamn_control_provision::EnvPolicy;
 use wamn_release_control::env_policies::env_policy_from_row;
 
 /// Read an org's whole env-policy set from the system DB, ordered by
@@ -20,7 +20,7 @@ pub async fn read_env_policies(
 ) -> anyhow::Result<Vec<EnvPolicy>> {
     let rows = client
         .query(
-            wamn_control_registry::sql::select_env_policies_sql().as_str(),
+            wamn_registry::sql::select_env_policies_sql().as_str(),
             &[&org],
         )
         .await

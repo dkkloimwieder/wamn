@@ -134,8 +134,17 @@ async fn retained_advisories(
     consumer: &str,
     limit: usize,
 ) -> anyhow::Result<Vec<OperatorRecord>> {
-    let subjects = ["MAX_DELIVERIES", "MSG_TERMINATED"]
-        .map(|type_| format!("$JS.EVENT.ADVISORY.CONSUMER.{type_}.{source_stream}.{consumer}"));
+    let subjects = ["MAX_DELIVERIES", "MSG_TERMINATED"].map(|type_| {
+        wamn_registry::name::nats_subject(&[
+            "$JS",
+            "EVENT",
+            "ADVISORY",
+            "CONSUMER",
+            type_,
+            source_stream,
+            consumer,
+        ])
+    });
     let mut next = [
         next_advisory(stream, &subjects[0], 1).await?,
         next_advisory(stream, &subjects[1], 1).await?,
@@ -177,8 +186,8 @@ mod tests {
     use anyhow::ensure;
     use async_nats::jetstream::consumer::Consumer;
     use async_nats::jetstream::{AckKind, Message};
-    use wamn_control_registry::Triple;
     use wamn_event_wire::{DeliveryAdvisoryType, stream_name};
+    use wamn_registry::Triple;
 
     use super::*;
 
@@ -187,7 +196,7 @@ mod tests {
         use crate::events::{consumer_config_matches, stream_config_matches};
         use async_nats::jetstream::consumer::IntoConsumerConfig as _;
 
-        let target = Triple::new("example", "fixture", "dev");
+        let target = Triple::new("example", "dev", "fixture");
         let source = source_stream_config(&target, 1, Duration::from_secs(120));
         assert!(stream_config_matches(&source, &source));
         let changed = async_nats::jetstream::stream::Config {
@@ -197,7 +206,7 @@ mod tests {
         assert!(!stream_config_matches(&source, &changed));
         let consumer = materializer_consumer_config(
             "registered",
-            "evt.example.fixture.dev.item.update",
+            "evt.example.dev.fixture.item.update",
             Duration::from_secs(30),
             2,
         );
@@ -219,12 +228,12 @@ mod tests {
         use wamn_test_infrastructure::{event_broker, scratch::ScratchRoot};
 
         let root = ScratchRoot::create()?;
-        let target = Triple::new("example", "fixture", "dev");
+        let target = Triple::new("example", "dev", "fixture");
         let source = source_stream_config(&target, 1, Duration::from_secs(120));
         let advisory = advisory_stream_config(&target, 1);
         let consumer = materializer_consumer_config(
             "registered",
-            "evt.example.fixture.dev.item.update",
+            "evt.example.dev.fixture.item.update",
             Duration::from_secs(30),
             2,
         );
@@ -267,11 +276,17 @@ mod tests {
             let role = user["user"].as_str().unwrap().split('_').next().unwrap();
             for (subject, permitted) in [
                 (
-                    "evt.example.fixture.dev.item.update".to_owned(),
+                    "evt.example.dev.fixture.item.update".to_owned(),
                     vec!["runtime", "publisher"],
                 ),
                 (
-                    format!("$JS.API.STREAM.INFO.{}", source.name),
+                    wamn_registry::name::nats_subject(&[
+                        "$JS",
+                        "API",
+                        "STREAM",
+                        "INFO",
+                        (source.name).as_ref(),
+                    ]),
                     vec![
                         "provisioning",
                         "runtime",
@@ -281,19 +296,51 @@ mod tests {
                     ],
                 ),
                 (
-                    format!("$JS.API.STREAM.MSG.GET.{}", source.name),
+                    wamn_registry::name::nats_subject(&[
+                        "$JS",
+                        "API",
+                        "STREAM",
+                        "MSG",
+                        "GET",
+                        (source.name).as_ref(),
+                    ]),
                     vec!["observer"],
                 ),
                 (
-                    format!("$JS.API.CONSUMER.INFO.{}.registered", source.name),
+                    wamn_registry::name::nats_subject(&[
+                        "$JS",
+                        "API",
+                        "CONSUMER",
+                        "INFO",
+                        (source.name).as_ref(),
+                        "registered",
+                    ]),
                     vec!["provisioning", "runtime", "materializer", "observer"],
                 ),
                 (
-                    format!("$JS.API.CONSUMER.MSG.NEXT.{}.registered", source.name),
+                    wamn_registry::name::nats_subject(&[
+                        "$JS",
+                        "API",
+                        "CONSUMER",
+                        "MSG",
+                        "NEXT",
+                        (source.name).as_ref(),
+                        "registered",
+                    ]),
                     vec!["materializer"],
                 ),
                 (
-                    format!("$JS.ACK.{}.registered.1.1.1.1.0", source.name),
+                    wamn_registry::name::nats_subject(&[
+                        "$JS",
+                        "ACK",
+                        (source.name).as_ref(),
+                        "registered",
+                        "1",
+                        "1",
+                        "1",
+                        "1",
+                        "0",
+                    ]),
                     vec!["materializer"],
                 ),
             ] {
@@ -305,7 +352,13 @@ mod tests {
             }
             for name in [&source.name, &advisory.name] {
                 for operation in ["CREATE", "UPDATE", "DELETE"] {
-                    let subject = format!("$JS.API.STREAM.{operation}.{name}");
+                    let subject = wamn_registry::name::nats_subject(&[
+                        "$JS",
+                        "API",
+                        "STREAM",
+                        (operation).as_ref(),
+                        (name).as_ref(),
+                    ]);
                     assert_eq!(
                         allows(user, "publish", &subject),
                         role == "provisioning",
@@ -314,7 +367,14 @@ mod tests {
                 }
             }
             for operation in ["CREATE", "DELETE"] {
-                let subject = format!("$JS.API.CONSUMER.{operation}.{}.registered", source.name);
+                let subject = wamn_registry::name::nats_subject(&[
+                    "$JS",
+                    "API",
+                    "CONSUMER",
+                    (operation).as_ref(),
+                    (source.name).as_ref(),
+                    "registered",
+                ]);
                 assert_eq!(
                     allows(user, "publish", &subject),
                     role == "provisioning",
@@ -322,18 +382,51 @@ mod tests {
                 );
             }
             for foreign in [
-                Triple::new("example", "other", "dev"),
-                Triple::new("example", "fixture", "prod"),
+                Triple::new("example", "dev", "other"),
+                Triple::new("example", "prod", "fixture"),
             ] {
                 let stream = source_stream_config(&foreign, 1, Duration::from_secs(120));
                 let advisory = advisory_stream_config(&foreign, 1);
                 for subject in [
                     stream.subjects[0].replace('>', "item.update"),
-                    format!("$JS.API.STREAM.INFO.{}", stream.name),
-                    format!("$JS.API.STREAM.MSG.GET.{}", stream.name),
-                    format!("$JS.API.STREAM.INFO.{}", advisory.name),
-                    format!("$JS.API.STREAM.MSG.GET.{}", advisory.name),
-                    format!("$JS.API.CONSUMER.INFO.{}.registered", stream.name),
+                    wamn_registry::name::nats_subject(&[
+                        "$JS",
+                        "API",
+                        "STREAM",
+                        "INFO",
+                        (stream.name).as_ref(),
+                    ]),
+                    wamn_registry::name::nats_subject(&[
+                        "$JS",
+                        "API",
+                        "STREAM",
+                        "MSG",
+                        "GET",
+                        (stream.name).as_ref(),
+                    ]),
+                    wamn_registry::name::nats_subject(&[
+                        "$JS",
+                        "API",
+                        "STREAM",
+                        "INFO",
+                        (advisory.name).as_ref(),
+                    ]),
+                    wamn_registry::name::nats_subject(&[
+                        "$JS",
+                        "API",
+                        "STREAM",
+                        "MSG",
+                        "GET",
+                        (advisory.name).as_ref(),
+                    ]),
+                    wamn_registry::name::nats_subject(&[
+                        "$JS",
+                        "API",
+                        "CONSUMER",
+                        "INFO",
+                        (stream.name).as_ref(),
+                        "registered",
+                    ]),
                 ] {
                     assert!(!allows(user, "publish", &subject), "{role}: {subject}");
                     assert!(!allows(user, "subscribe", &subject), "{role}: {subject}");
@@ -342,12 +435,19 @@ mod tests {
             assert!(allows(
                 user,
                 "subscribe",
-                &format!("_INBOX_{}.reply", user["user"].as_str().unwrap())
+                &wamn_registry::name::nats_subject(&[
+                    &wamn_registry::name::nats_token(
+                        "_INBOX_",
+                        (user["user"].as_str().unwrap()).as_ref(),
+                        ""
+                    ),
+                    "reply"
+                ])
             ));
             assert!(!allows(
                 user,
                 "subscribe",
-                "evt.example.fixture.dev.item.update"
+                "evt.example.dev.fixture.item.update"
             ));
         }
         Ok(())
@@ -389,10 +489,15 @@ mod tests {
             DeliveryAdvisoryType::MaxDeliver => "exhausted",
             DeliveryAdvisoryType::Terminated => "terminated",
         };
-        let target = Triple::new(format!("c-{name}"), "app", "dev");
+        let target = Triple::new(format!("c-{name}"), "dev", "app");
         let source_name = stream_name(&target.org, &target.project, target.env.as_str());
         let advisory_name = delivery_advisory_stream(&source_name);
-        let subject = format!("evt.{}.app.dev.item.update", target.org);
+        let subject = wamn_registry::name::event_subject(
+            &target.org,
+            &target.project,
+            target.env.as_str(),
+            "item.update",
+        );
         let consumer = materializer_consumer_config(name, &subject, Duration::from_millis(100), 2);
         crate::streams::provision(
             &jetstream,
@@ -938,7 +1043,13 @@ mod tests {
                 );
                 require_permission_denial(
                     &mut errors,
-                    &format!("$JS.API.STREAM.CREATE.{}", source.name),
+                    &wamn_registry::name::nats_subject(&[
+                        "$JS",
+                        "API",
+                        "STREAM",
+                        "CREATE",
+                        (source.name).as_ref(),
+                    ]),
                 )
                 .await?;
                 ensure!(
@@ -947,7 +1058,13 @@ mod tests {
                 );
                 require_permission_denial(
                     &mut errors,
-                    &format!("$JS.API.STREAM.UPDATE.{}", source.name),
+                    &wamn_registry::name::nats_subject(&[
+                        "$JS",
+                        "API",
+                        "STREAM",
+                        "UPDATE",
+                        (source.name).as_ref(),
+                    ]),
                 )
                 .await?;
                 ensure!(
@@ -956,7 +1073,13 @@ mod tests {
                 );
                 require_permission_denial(
                     &mut errors,
-                    &format!("$JS.API.STREAM.DELETE.{}", source.name),
+                    &wamn_registry::name::nats_subject(&[
+                        "$JS",
+                        "API",
+                        "STREAM",
+                        "DELETE",
+                        (source.name).as_ref(),
+                    ]),
                 )
                 .await?;
                 let stream = restricted.get_stream(&source.name).await?;
@@ -969,7 +1092,14 @@ mod tests {
                 );
                 require_permission_denial(
                     &mut errors,
-                    &format!("$JS.API.CONSUMER.CREATE.{}.registered", source.name),
+                    &wamn_registry::name::nats_subject(&[
+                        "$JS",
+                        "API",
+                        "CONSUMER",
+                        "CREATE",
+                        (source.name).as_ref(),
+                        "registered",
+                    ]),
                 )
                 .await?;
                 ensure!(
@@ -978,7 +1108,14 @@ mod tests {
                 );
                 require_permission_denial(
                     &mut errors,
-                    &format!("$JS.API.CONSUMER.CREATE.{}.registered", source.name),
+                    &wamn_registry::name::nats_subject(&[
+                        "$JS",
+                        "API",
+                        "CONSUMER",
+                        "CREATE",
+                        (source.name).as_ref(),
+                        "registered",
+                    ]),
                 )
                 .await?;
                 ensure!(
@@ -987,7 +1124,14 @@ mod tests {
                 );
                 require_permission_denial(
                     &mut errors,
-                    &format!("$JS.API.CONSUMER.DELETE.{}.registered", source.name),
+                    &wamn_registry::name::nats_subject(&[
+                        "$JS",
+                        "API",
+                        "CONSUMER",
+                        "DELETE",
+                        (source.name).as_ref(),
+                        "registered",
+                    ]),
                 )
                 .await?;
             }
@@ -1048,7 +1192,14 @@ mod tests {
                 );
                 require_permission_denial(
                     &mut runtime_errors,
-                    &format!("$JS.API.CONSUMER.INFO.{}.registered", foreign_source.name),
+                    &wamn_registry::name::nats_subject(&[
+                        "$JS",
+                        "API",
+                        "CONSUMER",
+                        "INFO",
+                        (foreign_source.name).as_ref(),
+                        "registered",
+                    ]),
                 )
                 .await?;
                 let foreign = restricted_materializer
@@ -1063,7 +1214,14 @@ mod tests {
                 );
                 require_permission_denial(
                     &mut materializer_errors,
-                    &format!("$JS.API.CONSUMER.INFO.{}.registered", foreign_source.name),
+                    &wamn_registry::name::nats_subject(&[
+                        "$JS",
+                        "API",
+                        "CONSUMER",
+                        "INFO",
+                        (foreign_source.name).as_ref(),
+                        "registered",
+                    ]),
                 )
                 .await?;
                 for name in [&foreign_source.name, &foreign_advisory.name] {
@@ -1073,7 +1231,13 @@ mod tests {
                     );
                     require_permission_denial(
                         &mut observer_errors,
-                        &format!("$JS.API.STREAM.INFO.{name}"),
+                        &wamn_registry::name::nats_subject(&[
+                            "$JS",
+                            "API",
+                            "STREAM",
+                            "INFO",
+                            (name).as_ref(),
+                        ]),
                     )
                     .await?;
                     let foreign = observer.get_stream_no_info(name).await?;
@@ -1083,7 +1247,14 @@ mod tests {
                     );
                     require_permission_denial(
                         &mut observer_errors,
-                        &format!("$JS.API.STREAM.MSG.GET.{name}"),
+                        &wamn_registry::name::nats_subject(&[
+                            "$JS",
+                            "API",
+                            "STREAM",
+                            "MSG",
+                            "GET",
+                            (name).as_ref(),
+                        ]),
                     )
                     .await?;
                 }
@@ -1312,9 +1483,9 @@ mod tests {
         );
         std::fs::DirBuilder::new().mode(0o700).create(root.path())?;
         let targets = [
-            Triple::new("example", "fixture", "dev"),
-            Triple::new("example", "other", "dev"),
-            Triple::new("example", "fixture", "prod"),
+            Triple::new("example", "dev", "fixture"),
+            Triple::new("example", "dev", "other"),
+            Triple::new("example", "prod", "fixture"),
         ];
         let mut brokers = Vec::new();
         let mut declarations = Vec::new();
@@ -1330,9 +1501,11 @@ mod tests {
             let advisory = advisory_stream_config(target, 1);
             let consumer = materializer_consumer_config(
                 "registered",
-                &format!(
-                    "evt.{}.{}.{}.item.update",
-                    target.org, target.project, target.env
+                &wamn_registry::name::event_subject(
+                    &(target.org),
+                    &(target.project),
+                    &(target.env),
+                    &("item.update"),
                 ),
                 Duration::from_secs(30),
                 2,
@@ -1346,9 +1519,11 @@ mod tests {
                 ] {
                     consumers.push(materializer_consumer_config(
                         name,
-                        &format!(
-                            "evt.{}.{}.{}.item.{name}",
-                            target.org, target.project, target.env
+                        &wamn_registry::name::event_subject(
+                            &(target.org),
+                            &(target.project),
+                            &(target.env),
+                            &(format!("item.{name}",)),
                         ),
                         ack_wait,
                         max_deliver,

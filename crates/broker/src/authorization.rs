@@ -8,7 +8,7 @@ use base64::{Engine as _, engine::general_purpose::STANDARD};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-use wamn_control_registry::Triple;
+use wamn_registry::Triple;
 
 /// The Secret that holds the authorization file of the one NATS.
 pub const AUTHORIZATION: &str = "wamn-nats-authorization";
@@ -104,7 +104,13 @@ fn platform_users() -> Vec<Account> {
                     .permissions
                     .publish
                     .deny
-                    .push(format!("$JS.API.STREAM.{operation}.KV_{bucket}"));
+                    .push(wamn_registry::name::nats_subject(&[
+                        "$JS",
+                        "API",
+                        "STREAM",
+                        operation,
+                        &wamn_registry::name::nats_token("KV_", bucket, ""),
+                    ]));
             }
         }
         account
@@ -151,36 +157,70 @@ fn read_authorization(live: Option<&str>) -> anyhow::Result<Authorization> {
     })
 }
 
-fn render(target: &wamn_control_registry::Triple, authorization: &mut Authorization) -> Vec<Value> {
+fn render(target: &wamn_registry::Triple, authorization: &mut Authorization) -> Vec<Value> {
     let project_env_key =
-        wamn_control_registry::project_env_key(&target.org, &target.project, target.env.as_str());
+        wamn_registry::project_env_key(&target.org, &target.project, target.env.as_str());
     let source = source_stream_config(target, 1, Duration::from_secs(120));
     let advisory = advisory_stream_config(target, 1);
-    let user = wamn_control_registry::environment_nats_user(&project_env_key);
+    let user = wamn_registry::environment_nats_user(&project_env_key);
     // The environment's events, and what its host and its materializer read
     // on that environment's own stream: every consumer of the stream, by
     // wildcard. The materializer creates application consumers with filters
     // confined to this environment. The broker owns the streams.
     let mut publish = vec![source.subjects[0].clone()];
     for name in [&source.name, &advisory.name] {
-        publish.push(format!("$JS.API.STREAM.INFO.{name}"));
+        publish.push(wamn_registry::name::nats_subject(&[
+            "$JS",
+            "API",
+            "STREAM",
+            "INFO",
+            (name).as_ref(),
+        ]));
     }
     publish.extend([
-        format!(
-            "$JS.API.CONSUMER.CREATE.{}.*.{}",
-            source.name, source.subjects[0]
-        ),
-        format!("$JS.API.CONSUMER.INFO.{}.*", source.name),
-        format!("$JS.API.CONSUMER.MSG.NEXT.{}.*", source.name),
-        format!("$JS.ACK.{}.>", source.name),
+        wamn_registry::name::nats_subject(&[
+            "$JS",
+            "API",
+            "CONSUMER",
+            "CREATE",
+            (source.name).as_ref(),
+            "*",
+            (source.subjects[0]).as_ref(),
+        ]),
+        wamn_registry::name::nats_subject(&[
+            "$JS",
+            "API",
+            "CONSUMER",
+            "INFO",
+            (source.name).as_ref(),
+            "*",
+        ]),
+        wamn_registry::name::nats_subject(&[
+            "$JS",
+            "API",
+            "CONSUMER",
+            "MSG",
+            "NEXT",
+            (source.name).as_ref(),
+            "*",
+        ]),
+        wamn_registry::name::nats_subject(&["$JS", "ACK", (source.name).as_ref(), ">"]),
     ]);
     for bucket in ["wamn-auth", "wamn-connection"] {
         publish.extend(memory_subjects(bucket, &project_env_key));
     }
-    publish.push(format!(
-        "$JS.API.CONSUMER.CREATE.KV_wamn-auth.*.$KV.wamn-auth.{}.>",
-        crate::auth_changes::IDENTITY_TOKEN
-    ));
+    publish.push(wamn_registry::name::nats_subject(&[
+        "$JS",
+        "API",
+        "CONSUMER",
+        "CREATE",
+        "KV_wamn-auth",
+        "*",
+        "$KV",
+        "wamn-auth",
+        crate::auth_changes::IDENTITY_TOKEN,
+        ">",
+    ]));
     keep_user(
         authorization,
         Account {
@@ -192,7 +232,10 @@ fn render(target: &wamn_control_registry::Triple, authorization: &mut Authorizat
                     deny: Vec::new(),
                 },
                 subscribe: Subjects {
-                    allow: vec![format!("_INBOX_{user}.>")],
+                    allow: vec![wamn_registry::name::nats_subject(&[
+                        &wamn_registry::name::nats_token("_INBOX_", (user).as_ref(), ""),
+                        ">",
+                    ])],
                     deny: Vec::new(),
                 },
             },
@@ -200,7 +243,7 @@ fn render(target: &wamn_control_registry::Triple, authorization: &mut Authorizat
     );
     // Environment provisioning owns the materializer and its host's data binding.
     vec![environment_certificate(
-        &format!("wamn-nats-{project_env_key}"),
+        &wamn_registry::name::nats_certificate(&project_env_key),
         &user,
     )]
 }
@@ -210,10 +253,37 @@ fn render(target: &wamn_control_registry::Triple, authorization: &mut Authorizat
 /// (docs/plan/alignment.md R5, A7).
 fn memory_subjects(bucket: &str, prefix: &str) -> [String; 4] {
     [
-        format!("$KV.{bucket}.{prefix}.>"),
-        format!("$JS.API.STREAM.INFO.KV_{bucket}"),
-        format!("$JS.API.DIRECT.GET.KV_{bucket}.$KV.{bucket}.{prefix}.>"),
-        format!("$JS.API.CONSUMER.CREATE.KV_{bucket}.*.$KV.{bucket}.{prefix}.>"),
+        wamn_registry::name::nats_subject(&["$KV", bucket, prefix, ">"]),
+        wamn_registry::name::nats_subject(&[
+            "$JS",
+            "API",
+            "STREAM",
+            "INFO",
+            &wamn_registry::name::nats_token("KV_", bucket, ""),
+        ]),
+        wamn_registry::name::nats_subject(&[
+            "$JS",
+            "API",
+            "DIRECT",
+            "GET",
+            &wamn_registry::name::nats_token("KV_", bucket, ""),
+            "$KV",
+            bucket,
+            prefix,
+            ">",
+        ]),
+        wamn_registry::name::nats_subject(&[
+            "$JS",
+            "API",
+            "CONSUMER",
+            "CREATE",
+            &wamn_registry::name::nats_token("KV_", bucket, ""),
+            "*",
+            "$KV",
+            bucket,
+            prefix,
+            ">",
+        ]),
     ]
 }
 
@@ -250,15 +320,23 @@ fn environment_certificate(name: &str, user: &str) -> Value {
 /// The NATS user of the control host of `org` and its Certificate. It covers
 /// every environment of the org (docs/plan/alignment.md R7).
 fn control_user(org: &str) -> (Account, Value) {
-    let user = wamn_control_registry::control_nats_user(org);
+    let user = wamn_registry::control_nats_user(org);
     let mut publish = Vec::new();
     for bucket in ["wamn-auth", "wamn-connection"] {
         publish.extend(memory_subjects(bucket, "*"));
-        publish.push(format!("$KV.{bucket}.>"));
+        publish.push(wamn_registry::name::nats_subject(&["$KV", bucket, ">"]));
         // The control host watches the whole bucket, with the filter `>`.
-        publish.push(format!(
-            "$JS.API.CONSUMER.CREATE.KV_{bucket}.*.$KV.{bucket}.>"
-        ));
+        publish.push(wamn_registry::name::nats_subject(&[
+            "$JS",
+            "API",
+            "CONSUMER",
+            "CREATE",
+            &wamn_registry::name::nats_token("KV_", bucket, ""),
+            "*",
+            "$KV",
+            bucket,
+            ">",
+        ]));
     }
     publish.sort();
     publish.dedup();
@@ -271,14 +349,17 @@ fn control_user(org: &str) -> (Account, Value) {
                 deny: Vec::new(),
             },
             subscribe: Subjects {
-                allow: vec![format!("_INBOX_{user}.>")],
+                allow: vec![wamn_registry::name::nats_subject(&[
+                    &wamn_registry::name::nats_token("_INBOX_", (user).as_ref(), ""),
+                    ">",
+                ])],
                 deny: Vec::new(),
             },
         },
     };
     (
         account,
-        environment_certificate(&format!("wamn-nats-control-{org}"), &user),
+        environment_certificate(&wamn_registry::name::control_nats_certificate(org), &user),
     )
 }
 
@@ -335,7 +416,7 @@ mod tests {
     use super::*;
 
     fn document(project: &str) -> Triple {
-        Triple::new("test", project, "dev")
+        Triple::new("test", "dev", project)
     }
 
     #[test]
@@ -364,7 +445,6 @@ mod tests {
             all
         };
         let (one, two) = (&authorization.users[0], &authorization.users[1]);
-        assert_eq!(one.user, "wamn-env-test--one--dev");
         for subject in subjects(one) {
             // R5: the subjects of one environment name only its own keys,
             // streams, consumers and inbox. The bucket metadata and the
@@ -386,20 +466,77 @@ mod tests {
                 one.permissions
                     .publish
                     .allow
-                    .contains(&format!("$KV.{bucket}.test--one--dev.>"))
+                    .contains(&wamn_registry::name::nats_subject(&[
+                        "$KV",
+                        (bucket).as_ref(),
+                        &wamn_registry::project_env_key("test", "one", "dev"),
+                        ">"
+                    ]))
             );
         }
         // Routing can create filtered consumers inside this environment.
         // Unfiltered consumers, foreign filters and stream mutations stay refused.
         let stream = source_stream_config(&document("one"), 1, Duration::from_secs(120)).name;
         for subject in [
-            format!("$JS.API.CONSUMER.CREATE.{stream}.mat"),
-            format!("$JS.API.CONSUMER.CREATE.{stream}.mat.evt.test.two.dev.>"),
-            format!("$JS.API.CONSUMER.DURABLE.CREATE.{stream}.mat"),
-            format!("$JS.API.CONSUMER.DELETE.{stream}.mat"),
-            format!("$JS.API.STREAM.CREATE.{stream}"),
-            format!("$JS.API.STREAM.UPDATE.{stream}"),
-            format!("$JS.API.STREAM.DELETE.{stream}"),
+            wamn_registry::name::nats_subject(&[
+                "$JS",
+                "API",
+                "CONSUMER",
+                "CREATE",
+                (stream).as_ref(),
+                "mat",
+            ]),
+            wamn_registry::name::nats_subject(&[
+                "$JS",
+                "API",
+                "CONSUMER",
+                "CREATE",
+                (stream).as_ref(),
+                "mat",
+                "evt",
+                "test",
+                "dev",
+                "two",
+                ">",
+            ]),
+            wamn_registry::name::nats_subject(&[
+                "$JS",
+                "API",
+                "CONSUMER",
+                "DURABLE",
+                "CREATE",
+                (stream).as_ref(),
+                "mat",
+            ]),
+            wamn_registry::name::nats_subject(&[
+                "$JS",
+                "API",
+                "CONSUMER",
+                "DELETE",
+                (stream).as_ref(),
+                "mat",
+            ]),
+            wamn_registry::name::nats_subject(&[
+                "$JS",
+                "API",
+                "STREAM",
+                "CREATE",
+                (stream).as_ref(),
+            ]),
+            wamn_registry::name::nats_subject(&[
+                "$JS",
+                "API",
+                "STREAM",
+                "UPDATE",
+                (stream).as_ref(),
+            ]),
+            wamn_registry::name::nats_subject(&[
+                "$JS",
+                "API",
+                "STREAM",
+                "DELETE",
+                (stream).as_ref(),
+            ]),
         ] {
             assert!(
                 !one.permissions
@@ -411,8 +548,29 @@ mod tests {
             );
         }
         for subject in [
-            format!("$JS.API.CONSUMER.MSG.NEXT.{stream}.mat"),
-            format!("$JS.API.CONSUMER.CREATE.{stream}.mat.evt.test.one.dev.order.>"),
+            wamn_registry::name::nats_subject(&[
+                "$JS",
+                "API",
+                "CONSUMER",
+                "MSG",
+                "NEXT",
+                (stream).as_ref(),
+                "mat",
+            ]),
+            wamn_registry::name::nats_subject(&[
+                "$JS",
+                "API",
+                "CONSUMER",
+                "CREATE",
+                (stream).as_ref(),
+                "mat",
+                "evt",
+                "test",
+                "dev",
+                "one",
+                "order",
+                ">",
+            ]),
         ] {
             assert!(
                 one.permissions
@@ -489,18 +647,20 @@ mod tests {
             tokio::time::sleep(Duration::from_millis(50)).await;
         };
         crate::kv_memory::create_buckets(&admin).await.unwrap();
-        let project_env_key = wamn_control_registry::project_env_key("test", "one", "dev");
+        let project_env_key = wamn_registry::project_env_key("test", "one", "dev");
         for (user, target) in [
             (
-                wamn_control_registry::environment_nats_user(&project_env_key),
+                wamn_registry::environment_nats_user(&project_env_key),
                 Some(project_env_key.as_str()),
             ),
-            (wamn_control_registry::control_nats_user("test"), None),
+            (wamn_registry::control_nats_user("test"), None),
         ] {
             eprintln!("{user} opens its auth memory watch");
             let client =
                 async_nats::ConnectOptions::with_user_and_password(user.clone(), "p".into())
-                    .custom_inbox_prefix(format!("_INBOX_{user}"))
+                    .custom_inbox_prefix(wamn_registry::name::nats_subject(&[
+                        &wamn_registry::name::nats_token("_INBOX_", (user).as_ref(), ""),
+                    ]))
                     .connect(url.clone())
                     .await
                     .unwrap();

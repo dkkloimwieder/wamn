@@ -188,7 +188,10 @@ pub async fn materialize_application_principals(
     }
     let mut system = connect(system_url).await?;
     let domain: Option<String> = system
-        .query_one("SELECT platform_domain FROM registry.meta", &[])
+        .query_one(
+            wamn_registry::sql::IDENTITY_PLATFORM_SRC_APPLICATION_PROJECT_AUTHORITY,
+            &[],
+        )
         .await?
         .get(0);
     let domain =

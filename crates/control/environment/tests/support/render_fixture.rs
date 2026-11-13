@@ -549,7 +549,7 @@ pub fn environment(
 }
 
 /// Render the credential Secrets from apply's producer list, with disposable URLs.
-pub fn credential_secrets(triple: &wamn_control_registry::Triple, namespace: &str) -> Vec<Value> {
+pub fn credential_secrets(triple: &wamn_registry::Triple, namespace: &str) -> Vec<Value> {
     use wamn_control_provision::{
         WorkloadRoleFamily, WorkloadSecretBody, render_workload_secret_manifest,
     };

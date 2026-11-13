@@ -430,10 +430,10 @@ pub(super) fn validate_session_identity(config: &DevConfig) -> Result<(), DevCon
             wamn_control_provision::identity_issuer::validate_identity_issuer(&identity.issuer)
                 .is_ok()
                 && wamn_control_provision::session_target::session_audience(
-                    &wamn_control_registry::Triple::new(
+                    &wamn_registry::Triple::new(
                         &config.activation_identity.org,
-                        &config.activation_identity.project,
                         config.activation_identity.environment.as_str(),
+                        &config.activation_identity.project,
                     ),
                     &identity.instance_suffix,
                 )

@@ -86,7 +86,7 @@ pub use backup::{
     object_store_name, render_object_store, render_scheduled_backup, scheduled_backup_name,
 };
 pub use database::render_project_env_database;
-pub use error::{ProvisionError, require_project_env_key_environment_identity};
+pub use error::ProvisionError;
 pub use name::{
     APP_ROLE, CDC_OBJECT_PREFIX, CDC_SECRET_PREFIX, DB_OWNER_ROLE, DB_PREFIX, GUEST_SECRET_PREFIX,
     INSTANCE_SUFFIX_LEN, MAX_DB_NAME_LEN, MAX_NAMESPACE_LEN, MAX_NAMESPACE_STEM_LEN,
@@ -138,7 +138,7 @@ pub const SYSTEM_SCHEMA_SQL: &str = concat!(
     include_str!("../../../../deploy/sql/system-schema-baseline.sql"),
 );
 
-/// Environment declarations and targeted connection-reader authority.
+/// Targeted connection-reader authority for control database logins.
 pub const CONTROL_PORTABLE_STORE_SQL: &str =
     include_str!("../../../../deploy/sql/control-portable-store.sql");
 
@@ -157,3 +157,11 @@ pub const APP_SCHEMA_SQL: &str = concat!(
     include_str!("../../../../deploy/sql/app-schema.sql"),
     include_str!("../../../../deploy/sql/app-schema-baseline.sql"),
 );
+
+mod placement;
+mod template;
+pub use placement::{
+    ClusterRef, DEFAULT_PG_IMAGE, EnvPolicy, Org, OrgEnvPolicy, Placement, RecoveryDomain,
+    cluster_of,
+};
+pub use template::Template;

@@ -87,7 +87,7 @@ fn platform(system_url: &str) -> Platform {
 fn org_request(system_url: &str) -> ProvisionOrgRequest {
     ProvisionOrgRequest {
         org: ORG.into(),
-        template: wamn_control_registry::Template::trials(),
+        template: wamn_control_provision::Template::trials(),
         pool: "wamn-pg".into(),
         cluster_namespace: "platform".into(),
         record: Some(OrgRecord {

@@ -136,14 +136,14 @@ fn record_connection_drops(
         "connection.write" | "connection.copy" | "connection.delete"
     ) && let Some(env) = result["env"].as_str()
     {
-        connections.connections(&format!("{org}--{project}--{env}"));
+        connections.connections(&wamn_registry::project_env_key(org, project, env));
     }
     let mut record = |env: &Value, id: &Value| {
         if let (Some(env), Some(id)) = (
             env.as_str(),
             id.as_str().and_then(|id| id.parse::<uuid::Uuid>().ok()),
         ) {
-            connections.connection(&format!("{org}--{project}--{env}"), id);
+            connections.connection(&wamn_registry::project_env_key(org, project, env), id);
         }
     };
     match operation {
@@ -265,13 +265,17 @@ pub async fn configure(
     }
     let sql = match operation.split_once('.').map(|(group, _)| group) {
         Some("external_system") => {
-            "SELECT registry.configure_external_system($1,$2,$3::text::jsonb)::text"
+            wamn_registry::sql::IDENTITY_PLATFORM_SRC_CONNECTIONS_ADMINISTRATION_CONFIGURE_4
         }
-        Some("integration") => "SELECT registry.configure_integration($1,$2,$3::text::jsonb)::text",
+        Some("integration") => {
+            wamn_registry::sql::IDENTITY_PLATFORM_SRC_CONNECTIONS_ADMINISTRATION_CONFIGURE_3
+        }
         Some("integration_type") => {
-            "SELECT registry.configure_integration_type($1,$2,$3::text::jsonb)::text"
+            wamn_registry::sql::IDENTITY_PLATFORM_SRC_CONNECTIONS_ADMINISTRATION_CONFIGURE_2
         }
-        Some("connection") => "SELECT registry.configure_connection($1,$2,$3::text::jsonb)::text",
+        Some("connection") => {
+            wamn_registry::sql::IDENTITY_PLATFORM_SRC_CONNECTIONS_ADMINISTRATION_CONFIGURE
+        }
         _ => return Err(refuse("invalid_input", "operation")),
     };
     let text: String = tx
@@ -371,10 +375,10 @@ async fn generation(
         Some(
             store_credential(
                 store,
-                &wamn_control_registry::Triple::new(
+                &wamn_registry::Triple::new(
                     org,
-                    request["project"].as_str().unwrap(),
                     request["env"].as_str().unwrap(),
+                    request["project"].as_str().unwrap(),
                 ),
                 value,
             )
@@ -424,7 +428,7 @@ async fn generation(
 
 async fn store_credential(
     store: &dyn Store,
-    target: &wamn_control_registry::Triple,
+    target: &wamn_registry::Triple,
     value: &str,
 ) -> Result<Value, ConnectionError> {
     let id = uuid::Uuid::new_v4();
@@ -633,7 +637,7 @@ mod tests {
     impl Store for RecordingStore {
         async fn put(
             &self,
-            _target: &wamn_control_registry::Triple,
+            _target: &wamn_registry::Triple,
             id: uuid::Uuid,
             value: &[u8],
         ) -> Result<StoreVersion, wamn_kubernetes::Error> {
@@ -658,7 +662,7 @@ mod tests {
         let value = r#"{"key":"private-1234"}"#;
         let metadata = store_credential(
             &store,
-            &wamn_control_registry::Triple::new("acme", "app", "dev"),
+            &wamn_registry::Triple::new("acme", "dev", "app"),
             value,
         )
         .await

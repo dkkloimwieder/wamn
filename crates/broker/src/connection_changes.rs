@@ -18,7 +18,7 @@ pub const BUCKET: &str = "wamn-connection";
 /// The key of the fact of connection `id` in `project_env_key`: its active
 /// generation, effective status and credential id.
 pub fn connection_key(project_env_key: &str, id: &uuid::Uuid) -> String {
-    format!("{project_env_key}.connection.{id}")
+    wamn_registry::name::connection_key(project_env_key, id)
 }
 
 /// The key of the connection map of the release `manifest_digest` in
@@ -28,12 +28,12 @@ pub fn release_key(project_env_key: &str, manifest_digest: &str) -> String {
     let hex = manifest_digest
         .strip_prefix("sha256:")
         .unwrap_or(manifest_digest);
-    format!("{project_env_key}.release.{hex}")
+    wamn_registry::name::nats_subject(&[project_env_key, "release", hex])
 }
 
 /// The key of the map from integration name to connection id of `project_env_key`.
 pub fn connections_key(project_env_key: &str) -> String {
-    format!("{project_env_key}.connections")
+    wamn_registry::name::nats_subject(&[project_env_key, "connections"])
 }
 
 /// One connection fact that a committed write changed.

@@ -28,7 +28,7 @@ wamn-event-wire = { workspace = true }
 # Canonical PostgreSQL identifier quoting shared with the guest-safe planners.
 postgres-protocol = { workspace = true }
 # registry.event_readers registration lookup.
-wamn-control-registry = { workspace = true }
+wamn-registry = { workspace = true }
 # The targeted registry-reader credential contract (wamn-0h0g.12.116): the pure,
 # pre-I/O refusal of a WAMN_SYSTEM_URL that is not this project-env's own
 # read-only generation. A pure text/hashing edge — no DB, K8s, clock or tokio.

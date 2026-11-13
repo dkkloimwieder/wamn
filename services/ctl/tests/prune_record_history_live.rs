@@ -34,7 +34,7 @@ use wamn_test_infrastructure::locked_database;
 
 const SCHEMA: &str = "record_retention";
 const PACKAGE_ID: &str = "record_retention_fixture";
-const PROJECT_ENV_KEY: &str = "record-retention-t--fixture--dev";
+const PROJECT_ENV_KEY: &str = "record-retention-t--dev--fixture";
 const OTHER_PROJECT_ENV_KEY: &str = "record-retention-other";
 const GENERATION_PASSWORD: &str = "record-retention-test-generation";
 /// The test principal that the fixture writes bind.

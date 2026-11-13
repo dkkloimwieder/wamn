@@ -250,14 +250,23 @@ impl HostRouteDelivery {
                     .await?
                 };
                 let mut answer = page.answer("projects", projects, |project| json!([project]));
-                answer["projects"] = Value::Array(
-                    answer["projects"]
-                        .as_array()
-                        .expect("page rows are an array")
-                        .iter()
-                        .map(|project| json!({"project": project, "project_admin": true}))
-                        .collect(),
-                );
+                let Value::Array(projects) = answer["projects"].take() else {
+                    unreachable!("page rows are an array")
+                };
+                let mut rows = Vec::with_capacity(projects.len());
+                for project in projects {
+                    let project_admin = org_admin
+                        || wamn_platform_identity::control::is_project_admin(
+                            control.as_ref(),
+                            &principal,
+                            org,
+                            project.as_str().expect("project name"),
+                            None,
+                        )
+                        .await?;
+                    rows.push(json!({"project":project,"project_admin":project_admin}));
+                }
+                answer["projects"] = Value::Array(rows);
                 answer["org_admin"] = json!(org_admin);
                 Ok(answer)
             }

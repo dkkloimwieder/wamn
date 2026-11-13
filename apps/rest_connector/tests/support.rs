@@ -31,7 +31,7 @@ pub fn admit(
     bases: BTreeSet<String>,
 ) -> ComponentAdmission {
     let target = ComponentPackageCoordinate {
-        project_env_key: "rest--publication--test".into(),
+        project_env_key: "rest--test--publication".into(),
         package_id: manifest(package)["package"]["id"].as_str().unwrap().into(),
         package_version: "0.1.1".into(),
     };

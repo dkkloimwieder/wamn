@@ -26,7 +26,7 @@ wamn-component-composer = { workspace = true }
 wasmparser = { workspace = true }
 wamn-package-artifact = { workspace = true }
 wamn-control-provision = { workspace = true }
-wamn-control-registry = { workspace = true }
+wamn-registry = { workspace = true }
 wamn-record-history = { workspace = true }
 wamn-runtime = { workspace = true }
 wamn-engine = { workspace = true }

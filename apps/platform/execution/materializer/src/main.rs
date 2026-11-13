@@ -286,12 +286,12 @@ async fn serve(config: &Config, serving: &Serving, counters: &mut Counters) {
         &registration.source_package_id,
         &registration.entity,
     );
-    let filter = format!(
-        "evt.{}.{}.{}.{}.>",
-        config.org,
-        config.project,
-        config.env,
-        wamn_event_wire::subject_token(registration.entity.as_str())
+    let entity = wamn_event_wire::subject_token(registration.entity.as_str());
+    let filter = wamn_registry::name::event_subject(
+        &config.org,
+        &config.project,
+        &config.env,
+        &wamn_registry::name::nats_subject(&[&entity, ">"]),
     );
     let provisioned = registration::prepare(
         registration.package_id.clone(),
@@ -394,11 +394,9 @@ async fn run_service() {
         }
     };
     println!(
-        "wamn::materializer up: stream={} filter=evt.{}.{}.{}.*.* project_env_key={} batch={} fetch_ms={} max_deliver={} max_sweeps={}",
+        "wamn::materializer up: stream={} filter={} project_env_key={} batch={} fetch_ms={} max_deliver={} max_sweeps={}",
         config.stream,
-        config.org,
-        config.project,
-        config.env,
+        wamn_registry::name::event_subject(&config.org, &config.project, &config.env, "*.*"),
         config.project_env_key,
         config.batch,
         config.fetch_ms,
@@ -594,7 +592,7 @@ mod tests {
     fn message() -> Message {
         Message {
             contents: bindings::wasmcloud::nats::types::NatsMessage {
-                subject: "evt.org.app.dev.receipts.insert".into(),
+                subject: wamn_registry::name::event_subject("org", "app", "dev", "receipts.insert"),
                 body: serde_json::to_vec(&envelope()).unwrap(),
                 reply_to: None,
                 headers: Some(vec![Header {

@@ -354,8 +354,7 @@ pub(crate) async fn connect_project(url: &str) -> anyhow::Result<Client> {
 pub(crate) async fn read_policy(system: &Client, org: &str, name: &str) -> anyhow::Result<Policy> {
     let row = system
         .query_opt(
-            "SELECT readiness_budget_seconds, drain_bound_seconds \
-               FROM registry.env_policies WHERE org = $1 AND name = $2",
+            wamn_registry::sql::CONTROL_ENVIRONMENT_SRC_ENVIRONMENT_ANALYSE_READ_POLICY,
             &[&org, &name],
         )
         .await
@@ -374,8 +373,7 @@ pub(crate) async fn read_row(
 ) -> anyhow::Result<Option<EnvironmentRow>> {
     Ok(system
         .query_opt(
-            "SELECT instance_suffix, route_host, policy_name, disposable FROM registry.project_envs \
-              WHERE org = $1 AND project = $2 AND env = $3",
+            wamn_registry::sql::CONTROL_ENVIRONMENT_SRC_ENVIRONMENT_ANALYSE_READ_ROW,
             &[&document.org, &document.project, &document.env],
         )
         .await
@@ -660,7 +658,7 @@ async fn read_history_revision(
 /// Discover application Helm releases in every status before status or environment deletion.
 pub(crate) async fn application_releases(
     platform: &Platform,
-    triple: &wamn_control_registry::Triple,
+    triple: &wamn_registry::Triple,
 ) -> anyhow::Result<BTreeMap<String, String>> {
     wamn_control_provision::validate_project_env(
         &triple.org,
@@ -668,13 +666,7 @@ pub(crate) async fn application_releases(
         triple.env.as_str(),
     )?;
     let coordinate = triple.to_string();
-    let slug: String = triple
-        .env
-        .as_str()
-        .chars()
-        .take(wamn_control_provision::environment_names::SLUG_LEN)
-        .collect();
-    let filter = format!("^r-{slug}-");
+    let filter = wamn_registry::name::application_release_filter(triple.env.as_str());
     let mut entries = Vec::new();
     loop {
         let offset = entries.len().to_string();
@@ -763,7 +755,7 @@ pub(crate) async fn read_live_set(
 
 /// The host pods of the environment's host group, as `kubectl get pods -o json`.
 pub(crate) async fn read_pods(platform: &Platform, release_name: &str) -> anyhow::Result<Value> {
-    let selector = format!("wasmcloud.com/hostgroup={release_name}");
+    let selector = wamn_registry::name::host_selector(release_name);
     let output = wamn_kubernetes::kubectl::kubectl(
         &platform.target.kubeconfig,
         &platform.target.context,
@@ -793,7 +785,7 @@ pub async fn replica_refusals(
     }
     let cloud: bool = system
         .query_one(
-            "SELECT type = 'cloud' FROM registry.target WHERE name = $1",
+            wamn_registry::sql::CONTROL_ENVIRONMENT_SRC_ENVIRONMENT_ANALYSE_REPLICA_REFUSALS,
             &[&document.target],
         )
         .await

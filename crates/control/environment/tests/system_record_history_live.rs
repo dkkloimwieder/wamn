@@ -9,7 +9,7 @@ const RELATIONS: [&str; 11] = [
     "registry.orgs",
     "registry.env_policies",
     "registry.projects",
-    "registry.project_envs",
+    "registry.environment_projects",
     "registry.retired_project_envs",
     "registry.capture_gap",
     "registry.generation_passwords",
@@ -36,10 +36,8 @@ async fn fresh_system_history_requires_stamps_and_preserves_retirement_actor() {
          INSERT INTO registry.projects VALUES ('history','project'); \
          INSERT INTO registry.env_policies(org,name,recovery_domain,promotion_rank,instances,storage,cpu,memory,image) \
            VALUES ('history','dev','{}',0,1,'1Gi','1','1Gi','fixture'); \
-         INSERT INTO registry.project_envs(org,project,env,secret_name,instance_suffix,policy_name) \
-           VALUES ('history','project','dev','secret','abcdefgh','dev'), \
-                  ('history','project','retired','secret','ijklmnop','dev'); \
-         DELETE FROM registry.project_envs WHERE env='retired'; \
+         WITH parent_environment AS (INSERT INTO registry.environments (org,env,policy_name) VALUES ('history','dev','dev'),('history','retired','dev') ON CONFLICT (org,env) DO NOTHING) INSERT INTO registry.environment_projects (org,project,env,secret_name,instance_suffix) VALUES ('history','project','dev','secret','abcdefgh'),('history','project','retired','secret','ijklmnop'); \
+         DELETE FROM registry.environment_projects WHERE env='retired'; \
          INSERT INTO registry.event_readers(org,project,env,publication,slot,stream,replication_secret_name) \
            VALUES ('history','project','dev','publication','slot','stream','secret'); \
          INSERT INTO registry.capture_gap(org,project,env,slot,start_at,reason,end_lsn) \
@@ -88,7 +86,10 @@ async fn fresh_system_history_requires_stamps_and_preserves_retirement_actor() {
             .await
             .unwrap();
     transaction
-        .execute("DELETE FROM registry.project_envs WHERE env='dev'", &[])
+        .execute(
+            "DELETE FROM registry.environment_projects WHERE env='dev'",
+            &[],
+        )
         .await
         .unwrap();
     assert_stamp(
@@ -102,7 +103,10 @@ async fn fresh_system_history_requires_stamps_and_preserves_retirement_actor() {
     transaction.commit().await.unwrap();
     assert_eq!(
         client
-            .execute("UPDATE registry.meta SET schema_version='unbound'", &[])
+            .execute(
+                "UPDATE registry.meta SET platform_domain='unbound.example'",
+                &[]
+            )
             .await
             .unwrap_err()
             .code(),

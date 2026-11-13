@@ -1311,7 +1311,7 @@ async fn pat_caller(
     )
     .await?;
     system.execute("INSERT INTO registry.env_policies (org, name, recovery_domain, promotion_rank, instances, storage, cpu, memory, image) VALUES ($1, $2, '\"own\"'::jsonb, 1, 1, '1Gi', '1', '1Gi', 'postgres:18')", &[&ORG, &ENVIRONMENT]).await?;
-    system.execute("INSERT INTO registry.project_envs (org, project, env, secret_name, instance_suffix, policy_name) VALUES ($1, $2, $3, 'warm-test', 'a1b2c3d4', $3)", &[&ORG, &PROJECT, &ENVIRONMENT]).await?;
+    system.execute("WITH parent_environment AS (INSERT INTO registry.environments (org,env,policy_name) VALUES ($1,$3,$3) ON CONFLICT (org,env) DO NOTHING) INSERT INTO registry.environment_projects (org,project,env,secret_name,instance_suffix) VALUES ($1,$2,$3,'warm-test','a1b2c3d4')", &[&ORG, &PROJECT, &ENVIRONMENT]).await?;
     assign_project_role(
         &system,
         principal.id(),

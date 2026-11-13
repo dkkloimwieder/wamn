@@ -31,7 +31,7 @@ impl std::error::Error for ProjectionError {
 
 fn failure(org: &str, project: &str, env: &str, source: anyhow::Error) -> ProjectionError {
     ProjectionError {
-        target: format!("{org}/{project}/{env}"),
+        target: wamn_registry::name::host_status(org, project, env),
         source,
     }
 }
@@ -69,7 +69,7 @@ async fn document(
 ) -> anyhow::Result<serde_json::Value> {
     Ok(system
         .query_one(
-            "SELECT registry.connection_projection($1,$2,$3)",
+            wamn_registry::sql::IDENTITY_PLATFORM_SRC_CONNECTION_PROJECTION_DOCUMENT,
             &[&org, &project, &env],
         )
         .await
@@ -170,7 +170,7 @@ async fn push(
         )
         .await?;
     let mut drops = AuthDrops::default();
-    let project_env_key = format!("{org}--{project}--{env}");
+    let project_env_key = wamn_registry::project_env_key(org, project, env);
     for row in document["principal"]
         .as_array()
         .context("connection principal projection")?
@@ -232,17 +232,17 @@ mod tests {
         }
         source.batch_execute(r"
             UPDATE registry.meta SET platform_domain='example.invalid';
-            UPDATE registry.project_envs SET target_id=(SELECT id FROM registry.target WHERE name='cloud');
+            UPDATE registry.environments SET target_id=(SELECT id FROM registry.target WHERE name='cloud');
             INSERT INTO registry.external_system(org,project,name) VALUES ('acme','project-a','source'),('acme','project-b','source');
             INSERT INTO registry.integration(org,project,name,integration_type,auth_type,status)
             VALUES ('acme','project-a','disabled','http','none','disabled'),
                    ('acme','project-a','active','http','none','active'),
                    ('acme','project-b','active','http','none','active');
             INSERT INTO identity.principals(id,type,subject,display_name)
-            SELECT gen_random_uuid(),'service','projection-' || row_number() OVER()::text,'projection' FROM registry.project_envs WHERE org='acme';
+            SELECT gen_random_uuid(),'service','projection-' || row_number() OVER()::text,'projection' FROM registry.environment_projects WHERE org='acme';
             INSERT INTO registry.connection(integration_id,org,project,env,integration_type,target_id,active_generation,service_principal_id)
-            SELECT i.id,i.org,i.project,e.env,i.integration_type,e.target_id,1,p.id
-            FROM registry.integration i JOIN registry.project_envs e ON (e.org,e.project)=(i.org,i.project)
+            SELECT i.id,i.org,i.project,e.env,i.integration_type,v.target_id,1,p.id
+            FROM registry.integration i JOIN registry.environment_projects e ON (e.org,e.project)=(i.org,i.project) JOIN registry.environments v ON (v.org,v.env)=(e.org,e.env)
             JOIN LATERAL (SELECT id FROM identity.principals WHERE subject='projection-' ||
                 CASE WHEN i.project='project-b' THEN '3' WHEN e.env='prod' THEN '2' ELSE '1' END) p ON true
             WHERE i.name=CASE WHEN i.project='project-a' THEN 'disabled' ELSE 'active' END;

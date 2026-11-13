@@ -23,7 +23,7 @@ pub fn history_sql(target: MigrationDatabase) -> String {
     // The project apply login inherits its database-owner grants. System apply
     // receives only the same read access as registry.schema_baseline.
     if target == MigrationDatabase::System {
-        sql.push_str("GRANT SELECT ON registry.schema_migration TO wamn_apply;");
+        sql.push_str(wamn_registry::sql::CONTROL_PROVISION_SRC_SCHEMA_MIGRATIONS_HISTORY_SQL);
     }
     sql
 }

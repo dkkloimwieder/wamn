@@ -552,6 +552,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "camino"
+version = "1.2.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bbbad30e4b4c14a39e3cc8aed085a12a327257c316619c93581e017bc52be591"
+dependencies = [
+ "serde_core",
+]
+
+[[package]]
 name = "cap-primitives"
 version = "4.0.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -567,6 +576,30 @@ dependencies = [
  "rustix-linux-procfs",
  "windows-sys 0.61.2",
  "winx",
+]
+
+[[package]]
+name = "cargo-platform"
+version = "0.3.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "dd0061da739915fae12ea00e16397555ed4371a6bb285431aab930f61b0aa4ba"
+dependencies = [
+ "serde",
+ "serde_core",
+]
+
+[[package]]
+name = "cargo_metadata"
+version = "0.23.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ef987d17b0a113becdd19d3d0022d04d7ef41f9efe4f3fb63ac44ba61df3ade9"
+dependencies = [
+ "camino",
+ "cargo-platform",
+ "semver",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
 ]
 
 [[package]]
@@ -1056,6 +1089,27 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ce6e4c961d6cd6c9a86db418387425e8bdeaf05b3c8bc1411e6dca4c252f1453"
 dependencies = [
  "hybrid-array",
+]
+
+[[package]]
+name = "csv"
+version = "1.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "52cd9d68cf7efc6ddfaaee42e7288d3a99d613d4b50f76ce9827ae0c6e14f938"
+dependencies = [
+ "csv-core",
+ "itoa",
+ "ryu",
+ "serde_core",
+]
+
+[[package]]
+name = "csv-core"
+version = "0.1.13"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "704a3c26996a80471189265814dbc2c257598b96b8a7feae2d31ace646bb9782"
+dependencies = [
+ "memchr",
 ]
 
 [[package]]
@@ -5660,21 +5714,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "wamn-bench"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "clap",
- "reqwest",
- "serde",
- "serde_json",
- "tokio",
- "tokio-postgres",
- "uuid",
- "wamn-digest",
-]
-
-[[package]]
 name = "wamn-broker"
 version = "0.1.0"
 dependencies = [
@@ -5688,9 +5727,9 @@ dependencies = [
  "tokio",
  "tracing",
  "uuid",
- "wamn-control-registry",
  "wamn-event-wire",
  "wamn-kubernetes",
+ "wamn-registry",
  "wamn-runtime",
  "wamn-test-infrastructure",
  "wamn-test-postgres",
@@ -5739,8 +5778,8 @@ dependencies = [
  "wamn-broker",
  "wamn-catalog",
  "wamn-control-provision",
- "wamn-control-registry",
  "wamn-event-wire",
+ "wamn-registry",
  "wamn-test-postgres",
 ]
 
@@ -5831,12 +5870,12 @@ dependencies = [
  "wamn-compiler",
  "wamn-component-policy",
  "wamn-control-provision",
- "wamn-control-registry",
  "wamn-digest",
  "wamn-engine",
  "wamn-environment-control",
  "wamn-execution-host",
  "wamn-fixture-package",
+ "wamn-registry",
  "wamn-release-control",
  "wamn-run-state",
  "wamn-runtime",
@@ -5863,23 +5902,15 @@ dependencies = [
  "url",
  "wamn-catalog",
  "wamn-compiler",
- "wamn-control-registry",
  "wamn-digest",
  "wamn-event-wire",
  "wamn-fixture-package",
  "wamn-identity-protocol",
  "wamn-record-history",
+ "wamn-registry",
  "wamn-run-state",
  "wamn-schema-control",
  "wamn-test-postgres",
-]
-
-[[package]]
-name = "wamn-control-registry"
-version = "0.1.0"
-dependencies = [
- "serde",
- "serde_json",
 ]
 
 [[package]]
@@ -5904,7 +5935,6 @@ dependencies = [
  "wamn-catalog",
  "wamn-compiler",
  "wamn-control-provision",
- "wamn-control-registry",
  "wamn-dev-control",
  "wamn-digest",
  "wamn-environment-control",
@@ -5914,6 +5944,7 @@ dependencies = [
  "wamn-package-artifact",
  "wamn-package-control",
  "wamn-platform-identity",
+ "wamn-registry",
  "wamn-release-control",
  "wamn-runtime",
  "wamn-schema-control",
@@ -5955,7 +5986,6 @@ dependencies = [
  "wamn-compiler",
  "wamn-component-composer",
  "wamn-control-provision",
- "wamn-control-registry",
  "wamn-digest",
  "wamn-engine",
  "wamn-environment-control",
@@ -5968,6 +5998,7 @@ dependencies = [
  "wamn-package-artifact",
  "wamn-package-control",
  "wamn-platform-identity",
+ "wamn-registry",
  "wamn-release-control",
  "wamn-run-state",
  "wamn-runtime",
@@ -6020,12 +6051,12 @@ dependencies = [
  "uuid",
  "wamn-catalog",
  "wamn-compiler",
- "wamn-control-registry",
  "wamn-dev-control",
  "wamn-digest",
  "wamn-engine",
  "wamn-identity-protocol",
  "wamn-kubernetes",
+ "wamn-registry",
  "wamn-run-state",
  "wamn-run-state-sqlite",
  "wamn-test-postgres",
@@ -6072,7 +6103,6 @@ dependencies = [
  "async-nats",
  "base64 0.22.1",
  "chrono",
- "docker_credential",
  "futures-util",
  "hex",
  "object_store",
@@ -6097,7 +6127,6 @@ dependencies = [
  "wamn-catalog",
  "wamn-compiler",
  "wamn-control-provision",
- "wamn-control-registry",
  "wamn-digest",
  "wamn-engine",
  "wamn-event-reg",
@@ -6110,6 +6139,7 @@ dependencies = [
  "wamn-package-artifact",
  "wamn-package-control",
  "wamn-platform-identity",
+ "wamn-registry",
  "wamn-release-control",
  "wamn-run-state",
  "wamn-runtime",
@@ -6142,6 +6172,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.11.0",
+ "wamn-registry",
 ]
 
 [[package]]
@@ -6183,7 +6214,6 @@ dependencies = [
  "wamn-compiler",
  "wamn-component-composer",
  "wamn-control-provision",
- "wamn-control-registry",
  "wamn-digest",
  "wamn-engine",
  "wamn-environment-control",
@@ -6195,6 +6225,7 @@ dependencies = [
  "wamn-package-artifact",
  "wamn-package-control",
  "wamn-platform-identity",
+ "wamn-registry",
  "wamn-release-control",
  "wamn-runtime",
  "wamn-scalar",
@@ -6240,7 +6271,6 @@ dependencies = [
  "wamn-broker",
  "wamn-catalog",
  "wamn-control-provision",
- "wamn-control-registry",
  "wamn-digest",
  "wamn-engine",
  "wamn-execution-host",
@@ -6248,6 +6278,7 @@ dependencies = [
  "wamn-identity-protocol",
  "wamn-package-artifact",
  "wamn-platform-identity",
+ "wamn-registry",
  "wamn-runtime",
  "wamn-test-postgres",
  "wamn-workflow",
@@ -6283,9 +6314,9 @@ dependencies = [
  "wamn-broker",
  "wamn-catalog",
  "wamn-control-provision",
- "wamn-control-registry",
  "wamn-identity-protocol",
  "wamn-platform-identity",
+ "wamn-registry",
  "wamn-test-infrastructure",
  "wamn-test-postgres",
  "zeroize",
@@ -6367,7 +6398,6 @@ dependencies = [
  "wamn-component-composer",
  "wamn-component-policy",
  "wamn-control-provision",
- "wamn-control-registry",
  "wamn-dev-control",
  "wamn-digest",
  "wamn-engine",
@@ -6379,6 +6409,7 @@ dependencies = [
  "wamn-package-artifact",
  "wamn-package-control",
  "wamn-platform-identity",
+ "wamn-registry",
  "wamn-release-control",
  "wamn-run-state",
  "wamn-runtime",
@@ -6410,7 +6441,7 @@ dependencies = [
  "tokio",
  "url",
  "uuid",
- "wamn-control-registry",
+ "wamn-registry",
 ]
 
 [[package]]
@@ -6467,13 +6498,13 @@ dependencies = [
  "wamn-compiler",
  "wamn-component-composer",
  "wamn-control-provision",
- "wamn-control-registry",
  "wamn-digest",
  "wamn-engine",
  "wamn-fixture-package",
  "wamn-package-artifact",
  "wamn-platform-identity",
  "wamn-record-history",
+ "wamn-registry",
  "wamn-runtime",
  "wamn-schema-control",
  "wamn-schema-introspection",
@@ -6505,11 +6536,11 @@ dependencies = [
  "wamn-broker",
  "wamn-catalog",
  "wamn-control-provision",
- "wamn-control-registry",
  "wamn-digest",
  "wamn-identity-protocol",
  "wamn-kubernetes",
  "wamn-platform-identity",
+ "wamn-registry",
  "wamn-runtime",
  "wamn-test-infrastructure",
  "wamn-test-postgres",
@@ -6548,7 +6579,6 @@ dependencies = [
  "wamn-compiler",
  "wamn-component-composer",
  "wamn-control-provision",
- "wamn-control-registry",
  "wamn-dev-control",
  "wamn-digest",
  "wamn-engine",
@@ -6559,6 +6589,7 @@ dependencies = [
  "wamn-package-control",
  "wamn-platform-identity",
  "wamn-record-history",
+ "wamn-registry",
  "wamn-release-control",
  "wamn-run-state",
  "wamn-runtime",
@@ -6580,6 +6611,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "wamn-registry"
+version = "0.1.0"
+dependencies = [
+ "hex",
+ "serde",
+ "wamn-digest",
+]
+
+[[package]]
 name = "wamn-release-control"
 version = "0.1.0"
 dependencies = [
@@ -6597,7 +6637,6 @@ dependencies = [
  "wamn-compiler",
  "wamn-component-composer",
  "wamn-control-provision",
- "wamn-control-registry",
  "wamn-digest",
  "wamn-engine",
  "wamn-fixture-package",
@@ -6606,6 +6645,7 @@ dependencies = [
  "wamn-package-control",
  "wamn-platform-identity",
  "wamn-record-history",
+ "wamn-registry",
  "wamn-runtime",
  "wamn-schema-control",
  "wamn-test-infrastructure",
@@ -6700,7 +6740,6 @@ dependencies = [
  "wamn-broker",
  "wamn-catalog",
  "wamn-control-provision",
- "wamn-control-registry",
  "wamn-digest",
  "wamn-engine",
  "wamn-event-wire",
@@ -6710,6 +6749,7 @@ dependencies = [
  "wamn-number-pattern",
  "wamn-package-artifact",
  "wamn-platform-identity",
+ "wamn-registry",
  "wamn-run-state",
  "wamn-runtime",
  "wamn-scalar",
@@ -6793,10 +6833,10 @@ dependencies = [
  "wamn-catalog",
  "wamn-compiler",
  "wamn-control-provision",
- "wamn-control-registry",
  "wamn-digest",
  "wamn-kubernetes",
  "wamn-platform-identity",
+ "wamn-registry",
  "wamn-schema-control",
  "wamn-test-postgres",
 ]
@@ -6834,7 +6874,6 @@ dependencies = [
  "wamn-cdc-reader",
  "wamn-compiler",
  "wamn-control-provision",
- "wamn-control-registry",
  "wamn-dev-control",
  "wamn-digest",
  "wamn-environment-control",
@@ -6845,6 +6884,7 @@ dependencies = [
  "wamn-kubernetes",
  "wamn-package-control",
  "wamn-platform-identity",
+ "wamn-registry",
  "wamn-release-control",
  "wamn-runtime",
  "wamn-test-infrastructure",
@@ -8396,6 +8436,40 @@ dependencies = [
  "rusticata-macros",
  "thiserror 2.0.21",
  "time",
+]
+
+[[package]]
+name = "xtask"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "base64 0.22.1",
+ "cargo_metadata",
+ "clap",
+ "csv",
+ "docker_credential",
+ "oci-client",
+ "regex",
+ "reqwest",
+ "rustix 1.1.5",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "tempfile",
+ "tokio",
+ "tokio-postgres",
+ "toml 1.1.6+spec-1.1.0",
+ "url",
+ "uuid",
+ "wamn-compiler",
+ "wamn-component-composer",
+ "wamn-dev-control",
+ "wamn-digest",
+ "wamn-environment-control",
+ "wamn-package-artifact",
+ "wamn-package-control",
+ "wamn-release-control",
+ "wash-runtime",
 ]
 
 [[package]]

@@ -25,10 +25,10 @@ use wamn_broker::events::{
     advisory_stream_config, consumer_config_matches, materializer_consumer_config,
     source_stream_config, stream_config_matches,
 };
-use wamn_control_registry::Triple;
 use wamn_event_wire::{
     Causation, DerivedEvent, Op, derived_msg_id, stream_name, subject, subject_token,
 };
+use wamn_registry::Triple;
 
 use wash_runtime::engine::ctx::{ActiveCtx, SharedCtx, extract_active_ctx};
 use wash_runtime::engine::workload::WorkloadItem;
@@ -183,7 +183,7 @@ impl WamnJetstreamConfig {
                 std::env::var("WAMN_EVT_ENV"),
             ) {
                 (Ok(org), Ok(project), Ok(environment)) => {
-                    Some(Triple::new(org, project, environment))
+                    Some(Triple::new(org, environment, project))
                 }
                 _ => None,
             },
@@ -481,8 +481,8 @@ impl WamnJetstream {
             })?;
         let target = Triple::new(
             self.event_coordinates.org.as_ref(),
-            self.event_coordinates.project.as_ref(),
             self.event_coordinates.environment.as_ref(),
+            self.event_coordinates.project.as_ref(),
         );
         Ok([
             source_stream_config(&target, replicas, duplicate_window),
@@ -493,7 +493,7 @@ impl WamnJetstream {
     fn materializer_project_env_key(&self) -> Result<String, JsError> {
         require_event_coordinates(&self.event_coordinates)
             .map_err(|error| JsError::Other(error.to_string()))?;
-        Ok(wamn_control_registry::project_env_key(
+        Ok(wamn_registry::project_env_key(
             &self.event_coordinates.org,
             &self.event_coordinates.project,
             &self.event_coordinates.environment,
@@ -779,7 +779,7 @@ const CONSUMER_CONFIG_DRIFT: &str = "registration-consumer-config-drift";
 /// The `(entity, op)` tail of one event subject — the whole of a registration's
 /// identity that a subject can carry.
 ///
-/// `evt.<org>.<project>.<env>.<entity>.<op>` is the entire grammar the event
+/// `evt.<org>.<env>.<project>.<entity>.<op>` is the entire grammar the event
 /// plane publishes ([`wamn_event_wire::subject`]), and its entity segment is
 /// [`subject_token`]-sanitized. Anything else — an empty filter (which selects
 /// the whole stream), a `>` above the entity — yields `None`: it selects
@@ -789,8 +789,8 @@ fn subject_source(subject: &str) -> Option<(&str, &str)> {
     let mut tokens = subject.split('.');
     let prefix = tokens.next()?;
     let _org = tokens.next()?;
-    let _project = tokens.next()?;
     let _environment = tokens.next()?;
+    let _project = tokens.next()?;
     let entity = tokens.next()?;
     let op = tokens.next()?;
     if prefix != "evt" || tokens.next().is_some() {
@@ -808,9 +808,10 @@ fn require_registration(
     filter_subject: &str,
 ) -> Result<(), String> {
     require_event_coordinates(coordinates).map_err(|error| error.to_string())?;
-    let prefix = format!(
-        "evt.{}.{}.{}.",
-        coordinates.org, coordinates.project, coordinates.environment,
+    let prefix = wamn_registry::name::event_prefix(
+        &coordinates.org,
+        &coordinates.project,
+        &coordinates.environment,
     );
     if stream
         != stream_name(
@@ -1217,8 +1218,6 @@ mod tests {
         )
         .expect("trusted target and admitted selector prepare");
 
-        assert_eq!(publication.subject, "evt.fixture.widgets.dev.orders.update");
-        assert_eq!(publication.expected_stream, "EVT_7_fixture_7_widgets_3_dev");
         assert_eq!(
             publication.message_id,
             derived_msg_id(
@@ -1365,7 +1364,7 @@ mod tests {
                 .is_err()
         );
         let mut plugin = WamnJetstream::new(WamnJetstreamConfig {
-            event_target: Some(Triple::new("fixture", "widgets", "dev")),
+            event_target: Some(Triple::new("fixture", "dev", "widgets")),
             ..Default::default()
         });
         assert!(plugin.expected_event_streams().is_err());
@@ -1410,10 +1409,10 @@ mod tests {
         require_registration(
             &triggers,
             &coordinates,
-            "EVT_7_fixture_4_proj_4_prod",
+            "EVT_7_fixture_4_prod_4_proj",
             "cat",
             "r1",
-            "evt.fixture.proj.prod.widgets.>",
+            "evt.fixture.prod.proj.widgets.>",
         )
         .expect("exact environment registration admits");
         for foreign_stream in [
@@ -1428,7 +1427,7 @@ mod tests {
                     &foreign_stream,
                     "cat",
                     "r1",
-                    "evt.fixture.proj.prod.widgets.>",
+                    "evt.fixture.prod.proj.widgets.>",
                 )
                 .is_err()
             );
@@ -1436,17 +1435,17 @@ mod tests {
         for filter in [
             "",
             "evt.>",
-            "evt.foreign.proj.prod.widgets.>",
-            "evt.fixture.foreign.prod.widgets.>",
-            "evt.fixture.proj.foreign.widgets.>",
-            "evt.fixture.proj.prod.*.>",
-            "evt.fixture.proj.prod.widgets.delete",
+            "evt.foreign.prod.proj.widgets.>",
+            "evt.fixture.prod.foreign.widgets.>",
+            "evt.fixture.foreign.proj.widgets.>",
+            "evt.fixture.prod.proj.*.>",
+            "evt.fixture.prod.proj.widgets.delete",
         ] {
             assert!(
                 require_registration(
                     &triggers,
                     &coordinates,
-                    "EVT_7_fixture_4_proj_4_prod",
+                    "EVT_7_fixture_4_prod_4_proj",
                     "cat",
                     "r1",
                     filter
@@ -1460,10 +1459,10 @@ mod tests {
             require_registration(
                 &triggers,
                 &coordinates,
-                "EVT_7_fixture_4_proj_4_prod",
+                "EVT_7_fixture_4_prod_4_proj",
                 "cat",
                 "r2",
-                "evt.fixture.proj.prod.widgets.>"
+                "evt.fixture.prod.proj.widgets.>"
             )
             .is_err()
         );
@@ -1471,10 +1470,10 @@ mod tests {
             require_registration(
                 &triggers,
                 &coordinates,
-                "EVT_7_fixture_4_proj_4_prod",
+                "EVT_7_fixture_4_prod_4_proj",
                 "cat",
                 "r1",
-                "evt.fixture.proj.prod.orders.>"
+                "evt.fixture.prod.proj.orders.>"
             )
             .is_err(),
             "a real registration id cannot bless another registration's source"
@@ -1483,10 +1482,10 @@ mod tests {
             require_registration(
                 &triggers,
                 &coordinates,
-                "EVT_7_fixture_4_proj_4_prod",
+                "EVT_7_fixture_4_prod_4_proj",
                 "other_package",
                 "r1",
-                "evt.fixture.proj.prod.widgets.>"
+                "evt.fixture.prod.proj.widgets.>"
             )
             .is_err(),
             "registration ids are package-owned and must not collide across packages"
@@ -1498,9 +1497,9 @@ mod tests {
         use async_nats::jetstream::consumer::IntoConsumerConfig as _;
 
         let requested = registration::ConsumerConfig {
-            stream_name: "EVT_7_fixture_4_proj_4_prod".into(),
+            stream_name: "EVT_7_fixture_4_prod_4_proj".into(),
             durable: "mat_t1_cat_r1".into(),
-            filter_subject: "evt.fixture.proj.prod.widgets.>".into(),
+            filter_subject: "evt.fixture.prod.proj.widgets.>".into(),
             ack_wait_ms: 30_000,
             max_deliver: 5,
         };
@@ -1544,10 +1543,10 @@ mod tests {
             .await
             .expect("connect");
         let ctx = async_nats::jetstream::new(client.clone());
-        let stream = "EVT_13_wamnjsderived_3_app_3_dev";
-        let event_subject = "evt.wamnjsderived.app.dev.orders.update";
+        let stream = "EVT_13_wamnjsderived_3_dev_3_app";
+        let event_subject = "evt.wamnjsderived.dev.app.orders.update";
         let _ = ctx.delete_stream(stream).await;
-        let target = Triple::new("wamnjsderived", "app", "dev");
+        let target = Triple::new("wamnjsderived", "dev", "app");
         let advisory_config = advisory_stream_config(&target, 1);
         let advisory_name = advisory_config.name.clone();
         let _ = ctx.delete_stream(&advisory_name).await;

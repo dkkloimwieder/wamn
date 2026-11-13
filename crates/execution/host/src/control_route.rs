@@ -59,8 +59,6 @@ use tokio_postgres::{Client, NoTls, Transaction};
 use wamn_broker::auth_changes::AuthDrops;
 use wamn_catalog::{HostAttachment, HostHandler, HostRouteAuthority};
 use wamn_control_provision::control_administration_key;
-use wamn_control_registry::identifiers::valid_project;
-use wamn_control_registry::project_env_key;
 use wamn_engine::router_delivery::{DeliveryError, PermissionDenial};
 use wamn_identity_client::{PatIssuerConfig, UserRefused, create_user, send_invitation};
 use wamn_identity_protocol::ADMIN_ROLE;
@@ -81,6 +79,8 @@ use wamn_platform_identity::org::{
 };
 use wamn_platform_identity::paging::{ListPage, Order};
 use wamn_platform_identity::{IdentityError, IdentityRefusal, require_user_contact};
+use wamn_registry::identifiers::valid_project;
+use wamn_registry::project_env_key;
 
 /// Why an org route did not answer.
 #[derive(Debug)]
@@ -245,8 +245,16 @@ impl ControlRoutes<'_> {
         let admitted = match attachment.route.authority {
             HostRouteAuthority::OrgAdmin => self.admits(self.control, caller, None).await?,
             HostRouteAuthority::ProjectAdmin => {
+                let target: Value =
+                    serde_json::from_str(payload).map_err(|error| Refusal::Failed(error.into()))?;
                 let project = parse::<ProjectTarget>(payload)?.project;
-                self.admits(self.control, caller, Some(&project)).await?
+                self.admits_environment(
+                    self.control,
+                    caller,
+                    Some(&project),
+                    target["env"].as_str(),
+                )
+                .await?
             }
             // A read for every control caller: `org-admin`, or `project-admin`
             // of a project of the org.
@@ -477,7 +485,13 @@ impl ControlRoutes<'_> {
                 let principal: PrincipalId = request.principal_id.parse()?;
                 let mut writer = self.writer.lock().await;
                 let transaction = self
-                    .begin_in(&mut writer, attachment, caller, Some(&request.project))
+                    .begin_in_environment(
+                        &mut writer,
+                        attachment,
+                        caller,
+                        Some(&request.project),
+                        Some(&request.env),
+                    )
                     .await?;
                 grant_member(
                     &transaction,
@@ -506,7 +520,13 @@ impl ControlRoutes<'_> {
                 let principal: PrincipalId = request.principal_id.parse()?;
                 let mut writer = self.writer.lock().await;
                 let transaction = self
-                    .begin_in(&mut writer, attachment, caller, Some(&request.project))
+                    .begin_in_environment(
+                        &mut writer,
+                        attachment,
+                        caller,
+                        Some(&request.project),
+                        Some(&request.env),
+                    )
                     .await?;
                 let mut drops = AuthDrops::default();
                 revoke_member(
@@ -737,9 +757,14 @@ impl ControlRoutes<'_> {
         let mut writer = self.writer.lock().await;
         let transaction = self.begin(&mut writer, attachment, caller).await?;
         let envs = status_environments(&transaction, self.org, project, env).await?;
-        let environments: Vec<(String, String)> = envs
-            .iter()
-            .map(|env| (project.to_owned(), env.clone()))
+        let environments: Vec<(String, String)> = transaction
+            .query(
+                wamn_registry::sql::ENVIRONMENT_PROJECTS,
+                &[&self.org, &envs],
+            )
+            .await?
+            .into_iter()
+            .map(|row| (row.get(0), row.get(1)))
             .collect();
         if status == EnvironmentStatus::Inactive {
             self.write_statuses(attachment, caller, &environments, status)
@@ -873,14 +898,26 @@ impl ControlRoutes<'_> {
         self.begin_in(writer, attachment, caller, None).await
     }
 
-    /// Open the write transaction of one route: bind the caller and the
-    /// sealed operation id, and test the route's role again inside it.
     async fn begin_in<'c>(
         &self,
         writer: &'c mut Client,
         attachment: &HostAttachment,
         caller: &PrincipalId,
         project: Option<&str>,
+    ) -> Result<Transaction<'c>, Refusal> {
+        self.begin_in_environment(writer, attachment, caller, project, None)
+            .await
+    }
+
+    /// Open the write transaction of one route: bind the caller and the
+    /// sealed operation id, and test the route's role again inside it.
+    async fn begin_in_environment<'c>(
+        &self,
+        writer: &'c mut Client,
+        attachment: &HostAttachment,
+        caller: &PrincipalId,
+        project: Option<&str>,
+        environment: Option<&str>,
     ) -> Result<Transaction<'c>, Refusal> {
         let transaction = writer.transaction().await?;
         transaction
@@ -890,7 +927,10 @@ impl ControlRoutes<'_> {
                 &[&caller.to_string().as_str(), &attachment.operation],
             )
             .await?;
-        if !self.admits(&transaction, caller, project).await? {
+        if !self
+            .admits_environment(&transaction, caller, project, environment)
+            .await?
+        {
             return Err(denied(attachment));
         }
         Ok(transaction)
@@ -904,11 +944,23 @@ impl ControlRoutes<'_> {
         caller: &PrincipalId,
         project: Option<&str>,
     ) -> Result<bool, Refusal> {
+        self.admits_environment(client, caller, project, None).await
+    }
+
+    async fn admits_environment(
+        &self,
+        client: &(impl tokio_postgres::GenericClient + Sync),
+        caller: &PrincipalId,
+        project: Option<&str>,
+        environment: Option<&str>,
+    ) -> Result<bool, Refusal> {
         if is_org_admin(client, caller, self.org).await? {
             return Ok(true);
         }
         Ok(match project {
-            Some(project) => is_project_admin(client, caller, self.org, project).await?,
+            Some(project) => {
+                is_project_admin(client, caller, self.org, project, environment).await?
+            }
             None => false,
         })
     }

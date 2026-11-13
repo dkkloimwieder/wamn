@@ -21,8 +21,9 @@
 //! clusters (it shares the pool) → [`render_org_cluster_set`] errors with
 //! [`ProvisionError::OrgIsPooled`].
 
+use crate::{EnvPolicy, Org, Placement};
 use serde_json::{Value, json};
-use wamn_control_registry::{Env, EnvPolicy, Org, Placement};
+use wamn_registry::Env;
 
 use crate::error::ProvisionError;
 
@@ -111,7 +112,7 @@ pub fn render_org_cluster_set(
                 name: owner.to_string(),
             }
         })?;
-        let name = format!("{}-{}", org.id, owner);
+        let name = wamn_registry::name::cluster(&org.id, owner);
         #[cfg(feature = "ops")]
         let backup_object_store = if policy.has_scheduled_backup() {
             object_stores.push(crate::backup::render_object_store(&name, namespace, policy));
@@ -255,7 +256,7 @@ pub(crate) fn render_cluster(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use wamn_control_registry::RecoveryDomain;
+    use crate::RecoveryDomain;
 
     /// The default policy set + a `canary` sharing prod's recovery domain.
     fn policies_with_shared_canary() -> Vec<EnvPolicy> {

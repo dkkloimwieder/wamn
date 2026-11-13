@@ -14,16 +14,21 @@ async fn seed_target_guard_registry(su: &Client) {
            THEN CREATE ROLE wamn_system NOLOGIN; END IF; END $$; \
          CREATE SCHEMA registry AUTHORIZATION wamn_system; \
          SET ROLE wamn_system; \
-         CREATE TABLE registry.project_envs ( \
+         CREATE TABLE registry.environments ( \
+           org text NOT NULL, env text NOT NULL, policy_name text NOT NULL, \
+           PRIMARY KEY (org, env)); \
+         CREATE TABLE registry.environment_projects ( \
            org text NOT NULL, project text NOT NULL, env text NOT NULL, \
            secret_name text NOT NULL, secret_namespace text, \
-           instance_suffix text NOT NULL, pending_database jsonb, policy_name text NOT NULL, \
-           PRIMARY KEY (org, project, env)); \
-         INSERT INTO registry.project_envs \
-           (org,project,env,secret_name,instance_suffix,policy_name) VALUES \
-           ('acme','billing','dev','wamn-db-acme--billing--dev','k3m9x2p7','dev'), \
-           ('acme','accounts','dev','wamn-db-acme--accounts--dev','q80zdw41','dev'), \
-           ('acme','billing','prod','wamn-db-acme--billing--prod','p7c4n2v8','prod'); \
+           instance_suffix text NOT NULL, pending_database jsonb, \
+           PRIMARY KEY (org, env, project)); \
+         INSERT INTO registry.environments (org,env,policy_name) VALUES \
+           ('acme','dev','dev'), ('acme','prod','prod'); \
+         INSERT INTO registry.environment_projects \
+           (org,env,project,secret_name,instance_suffix) VALUES \
+           ('acme','dev','billing','wamn-db-acme--dev--billing','k3m9x2p7'), \
+           ('acme','dev','accounts','wamn-db-acme--dev--accounts','q80zdw41'), \
+           ('acme','prod','billing','wamn-db-acme--prod--billing','p7c4n2v8'); \
          RESET ROLE; \
          CREATE TABLE registry.env_policies ( \
            org text NOT NULL, name text NOT NULL, recovery_domain jsonb NOT NULL, \
@@ -74,7 +79,7 @@ async fn target_guard_system_snapshot(su: &Client) -> String {
              SELECT jsonb_agg(jsonb_build_array( \
                        org,project,env,secret_name,secret_namespace,instance_suffix) \
                       ORDER BY org,project,env) \
-               FROM registry.project_envs), '[]'::jsonb), \
+               FROM registry.environment_projects), '[]'::jsonb), \
            'roles', COALESCE(( \
              SELECT jsonb_agg(jsonb_build_array( \
                        rolname,rolsuper,rolcreatedb,rolcreaterole,rolcanlogin,rolbypassrls) \
@@ -366,7 +371,7 @@ async fn reconcile_target_identity_guard_live() {
             &format!(
                 "SELECT expected_environment, \
                         source_policy_org,source_policy_hash \
-                   FROM {SCHEMA}.environment_policies WHERE project_env_key='acme--billing--dev'"
+                   FROM {SCHEMA}.environment_policies WHERE project_env_key='acme--dev--billing'"
             ),
             &[],
         )
@@ -403,7 +408,7 @@ async fn reconcile_target_identity_guard_live() {
         &primary_url,
         &schema(),
         CLI_ORG,
-        "acme--billing--dev",
+        "acme--dev--billing",
         CLI_ENV,
     )
     .await
@@ -416,7 +421,7 @@ async fn reconcile_target_identity_guard_live() {
         .execute(
             &format!(
                 "UPDATE {SCHEMA}.environment_policies \
-                    SET source_policy_hash=$1 WHERE project_env_key='acme--billing--dev'"
+                    SET source_policy_hash=$1 WHERE project_env_key='acme--dev--billing'"
             ),
             &[&format!("sha256:{}", "0".repeat(64))],
         )
@@ -428,7 +433,7 @@ async fn reconcile_target_identity_guard_live() {
             &primary_url,
             &schema(),
             CLI_ORG,
-            "acme--billing--dev",
+            "acme--dev--billing",
             CLI_ENV,
         )
         .await
@@ -442,7 +447,7 @@ async fn reconcile_target_identity_guard_live() {
             &primary_url,
             &schema(),
             CLI_ORG,
-            "acme--billing--dev",
+            "acme--dev--billing",
             CLI_ENV,
         )
         .await

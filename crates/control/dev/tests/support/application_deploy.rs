@@ -788,7 +788,7 @@ async fn first_install(
     system
         .batch_execute("SET default_transaction_read_only = on")
         .await?;
-    let environment_sql = "SELECT jsonb_build_object('instance_suffix',instance_suffix,'created_at',created_at) FROM registry.project_envs WHERE org=$1 AND project=$2 AND env=$3";
+    let environment_sql = "SELECT jsonb_build_object('instance_suffix',instance_suffix,'created_at',created_at) FROM registry.environment_projects WHERE org=$1 AND project=$2 AND env=$3";
     let org = &journey.run.document.org;
     ensure!(
         system
@@ -955,9 +955,8 @@ async fn first_install(
                     .as_array()
                     .context("shared workloads")?
                     .iter()
-                    .all(
-                        |workload| workload["metadata"]["name"] != format!("{shared}-materializer")
-                    ),
+                    .all(|workload| workload["metadata"]["name"]
+                        != wamn_registry::name::resource_suffix(&shared, "materializer")),
                 "missed the interruption window: provisioning already reached the materializer"
             );
         }
@@ -1171,7 +1170,7 @@ async fn observer(journey: &Journey<'_>) -> anyhow::Result<tokio_postgres::Clien
         .batch_execute("SET default_transaction_read_only = on")
         .await?;
     let document = EnvironmentDocument::compile(&journey.file)?;
-    let row = system.query_one("SELECT instance_suffix FROM registry.project_envs WHERE org=$1 AND project=$2 AND env=$3", &[&document.org, &document.project, &document.env]).await?;
+    let row = system.query_one("SELECT instance_suffix FROM registry.environment_projects WHERE org=$1 AND project=$2 AND env=$3", &[&document.org, &document.project, &document.env]).await?;
     let suffix: String = row.get(0);
     let name = wamn_control_provision::project_env_database_name(
         &document.org,
@@ -1256,7 +1255,7 @@ async fn runtime(journey: &Journey<'_>, app: &str) -> anyhow::Result<Value> {
         journey.run,
         "hosts",
         "deployment",
-        &format!("hostgroup-{name}"),
+        &wamn_registry::name::resource_suffix("hostgroup", name),
     )
     .await?;
     let mut workloads = BTreeMap::new();

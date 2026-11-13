@@ -293,7 +293,7 @@ pub async fn registry(
             )
             .await?;
     }
-    owner.batch_execute("UPDATE registry.project_envs SET target_id=(SELECT id FROM registry.target WHERE name='cloud')").await?;
+    owner.batch_execute("UPDATE registry.environments SET target_id=(SELECT id FROM registry.target WHERE name='cloud')").await?;
     bootstrap.batch_execute(
         "CREATE ROLE file_fixture_control LOGIN PASSWORD 'file-fixture-only' NOSUPERUSER NOBYPASSRLS; \
          GRANT wamn_control TO file_fixture_control",
@@ -330,7 +330,7 @@ pub async fn registry(
                  (login_identity,project_env_key,org_id,project_id,environment) VALUES ($1,$2,$3,$4,'dev')",
                     &[
                         &role,
-                        &format!("{org}--{target_project}--dev"),
+                        &wamn_registry::project_env_key(org, target_project, "dev"),
                         &org,
                         &target_project,
                     ],

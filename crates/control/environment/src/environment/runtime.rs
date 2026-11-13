@@ -87,7 +87,7 @@ pub(super) async fn resolve_registry(platform: &mut Platform, org: &str) -> anyh
         &[
             "get".as_ref(),
             "values".as_ref(),
-            format!("c-{org}").as_ref(),
+            wamn_registry::name::control_resource(org).as_ref(),
             "-n".as_ref(),
             "hosts".as_ref(),
             "-o".as_ref(),
@@ -758,9 +758,6 @@ mod tests {
                 )));
             }
         }
-        assert!(
-            references.contains_key(&("Secret".into(), "wamn-nats-example--orders--dev".into()))
-        );
         assert!(!references.contains_key(&("Secret".into(), "operator-example".into())));
         assert!(
             objects

@@ -333,8 +333,8 @@ pub fn replicate<H: AsRef<AuthCache> + Send + Sync + 'static>(
 ) -> Publisher {
     let filters = match project_env_key {
         Some(project_env_key) => vec![
-            format!("{project_env_key}.>"),
-            format!("{IDENTITY_TOKEN}.>"),
+            wamn_registry::name::nats_subject(&[project_env_key, ">"]),
+            wamn_registry::name::nats_subject(&[IDENTITY_TOKEN, ">"]),
         ],
         None => vec![">".to_owned()],
     };

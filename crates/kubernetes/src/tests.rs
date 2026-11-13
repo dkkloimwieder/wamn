@@ -16,7 +16,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 use tokio::net::TcpListener;
-use wamn_control_registry::Triple;
+use wamn_registry::Triple;
 
 struct Api {
     store: KubernetesStore,
@@ -96,7 +96,7 @@ async fn api(replies: Vec<(u16, Value)>) -> Api {
 }
 
 fn secret(version: u64, other: &[u8]) -> Value {
-    json!({"apiVersion":"v1","kind":"Secret","metadata":{"name":"wamn-credential-acme--app--dev","resourceVersion":version.to_string()},"data":{"other":STANDARD.encode(other)}})
+    json!({"apiVersion":"v1","kind":"Secret","metadata":{"name":"wamn-credential-acme--dev--app","resourceVersion":version.to_string()},"data":{"other":STANDARD.encode(other)}})
 }
 
 #[tokio::test]
@@ -109,7 +109,7 @@ async fn credentials_retry_conflicts_without_losing_concurrent_values() {
         (200, secret(3, &concurrent)),
     ])
     .await;
-    let target = Triple::new("acme", "app", "dev");
+    let target = Triple::new("acme", "dev", "app");
     let id = uuid::Uuid::new_v4();
     let stored = fixture.store.put(&target, id, &[3]).await.unwrap();
     assert_eq!(uuid::Uuid::parse_str(&stored.version).unwrap(), id);
@@ -145,7 +145,7 @@ async fn failed_or_redirected_writes_never_return_a_reference() {
             fixture
                 .store
                 .put(
-                    &Triple::new("acme", "app", "dev"),
+                    &Triple::new("acme", "dev", "app"),
                     uuid::Uuid::new_v4(),
                     &[1]
                 )

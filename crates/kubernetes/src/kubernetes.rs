@@ -8,7 +8,7 @@ use crate::{
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use hyper::{Method, StatusCode};
 use serde_json::json;
-use wamn_control_registry::{Triple, credential_secret_name};
+use wamn_registry::{Triple, credential_secret_name};
 
 #[derive(Clone, Debug)]
 pub struct KubernetesStore {

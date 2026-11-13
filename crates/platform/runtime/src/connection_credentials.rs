@@ -157,7 +157,7 @@ impl ConnectionCredentials {
         let (client, org) = self.reader()?;
         let row = client
             .query_opt(
-                "SELECT active_generation, active, credential_id, exclusive, target_id, resource_key, target_type, service_principal_id FROM registry.read_connection_fact($1,$2,$3,$4)",
+                wamn_registry::sql::PLATFORM_RUNTIME_SRC_CONNECTION_CREDENTIALS_CONNECTION_FACT,
                 &[&org, &project, &environment, id],
             )
             .await
@@ -189,7 +189,7 @@ impl ConnectionCredentials {
         let (client, org) = self.reader()?;
         let row = client
             .query_opt(
-                "SELECT name, integration_type, runtime_type, auth_type, external_system, parameters FROM registry.read_connection_generation($1,$2,$3,$4,$5)",
+                wamn_registry::sql::PLATFORM_RUNTIME_SRC_CONNECTION_CREDENTIALS_CONNECTION_GENERATION,
                 &[&org, &project, &environment, id, &generation],
             )
             .await
@@ -214,7 +214,7 @@ impl ConnectionCredentials {
         let (client, org) = self.reader()?;
         let row = client
             .query_opt(
-                "SELECT store, ref, version FROM registry.read_connection_secret($1,$2,$3,$4)",
+                wamn_registry::sql::PLATFORM_RUNTIME_SRC_CONNECTION_CREDENTIALS_CREDENTIAL_SECRET,
                 &[&org, &project, &environment, credential],
             )
             .await
@@ -234,7 +234,7 @@ impl ConnectionCredentials {
         let (client, org) = self.reader()?;
         Ok(client
             .query(
-                "SELECT name, id FROM registry.read_env_connections($1,$2,$3)",
+                wamn_registry::sql::PLATFORM_RUNTIME_SRC_CONNECTION_CREDENTIALS_ENV_CONNECTIONS,
                 &[&org, &project, &environment],
             )
             .await
@@ -253,7 +253,7 @@ impl ConnectionCredentials {
         let (client, _) = self.reader()?;
         let row = client
             .query_opt(
-                "SELECT version, digest FROM registry.read_integration_version($1,$2)",
+                wamn_registry::sql::PLATFORM_RUNTIME_SRC_CONNECTION_CREDENTIALS_INTEGRATION_VERSION,
                 &[&integration_type, &version],
             )
             .await

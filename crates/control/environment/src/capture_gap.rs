@@ -26,12 +26,12 @@ use tokio_postgres::{Client, NoTls};
 use wamn_control_provision::{
     cdc_object_name, project_env_database_name, sql, validate_project_env_cdc,
 };
-use wamn_control_registry::Triple;
-use wamn_control_registry::sql::{
+use wamn_event_wire::{Envelope, project_env};
+use wamn_registry::Triple;
+use wamn_registry::sql::{
     close_capture_gap_sql, insert_capture_gap_sql, lock_newest_capture_gap_sql,
     select_event_reader_origin_sql,
 };
-use wamn_event_wire::{Envelope, project_env};
 
 /// The reason a missing slot records.
 pub const MISSING_SLOT_REASON: &str = "missing";
@@ -92,7 +92,7 @@ pub async fn recover_capture_gap(
 ) -> anyhow::Result<RecoveredCaptureGap> {
     validate_project_env_cdc(&args.org, &args.project, &args.env)
         .map_err(|e| anyhow::anyhow!("cdc names: {e}"))?;
-    let triple = Triple::new(&args.org, &args.project, args.env.as_str());
+    let triple = Triple::new(&args.org, args.env.as_str(), &args.project);
     let instance =
         crate::provision_project_env::read_project_env_instance(&args.system_database_url, &triple)
             .await?;
@@ -238,7 +238,7 @@ async fn close_gap(
     args: &CloseCaptureGapRequest,
     optional: bool,
 ) -> anyhow::Result<Option<ClosedCaptureGap>> {
-    let triple = Triple::new(&args.org, &args.project, args.env.as_str());
+    let triple = Triple::new(&args.org, args.env.as_str(), &args.project);
     let mut system = connect_system(&args.system_database_url).await?;
     let env = triple.env.as_str();
     let transaction = crate::provision_project_env::provisioning_transaction(&mut system).await?;

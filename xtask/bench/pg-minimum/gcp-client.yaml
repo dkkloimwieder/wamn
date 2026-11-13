@@ -1,0 +1,42 @@
+# The pgbench client of the GCP Postgres minimum (wamn-c8a5v.1). cargo xtask bench-pg-minimum copies
+# the replay scripts in and runs pgbench through kubectl exec. It runs on pool
+# bench beside the idle Receiving host, never on pool pg: a client on the
+# Postgres node slows every statement (wamn-48d4d). The CPU request fits
+# beside the host's request, and pgbench can use the idle CPU above it. The
+# image is the one of the Cluster, so pgbench and the server are the same
+# major version.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: pg-minimum-client
+  namespace: platform
+  labels:
+    app.kubernetes.io/managed-by: wamn
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: 7200
+  ttlSecondsAfterFinished: 300
+  template:
+    spec:
+      restartPolicy: Never
+      nodeSelector:
+        role: bench-host
+      tolerations:
+        - key: role
+          operator: Equal
+          value: bench-host
+          effect: NoSchedule
+      containers:
+        - name: pgbench
+          image: ghcr.io/cloudnative-pg/postgresql:18
+          command: ["sleep", "7200"]
+          env:
+            - name: PGPASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: wamn-pg-superuser
+                  key: password
+          resources:
+            requests:
+              cpu: "500m"
+              memory: "256Mi"

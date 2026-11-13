@@ -34,7 +34,7 @@ pub(super) async fn prepare(
         "Chart.yaml":std::fs::read_to_string(chart.directory().join("Chart.yaml"))?,
         "values.yaml":std::fs::read_to_string(chart.directory().join("values.yaml"))?});
     let digest = wamn_digest::bytes_sha256(&wamn_digest::canonical_json_bytes(&data));
-    let inputs = format!("wamn-operation-{}-{}", document.org, &digest[7..23]);
+    let inputs = wamn_registry::name::operation_inputs(&document.org, &digest[7..23]);
     let object = json!({"apiVersion":"v1","kind":"ConfigMap","immutable":true,
         "metadata":{"name":inputs,"namespace":"platform"},"data":data});
     if document.provider == Provider::Kind {
@@ -49,13 +49,13 @@ pub(super) async fn prepare(
         .context("the platform registry credential is absent")?;
         let registry_json = super::bootstrap::secret_text(&secret, ".dockerconfigjson")?;
         resources::apply_object(target,&json!({"apiVersion":"v1","kind":"Secret","type":"Opaque",
-            "metadata":{"name":format!("wamn-operation-registry-{}",document.org),"namespace":"platform"},"stringData":{"config.json":registry_json}})).await?;
+            "metadata":{"name":wamn_registry::name::operation_registry(&document.org),"namespace":"platform"},"stringData":{"config.json":registry_json}})).await?;
     }
     resources::apply_object(target, &object).await?;
     resources::apply_object(
         target,
         &json!({"apiVersion":"v1","kind":"ConfigMap",
-        "metadata":{"name":format!("wamn-operation-{}",document.org),"namespace":"platform"},
+        "metadata":{"name":wamn_registry::name::operation(&document.org),"namespace":"platform"},
         "data":{"inputs":inputs}}),
     )
     .await
@@ -66,8 +66,11 @@ pub(super) async fn prepare(
 /// # Errors
 /// Returns an error if the image payload or selected chart metadata cannot be read.
 pub(crate) fn worker_chart(repository: &Path, inputs: &Path, chart: &Path) -> anyhow::Result<()> {
-    crate::platform_build::copy_package_output(&repository.join("deploy/platform/release"), chart)?;
-    crate::platform_build::prepare_payload(repository, chart)?;
+    crate::platform::artifact_plan::copy_package_output(
+        &repository.join("deploy/platform/release"),
+        chart,
+    )?;
+    crate::platform::artifact_plan::prepare_payload(repository, chart)?;
     for file in ["Chart.yaml", "values.yaml"] {
         std::fs::copy(inputs.join(file), chart.join(file))?;
     }
@@ -181,28 +184,4 @@ pub(crate) fn administrator(cluster: &str) -> anyhow::Result<String> {
     url.set_password(Some(&password.replace('%', "%25")))
         .map_err(|()| anyhow::anyhow!("encode the administrator credential"))?;
     Ok(url.into())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn the_worker_prepares_its_image_chart_with_the_selected_values() -> anyhow::Result<()> {
-        let repository = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
-        let selected = super::super::artifact_plan::test_util::prepared_chart(&repository)?;
-        let inputs = selected.0.join("worker-inputs");
-        std::fs::create_dir(&inputs)?;
-        for file in ["Chart.yaml", "values.yaml"] {
-            std::fs::copy(selected.0.join(file), inputs.join(file))?;
-        }
-        let output = selected.0.join("worker-chart");
-        worker_chart(&repository, &inputs, &output)?;
-        let prepared = super::super::artifact_plan::select(&output)?;
-        let source = super::super::artifact_plan::select(&selected.0)?;
-        assert_eq!(prepared.image("ctl")?, source.image("ctl")?);
-        assert_eq!(prepared.version, source.version);
-        assert!(prepared.operator_archive.is_file());
-        Ok(())
-    }
 }

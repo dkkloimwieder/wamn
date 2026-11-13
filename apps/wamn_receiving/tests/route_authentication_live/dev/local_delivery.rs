@@ -90,10 +90,10 @@ async fn local_watch_preserves_data_refuses_bad_sql_and_recreates_schema() -> an
     .await?;
     let system_acl = current_database_acl(admin.as_ref()).await?;
     let provisioning = inputs.environment.nats.connect().await?;
-    let target = wamn_control_registry::Triple::new(
+    let target = wamn_registry::Triple::new(
         &environment.identity.org,
-        &environment.identity.project,
         environment.identity.environment.as_str(),
+        &environment.identity.project,
     );
     wamn_broker::streams::provision(
         &async_nats::jetstream::new(provisioning.clone()),

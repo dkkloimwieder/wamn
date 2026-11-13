@@ -820,7 +820,7 @@ async fn platform_migrations_adopt_order_commit_and_resume_exact_bytes() {
             )
             .await
             .unwrap();
-        let triple = wamn_control_registry::Triple::new("migration", "fixture", "dev");
+        let triple = wamn_registry::Triple::new("migration", "dev", "fixture");
         let lifecycle = wamn_environment_control::environment::lock::LifecycleLock::acquire(
             registry.url(),
             &triple,
@@ -1100,7 +1100,7 @@ async fn platform_nontransactional_files_keep_started_and_share_resolution() {
             )
             .await
             .unwrap();
-        let triple = wamn_control_registry::Triple::new("migration", "fixture", "dev");
+        let triple = wamn_registry::Triple::new("migration", "dev", "fixture");
         let lifecycle = wamn_environment_control::environment::lock::LifecycleLock::acquire(
             registry.url(),
             &triple,

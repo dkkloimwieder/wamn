@@ -57,7 +57,7 @@ impl ControlRoutes<'_> {
         let context = {
             let mut writer = self.writer.lock().await;
             let transaction = self
-                .begin_in(&mut writer, attachment, caller, Some(project))
+                .begin_in_environment(&mut writer, attachment, caller, Some(project), Some(env))
                 .await?;
             let context = administration::configure(
                 &transaction,
@@ -105,7 +105,7 @@ impl ControlRoutes<'_> {
             if selected.is_none() {
                 let status = self.status.read(self.org, project, env).await?;
                 if let Some(digest) = status["digest"].as_str() {
-                    selected = transaction.query_opt("SELECT version FROM catalog.release_connection WHERE project_env_key=$1 AND manifest_digest=$2 AND connection_id=$3::text::uuid", &[&wamn_control_registry::project_env_key(self.org,project,env),&digest,&connection]).await?.map(|row|row.get(0));
+                    selected = transaction.query_opt("SELECT version FROM catalog.release_connection WHERE project_env_key=$1 AND manifest_digest=$2 AND connection_id=$3::text::uuid", &[&wamn_registry::project_env_key(self.org,project,env),&digest,&connection]).await?.map(|row|row.get(0));
                 }
             }
             transaction.rollback().await?;

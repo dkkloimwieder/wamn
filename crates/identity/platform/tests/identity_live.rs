@@ -294,10 +294,12 @@ async fn project_environment_membership_round_trip(
                 storage, cpu, memory, image) \
              SELECT id, env, '\"own\"'::jsonb, 1, 1, '1Gi', '1', '1Gi', 'postgres:17' \
              FROM registry.orgs CROSS JOIN (VALUES ('dev'), ('prod')) AS envs(env); \
-             INSERT INTO registry.project_envs \
-               (org, project, env, secret_name, instance_suffix, policy_name) \
-             SELECT p.org, p.id, e.name, 'membership-test-secret', 'a1b2c3d4', e.name \
-             FROM registry.projects p JOIN registry.env_policies e ON p.org = e.org;",
+             INSERT INTO registry.environments (org, env, policy_name) \
+             SELECT org, name, name FROM registry.env_policies; \
+             INSERT INTO registry.environment_projects \
+               (org, env, project, secret_name, instance_suffix) \
+             SELECT p.org, e.env, p.id, 'membership-test-secret', 'a1b2c3d4' \
+             FROM registry.projects p JOIN registry.environments e ON p.org = e.org;",
         )
         .await
         .expect("seed distinct registered project-environments");
@@ -507,11 +509,11 @@ async fn project_environment_membership_round_trip(
         .expect("grant before environment replacement");
     client
         .batch_execute(
-            "DELETE FROM registry.project_envs \
+            "DELETE FROM registry.environment_projects \
              WHERE org = 'demo' AND project = 'widgets' AND env = 'dev'; \
-             INSERT INTO registry.project_envs \
-               (org, project, env, secret_name, instance_suffix, policy_name) \
-             VALUES ('demo', 'widgets', 'dev', 'replacement-secret', 'e5f6g7h8', 'dev');",
+             INSERT INTO registry.environment_projects \
+               (org, env, project, secret_name, instance_suffix) \
+             VALUES ('demo', 'dev', 'widgets', 'replacement-secret', 'e5f6g7h8');",
         )
         .await
         .expect("replace the provisioned environment");

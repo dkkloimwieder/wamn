@@ -4,11 +4,11 @@ use std::time::Duration;
 
 use async_nats::jetstream::consumer::{self, AckPolicy, DeliverPolicy, pull};
 use async_nats::jetstream::stream::{self, Compression, RetentionPolicy, StorageType};
-use wamn_control_registry::Triple;
 use wamn_event_wire::{
     DELIVERY_ADVISORY_MAX_AGE_SECONDS, DELIVERY_ADVISORY_MAX_MESSAGES_PER_SUBJECT,
     delivery_advisory_stream, delivery_advisory_subjects, stream_subjects,
 };
+use wamn_registry::Triple;
 
 /// One materializer batch holds at most four MiB.
 pub const MATERIALIZER_MAX_PULL_BYTES: i64 = 4 * 1024 * 1024;
@@ -70,12 +70,11 @@ pub fn entity_consumers<'a>(
                 wamn_event_wire::subject_token(package),
                 wamn_event_wire::subject_token(entity)
             );
-            let filter = format!(
-                "evt.{}.{}.{}.{}.>",
-                target.org,
-                target.project,
+            let filter = wamn_registry::name::event_subject(
+                &target.org,
+                &target.project,
                 target.env.as_str(),
-                wamn_event_wire::subject_token(entity)
+                &format!("{}.>", wamn_event_wire::subject_token(entity)),
             );
             materializer_consumer_config(&durable, &filter, Duration::from_secs(30), 5)
         })
@@ -252,7 +251,7 @@ mod tests {
     #[test]
     fn source_comparison_refuses_foreign_inputs_and_changed_delivery_policy() {
         let expected = source_stream_config(
-            &Triple::new("acme", "widgets", "dev"),
+            &Triple::new("acme", "dev", "widgets"),
             3,
             Duration::from_secs(120),
         );
@@ -271,7 +270,7 @@ mod tests {
                 ..expected.clone()
             },
             stream::Config {
-                subjects: vec!["evt.acme.*.dev.>".into()],
+                subjects: vec!["evt.acme.dev.*.>".into()],
                 ..expected.clone()
             },
             stream::Config {
@@ -350,7 +349,7 @@ mod tests {
 
     #[test]
     fn stream_comparison_accepts_server_annotations() {
-        let target = Triple::new("acme", "widgets", "dev");
+        let target = Triple::new("acme", "dev", "widgets");
         for expected in [
             source_stream_config(&target, 3, Duration::from_secs(120)),
             advisory_stream_config(&target, 3),
@@ -364,7 +363,7 @@ mod tests {
 
     #[test]
     fn stream_comparison_refuses_a_changed_owned_field_beside_annotations() {
-        let expected = advisory_stream_config(&Triple::new("acme", "widgets", "dev"), 3);
+        let expected = advisory_stream_config(&Triple::new("acme", "dev", "widgets"), 3);
         let reported = server_reported(&expected);
         let changed = [
             stream::Config {
@@ -421,7 +420,7 @@ mod tests {
     fn consumer_comparison_ignores_broker_fields_and_refuses_changed_wamn_fields() {
         let expected = materializer_consumer_config(
             "mat_t_pkg_r1",
-            "evt.acme.widgets.dev.widget.>",
+            "evt.acme.dev.widgets.widget.>",
             Duration::from_secs(30),
             5,
         );
@@ -475,7 +474,7 @@ mod tests {
                 ..stored.clone()
             },
             consumer::Config {
-                filter_subject: "evt.acme.billing.dev.>".into(),
+                filter_subject: "evt.acme.dev.billing.>".into(),
                 ..stored.clone()
             },
             consumer::Config {

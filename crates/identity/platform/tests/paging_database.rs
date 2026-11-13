@@ -32,11 +32,7 @@ async fn sql_pages_keep_order_filter_and_current_authority() {
          INSERT INTO registry.env_policies
            (org, name, recovery_domain, promotion_rank, instances, storage, cpu, memory, image)
            VALUES ('acme', 'dev', '\"own\"', 0, 1, '1Gi', '1', '1Gi', 'postgres:18');
-         INSERT INTO registry.project_envs
-           (org, project, env, secret_name, instance_suffix, policy_name) VALUES
-           ('acme', 'a', 'a', 's1', 'aaaaaaa1', 'dev'),
-           ('acme', 'a', 'b', 's2', 'aaaaaaa2', 'dev'),
-           ('acme', 'a', 'c', 's3', 'aaaaaaa3', 'dev');",
+         WITH parent_environment AS (INSERT INTO registry.environments (org,env,policy_name) VALUES ('acme','a','dev'),('acme','b','dev'),('acme','c','dev') ON CONFLICT (org,env) DO NOTHING) INSERT INTO registry.environment_projects (org,project,env,secret_name,instance_suffix) VALUES ('acme','a','a','s1','aaaaaaa1'),('acme','a','b','s2','aaaaaaa2'),('acme','a','c','s3','aaaaaaa3');",
         )
         .await
         .unwrap();

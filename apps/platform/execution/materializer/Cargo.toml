@@ -12,6 +12,7 @@ wamn-materializer = { workspace = true }
 # Registration delivery grain and subscription declaration.
 wamn-event-reg = { workspace = true }
 wamn-event-wire = { workspace = true }
+wamn-registry = { workspace = true }
 
 [lib]
 crate-type = ["cdylib"]

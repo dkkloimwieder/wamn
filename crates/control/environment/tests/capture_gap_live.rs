@@ -16,14 +16,14 @@ use tokio_postgres::{Client, NoTls};
 use wamn_control_provision::{
     cdc_object_name, project_env_database_name, sql, validate_project_env_cdc,
 };
-use wamn_control_registry::sql::{
-    stamp_env_policy_sql, upsert_event_reader_sql, upsert_org_sql, upsert_project_env_sql,
-    upsert_project_sql,
-};
 use wamn_environment_control::capture_gap::{
     CloseCaptureGapRequest, RecoverCaptureGapRequest, close_capture_gap, recover_capture_gap,
 };
 use wamn_event_wire::{Envelope, Op, msg_id, stream_subjects, subject};
+use wamn_registry::sql::{
+    stamp_env_policy_sql, upsert_event_reader_sql, upsert_org_sql,
+    upsert_project_env_with_policy_sql, upsert_project_sql,
+};
 
 const ORG: &str = "cg0";
 const PROJECT: &str = "app";
@@ -135,15 +135,17 @@ async fn recover_and_close_record_each_capture_gap() {
         .expect("env-policy row");
     system
         .execute(
-            upsert_project_env_sql(),
+            upsert_project_env_with_policy_sql(),
             &[
                 &ORG,
                 &PROJECT,
                 &ENV,
-                &"wamn-db-cg0--app--dev",
+                &"wamn-db-cg0--dev--app",
                 &None::<&str>,
                 &INSTANCE,
                 &false,
+                &ENV,
+                &Option::<String>::None,
             ],
         )
         .await
@@ -158,7 +160,7 @@ async fn recover_and_close_record_each_capture_gap() {
                 &slot,
                 &slot,
                 &stream,
-                &"wamn-cdc-cg0--app--dev",
+                &"wamn-cdc-cg0--dev--app",
                 &None::<&str>,
                 &true,
                 &vec!["app"],
@@ -168,7 +170,7 @@ async fn recover_and_close_record_each_capture_gap() {
         .expect("event-reader row");
     system
         .batch_execute(
-            "ALTER TABLE registry.project_envs OWNER TO wamn_system; \
+            "ALTER TABLE registry.environment_projects OWNER TO wamn_system; \
              ALTER TABLE registry.event_readers OWNER TO wamn_system; \
              ALTER TABLE registry.capture_gap OWNER TO wamn_system",
         )

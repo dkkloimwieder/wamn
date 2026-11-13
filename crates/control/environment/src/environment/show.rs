@@ -5,7 +5,7 @@ use super::{Platform, analyse::read_revision, document::EnvironmentDocument};
 use anyhow::Context as _;
 use plan::revision_applications;
 use std::path::Path;
-use wamn_control_registry::Triple;
+use wamn_registry::Triple;
 
 /// Export the canonical document without substituting successful Helm revisions.
 pub async fn show(platform: &Platform, file: &Path) -> anyhow::Result<EnvironmentDocument> {
