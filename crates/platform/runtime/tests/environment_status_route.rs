@@ -112,8 +112,7 @@ async fn an_inactive_environment_refuses_every_route() -> anyhow::Result<()> {
     admin
         .batch_execute(
             "CREATE ROLE wamn_app NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS; \
-             CREATE ROLE wamn_scenario_author NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE \
-               NOBYPASSRLS; \
+             \
              CREATE SCHEMA wamn_run AUTHORIZATION postgres;",
         )
         .await?;

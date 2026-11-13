@@ -102,9 +102,6 @@ pub struct AuthorArgs {
     /// The coordinate, `org/project/env`, whose serving release gates the graph.
     #[arg(long)]
     pub coordinate: String,
-    /// Owner URL to the CONTROL database holding `wamn_run.gate_reports`.
-    #[arg(long)]
-    pub control_database_url: String,
     /// The application of the workflow, as the environment declares it.
     #[arg(long)]
     pub application: String,
@@ -296,7 +293,6 @@ pub async fn run(command: WorkflowCommand) -> anyhow::Result<()> {
                 serving_facts(&triple, args.dev_root.as_deref(), &args.application).await?;
             let hash = wamn_environment_control::author_workflow::author_workflow_in_databases(
                 &args.scope.admin_database_url,
-                &args.control_database_url,
                 &AuthorWorkflowRequest {
                     org: &triple.org,
                     project: &triple.project,
@@ -501,8 +497,6 @@ mod tests {
             "dev",
             "--coordinate",
             "acme/orders/dev",
-            "--control-database-url",
-            "postgres://localhost/control",
             "--application",
             "orders",
             "--document",

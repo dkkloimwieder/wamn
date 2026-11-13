@@ -224,24 +224,6 @@ fn pat_issue_flags_select_independently_and_revoke_conflicts() {
     assert!(revoke.project.is_none());
     assert!(revoke.env.is_none());
 
-    let abort = parse_args(&[
-        "--target-admin-database-url",
-        "postgresql://postgres@localhost/wamn-db-acme--billing--dev",
-        "--abort-management-admitter-generation",
-        "a",
-    ])
-    .unwrap();
-    assert_eq!(
-        abort.workload.action,
-        Some(WorkloadGenerationAction {
-            family: WorkloadRoleFamily::ManagementAdmitter,
-            verb: WorkloadActionVerb::Abort,
-            generation: CredentialGeneration::A,
-        })
-    );
-    assert!(abort.emit_secret.is_none());
-    assert!(abort.workload.secret.is_none());
-
     for issue_flag in [
         "--emit-management-author-pat-secret",
         "--emit-operator-pat-secret",
@@ -665,43 +647,6 @@ fn every_family_secret_is_bound_to_its_own_prepare() {
             );
         }
     }
-}
-
-/// The management-admitter family's own parse, split from
-/// `the_management_admitter_action_is_one_more_stamp_of_the_workload_lifecycle`,
-/// whose lifecycle half stays beside the implementation in `wamn-environment-control`.
-#[test]
-fn the_management_admitter_action_parses_its_own_prepare_and_secret() {
-    // One action per invocation and one Secret bound to its own prepare are
-    // now group-derived properties, checked for EVERY pair and EVERY family
-    // by `one_action_group_excludes_every_pair_across_every_family` and
-    // `every_family_secret_is_bound_to_its_own_prepare` below. What stays
-    // here is this family's own parse.
-    let prepared = parse_argv(action_argv(&[
-        "--prepare-management-admitter-generation",
-        "a",
-        "--emit-management-admitter-secret",
-        "/tmp/management-admitter.json",
-    ]))
-    .expect("prepare with its Secret path parses");
-    assert_eq!(
-        prepared.workload.action,
-        Some(WorkloadGenerationAction {
-            family: WorkloadRoleFamily::ManagementAdmitter,
-            verb: WorkloadActionVerb::Prepare,
-            generation: CredentialGeneration::A,
-        })
-    );
-    assert!(prepared.emit_secret.is_none());
-    assert_eq!(
-        prepared.workload_secret_path(WorkloadRoleFamily::ManagementAdmitter),
-        Some(Path::new("/tmp/management-admitter.json"))
-    );
-    assert!(
-        prepared
-            .workload_secret_path(WorkloadRoleFamily::ControlAuthor)
-            .is_none()
-    );
 }
 
 mod enable_cdc {

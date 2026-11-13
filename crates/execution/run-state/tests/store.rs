@@ -156,10 +156,7 @@ fn run_state_schema_applies_and_isolates_on_postgres() {
            EXECUTE format('DROP ROLE %I', '{app_role}'); \
          END IF; END $$;\n\
          DO $$ BEGIN \
-           IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname='wamn_scenario_author') THEN \
-             CREATE ROLE wamn_scenario_author NOLOGIN NOSUPERUSER NOCREATEDB \
-               NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS; \
-           END IF; \
+            \
          END $$;\n\
          {prepare_app}\n\
          DROP SCHEMA IF EXISTS wamn_run CASCADE;\n\

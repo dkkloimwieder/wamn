@@ -1,12 +1,12 @@
 //! Live tests of environment workflows
 //! (docs/architecture/execution.md#environment-workflows): authorship against
-//! the serving release and a green gate report, one enabled version, the
+//! the serving release, one enabled version, the
 //! lifecycle lock, the enable-role checks, the immutability trigger and the
 //! `workflow` user row.
 //!
 //! The project database carries the production catalog and platform schemas
 //! (`wamn_project_state::test_database::tenant_platform`), and the control
-//! database the production control store, which holds the gate reports. The
+//! database the production control store. The
 //! lifecycle lock is an advisory lock, so the project database also serves as
 //! the system database of the lock.
 
@@ -51,10 +51,9 @@ const BOB: &str = "22222222-2222-2222-2222-222222222222";
 
 struct Fixture {
     project: Client,
-    control: Client,
     project_url: String,
     digest: String,
-    _databases: (wamn_test_postgres::Database, wamn_test_postgres::Database),
+    _database: wamn_test_postgres::Database,
 }
 
 async fn connect(url: &str) -> Client {
@@ -123,25 +122,14 @@ fn workflow(id: &str, version: u32, node: &str, component: &str) -> WiringDocume
             },
         )]),
         Vec::new(),
-        Vec::new(),
     )
     .expect("the fixture workflow is structurally valid")
 }
 
 async fn fixture() -> Fixture {
     let project_database = wamn_project_state::test_database::tenant_platform();
-    let control_database = wamn_control_provision::test_database::system();
     let project_url = project_database.url().to_owned();
     let project = connect(&project_url).await;
-    let control = connect(control_database.url()).await;
-    control
-        .execute(
-            "SELECT set_config('app.env_key', $1, false), set_config('app.user_id', $2, false)",
-            &[&ENV_KEY, &ALICE],
-        )
-        .await
-        .expect("scope the control seed session");
-
     project.batch_execute(&format!("SELECT set_config('app.user_id', '{}', false), set_config('app.operation', 'admin:seed-workflow-fixture', false)", PlatformComponent::Provisioning.principal_id())).await.unwrap();
     let manifest = release();
     let bytes = manifest.canonical_bytes();
@@ -179,25 +167,13 @@ async fn fixture() -> Fixture {
         .expect("seed the users and roles");
     Fixture {
         project,
-        control,
         project_url,
         digest,
-        _databases: (project_database, control_database),
+        _database: project_database,
     }
 }
 
 impl Fixture {
-    async fn green(&self, document: &WiringDocument) {
-        self.control
-            .execute(
-                "INSERT INTO wamn_run.gate_reports (env_key, wiring_hash, passed, summary) \
-                 VALUES ($1, $2, true, '{}'::jsonb)",
-                &[&ENV_KEY, &document.wiring_hash().as_str()],
-            )
-            .await
-            .expect("record a green gate report");
-    }
-
     async fn author(
         &mut self,
         document: &WiringDocument,
@@ -215,7 +191,6 @@ impl Fixture {
     ) -> Result<(), AuthorWorkflowError> {
         let transaction = self.project.transaction().await.unwrap();
         author_workflow(
-            &self.control,
             &transaction,
             &AuthorWorkflowRequest {
                 org: "workflow-tenant",
@@ -298,20 +273,12 @@ fn key(id: &str, version: u32) -> WorkflowVersion<'_> {
 }
 
 #[tokio::test]
-async fn authorship_converges_and_refuses_what_the_release_or_the_report_does_not_cover() {
+async fn authorship_converges_and_refuses_graphs_outside_the_release() {
     let _lock = wamn_test_postgres::lock();
     let mut fixture = fixture().await;
 
     // No green report under the graph's hash.
     let ungated = workflow("nightly", 1, "read", "orders_data");
-    let refusal = fixture
-        .author(&ungated, WorkflowExecution::Invoker)
-        .await
-        .expect_err("an ungated graph refuses");
-    assert_eq!(refusal.error_type(), AuthorWorkflowErrorType::Report);
-
-    // Same bytes converge.
-    fixture.green(&ungated).await;
     fixture
         .author(&ungated, WorkflowExecution::Invoker)
         .await
@@ -336,7 +303,7 @@ async fn authorship_converges_and_refuses_what_the_release_or_the_report_does_no
 
     // Changed bytes under the same version.
     let changed = workflow("nightly", 1, "moved", "orders_data");
-    fixture.green(&changed).await;
+
     let refusal = fixture
         .author(&changed, WorkflowExecution::Invoker)
         .await
@@ -345,7 +312,7 @@ async fn authorship_converges_and_refuses_what_the_release_or_the_report_does_no
 
     // A node the release does not carry, with a green report of its own.
     let absent = workflow("nightly", 2, "read", "absent_data");
-    fixture.green(&absent).await;
+
     let refusal = fixture
         .author(&absent, WorkflowExecution::Invoker)
         .await
@@ -360,7 +327,6 @@ async fn one_version_is_enabled_and_the_lock_refuses_while_held() {
     let first = workflow("nightly", 1, "read", "orders_data");
     let second = workflow("nightly", 2, "again", "orders_data");
     for document in [&first, &second] {
-        fixture.green(document).await;
         fixture
             .author(document, WorkflowExecution::Invoker)
             .await
@@ -480,7 +446,6 @@ async fn enable_requires_the_role_of_the_enabler_and_of_the_workflow_user() {
     let first = workflow("approve", 1, "read", "orders_data");
     let second = workflow("approve", 2, "again", "orders_data");
     for document in [&first, &second] {
-        fixture.green(document).await;
         fixture
             .author(document, WorkflowExecution::Role("clerk"))
             .await
@@ -546,7 +511,7 @@ async fn event_authorship_requires_a_captured_application_model() {
     let mut fixture = fixture().await;
     capture_orders(&fixture).await;
     let graph = workflow("changed", 1, "get", "orders_data");
-    fixture.green(&graph).await;
+
     for (source_package, entity, ops, condition) in [
         ("other", "order", vec![Op::Insert], None),
         (APPLICATION, "missing", vec![Op::Insert], None),
@@ -623,7 +588,7 @@ async fn event_enable_records_stream_tail_and_requires_admin() {
     let mut fixture = fixture().await;
     capture_orders(&fixture).await;
     let graph = workflow("changed", 1, "get", "orders_data");
-    fixture.green(&graph).await;
+
     let release_bytes = fixture.project.query_one(
         "SELECT canonical_bytes FROM catalog.releases WHERE env_key = $1 AND manifest_digest = $2",
         &[&ENV_KEY, &fixture.digest],

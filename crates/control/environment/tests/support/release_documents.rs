@@ -612,7 +612,7 @@ pub mod workflow {
         key: &str,
     ) -> anyhow::Result<String> {
         let (project, task) = connect_owned(environment.project_url).await?;
-        let result = wamn_gate_harness::run_check::check(
+        let result = wamn_test_postgres::run_check::check(
             work,
             "start_workflow",
             &project,
@@ -754,7 +754,7 @@ pub mod workflow {
         key: &str,
     ) -> anyhow::Result<String> {
         let (project, task) = connect_owned(environment.project_url).await?;
-        let result = wamn_gate_harness::run_check::check(
+        let result = wamn_test_postgres::run_check::check(
             work,
             "admit_workflow",
             &project,
@@ -957,24 +957,8 @@ pub mod workflow {
             }
             .await?;
         }
-        let (control, control_task) = connect_owned(environment.system_url).await?;
-        control
-            .execute(
-                "SELECT set_config('app.env_key', $1, false), set_config('app.user_id', $2, false)",
-                &[&env_key, &ENABLER],
-            )
-            .await?;
-        control
-            .execute(
-                "INSERT INTO wamn_run.gate_reports (env_key, wiring_hash, passed, summary) \
-             VALUES ($1, $2, true, '{}'::jsonb) ON CONFLICT DO NOTHING",
-                &[&env_key, &document.wiring_hash().as_str()],
-            )
-            .await?;
-        control_task.abort();
         author_workflow_in_databases(
             environment.project_url,
-            environment.system_url,
             &AuthorWorkflowRequest {
                 org: &environment.scope.org,
                 project: &environment.scope.project,

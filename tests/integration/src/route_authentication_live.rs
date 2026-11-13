@@ -13,7 +13,6 @@ use wamn_engine::flow_http_routing::{FlowHttpRouting, RouteInFlightLimit};
 use wamn_engine::release_manifest::LoadedRelease;
 use wamn_engine::router_delivery::authorize_attachment_for_test;
 use wamn_environment_control::provision_project_env::{self, secret_value};
-use wamn_gate_harness::journey::{journey_document_schema_bytes, parse_journey_document};
 use wamn_package_control::apply_package::{self, ApplyPackageRequest};
 use wamn_platform_identity::{
     PrincipalType, assign_project_role, create_service, create_user, disable_principal, issue_pat,
@@ -27,7 +26,7 @@ use wamn_runtime::plugins::wamn_postgres::{
     AuthorityClass, CredentialProvider, StaticCredentialProvider, WamnPostgres, WamnPostgresConfig,
 };
 
-use crate::identity_session_test::membership::{self as fixture_membership, MembershipRequest};
+use crate::fixture_membership::{self, MembershipRequest};
 use wamn_dev_control::dev::environment::{
     ENV_KEY, ENVIRONMENT, JourneyScope, ORG, PROJECT, connect, generation_args, provision_route,
     reset_control_store,
@@ -501,11 +500,7 @@ async fn assert_user_environment_membership(
     let other_database = wamn_test_postgres::database();
     let (other_project, other_connection) = connect(other_database.url()).await?;
     other_project
-        .batch_execute(&format!(
-            "{} {}",
-            wamn_control_provision::sql::ensure_app_acl_role_sql(),
-            wamn_schema_control::ensure_scenario_author_role_sql(),
-        ))
+        .batch_execute(&wamn_control_provision::sql::ensure_app_acl_role_sql())
         .await?;
     wamn_dev_control::dev::environment::install_journey_platform_floor(
         &other_project,
@@ -1251,131 +1246,4 @@ async fn production_operator_authentication(root: &Path) {
     drop(project);
     project_task.abort();
     admin_task.abort();
-}
-
-/// Checked-in schema generated from [`JourneyDocument`], relative to this
-/// crate's manifest. Regenerate it with the command beside its drift test.
-const JOURNEY_SCHEMA_PATH: &str = "schema/wamn-journey.schema.json";
-/// A complete example the shell writer reproduces byte-for-byte and this crate
-/// parses, so the two sides are pinned to one artifact rather than to each
-/// other's reading of the schema.
-const JOURNEY_EXAMPLE_PATH: &str = "schema/wamn-journey.example.json";
-
-/// Regenerate the checked-in schema with
-/// `cargo run --locked --offline -p wamn-integration-tests --example print-journey-schema > tests/integration/schema/wamn-journey.schema.json`.
-#[test]
-fn checked_in_journey_schema_matches_generated_bytes() {
-    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join(JOURNEY_SCHEMA_PATH);
-    let checked_in = std::fs::read(&path).expect("read the checked-in journey schema");
-    assert_eq!(checked_in, journey_document_schema_bytes());
-}
-
-/// The generated schema and the strict parser share ONE field authority: a
-/// field cannot exist in the parser and be absent from the schema, or the
-/// reverse, and the schema says which fields a writer must supply.
-#[test]
-fn generated_journey_schema_and_strict_parser_share_one_field_authority() {
-    let first = journey_document_schema_bytes();
-    assert_eq!(first, journey_document_schema_bytes());
-    assert_eq!(first.last(), Some(&b'\n'));
-
-    let schema: serde_json::Value = serde_json::from_slice(&first).expect("parse the schema");
-    assert_eq!(schema["additionalProperties"], false);
-    let properties = schema["properties"].as_object().expect("object properties");
-    let required: Vec<&str> = schema["required"]
-        .as_array()
-        .expect("required set")
-        .iter()
-        .map(|key| key.as_str().expect("required key"))
-        .collect();
-    // Every scalar the parser refuses-when-empty is a required property, and
-    // the only property that is not required is the phase the shell amends in.
-    let example = parse_journey_document(&example_document()).expect("example parses");
-    for (field, _) in example.scalars() {
-        assert!(properties.contains_key(field), "schema lacks {field}");
-        assert!(required.contains(&field), "schema does not require {field}");
-    }
-    assert_eq!(properties.len(), example.scalars().len() + 3);
-    for phase in ["materializer", "runtime", "postcommit"] {
-        assert!(properties.contains_key(phase));
-        assert!(!required.contains(&phase));
-    }
-    let runtime = &schema["definitions"]["RuntimePhase"];
-    assert_eq!(runtime["additionalProperties"], false);
-    assert_eq!(
-        runtime["required"],
-        serde_json::json!(["packaging_id", "route_endpoint", "to_location_id"])
-    );
-    let phase = &schema["definitions"]["MaterializerPhase"];
-    assert_eq!(phase["additionalProperties"], false);
-    assert_eq!(
-        phase["required"],
-        serde_json::json!(["nats_url", "project_pg_url", "receipt_id"])
-    );
-
-    // And the refusals name the field, so a forty-minute run does not fail
-    // under a message about something else.
-    let mut missing: serde_json::Value =
-        serde_json::from_slice(&example_document()).expect("example is JSON");
-    missing
-        .as_object_mut()
-        .expect("object")
-        .remove("route_host");
-    let error = parse_journey_document(&serde_json::to_vec(&missing).expect("serialize"))
-        .expect_err("a missing required field is refused");
-    assert!(format!("{error:#}").contains("route_host"), "{error:#}");
-
-    let mut unknown: serde_json::Value =
-        serde_json::from_slice(&example_document()).expect("example is JSON");
-    unknown["route_hots"] = serde_json::json!("typo.localhost");
-    let error = parse_journey_document(&serde_json::to_vec(&unknown).expect("serialize"))
-        .expect_err("an unknown field is refused, not ignored");
-    assert!(format!("{error:#}").contains("route_hots"), "{error:#}");
-
-    let mut empty: serde_json::Value =
-        serde_json::from_slice(&example_document()).expect("example is JSON");
-    empty["host_secret_namespace"] = serde_json::json!("");
-    let error = parse_journey_document(&serde_json::to_vec(&empty).expect("serialize"))
-        .expect_err("an empty value is refused, not passed through");
-    assert!(
-        format!("{error:#}").contains("host_secret_namespace"),
-        "{error:#}"
-    );
-
-    let mut no_phase: serde_json::Value =
-        serde_json::from_slice(&example_document()).expect("example is JSON");
-    no_phase
-        .as_object_mut()
-        .expect("object")
-        .remove("materializer");
-    let parsed = parse_journey_document(&serde_json::to_vec(&no_phase).expect("serialize"))
-        .expect("the materializer phase is optional until the shell amends it in");
-    assert!(parsed.materializer.is_none());
-}
-
-/// The checked-in example is what the shell writer reproduces byte-for-byte;
-/// parsing it here is what pins the two sides to one artifact.
-#[test]
-fn the_checked_in_example_document_parses_with_every_field() {
-    let document = parse_journey_document(&example_document()).expect("example parses");
-    assert_eq!(document.route_host, "example.localhost");
-    assert_eq!(document.host_secret_namespace, "wamn-example-journey");
-    assert_eq!(
-        document.registry_auth_file,
-        Path::new("/tmp/example/docker/config.json")
-    );
-    let phase = document
-        .materializer
-        .expect("the example carries the amended phase");
-    assert_eq!(phase.receipt_id, "00000000-0000-0000-0000-00000000c0de");
-    let runtime = document
-        .runtime
-        .expect("the example carries the runtime phase");
-    assert_eq!(runtime.route_endpoint, "http://10.0.0.2:30999");
-    assert_eq!(runtime.packaging_id, "00000000-0000-0000-0000-000000000301");
-}
-
-fn example_document() -> Vec<u8> {
-    std::fs::read(Path::new(env!("CARGO_MANIFEST_DIR")).join(JOURNEY_EXAMPLE_PATH))
-        .expect("read the checked-in journey example")
 }

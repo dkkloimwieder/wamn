@@ -1658,8 +1658,8 @@ mod tests {
             .batch_execute(
                 "DO $roles$ DECLARE role_name text; BEGIN \
                    FOREACH role_name IN ARRAY ARRAY[ \
-                     'wamn_executor_platform', 'wamn_management_admitter', \
-                     'wamn_app', 'wamn_control_author', 'wamn_scenario_author', \
+                     'wamn_executor_platform', \
+                     'wamn_app', \
                      'wamn_executor_authority_test' \
                    ] LOOP \
                      IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = role_name) THEN \
@@ -1680,12 +1680,7 @@ mod tests {
 
         let packages = ["authority-test".to_string()];
         let completion = ProductionCompletion::completed(serde_json::Value::Null, None);
-        for role in [
-            "wamn_management_admitter",
-            "wamn_app",
-            "wamn_control_author",
-            "wamn_scenario_author",
-        ] {
+        for role in ["wamn_app"] {
             connection
                 .batch_execute(&format!("SET LOCAL ROLE {role}"))
                 .await?;

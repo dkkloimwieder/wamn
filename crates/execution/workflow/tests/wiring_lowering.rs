@@ -129,7 +129,6 @@ fn document(to_port: Option<&str>) -> WiringDocument {
                 to_port: to_port.map(str::to_owned),
             },
         ],
-        Vec::new(),
     )
     .expect("fixture wiring is structurally valid")
 }

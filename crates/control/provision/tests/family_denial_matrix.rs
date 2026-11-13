@@ -71,17 +71,6 @@ const ENV_KEY_B: &str = "t2";
 /// gate builds and drops these roles inside a disposable container.
 const PROBE_PASSWORD: &str = "w68-matrix-probe";
 
-/// The reserved host-only group that is NOT a [`WorkloadRoleFamily`] and has no
-/// platform-group exception.
-const SCENARIO_AUTHOR_ROLE: &str = "wamn_scenario_author";
-
-/// A test-only login inheriting [`SCENARIO_AUTHOR_ROLE`].
-///
-/// Production deliberately mints no such credential. This probe exists only to
-/// carry the role's effective authority through a real connection and check that
-/// both residue reads receive SQLSTATE 42501.
-const SCENARIO_AUTHOR_PROBE: &str = "wamn_matrix_author_probe";
-
 // ---------------------------------------------------------------------------
 // THE MATRIX UNIVERSE
 // ---------------------------------------------------------------------------
@@ -161,12 +150,7 @@ struct FamilyReach {
 ///
 /// `RegistryReader`, `IdentityReader` and `Control` are absent because their
 /// credentials reach the CONTROL database, a different plane with its own
-/// matrix, [`CONTROL_MATRIX`]. `ControlAuthor` is absent from both: no
-/// [`sql::stable_surface_sql`] batch grants its surface.
-/// `wamn_scenario_author` is absent because it is a host group,
-/// not a [`WorkloadRoleFamily`] — it has no generation lifecycle to mint a
-/// principal from.
-const MATRIX: [FamilyReach; 10] = [
+const MATRIX: [FamilyReach; 9] = [
     FamilyReach {
         family: WorkloadRoleFamily::App,
         relations: &[
@@ -201,11 +185,6 @@ const MATRIX: [FamilyReach; 10] = [
         family: WorkloadRoleFamily::Retention,
         relations: &["wamn_run.runs|DELETE|table", "wamn_run.runs|SELECT|column"],
         routines: &[],
-    },
-    FamilyReach {
-        family: WorkloadRoleFamily::ManagementAdmitter,
-        relations: &[],
-        routines: &["wamn_authority.tenant_key(text)"],
     },
     FamilyReach {
         family: WorkloadRoleFamily::ExecutorPlatform,
@@ -573,8 +552,6 @@ fn managed_roles() -> Vec<String> {
         .collect();
     // The probe comes BEFORE the group it inherits: a role still named by a
     // `pg_auth_members` row cannot be dropped.
-    roles.push(SCENARIO_AUTHOR_PROBE.to_owned());
-    roles.push(SCENARIO_AUTHOR_ROLE.to_owned());
     roles.push(PLATFORM_GROUP_ROLE.to_owned());
     roles
 }
@@ -705,21 +682,6 @@ fn build() -> Fixture {
     for reach in &MATRIX {
         mint(&db_url, reach.family);
     }
-    // A test-only login that INHERITS the scenario-author group. It adds no
-    // privilege of its own and does not make the group a member of anything, so
-    // every observed read comes from that reserved role alone.
-    apply(
-        &db_url,
-        "mint the scenario-author probe login",
-        &format!(
-            "CREATE ROLE {SCENARIO_AUTHOR_PROBE} LOGIN PASSWORD '{PROBE_PASSWORD}' \
-               NOSUPERUSER NOCREATEDB NOCREATEROLE INHERIT NOREPLICATION NOBYPASSRLS;\n\
-             GRANT {SCENARIO_AUTHOR_ROLE} TO {SCENARIO_AUTHOR_PROBE} \
-               WITH ADMIN FALSE, INHERIT TRUE, SET FALSE;\n\
-             GRANT CONNECT ON DATABASE \"{DATABASE}\" TO {SCENARIO_AUTHOR_PROBE};\n"
-        ),
-    );
-
     let control_url = build_control_plane(&admin);
 
     Fixture {
@@ -746,11 +708,9 @@ fn build_control_plane(admin: &str) -> String {
                    NOINHERIT NOREPLICATION NOBYPASSRLS; \
                END IF; \
              END $system_role$;\n\
-             {control_author}\n\
              {db_owner}\n\
              CREATE DATABASE \"{CONTROL_DATABASE}\" OWNER wamn_system;\n\
              REVOKE CONNECT, TEMPORARY ON DATABASE \"{CONTROL_DATABASE}\" FROM PUBLIC;\n",
-            control_author = sql::ensure_control_author_acl_role_sql(),
             db_owner = sql::ensure_db_owner_role_sql(),
         ),
     );
@@ -1008,11 +968,6 @@ fn the_retention_family_is_refused_the_other_families_operations() {
 }
 
 #[test]
-fn the_management_admitter_family_is_refused_the_other_families_operations() {
-    assert_family_row(&project_plane(), WorkloadRoleFamily::ManagementAdmitter);
-}
-
-#[test]
 fn the_executor_platform_family_is_refused_the_other_families_operations() {
     assert_family_row(&project_plane(), WorkloadRoleFamily::ExecutorPlatform);
 }
@@ -1195,17 +1150,12 @@ fn every_ordered_pair_of_matrix_families_is_covered_exactly_once() {
 /// pairs the matrix cannot speak for, so it is spelled out rather than left to
 /// be counted. Pairs naming the MEASURED-EMPTY family as the object
 /// are excluded: those are asserted separately, by name, above.
-// Dropping catalog.wirings removed ManagementAdmitter's INSERT surface.
-// Its remaining tenant_key grant is shared by app and executor. C3.1 revokes
-// that grant from administration, so that pair now requires a denial.
-const CONTAINED_PAIRS: [(&str, &str); 8] = [
+const CONTAINED_PAIRS: [(&str, &str); 6] = [
     ("administration", "session-role-reader"),
     ("app", "event-materializer"),
     ("app", "http-admitter"),
-    ("app", "management-admitter"),
     ("app", "retention"),
     ("app", "session-role-reader"),
-    ("executor-platform", "management-admitter"),
     ("http-admitter", "session-role-reader"),
 ];
 
@@ -1565,12 +1515,11 @@ fn authority_derivations_are_not_public_execute() {
 /// admitting or demoting a family costs one deliberate edit here.
 ///
 /// Sorted, because the arm compares against a sorted list.
-const PLATFORM_GRAIN_ACL_ROLES: [&str; 8] = [
+const PLATFORM_GRAIN_ACL_ROLES: [&str; 7] = [
     "wamn_administration",
     "wamn_event_materializer",
     "wamn_executor_platform",
     "wamn_http_admitter",
-    "wamn_management_admitter",
     "wamn_run_retention",
     "wamn_service_reader",
     "wamn_session_role_reader",
@@ -1578,8 +1527,6 @@ const PLATFORM_GRAIN_ACL_ROLES: [&str; 8] = [
 
 /// THE MEMBER SET OF `wamn_platform`, FROM `pg_auth_members`.
 ///
-/// It is exactly the eight derived workload families. `wamn_scenario_author`
-/// has no exception: it has no production credential or project-plane read.
 #[test]
 fn the_platform_group_members_are_exactly_the_derived_families() {
     let fixture = fixture();
@@ -1647,78 +1594,6 @@ fn the_platform_group_members_are_exactly_the_derived_families() {
          FALSE: the edge exists and confers nothing, which is a silent lockout \
          with a row in the catalog that requires its absence"
     );
-}
-
-/// The reserved scenario-author role has neither a platform-policy edge nor a
-/// table read. The synthetic inheriting login tests this as a real SQL refusal,
-/// not merely as an ACL catalog observation.
-#[test]
-fn the_scenario_author_has_no_platform_membership_or_project_reads() {
-    let fixture = fixture();
-
-    assert_eq!(
-        query(
-            &fixture.db_url,
-            &format!(
-                "SELECT (NOT rolcanlogin AND NOT rolsuper AND NOT rolcreatedb \
-                         AND NOT rolcreaterole AND NOT rolinherit \
-                         AND NOT rolreplication AND NOT rolbypassrls)::text \
-                   FROM pg_catalog.pg_roles \
-                  WHERE rolname = '{SCENARIO_AUTHOR_ROLE}'"
-            ),
-        ),
-        "true",
-        "{SCENARIO_AUTHOR_ROLE} is not the stable NOLOGIN role"
-    );
-    assert_eq!(
-        query(
-            &fixture.db_url,
-            &format!(
-                "SELECT pg_has_role('{SCENARIO_AUTHOR_ROLE}', \
-                   '{PLATFORM_GROUP_ROLE}', 'MEMBER')::text"
-            ),
-        ),
-        "false",
-        "{SCENARIO_AUTHOR_ROLE} acquired the forbidden ninth platform edge"
-    );
-
-    let exposed = rows(
-        &fixture.db_url,
-        &format!(
-            "SELECT row FROM ( \
-               SELECT n.nspname || '.' || c.relname AS row \
-                 FROM pg_catalog.pg_policy p \
-                 JOIN pg_catalog.pg_class c ON c.oid = p.polrelid \
-                 JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace \
-                WHERE pg_get_expr(p.polqual, p.polrelid) LIKE '%current_tenant_key%' \
-                  AND has_table_privilege('{SCENARIO_AUTHOR_ROLE}', c.oid, 'SELECT') \
-             ) q ORDER BY row COLLATE \"C\"",
-        ),
-    );
-    assert!(
-        exposed.is_empty(),
-        "{SCENARIO_AUTHOR_ROLE} retains governed project reads: {exposed:?}"
-    );
-
-    let as_author = login_url(&fixture.admin, SCENARIO_AUTHOR_PROBE);
-    for relation in ["wamn_run.environment_policies", "wamn_run.runs"] {
-        assert_eq!(
-            query(
-                &fixture.db_url,
-                &format!(
-                    "SELECT has_table_privilege('{SCENARIO_AUTHOR_PROBE}', \
-                       '{relation}', 'SELECT')::text"
-                ),
-            ),
-            "false",
-            "the synthetic author login inherits SELECT on {relation}"
-        );
-        assert_eq!(
-            sqlstate(&as_author, &format!("SELECT count(*) FROM {relation};\n")).as_deref(),
-            Some("42501"),
-            "the synthetic author login did not receive the server's permission denial on {relation}"
-        );
-    }
 }
 
 // ---------------------------------------------------------------------------

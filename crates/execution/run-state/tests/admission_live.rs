@@ -10,7 +10,6 @@ use wamn_run_state::queue::{
 };
 
 const EXECUTOR_LOGIN: &str = "wamn_matrix_executor_login";
-const MANAGEMENT_LOGIN: &str = "wamn_matrix_management_login";
 
 fn psql(url: &str, script: &str) -> Output {
     let actor = wamn_control_provision::PlatformComponent::Provisioning.principal_id();
@@ -84,15 +83,6 @@ fn surviving_authority_matrix_live() {
         "executor-test-password",
         "2099-01-01T00:00:00Z",
     );
-    let management_provision = sql::prepare_workload_generation_sql(
-        WorkloadRoleFamily::ManagementAdmitter,
-        &database,
-        MANAGEMENT_LOGIN,
-        "management-test-password",
-        "2099-01-01T00:00:00Z",
-    );
-    let management_surface = sql::grant_management_admitter_surface_sql("wamn_run");
-
     success(
         &url,
         &format!(
@@ -100,9 +90,9 @@ fn surviving_authority_matrix_live() {
              DROP SCHEMA IF EXISTS catalog CASCADE; \
              DO $$ DECLARE role_name text; BEGIN \
                FOREACH role_name IN ARRAY ARRAY[ \
-                 'wamn_app','wamn_control_author','wamn_scenario_author', \
-                 'wamn_executor_platform','wamn_management_admitter', \
-                 '{EXECUTOR_LOGIN}','{MANAGEMENT_LOGIN}' \
+                 'wamn_app', \
+                 'wamn_executor_platform', \
+                 '{EXECUTOR_LOGIN}' \
                ] LOOP \
                  IF EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname=role_name) THEN \
                    EXECUTE format('DROP OWNED BY %I', role_name); \
@@ -111,61 +101,18 @@ fn surviving_authority_matrix_live() {
                END LOOP; \
              END $$; \
              CREATE ROLE wamn_app LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS; \
-             CREATE ROLE wamn_scenario_author NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE \
-               NOINHERIT NOREPLICATION NOBYPASSRLS; \
-             CREATE ROLE wamn_control_author NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE \
-               NOINHERIT NOREPLICATION NOBYPASSRLS; \
+              \
+              \
              BEGIN; {catalog} {run_state} {run_queue} {app_schema} COMMIT; \
              {access_floor} \
-             {executor_provision} \
-             {management_provision}"
+             {executor_provision}"
         ),
     );
     // Publication still needs tenant-key execution for its catalog index.
     success(
         &url,
         &format!(
-            "GRANT UPDATE (durability_class) ON wamn_run.environment_policies \
-               TO wamn_management_admitter; \
-             {management_surface} \
-             DO $$ BEGIN \
-               ASSERT NOT pg_catalog.has_column_privilege( \
-                 'wamn_management_admitter', 'wamn_run.environment_policies', \
-                 'durability_class', 'UPDATE'); \
-               ASSERT pg_catalog.has_function_privilege( \
-                 'wamn_management_admitter', \
-                 'wamn_authority.tenant_key(text)', 'EXECUTE'); \
-               ASSERT NOT pg_catalog.has_schema_privilege( \
-                 'wamn_management_admitter', 'wamn_authority', 'USAGE'); \
-               ASSERT NOT pg_catalog.has_function_privilege( \
-                 'wamn_management_admitter', \
-                 'wamn_authority.current_tenant_key()', 'EXECUTE'); \
-               ASSERT EXISTS ( \
-                 SELECT FROM pg_catalog.pg_authid \
-                  WHERE rolname = 'wamn_management_admitter' \
-                    AND NOT rolcanlogin AND NOT rolsuper AND NOT rolcreatedb \
-                    AND NOT rolcreaterole AND NOT rolinherit AND NOT rolreplication \
-                    AND NOT rolbypassrls AND rolpassword IS NULL); \
-               ASSERT EXISTS ( \
-                 SELECT FROM pg_catalog.pg_authid \
-                  WHERE rolname = '{MANAGEMENT_LOGIN}' \
-                    AND rolcanlogin AND NOT rolsuper AND NOT rolcreatedb \
-                    AND NOT rolcreaterole AND rolinherit AND NOT rolreplication \
-                    AND NOT rolbypassrls AND rolpassword IS NOT NULL \
-                    AND rolvaliduntil IS NOT NULL); \
-               ASSERT EXISTS ( \
-                 SELECT FROM pg_catalog.pg_auth_members AS membership \
-                 JOIN pg_catalog.pg_roles AS parent ON parent.oid = membership.roleid \
-                 JOIN pg_catalog.pg_roles AS child ON child.oid = membership.member \
-                  WHERE parent.rolname = 'wamn_management_admitter' \
-                    AND child.rolname = '{MANAGEMENT_LOGIN}' \
-                    AND NOT membership.admin_option \
-                    AND membership.inherit_option \
-                    AND NOT membership.set_option); \
-               ASSERT pg_catalog.has_database_privilege( \
-                 '{MANAGEMENT_LOGIN}', current_database(), 'CONNECT'); \
-               ASSERT NOT pg_catalog.has_database_privilege( \
-                 '{MANAGEMENT_LOGIN}', current_database(), 'TEMPORARY'); \
+            "DO $$ BEGIN \
                ASSERT EXISTS ( \
                  SELECT FROM pg_catalog.pg_authid \
                   WHERE rolname = 'wamn_executor_platform' \
@@ -201,8 +148,6 @@ fn surviving_authority_matrix_live() {
                  '{EXECUTOR_LOGIN}', 'wamn_platform', 'USAGE'); \
                ASSERT NOT pg_catalog.pg_has_role( \
                  '{EXECUTOR_LOGIN}', 'wamn_app', 'USAGE'); \
-               ASSERT NOT pg_catalog.pg_has_role( \
-                 '{MANAGEMENT_LOGIN}', 'wamn_app', 'USAGE'); \
              END $$;"
         ),
     );
@@ -217,7 +162,7 @@ fn surviving_authority_matrix_live() {
              GRANT UPDATE (input_json) ON wamn_run.runs TO wamn_executor_platform; \
              GRANT UPDATE (available_at) ON wamn_run.run_queue TO wamn_executor_platform; \
              {executor_surface} \
-             GRANT USAGE ON SCHEMA wamn_run TO wamn_control_author; \
+              \
              INSERT INTO catalog.packages \
                (physical_schema_fingerprint, env_key,package_id,package_version,artifact_digest) \
              VALUES ('sha256:' || repeat('c', 64), 't1','cat','1.0.0','sha256:{manifest_hash}'); \
@@ -371,21 +316,8 @@ package_id,registration_id,service_principal_id,status,trigger_source,wiring_has
              WHERE pg_catalog.has_table_privilege('wamn_app','wamn_run.run_queue',p)); \
          END $$;",
     );
-    // Broad table grants do not confer executor membership.
-    success(
-        &url,
-        &format!(
-            "GRANT USAGE ON SCHEMA wamn_run, catalog TO {MANAGEMENT_LOGIN}; \
-             GRANT SELECT, INSERT, UPDATE, DELETE \
-               ON ALL TABLES IN SCHEMA catalog, wamn_run TO {MANAGEMENT_LOGIN};"
-        ),
-    );
-    for denied_role in [
-        MANAGEMENT_LOGIN,
-        "wamn_app",
-        "wamn_control_author",
-        "wamn_scenario_author",
-    ] {
+    {
+        let denied_role = "wamn_app";
         assert_eq!(
             success(
                 &url,
@@ -422,7 +354,7 @@ fn release_scoped_queue_claim_skips_another_releases_head_live() {
         &format!(
             "DO $$ DECLARE role_name text; BEGIN \
                FOREACH role_name IN ARRAY ARRAY[ \
-                 'wamn_app','wamn_control_author','wamn_scenario_author' \
+                 'wamn_app' \
                ] LOOP \
                  IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname=role_name) THEN \
                    EXECUTE format('CREATE ROLE %I NOLOGIN', role_name); \

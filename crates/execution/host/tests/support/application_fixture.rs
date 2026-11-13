@@ -72,7 +72,7 @@ pub(super) async fn install(
     admin
         .batch_execute(
             "CREATE ROLE wamn_app NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS; \
-             CREATE ROLE wamn_scenario_author NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS; \
+              \
              CREATE SCHEMA wamn_run AUTHORIZATION postgres;",
         )
         .await?;

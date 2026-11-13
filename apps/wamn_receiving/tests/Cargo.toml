@@ -45,7 +45,6 @@ wamn-control-provision = { workspace = true, features = ["ops"] }
 wamn-control-registry = { workspace = true }
 wamn-cdc-reader = { workspace = true }
 wamn-event-wire = { workspace = true }
-wamn-gate-harness = { workspace = true }
 wamn-integration-tests = { workspace = true }
 wamn-test-infrastructure = { workspace = true }
 wamn-test-postgres = { workspace = true }
@@ -58,13 +57,11 @@ wash-runtime = { workspace = true, features = ["washlet"] }
 wasmtime-wasi = { workspace = true }
 async-trait = { workspace = true }
 rustix = { workspace = true }
-wamn-client = { workspace = true }
 wamn-record-history = { workspace = true }
 wamn-schema-generator = { workspace = true }
 wamn-schema-introspection = { workspace = true }
 wat = "=1.254.2"
 
-wamn-authoring-model = { workspace = true }
 
 [lints]
 workspace = true

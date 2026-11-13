@@ -11,7 +11,6 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use tokio::sync::watch;
-use wamn_authoring_model::{GateRefusal, GateResult};
 use wamn_catalog::{
     AttachmentType, PackageCoordinate, ServingAttachment, ServingComponent,
     ServingComponentOperation, ServingManifest,
@@ -27,10 +26,6 @@ pub use plan::DEV_OBSERVATION_LIMIT;
 pub use plan::DevStageState;
 
 pub use plan::DevStageSnapshot;
-
-pub use plan::DevGateVerdict;
-
-pub use plan::DevGateOutcome;
 
 pub use plan::DevReleaseSnapshot;
 
@@ -121,9 +116,6 @@ mod publisher {
                 for stage in &mut snapshot.stages[from.position()..] {
                     stage.state = DevStageState::Awaiting;
                 }
-                if from.position() <= DevStage::Gate.position() {
-                    snapshot.gate_outcomes.clear();
-                }
                 if from.position() <= DevStage::Release.position() {
                     snapshot.release = None;
                 }
@@ -157,12 +149,6 @@ mod publisher {
             self.update(|snapshot| {
                 snapshot.stages[stage.position()].state = DevStageState::Failed(failure);
             });
-        }
-
-        /// Replace Gate outcomes with the latest suffix's exact results.
-        #[cfg(test)]
-        pub fn set_gate_outcomes(&self, outcomes: Vec<super::DevGateOutcome>) {
-            self.update(|snapshot| snapshot.gate_outcomes = outcomes);
         }
 
         /// Publish the exact manifest and its serving carrier atomically.
@@ -230,7 +216,6 @@ mod tests {
     use std::collections::{BTreeMap, BTreeSet};
 
     use serde_json::json;
-    use wamn_authoring_model::ValidatedDraftRef;
     use wamn_catalog::{DefinitionHash, SERVING_MANIFEST_FORMAT_VERSION, ServingRelease};
 
     use super::*;
@@ -268,26 +253,6 @@ mod tests {
             running.stages()[DevStage::Gate.position()].state(),
             &DevStageState::Running
         );
-
-        publisher.set_gate_outcomes(vec![DevGateOutcome {
-            package_id: "platform_fixture".to_owned(),
-            package_version: "1.0.0".to_owned(),
-            wiring_id: "widget/get".to_owned(),
-            wiring_version: 1,
-            verdict: DevGateVerdict::Accepted(GateResult {
-                report_id: "report-1".to_owned(),
-                validated_draft: ValidatedDraftRef {
-                    validated_draft_id: DIGEST.to_owned(),
-                },
-            }),
-        }]);
-
-        let gated = subscriber.next().await.expect("publisher remains live");
-        assert_eq!(gated.gate_outcomes().len(), 1);
-        assert!(matches!(
-            gated.gate_outcomes()[0].verdict(),
-            DevGateVerdict::Accepted(result) if result.report_id == "report-1"
-        ));
 
         publisher.stage_failed(
             DevStage::Gate,
@@ -492,24 +457,8 @@ mod tests {
 #[cfg(feature = "test-util")]
 pub mod test_support {
     pub use super::publisher::{DevReadPublisher, dev_read_channel};
-    use super::{DevGateOutcome, DevGateVerdict, DevRuntimeEndpoint, DevTraceObservation};
+    use super::{DevRuntimeEndpoint, DevTraceObservation};
     use std::time::Duration;
-
-    pub fn gate_outcome(
-        package_id: String,
-        package_version: String,
-        wiring_id: String,
-        wiring_version: u32,
-        verdict: DevGateVerdict,
-    ) -> DevGateOutcome {
-        DevGateOutcome {
-            package_id,
-            package_version,
-            wiring_id,
-            wiring_version,
-            verdict,
-        }
-    }
 
     pub fn trace_observation(
         trace_id: String,

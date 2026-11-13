@@ -17,9 +17,7 @@ async fn main() -> anyhow::Result<()> {
                IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = 'wamn_app') THEN
                  CREATE ROLE wamn_app NOLOGIN;
                END IF;
-               IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = 'wamn_scenario_author') THEN
-                 CREATE ROLE wamn_scenario_author NOLOGIN;
-               END IF;
+
              END $roles$;",
         )
         .await?;

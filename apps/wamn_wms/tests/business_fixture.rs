@@ -2,7 +2,6 @@
 
 use anyhow::Context as _;
 use tokio_postgres::Client;
-use wamn_gate_harness::journey::RuntimePhase;
 
 const PRODUCT_ID: &str = "00000000-0000-0000-0000-000000000101";
 pub(crate) const LOCATION_A_ID: &str = "00000000-0000-0000-0000-000000000201";
@@ -26,9 +25,16 @@ pub(crate) async fn seed_fixture(project: &Client, initial_revision: i64) -> any
     )).await.context("seed the existing WMS application fixture")
 }
 
-pub(crate) fn runtime_phase(route_endpoint: String) -> RuntimePhase {
+#[derive(Debug, Clone)]
+pub struct RuntimePhase {
+    /// The fixture packaging the contention moves.
+    pub packaging_id: String,
+    /// The fixture location it moves to.
+    pub to_location_id: String,
+}
+
+pub(crate) fn runtime_phase() -> RuntimePhase {
     RuntimePhase {
-        route_endpoint,
         packaging_id: PACKAGING_ID.to_owned(),
         to_location_id: LOCATION_B_ID.to_owned(),
     }

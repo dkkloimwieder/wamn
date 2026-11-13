@@ -841,14 +841,11 @@ mod tests {
         let identity: Value =
             serde_json::from_str(include_str!("fixtures/workload/identity-node-image.json"))
                 .unwrap();
-        let gates: Value =
-            serde_json::from_str(include_str!("fixtures/workload/gates-node-image.json")).unwrap();
         let expected = (
             "sha256:a3dafaa1a09101a5a4eaaeedd12fc21542a8bb4b3c66fb8dd3fa01850ec16021".to_owned(),
             "sha256:6d7e01c8efdb85c004da7c5924b7b83a8489f3ab97b55a0aaeed45601e795e77".to_owned(),
         );
         assert_eq!(image_tuple(&identity).unwrap(), expected);
-        assert!(image_tuple(&gates).is_err());
 
         let mut alias = identity.clone();
         alias["status"]["repoDigests"]

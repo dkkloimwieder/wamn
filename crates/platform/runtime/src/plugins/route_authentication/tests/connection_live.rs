@@ -34,7 +34,7 @@ async fn external_signature_uses_the_service_principal_and_only_admin_granted_ro
         .batch_execute(sql::ensure_db_owner_role_sql())
         .await
         .unwrap();
-    project.batch_execute("DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname='wamn_app') THEN CREATE ROLE wamn_app NOLOGIN; END IF; END $$; DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname='wamn_scenario_author') THEN CREATE ROLE wamn_scenario_author NOLOGIN; END IF; IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname='wamn_http_admitter') THEN CREATE ROLE wamn_http_admitter NOLOGIN; END IF; END $$; CREATE SCHEMA wamn_run;").await.unwrap();
+    project.batch_execute("DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname='wamn_app') THEN CREATE ROLE wamn_app NOLOGIN; END IF; END $$; DO $$ BEGIN  IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname='wamn_http_admitter') THEN CREATE ROLE wamn_http_admitter NOLOGIN; END IF; END $$; CREATE SCHEMA wamn_run;").await.unwrap();
     project
         .batch_execute(wamn_catalog::CATALOG_SCHEMA_SQL)
         .await

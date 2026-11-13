@@ -106,27 +106,15 @@ const HOST_INJECTED: [&str; 1] = ["wamn_run.run_queue"];
 /// Its explicit column grants and tenant predicates bound its reads.
 ///
 /// Sorted, because both consumers compare against a sorted list.
-const PLATFORM_GRAIN_ACL_ROLES: [&str; 8] = [
+const PLATFORM_GRAIN_ACL_ROLES: [&str; 7] = [
     "wamn_administration",
     "wamn_event_materializer",
     "wamn_executor_platform",
     "wamn_http_admitter",
-    "wamn_management_admitter",
     "wamn_run_retention",
     "wamn_service_reader",
     "wamn_session_role_reader",
 ];
-
-/// The host-only group that is NOT a [`WorkloadRoleFamily`] and, since
-/// `wamn-0h0g.22.27`, is NOT a `wamn_platform` member either.
-///
-/// `deploy/sql/postgres-init.sql` used to grant it the membership and NOTHING
-/// ELSE did: the converge path that creates the role,
-/// `wamn_schema_control::ensure_scenario_author_role_sql`, grants none. A fresh
-/// install therefore granted what a converge did not. THE EMITTERS NOW AGREE AT
-/// ZERO GRANTS, which is what the arm below reads back from `pg_auth_members`
-/// on both paths against the same server.
-const SCENARIO_AUTHOR_GROUP_MEMBER: &str = "wamn_scenario_author";
 
 /// THE PURE HALF OF THE PLATFORM-ARM GUARD, and the reason
 /// `wamn-0h0g.15.137.1` is closed.
@@ -150,11 +138,6 @@ fn the_platform_grain_family_set_is_pinned_and_not_derived() {
          tenant's rows on the relations it holds grants on; one that loses it \
          reads ZERO ROWS with no error and no failing live gate. Move the pin \
          deliberately, or put the family back"
-    );
-    assert!(
-        !derived.contains(&SCENARIO_AUTHOR_GROUP_MEMBER),
-        "the scenario author is not a WorkloadRoleFamily and must not be \
-         reachable through the family derivation"
     );
 }
 
@@ -254,7 +237,6 @@ fn reset(admin_url: &str) {
     // it, and a role still named by a `relacl` cannot be dropped.
     for role in [
         "wamn_app",
-        "wamn_scenario_author",
         // `wamn-0h0g.12.69`: run-state.sql creates and grants to this one for
         // the same reason it creates `wamn_platform` — it NAMES it, and a GRANT
         // to a missing role fails the whole apply. Dropped here BEFORE the group
@@ -457,27 +439,6 @@ fn the_swept_floor_admits_only_the_connected_guest_on_postgres() {
 ///
 /// The floor was UNTARGETED, so it applied to every role — and it calls
 /// `wamn_authority.current_tenant_key()`, which only `wamn_app` may EXECUTE.
-/// Measured against these very files on PostgreSQL 18.6: `wamn_scenario_author`
-/// reading a catalog relation got `ERROR: permission denied for
-/// function current_tenant_key`. Loud, and therefore survivable.
-///
-/// Narrowing the floor `TO wamn_app` turns that error into something worse.
-/// PostgreSQL DEFAULT-DENIES when RLS is enabled and no policy matches the
-/// connected role, so the narrowing does not EXEMPT a platform principal — it
-/// LOCKS IT OUT, at zero rows, with no exception at all. Every assertion here is
-/// therefore a ROW COUNT or a membership fact, never the absence of an error.
-///
-/// # The two-hop chain, and the silent way it dies
-///
-/// A policy `TO wamn_platform` admits a generation login only through
-/// generation login -> stable ACL role -> `wamn_platform`, and PostgreSQL 16+
-/// walks that by the PER-EDGE `inherit_option`. `ensure_workload_acl_role_sql`
-/// mints every stable ACL role `NOINHERIT`, and a role's `rolinherit` is the
-/// DEFAULT for memberships granted TO it — so a bare
-/// `GRANT wamn_platform TO wamn_run_retention` lands `inherit_option = false`
-/// and every platform read silently returns zero. Measured both ways on 18.6:
-/// bare grant 0 rows, `INHERIT TRUE` all rows. The edge option is asserted below
-/// from `pg_auth_members`, not assumed from the builder's text.
 #[test]
 fn the_platform_arm_admits_every_platform_family_from_the_server() {
     let (_database, admin) = shared_server();
@@ -740,110 +701,6 @@ fn the_platform_arm_admits_every_platform_family_from_the_server() {
 }
 
 /// THE TWO SCENARIO-AUTHOR EMITTERS, READ BACK FROM THE SAME SERVER
-/// (`wamn-0h0g.22.27`).
-///
-/// # The defect this closes is DRIFT, not the membership itself
-///
-/// `wamn_scenario_author` is CREATED by
-/// `wamn_schema_control::ensure_scenario_author_role_sql`, which grants no
-/// membership at all. `deploy/sql/postgres-init.sql` granted it `wamn_platform`
-/// and nothing else did. So a FRESH INSTALL granted what a CONVERGE did not,
-/// and the two appliers disagreed about the authority a role carries — the
-/// two-appliers drift class, independent of whether the membership was ever
-/// wanted. The owner ruled DELETE FROM THE INSTALL PATH: agreeing by GRANTING
-/// would ratify through the side door a membership that was explicitly not
-/// pre-ratified. THE EMITTERS AGREE AT ZERO GRANTS.
-///
-/// # Why this reads `pg_auth_members` and not an exit status
-///
-/// An emitter that raises nothing has established nothing. Both appliers succeed
-/// today and always did — the disagreement was in the POST-STATE, which is the
-/// only thing asserted below. Every arm reads the member set out of the
-/// catalog, and the role's own existence is asserted first so an empty set
-/// cannot pass vacuously because the role was never created.
-///
-/// # A SECOND APPLY IS A NO-OP, and that is a post-state claim too
-///
-/// The converge emitter is applied TWICE and the member set is read after each,
-/// so a builder that grants on replay — or one whose `ELSIF` harden arm gains a
-/// membership — fails here rather than at the next reconcile. `postgres-init.sql`
-/// cannot be applied twice against a surviving cluster at all (its bare
-/// `CREATE DATABASE wamn` is `wamn-0h0g.12.188`), so its replay is the one
-/// following a `reset`, which is the second install arm below.
-#[test]
-fn the_two_scenario_author_emitters_agree_at_zero_memberships() {
-    let (_database, admin) = shared_server();
-
-    let memberships = |label: &str| -> String {
-        let existing = psql(
-            &admin,
-            None,
-            &format!(
-                "SELECT count(*) FROM pg_catalog.pg_roles \
-                  WHERE rolname = '{SCENARIO_AUTHOR_GROUP_MEMBER}'"
-            ),
-        );
-        assert_eq!(
-            existing, "1",
-            "{label}: the role is absent, so an empty membership set would pass \
-             vacuously"
-        );
-        psql(
-            &admin,
-            None,
-            &format!(
-                "SELECT coalesce(string_agg(parent.rolname, ' ' ORDER BY parent.rolname), \
-                        '<none>') \
-                   FROM pg_catalog.pg_auth_members AS membership \
-                   JOIN pg_catalog.pg_roles AS parent ON parent.oid = membership.roleid \
-                   JOIN pg_catalog.pg_roles AS member ON member.oid = membership.member \
-                  WHERE member.rolname = '{SCENARIO_AUTHOR_GROUP_MEMBER}'"
-            ),
-        )
-    };
-
-    // 1. THE FRESH-INSTALL PATH, from an empty cluster.
-    reset(&admin);
-    apply(&admin, POSTGRES_INIT);
-    let install = memberships("fresh install");
-    assert_eq!(
-        install, "<none>",
-        "deploy/sql/postgres-init.sql grants wamn_scenario_author a membership \
-         the converge path does not: a fresh install and a converge would ship \
-         different authority for the same role"
-    );
-
-    // 2. THE CONVERGE PATH, applied ON TOP of the install, then AGAIN.
-    let converge = wamn_schema_control::ensure_scenario_author_role_sql();
-    apply(&admin, converge);
-    let converged = memberships("converge over install");
-    apply(&admin, converge);
-    let converged_twice = memberships("second converge");
-    assert_eq!(
-        converged, install,
-        "the two emitters disagree about wamn_scenario_author's memberships"
-    );
-    assert_eq!(
-        converged_twice, converged,
-        "a second apply is not a no-op: the converge emitter moved the member set"
-    );
-
-    // 3. THE CONVERGE PATH FIRST, on a cluster the install has never touched,
-    //    then the install on top. Order must not decide the outcome, and this is
-    //    the arm that would catch an install-path grant that only lands when the
-    //    role already exists.
-    reset(&admin);
-    apply(&admin, converge);
-    let converge_only = memberships("converge on an empty cluster");
-    apply(&admin, POSTGRES_INIT);
-    let install_over_converge = memberships("install over converge");
-    assert_eq!(
-        [converge_only.as_str(), install_over_converge.as_str()],
-        ["<none>", "<none>"],
-        "the emitters must agree at ZERO GRANTS in either application order"
-    );
-}
-
 /// The applier of the stable audit retention role (`wamn-emtx.13`).
 ///
 /// `CATALOG_SCHEMA_SQL` creates the role as a NOLOGIN grant carrier with no

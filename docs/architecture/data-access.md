@@ -1039,7 +1039,7 @@ These relations are `identity.principals`, `identity.org_memberships`, `identity
 Each relation carries the four stamp columns as `NOT NULL` with no default, and a static `wamn_record_history_stamp` trigger.
 The full system schema also stamps `registry.meta`, `orgs`, `env_policies`, `projects`, `project_envs`, `retired_project_envs`, `capture_gap`, and `generation_passwords`.
 It stamps `identity.session_keys`, `session_signing_state`, and `password_attempts` too.
-The full control schema stamps the control store relations `catalog.tenant_environments`, `catalog.authoring_command_audit`, `wamn_run.gate_reports`, and `wamn_authority.author_login_tenants`.
+The full control schema stamps the control store relations `catalog.tenant_environments` and `wamn_authority.author_login_tenants`.
 The system operations tables carry no stamps.
 In the system database, the actor is an `identity.principals` id.
 The system identity tables record the actor only. A control route binds `app.operation` to its sealed operation id, and no column stores it.

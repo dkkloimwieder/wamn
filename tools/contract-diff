@@ -23,14 +23,9 @@ readonly WAMN_REPOSITORY_ROOT="$(
   CDPATH= cd -- "$WAMN_TOOL_DIRECTORY/.." >/dev/null 2>&1
   pwd -P
 )"
-readonly WAMN_ROOT_MANIFEST="$WAMN_REPOSITORY_ROOT/Cargo.toml"
 readonly WAMN_COMPONENT_MANIFEST="$WAMN_REPOSITORY_ROOT/apps/Cargo.toml"
 readonly WAMN_CARGO="${CARGO:-cargo}"
 
-readonly -a WAMN_AUTHORING=(
-  test --manifest-path "$WAMN_ROOT_MANIFEST" --locked --offline
-  -p wamn-authoring-model --test contract
-)
 readonly -a WAMN_FLOW_HTTP=(
   test --manifest-path "$WAMN_COMPONENT_MANIFEST" --locked --offline
   -p http-route --test adversarial
@@ -45,7 +40,6 @@ wamn_print_plan() {
 
 wamn_dry_run() {
   printf 'working-directory: %q\n' "$WAMN_REPOSITORY_ROOT"
-  wamn_print_plan authoring "${WAMN_AUTHORING[@]}"
   wamn_print_plan http-route "${WAMN_FLOW_HTTP[@]}"
 }
 
@@ -78,7 +72,6 @@ case "$WAMN_COMMAND" in
   run)
     wamn_require_cargo
     cd -- "$WAMN_REPOSITORY_ROOT"
-    wamn_run authoring "${WAMN_AUTHORING[@]}"
     wamn_run http-route "${WAMN_FLOW_HTTP[@]}"
     ;;
   *)

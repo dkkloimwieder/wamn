@@ -27,7 +27,7 @@ fn deploy_dir() -> std::path::PathBuf {
 
 fn app_schema_sql() -> String {
     format!(
-        "DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname='wamn_scenario_author') THEN CREATE ROLE wamn_scenario_author NOLOGIN; END IF; END $$;\nDROP SCHEMA IF EXISTS catalog CASCADE;\n{}\n{}",
+        "\nDROP SCHEMA IF EXISTS catalog CASCADE;\n{}\n{}",
         wamn_catalog::CATALOG_SCHEMA_SQL,
         include_str!("../../../../deploy/sql/app-schema.sql")
     )

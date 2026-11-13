@@ -223,25 +223,9 @@ pub async fn schedule_run(
         wamn_catalog::ServingManifest::from_canonical_bytes(&manifest.canonical_bytes())?;
     let mut project = execution_role(database, role, operations).await?;
 
-    // The gate's green report under the graph's hash, which authoring reads.
-    let control = wamn_control_provision::test_database::system();
-    let (gate, connection) = tokio_postgres::connect(control.url(), tokio_postgres::NoTls).await?;
-    tokio::spawn(connection);
-    gate.execute(
-        "SELECT set_config('app.env_key', $1, false), set_config('app.user_id', $2, false)",
-        &[&ENV_KEY, &ENABLER],
-    )
-    .await?;
-    gate.execute(
-        "INSERT INTO wamn_run.gate_reports (env_key, wiring_hash, passed, summary) \
-         VALUES ($1, $2, true, '{}'::jsonb)",
-        &[&ENV_KEY, &document.wiring_hash().as_str()],
-    )
-    .await?;
     let declared = declared(application, manifest);
     author_workflow_in_databases(
         database.url(),
-        control.url(),
         &AuthorWorkflowRequest {
             org: "rest",
             project: "publication",
@@ -327,7 +311,7 @@ pub async fn install(
     manifest: &wamn_catalog::ServingManifest,
 ) -> anyhow::Result<String> {
     admin
-        .batch_execute("CREATE ROLE wamn_app NOLOGIN; CREATE ROLE wamn_scenario_author NOLOGIN;")
+        .batch_execute("CREATE ROLE wamn_app NOLOGIN; ")
         .await?;
     admin.batch_execute(sql::ensure_db_owner_role_sql()).await?;
     admin.batch_execute("DO $$ BEGIN EXECUTE format('GRANT CREATE ON DATABASE %I TO wamn_db_owner', current_database()); END $$").await?;

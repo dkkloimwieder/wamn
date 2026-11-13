@@ -1,3 +1,8 @@
+-- Environment declarations and scoped reader authority in the control database.
+-- Apply after system-schema.sql as wamn_system.
+CREATE SCHEMA IF NOT EXISTS catalog AUTHORIZATION wamn_system;
+REVOKE ALL ON SCHEMA catalog FROM PUBLIC;
+
 -- ---------------------------------------------------------------------------
 -- The environment identity behind a tenant's control facts, PROJECTED from
 -- `registry.project_envs` (wamn-10yt.38).
@@ -55,66 +60,6 @@ CREATE TRIGGER wamn_record_history_stamp
     FOR EACH ROW EXECUTE FUNCTION wamn_history.stamp_row(
         'created_at', 'created_by', 'updated_at', 'updated_by');
 
--- `principal_type` admits `human`, because the audit is immutable and rows
--- written before system migration 0007 keep the old name of `user`.
-CREATE TABLE catalog.authoring_command_audit (
-    created_at timestamptz NOT NULL,
-    created_by uuid NOT NULL,
-    updated_at timestamptz NOT NULL,
-    updated_by uuid NOT NULL,
-    env_key           text        NOT NULL CHECK (env_key <> ''),
-    audit_id          uuid        NOT NULL DEFAULT gen_random_uuid(),
-    command_id        text        NOT NULL CHECK (command_id <> ''),
-    command_type      text        NOT NULL CHECK (command_type IN ('gate', 'publish')),
-    principal_id      text        NOT NULL CHECK (principal_id <> ''),
-    principal_type    text        NOT NULL CHECK (principal_type IN ('user', 'service', 'human')),
-    principal_subject text        NOT NULL CHECK (principal_subject <> ''),
-    effective_role    text        NOT NULL
-        CHECK (effective_role IN ('project-author', 'project-admin')),
-    org               text        NOT NULL CHECK (org <> ''),
-    project           text        NOT NULL CHECK (project <> ''),
-    environment       text        NOT NULL CHECK (environment <> ''),
-    target_ref        text        NOT NULL CHECK (target_ref <> ''),
-    request_hash      text        NOT NULL CHECK (request_hash ~ '^sha256:[0-9a-f]{64}$'),
-    outcome_bytes     bytea       NOT NULL CHECK (octet_length(outcome_bytes) > 0),
-    provenance_commit text,
-    provenance_ref    text,
-    provenance_dirty  boolean,
-    recorded_at       timestamptz NOT NULL DEFAULT clock_timestamp(),
-    CONSTRAINT authoring_command_audit_pkey
-        PRIMARY KEY (env_key, principal_id, command_id),
-    CONSTRAINT authoring_command_audit_id_key UNIQUE (env_key, audit_id),
-    CONSTRAINT authoring_command_audit_provenance_check CHECK (
-        (provenance_commit IS NULL) = (provenance_dirty IS NULL)
-        AND (provenance_commit IS NULL OR provenance_commit <> '')
-        AND (provenance_ref IS NULL OR provenance_ref <> '')
-        AND (provenance_commit IS NOT NULL OR provenance_ref IS NULL)
-    )
-);
-CREATE TRIGGER wamn_record_history_stamp
-    BEFORE INSERT OR UPDATE ON catalog.authoring_command_audit
-    FOR EACH ROW EXECUTE FUNCTION wamn_history.stamp_row(
-        'created_at', 'created_by', 'updated_at', 'updated_by');
-CREATE INDEX authoring_command_audit_recorded
-    ON catalog.authoring_command_audit (env_key, recorded_at);
-
-CREATE TABLE wamn_run.gate_reports (
-    created_at timestamptz NOT NULL,
-    created_by uuid NOT NULL,
-    updated_at timestamptz NOT NULL,
-    updated_by uuid NOT NULL,
-    env_key     text        NOT NULL CHECK (env_key <> ''),
-    wiring_hash text        NOT NULL CHECK (wiring_hash ~ '^sha256:[0-9a-f]{64}$'),
-    passed      boolean     NOT NULL,
-    summary     jsonb       NOT NULL CHECK (jsonb_typeof(summary) = 'object'),
-    gated_at    timestamptz NOT NULL DEFAULT clock_timestamp(),
-    CONSTRAINT gate_reports_pkey PRIMARY KEY (env_key, wiring_hash)
-);
-CREATE TRIGGER wamn_record_history_stamp
-    BEFORE INSERT OR UPDATE ON wamn_run.gate_reports
-    FOR EACH ROW EXECUTE FUNCTION wamn_history.stamp_row(
-        'created_at', 'created_by', 'updated_at', 'updated_by');
-
 -- Tenant isolation is structural even for owner-only tables.
 DO $tenant_policies$
 DECLARE
@@ -122,9 +67,7 @@ DECLARE
     policy_name text;
 BEGIN
     FOREACH relation_name IN ARRAY ARRAY[
-        'catalog.authoring_command_audit',
-        'catalog.tenant_environments',
-        'wamn_run.gate_reports'
+        'catalog.tenant_environments'
     ] LOOP
         EXECUTE format('ALTER TABLE %s ENABLE ROW LEVEL SECURITY', relation_name);
         EXECUTE format('ALTER TABLE %s FORCE ROW LEVEL SECURITY', relation_name);
@@ -136,25 +79,6 @@ BEGIN
     END LOOP;
 END
 $tenant_policies$;
-
-DO $immutable_facts$
-DECLARE
-    relation_name text;
-    trigger_name text;
-BEGIN
-    -- ONE freeze for every control fact, unconditionally (wamn-10yt.52).
-    FOREACH relation_name IN ARRAY ARRAY[
-        'catalog.authoring_command_audit',
-        'wamn_run.gate_reports'
-    ] LOOP
-        trigger_name := split_part(relation_name, '.', 2) || '_immutable';
-        EXECUTE format(
-            'CREATE TRIGGER %I BEFORE UPDATE OR DELETE ON %s FOR EACH ROW EXECUTE FUNCTION catalog.reject_immutable_row_change()',
-            trigger_name, relation_name
-        );
-    END LOOP;
-END
-$immutable_facts$;
 
 -- The control author is mapped to one tenant by its exact login generation.
 CREATE SCHEMA IF NOT EXISTS wamn_authority AUTHORIZATION wamn_system;
@@ -178,107 +102,5 @@ CREATE TRIGGER wamn_record_history_stamp
         'created_at', 'created_by', 'updated_at', 'updated_by');
 REVOKE ALL ON TABLE wamn_authority.author_login_tenants FROM PUBLIC;
 
-CREATE OR REPLACE FUNCTION wamn_authority.session_author_env_key()
-RETURNS text
-LANGUAGE sql
-STABLE
-SECURITY DEFINER
-SET search_path = pg_catalog, wamn_authority
-AS $$
-    SELECT mapping.env_key
-      FROM wamn_authority.author_login_tenants AS mapping
-     WHERE mapping.login_identity = session_user
-$$;
-REVOKE ALL ON FUNCTION wamn_authority.session_author_env_key() FROM PUBLIC;
-
-DO $author_policies$
-DECLARE
-    relation_name text;
-    policy_name text;
-BEGIN
-    FOREACH relation_name IN ARRAY ARRAY[
-        'catalog.authoring_command_audit',
-        'wamn_run.gate_reports'
-    ] LOOP
-        policy_name := split_part(relation_name, '.', 2) || '_author_tenant';
-        EXECUTE format(
-            'CREATE POLICY %I ON %s AS RESTRICTIVE TO wamn_control_author USING (env_key = wamn_authority.session_author_env_key()) WITH CHECK (env_key = wamn_authority.session_author_env_key())',
-            policy_name, relation_name
-        );
-    END LOOP;
-END
-$author_policies$;
-
-REVOKE ALL PRIVILEGES ON SCHEMA catalog, wamn_run, wamn_authority
-    FROM wamn_control_author;
-GRANT USAGE ON SCHEMA catalog, wamn_run, wamn_authority TO wamn_control_author;
-GRANT EXECUTE ON FUNCTION wamn_authority.session_author_env_key()
-    TO wamn_control_author;
-
-REVOKE ALL PRIVILEGES ON catalog.authoring_command_audit, wamn_run.gate_reports
-    FROM wamn_control_author;
-GRANT SELECT, INSERT ON catalog.authoring_command_audit, wamn_run.gate_reports
-    TO wamn_control_author;
-
-REVOKE ALL ON ALL TABLES IN SCHEMA catalog, wamn_run FROM PUBLIC;
+REVOKE ALL ON ALL TABLES IN SCHEMA catalog FROM PUBLIC;
 REVOKE ALL ON ALL FUNCTIONS IN SCHEMA catalog FROM PUBLIC;
-
--- Assert the server objects produced by this artifact. There is deliberately
--- no checked-in fingerprint or compatibility list to regenerate.
-DO $objects$
-DECLARE
-    catalog_tables text[];
-    run_tables text[];
-    unexpected text;
-BEGIN
-    SELECT array_agg(tablename ORDER BY tablename) INTO catalog_tables
-      FROM pg_tables WHERE schemaname = 'catalog';
-    IF catalog_tables IS DISTINCT FROM ARRAY[
-        'authoring_command_audit', 'tenant_environments'
-    ]::text[] THEN
-        RAISE EXCEPTION USING ERRCODE = '55000',
-            MESSAGE = 'control-portable-catalog-inventory-drift';
-    END IF;
-
-    SELECT array_agg(tablename ORDER BY tablename) INTO run_tables
-      FROM pg_tables WHERE schemaname = 'wamn_run';
-    IF run_tables IS DISTINCT FROM ARRAY['gate_reports']::text[] THEN
-        RAISE EXCEPTION USING ERRCODE = '55000',
-            MESSAGE = 'control-portable-run-inventory-drift';
-    END IF;
-
-    SELECT string_agg(format('%s:%s', relation, privilege), ', '
-                      ORDER BY relation, privilege)
-      INTO unexpected
-      FROM (
-        SELECT quote_ident(namespace.nspname) || '.' || quote_ident(relation.relname)
-                   AS relation,
-               candidate.privilege
-          FROM pg_class AS relation
-          JOIN pg_namespace AS namespace ON namespace.oid = relation.relnamespace
-          CROSS JOIN unnest(ARRAY['SELECT', 'INSERT', 'UPDATE', 'DELETE',
-                                  'TRUNCATE', 'REFERENCES', 'TRIGGER'])
-               AS candidate(privilege)
-         WHERE relation.relkind IN ('r', 'p')
-           AND namespace.nspname IN ('catalog', 'wamn_run', 'wamn_authority')
-           AND has_table_privilege('wamn_control_author', relation.oid,
-                                   candidate.privilege)
-           AND NOT EXISTS (
-             SELECT 1 FROM (VALUES
-                 ('catalog', 'authoring_command_audit', 'SELECT'),
-                 ('catalog', 'authoring_command_audit', 'INSERT'),
-                 ('wamn_run', 'gate_reports', 'SELECT'),
-                 ('wamn_run', 'gate_reports', 'INSERT')
-             ) AS allowed(schema_name, table_name, privilege)
-             WHERE allowed.schema_name = namespace.nspname
-               AND allowed.table_name = relation.relname
-               AND allowed.privilege = candidate.privilege
-           )
-      ) AS excess;
-    IF unexpected IS NOT NULL THEN
-        RAISE EXCEPTION USING ERRCODE = '42501',
-            MESSAGE = 'control-author-effective-privilege-out-of-bounds',
-            DETAIL = unexpected;
-    END IF;
-END
-$objects$;

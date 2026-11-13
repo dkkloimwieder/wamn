@@ -89,7 +89,6 @@ fn wiring() -> WiringDocument {
             },
         )]),
         Vec::new(),
-        Vec::new(),
     )
     .expect("fixture wiring is structurally valid")
 }
@@ -281,7 +280,6 @@ async fn provision_project(project: &Client, project_url: &str) -> Vec<AdmittedC
                         terminal: Some(WiringTerminal::Respond),
                     },
                 )]),
-                Vec::new(),
                 Vec::new(),
             )
             .unwrap(),
@@ -904,7 +902,6 @@ async fn read_binding_refuses_post_and_forged_candidate_mode_before_dispatch() {
                 terminal: Some(WiringTerminal::Respond),
             },
         )]),
-        Vec::new(),
         Vec::new(),
     )
     .unwrap();

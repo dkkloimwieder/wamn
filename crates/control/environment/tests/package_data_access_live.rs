@@ -185,9 +185,7 @@ async fn installed_package_set_unions_a_real_app_generation_and_replays_noop() {
                  EXECUTE 'DROP ROLE wamn_app'; \
                END IF; \
                CREATE ROLE wamn_app NOLOGIN; \
-               IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'wamn_scenario_author') THEN \
-                 CREATE ROLE wamn_scenario_author NOLOGIN; \
-               END IF; \
+                \
              END $reset$;"
         ))
         .await
@@ -491,9 +489,7 @@ async fn install_lineage_fixture(url: &str) -> Client {
                  EXECUTE 'DROP ROLE wamn_app'; \
                END IF; \
                CREATE ROLE wamn_app NOLOGIN; \
-               IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'wamn_scenario_author') THEN \
-                 CREATE ROLE wamn_scenario_author NOLOGIN; \
-               END IF; \
+                \
              END $reset$;",
         )
         .await

@@ -136,14 +136,6 @@ mod tests {
     }
 
     #[test]
-    fn an_exact_membership_request_names_its_principal() {
-        assert_eq!(
-            validate_args(&request()).unwrap().as_str(),
-            "00112233-4455-6677-8899-aabbccddeeff"
-        );
-    }
-
-    #[test]
     fn malformed_scope_or_principal_is_refused_before_connecting() {
         type SetField = fn(&mut MembershipRequest, &str);
         let fields: [(SetField, &str); 4] = [
@@ -163,70 +155,5 @@ mod tests {
             set(&mut request, value);
             assert!(validate_args(&request).is_err(), "{value} must be refused");
         }
-    }
-
-    #[tokio::test]
-    async fn membership_steps_write_as_provisioning_without_an_admin() {
-        use wamn_control_provision::PlatformComponent;
-        use wamn_platform_identity::auth_changes::AuthChanges;
-
-        let _lock = wamn_test_postgres::lock();
-        let database = wamn_control_provision::test_database::system();
-        database
-            .execute(&[
-                &wamn_control_provision::test_database::seed_org_project_env_sql(
-                    "acme", "billing", "dev",
-                ),
-            ])
-            .unwrap();
-        let (mut client, connection) =
-            tokio_postgres::connect(database.url(), tokio_postgres::NoTls)
-                .await
-                .unwrap();
-        let connection = tokio::spawn(connection);
-        client.batch_execute("SET ROLE wamn_system").await.unwrap();
-        let transaction =
-            wamn_environment_control::provision_project_env::provisioning_transaction(&mut client)
-                .await
-                .unwrap();
-        let user = wamn_platform_identity::create_or_reuse_user(
-            &transaction,
-            "fixture@example.test",
-            "Fixture user",
-        )
-        .await
-        .unwrap();
-        transaction.commit().await.unwrap();
-        let arguments = || MembershipRequest {
-            system_database_url: database.url().to_owned(),
-            principal_id: user.principal_id.as_str().to_owned(),
-            ..request()
-        };
-        for _ in 0..2 {
-            assert_eq!(super::grant(arguments()).await.unwrap(), user.principal_id);
-        }
-        let row = client.query_one(
-            "SELECT created_by::text, updated_by::text FROM identity.project_env_memberships \
-             WHERE principal_id = $1::text::uuid AND org = 'acme' AND project = 'billing' AND env = 'dev'",
-            &[&user.principal_id.as_str()],
-        ).await.unwrap();
-        let provisioning = PlatformComponent::Provisioning.principal_id().to_string();
-        assert_eq!(row.get::<_, String>(0), provisioning);
-        assert_eq!(row.get::<_, String>(1), provisioning);
-        let row = client
-            .query_one("SELECT count(*) FROM identity.org_roles", &[])
-            .await
-            .unwrap();
-        assert_eq!(row.get::<_, i64>(0), 0);
-        super::revoke(arguments(), &AuthChanges::default())
-            .await
-            .unwrap();
-        let row = client.query_one(
-            "SELECT count(*) FROM identity.project_env_memberships WHERE principal_id = $1::text::uuid",
-            &[&user.principal_id.as_str()],
-        ).await.unwrap();
-        assert_eq!(row.get::<_, i64>(0), 0);
-        drop(client);
-        connection.await.unwrap().unwrap();
     }
 }

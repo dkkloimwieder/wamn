@@ -1,10 +1,8 @@
 [workspace]
 resolver = "2"
-members = ["services/host", "services/edge", "services/identity", "services/ctl", "services/scenario-worker", "services/cdc-reader", "tools/bench", "tools/submodule-check", "tests/orchestrator", "tests/conformance", "tests/integration", "tests/system", "test-support/harness", "test-support/fixture-package", "test-support/infrastructure", "test-support/postgres", "crates/client/core", "apps/wamn_receiving/tests", "apps/wamn_wms/tests", "crates/authoring/model", "crates/catalog/model", "crates/catalog/package-artifact", "crates/execution/host", "crates/execution/workflow/router", "crates/execution/run-state", "crates/execution/run-state-sqlite", "crates/execution/workflow", "crates/schema/control", "crates/schema/generator", "crates/schema/introspection", "crates/platform/pg-core", "crates/platform/number-pattern", "crates/platform/component-policy", "crates/platform/component-composer", "crates/platform/component-virtualizer", "crates/platform/engine", "crates/platform/runtime", "crates/control/package", "crates/control/release", "crates/control/environment", "crates/control/dev", "crates/control/provision", "crates/control/registry", "crates/identity/platform", "crates/identity/client", "crates/identity/session", "crates/identity/project-state", "crates/identity/credential-store"]
+members = ["services/host", "services/edge", "services/identity", "services/ctl", "services/cdc-reader", "tools/bench", "tools/submodule-check", "tests/conformance", "tests/integration", "test-support/fixture-package", "test-support/infrastructure", "test-support/postgres", "apps/wamn_receiving/tests", "apps/wamn_wms/tests", "crates/catalog/model", "crates/catalog/package-artifact", "crates/execution/host", "crates/execution/workflow/router", "crates/execution/run-state", "crates/execution/run-state-sqlite", "crates/execution/workflow", "crates/schema/control", "crates/schema/generator", "crates/schema/introspection", "crates/platform/pg-core", "crates/platform/number-pattern", "crates/platform/component-policy", "crates/platform/component-composer", "crates/platform/component-virtualizer", "crates/platform/engine", "crates/platform/runtime", "crates/control/package", "crates/control/release", "crates/control/environment", "crates/control/dev", "crates/control/provision", "crates/control/registry", "crates/identity/platform", "crates/identity/client", "crates/identity/session", "crates/identity/project-state", "crates/identity/credential-store"]
 default-members = [
-  "crates/authoring/model",
   "crates/catalog/model",
-  "crates/client/core",
   "crates/execution/host",
   "crates/execution/workflow/router",
   "crates/execution/run-state",
@@ -16,7 +14,6 @@ default-members = [
   "crates/platform/runtime",
   "services/host",
   "services/identity",
-  "services/scenario-worker",
 ]
 # Guest components are built separately for wasm32-wasip2 (see apps/*).
 exclude = ["apps"]
@@ -118,7 +115,7 @@ mimalloc = "0.1.52"
 # Pin shared crates to the versions in the wasmCloud release lockfile.
 # Conformance enforces one crates.io Wasmtime type universe.
 wash-runtime = { git = "https://github.com/wasmCloud/wasmCloud", tag = "v2.12.1", default-features = false }
-# Native sandbox hosts and gates must share one Wasmtime type universe.
+# Native hosts must share one Wasmtime type universe.
 # parallel-compilation is a wasmtime DEFAULT that default-features=false drops.
 # Without it Cranelift compiles every component on one core: receiving took
 # 24,383 ms on an 8-core box against 27,250 ms under a 2-core pod cap -- a ratio
@@ -231,10 +228,8 @@ wasmparser = "0.261.0"
 wasi-virt = { version = "=0.2.0", git = "https://github.com/bytecodealliance/WASI-Virt.git", rev = "448f6df8f688cee5d6995e96b1ffc31f9bf00742", default-features = false }
 
 # Every project crate has one canonical path + version identity (M-CRATES-IN-WORKSPACE).
-wamn-authoring-model = { path = "crates/authoring/model", version = "0.1.0" }
 wamn-catalog = { path = "crates/catalog/model", version = "0.1.0" }
 wamn-package-artifact = { path = "crates/catalog/package-artifact", version = "0.1.0" }
-wamn-client = { path = "crates/client/core", version = "0.1.0" }
 wamn-fixture-package = { path = "test-support/fixture-package", version = "0.1.0" }
 wamn-cdc-reader = { path = "services/cdc-reader", version = "0.1.0" }
 wamn-component-policy = { path = "crates/platform/component-policy", version = "0.1.0" }
@@ -253,8 +248,6 @@ wamn-event-wire = { path = "apps/platform/events/wire", version = "0.1.0" }
 wamn-execution-contract = { path = "apps/platform/execution/contract", version = "0.1.0" }
 wamn-engine = { path = "crates/platform/engine", version = "0.1.0" }
 wamn-execution-host = { path = "crates/execution/host", version = "0.1.0" }
-wamn-gate-harness = { path = "test-support/harness", version = "0.1.0" }
-wamn-gates = { path = "tests/orchestrator", version = "0.1.0" }
 wamn-host = { path = "services/host", version = "0.1.0" }
 wamn-materializer = { path = "apps/platform/events/materializer", version = "0.1.0" }
 wamn-pg-core = { path = "crates/platform/pg-core", version = "0.1.0" }
@@ -265,13 +258,11 @@ wamn-project-state = { path = "crates/identity/project-state", version = "0.1.0"
 wamn-record-history = { path = "apps/platform/data/record-history", version = "0.1.0" }
 wamn-conformance-tests = { path = "tests/conformance", version = "0.1.0" }
 wamn-integration-tests = { path = "tests/integration", version = "0.1.0" }
-wamn-system-tests = { path = "tests/system", version = "0.1.0" }
 wamn-router = { path = "crates/execution/workflow/router", version = "0.1.0" }
 wamn-run-state = { path = "crates/execution/run-state", version = "0.1.0" }
 wamn-run-state-sqlite = { path = "crates/execution/run-state-sqlite", version = "0.1.0" }
 wamn-session = { path = "crates/identity/session", version = "0.1.0" }
 wamn-runtime = { path = "crates/platform/runtime", version = "0.1.0" }
-wamn-scenario-worker = { path = "services/scenario-worker", version = "0.1.0" }
 wamn-schema-control = { path = "crates/schema/control", version = "0.1.0" }
 wamn-schema-generator = { path = "crates/schema/generator", version = "0.1.0" }
 wamn-schema-introspection = { path = "crates/schema/introspection", version = "0.1.0" }

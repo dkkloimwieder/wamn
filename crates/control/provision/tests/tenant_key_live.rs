@@ -483,7 +483,7 @@ fn the_session_derivation_returns_the_key_of_the_connected_guest_login() {
     }
 
     // FAIL CLOSED for anything that is not a guest generation at all — the
-    // posture `session_author_env_key()` takes for an unmapped login.
+    // posture of an unmapped login.
     let non_guest = psql(
         &db_url,
         None,
@@ -593,10 +593,7 @@ fn administration_uses_the_database_boundary_while_catalog_keeps_tenant_keys() {
     let _lock = wamn_test_postgres::lock();
     let database = wamn_test_postgres::database();
     let url = database.url();
-    psql_file(
-        url,
-        "CREATE ROLE wamn_app NOLOGIN; CREATE ROLE wamn_scenario_author NOLOGIN",
-    );
+    psql_file(url, "CREATE ROLE wamn_app NOLOGIN; ");
     psql_file(url, wamn_catalog::CATALOG_SCHEMA_SQL);
     psql_file(url, wamn_control_provision::APP_SCHEMA_SQL);
     psql_file(url, "DO $$ BEGIN

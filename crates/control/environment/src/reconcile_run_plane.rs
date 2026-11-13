@@ -16,14 +16,12 @@ use wamn_control_provision::{
 use wamn_control_registry::{DurabilityClass, Triple};
 use wamn_schema_control::{
     BareSchemaName, RowPolicyObservation, RowSecurityObservation, RunPlaneObservation,
-    RunPlanePlan, ScenarioAuthorRoleObservation, catalog_schema_present_sql, plan_run_plane,
-    select_app_run_queue_authority_sql, select_app_scenario_author_membership_sql,
+    RunPlanePlan, catalog_schema_present_sql, plan_run_plane, select_app_run_queue_authority_sql,
     select_authoring_effective_column_privileges_sql,
     select_authoring_effective_table_privileges_sql, select_authoring_table_owners_sql,
     select_authoring_table_privileges_sql, select_environment_policy_policies_sql,
     select_environment_policy_row_security_sql, select_run_capture_privileges_sql,
-    select_run_plane_helper_functions_sql, select_scenario_author_role_sql,
-    select_scenario_author_schema_usage_sql, select_schema_checks_sql, select_schema_columns_sql,
+    select_run_plane_helper_functions_sql, select_schema_checks_sql, select_schema_columns_sql,
     select_schema_indexes_sql, select_schema_triggers_sql,
 };
 
@@ -946,58 +944,22 @@ pub async fn ensure_runtime_roles(client: &tokio_postgres::Client) -> anyhow::Re
         .batch_execute(&wamn_control_provision::sql::ensure_app_acl_role_sql())
         .await
         .context("ensure wamn_app role")?;
-    client
-        .batch_execute(wamn_schema_control::ensure_scenario_author_role_sql())
-        .await
-        .context("ensure host-only wamn_scenario_author role")?;
-    client
-        .batch_execute(
-            "SELECT pg_advisory_xact_lock(hashtext('wamn_role_bootstrap')); \
-             DO $separate$ BEGIN \
-               IF EXISTS (SELECT FROM pg_auth_members m \
-                            JOIN pg_roles g ON g.oid = m.roleid \
-                            JOIN pg_roles r ON r.oid = m.member \
-                           WHERE g.rolname = 'wamn_scenario_author' \
-                             AND r.rolname = 'wamn_app') THEN \
-                 REVOKE wamn_scenario_author FROM wamn_app; \
-               END IF; \
-             END $separate$;",
-        )
-        .await
-        .context("separate guest and scenario-author roles")
+    Ok(())
 }
 
-/// Read everything the pure planner decides on. Read-only.
+/// Read the database facts that the planner uses.
 async fn observe(
     client: &tokio_postgres::Client,
     schema: &BareSchemaName,
 ) -> anyhow::Result<RunPlaneObservation> {
     let mut obs = RunPlaneObservation {
-        scenario_author_role: client
-            .query_opt(select_scenario_author_role_sql(), &[])
+        app_run_queue_authority: client
+            .query_one(select_app_run_queue_authority_sql(), &[&schema.as_str()])
             .await
-            .context("read scenario-author role attributes")?
-            .map(|row| ScenarioAuthorRoleObservation {
-                can_login: row.get(0),
-                is_superuser: row.get(1),
-                can_create_database: row.get(2),
-                can_create_role: row.get(3),
-                inherits_roles: row.get(4),
-                can_replicate: row.get(5),
-                bypasses_rls: row.get(6),
-            }),
+            .context("read guest run-queue authority")?
+            .get(0),
         ..Default::default()
     };
-    obs.app_is_scenario_author_member = client
-        .query_one(select_app_scenario_author_membership_sql(), &[])
-        .await
-        .context("read guest scenario-author membership")?
-        .get(0);
-    obs.app_run_queue_authority = client
-        .query_one(select_app_run_queue_authority_sql(), &[&schema.as_str()])
-        .await
-        .context("read guest run-queue authority")?
-        .get(0);
     let capture_privileges_sql = select_run_capture_privileges_sql();
     let capture_privileges = client
         .query_one(&capture_privileges_sql, &[&schema.as_str()])
@@ -1051,20 +1013,6 @@ async fn observe(
     {
         obs.authoring_table_owners
             .insert((row.get(0), row.get(1)), row.get(2));
-    }
-    for row in client
-        .query(
-            select_scenario_author_schema_usage_sql(),
-            &[&schema.as_str()],
-        )
-        .await
-        .context("read scenario-author schema usage")?
-    {
-        let schema_name: String = row.get(0);
-        let has_usage: bool = row.get(1);
-        if has_usage {
-            obs.scenario_author_schema_usage.insert(schema_name);
-        }
     }
 
     for row in client

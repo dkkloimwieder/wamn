@@ -10,9 +10,6 @@
 //! enable-cdc-project-env) live in `wamn-ctl`
 //! (SR9); this artifact ships none of them.
 //!
-//! The test suite lives in the separate
-//! `wamn-gates` binary (docs/operations/building.md); this artifact ships
-//! none of it.
 
 use std::str::FromStr as _;
 

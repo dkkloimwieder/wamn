@@ -26,12 +26,9 @@ pub(crate) use credentials::{
 };
 #[doc(inline)]
 pub use credentials::{
-    ensure_control_author_acl_role_sql, ensure_workload_acl_role_sql,
-    forget_generation_password_sql, generation_password_recorded_sql,
-    normalize_workload_generation_membership_sql, prepare_control_author_generation_sql,
-    prepare_workload_generation_sql, record_generation_password_sql,
-    retire_control_author_generation_sql, retire_workload_generation_sql,
-    system_generation_state_sql, terminate_control_author_generation_sessions_sql,
+    ensure_workload_acl_role_sql, forget_generation_password_sql, generation_password_recorded_sql,
+    normalize_workload_generation_membership_sql, prepare_workload_generation_sql,
+    record_generation_password_sql, retire_workload_generation_sql, system_generation_state_sql,
     terminate_workload_generation_sessions_sql, workload_generation_state_sql,
     workload_scope_lock_sql,
 };
@@ -57,7 +54,7 @@ pub use package_owner::{ensure_package_owner_role_sql, package_owner_grants_sql}
 use crate::name::{APP_ROLE, DB_OWNER_ROLE};
 use crate::workload_role::{
     ADMINISTRATION_ROLE, EVENT_MATERIALIZER_ROLE, EXECUTOR_PLATFORM_ROLE, HTTP_ADMITTER_ROLE,
-    MANAGEMENT_ADMITTER_ROLE, PLATFORM_GROUP_ROLE, SESSION_ROLE_READER_ROLE, WorkloadRoleFamily,
+    PLATFORM_GROUP_ROLE, SESSION_ROLE_READER_ROLE, WorkloadRoleFamily,
 };
 pub(crate) use wamn_pg_core::quote_ident;
 use wamn_pg_core::quote_literal;
@@ -139,15 +136,6 @@ pub fn drain_app_role_sessions_sql() -> String {
         role_lit = quote_literal(APP_ROLE),
     )
 }
-
-/// Catalog relations read by the surviving management-admission surface.
-///
-/// Publish reads the immutable wirings. Publish and Gate read the component
-/// facts from the package artifact in the registry, not from this database
-/// (`wamn-vavs4.6`). Runtime connection state is deliberately absent: an empty
-/// case set executes nothing, while a nonempty set reaches the effect posture
-/// before any binding could be relevant (`wamn-10yt.10.14`).
-pub const MANAGEMENT_ADMITTER_CATALOG_RELATIONS: [&str; 0] = [];
 
 /// Catalog relations read by callable-HTTP connection authorization.
 ///
@@ -441,50 +429,6 @@ fn grant_tenant_key_execute_sql(role: &str) -> String {
         schema = quote_ident(crate::tenant_key::TENANT_KEY_SCHEMA),
         role = quote_ident(role),
     )
-}
-
-/// Converge management publication to its exact catalog grants.
-///
-/// The family reads wiring facts and appends immutable wirings.
-/// Revocation removes stale table, column, and schema privileges before grants.
-pub fn grant_management_admitter_surface_sql(schema: &str) -> String {
-    let role = quote_ident(MANAGEMENT_ADMITTER_ROLE);
-    let schema_literal = quote_literal(schema);
-    let schema = quote_ident(schema);
-    let mut sql = format!(
-        "{ensure} \
-         REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA catalog, {schema} FROM {role}; \
-         DO $management_column_acl$ DECLARE target record; BEGIN \
-           FOR target IN \
-             SELECT namespace.nspname, relation.relname, attribute.attname \
-               FROM pg_catalog.pg_attribute AS attribute \
-               JOIN pg_catalog.pg_class AS relation ON relation.oid = attribute.attrelid \
-               JOIN pg_catalog.pg_namespace AS namespace ON namespace.oid = relation.relnamespace \
-              WHERE namespace.nspname IN ('catalog', {schema_literal}) \
-                AND relation.relkind IN ('r', 'p') \
-                AND attribute.attnum > 0 AND NOT attribute.attisdropped \
-           LOOP \
-             EXECUTE format( \
-               'REVOKE ALL PRIVILEGES (%I) ON TABLE %I.%I FROM %I', \
-               target.attname, target.nspname, target.relname, {role_literal}); \
-           END LOOP; \
-         END $management_column_acl$; \
-         REVOKE ALL PRIVILEGES ON SCHEMA catalog, {schema} FROM {role}; \
-         GRANT USAGE ON SCHEMA catalog TO {role};",
-        ensure = ensure_workload_acl_role_sql(WorkloadRoleFamily::ManagementAdmitter),
-        role_literal = quote_literal(MANAGEMENT_ADMITTER_ROLE),
-    );
-    for relation in MANAGEMENT_ADMITTER_CATALOG_RELATIONS {
-        write!(
-            sql,
-            " GRANT SELECT ON TABLE catalog.{relation} TO {role};",
-            relation = quote_ident(relation),
-        )
-        .expect("writing to a String cannot fail");
-    }
-    sql.push(' ');
-    sql.push_str(&grant_tenant_key_execute_sql(MANAGEMENT_ADMITTER_ROLE));
-    sql
 }
 
 fn quoted_column_list(columns: &[&str]) -> String {
@@ -927,7 +871,7 @@ pub fn grant_registry_reader_surface_sql() -> String {
 /// live cluster role carries `SELECT, INSERT, UPDATE`; its `INSERT` was added
 /// deliberately when that route did exist, and the grant then drifted
 /// SELECT-only -> +INSERT -> +INSERT,UPDATE out of band THREE times.
-/// `services/scenario-worker`'s
+/// the identity service’s
 /// `only_the_mounted_kinds_have_a_route_and_the_rest_answer_a_bare_501` decides
 /// the mounted route list by CALLING route selection, so a re-mounted session
 /// route changes an answer that test reads. The write privilege such a route
@@ -1082,9 +1026,6 @@ pub fn control_surface_grants_sql() -> String {
 /// a family stays per-family (`wamn-0h0g.22.16`).
 pub fn stable_surface_sql(family: WorkloadRoleFamily) -> Option<String> {
     match family {
-        WorkloadRoleFamily::ManagementAdmitter => {
-            Some(grant_management_admitter_surface_sql("wamn_run"))
-        }
         WorkloadRoleFamily::ExecutorPlatform => {
             Some(grant_executor_platform_surface_sql("wamn_run"))
         }
@@ -1195,127 +1136,17 @@ mod tests {
             "DROP DATABASE IF EXISTS \"wamn-db-acme--billing--dev\" WITH (FORCE)"
         );
     }
-    #[test]
-    fn management_admitter_surface_is_current_column_exact_and_convergent() {
-        let sql = grant_management_admitter_surface_sql("wamn_run");
-        assert!(sql.contains("'wamn_management_admitter'"));
-        assert!(sql.contains("CREATE ROLE %I NOLOGIN"));
-        let revoke = sql
-            .find(
-                "REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA catalog, \"wamn_run\" \
-                 FROM \"wamn_management_admitter\"",
-            )
-            .expect("blanket table revoke");
-        let usage = sql
-            .find("GRANT USAGE ON SCHEMA catalog TO \"wamn_management_admitter\"")
-            .expect("exact schema usage");
-        assert!(revoke < usage);
-        let column_revoke = sql
-            .find("DO $management_column_acl$")
-            .expect("explicit stale column-ACL revocation");
-        assert!(revoke < column_revoke && column_revoke < usage);
-
-        for relation in MANAGEMENT_ADMITTER_CATALOG_RELATIONS {
-            assert!(sql.contains(&format!(
-                "GRANT SELECT ON TABLE catalog.\"{relation}\" TO \
-                 \"wamn_management_admitter\""
-            )));
-        }
-        for forbidden in [
-            "GRANT SELECT ON TABLE \"wamn_run\"",
-            "ON TABLE \"wamn_run\".\"runs\" TO",
-            "ON TABLE \"wamn_run\".\"run_queue\" TO",
-            "GRANT SELECT ON ALL TABLES",
-            "GRANT INSERT ON TABLE catalog",
-            "\"created_at\") ON TABLE catalog.\"wirings\"",
-            "GRANT UPDATE",
-            "GRANT DELETE",
-            "GRANT TRUNCATE",
-            "GRANT REFERENCES",
-            "GRANT TRIGGER",
-            "flow_id",
-            "flow_version",
-            "plan_hash",
-            "execution_bundle_hash",
-        ] {
-            assert!(!sql.contains(forbidden), "surface gained {forbidden:?}");
-        }
-        assert!(grant_management_admitter_surface_sql("we\"ird").contains("\"we\"\"ird\""));
-    }
-
-    /// The catalog wiring index needs tenant-key execution during INSERT.
-    #[test]
-    fn the_management_surface_grants_the_one_execute_its_tkey_index_needs() {
-        let sql = grant_management_admitter_surface_sql("wamn_run");
-        assert!(
-            sql.contains(
-                "GRANT EXECUTE ON FUNCTION \"wamn_authority\".tenant_key(text) \
-                 TO \"wamn_management_admitter\""
-            ),
-            "the tkey expression index makes this EXECUTE load bearing for INSERT"
-        );
-        assert_eq!(
-            sql.matches("GRANT EXECUTE").count(),
-            1,
-            "exactly one function grant, and it is the tenant-key derivation"
-        );
-        for forbidden in [
-            "GRANT USAGE ON SCHEMA \"wamn_authority\"",
-            "current_tenant_key",
-        ] {
-            assert!(
-                !sql.contains(forbidden),
-                "index-expression evaluation needs neither: surface gained {forbidden:?}"
-            );
-        }
-    }
 
     /// The grant set MINUS the shared role bootstrap, so a pin can be exact.
     ///
     /// `ensure_workload_acl_role_sql` is the same text for all twelve families
-    /// and is nobody's surface; splitting it off is what lets the two pins below
+    /// and is nobody's surface; splitting it off is what lets the surface test
     /// be byte-equality against the thing that actually varies, instead of
     /// fragment `contains` checks that pass while a grant is deleted.
     fn surface_grants(family: WorkloadRoleFamily, sql: &str) -> String {
         sql.strip_prefix(&format!("{} ", ensure_workload_acl_role_sql(family)))
             .expect("a family surface opens with its own role bootstrap")
             .to_string()
-    }
-
-    /// THE CALLABLE-HTTP ADMITTER'S WHOLE SURFACE, PINNED AS A STRING
-    /// (`wamn-0h0g.22.37`).
-    ///
-    /// The live gate in `tests/family_surface_grants.rs` measures this from a
-    /// test server. This is generated SQL from a Rust builder, so byte-equality
-    /// here also catches the builder moving without a server.
-    #[test]
-    fn the_http_admitter_surface_adds_only_fresh_operation_permission_reads() {
-        let sql = grant_http_admitter_surface_sql("wamn_run");
-        assert_eq!(
-            surface_grants(WorkloadRoleFamily::HttpAdmitter, &sql),
-            "REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA catalog, platform, \"wamn_run\" \
-             FROM \"wamn_http_admitter\"; \
-             REVOKE ALL PRIVILEGES ON ALL ROUTINES IN SCHEMA catalog, platform, \"wamn_run\" \
-             FROM \"wamn_http_admitter\"; \
-             REVOKE ALL PRIVILEGES ON SCHEMA catalog, platform, \"wamn_run\" \
-             FROM \"wamn_http_admitter\"; \
-             GRANT USAGE ON SCHEMA catalog, platform TO \"wamn_http_admitter\"; \
-             GRANT SELECT ON TABLE catalog.\"releases\" TO \"wamn_http_admitter\"; \
-             GRANT SELECT ON TABLE catalog.\"connection_requirement\" \
-             TO \"wamn_http_admitter\"; \
-             GRANT SELECT ON TABLE catalog.\"connection_binding\" TO \"wamn_http_admitter\"; \
-             GRANT SELECT ON TABLE catalog.\"release_connection\" TO \"wamn_http_admitter\"; \
-             GRANT SELECT ON TABLE platform.\"connection\" TO \"wamn_http_admitter\"; \
-             GRANT SELECT ON TABLE platform.\"integration\" TO \"wamn_http_admitter\"; \
-             GRANT SELECT ON TABLE platform.\"permission\" TO \"wamn_http_admitter\"; \
-             GRANT SELECT ON TABLE platform.\"user\" TO \"wamn_http_admitter\"; \
-             GRANT SELECT ON TABLE platform.\"user_role\" TO \"wamn_http_admitter\"; \
-             GRANT SELECT (\"env_key\", \"environment\", \"application\", \"workflow_id\", \
-             \"version\", \"graph_json\") ON TABLE catalog.\"workflows\" TO \"wamn_http_admitter\";",
-            "the callable-HTTP admitter reads four catalog relations, the selected workflow columns and five platform relations, and holds nothing on the run plane, no write of any grain, and no EXECUTE"
-        );
-        // The schema is an identifier position and is quoted, not interpolated.
-        assert!(grant_http_admitter_surface_sql("we\"ird").contains("\"we\"\"ird\""));
     }
 
     /// THE EXECUTOR-PLATFORM SURFACE, PINNED AS A STRING (`wamn-0h0g.22.37`).
@@ -1399,28 +1230,6 @@ mod tests {
             assert!(!sql.contains(forbidden), "surface gained {forbidden:?}");
         }
         assert!(grant_executor_platform_surface_sql("we\"ird").contains("\"we\"\"ird\""));
-    }
-
-    #[test]
-    fn management_admitter_prepare_uses_the_generic_generation_lifecycle() {
-        let role = "management-generation-a";
-        let sql = prepare_workload_generation_sql(
-            WorkloadRoleFamily::ManagementAdmitter,
-            "project-db",
-            role,
-            "secret",
-            "2026-09-15T12:00:00Z",
-        );
-        assert!(sql.contains(&grant_management_admitter_surface_sql("wamn_run")));
-        assert!(sql.contains(&format!(
-            "GRANT \"wamn_management_admitter\" TO \"{role}\" \
-             WITH ADMIN FALSE, INHERIT TRUE, SET FALSE"
-        )));
-        assert!(sql.contains(&format!(
-            "GRANT CONNECT ON DATABASE \"project-db\" TO \"{role}\""
-        )));
-        assert_eq!(sql.matches("LOGIN PASSWORD 'secret'").count(), 1);
-        assert!(!sql.contains("CREATE SECRET"));
     }
 
     /// The registry reader's WHOLE batch, pinned as the string the builder
@@ -1626,87 +1435,6 @@ mod tests {
         assert!(sql.contains("GRANT CONNECT ON DATABASE \"wamn_system\""));
         assert!(stable_surface_sql(WorkloadRoleFamily::IdentityReader).is_some());
     }
-    /// wamn-0h0g.8.18: the stable control-author role is host-only, hardens on
-    /// replay, and never becomes a member of another plane's role.
-    #[test]
-    fn control_author_acl_role_is_nologin_and_hardens_on_replay() {
-        let sql = ensure_control_author_acl_role_sql();
-        assert!(sql.contains("pg_advisory_xact_lock(hashtext('wamn_role_bootstrap'))"));
-        assert!(sql.contains("'wamn_control_author'"));
-        assert!(sql.contains("CREATE ROLE %I NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE"));
-        // A replay that finds a drifted attribute must repair it, not succeed.
-        assert!(sql.contains("ELSIF EXISTS"));
-        assert!(sql.contains("ALTER ROLE %I NOLOGIN PASSWORD NULL NOCREATEDB"));
-        assert!(sql.contains("EXECUTE format('ALTER ROLE %I NOSUPERUSER', role_name)"));
-        for other_plane in ["wamn_scenario_author", "wamn_app"] {
-            assert!(
-                !sql.contains(other_plane),
-                "control author touched {other_plane}"
-            );
-        }
-    }
-
-    /// The prepared generation may authenticate and connect to exactly the
-    /// control database, inheriting exactly the one stable ACL role.
-    #[test]
-    fn control_author_prepare_has_only_control_connect_and_one_membership() {
-        let role = "wamn_control_author_2222222222222222222222222222222222222222_b";
-        let sql = prepare_control_author_generation_sql(
-            "wamn-system",
-            role,
-            "0123456789abcdef",
-            "2026-09-15T12:00:00Z",
-        );
-        assert!(sql.contains(&ensure_control_author_acl_role_sql()));
-        // NOLOGIN create precedes the LOGIN flip, so a crash between them leaves
-        // an inert role rather than a passwordless login.
-        let created = sql.find("CREATE ROLE \"wamn_control_author_2").unwrap();
-        let login = sql.find("LOGIN PASSWORD '0123456789abcdef'").unwrap();
-        assert!(created < login);
-        assert!(sql[created..login].contains("NOLOGIN"));
-        assert!(sql.contains("VALID UNTIL '2026-09-15T12:00:00Z'"));
-        assert!(sql.contains(&format!(
-            "GRANT \"wamn_control_author\" TO \"{role}\" \
-             WITH ADMIN FALSE, INHERIT TRUE, SET FALSE;"
-        )));
-        assert_eq!(sql.matches("GRANT CONNECT ON DATABASE").count(), 1);
-        assert!(sql.contains("GRANT CONNECT ON DATABASE \"wamn-system\""));
-        // Never the project plane's author role, and never another plane's ACL.
-        for forbidden in [
-            "wamn_scenario_author",
-            "SUPERUSER TO",
-            "WITH ADMIN TRUE",
-            "WITH GRANT OPTION",
-        ] {
-            assert!(!sql.contains(forbidden), "prepare granted {forbidden}");
-        }
-    }
-
-    /// Retirement removes authority before authentication and never terminates a
-    /// session in the same batch; the terminate builder changes no authority.
-    #[test]
-    fn control_author_retire_commits_authority_removal_before_termination() {
-        let role = "wamn_control_author_3333333333333333333333333333333333333333_a";
-        let sql = retire_control_author_generation_sql("wamn-system", role);
-        let membership = sql.find("REVOKE \"wamn_control_author\"").unwrap();
-        let connect = sql.find("REVOKE CONNECT ON DATABASE").unwrap();
-        let no_login = sql.find("NOLOGIN PASSWORD NULL").unwrap();
-        assert!(membership < connect && connect < no_login);
-        assert!(sql.contains("VALID UNTIL 'epoch'"));
-        assert!(!sql.contains("pg_terminate_backend"));
-        assert!(
-            !sql.contains("DROP ROLE"),
-            "slots are reused, never dropped"
-        );
-
-        let terminate = terminate_control_author_generation_sessions_sql(role);
-        assert!(terminate.contains(&format!("WHERE usename = '{role}'")));
-        assert!(terminate.contains("pid <> pg_backend_pid()"));
-        for authority_change in ["REVOKE ", "GRANT ", "ALTER ROLE"] {
-            assert!(!terminate.contains(authority_change));
-        }
-    }
-
     #[test]
     fn generation_state_probe_is_read_only_and_parameterized() {
         let sql = workload_generation_state_sql();

@@ -13,20 +13,16 @@
 //!   (wamn-0h0g.26.14);
 //! - **ports** — [`MAIN_PORT`] / [`ERROR_PORT`] / [`EntryKind`], persisted names
 //!   the walk and the exposure row both read;
-//! - **cases** — [`TestSetCase`] and [`Expect`], the publish gate's bounded test
-//!   contract;
 //! - **failure** — [`WiringFailureKind`], the frozen `failure-code` literals;
 //! - **read query** — [`encode_read_query`] / [`decode_read_query`], the one
 //!   query-string encoding of a read request element.
 
 mod canonical_scalar;
 mod effect_outcome;
-mod expect;
 pub mod node_contract;
 mod ports;
 mod read_query;
 mod status;
-mod test_set;
 
 use std::fmt::Write as _;
 
@@ -35,7 +31,6 @@ use sha2::{Digest as _, Sha256};
 
 pub use canonical_scalar::{canonical_numeric, canonical_timestamptz, format_timestamptz};
 pub use effect_outcome::EffectOutcome;
-pub use expect::{Expect, ExpectError, ExpectedOutcome};
 pub use node_contract::{
     CanonicalHttpTarget, ConnectionRequirement, PortableHttpTargetError,
     normalize_portable_http_target,
@@ -43,9 +38,6 @@ pub use node_contract::{
 pub use ports::{ERROR_PORT, EntryKind, MAIN_PORT};
 pub use read_query::{ReadQueryError, decode_read_query, encode_read_query};
 pub use status::WiringFailureKind;
-pub use test_set::{
-    MAX_TEST_SET_CASES, TestSetCase, TestSetCasesError, TestSetCasesErrorType, validate_cases,
-};
 
 /// `sha256:<hex>` over the canonical representation of arbitrary JSON.
 ///

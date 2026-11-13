@@ -5619,17 +5619,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "wamn-authoring-model"
-version = "0.1.0"
-dependencies = [
- "schemars",
- "serde",
- "serde_json",
- "wamn-catalog",
- "wamn-execution-contract",
-]
-
-[[package]]
 name = "wamn-bench"
 version = "0.1.0"
 dependencies = [
@@ -5692,22 +5681,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "wamn-client"
-version = "0.1.0"
-dependencies = [
- "async-trait",
- "boon",
- "rust_decimal",
- "serde",
- "serde_json",
- "tokio",
- "url",
- "uuid",
- "wamn-execution-contract",
- "zeroize",
-]
-
-[[package]]
 name = "wamn-component-composer"
 version = "0.1.0"
 dependencies = [
@@ -5758,11 +5731,15 @@ dependencies = [
  "syn 3.0.6",
  "tokio",
  "url",
+ "wamn-catalog",
  "wamn-component-policy",
+ "wamn-control-provision",
+ "wamn-control-registry",
  "wamn-engine",
+ "wamn-environment-control",
  "wamn-execution-host",
  "wamn-fixture-package",
- "wamn-gate-harness",
+ "wamn-release-control",
  "wamn-run-state",
  "wamn-runtime",
  "wamn-schema-generator",
@@ -5872,7 +5849,6 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-nats",
- "async-trait",
  "base64 0.22.1",
  "chrono",
  "futures-util",
@@ -5892,9 +5868,7 @@ dependencies = [
  "tracing",
  "url",
  "uuid",
- "wamn-authoring-model",
  "wamn-catalog",
- "wamn-client",
  "wamn-component-composer",
  "wamn-control-provision",
  "wamn-control-registry",
@@ -5905,7 +5879,6 @@ dependencies = [
  "wamn-execution-contract",
  "wamn-execution-host",
  "wamn-fixture-package",
- "wamn-gate-harness",
  "wamn-identity-client",
  "wamn-package-artifact",
  "wamn-package-control",
@@ -6037,7 +6010,6 @@ dependencies = [
  "wamn-execution-contract",
  "wamn-execution-host",
  "wamn-fixture-package",
- "wamn-gate-harness",
  "wamn-identity-client",
  "wamn-package-artifact",
  "wamn-package-control",
@@ -6159,50 +6131,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "wamn-gate-harness"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "oci-client",
- "schemars",
- "serde",
- "serde_json",
- "serde_yaml",
- "tar",
- "tokio",
- "tokio-postgres",
- "url",
- "wamn-catalog",
- "wamn-control-provision",
- "wamn-control-registry",
- "wamn-credential-store",
- "wamn-dev-control",
- "wamn-engine",
- "wamn-environment-control",
- "wamn-identity-client",
- "wamn-package-artifact",
- "wamn-package-control",
- "wamn-platform-identity",
- "wamn-release-control",
- "wamn-schema-control",
- "wamn-test-infrastructure",
-]
-
-[[package]]
-name = "wamn-gates"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "clap",
- "tokio",
- "tracing",
- "wamn-conformance-tests",
- "wamn-integration-tests",
- "wamn-system-tests",
- "wash-runtime",
-]
-
-[[package]]
 name = "wamn-host"
 version = "0.1.0"
 dependencies = [
@@ -6303,7 +6231,6 @@ dependencies = [
  "base64 0.22.1",
  "bytes",
  "chrono",
- "clap",
  "futures-util",
  "hex",
  "hmac 0.13.0",
@@ -6318,10 +6245,8 @@ dependencies = [
  "reqwest",
  "ring",
  "rustls",
- "schemars",
  "serde",
  "serde_json",
- "serde_yaml",
  "sha2 0.11.0",
  "tokio",
  "tokio-postgres",
@@ -6343,7 +6268,6 @@ dependencies = [
  "wamn-event-wire",
  "wamn-execution-contract",
  "wamn-execution-host",
- "wamn-gate-harness",
  "wamn-package-artifact",
  "wamn-package-control",
  "wamn-platform-identity",
@@ -6510,10 +6434,8 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "uuid",
- "wamn-authoring-model",
  "wamn-catalog",
  "wamn-cdc-reader",
- "wamn-client",
  "wamn-component-composer",
  "wamn-control-provision",
  "wamn-control-registry",
@@ -6522,7 +6444,6 @@ dependencies = [
  "wamn-environment-control",
  "wamn-event-wire",
  "wamn-execution-contract",
- "wamn-gate-harness",
  "wamn-integration-tests",
  "wamn-package-control",
  "wamn-platform-identity",
@@ -6692,39 +6613,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "wamn-scenario-worker"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "bytes",
- "clap",
- "http-body-util",
- "hyper",
- "hyper-util",
- "reqwest",
- "serde",
- "serde_json",
- "tokio",
- "tokio-postgres",
- "tracing",
- "url",
- "wamn-authoring-model",
- "wamn-catalog",
- "wamn-control-provision",
- "wamn-control-registry",
- "wamn-execution-contract",
- "wamn-package-artifact",
- "wamn-package-control",
- "wamn-platform-identity",
- "wamn-runtime",
- "wamn-schema-control",
- "wamn-session",
- "wamn-test-infrastructure",
- "wamn-test-postgres",
- "wash-runtime",
-]
-
-[[package]]
 name = "wamn-schema-control"
 version = "0.1.0"
 dependencies = [
@@ -6803,28 +6691,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "wamn-system-tests"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "clap",
- "hyper",
- "opentelemetry",
- "opentelemetry_sdk",
- "reqwest",
- "serde_json",
- "serde_yaml",
- "tokio",
- "tracing",
- "tracing-opentelemetry",
- "tracing-subscriber",
- "wamn-gate-harness",
- "wamn-run-state",
- "wamn-runtime",
- "wamn-test-infrastructure",
-]
-
-[[package]]
 name = "wamn-test-infrastructure"
 version = "0.1.0"
 dependencies = [
@@ -6844,13 +6710,10 @@ dependencies = [
  "tokio-postgres",
  "url",
  "uuid",
- "wamn-authoring-model",
  "wamn-catalog",
  "wamn-control-provision",
  "wamn-control-registry",
  "wamn-credential-store",
- "wamn-dev-control",
- "wamn-environment-control",
  "wamn-platform-identity",
  "wamn-schema-control",
  "wamn-schema-generator",
@@ -6863,6 +6726,8 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "hex",
+ "serde_json",
+ "tokio-postgres",
  "url",
 ]
 
@@ -6884,7 +6749,6 @@ dependencies = [
  "tokio",
  "tokio-postgres",
  "uuid",
- "wamn-authoring-model",
  "wamn-catalog",
  "wamn-cdc-reader",
  "wamn-control-provision",
@@ -6894,7 +6758,6 @@ dependencies = [
  "wamn-environment-control",
  "wamn-event-wire",
  "wamn-execution-contract",
- "wamn-gate-harness",
  "wamn-identity-client",
  "wamn-integration-tests",
  "wamn-package-control",

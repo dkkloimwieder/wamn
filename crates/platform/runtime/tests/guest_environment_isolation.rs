@@ -34,9 +34,7 @@
 //! unchanged: a guest compiled from `apps/platform/fixtures/` makes this test depend
 //! on a `wasm32-wasip2` build of a SEPARATE WORKSPACE, and a test that silently
 //! skips when that artifact is missing is exactly the vacuous pass this file
-//! exists to prevent. The `apps/platform/fixtures` guests (`sockprobe`, `busyloop`,
-//! `connection-http-standard`) are driven by IN-CLUSTER gates through mounted
-//! volumes. The hermetic precedent for an in-process guest is component-model WAT
+//! exists to prevent. An in-process guest uses component-model WAT
 //! encoded at run time. No cluster, no daemon, no prebuilt artifact, no skip.
 
 use std::sync::{Arc, Mutex};

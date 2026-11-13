@@ -18,7 +18,7 @@
 use anyhow::Context as _;
 use serde_json::{Value, json};
 
-use wamn_gate_harness::journey::RuntimePhase;
+use crate::business_fixture::RuntimePhase;
 
 const REQUEST_ID_A: &str = "contention-a";
 const REQUEST_ID_B: &str = "contention-b";

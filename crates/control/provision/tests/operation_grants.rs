@@ -108,9 +108,7 @@ fn admin_role_has_no_rows_and_authored_rows_are_grants_live() {
              CREATE ROLE wamn_app NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE \
                NOINHERIT NOREPLICATION NOBYPASSRLS; \
            END IF; \
-           IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = 'wamn_scenario_author') THEN \
-             CREATE ROLE wamn_scenario_author NOLOGIN; \
-           END IF; \
+            \
          END $role$;",
     );
 
