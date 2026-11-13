@@ -96,19 +96,33 @@ impl<P: InvocationPolicy> fmt::Debug for OperationCall<'_, P> {
 /// for each input request element and runs only the new request elements ([`intent`]).
 pub async fn invoke_operation<H: ApplicationHost>(
     host: &H,
-    call: OperationCall<'_, H::Policy>,
+    mut call: OperationCall<'_, H::Policy>,
     intent: Option<IntentContext<'_>>,
 ) -> anyhow::Result<Result<node_types::Emission, node_types::NodeError>> {
     let closure = call.closure;
     let component = call.component;
     let operation = call.operation;
+    let deadline = tokio::time::Instant::now()
+        + Duration::from_millis(call.deadline_ms).min(crate::engine::MAX_HOST_CALL_DURATION);
+    let application = tokio::time::timeout_at(deadline, application_of(host, closure))
+        .await
+        .context("native application deadline elapsed")??;
+    let id = component_id_of(&application, component)?;
+    call.facts = tokio::time::timeout_at(
+        deadline,
+        application.policy.prepare(id, operation, &call.facts),
+    )
+    .await
+    .context("native admission deadline elapsed")??;
     let facts = call.facts.clone();
-    let deadline = tokio::time::Instant::now() + Duration::from_millis(call.deadline_ms);
-    let outcome = match intent.filter(|intent| logs_intent(intent.type_)) {
-        // The per request element loop holds a large future, so it lives on the heap.
-        Some(intent) => Box::pin(intent::invoke_logged(host, call, intent)).await?,
-        None => Box::pin(run_export(host, call)).await?,
-    };
+    let outcome = tokio::time::timeout_at(deadline, async {
+        match intent.filter(|intent| logs_intent(intent.type_)) {
+            Some(intent) => Box::pin(intent::invoke_logged(host, call, intent)).await,
+            None => Box::pin(run_export(host, call)).await,
+        }
+    })
+    .await
+    .context("native operation deadline elapsed")??;
     // Persist UUIDs in the write log. Every delivery, including a replay,
     // signs its own URLs under the originating operation's authority.
     tokio::time::timeout_at(deadline, async {

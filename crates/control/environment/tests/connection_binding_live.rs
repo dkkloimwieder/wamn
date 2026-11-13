@@ -1076,7 +1076,7 @@ async fn read_binding_refuses_post_and_forged_candidate_mode_before_dispatch() {
         .into(),
         Some(release),
     );
-    plugin
+    postgres
         .bind_invocation(COMPONENT_ID, invocation.clone())
         .unwrap();
     assert_eq!(
@@ -1098,7 +1098,7 @@ async fn read_binding_refuses_post_and_forged_candidate_mode_before_dispatch() {
             .await
             .is_err()
     );
-    plugin.revoke_invocation(COMPONENT_ID);
+    postgres.revoke_invocation(COMPONENT_ID);
     let entry = wamn_runtime::plugins::wamn_postgres::ConnectionEntryLookup {
         package_id: PACKAGE,
         wiring: Some(wamn_runtime::plugins::wamn_postgres::WiringLookup {
@@ -1161,7 +1161,7 @@ async fn read_binding_refuses_post_and_forged_candidate_mode_before_dispatch() {
         ),
     };
     let plugin = ConnectionHttp::new(
-        postgres,
+        Arc::clone(&postgres),
         Arc::new(HttpTransport::new().unwrap()),
         Arc::clone(&facts),
         PROJECT_ENV_KEY,
@@ -1174,7 +1174,7 @@ async fn read_binding_refuses_post_and_forged_candidate_mode_before_dispatch() {
         .into(),
         None,
     );
-    plugin.bind_invocation(COMPONENT_ID, invocation).unwrap();
+    postgres.bind_invocation(COMPONENT_ID, invocation).unwrap();
     assert_eq!(
         plugin
             .send_for_test(COMPONENT_ID, "erp", "POST")

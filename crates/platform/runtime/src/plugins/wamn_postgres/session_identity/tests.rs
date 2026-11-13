@@ -461,56 +461,36 @@ fn invocation(node_id: &str) -> ConnectionInvocation {
     }
 }
 
-// wamn-0h0g.7.9 — the node and wiring half of a postgres effect's coordinates.
-// Bound per component id, refused while one is still bound, and released by
-// revoke; the run half is `current_run_for`, set beside it by the same driver.
-#[test]
-fn bind_and_revoke_invocation_is_per_component() {
+#[tokio::test]
+async fn scope_authority_is_unique_and_revoked_by_its_owner() {
+    use crate::invocation::{AuthorizedInvocation, InvocationRequest, PrincipalVerification};
     let pg = WamnPostgres::with_provider(Arc::new(StaticCredentialProvider::default_only(None)));
+    let enter = |scope: &str| InvocationRequest {
+        scope: scope.to_owned(),
+        identity: SessionIdentity {
+            project_env_key: "test--dev--fixture".to_owned(),
+            ..SessionIdentity::default()
+        },
+        caller: None,
+        registered_operation: None,
+        causation: None,
+        invocation: Some(invocation("receive")),
+        statements: WamnPostgres::prepare_statement_set(Default::default(), false),
+        members: Default::default(),
+        principal: PrincipalVerification::Authenticated,
+    };
+    let first = AuthorizedInvocation::enter(&pg, enter("c1")).await.unwrap();
+    let retained = Arc::clone(&first);
+    assert!(AuthorizedInvocation::enter(&pg, enter("c1")).await.is_err());
+    let second = AuthorizedInvocation::enter(&pg, enter("c2")).await.unwrap();
+    drop(first);
+    assert!(pg.session_identity("c1").is_some());
+    drop(retained);
+    assert!(pg.session_identity("c1").is_none());
     assert!(pg.invocation("c1").is_none());
-    pg.bind_invocation("c1", invocation("receive"))
-        .expect("a fresh component accepts its invocation");
-    assert_eq!(
-        pg.invocation("c1")
-            .unwrap()
-            .entry
-            .wiring()
-            .expect("wiring entry")
-            .node_id,
-        "receive"
-    );
-    // A still-bound owner refuses rather than inheriting the next node's position.
-    assert!(pg.bind_invocation("c1", invocation("ship")).is_err());
-    assert_eq!(
-        pg.invocation("c1")
-            .unwrap()
-            .entry
-            .wiring()
-            .expect("wiring entry")
-            .node_id,
-        "receive"
-    );
-    // A second component is independent.
-    assert!(pg.invocation("c2").is_none());
-    pg.bind_invocation("c2", invocation("ship"))
-        .expect("a second component binds its own invocation");
-    // An empty component id names no pooled instance.
-    assert!(pg.bind_invocation("", invocation("receive")).is_err());
-    pg.revoke_invocation("c1");
-    assert!(pg.invocation("c1").is_none());
-    assert_eq!(
-        pg.invocation("c2")
-            .unwrap()
-            .entry
-            .wiring()
-            .expect("wiring entry")
-            .node_id,
-        "ship"
-    );
-    // Revoke is idempotent; rebinding a released scope succeeds.
-    pg.revoke_invocation("c1");
-    pg.bind_invocation("c1", invocation("ship"))
-        .expect("a revoked scope rebinds");
+    assert!(pg.invocation("c2").is_some());
+    drop(second);
+    assert!(pg.scopes.is_empty());
 }
 
 // R31 — unbind reaps every per-component identity registry plus the closed

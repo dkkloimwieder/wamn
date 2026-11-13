@@ -59,14 +59,7 @@ fn native_warm_reuse_and_idle_reclamation() {
                     .payload,
                 input
             );
-            assert!(
-                fixture
-                    .policy
-                    .invocations
-                    .lock()
-                    .expect("authority")
-                    .is_empty()
-            );
+            assert!(fixture.policy.resources.postgres.scopes.is_empty());
         }
         assert_eq!(
             starts(&fixture),
@@ -165,12 +158,7 @@ fn native_warm_failures_retire_instances() {
                 assert!(invoke_native(&target, request).await.is_err());
             }
             assert!(
-                fixture
-                    .policy
-                    .invocations
-                    .lock()
-                    .expect("authority")
-                    .is_empty(),
+                fixture.policy.resources.postgres.scopes.is_empty(),
                 "caller cancellation revokes immediately"
             );
             // Native requires its ten-second grace plus continuous execution

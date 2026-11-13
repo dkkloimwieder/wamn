@@ -387,7 +387,10 @@ impl Fixture {
             vec![self.base.strip_suffix("bound/").unwrap().parse().unwrap()].into(),
             Some(release),
         );
-        plugin.bind_invocation("instance", invocation).unwrap();
+        plugin
+            .postgres
+            .bind_invocation("instance", invocation)
+            .unwrap();
         plugin
     }
 
@@ -415,9 +418,6 @@ impl Fixture {
             Arc::clone(&first.allowed_hosts),
             first.release.clone(),
         );
-        plugin
-            .bind_invocation("instance", first.invocation("instance").unwrap())
-            .unwrap();
         plugin
     }
 

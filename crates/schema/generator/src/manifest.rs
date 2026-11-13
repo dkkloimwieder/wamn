@@ -764,9 +764,9 @@ impl PackageManifest {
             .collect()
     }
 
-    /// Whether the package declares no SQL: no model, relation, connection or
-    /// base dependency, and only stateless commands. Such a package needs no
-    /// database, and an edge box can run its component.
+    /// Whether the package declares no SQL, owned relations or base dependencies.
+    /// Commands can be stateless or use external claims. The package needs no
+    /// application schema, and an edge box can run its component.
     pub fn declares_no_sql(&self) -> bool {
         self.models.is_empty()
             && self.internal_relations.is_empty()
@@ -775,10 +775,15 @@ impl PackageManifest {
                 .values()
                 .any(|component| component.connections.iter().any(|name| name == "postgres"))
             && self.base_dependencies.is_empty()
-            && self
-                .custom_operations
-                .values()
-                .all(|operation| operation.idempotent_by == Some(CommandIdempotence::Stateless))
+            && self.custom_operations.values().all(|operation| {
+                matches!(
+                    operation.idempotent_by,
+                    Some(CommandIdempotence::Stateless | CommandIdempotence::Claim)
+                ) && operation.connection.is_none()
+                    && operation.relations.is_empty()
+                    && operation.statements.is_empty()
+                    && !operation.begins_host_transaction()
+            })
     }
 
     /// Whether every SQL operation belongs to a base, with only stateless
@@ -1201,6 +1206,23 @@ fn validate_component_groups(
                 format!("operation {operation} references unknown component {component}"),
             ));
         };
+        let custom = manifest.custom_operations.get(operation);
+        let sql_work = custom.is_none_or(|declaration| {
+            custom_operation_uses_sql(manifest, operation, declaration)
+                || declaration.begins_host_transaction()
+        });
+        let external_effect = manifest.components[component]
+            .connections
+            .iter()
+            .any(|name| manifest.connections.contains_key(name));
+        if sql_work && external_effect {
+            return Err(ManifestError::new(
+                ManifestErrorType::InvalidOperation,
+                format!(
+                    "operation {operation} combines SQL work with an external effect; split the work into separate operations"
+                ),
+            ));
+        }
         *count += 1;
     }
     if let Some((component, _)) = grouped.iter().find(|(_, count)| **count == 0) {
@@ -1256,7 +1278,7 @@ fn validate_custom_operation(
         }
     }
 
-    validate_custom_operation_type(operation_name, operation)?;
+    validate_custom_operation_type(manifest, operation_name, operation)?;
     validate_custom_operation_input(operation_name, &operation.input)?;
     if let Some(result) = &operation.result {
         // No paging contract exists for a custom operation. Page belongs to
@@ -1299,7 +1321,24 @@ fn validate_signed_reads(
     Ok(())
 }
 
+fn custom_operation_uses_sql(
+    manifest: &PackageManifest,
+    name: &str,
+    operation: &CustomOperationDeclaration,
+) -> bool {
+    operation.connection.is_some()
+        || !operation.relations.is_empty()
+        || !operation.statements.is_empty()
+        || manifest.base_dependencies.values().any(|dependency| {
+            dependency
+                .operations
+                .iter()
+                .any(|operation| operation == name)
+        })
+}
+
 fn validate_custom_operation_type(
+    manifest: &PackageManifest,
     operation_name: &str,
     operation: &CustomOperationDeclaration,
 ) -> Result<(), ManifestError> {
@@ -1346,7 +1385,12 @@ fn validate_custom_operation_type(
                 ));
             }
             validate_command_idempotence(operation_name, operation)?;
+            let has_local_sql = operation.connection.is_some()
+                || !operation.relations.is_empty()
+                || !operation.statements.is_empty();
+            let has_sql = custom_operation_uses_sql(manifest, operation_name, operation);
             if operation.claims()
+                && has_sql
                 && operation.transaction != Some(CommandTransaction::ExplicitPerInput)
             {
                 return Err(ManifestError::new(
@@ -1356,9 +1400,6 @@ fn validate_custom_operation_type(
                     ),
                 ));
             }
-            let has_local_sql = operation.connection.is_some()
-                || !operation.relations.is_empty()
-                || !operation.statements.is_empty();
             match (
                 has_local_sql,
                 operation.transaction,
@@ -1366,6 +1407,7 @@ fn validate_custom_operation_type(
             ) {
                 (_, Some(CommandTransaction::ExplicitPerInput), Some(false))
                 | (false, None, None) => {}
+                (false, None, Some(false)) if operation.claims() => {}
                 (true, Some(_), Some(true)) => {
                     return Err(ManifestError::new(
                         ManifestErrorType::InvalidOperation,
@@ -1878,7 +1920,8 @@ fn validate_static_sql_declarations(
     if !has_connection && !has_relations && !has_statements {
         if operation.type_ == CustomOperationType::Command
             && (matching_dependencies == 1
-                || operation.idempotent_by == Some(CommandIdempotence::Stateless))
+                || operation.idempotent_by == Some(CommandIdempotence::Stateless)
+                || operation.claims())
         {
             return Ok(());
         }
@@ -2378,6 +2421,77 @@ mod tests {
                 .unwrap_err();
         assert_eq!(
             error.error_type(),
+            super::ManifestErrorType::InvalidOperation
+        );
+    }
+
+    #[test]
+    fn claim_commands_separate_sql_work_from_external_effects() {
+        let document = serde_json::json!({
+            "package": {"id": "notify", "version": "1.0.0"},
+            "required_platform_policy_contract": {"id": "notify_access", "state": "satisfied"},
+            "models": {},
+            "connections": {"api": {"interface": "wamn:connection/http@0.1.0", "mode": "write"}},
+            "components": {"notify": {"connections": ["api"]}},
+            "custom_operations": {"notify.send": {
+                "type": "command", "visibility": "public", "permission": "notify.send",
+                "idempotent_by": "claim", "input": {"fields": [
+                    {"path": "idempotency_key", "type": "text", "nullable": false}
+                ]},
+                "result": {"class": "one", "fields": [{"path": "id", "type": "uuid", "nullable": false}]},
+                "errors": ["invalid_input", "idempotency_conflict", "retry", "timeout", "permission_denied", "internal_error"]
+            }}
+        });
+        let mut manifest =
+            super::PackageManifest::from_authored_slice(&serde_json::to_vec(&document).unwrap())
+                .unwrap();
+        assert!(manifest.declares_no_sql());
+        assert!(!manifest.custom_operations["notify.send"].begins_host_transaction());
+        let operation = manifest.custom_operations.get_mut("notify.send").unwrap();
+        operation.automatic_retry = Some(false);
+        super::validate_operation_vocabulary(&manifest).unwrap();
+        let operation = manifest.custom_operations.get_mut("notify.send").unwrap();
+        operation.transaction = Some(super::CommandTransaction::ExplicitPerInput);
+        assert_eq!(
+            super::validate_operation_vocabulary(&manifest)
+                .unwrap_err()
+                .error_type(),
+            super::ManifestErrorType::InvalidOperation
+        );
+        let operation = manifest.custom_operations.get_mut("notify.send").unwrap();
+        operation.connection = Some("postgres".to_owned());
+        operation.statements = serde_json::from_value(serde_json::json!({
+            "send": {"path": "command/notify/send.sql", "fetch": "one", "parameters": [],
+                "row": [{"name": "id", "type": "uuid", "nullable": false}]}
+        }))
+        .unwrap();
+        manifest
+            .components
+            .get_mut("notify")
+            .unwrap()
+            .connections
+            .push("postgres".to_owned());
+        assert_eq!(
+            super::validate_operation_vocabulary(&manifest)
+                .unwrap_err()
+                .error_type(),
+            super::ManifestErrorType::InvalidOperation
+        );
+        manifest
+            .components
+            .get_mut("notify")
+            .unwrap()
+            .connections
+            .retain(|name| name == "postgres");
+        super::validate_operation_vocabulary(&manifest).unwrap();
+        assert!(manifest.custom_operations["notify.send"].begins_host_transaction());
+        let operation = manifest.custom_operations.get_mut("notify.send").unwrap();
+        operation.transaction = None;
+        operation.automatic_retry = None;
+        assert_eq!(
+            super::validate_operation_vocabulary(&manifest)
+                .unwrap_err()
+                .error_type(),
             super::ManifestErrorType::InvalidOperation
         );
     }

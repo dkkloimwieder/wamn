@@ -55,6 +55,10 @@ pub enum Begun {
     New(IntentId),
     /// The key already finished. The stored outcome is the answer.
     Finished(StoredOutcome),
+    /// Another call still owns this claim. Retry after its execution bound.
+    InProgress(IntentId),
+    /// The call exceeded its execution bound without a recorded outcome.
+    OutcomeUnknown(IntentId),
     /// The key began and never finished. The export must not run again.
     Uncertain(IntentId),
     /// An operator resolved the uncertain key. It is never uncertain again, and

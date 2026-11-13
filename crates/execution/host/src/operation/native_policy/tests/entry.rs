@@ -56,7 +56,7 @@ fn operation_caller() -> Vec<u8> {
         (type $refusal' (variant (case "uncertain") (case "resolved" string) (case "conflict")
           (case "unknown-operation") (case "grant-denied") (case "invalid-caller")
           (case "not-begun") (case "already-begun") (case "postgres" $pg-error)
-          (case "reads-identity-nothing")))
+          (case "reads-claim-nothing") (case "in-progress") (case "outcome-unknown")))
         (export "refusal" (type $refusal (eq $refusal')))
         (type $begun' (variant (case "new" string) (case "finished" string)))
         (export "begun" (type $begun (eq $begun')))

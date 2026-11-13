@@ -1,16 +1,7 @@
-//! The blobstore host plugin: registration, invocation facts, and the live
-//! binding lookup.
-//!
-//! Mirrors `ConnectionHttp`'s shape deliberately. It keeps its OWN invocation
-//! registry rather than reading the HTTP plugin's, because a second reader on
-//! one registry is the defect class `wamn-0h0g.21.9` records, and two sibling
-//! plugins should not couple over something neither owns. Extracting a shared
-//! registry is the right end state and is deferred to capability three
-//! (`wamn-jpxo`, and inherited by the seam template) — two consumers is the
-//! wrong count to extract at.
+//! Blob storage resolves bindings under the shared invocation authority.
 
-use std::collections::{HashMap, HashSet};
-use std::sync::{Arc, RwLock};
+use std::collections::HashSet;
+use std::sync::Arc;
 
 use object_store::ObjectStore;
 use object_store::aws::AmazonS3Builder;
@@ -53,10 +44,6 @@ pub struct WamnBlobstore {
     /// only thing that can supply them without guessing at the coordinates
     /// that decide which binding authorizes.
     release: Option<Arc<LoadedRelease>>,
-    /// Component-store owner id to the invocation currently using that pooled
-    /// instance. The driver binds before `handler.run` and revokes before
-    /// returning the instance to the pool.
-    invocations: RwLock<HashMap<String, ConnectionInvocation>>,
 }
 
 /// The release digest and environment one invocation authorizes under.
@@ -169,48 +156,12 @@ impl WamnBlobstore {
             project_env_key: project_env_key.into(),
             project,
             release,
-            invocations: RwLock::new(HashMap::new()),
         }
     }
 
-    /// Bind the exact invocation facts before entering one pooled component.
-    ///
-    /// A still-bound owner refuses rather than silently replacing leaked
-    /// state — the same rule the HTTP plugin holds, for the same reason: a
-    /// stale invocation would authorize the next guest against the previous
-    /// one's wiring position.
-    pub fn bind_invocation(
-        &self,
-        component_id: &str,
-        invocation: ConnectionInvocation,
-    ) -> anyhow::Result<()> {
-        anyhow::ensure!(!component_id.is_empty(), "component id must be present");
-        let mut invocations = self
-            .invocations
-            .write()
-            .map_err(|_| anyhow::anyhow!("blobstore invocation registry is poisoned"))?;
-        anyhow::ensure!(
-            !invocations.contains_key(component_id),
-            "component {component_id} still holds a bound blobstore invocation"
-        );
-        invocations.insert(component_id.to_owned(), invocation);
-        Ok(())
-    }
-
-    /// Release the invocation when the instance returns to the pool.
-    pub fn revoke_invocation(&self, component_id: &str) {
-        if let Ok(mut invocations) = self.invocations.write() {
-            invocations.remove(component_id);
-        }
-    }
-
-    /// The invocation currently bound to one pooled instance.
-    #[must_use]
+    /// Read signing and effect authority from the invocation record.
     pub fn invocation(&self, component_id: &str) -> Option<ConnectionInvocation> {
-        self.invocations
-            .read()
-            .ok()
-            .and_then(|invocations| invocations.get(component_id).cloned())
+        self.postgres.invocation(component_id)
     }
 
     /// Open file storage after the native host authorizes the package-declared binding.
@@ -1157,6 +1108,7 @@ mod tests {
         let plugin = offline_plugin();
         let component_id = "component-store-3";
         plugin
+            .postgres
             .bind_invocation(component_id, released())
             .expect("the fresh store accepts its invocation");
         let component_digest = released().component_digest;

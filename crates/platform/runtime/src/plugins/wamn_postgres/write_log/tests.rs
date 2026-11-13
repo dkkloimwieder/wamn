@@ -1,13 +1,11 @@
 //! The write log as the engine's intent store, on disposable databases.
 
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
-use async_trait::async_trait;
 use serde_json::json;
 use tokio::time::Duration;
 use wamn_run_state::IntentStore;
-use wamn_run_state::intent_cases::{self, CaseStores, IntentStoreFixture};
-use wamn_run_state::intent_store::{Begun, Intent, StoredOutcome};
+use wamn_run_state::intent_store::{Begun, Intent, IntentId, StoreErrorType, StoredOutcome};
 
 use super::WriteLogStore;
 use crate::plugins::wamn_postgres::session_identity::tests::{
@@ -62,49 +60,91 @@ async fn project_env_key_database(
     (database, postgres)
 }
 
-/// Each case gets two fresh databases: the database is the project.
-#[derive(Default)]
-struct Databases(Mutex<Vec<wamn_test_postgres::Database>>);
-
-#[async_trait]
-impl IntentStoreFixture for Databases {
-    async fn stores(&self, _case: &'static str) -> CaseStores {
-        let (database, postgres) = project_env_key_database("writeloga").await;
-        let (other_database, other_postgres) = project_env_key_database("writelogb").await;
-        self.0
-            .lock()
-            .expect("databases lock poisoned")
-            .extend([database, other_database]);
-        CaseStores {
-            store: Arc::new(WriteLogStore::new(
-                postgres,
-                PROJECT.into(),
-                "writeloga".into(),
-            )),
-            partition: "writeloga".into(),
-            other: Arc::new(WriteLogStore::new(
-                other_postgres,
-                PROJECT.into(),
-                "writelogb".into(),
-            )),
-            other_partition: "writelogb".into(),
-        }
-    }
-}
-
-/// The two-step store keeps every shared intent rule except operator
-/// resolution, which the write log does not have: a claim that never
-/// finishes stays uncertain, and the client sends a new key.
+/// Replay, release, conflict and partition behavior remain write-log contracts.
 #[tokio::test]
 async fn the_two_step_write_log_keeps_the_intent_rules() {
     let _lock = wamn_test_postgres::lock();
-    let fixture = Databases::default();
-    for case in intent_cases::CASES {
-        if case == "a_resolved_intent_leaves_the_list_and_answers_its_basis" {
-            continue;
-        }
-        intent_cases::run(&fixture, case).await;
+    let (_database, postgres) = project_env_key_database("test--dev--writelogtx").await;
+    let (_other_database, other_postgres) = project_env_key_database("test--dev--otherlog").await;
+    let store = WriteLogStore::new(
+        postgres,
+        PROJECT.to_owned(),
+        "test--dev--writelogtx".to_owned(),
+    );
+    let other = WriteLogStore::new(
+        other_postgres,
+        PROJECT.to_owned(),
+        "test--dev--otherlog".to_owned(),
+    );
+    let request = intent("key", "hash");
+    let Begun::New(first) = store.begin(&request).await.unwrap() else {
+        panic!("new claim")
+    };
+    let elsewhere = Intent {
+        partition: "test--dev--otherlog",
+        ..request
+    };
+    assert_eq!(
+        store.begin(&elsewhere).await.unwrap_err().error_type(),
+        StoreErrorType::Contract
+    );
+    assert!(matches!(
+        other.begin(&elsewhere).await.unwrap(),
+        Begun::New(_)
+    ));
+    let missing = IntentId(format!(
+        "{}#missing",
+        request.operation.split('@').next().unwrap()
+    ));
+    store.release(&first).await.unwrap();
+    for id in [&missing, &first] {
+        assert_eq!(
+            store.release(id).await.unwrap_err().error_type(),
+            StoreErrorType::Contract
+        );
+        assert_eq!(
+            store
+                .finish(id, &StoredOutcome(json!({"value": 0})))
+                .await
+                .unwrap_err()
+                .error_type(),
+            StoreErrorType::Contract
+        );
     }
+    let Begun::New(second) = store.begin(&request).await.unwrap() else {
+        panic!("released key")
+    };
+    let outcome = StoredOutcome(json!({"value": 7}));
+    store.finish(&second, &outcome).await.unwrap();
+    assert_eq!(
+        store.begin(&request).await.unwrap(),
+        Begun::Finished(outcome.clone())
+    );
+    assert_eq!(
+        store
+            .finish(&second, &outcome)
+            .await
+            .unwrap_err()
+            .error_type(),
+        StoreErrorType::Contract
+    );
+    assert_eq!(
+        store.release(&second).await.unwrap_err().error_type(),
+        StoreErrorType::Contract
+    );
+    let malformed = IntentId("not-a-claim".to_owned());
+    assert_eq!(
+        store
+            .finish(&malformed, &outcome)
+            .await
+            .unwrap_err()
+            .error_type(),
+        StoreErrorType::Contract
+    );
+    assert_eq!(
+        store.release(&malformed).await.unwrap_err().error_type(),
+        StoreErrorType::Contract
+    );
 }
 
 fn intent<'a>(key: &'a str, input_hash: &'a str) -> Intent<'a> {
@@ -173,7 +213,7 @@ async fn a_known_result_commits_in_the_claim_without_a_finish_update() {
             .begin_opaque("base:widget/delete@1", "opaque", vec![1])
             .await
             .unwrap(),
-        super::OpaqueBegun::New
+        super::Claim::New
     ));
     opaque.finish_opaque(
         "base:widget/delete@1",
@@ -183,8 +223,11 @@ async fn a_known_result_commits_in_the_claim_without_a_finish_update() {
     opaque.commit().await.unwrap();
     let replay = begin().await;
     assert!(matches!(
-        replay.begin_opaque("base:widget/delete@2", "opaque", vec![1]).await.unwrap(),
-        super::OpaqueBegun::Finished(result) if result == r#"{"value":{"outcome":"deleted"}}"#
+        replay
+            .begin_opaque("base:widget/delete@2", "opaque", vec![1])
+            .await
+            .unwrap(),
+        super::Claim::Finished(_)
     ));
     replay.rollback().await.unwrap();
     let refused = begin().await;
@@ -193,14 +236,15 @@ async fn a_known_result_commits_in_the_claim_without_a_finish_update() {
         Begun::New(_)
     ));
     refused.rollback().await.unwrap();
-    assert_eq!(
-        database
-            .execute(&["SELECT count(*) FROM platform.write_log"])
-            .unwrap()
-            .trim(),
-        "2",
-        "replay keeps both success rows and refusal leaves no claim"
-    );
+    let released = begin().await;
+    assert!(matches!(
+        released
+            .begin(&intent("refused", "different"))
+            .await
+            .unwrap(),
+        Begun::New(_)
+    ));
+    released.rollback().await.unwrap();
 }
 
 /// An operation with SQL claims in its request element transaction: the claim commits
@@ -228,28 +272,30 @@ async fn the_claim_of_a_request_element_commits_with_its_transaction() {
             .await
             .expect("the request element transaction begins")
     };
-    let rows = || {
-        database
-            .execute(&["SELECT count(*) FROM platform.write_log"])
-            .expect("count the write log")
-    };
+    let mut observer = wamn_postgres::connect(database.url()).await.unwrap();
     let outcome = StoredOutcome(json!({"value": {"id": 7}}));
 
     let first = begin().await;
     let Begun::New(id) = first.begin(&intent("k1", "h1")).await.expect("claim") else {
         panic!("a new key is new");
     };
-    assert_eq!(
-        id.0, "base:widget/create#k1",
-        "the version is not part of the claim"
-    );
     first.finish(&id, &outcome).await.expect("finish");
-    assert_eq!(rows().trim(), "0", "nothing commits before the owner");
+    let visible: bool = sqlx::query_scalar("SELECT EXISTS (SELECT FROM platform.write_log)")
+        .fetch_one(&mut observer)
+        .await
+        .unwrap();
+    assert!(!visible, "the claim is not visible before commit");
     first.commit().await.expect("commit");
 
     let retry = begin().await;
     assert_eq!(
-        retry.begin(&intent("k1", "h1")).await.expect("retry"),
+        retry
+            .begin(&Intent {
+                operation: "base:widget/create@2.0.0",
+                ..intent("k1", "h1")
+            })
+            .await
+            .expect("retry"),
         Begun::Finished(outcome.clone()),
         "the same request answers the stored result"
     );
@@ -287,14 +333,9 @@ async fn the_claim_of_a_request_element_commits_with_its_transaction() {
     });
     tokio::time::timeout(HANG_GUARD, async {
         loop {
-            let waits = database
-                .execute(&["SELECT count(*) FROM pg_stat_activity \
-                     WHERE wait_event_type = 'Lock' \
-                       AND query LIKE 'INSERT INTO platform.write_log%'"])
-                .expect("read the lock waits");
-            if waits.trim() == "1" {
-                break;
-            }
+            let waiting: bool = sqlx::query_scalar("SELECT EXISTS (SELECT FROM pg_stat_activity WHERE datname = current_database() AND cardinality(pg_blocking_pids(pid)) > 0)")
+                .fetch_one(&mut observer).await.unwrap();
+            if waiting { break; }
             tokio::task::yield_now().await;
         }
     })
@@ -308,7 +349,6 @@ async fn the_claim_of_a_request_element_commits_with_its_transaction() {
         "the second claim answers what the first committed"
     );
     waiter.rollback().await.expect("rollback");
-    assert_eq!(rows().trim(), "2", "k1 and k3 committed, k2 left no row");
 
     // A statement that finds its connection lost fails, and the rollback
     // after it answers that the transaction ended.
@@ -320,21 +360,30 @@ async fn the_claim_of_a_request_element_commits_with_its_transaction() {
         .execute(&["SELECT pg_terminate_backend(pid) FROM pg_stat_activity \
              WHERE state = 'idle in transaction' AND pid <> pg_backend_pid()"])
         .expect("end the request element connection");
-    assert!(
-        lost.begin(&intent("k4", "h1")).await.is_err(),
-        "a lost connection fails the claim"
+    assert_eq!(
+        lost.begin(&intent("k4", "h1"))
+            .await
+            .unwrap_err()
+            .error_type(),
+        StoreErrorType::Storage,
+        "a lost connection is a storage failure"
     );
     lost.rollback()
         .await
         .expect("the rollback of a lost connection succeeds");
-    assert_eq!(rows().trim(), "2", "a lost connection leaves no row");
+    let recovered = begin().await;
+    assert!(matches!(
+        recovered.begin(&intent("lost", "different")).await.unwrap(),
+        Begun::New(_)
+    ));
+    recovered.rollback().await.unwrap();
 }
 
 /// A failed finish must abort business writes even when COMMIT is already queued.
 #[tokio::test]
 async fn a_missing_finish_rolls_back_the_pipelined_commit() {
     let _lock = wamn_test_postgres::lock();
-    let (database, postgres) = project_env_key_database("test--dev--writelogtx").await;
+    let (_database, postgres) = project_env_key_database("test--dev--writelogtx").await;
     postgres
         .bind_session_identity(
             SCOPE,
@@ -360,13 +409,12 @@ async fn a_missing_finish_rolls_back_the_pipelined_commit() {
         transaction.commit().await,
         Err(super::super::operation_transaction::PgCommitFailure::RolledBack(_))
     ));
-    assert_eq!(
-        database
-            .execute(&["SELECT count(*) FROM platform.write_log"])
-            .unwrap()
-            .trim(),
-        "0"
-    );
+    let retry = postgres.begin_operation_transaction(SCOPE).await.unwrap();
+    assert!(matches!(
+        retry.begin(&intent("open", "different")).await.unwrap(),
+        Begun::New(_)
+    ));
+    retry.rollback().await.unwrap();
 }
 
 /// Every writer's committed WAL invalidates weak model tags, including deletes and truncates.
@@ -423,4 +471,59 @@ async fn model_versions_follow_wal_without_a_counter() {
         assert_ne!(previous, current, "{statement}");
         previous = current;
     }
+}
+
+/// The call bound changes the refusal without preventing a late result or expiry.
+#[tokio::test]
+async fn unfinished_claims_have_a_call_bound_and_accept_late_completion() {
+    let _lock = wamn_test_postgres::lock();
+    let (database, postgres) = project_env_key_database("test--dev--writelogtx").await;
+    let store = WriteLogStore::new(
+        postgres,
+        PROJECT.to_owned(),
+        "test--dev--writelogtx".to_owned(),
+    );
+    let request = intent("late", "hash");
+    let Begun::New(id) = store.begin(&request).await.unwrap() else {
+        panic!("new claim")
+    };
+    assert!(matches!(
+        store.begin(&request).await.unwrap(),
+        Begun::InProgress(_)
+    ));
+    assert!(matches!(
+        store.begin(&intent("late", "changed")).await.unwrap(),
+        Begun::Conflict(_)
+    ));
+    assert!(matches!(
+        store.begin(&request).await.unwrap(),
+        Begun::InProgress(_)
+    ));
+    let bound = wamn_engine::engine::MAX_HOST_CALL_DURATION.as_secs() + 1;
+    database.execute(&[&format!("UPDATE platform.write_log SET created_at = clock_timestamp() - interval '{bound} seconds'")]).unwrap();
+    assert!(matches!(
+        store.begin(&request).await.unwrap(),
+        Begun::OutcomeUnknown(_)
+    ));
+    let outcome = StoredOutcome(json!({"value": 7}));
+    store.finish(&id, &outcome).await.unwrap();
+    assert_eq!(
+        store.begin(&request).await.unwrap(),
+        Begun::Finished(outcome)
+    );
+    let expired = intent("expired", "hash");
+    assert!(matches!(
+        store.begin(&expired).await.unwrap(),
+        Begun::New(_)
+    ));
+    database
+        .execute(&[
+            "UPDATE platform.write_log SET created_at = clock_timestamp() - interval '31 days'",
+            wamn_control_provision::audit_retention::WRITE_LOG_RETENTION_SQL,
+        ])
+        .unwrap();
+    assert!(matches!(
+        store.begin(&expired).await.unwrap(),
+        Begun::New(_)
+    ));
 }

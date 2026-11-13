@@ -24,6 +24,21 @@ pub trait InvocationPolicy: HostPlugin + Sized {
     /// The host transaction of one request element of a logged call.
     type Transaction: Transaction;
 
+    /// Admit one invocation and retain its authority through result delivery.
+    fn prepare(
+        &self,
+        _component_id: &str,
+        _operation: &str,
+        facts: &Self::Facts,
+    ) -> impl Future<Output = anyhow::Result<Self::Facts>> + Send {
+        async { Ok(facts.clone()) }
+    }
+
+    /// The prepared invocation's scope, when the policy owns its lifetime.
+    fn scope_id<'a>(&self, _facts: &'a Self::Facts) -> Option<&'a str> {
+        None
+    }
+
     /// Begin the host transaction of one request element of a logged call, before its
     /// claim and its guest call (`docs/history/host-transaction.md` 4.1). It
     /// admits the call as [`activate`](Self::activate) does. An operation that
@@ -139,6 +154,15 @@ impl<P: InvocationPolicy> InvocationScope<P> {
     pub fn new(policy: Arc<P>) -> Self {
         Self {
             id: super::next_scope("native-invocation"),
+            closed: Mutex::new(false),
+            cancelled: tokio::sync::Notify::new(),
+            policy,
+        }
+    }
+
+    pub fn with_id(policy: Arc<P>, id: Box<str>) -> Self {
+        Self {
+            id,
             closed: Mutex::new(false),
             cancelled: tokio::sync::Notify::new(),
             policy,

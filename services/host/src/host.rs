@@ -1337,6 +1337,7 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
     }
     let postgres = Arc::new(postgres);
     let logging = Arc::new(WamnLogging::from_env().context("wamn:logging plugin init")?);
+    logging.set_scope_registry(Arc::clone(&postgres.scopes))?;
     let http_transport = Arc::new(HttpTransport::new().context("HTTP transport init")?);
     let mut file_connection_reader = None;
     let credentials = match (&application, &args.connection_store_url) {

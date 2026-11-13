@@ -702,6 +702,11 @@ fn native_member_statement_instances() {
             let mut request = fixture.request(Instant::now() + Duration::from_secs(10));
             request.input = input.into();
             request.facts.caller = Some(caller.clone());
+            request.facts = fixture
+                .policy
+                .prepare(&component_id, ROOT, &request.facts)
+                .await
+                .expect("admit the invocation");
             let mut transaction = fixture
                 .policy
                 .admit_and_open_transaction(&component_id, ROOT, &request.facts)
@@ -838,6 +843,11 @@ fn native_sql_free_command_begins_from_its_transaction_field() {
                 let mut request = fixture.request(Instant::now() + Duration::from_secs(10));
                 request.input = input.into();
                 request.facts.caller = Some(caller.clone());
+                request.facts = fixture
+                    .policy
+                    .prepare(&component_id, ROOT, &request.facts)
+                    .await
+                    .expect("admit the invocation");
                 let mut transaction = fixture
                     .policy
                     .admit_and_open_transaction(&component_id, ROOT, &request.facts)
@@ -926,14 +936,7 @@ fn native_warm_alternating_callers_and_credentials() {
                     result.payload, input,
                     "no caller-dependent result crosses calls"
                 );
-                assert!(
-                    fixture
-                        .policy
-                        .invocations
-                        .lock()
-                        .expect("authority")
-                        .is_empty()
-                );
+                assert!(fixture.policy.resources.postgres.scopes.is_empty());
                 for event in fixture
                     .events
                     .lock()

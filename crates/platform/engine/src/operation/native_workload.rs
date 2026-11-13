@@ -94,6 +94,13 @@ impl NativeWorkload {
             .context("native-workload-component-missing")
     }
 
+    pub(super) fn target_component(&self, target: &DispatchTarget) -> Option<&str> {
+        self.workloads
+            .iter()
+            .find(|(_, workload)| workload.id() == target.workload().id())
+            .map(|(id, _)| id.as_str())
+    }
+
     /// Every native component id of this application.
     pub fn component_ids(&self) -> impl Iterator<Item = &str> {
         self.workloads.keys().map(String::as_str)

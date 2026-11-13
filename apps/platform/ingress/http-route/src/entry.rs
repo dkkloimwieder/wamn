@@ -210,6 +210,9 @@ async fn execute(
                 &format!("the key {key} repeats with another input"),
                 &json!({"field": key_field, "intent": intent}),
             ),
+            Err(error @ (operation::Refusal::InProgress | operation::Refusal::OutcomeUnknown)) => {
+                commit_failure(error, &intent)
+            }
             Err(operation::Refusal::Uncertain) => uncertain(&intent),
             Err(operation::Refusal::Resolved(basis)) => resolved(&intent, &basis),
             Err(error) => return Err(boundary(&error, operation_id)),
@@ -282,6 +285,16 @@ async fn execute(
 fn commit_failure(error: operation::Refusal, intent: &str) -> Value {
     use super::bindings::wamn::postgres::types::PgError;
     match error {
+        operation::Refusal::InProgress => refusal(
+            "in-progress",
+            "the operation is still running",
+            &serde_json::Value::Null,
+        ),
+        operation::Refusal::OutcomeUnknown => refusal(
+            "outcome-unknown",
+            "check the external system before sending a new key",
+            &serde_json::Value::Null,
+        ),
         operation::Refusal::Uncertain => uncertain(intent),
         operation::Refusal::Postgres(error) => {
             let code = match error {

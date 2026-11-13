@@ -109,10 +109,15 @@ impl Drop for ActiveScope<'_> {
 
 // This guard belongs to the dispatching caller, not the native guest task.
 // Cancellation revokes authority before native's abandoned-store grace ends.
-struct CloseScope<P: InvocationPolicy>(Arc<InvocationScope<P>>);
+struct CloseScope<P: InvocationPolicy> {
+    scope: Arc<InvocationScope<P>>,
+    completed: bool,
+}
 impl<P: InvocationPolicy> Drop for CloseScope<P> {
     fn drop(&mut self) {
-        self.0.close();
+        if !self.completed {
+            self.scope.close();
+        }
     }
 }
 
@@ -324,19 +329,46 @@ pub(super) async fn invoke_raw<P: InvocationPolicy>(
 
 async fn invoke<P: InvocationPolicy>(
     target: &DispatchTarget,
-    request: NativeInvocation<P>,
+    mut request: NativeInvocation<P>,
     finish_result: bool,
 ) -> anyhow::Result<NativeOutcome> {
-    let deadline = request.deadline;
+    let deadline = request
+        .deadline
+        .min(Instant::now() + crate::engine::MAX_HOST_CALL_DURATION);
+    request.deadline = deadline;
     anyhow::ensure!(Instant::now() < deadline, "native-node-deadline-exceeded");
     let (reply, response) = oneshot::channel();
     let failure = NativeCallFailure::default();
     let retired_after_reply = Arc::new(AtomicBool::new(false));
-    let scope = Arc::new(InvocationScope::new(Arc::clone(
-        &request.application.policy,
-    )));
-    let _close = CloseScope(Arc::clone(&scope));
-    timeout_at(deadline, async move {
+    request.facts = timeout_at(
+        deadline,
+        request.application.policy.prepare(
+            request
+                .application
+                .workload
+                .target_component(target)
+                .context("dispatch target is outside the application")?,
+            &request.operation,
+            &request.facts,
+        ),
+    )
+    .await
+    .context("native admission deadline elapsed")??;
+    let retained = request
+        .application
+        .policy
+        .scope_id(&request.facts)
+        .map(Box::<str>::from);
+    let retains_authority = retained.is_some();
+    let scope = Arc::new(match retained {
+        Some(id) => InvocationScope::with_id(Arc::clone(&request.application.policy), id),
+        None => InvocationScope::new(Arc::clone(&request.application.policy)),
+    });
+    let mut close = CloseScope {
+        scope: Arc::clone(&scope),
+        completed: false,
+    };
+    let result = timeout_at(deadline, async move {
         // Await native completion first: an initialization or guest failure
         // must not be replaced by the resulting closed response channel.
         if let Err(native_error) = target
@@ -378,7 +410,9 @@ async fn invoke<P: InvocationPolicy>(
             .context("native node dispatch completed without a response")
     })
     .await
-    .context("native node enclosing deadline elapsed")?
+    .context("native node enclosing deadline elapsed")?;
+    close.completed = result.is_ok() && retains_authority;
+    result
 }
 
 /// Invoke the JSON adapter at an HTTP or dynamic routing boundary.
