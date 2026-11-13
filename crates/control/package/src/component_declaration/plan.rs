@@ -61,27 +61,3 @@ pub(super) fn render_palette_declaration(
     }
     Ok(document)
 }
-
-pub(super) fn render_declaration_document(
-    template: &Path,
-    document: &mut Value,
-    project_env_key: &str,
-) -> Result<(), ComponentDeclarationError> {
-    let invalid = |detail: String| {
-        ComponentDeclarationError::invalid(
-            ComponentDeclarationErrorType::TemplateInvalid,
-            template,
-            detail,
-        )
-    };
-    let slot = document
-        .pointer_mut("/target/project_env_key")
-        .ok_or_else(|| invalid("has no target.project_env_key".to_owned()))?;
-    if slot.as_str() != Some(COMPONENT_DECLARATION_PLACEHOLDER) {
-        return Err(invalid(
-            "must leave target.project_env_key as the deployment placeholder".to_owned(),
-        ));
-    }
-    *slot = Value::String(project_env_key.to_owned());
-    Ok(())
-}

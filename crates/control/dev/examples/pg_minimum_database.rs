@@ -66,15 +66,5 @@ async fn main() -> anyhow::Result<()> {
         ENVIRONMENT,
     )
     .await?;
-    let access =
-        wamn_environment_control::reconcile_package_data_access::prepare_local(&[package])?;
-    wamn_environment_control::reconcile_package_data_access::reconcile_local(
-        &access,
-        &url,
-        PROJECT_ENV_KEY,
-        ENVIRONMENT,
-        true,
-    )
-    .await?;
     Ok(())
 }

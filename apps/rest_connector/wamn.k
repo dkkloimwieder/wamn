@@ -40,5 +40,5 @@ manifest.Package {
         }
     }
     connections = {upstream = {interface = "wamn:connection/http@0.1.0", mode = "read"}}
-    components = {rest_connector = {connections = ["postgres"]}}
+    components = {rest_connector = {connections = ["postgres"], exports = {"wamn:node/async-handler@0.1.0": {"input-ports": [{"name": "input", "schema": {}}], "output-ports": [{"name": "main", "schema": {}}], "parameters": []}}}}
 }

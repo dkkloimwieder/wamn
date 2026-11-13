@@ -8,7 +8,7 @@ use wamn_package_control::component_admission::{
     AdmitComponentRequest, ComponentAdmission, admit_component,
 };
 use wamn_package_control::component_declaration::{
-    render_declaration_document, render_palette_declaration,
+    render_package_declaration, render_palette_declaration,
 };
 
 pub fn repository() -> PathBuf {
@@ -16,8 +16,6 @@ pub fn repository() -> PathBuf {
 }
 
 pub fn manifest(package: &Path) -> Value {
-    wamn_compiler::build_record::require_current(package)
-        .unwrap_or_else(|error| panic!("{error:#}"));
     serde_json::from_slice(
         &std::fs::read(wamn_compiler::output_root(package).join("wamn.json")).unwrap(),
     )
@@ -39,11 +37,7 @@ pub fn admit(
         Some(template) => {
             render_palette_declaration(&repository().join(template), &target, None).unwrap()
         }
-        None => render_declaration_document(
-            &package.join(format!("publication/components/{name}.json.in")),
-            &target.project_env_key,
-        )
-        .unwrap(),
+        None => render_package_declaration(package, name, &target.project_env_key).unwrap(),
     };
     let rendered = std::env::temp_dir().join(format!(
         "rest-publication-{}-{name}-{}.json",

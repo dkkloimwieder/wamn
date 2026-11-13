@@ -298,7 +298,7 @@ mod tests {
     #[test]
     fn definition_owners_must_name_the_package_or_a_declared_base() {
         let mut manifest = PackageManifest::from_slice(include_bytes!(
-            "../../../tests/fixtures/observer_package/wamn.json"
+            "../../../tests/fixtures/observer_package/generated/wamn.json"
         ))
         .unwrap();
         let model = manifest.models.get_mut("item").unwrap();

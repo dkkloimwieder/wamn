@@ -83,7 +83,7 @@ impl ProjectDocument {
     ///
     /// When KCL refuses the file, or when the JSON is not a valid document.
     pub fn compile(file: &Path) -> anyhow::Result<Self> {
-        let bytes = wamn_compiler::compile_schema_file(file, "project")?;
+        let bytes = crate::kcl::compile(file, "project")?;
         Self::from_json(&bytes)
             .with_context(|| format!("{} is not a valid project", file.display()))
     }
@@ -286,7 +286,7 @@ mod tests {
         // The document and its embedded schema module share the name.
         let file = directory.join("project.k");
         std::fs::write(&file, source).expect("write the document");
-        let result = wamn_compiler::compile_schema_file(&file, "project");
+        let result = crate::kcl::compile(&file, "project");
         std::fs::remove_dir_all(&directory).expect("remove the directory");
         result
     }

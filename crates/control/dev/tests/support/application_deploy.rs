@@ -1062,23 +1062,13 @@ async fn sources(
             "version = \"2.1.1\"",
             &format!("version = \"1.0.0-test-{id}\""),
         );
-        let text = text.replace(
-            "routes = {",
-            &format!("routes = {{path_prefix = \"/{app}\", "),
-        );
+        let text = text
+            .replace(
+                "routes = {",
+                &format!("routes = {{path_prefix = \"/{app}\", "),
+            )
+            .replace("path = \"/", &format!("path = \"/{app}/"));
         std::fs::write(manifest, text)?;
-        let file = root.join("publication/attachments.json");
-        let mut attachments: BTreeMap<String, Value> =
-            serde_json::from_slice(&std::fs::read(&file)?)?;
-        for attachment in attachments.values_mut() {
-            let path = attachment["definition"]["route"]["path"]
-                .as_str()
-                .context("fixture route path")?;
-            attachment["definition"]["route"]["path"] = format!("/{app}{path}").into();
-            attachment["definition-hash"] =
-                wamn_digest::canonical_json_sha256(&attachment["definition"]).into();
-        }
-        std::fs::write(file, serde_json::to_vec_pretty(&attachments)?)?;
         let query = root.join("query/widget_list.sql");
         std::fs::write(
             &query,

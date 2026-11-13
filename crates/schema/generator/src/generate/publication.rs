@@ -18,6 +18,20 @@ pub(super) fn emit_package_publication(
 ) -> Result<(), GenerateError> {
     let mut attachments = BTreeMap::new();
     let mut components = BTreeMap::<String, Value>::new();
+    for (component, declaration) in &manifest.components {
+        for (export, operation) in &declaration.exports {
+            if operation.registered_operation.is_some() {
+                return Err(crate::ManifestError::new(
+                    crate::ManifestErrorType::InvalidManifest,
+                    format!("component export {export} cannot declare a registered operation"),
+                ));
+            }
+        }
+        components.insert(component.clone(), json!({
+            "target": {"package-id": manifest.package.id, "package-version": manifest.package.version},
+            "component": component, "interface-version": "0.1.0", "operations": declaration.exports, "connections": [],
+        }));
+    }
     let routes = &manifest.routes;
     let modes = routes.auth_modes.as_deref().unwrap_or(&[]);
     let modes = if modes.is_empty() {
@@ -50,19 +64,30 @@ pub(super) fn emit_package_publication(
         let identity = description.operation.operation.as_str();
         let input = input_schema(description);
         let result = result_schema(description);
-        let declaration = components.entry(component.clone()).or_insert_with(|| json!({
-            "target": {"project_env_key": "__PROJECT_ENV_KEY__", "package-id": manifest.package.id, "package-version": manifest.package.version},
-            "component": component, "interface-version": "0.1.0",
-            "operations": {}, "connections": [],
-        }));
-        declaration["operations"][identity] = json!({
-            "registered-operation": identity,
+        let declaration = components
+            .get_mut(component)
+            .expect("validated component owner");
+        if declaration["operations"].get(identity).is_some() {
+            return Err(crate::ManifestError::new(
+                crate::ManifestErrorType::InvalidManifest,
+                format!("component export {identity} is already generated"),
+            ));
+        }
+        let mut published = json!({
             "input-ports": [{"name": "input", "schema": input}],
             "output-ports": [{"name": "main", "schema": result}],
-            "parameters": [],
+            "parameters": manifest.components[component].parameters.get(local).map_or(&[][..], Vec::as_slice),
         });
-        // Authored routes choose which custom operations they expose.
-        if model_operation.is_none() {
+        if description.operation.visibility.as_deref() != Some("private") {
+            published["registered-operation"] = json!(identity);
+        }
+        if !description.operation.type_.is_read() && !description.result.is_null() {
+            published["committed-result-schema"] =
+                json!({"type": "array", "items": result["items"]["oneOf"][0]});
+        }
+        declaration["operations"][identity] = published;
+        let exposure = manifest.routes.operations.get(local);
+        if model_operation.is_none() && exposure.is_none() {
             continue;
         }
         let id = wamn_catalog::route_attachment_id(
@@ -70,12 +95,43 @@ pub(super) fn emit_package_publication(
             module,
             action,
         );
+        let id = exposure.map_or(id, |exposure| exposure.id.clone());
+        let path = exposure.map_or_else(
+            || {
+                wamn_catalog::route_path(
+                    routes.path_prefix.as_deref().unwrap_or(""),
+                    module,
+                    action,
+                )
+            },
+            |exposure| exposure.path.clone(),
+        );
+        let path = wamn_schema_control::exposure::normalize_http_route(
+            &wamn_schema_control::exposure::HttpRoute {
+                path,
+                method: "POST".to_owned(),
+            },
+            &id,
+        )
+        .map_err(|source| {
+            crate::ManifestError::new(
+                crate::ManifestErrorType::InvalidManifest,
+                source.to_string(),
+            )
+        })?
+        .path;
         let definition = json!({
             "id": id, "type": "http",
-            "route": {"path": wamn_catalog::route_path(routes.path_prefix.as_deref().unwrap_or(""), module, action)},
+            "route": {"path": path},
             "input-schema": input,
             "raw-body-bytes": {"maximum": RAW_BODY_MAXIMUM},
         });
+        if attachments.contains_key(&id) {
+            return Err(crate::ManifestError::new(
+                crate::ManifestErrorType::InvalidManifest,
+                format!("duplicate HTTP attachment id {id}"),
+            ));
+        }
         attachments.insert(
             id,
             json!({
@@ -429,6 +485,21 @@ mod tests {
         let manifest = crate::derive_manifest(&catalog, &authored, &[], &[]).unwrap();
         let facts = StatementTransactionality::from_paths(BTreeMap::new());
         let package = generate(&GenerationInput::new(&catalog, &manifest, &[], &facts)).unwrap();
+        let mut duplicate: Value = serde_json::from_slice(&manifest).unwrap();
+        duplicate["routes"]["operations"] = json!({
+            "record.query": {"id": "record-http", "path": "/record/query"},
+            "record.update": {"id": "record-http", "path": "/record/update"}
+        });
+        assert!(
+            generate(&GenerationInput::new(
+                &catalog,
+                &serde_json::to_vec(&duplicate).unwrap(),
+                &[],
+                &facts
+            ))
+            .is_err()
+        );
+
         let attachments: BTreeMap<String, wamn_catalog::ServingAttachment> =
             serde_json::from_slice(package.file(ATTACHMENTS).unwrap().bytes()).unwrap();
         for attachment in attachments.values().filter(|attachment| {
@@ -451,7 +522,7 @@ mod tests {
                 assert!(schemas.validate(&invalid, input).is_err());
             }
         }
-        let declarations: BTreeMap<String, wamn_catalog::ComponentDeclaration> =
+        let declarations: BTreeMap<String, crate::publication::CompiledComponentDeclaration> =
             serde_json::from_slice(package.file(COMPONENTS).unwrap().bytes()).unwrap();
         for declaration in declarations.values() {
             for (identity, operation) in &declaration.operations {

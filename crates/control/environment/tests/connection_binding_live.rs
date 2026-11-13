@@ -196,7 +196,12 @@ async fn provision_project(project: &Client, project_url: &str) -> Vec<AdmittedC
     let scratch = wamn_test_infrastructure::scratch::ScratchRoot::create().unwrap();
     let package = scratch.path().join("package");
     std::fs::create_dir_all(package.join("migrations")).unwrap();
-    std::fs::copy(source.join("wamn.json"), package.join("wamn.json")).unwrap();
+    std::fs::create_dir_all(package.join("generated")).unwrap();
+    std::fs::copy(
+        source.join("generated/wamn.json"),
+        package.join("generated/wamn.json"),
+    )
+    .unwrap();
     for entry in std::fs::read_dir(source.join("migrations")).unwrap() {
         let entry = entry.unwrap();
         std::fs::copy(

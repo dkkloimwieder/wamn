@@ -83,7 +83,6 @@ fn fixture(root: &Path) -> anyhow::Result<()> {
     let repository = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
     for file in [
         "rust-toolchain.toml",
-        "tools/guest-rustflags",
         "apps/platform/no-std/guest_runtime.rs",
         "apps/platform/no-std/modbus/Cargo.toml",
         "apps/platform/no-std/modbus/src/lib.rs",
@@ -178,14 +177,15 @@ impl Application {
     async fn load(reader: Arc<IntegrationImports>) -> anyhow::Result<Self> {
         let repository = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
         let package = repository.join("apps/modbus_reader");
-        wamn_compiler::build_record::require_current(&package)?;
+
         let bytes = std::fs::read(
             repository.join("apps/target/wamn/modbus_reader/components/modbus_reader.wasm"),
         )?;
         let engine = wamn_engine::build_engine(&[])?;
         let mut declaration =
-            wamn_package_control::component_declaration::render_declaration_document(
-                &package.join("publication/components/modbus_reader.json.in"),
+            wamn_package_control::component_declaration::render_package_declaration(
+                &package,
+                "modbus_reader",
                 "acme--dev--one",
             )?;
         declaration["target"]["package-version"] = json!("0.1.0");
@@ -264,12 +264,7 @@ impl Application {
     }
 
     async fn read_unit(&mut self, unit: u8) -> anyhow::Result<Result<Emission, NodeError>> {
-        let repository = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
-        let wiring: serde_json::Value = serde_json::from_slice(&std::fs::read(
-            repository.join("apps/modbus_reader/publication/wirings/read_register.json"),
-        )?)?;
-        let mut config = wiring["nodes"]["read"]["params"].clone();
-        config["unit"] = json!(unit);
+        let config = json!({"unit": unit});
         let context = NodeContext {
             wiring_id: "read_register".into(),
             wiring_version: 1,

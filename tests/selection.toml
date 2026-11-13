@@ -58,7 +58,6 @@ targets = [
   { workspace="root", package="wamn-dev-control", target="test:native_host", tier="live-nats" },
   { workspace="root", package="wamn-environment-control", target="test:netsuite_publication", tier="live-postgres" },
   { workspace="root", package="wamn-package-control", target="test:package_artifact_live", tier="live-postgres" },
-  { workspace="root", package="wamn-environment-control", target="test:package_data_access_live", tier="live-postgres" },
   { workspace="root", package="wamn-environment-control", target="test:platform_grants_live", tier="live-postgres" },
   { workspace="root", package="wamn-environment-control", target="test:platform_render", tier="contract" },
   { workspace="root", package="wamn-environment-control", target="test:provision_org_admin_live", tier="live-postgres" },
@@ -72,7 +71,6 @@ targets = [
   { workspace="root", package="wamn-environment-control", target="test:run_plane_live", tier="live-postgres" },
   { workspace="root", package="wamn-environment-control", target="test:run_record_history_live", tier="live-postgres" },
   { workspace="root", package="wamn-environment-control", target="test:system_record_history_live", tier="live-postgres" },
-  { workspace="root", package="wamn-environment-control", target="test:wamn_integration_live", tier="live-postgres" },
   { workspace="root", package="wamn-environment-control", target="test:workflow_event_nats", tier="live-nats" },
   { workspace="root", package="wamn-environment-control", target="test:workflow_lifecycle_live", tier="live-nats" },
   { workspace="root", package="wamn-environment-control", target="test:workflow_manual_run_live", tier="live-postgres" },
@@ -191,7 +189,6 @@ targets = [
   { workspace="root", package="wamn-compiler", target="test:client_projection", tier="contract" },
   { workspace="root", package="wamn-compiler", target="test:client_ts_emitter", tier="contract" },
   { workspace="root", package="wamn-compiler", target="test:connection_declarations", tier="contract" },
-  { workspace="root", package="wamn-compiler", target="test:cursor", tier="contract" },
   { workspace="root", package="wamn-compiler", target="test:generation", tier="contract" },
   { workspace="root", package="wamn-compiler", target="test:manifest_authoring", tier="contract" },
   { workspace="root", package="wamn-compiler", target="test:numbering", tier="live-postgres" },
@@ -486,11 +483,6 @@ target = ["test:rest_connector_publication"]
 prerequisites = ["rest-connector"]
 
 [[preparation]]
-packages = ["wamn-environment-control"]
-target = ["test:wamn_integration_live"]
-prerequisites = ["wamn-integration"]
-
-[[preparation]]
 packages = ["wamn-package-control"]
 target = ["test:package_artifact_live"]
 prerequisites = ["publication-applications"]
@@ -519,7 +511,7 @@ prerequisites = ["fixture-components"]
 
 [[preparation]]
 packages = ["wamn-environment-control"]
-target = ["lib:wamn_environment_control", "test:package_data_access_live", "test:provision_system_live", "test:run_plane_live"]
+target = ["lib:wamn_environment_control", "test:provision_system_live", "test:run_plane_live"]
 prerequisites = ["fixture"]
 
 [[preparation]]
@@ -775,7 +767,7 @@ target = ["test:platform_apply_kind"]
 tests = ["platform_apply_kind"]
 features = []
 prerequisites = ["docker", "kind", "helm", "kubectl", "openssl"]
-inputs = ["^deploy/", "^services/ctl/", "^services/identity/", "^apps/platform_fixture/", "^apps/Cargo\\.(toml|lock)$", "^wit/(wamn-node|wamn-postgres-0\\.4|wamn-connection)/", "^apps/platform/(data|ingress/http-route)/", "^tools/guest-rustflags$", "^tools/component-virtualization\\.json$"]
+inputs = ["^deploy/", "^services/ctl/", "^services/identity/", "^apps/platform_fixture/", "^apps/Cargo\\.(toml|lock)$", "^wit/(wamn-node|wamn-postgres-0\\.4|wamn-connection)/", "^apps/platform/(data|ingress/http-route)/"]
 execution = "libtest"
 mode = "local"
 select_packages = ["wamn-release-control", "wamn-environment-control", "wamn-dev-control"]

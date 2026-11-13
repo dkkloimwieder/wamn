@@ -28,36 +28,27 @@ pub mod client_plan;
 mod client_route;
 /// The TypeScript client emitter. Browser bindings from the same contract IR.
 pub mod client_ts;
-mod components;
-mod cursor;
 mod describe;
 /// Catalog facts for authored query feeds.
 pub mod feed;
 mod generate;
 mod inheritance;
+pub mod kcl;
 mod key;
 pub mod manifest;
 mod manifest_error;
 pub use manifest_error::{ManifestError, ManifestErrorType};
 mod materialize;
-mod operation_reference;
 mod output;
 mod package_catalog;
 pub mod publication;
 mod rustfmt;
 mod sql;
 mod sql_analysis;
-mod sqlx_metadata;
-mod tofu;
 
 pub use authoring::{
-    AUTHORED_MANIFEST, COMPILED_MANIFEST, KCL_ENV, compile_environment, compile_manifest,
-    compile_schema_file, is_authored, is_package_root, manifest_package_root,
-    package_manifest_path,
-};
-/// The write log's three fixed statements.
-pub use cursor::{
-    CursorError, CursorErrorType, CursorV1, CursorValue, decode_cursor, encode_cursor,
+    AUTHORED_MANIFEST, COMPILED_MANIFEST, compile_manifest, is_authored, is_package_root,
+    manifest_package_root, package_manifest_path,
 };
 pub use generate::{
     AuthoredSql, GeneratedFile, GeneratedPackage, GenerationInput, OperationDescription,
@@ -66,13 +57,6 @@ pub use generate::{
 };
 pub use materialize::{
     introspect_package, materialize_client_consumers, materialize_host_route_client,
-    materialize_package, materialize_package_from_catalog, materialize_package_verified,
-    materialize_package_verified_with_catalog,
 };
-pub use output::{host_route_client_output_root, output_root};
+pub use output::{host_route_client_output_root, output_root, package_workspace};
 pub use package_catalog::project_package_catalog;
-pub use sqlx_metadata::{
-    SqlxVerifier, package_database_url, prepare_sqlx_metadata, stage_sqlx_verifier,
-};
-#[doc(inline)]
-pub use tofu::render_project_tofu;

@@ -7,9 +7,9 @@
     ".": "./src/index.ts"
   },
   "scripts": {
-    "lint": "pnpm --workspace-root run wfe:build && node ../../web/host-route-clients.mjs && tsc --noEmit",
-    "test": "pnpm --workspace-root run wfe:build && node ../../web/host-route-clients.mjs && vitest run",
-    "build": "pnpm --workspace-root run wfe:build && node ../../web/host-route-clients.mjs && vite build"
+    "lint": "pnpm --workspace-root run wfe:build && (cd ../.. && cargo xtask host-route-clients) && tsc --noEmit",
+    "test": "pnpm --workspace-root run wfe:build && (cd ../.. && cargo xtask host-route-clients) && vitest run",
+    "build": "pnpm --workspace-root run wfe:build && (cd ../.. && cargo xtask host-route-clients) && vite build"
   },
   "wamn": {
     "clients": [

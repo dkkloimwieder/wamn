@@ -123,9 +123,9 @@ pub fn bundle(test: &str, public: &PublicSessionKey) -> (PathBuf, String) {
 fn build_bundle() -> PathBuf {
     let repository = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     let package = repository.join("apps/edge_device");
-    wamn_compiler::build_record::require_current(&package)
-        .unwrap_or_else(|error| panic!("{error:#}"));
-    let flags = run(&mut Command::new(repository.join("tools/guest-rustflags")));
+    let flags = run(Command::new("cargo")
+        .current_dir(&repository)
+        .args(["xtask", "guest-rustflags"]));
     run(Command::new(env!("CARGO"))
         .current_dir(repository.join("apps"))
         .env_remove("CARGO_TARGET_DIR")

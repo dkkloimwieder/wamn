@@ -253,19 +253,23 @@ pub async fn pg(root: &Path, _args: &PgArgs) -> anyhow::Result<()> {
         false,
     )
     .await?;
-    let operation = data::read(
-        &root
-            .join("apps/target/wamn/wamn_receiving/contracts/purchase_order/update.operation.json"),
-    )?["operation"]
-        .as_str()
-        .context("update operation")?
-        .to_owned();
-    let receipt = data::read(&root.join(
-        "apps/target/wamn/wamn_receiving/contracts/receiving/record_receipt.operation.json",
-    ))?["operation"]
-        .as_str()
-        .context("receipt operation")?
-        .to_owned();
+    let manifest = wamn_compiler::manifest::PackageManifest::from_slice(&std::fs::read(
+        wamn_compiler::package_manifest_path(&root.join("apps/wamn_receiving")),
+    )?)?;
+    let operation = manifest
+        .compiled_operations
+        .get("purchase_order.update")
+        .context("compiled purchase_order.update")?
+        .operation
+        .operation
+        .as_str();
+    let receipt = manifest
+        .compiled_operations
+        .get("receiving.record_receipt")
+        .context("compiled receiving.record_receipt")?
+        .operation
+        .operation
+        .as_str();
     let mut statement = std::fs::read_to_string(
         root.join("apps/wamn_receiving/command/record_receipt/record_receipt.sql"),
     )?;
@@ -306,21 +310,21 @@ pub async fn pg(root: &Path, _args: &PgArgs) -> anyhow::Result<()> {
         for name in ["get","update","receipt"]{let path=if name=="receipt"{work.join("receipt.sql")}else{root.join(format!("xtask/bench/pg-minimum/{name}.sql"))};process::run(root,"kubectl",&["-n","platform","cp",path.to_str().context("replay path")?,&format!("{client}:/tmp/minimum/{name}.sql")]).await?;}
         process::run(root,"kubectl",&["-n","platform","exec",&client,"--","pgbench",client_url,"-i","-s","10"]).await?;
         for call in calls.split_whitespace(){
-            let run=SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();let receipt_lines=call.strip_prefix("receipt-");let operation=if receipt_lines.is_some(){&receipt}else{&operation};
+            let run=SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();let receipt_lines=call.strip_prefix("receipt-");let operation=if receipt_lines.is_some(){receipt}else{operation};
             if let Some(lines)=receipt_lines {process::execute(tokio::process::Command::new("psql").current_dir(root).env("PGPASSWORD",&password).args([database,"-XAt","-v","ON_ERROR_STOP=1","-v",&format!("clients={concurrency}"),"-v",&format!("lines={lines}"),"-f","xtask/bench/pg-minimum/receipt-slots.sql"])).await?;}
             if call=="update-no-triggers"{sql(database,"ALTER TABLE receiving.purchase_order DISABLE TRIGGER wamn_record_history_stamp, DISABLE TRIGGER wamn_record_history_log",false).await?;}
             sql(database,"SELECT pg_stat_statements_reset(); SELECT pg_stat_reset()",false).await?;std::fs::write(work.join(format!("{call}.database-before.json")),sql(database,include_str!("../bench/database-snapshot.sql"),false).await?)?;
             let builtin=matches!(call,"select-only"|"simple-update");let mut url=if builtin{client_url.to_owned()}else{format!("{client_url}?options=-csearch_path%3Dreceiving,public%20-cstatement_timeout%3D5000%20-crole%3Dwamn_app")};
             if receipt_lines.is_some() { url.push_str("%20-ctrack_functions%3Dpl"); }
             let mut command=tokio::process::Command::new("kubectl");command.current_dir(root).args(["-n","platform","exec",&client,"--","pgbench",&url,"-n","-M","prepared","-c",&concurrency.to_string(),"-j","2","-T",&duration.to_string(),"-r","-l",&format!("--log-prefix=/tmp/minimum/{call}.latencies")]);
-            for (name,value) in [("clients",concurrency.to_string()),("sequence","0".into()),("run",run.to_string()),("operation",operation.to_owned()),("claim_operation",operation.rsplit_once('@').map_or(operation.as_str(),|(name,_)|name).to_owned()),("statement_timeout","5000".into()),("schema","receiving".into()),("principal","770df186-ac15-579e-b46b-c297cae2011b".into())]{command.args(["-D",&format!("{name}={value}")]);}
+            for (name,value) in [("clients",concurrency.to_string()),("sequence","0".into()),("run",run.to_string()),("operation",operation.to_owned()),("claim_operation",operation.rsplit_once('@').map_or(operation,|(name,_)|name).to_owned()),("statement_timeout","5000".into()),("schema","receiving".into()),("principal","770df186-ac15-579e-b46b-c297cae2011b".into())]{command.args(["-D",&format!("{name}={value}")]);}
             if builtin{command.args(["-b",call]);}else{command.args(["-f",&format!("/tmp/minimum/{}.sql",if receipt_lines.is_some(){"receipt"}else{call.strip_suffix("-no-triggers").unwrap_or(call)})]);}
             let measured=process::execute(&mut command).await;
             if call=="update-no-triggers"{sql(database,"ALTER TABLE receiving.purchase_order ENABLE TRIGGER wamn_record_history_stamp, ENABLE TRIGGER wamn_record_history_log",false).await?;}
             std::fs::write(work.join(format!("{call}.log")),measured?)?;
             std::fs::write(work.join(format!("{call}.database-after.json")),sql(database,include_str!("../bench/database-snapshot.sql"),false).await?)?;
             std::fs::write(work.join(format!("{call}.statements.csv")),sql(database,"SELECT s.*, r.rolname FROM pg_stat_statements s JOIN pg_roles r ON r.oid = s.userid WHERE dbid = (SELECT oid FROM pg_database WHERE datname = current_database()) ORDER BY total_exec_time DESC",true).await?)?;data::database_delta(&work,call)?;
-            if call.starts_with("update"){let base=operation.rsplit_once('@').map_or(operation.as_str(),|(name,_)|name).replace('\'',"''");std::fs::write(work.join("update-counts"),sql(database,&format!("SELECT sum(row_version - 1), (SELECT count(*) FROM platform.write_log WHERE operation = '{base}' AND result IS NOT NULL) FROM receiving.purchase_order"),false).await?)?;}
+            if call.starts_with("update"){let base=operation.rsplit_once('@').map_or(operation,|(name,_)|name).replace('\'',"''");std::fs::write(work.join("update-counts"),sql(database,&format!("SELECT sum(row_version - 1), (SELECT count(*) FROM platform.write_log WHERE operation = '{base}' AND result IS NOT NULL) FROM receiving.purchase_order"),false).await?)?;}
             if receipt_lines.is_some(){tokio::time::sleep(Duration::from_secs(1)).await;std::fs::write(work.join(format!("{call}.functions.csv")),sql(database,"SELECT * FROM pg_stat_user_functions",true).await?)?;std::fs::write(work.join(format!("{call}.receipt-counts")),sql(database,&format!("SELECT count(DISTINCT r.id), count(l.id) FROM receiving.receipt AS r JOIN receiving.receipt_line AS l ON l.receipt_id = r.id WHERE r.receipt_reference LIKE 'bench-{run}-%'"),false).await?)?;}
         }
         process::run(root,"kubectl",&["-n","platform","cp",&format!("{client}:/tmp/minimum/."),work.to_str().context("run directory")?]).await?;data::pg_result(&work,&output,concurrency)

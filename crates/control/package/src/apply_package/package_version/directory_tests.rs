@@ -18,12 +18,19 @@ const FILES: [(&str, &str); 3] = [
 ];
 
 fn write_package(root: &Path, order: [usize; 3]) {
-    let _ = std::fs::remove_dir_all(root);
-    std::fs::create_dir_all(root.join("migrations")).unwrap();
-    std::fs::write(root.join("wamn.json"), b"{}").unwrap();
+    std::fs::create_dir_all(root).unwrap();
+    std::fs::write(root.join("wamn.k"), "# authored fixture").unwrap();
+    let output = wamn_compiler::output_root(root);
+    std::fs::create_dir_all(output.join("migrations")).unwrap();
+    std::fs::write(
+        output.join("wamn.json"),
+        include_bytes!("../../../tests/fixtures/apply_package/base/generated/wamn.json"),
+    )
+    .unwrap();
+    std::fs::write(output.join("record-history.sql"), "SELECT 1;").unwrap();
     for index in order {
         let (name, sql) = FILES[index];
-        std::fs::write(root.join("migrations").join(name), sql).unwrap();
+        std::fs::write(output.join("migrations").join(name), sql).unwrap();
     }
 }
 
@@ -34,32 +41,20 @@ fn package_root(label: &str) -> PathBuf {
     ))
 }
 
-/// Two directories that hold the same files give the same package bytes,
-/// whatever order the files were created in or the file system lists them in.
+/// The reader plans authored migrations in order and keeps generated history separate.
 #[test]
-fn the_creation_order_of_migration_files_does_not_change_the_package_bytes() {
-    let forward = package_root("forward");
-    let reverse = package_root("reverse");
-    write_package(&forward, [0, 1, 2]);
-    write_package(&reverse, [2, 1, 0]);
-
-    let forward_bytes = read_package_directory(&forward).unwrap();
-    let reverse_bytes = read_package_directory(&reverse).unwrap();
-    std::fs::remove_dir_all(&forward).unwrap();
-    std::fs::remove_dir_all(&reverse).unwrap();
-
-    assert_eq!(forward_bytes, reverse_bytes);
-    let paths = forward_bytes
-        .migrations
-        .iter()
-        .map(|migration| migration.relative_path.as_str())
-        .collect::<Vec<_>>();
-    assert_eq!(
-        paths,
-        [
-            "migrations/0001_initial.sql",
-            "migrations/0002_lane_note.sql",
-            "migrations/0003_lane_code.sql",
-        ]
-    );
+fn compiled_inputs_plan_only_authored_migrations_in_creation_independent_order() {
+    for (label, order) in [("forward", [0, 1, 2]), ("reverse", [2, 1, 0])] {
+        let root = package_root(label);
+        write_package(&root, order);
+        let directory = read_package_directory(&root).unwrap();
+        let plan = wamn_schema_control::plan_package_migrations(&directory, None, &[]).unwrap();
+        assert_eq!(plan.pending.len(), FILES.len());
+        for (pending, (name, _)) in plan.pending.iter().zip(FILES) {
+            let ordinal: u32 = name.split_once('_').unwrap().0.parse().unwrap();
+            assert_eq!(pending.ordinal, ordinal);
+        }
+        std::fs::remove_dir_all(wamn_compiler::output_root(&root)).unwrap();
+        std::fs::remove_dir_all(root).unwrap();
+    }
 }

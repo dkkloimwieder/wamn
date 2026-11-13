@@ -81,7 +81,7 @@ async fn explicit_sql_advances_across_versions_without_selecting_code() {
         .await
         .unwrap()
         .get(0);
-    let manifest_path = next.join("wamn.json");
+    let manifest_path = next.join("generated/wamn.json");
     let mut manifest: serde_json::Value =
         serde_json::from_slice(&std::fs::read(&manifest_path).unwrap()).unwrap();
     manifest["package"]["version"] = "2.0.0".into();
@@ -300,7 +300,7 @@ async fn nontransactional_files_keep_committed_work_and_require_explicit_resolut
     let scratch = wamn_test_infrastructure::scratch::ScratchRoot::create().unwrap();
     let root = scratch.path().join("candidate");
     crate::test_support::copy_schema_fixture(&root);
-    let manifest_path = root.join("wamn.json");
+    let manifest_path = root.join("generated/wamn.json");
     let mut manifest: serde_json::Value =
         serde_json::from_slice(&std::fs::read(&manifest_path).unwrap()).unwrap();
     std::fs::write(root.join("migrations/0002_dock_index.sql"),
@@ -550,7 +550,7 @@ async fn adoption_preserves_execution_records_and_never_executes_asserted_files(
         .unwrap();
     let baseline = state(&mut client).await;
     let manifest = wamn_compiler::manifest::PackageManifest::from_slice(
-        &std::fs::read(root.join("wamn.json")).unwrap(),
+        &std::fs::read(root.join("generated/wamn.json")).unwrap(),
     )
     .unwrap();
     let tx = client.transaction().await.unwrap();
@@ -651,7 +651,7 @@ async fn adoption_preserves_execution_records_and_never_executes_asserted_files(
     let mut next_manifest = manifest.clone();
     next_manifest.package.version = "2.0.0".into();
     std::fs::write(
-        root.join("wamn.json"),
+        root.join("generated/wamn.json"),
         serde_json::to_vec(&next_manifest).unwrap(),
     )
     .unwrap();
@@ -752,7 +752,7 @@ async fn adoption_preserves_execution_records_and_never_executes_asserted_files(
     );
     next_manifest.package.version = "3.0.0".into();
     std::fs::write(
-        root.join("wamn.json"),
+        root.join("generated/wamn.json"),
         serde_json::to_vec(&next_manifest).unwrap(),
     )
     .unwrap();
@@ -864,7 +864,7 @@ async fn resolution_selects_one_package_with_a_shared_migration_path() {
     for name in ["alpha", "beta"] {
         let root = scratch.path().join(name);
         crate::test_support::copy_schema_fixture(&root);
-        for file in ["wamn.json", "migrations/0001_initial.sql"] {
+        for file in ["generated/wamn.json", "migrations/0001_initial.sql"] {
             let bytes = std::fs::read_to_string(root.join(file))
                 .unwrap()
                 .replace("inventory", name);
@@ -946,7 +946,7 @@ async fn lost_commit_response_retries_without_repeating_sql() -> anyhow::Result<
     let root = scratch.path().join("lost-result");
     crate::test_support::copy_schema_fixture(&root);
     apply_package(request(&root, database.url())).await?;
-    let manifest = root.join("wamn.json");
+    let manifest = root.join("generated/wamn.json");
     std::fs::write(
         &manifest,
         std::fs::read_to_string(&manifest)?.replace("1.0.0", "2.0.0"),
@@ -1045,7 +1045,7 @@ async fn resolution_waits_for_a_running_nontransactional_statement() -> anyhow::
     let root = scratch.path().join("running-sql");
     crate::test_support::copy_schema_fixture(&root);
     apply_package(request(&root, database.url())).await?;
-    let manifest = root.join("wamn.json");
+    let manifest = root.join("generated/wamn.json");
     std::fs::write(
         &manifest,
         std::fs::read_to_string(&manifest)?.replace("1.0.0", "2.0.0"),

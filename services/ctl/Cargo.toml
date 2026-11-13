@@ -38,6 +38,7 @@ path = "tests/prune_run_history_live.rs"
 required-features = ["ops"]
 
 [dependencies]
+wamn-build.workspace = true
 wamn-broker = { workspace = true }
 wamn-digest.workspace = true
 wamn-identity-client = { workspace = true }

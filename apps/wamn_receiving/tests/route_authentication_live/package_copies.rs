@@ -7,7 +7,7 @@
 //! the workspace manifest and its lock, which are copies, and `apps`. In
 //! `<root>/apps` each entry is a symlink, except the copied packages, the apps
 //! workspace manifest and its lock, which are copies, and `target`, which the
-//! build writes. `tools/guest-rustflags` then maps `<root>` as the repository,
+//! build writes. `cargo xtask guest-rustflags` then maps `<root>` as the repository,
 //! and the build of an edited copy runs with the generator unchanged and
 //! leaves the repository's own build output alone. push-package takes the copy
 //! like any other built package.

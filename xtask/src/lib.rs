@@ -22,6 +22,19 @@ pub struct Args {
 
 #[derive(Debug, Subcommand)]
 enum Task {
+    /// Install the pinned KCL CLI.
+    InstallKcl,
+    /// Build complete package artifacts.
+    BuildPackage {
+        #[arg(required = true)]
+        packages: Vec<PathBuf>,
+        #[arg(long, env = "DATABASE_URL", hide_env_values = true)]
+        database_url: String,
+    },
+    /// Generate TypeScript clients for native host routes.
+    HostRouteClients,
+    /// Print guest compiler flags.
+    GuestRustflags,
     /// Build, push, and stamp one platform chart.
     BuildPlatform(platform::Args),
     /// Run the deployed application benchmark.
@@ -95,6 +108,36 @@ enum Task {
 pub async fn run(args: Args) -> anyhow::Result<()> {
     let root = root();
     match args.command {
+        Task::InstallKcl => {
+            println!("{}", wamn_build::kcl::install(&root).await?.display());
+            Ok(())
+        }
+        Task::BuildPackage {
+            packages,
+            database_url,
+        } => {
+            for package in packages {
+                let output = wamn_build::default_output_root(&package);
+                let record = wamn_build::build_package(&wamn_build::BuildRequest::new(
+                    &package,
+                    &output,
+                    &database_url,
+                ))
+                .await?;
+                println!(
+                    "{} {} {}",
+                    record.package.id, record.package.version, record.outputs.manifest
+                );
+            }
+            Ok(())
+        }
+        Task::HostRouteClients => wamn_compiler::materialize_host_route_client(
+            &wamn_compiler::host_route_client_output_root(&root),
+        ),
+        Task::GuestRustflags => {
+            println!("{}", guest_rustflags(&root).await?);
+            Ok(())
+        }
         Task::BuildPlatform(args) => platform::run(args).await,
         Task::Bench(args) => bench::run(args).await,
         Task::BenchLocal(args) => bench_local::run(&root, &args).await,
@@ -152,12 +195,5 @@ fn root() -> PathBuf {
 }
 
 async fn guest_rustflags(root: &Path) -> anyhow::Result<String> {
-    use anyhow::Context as _;
-    let script = root.join("tools/guest-rustflags");
-    Ok(
-        process::output(root, script.to_str().context("guest flags path")?, &[])
-            .await?
-            .trim()
-            .to_owned(),
-    )
+    wamn_build::guest_rustflags(root).await
 }

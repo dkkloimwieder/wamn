@@ -65,7 +65,7 @@ const WASMTIME_CACHE_DIR: &str = "wasmtime_cache_dir";
 const HOST_CONFIG_FILE: &str = "host_config_file";
 const CDC_READER: &str = "cdc_reader";
 #[cfg(test)]
-const PACKAGE_MANIFEST_FILE: &str = "wamn.json";
+const PACKAGE_MANIFEST_FILE: &str = "generated/wamn.json";
 
 pub(super) const POSTGRES_SYSTEM_DATABASES: [&str; 3] = ["postgres", "template0", "template1"];
 const POSTGRES_ROUTING_QUERY_KEYS: [&str; 5] = ["host", "hostaddr", "port", "dbname", "user"];
@@ -79,8 +79,6 @@ pub struct LocalArtifacts {
     /// The built platform materializer, which the loop runs beside the
     /// release as the cluster does.
     pub materializer_component: PathBuf,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub bindings: Option<PathBuf>,
 }
 
 /// The CDC reader the loop runs beside the host: the cluster's binary with the
@@ -1047,15 +1045,6 @@ pub(crate) fn read_package_manifest(root: &Path) -> Result<PackageManifest, DevP
     }
     // JSON in a build output directory still consumes an artifact.
     let path = wamn_compiler::package_manifest_path(root);
-    if path.parent() == Some(wamn_compiler::output_root(root).as_path()) {
-        wamn_compiler::build_record::require_current(root).map_err(|source| {
-            DevPackageError::manifest(
-                DevPackageErrorType::ManifestInvalid,
-                root.join(wamn_compiler::build_record::BUILD_RECORD_FILE),
-                source,
-            )
-        })?;
-    }
     read_manifest_file(&path)
 }
 
@@ -1167,8 +1156,6 @@ pub(crate) mod tests {
     const ENDPOINT_COUNT: usize = 10;
     /// The overlay manifest of the platform fixture application.
     fn overlay_manifest() -> Vec<u8> {
-        wamn_compiler::build_record::require_current(&wamn_fixture_package::overlay_root())
-            .unwrap_or_else(|error| panic!("{error:#}"));
         wamn_fixture_package::overlay_manifest_bytes()
     }
 
@@ -1185,7 +1172,7 @@ pub(crate) mod tests {
                 std::process::id(),
                 NEXT_ID.fetch_add(1, Ordering::Relaxed)
             ));
-            fs::create_dir(&root).expect("create isolated package fixture");
+            fs::create_dir_all(root.join("generated")).expect("create isolated package fixture");
             fs::write(root.join(PACKAGE_MANIFEST_FILE), bytes)
                 .expect("write strict package manifest fixture");
             Self { root }
@@ -1438,7 +1425,7 @@ manifest.Package {
         let built: build_record::BuildRecord = serde_json::from_value(json!({
             "schema": build_record::BUILD_RECORD_SCHEMA,
             "package": {"id": "source_package", "version": "1.0.0"},
-            "inputs": {"digest": build_record::input_digest(&root).unwrap(), "generation_digest": build_record::generation_digest(&root).unwrap(), "files": {}},
+
             "dependencies": [],
             "generator": {"id": "generator", "toolchain": "toolchain", "sqlx": "0.9.0"},
             "outputs": {"manifest": "sha256:fixture", "files": {}, "components": []}
@@ -1454,7 +1441,6 @@ manifest.Package {
         fs::write(root.join("wamn.k"), authored.replace("1.0.0", "1.0.1")).unwrap();
         fs::create_dir(root.join("migrations")).unwrap();
         fs::write(root.join("migrations/0001_initial.sql"), "SELECT 1;\n").unwrap();
-        build_record::require_current(&root).unwrap_err();
 
         let resolved = resolve_dev_packages(&config, &root).unwrap();
         assert_eq!(resolved.overlay_manifest().package.version, "1.0.1");

@@ -1,0 +1,78 @@
+{
+  "package": {
+    "id": "source_fixture",
+    "version": "1.0.0"
+  },
+  "required_platform_policy_contract": {
+    "id": "fixture_data_access",
+    "state": "satisfied"
+  },
+  "models": {
+    "item": {
+      "schema": "inventory",
+      "table": "item",
+      "owner": "source_fixture",
+      "server_owned_fields": [],
+      "audit_log": {
+        "columns": [],
+        "retention": "none"
+      },
+      "operations": {
+        "get": {
+          "permission": "item.get",
+          "result": "one"
+        }
+      }
+    }
+  },
+  "connections": {},
+  "components": {
+    "source_fixture": {
+      "connections": [
+        "postgres"
+      ]
+    }
+  },
+  "compiled_operations": {
+    "item.get": {
+      "operation": {
+        "operation": "source-fixture:item/get@1.0.0",
+        "statements": [
+          {
+            "binds": [
+              {
+                "name": "id",
+                "nullable": false,
+                "type": "uuid"
+              }
+            ],
+            "columns": [
+              {
+                "name": "id",
+                "nullable": false,
+                "type": "uuid"
+              }
+            ],
+            "name": "get",
+            "path": "generated/sql/item/get.sql",
+            "relations": [
+              {
+                "deletes": false,
+                "locks": false,
+                "reads": [
+                  "id"
+                ],
+                "table": "item",
+                "writes": []
+              }
+            ],
+            "transactional": false
+          }
+        ],
+        "type": "get",
+        "permission_token": "item.get",
+        "grant": null
+      }
+    }
+  }
+}

@@ -2,7 +2,7 @@ use serde_json::{Value, json};
 
 fn mapping(wiring: &str, node: &str, input: &Value, parameters: Option<&Value>) -> Value {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join(format!("../publication/wirings/{wiring}.json"));
+        .join(format!("../tests/workflows/{wiring}.json"));
     let wiring: Value = serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
     let config = &wiring["nodes"][node]["params"];
     let parameters = parameters.unwrap_or(&config["parameters"]);
@@ -91,7 +91,7 @@ fn pull_rows_become_one_consumer_batch_and_retain_due() {
 #[test]
 fn consumer_error_prevents_checkpoint_mapping() {
     let wiring: Value =
-        serde_json::from_str(include_str!("../publication/wirings/netsuite_pull.json")).unwrap();
+        serde_json::from_str(include_str!("../tests/workflows/netsuite_pull.json")).unwrap();
     for input in [
         json!([]),
         json!([{"request_id": "due", "error": {"code": "retry"}}]),
@@ -173,8 +173,8 @@ fn record_and_restlet_parameters_build_relative_paths() {
 fn a_false_workflow_parameter_cannot_select_consumer_provenance() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
     for path in [
-        "../publication/wirings/netsuite_pull.json",
-        "../../rest_connector/publication/wirings/rest_item.json",
+        "../tests/workflows/netsuite_pull.json",
+        "../../rest_connector/tests/workflows/rest_item.json",
     ] {
         let wiring: Value =
             serde_json::from_slice(&std::fs::read(root.join(path)).unwrap()).unwrap();

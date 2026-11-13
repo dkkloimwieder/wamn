@@ -227,15 +227,10 @@ pub(super) async fn assemble(
             environment: input.environment.to_owned(),
         })
         .await?;
-        let declaration_source = package
-            .root
-            .join("publication/components")
-            .join(format!("{}.json.in", package.component));
         let declaration_path = input
             .scratch
             .join(format!("{}-{}.json", applied.package_id, package.component));
-        let base_digests =
-            render_declaration(&input, package, &declaration_source, &declaration_path)?;
+        let base_digests = render_declaration(&input, package, &declaration_path)?;
         let component_path = input
             .component_directory
             .join(format!("{}.wasm", package.component));
@@ -260,29 +255,6 @@ pub(super) async fn assemble(
         admitted.push((applied.package_id, facts));
         admissions.push(admission);
     }
-    wamn_environment_control::reconcile_package_data_access::reconcile_package_data_access(
-        wamn_environment_control::reconcile_package_data_access::ReconcilePackageDataAccessRequest {
-            packages: input
-                .packages
-                .iter()
-                .map(|package| {
-                    Ok(wamn_package_control::apply_package::PackageRoot {
-                        path: package.root.to_path_buf(),
-                        artifact_digest: Some(
-                            wamn_test_infrastructure::fixture_digest::fixture_artifact_digest(
-                                package.root,
-                            )?,
-                        ),
-                    })
-                })
-                .collect::<anyhow::Result<_>>()?,
-            database_url: input.database_url.to_owned(),
-            org: input.org.to_owned(),
-            project: input.project.to_owned(),
-            environment: input.environment.to_owned(),
-        },
-    )
-    .await?;
 
     let attachments = selected_attachments(&input, &roots)?;
     let routes = attachment_routes(&attachments, &roots)?;
@@ -491,13 +463,11 @@ pub(super) async fn assemble(
 fn render_declaration(
     input: &LocalApplicationConfig<'_>,
     package: &LocalPackage<'_>,
-    source: &Path,
     target: &Path,
 ) -> anyhow::Result<BTreeSet<String>> {
     let mut base_digests =
         wamn_package_control::component_declaration::authored_base_digests(package.root)?;
     for base in input.packages {
-        wamn_compiler::build_record::require_current(base.root)?;
         let manifest: Value = serde_json::from_slice(&std::fs::read(
             wamn_compiler::package_manifest_path(base.root),
         )?)?;
@@ -517,8 +487,9 @@ fn render_declaration(
             *digest = wamn_digest::bytes_sha256(&bytes).into_boxed_str();
         }
     }
-    let value = wamn_package_control::component_declaration::render_declaration_document(
-        source,
+    let value = wamn_package_control::component_declaration::render_package_declaration(
+        package.root,
+        package.component,
         input.project_env_key,
     )?;
     std::fs::write(target, serde_json::to_vec(&value)?)?;

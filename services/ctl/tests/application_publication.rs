@@ -14,13 +14,12 @@ mod local_registry;
 fn package(work: &Path, id: &str, version: &str) -> anyhow::Result<PathBuf> {
     let root = work.join("apps").join(id);
     let output = wamn_compiler::output_root(&root);
-    std::fs::create_dir_all(root.join("publication/components"))?;
+    std::fs::create_dir_all(output.join("publication"))?;
     std::fs::create_dir_all(root.join("migrations"))?;
     std::fs::write(
         root.join("migrations/0001_initial.sql"),
         format!("CREATE TABLE {id}.item (id uuid CONSTRAINT item_pkey PRIMARY KEY);"),
     )?;
-    std::fs::create_dir_all(output.join("contracts/item"))?;
     std::fs::create_dir_all(output.join("components"))?;
     std::fs::write(
         root.join("wamn.k"),
@@ -34,30 +33,28 @@ fn package(work: &Path, id: &str, version: &str) -> anyhow::Result<PathBuf> {
         "models": {"item": {"schema": id, "table": "item", "owner": id,
             "server_owned_fields": [], "audit_log": {"columns": [], "retention": "none"},
             "operations": {"get": {"permission": "item.get", "result": "one"}}}},
-        "connections": {}, "components": {"entry": {"connections": ["postgres"]}}
+        "connections": {}, "components": {"entry": {"connections": ["postgres"]}},
+        "compiled_operations": {"item.get": {"operation": {
+            "operation": operation, "type": "get", "permission_token": "item.get", "grant": null,
+            "relations": [{"schema": id, "table": "item"}], "statements": []
+        }}}
     });
     std::fs::write(output.join("wamn.json"), serde_json::to_vec(&manifest)?)?;
     std::fs::write(
-        output.join("contracts/item/get.operation.json"),
-        serde_json::to_vec(&json!({
-            "operation": operation, "type": "get", "statements": []
-        }))?,
-    )?;
-    std::fs::write(
-        root.join("publication/components/entry.json.in"),
-        serde_json::to_vec(&json!({
-            "target": {"project_env_key": "__PROJECT_ENV_KEY__", "package-id": id},
+        output.join("publication/components.json"),
+        serde_json::to_vec(&json!({"entry": {
+            "target": {"package-id": id, "package-version": version},
             "component": "entry", "interface-version": "0.1.0",
-            "operations": {&reference: {"registered-operation": reference,
+            "operations": {&operation: {"registered-operation": operation,
                 "input-ports": [], "output-ports": [], "parameters": []}}, "connections": []
-        }))?,
+        }}))?,
     )?;
     let definition = json!({"id": "get", "type": "http", "route": {"path": "/item"}});
     std::fs::write(
-        root.join("publication/attachments.json"),
+        output.join("publication/attachments.json"),
         serde_json::to_vec(&json!({
-            "get": {"type": "http", "package-id": id, "component": "entry", "operation": reference,
-                "registered-operation": reference, "auth-policy": {"modes": ["pat"]},
+            "get": {"type": "http", "package-id": id, "component": "entry", "operation": operation,
+                "registered-operation": operation, "auth-policy": {"modes": ["pat"]},
                 "definition-hash": wamn_digest::canonical_json_sha256(&definition),
                 "definition": definition}
         }))?,
@@ -93,6 +90,11 @@ fn package(work: &Path, id: &str, version: &str) -> anyhow::Result<PathBuf> {
         .encode()?;
     let path = "components/entry.wasm";
     std::fs::write(output.join(path), &bytes)?;
+    std::fs::create_dir_all(output.join("migrations"))?;
+    std::fs::copy(
+        root.join("migrations/0001_initial.sql"),
+        output.join("migrations/0001_initial.sql"),
+    )?;
     wamn_test_infrastructure::fixture_digest::write_physical_schema(
         &root,
         serde_json::from_value(json!({"item": [

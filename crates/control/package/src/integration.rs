@@ -9,7 +9,6 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context as _, ensure};
 use oci_client::manifest::OCI_IMAGE_MEDIA_TYPE;
 use serde_json::{Value, json};
-use tokio::process::Command;
 use wamn_catalog::RuntimeType;
 use wamn_digest::bytes_sha256;
 use wamn_package_artifact::{PackageRegistry, Repository};
@@ -96,66 +95,8 @@ pub async fn build(repository: &Path, code: &str) -> anyhow::Result<BuiltIntegra
         .with_context(|| format!("find integration {code}"))?;
     let manifest_path = root.join("Cargo.toml");
     let inputs = source_digest(&root)?;
-    let flags = Command::new(repository.join("tools/guest-rustflags"))
-        .current_dir(&repository)
-        .output()
-        .await
-        .context("read guest build flags")?;
-    ensure!(
-        flags.status.success(),
-        "guest-rustflags failed: {}",
-        String::from_utf8_lossy(&flags.stderr)
-    );
-    let output = Command::new("cargo")
-        .current_dir(&repository)
-        .env("RUSTFLAGS", String::from_utf8(flags.stdout)?.trim())
-        .args([
-            "build",
-            "--locked",
-            "--offline",
-            "--target",
-            "wasm32-wasip2",
-            "--message-format",
-            "json-render-diagnostics",
-            "--manifest-path",
-        ])
-        .arg(&manifest_path)
-        .output()
-        .await
-        .context("build integration")?;
-    ensure!(
-        output.status.success(),
-        "build integration {code}: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    let mut component_path = None;
-    for line in output.stdout.split(|byte| *byte == b'\n') {
-        let Ok(message) = serde_json::from_slice::<Value>(line) else {
-            continue;
-        };
-        if message["reason"] == "compiler-artifact"
-            && message["manifest_path"]
-                .as_str()
-                .is_some_and(|path| Path::new(path) == manifest_path)
-            && message["target"]["crate_types"]
-                .as_array()
-                .is_some_and(|types| types.iter().any(|type_| type_ == "cdylib"))
-        {
-            component_path = message["filenames"]
-                .as_array()
-                .into_iter()
-                .flatten()
-                .filter_map(Value::as_str)
-                .find(|file| {
-                    Path::new(file)
-                        .extension()
-                        .is_some_and(|extension| extension == "wasm")
-                })
-                .map(PathBuf::from);
-        }
-    }
-    let component =
-        std::fs::read(component_path.context("integration build gave no wasm cdylib")?)?;
+    let component_path = wamn_build::build_component(&repository, &manifest_path).await?;
+    let component = std::fs::read(component_path)?;
     ensure!(
         wasmparser::Parser::is_component(&component),
         "integration output is not a WebAssembly component"

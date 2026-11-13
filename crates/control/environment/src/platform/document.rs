@@ -122,7 +122,7 @@ impl ClusterDocument {
     ///
     /// When KCL refuses the file, or when the JSON is not a valid document.
     pub fn compile(file: &Path) -> anyhow::Result<Self> {
-        let bytes = wamn_compiler::compile_schema_file(file, "cluster")?;
+        let bytes = crate::kcl::compile(file, "cluster")?;
         Self::from_json(&bytes)
             .with_context(|| format!("{} is not a valid cluster", file.display()))
     }
@@ -311,7 +311,7 @@ mod tests {
         // The document and its embedded schema module share the name.
         let file = directory.join("cluster.k");
         std::fs::write(&file, source).expect("write the document");
-        let result = wamn_compiler::compile_schema_file(&file, "cluster");
+        let result = crate::kcl::compile(&file, "cluster");
         std::fs::remove_dir_all(&directory).expect("remove the directory");
         result
     }

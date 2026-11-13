@@ -192,11 +192,11 @@ The fixture overlay has no data crate, so its component includes the data functi
 The authored world, in `component/wit/authored.wit`, only includes the generated world.
 The authored world includes the generated one, and the reverse is not possible.
 
-The authored `publication/attachments.json` and component declaration carry only the custom operations.
-Publication, the declaration render, the client generator, and `materialize_package` read the authored file and the generated file together.
-A package with no authored `publication/attachments.json` authors no attachments, and its generated file is still read.
-An attachment id or an operation in both files refuses.
-A copy of an authored document outside its package reads the generated file beside it only when the copy keeps the package layout.
+The package declares custom HTTP exposure in `routes.operations`, keyed by its local operation name.
+Each entry names an attachment id and path.
+The compiler derives its schemas, sealed operation identity and definition hash.
+Component declarations and attachments come only from the compiled output.
+Package-local publication JSON is not an input.
 
 ### Operation references
 
@@ -204,18 +204,11 @@ The package version is authored once, as `package.version` in `wamn.k`.
 A sealed operation id is `<package>:<interface>/<operation>@<version>`, for example `wamn-receiving:location/list@2.0.0`.
 WIT packages, component worlds, contracts, the files under `generated/`, the clients, grants and the statement sets of the host carry the sealed id.
 
-An authored route entry, component declaration or wiring names an operation by its reference, `<package>:<interface>/<operation>`.
-A declaration template authors no `target.package-version`.
-A reference to an operation of the package takes `package.version`, and a reference to an operation of a base takes the `version` of that base in `base_dependencies`.
-A platform interface, such as `wamn:node/handler@0.1.0`, is not a package operation and keeps its WIT version.
-
-The compiler resolves authored operation references once when it builds final publication documents.
-Publication, admission, clients, and workflow authorship read the compiled output.
-The workflow CLI takes a compiled file from the build output's `publication/wirings/` directory.
-An authored id that carries a version, or a template that authors `target.package-version`, refuses during compilation.
-A web page keys `onOpen` and `onFill` by the reference, so one page shows one version of each package.
-A test gets the sealed id and the package version from the compiled `wamn.json` through `wamn_test_infrastructure::operations`.
-A new package version is one line in `wamn.k` and a regeneration.
+The compiler derives sealed identities from the package and base declarations.
+Publication, admission and clients read those compiled facts.
+Workflows belong to the environment and name sealed operations from its serving release.
+A web page keys `onOpen` and `onFill` by the operation reference.
+A test reads sealed identities through `wamn_test_infrastructure::operations`.
 
 The manifest member `routes` sets how a generated route is published:
 
@@ -225,7 +218,6 @@ The manifest member `routes` sets how a generated route is published:
 
 A query that names an undeclared sort refuses with `invalid_input` on the field `sort`.
 
-Native SQLx tests compile the exact files that guest execution names.
 Guests send statement identities and arguments through `wamn:postgres`.
 The `statements` interface uses native async calls for execution, transaction creation, commit, and rollback.
 Version 0.4.0 includes `run-stream`, `operation-transaction`, `next-number`, `peek-number`, and the separate `operation` interface. It is the one version, and the host serves only it.
@@ -236,7 +228,7 @@ The host keys the active statement set by the invocation scope and the import na
 Every instance lends the same host transaction. Only the statement set differs.
 The host resolves those identities to admitted SQL bytes and the operation's allowed statements.
 Generation refuses PostgreSQL values that the production `wamn:postgres` type contract cannot represent.
-SQLx metadata is compilation data, not the SQL or package contract.
+The compiler stores described statement facts in the compiled operation description.
 
 The generator default for a base package command is one SQL statement that validates and writes.
 Review authored commands against the same rule. SQL returns the outcome and its details, and the guest maps them without repeating database predicates.
@@ -805,7 +797,7 @@ The generator recognizes the history table of each logged model by its name, and
 It takes the history columns from `HISTORY_COLUMNS` in the [`wamn-record-history`](../../apps/platform/data/record-history/src/lib.rs) crate.
 Authored SQL analysis and the required schema contract use that column list.
 A custom operation cannot require or map a constraint of a history table.
-The compiler emits the history DDL in `migrations/record_history.sql`.
+The compiler emits the history DDL in `record-history.sql`.
 The existing physical schema readers still apply history until the migration runner replaces them.
 The changes statement reads entries at or after the cursor transaction.
 One snapshot supplies xmin, xmax, and the visibility test.
@@ -815,7 +807,7 @@ A page that carries any such row completes the pass and leaves its next cursor a
 `create_history_table` also creates an index on `transaction_id`, and apply-package runs it for a present table too, so an older table gains the index.
 The log function is `SECURITY INVOKER`, so the writer needs that grant.
 The reconciler reads the history table like any other package relation and keeps that grant.
-The generation database creates the history tables before `EXPLAIN` and SQLx prepare, as [running tests](../operations/running-tests.md#application-generation-and-sqlx) describes.
+The generation database creates the history tables before statement description, as [running tests](../operations/running-tests.md#application-generation-and-sqlx) describes.
 
 ### Retention task
 

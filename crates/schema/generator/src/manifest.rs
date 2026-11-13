@@ -2881,6 +2881,9 @@ pub enum CursorDirection {
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RoutesDeclaration {
+    /// Authored HTTP exposure for custom operations, keyed by local operation.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub operations: BTreeMap<String, HttpExposure>,
     /// The authentication modes of each route. Absent means `pat` and `session`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub auth_modes: Option<Vec<String>>,
@@ -2890,6 +2893,14 @@ pub struct RoutesDeclaration {
     /// The start of each attachment id. Absent means none.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub id_prefix: Option<String>,
+}
+
+/// An operation's HTTP identity. Schemas and hashes are compiled facts.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct HttpExposure {
+    pub id: String,
+    pub path: String,
 }
 
 impl RoutesDeclaration {
@@ -2903,6 +2914,12 @@ impl RoutesDeclaration {
 #[serde(deny_unknown_fields)]
 pub struct ComponentDeclaration {
     pub connections: Vec<String>,
+    /// Private component exports outside the generated operation interfaces.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub exports: BTreeMap<String, wamn_catalog::ComponentOperationDeclaration>,
+    /// Parameters of a generated operation, keyed by its local name.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub parameters: BTreeMap<String, Vec<wamn_catalog::ComponentParameterDeclaration>>,
 }
 
 pub fn custom_artifact_stem(operation: &str) -> String {

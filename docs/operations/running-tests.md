@@ -604,7 +604,7 @@ Export `CARGO_TARGET_DIR` with the path to its separate absolute build directory
 The case changes authored files, observes the running application, and restores the saved source.
 Run this case alone.
 The fixture requires PostgreSQL 18 binaries, Docker, and the existing development service images.
-The case also requires SQLx CLI 0.9.0 as `cargo-sqlx` and `jq` on `PATH`.
+The case also requires `jq` on `PATH`.
 
 Use the preparation rows for the native programs, application packages, HTTP guest, and materializer.
 From the disposable worktree, build its fixture example and list its test executable:
@@ -730,7 +730,7 @@ Install once with the product command from a shell with the prepared chart and p
 
 ```bash
 export PATH="$CARGO_TARGET_DIR/debug:$PATH"
-export WAMN_KCL="$(tools/install-kcl)"
+export WAMN_KCL="$(cargo xtask install-kcl)"
 export WAMN_RELEASE_CHART=/var/tmp/wamn-platform-chart
 cargo build --locked --offline -p wamn-ctl --bin wamn --bin wamn-ctl
 mkdir -p /var/tmp/wamn-kind-dep3
@@ -1060,7 +1060,7 @@ The generator writes the client of the application host routes, `@wamn/control-c
 It writes the client of the control routes, `@wamn/control-org-client`, to `apps/target/wamn/wamn_control/control/client-ts`.
 It makes them from the contracts in `crates/catalog/model/src/host_route/contracts` and `host_route/control/contracts`.
 It copies them into `src/generated/wamn_control` and `src/generated/wamn_control_org` of each package that names them in `package.json` `"wamn": { "clients": [...] }`.
-Every web script that reads the clients writes them first through `web/host-route-clients.mjs`, so you do not need to write them yourself.
+Every web script that reads the clients writes them first through `cargo xtask host-route-clients`, so you do not need to write them yourself.
 To write them without a web script, run:
 
 ```bash

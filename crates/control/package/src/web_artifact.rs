@@ -126,7 +126,7 @@ pub async fn build_web_artifact(package_root: &Path) -> Result<PathBuf, WebArtif
         if sidecar.exists() {
             std::fs::remove_file(&sidecar)?;
         }
-        wamn_compiler::build::build_web_client(package_root, &root.join("dist")).await?;
+        wamn_build::build_web_client(package_root, &root.join("dist")).await?;
         std::fs::write(&sidecar, manifest.to_bytes())
             .with_context(|| format!("write {}", sidecar.display()))?;
         Ok(root)

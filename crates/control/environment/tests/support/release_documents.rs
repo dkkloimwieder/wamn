@@ -165,15 +165,16 @@ pub fn fixture_http_entry(
 )> {
     let package = repository.join("apps").join(PACKAGE);
     let output = wamn_compiler::output_root(&package);
-    let build_record = wamn_compiler::build_record::read_current(&package, &output)?;
+    let build_record = wamn_compiler::build_record::read(&output)?;
     let component = build_record
         .outputs
         .components
         .iter()
         .find(|component| component.name == "device")
         .context("the fixture build contains its device component")?;
-    let declaration = wamn_package_control::component_declaration::render_declaration_document(
-        &package.join("publication/components/device.json.in"),
+    let declaration = wamn_package_control::component_declaration::render_package_declaration(
+        &package,
+        "device",
         &wamn_registry::project_env_key(ORG, PROJECT, "http"),
     )?;
     let declaration_path = work.join("device-declaration.json");

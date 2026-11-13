@@ -28,30 +28,6 @@ pub(in super::super) fn merge_package_attachment_documents(
     Ok(merged)
 }
 
-/// Require every attachment hash to identify its exact canonical definition.
-///
-/// The release publish is the production boundary that accepts the authored
-/// attachment map. Comparing here prevents a caller from pairing an unchanged
-/// identity declaration with different route or contract bytes before either can
-/// enter the immutable serving snapshot.
-pub(in super::super) fn validate_attachment_definition_hashes(
-    attachments: &BTreeMap<String, ServingAttachment>,
-) -> Result<(), PublishManifestError> {
-    for (attachment_id, attachment) in attachments {
-        let derived = wamn_digest::canonical_json_sha256(&attachment.definition);
-        if attachment.definition_hash.as_str() != derived {
-            return Err(PublishManifestError::new(
-                PublishManifestErrorType::Document,
-                format!(
-                    "attachment {attachment_id:?} definition-hash {} differs from canonical definition hash {derived}",
-                    attachment.definition_hash.as_str(),
-                ),
-            ));
-        }
-    }
-    Ok(())
-}
-
 /// Write each route's method from the type of the operation it calls, and
 /// refuse ambiguous routes.
 ///
@@ -62,7 +38,6 @@ pub(in super::super) fn resolve_route_methods(
     route_contracts: &RouteContracts,
 ) -> Result<BTreeMap<String, ServingAttachment>, PublishManifestError> {
     validate_authored_attachment_routes(authored)?;
-    validate_attachment_definition_hashes(authored)?;
     let mut resolved = authored.clone();
     let mut route_keys = BTreeSet::new();
     for (attachment_id, attachment) in &mut resolved {

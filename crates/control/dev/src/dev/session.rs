@@ -67,28 +67,12 @@ struct NativeInvalidations {
 
 fn local_configuration_files(config: &DevConfig, environment_file: &Path) -> Vec<PathBuf> {
     let local = config.local_artifacts();
-    let mut files = vec![
+    vec![
         environment_file.to_owned(),
         config.target_privileges_file().to_owned(),
         config.target_database_acl_file().to_owned(),
         local.flow_http_component.clone(),
-    ];
-    if let Some(path) = &local.bindings {
-        files.push(path.clone());
-        // Watches identify input files; the coordinator owns strict interpretation.
-        if let Ok(bytes) = std::fs::read(path)
-            && let Ok(serde_json::Value::Array(selections)) = serde_json::from_slice(&bytes)
-        {
-            files.extend(
-                selections
-                    .iter()
-                    .filter_map(|selection| selection["instance"]["definition"].as_str())
-                    .map(PathBuf::from)
-                    .filter(|path| path.is_absolute()),
-            );
-        }
-    }
-    files
+    ]
 }
 
 impl DevInvalidationSource for NativeInvalidations {
@@ -450,7 +434,7 @@ mod tests {
             from: DevStage::Migrate,
         };
         let queued = DevInvalidation::Rerun {
-            from: DevStage::Generate,
+            from: DevStage::Build,
         };
         let mut source = CommandInvalidations {
             initial: Some(initial),

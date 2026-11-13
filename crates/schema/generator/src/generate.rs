@@ -173,26 +173,6 @@ pub struct GeneratedPackage {
 }
 
 impl GeneratedPackage {
-    pub(crate) fn replace_json(
-        &mut self,
-        path: &str,
-        value: &Value,
-    ) -> Result<(), serde_json::Error> {
-        let bytes = serde_json::to_vec(value)?;
-        match self.files.binary_search_by_key(&path, |file| file.path()) {
-            Ok(index) => self.files[index].bytes = bytes.into_boxed_slice(),
-            Err(index) => {
-                let mut files = std::mem::take(&mut self.files).into_vec();
-                files.insert(
-                    index,
-                    GeneratedFile::new(path.into(), bytes.into_boxed_slice()),
-                );
-                self.files = files.into_boxed_slice();
-            }
-        }
-        Ok(())
-    }
-
     pub(crate) fn take_operations(&mut self) -> BTreeMap<String, OperationDescription> {
         std::mem::take(&mut self.operations)
     }

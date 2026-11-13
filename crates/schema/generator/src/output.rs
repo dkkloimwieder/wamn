@@ -43,7 +43,7 @@ pub fn output_root(package_root: &Path) -> PathBuf {
 }
 
 /// The application workspace for a top-level or nested platform package.
-pub(crate) fn package_workspace(package_root: &Path) -> PathBuf {
+pub fn package_workspace(package_root: &Path) -> PathBuf {
     if package_root.file_name().is_none() {
         if let Ok(canonical) = package_root.canonicalize()
             && canonical.file_name().is_some()

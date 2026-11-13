@@ -824,7 +824,6 @@ pub async fn apply(
         )
         .await?;
     }
-    stage::reconcile_installed_sql_grants(platform, document, &url).await?;
     Ok(())
 }
 

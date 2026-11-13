@@ -74,9 +74,7 @@ fn declared_consumers(target: &Triple, manifests: &[String]) -> anyhow::Result<V
     let manifests = manifests
         .iter()
         .map(|path| {
-            if let Some(root) = wamn_compiler::manifest_package_root(Path::new(path)) {
-                wamn_compiler::build_record::require_current(root)?;
-            }
+            if let Some(root) = wamn_compiler::manifest_package_root(Path::new(path)) {}
             Ok(wamn_compiler::manifest::PackageManifest::from_slice(
                 &fs::read(path).with_context(|| format!("read {path}"))?,
             )?)

@@ -29,10 +29,10 @@ use wamn_identity_protocol::ADMIN_ROLE;
 use wamn_registry::project_env_key;
 use wamn_runtime::local_application::{LOCAL_FACTS_FILE, LocalApplicationFacts};
 
-use super::coordinator::{NODE_CAPABILITY, PACKAGE_COMPONENTS, POSTGRES_CAPABILITY, TemporaryFile};
+use super::coordinator::{NODE_CAPABILITY, POSTGRES_CAPABILITY, TemporaryFile};
 use wamn_package_control::component_admission::{AdmitComponentRequest, admit_component};
 use wamn_package_control::component_declaration::{
-    authored_base_digests, render_declaration_document,
+    authored_base_digests, render_package_declaration,
 };
 use wamn_release_control::publish_release::{
     PublishReleaseRequest, assemble_local_release, compose_pinned_application,
@@ -109,11 +109,8 @@ pub fn write_package(
     target: &EdgeTarget<'_>,
     out: &Path,
 ) -> anyhow::Result<String> {
-    let template = package
-        .join(PACKAGE_COMPONENTS)
-        .join(format!("{component}.json.in"));
     let project_env_key = target.project_env_key();
-    let document = render_declaration_document(&template, &project_env_key)?;
+    let document = render_package_declaration(package, component, &project_env_key)?;
     let declaration = TemporaryFile::write(&serde_json::to_vec(&document)?)?;
     let admission = admit_component(AdmitComponentRequest {
         package: package.to_owned(),

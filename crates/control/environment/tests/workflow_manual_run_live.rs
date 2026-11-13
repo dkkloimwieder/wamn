@@ -176,10 +176,6 @@ fn jsonata_declaration() -> Value {
 }
 
 fn jsonata_bytes() -> Vec<u8> {
-    wamn_compiler::build_record::require_current(
-        &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../apps/wamn_wms"),
-    )
-    .unwrap_or_else(|error| panic!("{error:#}"));
     let path = std::path::PathBuf::from(
         std::env::var_os("WAMN_JSONATA_COMPONENT")
             .expect("set WAMN_JSONATA_COMPONENT to the built jsonata component"),

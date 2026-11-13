@@ -6,9 +6,7 @@ use std::fs;
 use std::os::unix::fs::PermissionsExt as _;
 use std::path::Path;
 use std::time::{Duration, SystemTime};
-use wamn_compiler::build_record::{
-    self, BuildGenerator, BuildInputs, BuildOutputs, BuildPackage, BuildRecord,
-};
+use wamn_compiler::build_record::{self, BuildGenerator, BuildOutputs, BuildPackage, BuildRecord};
 use wamn_digest::{bytes_sha256, canonical_json_bytes};
 use wamn_package_artifact::PackageRegistry;
 use wamn_package_artifact::registry_pull::test_server::Server;
@@ -30,11 +28,7 @@ pub fn build_fixture(client: Option<&str>) -> (BuildRecord, Vec<u8>) {
             id: "web_fixture".into(),
             version: "1.0.0".into(),
         },
-        inputs: BuildInputs {
-            digest: bytes_sha256(b"package inputs"),
-            generation_digest: bytes_sha256(b"generation inputs"),
-            files: BTreeMap::new(),
-        },
+
         dependencies: Vec::new(),
         generator: BuildGenerator {
             id: "fixture".into(),

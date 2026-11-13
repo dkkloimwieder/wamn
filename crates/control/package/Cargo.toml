@@ -10,6 +10,7 @@ default = []
 test-util = ["dep:wamn-fixture-package", "dep:wamn-test-infrastructure", "wamn-package-artifact/test-util"]
 
 [dependencies]
+wamn-build.workspace = true
 wamn-broker = { workspace = true }
 wamn-digest.workspace = true
 wit-component = { workspace = true }

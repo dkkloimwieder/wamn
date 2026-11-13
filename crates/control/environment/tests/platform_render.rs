@@ -175,12 +175,11 @@ fn platform_edge_uses_the_selected_image_and_existing_certificate() -> anyhow::R
             let project = wamn_environment_control::platform::project::ProjectDocument::compile(
                 &repository.join("deploy/gcp/project.k"),
             )?;
-            let infrastructure: serde_json::Value =
-                serde_json::from_slice(&wamn_compiler::render_project_tofu(
-                    &project.canonical_json()?,
-                    "state",
-                    "fixture",
-                )?)?;
+            let infrastructure: serde_json::Value = serde_json::from_slice(
+                &wamn_environment_control::platform::tofu::render_project_tofu(
+                    &project, "state", "fixture",
+                )?,
+            )?;
             let neg: serde_json::Value = serde_json::from_str(
                 service["metadata"]["annotations"]["cloud.google.com/neg"]
                     .as_str()

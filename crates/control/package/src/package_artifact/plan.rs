@@ -98,8 +98,10 @@ pub(super) fn physical_path(root: &Path, logical: &str) -> PathBuf {
     let logical = Path::new(logical);
     if let Ok(output) = logical.strip_prefix("generated") {
         wamn_compiler::output_root(root).join(output)
-    } else {
+    } else if root.join("generated").is_dir() {
         root.join(logical)
+    } else {
+        wamn_compiler::output_root(root).join(logical)
     }
 }
 

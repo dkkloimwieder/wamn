@@ -2,7 +2,7 @@
 
 use std::path::PathBuf;
 
-use wamn_compiler::build::{BuildRequest, build_package, default_output_root, package_output};
+use wamn_build::{BuildRequest, build_package, default_output_root, package_output};
 
 /// Arguments of `wamn build`.
 #[derive(Debug, clap::Args)]
@@ -11,18 +11,10 @@ pub struct BuildArgs {
     /// before its overlays: an overlay reads the base's build.json.
     #[arg(required = true)]
     pub packages: Vec<PathBuf>,
-    /// The directory that holds one build output directory per package.
-    /// Defaults to <package>/../target/wamn.
-    #[arg(long)]
-    pub output_root: Option<PathBuf>,
     /// A superuser URL of a PostgreSQL server. The build creates its own
     /// verification database there and drops it at the end.
     #[arg(long, env = "DATABASE_URL", hide_env_values = true)]
     pub database_url: String,
-    /// Also write `<package>/package.digest`: the tag and the digest that the
-    /// built package packs to. Commit it with the package (wamn-vl6im).
-    #[arg(long)]
-    pub record_digest: bool,
 }
 
 /// Build each package and print its manifest digest and output directory.
@@ -32,10 +24,7 @@ pub struct BuildArgs {
 /// When a build fails. The packages before it keep their output.
 pub async fn run(args: BuildArgs) -> anyhow::Result<()> {
     for package in &args.packages {
-        let output_root = args
-            .output_root
-            .clone()
-            .unwrap_or_else(|| default_output_root(package));
+        let output_root = default_output_root(package);
         let build_record = build_package(&BuildRequest::new(
             package,
             &output_root,
@@ -49,9 +38,44 @@ pub async fn run(args: BuildArgs) -> anyhow::Result<()> {
             build_record.outputs.manifest,
             package_output(&output_root, &build_record.package.id).display()
         );
-        if args.record_digest {
-            let line = wamn_package_control::package_artifact::record_package_digest(package)?;
-            print!("{}: {line}", package.display());
+    }
+    Ok(())
+}
+
+/// Take ownership of one generated action or browser component.
+#[derive(Debug, clap::Args)]
+pub struct EjectArgs {
+    #[command(subcommand)]
+    pub target: EjectTarget,
+}
+/// The generated default to copy.
+#[derive(Debug, clap::Subcommand)]
+pub enum EjectTarget {
+    /// Replace an empty Action implementation with its current default body.
+    Action { package: PathBuf, operation: String },
+    /// Copy a browser component to an authored file for composition.
+    Component {
+        package: PathBuf,
+        name: String,
+        output: PathBuf,
+    },
+}
+/// Eject a generated default into application source.
+pub fn eject(args: EjectArgs) -> anyhow::Result<()> {
+    match args.target {
+        EjectTarget::Action { package, operation } => {
+            println!(
+                "{}",
+                wamn_build::eject::action(&package, &operation)?.display()
+            );
+        }
+        EjectTarget::Component {
+            package,
+            name,
+            output,
+        } => {
+            wamn_build::eject::component(&package, &name, &output)?;
+            println!("{}", output.display());
         }
     }
     Ok(())

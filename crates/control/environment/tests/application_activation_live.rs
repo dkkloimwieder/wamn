@@ -248,18 +248,6 @@ fn package(
         root.join("generated/physical-schema.json"),
         serde_json::to_vec(&physical)?,
     )?;
-    let overlay = wamn_compiler::derive_data_access_overlay_from_relation_fields(
-        &[wamn_compiler::DataAccessRelationFields::new(
-            name,
-            "data",
-            vec!["id".into(), "value".into()],
-        )],
-        &bytes,
-    )?;
-    std::fs::write(
-        root.join("generated/platform-policy/data-access.json"),
-        overlay.canonical_bytes(),
-    )?;
     wamn_test_infrastructure::fixture_digest::write_build_record(&root);
     let packed = wamn_package_control::package_artifact::pack_package(&root)?;
     let tag = packed.tag();

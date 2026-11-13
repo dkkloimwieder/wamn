@@ -9,9 +9,9 @@ The package pins both base components by version and digest.
 
 ## Operations
 
-Each operation is an executable wiring in `publication/wirings`.
-The operation names below map to filenames with dots replaced by underscores.
-Publish these wirings with the two workflow wirings.
+Workflow examples live in `tests/workflows`.
+Copy and edit these examples in the environment configuration, then author them with `workflow author`.
+The package build does not publish workflows.
 
 | Operation | Input | Node parameters | Request |
 | --- | --- | --- | --- |

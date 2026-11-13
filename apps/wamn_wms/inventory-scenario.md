@@ -67,8 +67,8 @@ It is a current SQL read rather than an event-maintained rollup.
 The [projection implementation](data/src/inventory_aggregate.rs) owns its result.
 
 `/inventory/move` is a route to `inventory.move`, like every other operation.
-The move's row event starts the [label workflow](publication/wirings/inventory_move_and_label.json) off the request path.
-`wamn.k` declares it as the workflow `movement_label`, registered on the `packaging` update with the condition `old.location_id != new.location_id`:
+The move's row event starts the environment's label workflow off the request path.
+Author `movement_label` in the environment on the `packaging` update with the condition `old.location_id != new.location_id`:
 
 ```text
 packaging update → shape (jsonata) → label-render → blob-put

@@ -127,7 +127,6 @@ fn application_manifests(
     packages
         .iter()
         .map(|package| {
-            wamn_compiler::build_record::require_current(&repository.join("apps").join(package))?;
             let path = wamn_compiler::package_manifest_path(&repository.join("apps").join(package));
             Ok(wamn_compiler::manifest::PackageManifest::from_slice(
                 &fs::read(&path).with_context(|| format!("read {}", path.display()))?,

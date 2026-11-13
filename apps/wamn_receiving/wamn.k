@@ -457,4 +457,14 @@ manifest.Package {
     }
     connections = {}
     components = {receiving = {connections = ["postgres"]}}
+    routes = {
+        operations = {
+            "receiving.record_receipt" = {id = "receiving-record-receipt-http", path = "/receiving/record_receipt"}
+            "receiving.load_receipt_screen" = {id = "receiving-load-receipt-screen-http", path = "/receiving/load_receipt_screen"}
+            "receiving.load_open_receipt_lines" = {id = "receiving-load-open-receipt-lines-http", path = "/receiving/load_open_receipt_lines"}
+            "receiving.load_purchase_order_history" = {id = "receiving-load-purchase-order-history-http", path = "/receiving/load_purchase_order_history"}
+            "receiving.purchase_order_summary" = {id = "receiving-purchase-order-summary-http", path = "/receiving/purchase_order_summary"}
+            "location.list" = {id = "location-list-http", path = "/location/list"}
+        }
+    }
 }
