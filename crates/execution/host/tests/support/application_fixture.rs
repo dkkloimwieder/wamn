@@ -72,7 +72,7 @@ pub(super) async fn install(
     admin
         .batch_execute(
             "CREATE ROLE wamn_app NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS; \
-             CREATE ROLE wamn_scenario_author NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS; \
+              \
              CREATE SCHEMA wamn_run AUTHORIZATION postgres;",
         )
         .await?;
@@ -215,11 +215,11 @@ pub(super) fn load_release() -> anyhow::Result<Arc<LoadedRelease>> {
         "format-version": SERVING_MANIFEST_FORMAT_VERSION,
         "release": {"packages": [{"package-id": "session_test", "package-version": "1.0.0"}]},
         "components": [{"package-id": "session_test",
-            "descriptor": {"component": "purchase", "interface-version": "0.1.0", "component-digest": format!("sha256:{}", "a".repeat(64)), "operations": {}, "imports": [], "imports-fingerprint": "", "effects": [], "connections": []},
+            "descriptor": {"component": "purchase", "interface-version": "0.1.0", "component-digest": format!("sha256:{}", "a".repeat(64)), "imports": [], "imports-fingerprint": "", "effects": [], "connections": [],
             "operations": {
-                READ: {"registered-operation": READ, "permissions": [READ]},
-                WRITE: {"registered-operation": WRITE, "permissions": [WRITE, READ]}
-            }}],
+                READ: {"registered-operation": READ, "input-ports": [], "output-ports": [], "parameters": []},
+                WRITE: {"registered-operation": WRITE, "input-ports": [], "output-ports": [], "parameters": []}
+            }}}],
         "routes": [
             {"package-id": "session_test", "component": "purchase", "operation": READ, "type": "get"},
             {"package-id": "session_test", "component": "purchase", "operation": WRITE, "type": "create"}
@@ -230,7 +230,7 @@ pub(super) fn load_release() -> anyhow::Result<Arc<LoadedRelease>> {
     // The manifest's own serialization leaves out its empty sections.
     let manifest: wamn_catalog::ServingManifest = serde_json::from_value(manifest)?;
     Ok(Arc::new(LoadedRelease::load_canonical_bytes(
-        &wamn_execution_contract::canonical_json_bytes(&serde_json::to_value(&manifest)?),
+        &wamn_digest::canonical_json_bytes(&serde_json::to_value(&manifest)?),
         "host route test",
         wamn_engine::release_manifest::ReleaseScope::new(ENV_KEY, "dev").with_applications(
             serde_json::from_value(json!({"receiving": {"packages": ["session_test"]}}))?,

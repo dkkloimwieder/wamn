@@ -7,7 +7,7 @@ use serde_json::{Value, json};
 use crate::entry_response::{refusal, resolved, uncertain, with_request_id};
 
 use super::bindings::wamn::flow_http_routing::routing::{
-    AuthenticatedCaller, CanonicalSpelling, EtagKind, RequestHashRule, RouteDefinition,
+    AuthenticatedCaller, EtagKind, RouteDefinition,
 };
 use super::bindings::wamn::node::types::{NodeContext, NodeError};
 use super::bindings::wamn::{application_dispatch::dispatch, operation::operation};
@@ -159,9 +159,6 @@ async fn execute(
     };
     let mut keys = HashSet::new();
     for request_element in request_elements.iter_mut() {
-        if let Some(rule) = &route.request_hash_rule {
-            canonicalize(request_element, rule);
-        }
         let Some(key) = field(request_element, key_field).and_then(Value::as_str) else {
             return Ok(invalid(&format!("a request element has no {key_field}")));
         };
@@ -194,12 +191,9 @@ async fn execute(
             .and_then(Value::as_str)
             .expect("key checked");
         let mut hashed = request_element.clone();
-        if let Some(rule) = &route.request_hash_rule {
-            for path in &rule.excluded {
-                remove(&mut hashed, &path.split('.').collect::<Vec<_>>());
-            }
-        }
-        let hash = wamn_execution_contract::canonical_json_sha256(&hashed).into_bytes();
+        remove(&mut hashed, &["request_id"]);
+        remove(&mut hashed, &key_field.split('.').collect::<Vec<_>>());
+        let hash = wamn_digest::canonical_json_sha256(&hashed).into_bytes();
         let begun =
             operation::begin_operation(caller, operation_id.clone(), key.to_owned(), hash).await;
         let intent = format!(
@@ -416,7 +410,7 @@ fn node_failure(error: NodeError) -> DeliveryOutcome {
 }
 
 fn tag_digest(value: &Value) -> String {
-    wamn_execution_contract::canonical_json_sha256(value)[7..39].to_owned()
+    wamn_digest::canonical_json_sha256(value)[7..39].to_owned()
 }
 
 fn matches_tag(request: &DeliveryRequest<AuthenticatedCaller>, tag: Option<&str>) -> bool {
@@ -430,53 +424,6 @@ fn matches_tag(request: &DeliveryRequest<AuthenticatedCaller>, tag: Option<&str>
 
 fn field<'a>(value: &'a Value, path: &str) -> Option<&'a Value> {
     path.split('.').try_fold(value, |value, key| value.get(key))
-}
-
-fn canonicalize(request_element: &mut Value, rule: &RequestHashRule) {
-    for spelling in &rule.spelling {
-        respell(
-            request_element,
-            &spelling.path.split('.').collect::<Vec<_>>(),
-            spelling.spelling,
-        );
-    }
-    if let Some(order) = &rule.lines
-        && let Some(Value::Array(lines)) = order
-            .path
-            .split('.')
-            .try_fold(request_element, |value, key| value.get_mut(key))
-    {
-        lines.sort_by_cached_key(|line| {
-            line.get(&order.ascending_by)
-                .map_or_else(String::new, Value::to_string)
-        });
-    }
-}
-
-fn respell(value: &mut Value, path: &[&str], spelling: CanonicalSpelling) {
-    let Some((first, rest)) = path.split_first() else {
-        if let Value::String(text) = value {
-            let canonical = match spelling {
-                CanonicalSpelling::Numeric => wamn_execution_contract::canonical_numeric(text),
-                CanonicalSpelling::Timestamptz => {
-                    wamn_execution_contract::canonical_timestamptz(text)
-                }
-            };
-            if let Some(canonical) = canonical {
-                *text = canonical;
-            }
-        }
-        return;
-    };
-    if let Some(name) = first.strip_suffix("[]") {
-        if let Some(Value::Array(request_elements)) = value.get_mut(name) {
-            for request_element in request_elements {
-                respell(request_element, rest, spelling);
-            }
-        }
-    } else if let Some(value) = value.get_mut(*first) {
-        respell(value, rest, spelling);
-    }
 }
 
 fn remove(value: &mut Value, path: &[&str]) {

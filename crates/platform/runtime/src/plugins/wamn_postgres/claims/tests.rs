@@ -1,11 +1,12 @@
 use super::super::pool::ResolvedCredential;
 use super::super::resources::admit_transaction_statement;
-use super::super::statements::{StatementField, StatementValueType};
+use super::super::statements::StatementField;
 use super::super::{SqlValue, StatementError};
 use super::transactions::{CLAIM_SQL, causation_emit_sql};
 use super::*;
 use crate::plugins::connection_http::{ConnectionExecutionClosure, ConnectionOrigin};
 use tokio_postgres::NoTls;
+use wamn_scalar::SqlValueType;
 
 fn candidate_binding(component: &str, alias: &str) -> serde_json::Value {
     serde_json::json!({
@@ -2167,7 +2168,7 @@ fn cold_parse_statement() -> VerifiedStatement {
         exact_sql: "SELECT id FROM cold_parse ORDER BY id".into(),
         binds: Box::new([]),
         columns: Box::new([StatementField {
-            value_type: StatementValueType::Int32,
+            value_type: SqlValueType::Int32,
             nullable: false,
         }]),
         // The claim path under test. A non-transactional statement with no
@@ -2272,7 +2273,7 @@ fn principal_statement(transactional: bool) -> VerifiedStatement {
         exact_sql: "SELECT COALESCE(current_setting('app.user_id', true), '')".into(),
         binds: Box::new([]),
         columns: Box::new([StatementField {
-            value_type: StatementValueType::Text,
+            value_type: SqlValueType::Text,
             nullable: true,
         }]),
         transactional,
@@ -2714,7 +2715,7 @@ fn operation_statement(transactional: bool) -> VerifiedStatement {
         exact_sql: "SELECT COALESCE(current_setting('app.operation', true), '')".into(),
         binds: Box::new([]),
         columns: Box::new([StatementField {
-            value_type: StatementValueType::Text,
+            value_type: SqlValueType::Text,
             nullable: true,
         }]),
         transactional,
@@ -2897,7 +2898,7 @@ fn application_statement() -> VerifiedStatement {
         exact_sql: "SELECT COALESCE(current_setting('app.application', true), '')".into(),
         binds: Box::new([]),
         columns: Box::new([StatementField {
-            value_type: StatementValueType::Text,
+            value_type: SqlValueType::Text,
             nullable: true,
         }]),
         transactional: true,
@@ -3136,7 +3137,7 @@ async fn live_a_read_invocation_transaction_reads_one_snapshot() {
         exact_sql: "SELECT value FROM public.read_snapshot_fixture WHERE id = 1".into(),
         binds: Box::new([]),
         columns: Box::new([StatementField {
-            value_type: StatementValueType::Int32,
+            value_type: SqlValueType::Int32,
             nullable: false,
         }]),
         transactional: false,
@@ -3240,15 +3241,15 @@ async fn live_autocommit_settings_are_reused_only_on_their_connection() {
         binds: Box::new([]),
         columns: Box::new([
             StatementField {
-                value_type: StatementValueType::Text,
+                value_type: SqlValueType::Text,
                 nullable: true,
             },
             StatementField {
-                value_type: StatementValueType::Text,
+                value_type: SqlValueType::Text,
                 nullable: true,
             },
             StatementField {
-                value_type: StatementValueType::Int32,
+                value_type: SqlValueType::Int32,
                 nullable: true,
             },
         ]),
@@ -3383,19 +3384,19 @@ async fn live_stream_reads_once_and_scopes_claims() {
             binds: Box::new([]),
             columns: Box::new([
                 StatementField {
-                    value_type: StatementValueType::Text,
+                    value_type: SqlValueType::Text,
                     nullable: true,
                 },
                 StatementField {
-                    value_type: StatementValueType::Text,
+                    value_type: SqlValueType::Text,
                     nullable: false,
                 },
                 StatementField {
-                    value_type: StatementValueType::Text,
+                    value_type: SqlValueType::Text,
                     nullable: false,
                 },
                 StatementField {
-                    value_type: StatementValueType::Int32,
+                    value_type: SqlValueType::Int32,
                     nullable: false,
                 },
             ]),
@@ -3483,11 +3484,11 @@ async fn live_stream_reads_once_and_scopes_claims() {
             binds: Box::new([]),
             columns: Box::new([
                 StatementField {
-                    value_type: StatementValueType::Int32,
+                    value_type: SqlValueType::Int32,
                     nullable: false,
                 },
                 StatementField {
-                    value_type: StatementValueType::Text,
+                    value_type: SqlValueType::Text,
                     nullable: false,
                 },
             ]),

@@ -1,5 +1,5 @@
 use std::fmt::Write as _;
-use wamn_catalog::schema::ColumnType;
+use wamn_scalar::SqlValueType;
 use wamn_schema_introspection::ir::{Column, Table};
 
 use wamn_record_history::history_table_name;
@@ -68,7 +68,7 @@ pub(crate) fn create(
     if let Some((field, _)) = model.number_field() {
         let bind = format!("${}::text", values.len() + 1);
         values.push(match column_type(table, field) {
-            ColumnType::Text => bind,
+            SqlValueType::Text => bind,
             ty => format!("{bind}::{}", postgres_type(ty)),
         });
         columns.push(field);
@@ -642,18 +642,18 @@ pub(crate) const fn direction_name(direction: CursorDirection) -> &'static str {
     }
 }
 
-pub(crate) const fn postgres_type(ty: ColumnType) -> &'static str {
+pub(crate) const fn postgres_type(ty: SqlValueType) -> &'static str {
     match ty {
-        ColumnType::Boolean => "boolean",
-        ColumnType::Int32 => "int4",
-        ColumnType::Int64 => "int8",
-        ColumnType::Float64 => "float8",
-        ColumnType::Text => "text",
-        ColumnType::Bytes => "bytea",
-        ColumnType::Numeric => "numeric",
-        ColumnType::Timestamptz => "timestamptz",
-        ColumnType::Json => "jsonb",
-        ColumnType::Uuid => "uuid",
+        SqlValueType::Boolean => "boolean",
+        SqlValueType::Int32 => "int4",
+        SqlValueType::Int64 => "int8",
+        SqlValueType::Float64 => "float8",
+        SqlValueType::Text => "text",
+        SqlValueType::Bytes => "bytea",
+        SqlValueType::Numeric => "numeric",
+        SqlValueType::Timestamptz => "timestamptz",
+        SqlValueType::Json => "jsonb",
+        SqlValueType::Uuid => "uuid",
     }
 }
 
@@ -665,7 +665,7 @@ fn key_cast(table: &Table) -> &'static str {
     )
 }
 
-fn column_type(table: &Table, field: &str) -> ColumnType {
+fn column_type(table: &Table, field: &str) -> SqlValueType {
     table
         .columns()
         .iter()
@@ -715,7 +715,7 @@ mod tests {
     use tokio_postgres::{NoTls, SimpleQueryMessage};
     use wamn_catalog::manifest::DeleteMode;
     use wamn_catalog::manifest::{CursorDirection, ModelDeclaration, OperationDeclaration};
-    use wamn_catalog::schema::ColumnType;
+    use wamn_scalar::SqlValueType;
     use wamn_schema_introspection::ir::{Column, Constraint, Table};
 
     #[test]
@@ -730,9 +730,9 @@ mod tests {
         }))
         .unwrap();
         for (ty, cast) in [
-            (ColumnType::Uuid, "uuid"),
-            (ColumnType::Int32, "int4"),
-            (ColumnType::Int64, "int8"),
+            (SqlValueType::Uuid, "uuid"),
+            (SqlValueType::Int32, "int4"),
+            (SqlValueType::Int64, "int8"),
         ] {
             let table = Table::new(
                 "public",
@@ -743,14 +743,14 @@ mod tests {
                         ty,
                         false,
                         None,
-                        (ty != ColumnType::Uuid).then_some(
+                        (ty != SqlValueType::Uuid).then_some(
                             wamn_schema_introspection::ir::ColumnGeneration::Identity {
                                 mode: wamn_schema_introspection::ir::IdentityMode::Always,
                             },
                         ),
                     ),
-                    Column::new("label", ColumnType::Text, false, None, None),
-                    Column::new("version", ColumnType::Int64, false, None, None),
+                    Column::new("label", SqlValueType::Text, false, None, None),
+                    Column::new("version", SqlValueType::Int64, false, None, None),
                 ],
                 vec![Constraint::primary_key("key_row_pkey", ["id"]).unwrap()],
                 Vec::new(),
@@ -830,8 +830,8 @@ mod tests {
         }))
         .unwrap();
         for (ty, sql_type, expected) in [
-            (ColumnType::Int32, "int4", "2147483647"),
-            (ColumnType::Int64, "int8", "9007199254740993"),
+            (SqlValueType::Int32, "int4", "2147483647"),
+            (SqlValueType::Int64, "int8", "9007199254740993"),
         ] {
             for (generation, mode) in [
                 (format!("DEFAULT {expected}"), None),
@@ -857,12 +857,12 @@ mod tests {
                                 ty,
                                 false,
                                 mode.is_none().then(|| match ty {
-                                    ColumnType::Int32 => ColumnDefault::int32(2_147_483_647),
+                                    SqlValueType::Int32 => ColumnDefault::int32(2_147_483_647),
                                     _ => ColumnDefault::int64(9_007_199_254_740_993),
                                 }),
                                 mode.map(|mode| ColumnGeneration::Identity { mode }),
                             ),
-                            Column::new("label", ColumnType::Text, true, None, None),
+                            Column::new("label", SqlValueType::Text, true, None, None),
                         ],
                         vec![Constraint::primary_key("key_row_pkey", ["id"]).unwrap()],
                         Vec::new(),
@@ -927,8 +927,8 @@ mod tests {
             "public",
             "page_row",
             vec![
-                Column::new("id", ColumnType::Uuid, false, None, None),
-                Column::new("rank", ColumnType::Int64, false, None, None),
+                Column::new("id", SqlValueType::Uuid, false, None, None),
+                Column::new("rank", SqlValueType::Int64, false, None, None),
             ],
             vec![Constraint::primary_key("page_row_pkey", ["id"]).unwrap()],
             Vec::new(),

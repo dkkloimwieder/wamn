@@ -38,7 +38,6 @@ EXCEPTION WHEN duplicate_object THEN NULL;
 END $audit_retention$;
 
 GRANT USAGE ON SCHEMA catalog TO wamn_app;
-GRANT USAGE ON SCHEMA catalog TO wamn_scenario_author;
 
 -- GENERATED authority-derivation bootstrap. The database name is embedded so
 -- tenant_key stays IMMUTABLE and remains legal in expression indexes.

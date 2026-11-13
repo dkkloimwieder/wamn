@@ -3436,7 +3436,7 @@ host:
         ));
         std::fs::create_dir_all(&directory).unwrap();
         let bytes = b"local materializer transport fixture";
-        let digest = wamn_engine::component_admission::component_digest(bytes);
+        let digest = wamn_digest::bytes_sha256(bytes);
         let path = wamn_engine::artifact_source::local_component_path(&directory, &digest).unwrap();
         std::fs::write(&path, bytes).unwrap();
         let mut request = v2::WorkloadStartRequest {
@@ -3514,7 +3514,7 @@ host:
             std::env::temp_dir().join(format!("wamn-host-local-workload-{}", std::process::id()));
         std::fs::create_dir_all(&directory).unwrap();
         let bytes = b"local component transport fixture";
-        let digest = wamn_engine::component_admission::component_digest(bytes);
+        let digest = wamn_digest::bytes_sha256(bytes);
         let path = wamn_engine::artifact_source::local_component_path(&directory, &digest).unwrap();
         let request = v2::WorkloadStartRequest {
             workload_id: "wamn-dev-flow-http".to_owned(),
@@ -3718,8 +3718,8 @@ host:
     fn anonymous_release(connections: Vec<wamn_catalog::ComponentConnection>) -> ServingManifest {
         use std::collections::{BTreeMap, BTreeSet};
         use wamn_catalog::{
-            AttachmentTarget, AttachmentType, ComponentDescriptor, DefinitionHash, OperationType,
-            PackageCoordinate, ServingAttachment, ServingComponent, ServingComponentOperation,
+            AdmittedComponentOperation, AttachmentTarget, AttachmentType, ComponentDescriptor,
+            DefinitionHash, OperationType, PackageCoordinate, ServingAttachment, ServingComponent,
             ServingRelease, ServingRoute,
         };
 
@@ -3732,16 +3732,22 @@ host:
             BTreeSet::from([ServingComponent {
                 runtime_schema: None,
                 package_id: "cat".into(),
-                descriptor,
-                operations: BTreeMap::from([(
-                    "request".into(),
-                    ServingComponentOperation {
-                        committed_result_schema: None,
-                        registered_operation: None,
-                        permissions: BTreeSet::new(),
-                        statements: BTreeMap::new(),
-                    },
-                )]),
+                descriptor: {
+                    let mut descriptor = descriptor;
+                    descriptor.operations = BTreeMap::from([(
+                        "request".into(),
+                        AdmittedComponentOperation {
+                            host_transaction: false,
+                            input_ports: Vec::new(),
+                            output_ports: Vec::new(),
+                            parameters: Vec::new(),
+                            committed_result_schema: None,
+                            registered_operation: None,
+                            statements: BTreeMap::new(),
+                        },
+                    )]);
+                    descriptor
+                },
                 statement_instances: BTreeMap::new(),
             }]),
             BTreeSet::from([ServingRoute {
@@ -3752,7 +3758,6 @@ host:
                 reads: BTreeSet::new(),
                 revision: None,
                 idempotency: None,
-                canonicalization: None,
             }]),
             BTreeMap::from([(
                 "orders".into(),

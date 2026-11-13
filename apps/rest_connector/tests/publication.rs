@@ -216,6 +216,7 @@ async fn composed_sql_uses_released_schemas(
                 )
                 .await?;
             let statement = component
+                .descriptor
                 .operations
                 .values()
                 .flat_map(|operation| operation.statements.values())

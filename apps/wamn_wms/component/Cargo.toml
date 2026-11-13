@@ -6,8 +6,8 @@ description = "Package-grain WMS operation component"
 license = "Apache-2.0"
 
 [dependencies]
+wamn-scalar.workspace = true
 wamn-data-access = { workspace = true }
-wamn-execution-contract = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
 uuid.workspace = true

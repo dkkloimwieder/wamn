@@ -2,7 +2,6 @@
 #   docker build --build-arg WAMN_CHECKOUT_KEY="$(printf '%s' "$(realpath .)" | sha256sum | cut -c1-16)" --target host       -t wamn-host:dev       .  # HTTP + durable queue host
 #   docker build --build-arg WAMN_CHECKOUT_KEY="$(printf '%s' "$(realpath .)" | sha256sum | cut -c1-16)" --target ctl        -t wamn-ctl:dev        .  # one-shot verbs
 #   docker build --build-arg WAMN_CHECKOUT_KEY="$(printf '%s' "$(realpath .)" | sha256sum | cut -c1-16)" --target identity   -t wamn-identity:dev   .  # identity authority and JWKS
-#   docker build --build-arg WAMN_CHECKOUT_KEY="$(printf '%s' "$(realpath .)" | sha256sum | cut -c1-16)" --target gates      -t wamn-gates:dev      .  # gates: FROM host + suite + fixtures
 #   docker build --build-arg WAMN_CHECKOUT_KEY="$(printf '%s' "$(realpath .)" | sha256sum | cut -c1-16)" --target edge --output type=local,dest=target/edge .  # aarch64 edge box binary
 #   docker build --build-arg WAMN_CHECKOUT_KEY="$(printf '%s' "$(realpath .)" | sha256sum | cut -c1-16)" --target edge-web -t wamn-edge-web:dev .  # cluster web edge
 #   docker build --build-arg WAMN_CHECKOUT_KEY="$(printf '%s' "$(realpath .)" | sha256sum | cut -c1-16)" --target roles --output type=local,dest=DIR .  # http and materializer role components
@@ -11,9 +10,7 @@
 # Later invocations reuse shared BuildKit registry and Git caches with locks
 # that prevent concurrent writes, and one locked native target cache per checkout.
 # One build-native stage compiles all native packages in one invocation. The
-# host executable links no provisioning / replication-credential / gate code
-# (SR9 strings spot-check); the gates image layers the suite on top of the
-# IDENTICAL host stage so Jobs exercise the same host lib code they verify.
+# host executable links no provisioning or replication credential code.
 FROM rust:1.99-trixie AS toolchain
 # libprotobuf-dev carries the well-known types (google/protobuf/*.proto)
 # that protobuf-compiler alone does not ship on Debian.
@@ -31,7 +28,6 @@ FROM toolchain AS root-source
 COPY Cargo.toml Cargo.lock ./
 COPY crates ./crates
 COPY wit ./wit
-COPY vendor ./vendor
 # Native packages use shared guest libraries under apps/platform.
 COPY apps ./apps
 COPY services ./services
@@ -62,18 +58,16 @@ RUN --mount=type=cache,id=wamn-root-cargo-registry,target=/usr/local/cargo/regis
     --mount=type=cache,id=wamn-root-cargo-git,target=/usr/local/cargo/git,sharing=locked \
     --mount=type=cache,id=wamn-root-target-native-${WAMN_CHECKOUT_KEY},target=/build/target,sharing=locked \
     test -n "$WAMN_CHECKOUT_KEY" \
- && cargo build --locked --release -p wamn-host -p wamn-runtime -p wamn-ctl -p wamn-scenario-worker -p wamn-cdc-reader -p wamn-identity -p wamn-gates -p wamn-component-composer \
+ && cargo build --locked --release -p wamn-host -p wamn-runtime -p wamn-ctl -p wamn-cdc-reader -p wamn-identity -p wamn-component-composer \
  && cargo build --locked --release -p wamn-ctl --features ops --bin wamn-ctl-ops \
  && install -D -m 0755 target/release/wamn-host /native-output/wamn-host \
  && install -D -m 0755 target/release/docker-credential-wamn /native-output/docker-credential-wamn \
  && install -D -m 0755 target/release/wamn-ctl /native-output/wamn-ctl \
  && install -D -m 0755 target/release/wamn-ctl-ops /native-output/wamn-ctl-ops \
  && install -D -m 0755 target/release/wamn /native-output/wamn \
- && install -D -m 0755 target/release/wamn-scenario-worker /native-output/wamn-scenario-worker \
  && install -D -m 0755 target/release/wamn-cdc-reader /native-output/wamn-cdc-reader \
  && install -D -m 0755 target/release/wamn-identity /native-output/wamn-identity \
- && install -D -m 0755 target/release/wamn-component-composer /native-output/wamn-component-composer \
- && install -D -m 0755 target/release/wamn-gates /native-output/wamn-gates
+ && install -D -m 0755 target/release/wamn-component-composer /native-output/wamn-component-composer
 
 # ---- edge box binary: aarch64 release, cross-compiled ----------------------
 # docs/history/edge.md 4.10 option A. The C code in aws-lc-sys and libsqlite3-sys
@@ -117,7 +111,6 @@ COPY .cargo/config.toml /build/.cargo/config.toml
 COPY Cargo.toml /build/Cargo.toml
 COPY crates /build/crates
 COPY wit /build/wit
-COPY vendor /build/vendor
 COPY apps /build/apps
 COPY tools/guest-rustflags /build/tools/guest-rustflags
 WORKDIR /build/apps
@@ -138,16 +131,9 @@ RUN --mount=type=cache,id=wamn-component-cargo-registry,target=/usr/local/cargo/
      && sha256sum -c /build/apps/platform/ingress/http-route/http_route.wasm.sha256) \
  && cargo +1.99.0 build --locked --release --target wasm32-wasip2 \
       -p materializer \
- && cargo +1.99.0 build --locked --release --target wasm32-wasip2 \
-      -p busyloop \
- && cargo +1.99.0 build --locked --release --target wasm32-wasip2 \
-      -p connection-http-standard \
- && cargo +1.99.0 build --locked --release --target wasm32-wasip2 \
-      -p sockprobe \
  && install -d /component-output \
  && for artifact in \
-      http_route materializer \
-      busyloop connection_http_standard sockprobe; do \
+      http_route materializer; do \
       install -m 0644 "target/wasm32-wasip2/release/${artifact}.wasm" \
         "/component-output/${artifact}.wasm"; \
     done
@@ -173,8 +159,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates
 COPY --from=build-native /native-output/wamn-ctl /usr/local/bin/wamn-ctl
 COPY --from=component-builder /component-output/http_route.wasm /usr/local/share/wamn/http_route.wasm
 COPY --from=build-native /native-output/wamn-ctl-ops /usr/local/bin/wamn-ctl-ops
-# The ctl image carries the wiring gate program beside the verbs (wamn-zua8.3).
-COPY --from=build-native /native-output/wamn-scenario-worker /usr/local/bin/wamn-scenario-worker
 # `wamn-ctl env` applies manifests with kubectl, pinned by version and its
 # published sha256 (wamn-zua8.3). wamn-iggi moves the pin to the GKE minor.
 ADD --chmod=0755 --checksum=sha256:629d3f410e09bf49b64ae7079f7f0bda1191efed311f7d37fdbab0ad5b0ec2b7 https://dl.k8s.io/release/v1.36.1/bin/linux/amd64/kubectl /usr/local/bin/kubectl
@@ -195,27 +179,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates
 COPY --from=build-native /native-output/wamn-identity /usr/local/bin/wamn-identity
 ENV HOME=/tmp
 ENTRYPOINT ["/usr/local/bin/wamn-identity"]
-
-# ---- gates image: the host stage + the gate suite + wasm fixtures -----------
-FROM host AS gates
-COPY --from=build-native /native-output/wamn-gates /usr/local/bin/wamn-gates
-# Control-plane integration tests drive the deployable ctl artifact through its
-# executable boundary; the test packages do not link the service crate.
-COPY --from=build-native /native-output/wamn-ctl /usr/local/bin/wamn-ctl
-# Operations-only impact analysis crosses its own executable boundary.
-COPY --from=build-native /native-output/wamn-ctl-ops /usr/local/bin/wamn-ctl-ops
-# Test fixtures baked in so the retained gates run with no volume plumbing.
-COPY --from=component-builder /component-output/busyloop.wasm /bench/busyloop.wasm
-COPY --from=component-builder /component-output/sockprobe.wasm /bench/sockprobe.wasm
-# Callable-flow HTTP ingress: bounded routing/auth/mapping adapter over the
-# native wamn:router-delivery provider contract.
-COPY --from=component-builder /component-output/http_route.wasm /bench/http-route.wasm
-# l5i9.17 materializer Service guest (wasi:cli/run; imports wamn:postgres +
-# wamn:jetstream; the matbench gate drives it via CommandPre — the same wasm the
-# WorkloadDeployment pulls from the registry in production).
-COPY --from=component-builder /component-output/materializer.wasm /bench/materializer.wasm
-COPY --from=component-builder /component-output/connection_http_standard.wasm /bench/connection-http-standard.wasm
-ENTRYPOINT ["/usr/local/bin/wamn-gates"]
 
 # Compose the control-only platform entry after the route pin is checked.
 FROM component-builder AS control-entry

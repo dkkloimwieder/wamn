@@ -276,7 +276,6 @@ async fn record_org_rows(
                     &p.backup_cadence,
                     &p.wal_retention,
                     &p.hibernation,
-                    &p.durability_class.as_sql(),
                 ],
             )
             .await

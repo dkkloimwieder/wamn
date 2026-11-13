@@ -7,6 +7,8 @@ license.workspace = true
 
 [dependencies]
 postgres-protocol = { workspace = true }
+wamn-scalar.workspace = true
+wamn-digest.workspace = true
 wamn-schema-control.workspace = true
 anyhow.workspace = true
 base64.workspace = true
@@ -22,15 +24,13 @@ tokio-postgres = { workspace = true, features = ["with-serde_json-1"] }
 url.workspace = true
 wamn-schema-introspection = { workspace = true }
 wamn-catalog = { workspace = true }
-wamn-execution-contract = { workspace = true }
 wamn-record-history = { workspace = true }
 wamn-number-pattern = { workspace = true }
 
 wit-parser = { workspace = true }
 
 [build-dependencies]
-hex.workspace = true
-sha2.workspace = true
+wamn-digest.workspace = true
 
 [dev-dependencies]
 wamn-component-composer = { workspace = true }

@@ -26,12 +26,7 @@ use wash_runtime::wasmtime::component::Component;
 
 use crate::local_application::serve;
 
-#[path = "../../../crates/platform/runtime/tests/support/session_fixture.rs"]
-#[expect(
-    dead_code,
-    reason = "The shared fixture also provides verifier-only fetch barriers."
-)]
-mod session_fixture;
+use crate::session_fixture;
 use session_fixture::{ISSUER, ORG, Server, claims, header, signed};
 
 #[path = "../../../crates/execution/host/tests/support/application_fixture.rs"]

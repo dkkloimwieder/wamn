@@ -48,9 +48,14 @@ fn exchange(listener: &TcpListener, status: u16, answer: Value) -> anyhow::Resul
     reader.read_exact(&mut body)?;
     let value = if method == "GET" {
         assert!(body.is_empty());
-        Value::Object(wamn_execution_contract::decode_read_query(
-            path.split_once('?').context("read query")?.1,
-        )?)
+        let query = path.split_once('?').context("read query")?.1;
+        Value::Object(
+            url::form_urlencoded::parse(query.as_bytes())
+                .map(|(name, value)| {
+                    serde_json::from_str(&value).map(|value| (name.into_owned(), value))
+                })
+                .collect::<Result<_, _>>()?,
+        )
     } else {
         let [mut element]: [Value; 1] = serde_json::from_slice(&body)?;
         assert!(element["request_id"].is_string());

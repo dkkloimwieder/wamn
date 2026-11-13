@@ -3,22 +3,9 @@
 //! A wiring is the composition artifact of the component-palette model
 //! (`docs/architecture/execution.md#results-and-effects`): nodes name `(component, interface-version)`
 //! from the palette, edges connect declared ports, node parameters bind
-//! declared params, and the in-draft `cases` array rides the document. It is
+//! declared params. It is
 //! *data, not code* — versioned, gated against one environment effective
 //! release, and read from its environment workflow row in `catalog.workflows`.
-//!
-//! # The cases array attaches here (wamn-0h0g.18.4)
-//!
-//! The ruling put the in-draft test contract on the *wiring*, not on a
-//! component: a golden input plus a required observable is an end-to-end shape,
-//! and the flow document's successor as the composition artifact is this
-//! document. So [`WiringDocument::cases`] is [`wamn_execution_contract::TestSetCase`] itself —
-//! the same `case-id` / `input` / `expect` shape, the same
-//! [`wamn_execution_contract::MAX_TEST_SET_CASES`] bound, checked by the same
-//! [`wamn_execution_contract::validate_cases`]. A second declaration of that
-//! contract would be a second contract. The flow language retired in
-//! wamn-0h0g.26.5 and the cases module moved with it to
-//! `wamn-execution-contract`; this carrier kept working against the moved types.
 //!
 //! # The entry and the terminal are the router's authoring source (wamn-0h0g.18.5)
 //!
@@ -35,7 +22,7 @@
 //!
 //! [`WiringDocument::wiring_hash`] is the SHA-256 of the document's RFC 8785
 //! canonical JSON, taken through the workspace's single canonicalizer
-//! ([`wamn_execution_contract::canonical_json_sha256`]) exactly as
+//! ([`wamn_digest::canonical_json_sha256`]) exactly as
 //! [`ServingManifest`](crate::ServingManifest) does. It is the value stored in
 //! `catalog.workflows.wiring_hash`.
 //!
@@ -156,8 +143,8 @@ pub struct WiringNode {
 pub struct WiringEdge {
     /// Source node id — a key of [`WiringDocument::nodes`].
     pub from: String,
-    /// Source output port. Omitted means [`wamn_execution_contract::MAIN_PORT`];
-    /// [`wamn_execution_contract::ERROR_PORT`] is the error path the walk routes failures
+    /// Source output port. Omitted means [`crate::MAIN_PORT`];
+    /// [`crate::ERROR_PORT`] is the error path the walk routes failures
     /// along without ending the delivery.
     #[serde(default = "main_port", skip_serializing_if = "is_main_port")]
     pub from_port: String,
@@ -210,16 +197,6 @@ pub struct WiringDocument {
     /// targets in.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub edges: Vec<WiringEdge>,
-    /// The in-draft test cases (wamn-0h0g.18.4). Run by the gate against the
-    /// real effective release at authoring and again at promote-time re-gate;
-    /// `generate crud` writes them by construction.
-    ///
-    /// Bounded by [`wamn_execution_contract::validate_cases`], and only when the
-    /// document carries at least one: an absent and an empty array are the same
-    /// bytes, which is the rule the retired flow document applied to the same
-    /// field and this carrier inherited (wamn-0h0g.26.5).
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub cases: Vec<wamn_execution_contract::TestSetCase>,
     /// Explicit contracts for normal responses and selected committed results.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub response: Option<WiringResponse>,
@@ -242,7 +219,6 @@ pub fn fixture_graph(wiring_id: &str, version: u32) -> WiringDocument {
         "in",
         BTreeMap::from([("in".to_owned(), node)]),
         Vec::new(),
-        Vec::new(),
     )
     .expect("the fixture graph is valid")
 }
@@ -260,7 +236,6 @@ impl WiringDocument {
         entry: impl Into<String>,
         nodes: BTreeMap<String, WiringNode>,
         edges: Vec<WiringEdge>,
-        cases: Vec<wamn_execution_contract::TestSetCase>,
     ) -> Result<Self, CatalogIdentityError> {
         let document = Self {
             format_version: WIRING_DOCUMENT_FORMAT_VERSION.to_string(),
@@ -269,7 +244,6 @@ impl WiringDocument {
             entry: entry.into(),
             nodes,
             edges,
-            cases,
             response: None,
         };
         document.validate()?;
@@ -294,10 +268,8 @@ impl WiringDocument {
 
     /// The definition hash over this document's RFC 8785 canonical JSON.
     pub fn wiring_hash(&self) -> DefinitionHash {
-        DefinitionHash::parse(wamn_execution_contract::canonical_json_sha256(
-            &self.as_value(),
-        ))
-        .expect("the shared canonicalizer emits a canonical sha256 digest")
+        DefinitionHash::parse(wamn_digest::canonical_json_sha256(&self.as_value()))
+            .expect("the shared canonicalizer emits a canonical sha256 digest")
     }
 
     fn as_value(&self) -> Value {
@@ -380,13 +352,6 @@ impl WiringDocument {
             }
         }
 
-        if !self.cases.is_empty() {
-            wamn_execution_contract::validate_cases(&self.cases).map_err(|error| {
-                CatalogIdentityError::InvalidDefinition {
-                    message: format!("wiring document cases are invalid: {error}"),
-                }
-            })?;
-        }
         Ok(())
     }
 }
@@ -428,7 +393,7 @@ pub fn partial_response_schema(committed_schema: &Value) -> Value {
                     "code": {"type": "string", "minLength": 1},
                     "message": {"type": "string"},
                     "operation": {"type": "string"},
-                    "effect_outcome": {"enum": wamn_execution_contract::EffectOutcome::ALL.map(wamn_execution_contract::EffectOutcome::label)}
+                    "effect_outcome": {"enum": ["refused-before-dispatch", "responded", "timeout", "cancelled", "effect-uncertain", "response-lost"]}
                 }
             }
         }
@@ -442,11 +407,11 @@ fn invalid(message: &str) -> Result<(), CatalogIdentityError> {
 }
 
 fn main_port() -> String {
-    wamn_execution_contract::MAIN_PORT.to_string()
+    crate::MAIN_PORT.to_string()
 }
 
 fn is_main_port(port: &str) -> bool {
-    port == wamn_execution_contract::MAIN_PORT
+    port == crate::MAIN_PORT
 }
 
 #[cfg(test)]
@@ -455,7 +420,6 @@ mod tests {
 
     use serde_json::{Value, json};
     use wamn_event_wire::Op;
-    use wamn_execution_contract::{Expect, ExpectedOutcome, MAX_TEST_SET_CASES, TestSetCase};
 
     use super::{
         WiringDocument, WiringEdge, WiringNode, WiringOperationDependency, WiringTerminal,
@@ -480,20 +444,7 @@ mod tests {
         }
     }
 
-    fn case(case_id: &str) -> TestSetCase {
-        TestSetCase {
-            case_id: case_id.to_owned(),
-            input: json!({"value": 1}),
-            expect: Expect {
-                outcome: ExpectedOutcome::Responded,
-                status: Some(200),
-                body_subset: None,
-                failure_code: None,
-            },
-        }
-    }
-
-    fn crud_wiring(cases: Vec<TestSetCase>) -> WiringDocument {
+    fn crud_wiring() -> WiringDocument {
         let nodes = BTreeMap::from([
             ("in".to_owned(), node("http-entry")),
             ("write".to_owned(), node("entity")),
@@ -505,24 +456,24 @@ mod tests {
         let edges = vec![
             WiringEdge {
                 from: "in".to_owned(),
-                from_port: wamn_execution_contract::MAIN_PORT.to_owned(),
+                from_port: crate::MAIN_PORT.to_owned(),
                 to: "write".to_owned(),
                 to_port: None,
             },
             WiringEdge {
                 from: "write".to_owned(),
-                from_port: wamn_execution_contract::MAIN_PORT.to_owned(),
+                from_port: crate::MAIN_PORT.to_owned(),
                 to: "out".to_owned(),
                 to_port: None,
             },
         ];
-        WiringDocument::new("orders-create", 1, "in", nodes, edges, cases)
+        WiringDocument::new("orders-create", 1, "in", nodes, edges)
             .expect("the generated crud shape is a valid wiring")
     }
 
     #[test]
     fn secret_values_refuse_but_reference_names_remain_portable() {
-        let mut wiring = crud_wiring(vec![case("roundtrip")]);
+        let mut wiring = crud_wiring();
         wiring.nodes.get_mut("write").unwrap().params.insert(
             "credential".to_owned(),
             json!({"secret_ref": "fixture-api-token", "environment": "prod"}),
@@ -534,17 +485,15 @@ mod tests {
             "-----BEGIN RSA PRIVATE KEY-----",
             "AKIAIOSFODNN7EXAMPLE",
         ] {
-            for pointer in ["/nodes/write/params", "/cases/0/input"] {
-                let mut document = portable.clone();
-                *document.pointer_mut(pointer).unwrap() = json!({"nested": [secret]});
-                let error = WiringDocument::parse(&document).unwrap_err();
-                assert!(matches!(
-                    error,
-                    CatalogIdentityError::InvalidDefinition { .. }
-                ));
-                assert!(error.to_string().contains("secret-shaped value"));
-                assert!(!error.to_string().contains(secret));
-            }
+            let mut document = portable.clone();
+            *document.pointer_mut("/nodes/write/params").unwrap() = json!({"nested": [secret]});
+            let error = WiringDocument::parse(&document).unwrap_err();
+            assert!(matches!(
+                error,
+                CatalogIdentityError::InvalidDefinition { .. }
+            ));
+            assert!(error.to_string().contains("secret-shaped value"));
+            assert!(!error.to_string().contains(secret));
         }
         wiring
             .nodes
@@ -558,14 +507,13 @@ mod tests {
             wiring.entry,
             wiring.nodes,
             wiring.edges,
-            wiring.cases,
         )
         .expect_err("construction also refuses secret values");
     }
 
     #[test]
     fn the_document_wire_shape_is_closed() {
-        let wiring = crud_wiring(vec![case("roundtrip")]);
+        let wiring = crud_wiring();
         let wire = serde_json::to_value(&wiring).expect("serializes");
         assert_eq!(
             wire["nodes"]["write"],
@@ -578,18 +526,6 @@ mod tests {
             json!({"from": "in", "to": "write"}),
             "main-port edges serialize without the port"
         );
-        // The port names are PERSISTED bytes, not an internal convention. The
-        // walk that reads a stored edge back filters it against
-        // `wamn_router::MAIN_PORT`/`ERROR_PORT`, which are declared
-        // independently of these (`crates/execution/workflow/router/src/outcome.rs`) and
-        // outlived the flow language's retirement (wamn-0h0g.26.5). They agree
-        // today;
-        // if either side is renamed without the other, every stored edge goes
-        // silently dead — the walk simply finds no successors — so the stored
-        // spelling is pinned here rather than inherited.
-        assert_eq!(wamn_execution_contract::MAIN_PORT, "main");
-        assert_eq!(wamn_execution_contract::ERROR_PORT, "error");
-        assert_eq!(wire["cases"][0]["case-id"], json!("roundtrip"));
         assert_eq!(
             WiringDocument::parse(&wire).expect("the exact document parses"),
             wiring
@@ -616,7 +552,7 @@ mod tests {
 
     #[test]
     fn a_cross_package_node_carries_one_closed_alias_operation_coordinate() {
-        let mut stored = serde_json::to_value(crud_wiring(Vec::new())).expect("serializes");
+        let mut stored = serde_json::to_value(crud_wiring()).expect("serializes");
         stored["nodes"]["write"]["operation-dependency"] = json!({
             "alias": "fixture",
             "operation": "widget.record_batch"
@@ -644,7 +580,7 @@ mod tests {
 
     #[test]
     fn response_contracts_select_existing_nodes_and_validate_the_normal_schema() {
-        let original = crud_wiring(Vec::new());
+        let original = crud_wiring();
         let mut wire = serde_json::to_value(&original).unwrap();
         assert!(wire.get("response").is_none());
         wire["response"] = json!({
@@ -730,7 +666,7 @@ mod tests {
 
     #[test]
     fn an_edge_endpoint_must_name_a_declared_node() {
-        let mut wiring = crud_wiring(Vec::new());
+        let mut wiring = crud_wiring();
         wiring.edges[1].to = "missing".to_owned();
         let wire = serde_json::to_value(&wiring).expect("serializes");
 
@@ -750,14 +686,14 @@ mod tests {
     /// document -> `graph_json` bytes -> `WiringDocument::parse`.
     #[test]
     fn a_node_declares_its_terminal_and_the_document_declares_its_entry() {
-        let mut wiring = crud_wiring(Vec::new());
+        let mut wiring = crud_wiring();
         wiring.nodes.insert(
             "publish".to_owned(),
             terminal_node("bus", WiringTerminal::emit("orders", Op::Insert)),
         );
         wiring.edges.push(WiringEdge {
             from: "write".to_owned(),
-            from_port: wamn_execution_contract::MAIN_PORT.to_owned(),
+            from_port: crate::MAIN_PORT.to_owned(),
             to: "publish".to_owned(),
             to_port: None,
         });
@@ -799,7 +735,7 @@ mod tests {
     /// cache miss too late.
     #[test]
     fn the_entry_must_name_a_declared_node() {
-        let mut wiring = crud_wiring(Vec::new());
+        let mut wiring = crud_wiring();
         wiring.entry = "missing".to_owned();
         let stored = serde_json::to_value(&wiring).expect("serializes");
 
@@ -814,7 +750,7 @@ mod tests {
         // reads as one — the same refusal `wiring-id` and every node id give,
         // not the unresolved-node report a caller would go looking for a node
         // over.
-        let mut blank = crud_wiring(Vec::new());
+        let mut blank = crud_wiring();
         blank.entry = String::new();
         assert_eq!(
             WiringDocument::parse(&serde_json::to_value(&blank).expect("serializes")).unwrap_err(),
@@ -825,7 +761,7 @@ mod tests {
         // That is the whole backward-compatibility statement: a graph_json
         // written before wamn-0h0g.18.5 is refused as a *document*, so it can
         // never be read back as a wiring that happens to enter nowhere.
-        let mut absent = serde_json::to_value(crud_wiring(Vec::new())).expect("serializes");
+        let mut absent = serde_json::to_value(crud_wiring()).expect("serializes");
         absent
             .as_object_mut()
             .expect("an object")
@@ -838,45 +774,8 @@ mod tests {
     }
 
     #[test]
-    fn the_cases_array_carries_the_flow_documents_bounds() {
-        // The wiring is the carrier now (wamn-0h0g.18.4), so the bounds are
-        // wamn-execution-contract's own — not a second set that could drift
-        // from them. Each
-        // refusal is reached by storing an out-of-bounds array and reading it
-        // back, which is the path a hand-edited row takes.
-        let refuse = |cases: Vec<TestSetCase>| {
-            let mut stored = serde_json::to_value(crud_wiring(Vec::new())).expect("serializes");
-            stored["cases"] = serde_json::to_value(cases).expect("cases serialize");
-            WiringDocument::parse(&stored)
-                .expect_err("out-of-bounds cases are refused")
-                .to_string()
-        };
-
-        assert!(refuse(vec![case("same"), case("same")]).contains("duplicate case-id"));
-        assert!(
-            refuse(
-                (0..=MAX_TEST_SET_CASES)
-                    .map(|ordinal| case(&format!("case-{ordinal}")))
-                    .collect()
-            )
-            .contains("maximum is 256")
-        );
-
-        // A document carrying no cases is a legal document, exactly as an
-        // absent and an empty array are the same bytes.
-        let none = crud_wiring(Vec::new());
-        assert!(
-            !serde_json::to_value(&none)
-                .unwrap()
-                .as_object()
-                .unwrap()
-                .contains_key("cases")
-        );
-    }
-
-    #[test]
     fn the_wiring_hash_covers_the_graph_and_ignores_key_order() {
-        let wiring = crud_wiring(vec![case("roundtrip")]);
+        let wiring = crud_wiring();
         let hash = wiring.wiring_hash();
 
         let mut permuted = serde_json::Map::new();
@@ -900,10 +799,6 @@ mod tests {
             .params
             .insert("relation".to_owned(), json!("orders"));
         assert_ne!(reparameterized.wiring_hash(), hash);
-
-        let mut recased = wiring.clone();
-        recased.cases[0].expect.status = Some(201);
-        assert_ne!(recased.wiring_hash(), hash);
 
         // The terminal and the entry are gated definition content, not runtime
         // configuration: re-terminalling or re-entering a graph is a new
@@ -932,7 +827,7 @@ mod tests {
 
     #[test]
     fn an_emit_terminal_requires_a_complete_exact_selector() {
-        let base = serde_json::to_value(crud_wiring(Vec::new())).expect("serializes");
+        let base = serde_json::to_value(crud_wiring()).expect("serializes");
         for terminal in [
             json!("emit"),
             json!({"emit": {"operation": "insert"}}),

@@ -4,8 +4,7 @@ use serde_json::json;
 use wamn_run_state::invariants::{self, QueueState};
 use wamn_run_state::queue::{
     ClaimPlan, ClaimState, JanitorVerdict, Millis, ProductionClaimClass, QueueEntry, claim_state,
-    classify_production_claim, janitor_verdict, lease_deadline, lease_live, mint_evt_run_id,
-    plan_claim, should_renew,
+    classify_production_claim, janitor_verdict, lease_deadline, lease_live, should_renew,
 };
 
 // ---- D8a: the RUN-* invariant sweep (wamn-54b0.2) --------------------------
@@ -77,25 +76,6 @@ fn reclaim_classifier_has_exact_two_actions() {
 }
 
 #[test]
-fn global_fifo_uses_available_stream_run_tie_break() {
-    let rows = [
-        QueueEntry::ready("t1", "run-z", 10, 3).with_stream_seq(8),
-        QueueEntry::ready("t1", "run-b", 10, 3).with_stream_seq(7),
-        QueueEntry::ready("t1", "run-a", 10, 3).with_stream_seq(7),
-        QueueEntry::ready("t1", "earliest", 9, 3).with_stream_seq(99),
-    ];
-    let plan = plan_claim(&rows, 10, 10, 1_000);
-    assert_eq!(
-        plan.claimed
-            .iter()
-            .map(|claim| claim.run_id.as_str())
-            .collect::<Vec<_>>(),
-        ["earliest", "run-a", "run-b", "run-z"]
-    );
-    run_invariants_hold(&rows, Some((&plan, 10)), 10);
-}
-
-#[test]
 fn janitor_reaps_exhausted_runs() {
     let exhausted = QueueEntry {
         lease_expires_at: Some(100),
@@ -128,16 +108,10 @@ fn lease_arithmetic_remains_stable() {
 
 #[test]
 fn queue_entry_round_trips_without_partition_plane() {
-    let entry = QueueEntry::ready("tenant", "run", 42, 5).with_stream_seq(17);
+    let entry = QueueEntry::ready("tenant", "run", 42, 5);
     let value = serde_json::to_value(&entry).unwrap();
     assert_eq!(value["env_key"], json!("tenant"));
-    assert_eq!(value["stream-seq"], json!(17));
     assert!(value.get("partition-key").is_none());
     assert!(value.get("partition-policy").is_none());
     assert_eq!(serde_json::from_value::<QueueEntry>(value).unwrap(), entry);
-}
-
-#[test]
-fn event_run_id_preserves_numeric_stream_order() {
-    assert!(mint_evt_run_id("flow", 9) < mint_evt_run_id("flow", 10));
 }

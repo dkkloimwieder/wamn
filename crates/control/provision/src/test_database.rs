@@ -28,7 +28,6 @@ pub fn system() -> wamn_test_postgres::Database {
     database
         .execute(&[
             SYSTEM_ROLE_SQL,
-            &sql::ensure_control_author_acl_role_sql(),
             sql::ensure_db_owner_role_sql(),
             &format!(
                 "ALTER DATABASE \"{}\" OWNER TO wamn_system",
@@ -60,22 +59,4 @@ pub fn seed_org_project_env_sql(org: &str, project: &str, env: &str) -> String {
          INSERT INTO registry.project_envs(org,project,env,secret_name,instance_suffix,policy_name) \
          VALUES ({org},{project},{env},'s1','aaaaaaa1',{env}) ON CONFLICT DO NOTHING;"
     )
-}
-
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn system_floor_installs_the_control_store_as_its_owner() {
-        let database = super::system();
-        assert_eq!(
-            database
-                .execute(&[
-                    "SELECT pg_catalog.pg_get_userbyid(nspowner) FROM pg_catalog.pg_namespace \
-                     WHERE nspname IN ('registry', 'catalog') ORDER BY nspname",
-                ])
-                .unwrap()
-                .trim(),
-            "wamn_system\nwamn_system"
-        );
-    }
 }

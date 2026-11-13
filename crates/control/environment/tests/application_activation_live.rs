@@ -10,6 +10,7 @@ use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
 use wamn_catalog::manifest::PackageManifest;
 use wamn_catalog::{ComponentDescriptor, PackageCoordinate, ServingComponent, ServingManifest};
 use wamn_control_provision::{CredentialGeneration, WorkloadRoleFamily, WorkloadRoleScopeKind};
+use wamn_digest::bytes_sha256;
 use wamn_environment_control::environment::{
     Platform, document::EnvironmentDocument, ensure, expand, sql,
 };
@@ -17,7 +18,6 @@ use wamn_environment_control::provision_project_env::{
     WorkloadActionRequest, WorkloadActionVerb, WorkloadGenerationAction, run_workload_action,
 };
 use wamn_environment_control::provision_project_env::{finish_database, require_connected};
-use wamn_package_artifact::sha256_digest;
 use wamn_test_infrastructure::scratch::ScratchRoot;
 
 const ENV_KEY: &str = "acme--apps--dev";
@@ -68,7 +68,7 @@ impl Registry {
                 let header = format!(
                     "HTTP/1.1 {status} Fixture\r\nContent-Length: {}\r\nContent-Type: application/vnd.oci.image.manifest.v1+json\r\nDocker-Content-Digest: {}\r\nConnection: close\r\n\r\n",
                     body.len(),
-                    sha256_digest(body)
+                    bytes_sha256(body)
                 );
                 if socket.write_all(header.as_bytes()).await.is_ok()
                     && !request.starts_with("HEAD ")
@@ -100,7 +100,7 @@ fn artifact(
     objects.insert(format!("/v2/{repository}/manifests/{tag}"), manifest);
     for bytes in blobs {
         objects.insert(
-            format!("/v2/{repository}/blobs/{}", sha256_digest(&bytes)),
+            format!("/v2/{repository}/blobs/{}", bytes_sha256(&bytes)),
             bytes,
         );
     }
@@ -130,7 +130,7 @@ fn component(
         .module(&module)?
         .validate(true)
         .encode()?;
-    let mut descriptor = ComponentDescriptor::named(name, "1.0.0", sha256_digest(&bytes));
+    let mut descriptor = ComponentDescriptor::named(name, "1.0.0", bytes_sha256(&bytes));
     descriptor.operations = serde_json::from_value(json!({
         "run": {"input-ports": [], "output-ports": [], "parameters": []}
     }))?;
@@ -173,7 +173,6 @@ fn component(
         package_id: name.into(),
         descriptor,
         runtime_schema: None,
-        operations: BTreeMap::from([("run".into(), serde_json::from_value(json!({}))?)]),
         statement_instances: BTreeMap::new(),
     })
 }
@@ -208,9 +207,7 @@ fn package(
         std::fs::create_dir_all(root.join("descriptors"))?;
         std::fs::write(
             root.join("descriptors").join(format!("{name}.json")),
-            wamn_execution_contract::canonical_json_bytes(&serde_json::to_value(
-                &component.descriptor,
-            )?),
+            wamn_digest::canonical_json_bytes(&serde_json::to_value(&component.descriptor)?),
         )?;
     }
     let bytes = serde_json::to_vec(&value)?;

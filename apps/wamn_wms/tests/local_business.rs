@@ -66,7 +66,7 @@ async fn operations_and_replay() -> anyhow::Result<()> {
     // A revision near the top of int4, with room for the moves that follow.
     let initial_revision = 2_147_483_547_i64;
     crate::business_fixture::seed_fixture(&admin, initial_revision).await?;
-    let runtime = crate::business_fixture::runtime_phase(application.endpoint.clone());
+    let runtime = crate::business_fixture::runtime_phase();
     let route = crate::wms_runtime_live::Route::local(
         application.endpoint.clone(),
         application.route_host.clone(),

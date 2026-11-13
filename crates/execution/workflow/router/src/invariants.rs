@@ -14,10 +14,11 @@
 
 use std::collections::BTreeMap;
 
-use crate::outcome::{ERROR_PORT, NodeError, NodeOutcome};
+use crate::outcome::{NodeError, NodeOutcome};
 use crate::retry::RetryPolicy;
 use crate::walk::{FailureKind, NodeCall, Step, Walk, WalkStatus};
 use crate::wiring::Wiring;
+use wamn_catalog::ERROR_PORT;
 
 /// An invariant that did not hold.
 #[derive(Debug, Clone, PartialEq, Eq)]

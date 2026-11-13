@@ -560,7 +560,7 @@ async fn pat_authority(admin: &Client, a: &Client, b: &Client) -> anyhow::Result
     let id: String = admin
         .query_one(
             "INSERT INTO identity.principals (type,subject,email,display_name) \
-         VALUES ('user','issuer-pat-test','issuer-pat-test@example.invalid', \
+         VALUES ('service','issuer-pat-test',NULL, \
                  'Issuer PAT test') RETURNING id::text",
             &[],
         )

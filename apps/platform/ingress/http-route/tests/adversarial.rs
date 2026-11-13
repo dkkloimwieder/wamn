@@ -819,11 +819,22 @@ fn provider_and_body_faults_are_bounded() {
 
 #[test]
 fn partial_completion_preserves_only_committed_result_and_existing_failure() {
+    use http_route::EffectOutcome;
     use http_route::{FailedOutcome, PartialCompletion};
-    use wamn_execution_contract::EffectOutcome;
     let committed =
         json!([{"request_id":"move-1","value":{"movement_id":"movement-1","row_version":2}}]);
-    for observed in std::iter::once(None).chain(EffectOutcome::ALL.into_iter().map(Some)) {
+    for observed in std::iter::once(None).chain(
+        [
+            EffectOutcome::RefusedBeforeDispatch,
+            EffectOutcome::Responded,
+            EffectOutcome::Timeout,
+            EffectOutcome::Cancelled,
+            EffectOutcome::EffectUncertain,
+            EffectOutcome::ResponseLost,
+        ]
+        .into_iter()
+        .map(Some),
+    ) {
         let mut backend = FakeBackend::new(route());
         backend.delivery = Ok(DeliveryOutcome::PartiallyCompleted(PartialCompletion {
             committed_result: committed.to_string(),
@@ -925,13 +936,13 @@ fn deadline_adjustments_reach_success_and_error_responses() {
 }
 
 #[test]
-fn a_read_authenticates_its_body_but_takes_its_request_element_from_the_canonical_query() {
+fn a_read_authenticates_its_body_and_accepts_query_parameter_order() {
     let mut read = route();
     read.method = "GET".to_string();
     read.path = "/receipts/get".to_string();
     read.mappings = Vec::new();
     let request_element = json!({"filter": {"status": ["open"]}, "id": "r-1"});
-    let query = wamn_execution_contract::encode_read_query(request_element.as_object().unwrap());
+    let query = read_query(request_element.as_object().unwrap());
     let mut get = head();
     get.method = "get".to_string();
     get.target = format!("/receipts/get?{query}");
@@ -949,8 +960,12 @@ fn a_read_authenticates_its_body_but_takes_its_request_element_from_the_canonica
         json!([request_element])
     );
 
+    let mut reordered = get.clone();
+    reordered.target = "/receipts/get?id=%22r-1%22&filter=%7b%7d".to_owned();
+    let mut reordered_backend = FakeBackend::new(read.clone());
+    assert_eq!(request(&mut reordered_backend, &reordered, b"").status, 200);
+
     for target in [
-        "/receipts/get?id=%22r-1%22&filter=%7B%7D".to_string(),
         "/receipts/get?id=r-1".to_string(),
         format!("/receipts/get?id=%22{}%22", "a".repeat(8 * 1024)),
     ] {
@@ -972,7 +987,7 @@ fn a_query_read_answers_its_page_as_one_body() {
     read.mappings = Vec::new();
     read.cache_control = Some("private, max-age=10, stale-while-revalidate=60".to_string());
     let request_element = json!({"limit": 10});
-    let query = wamn_execution_contract::encode_read_query(request_element.as_object().unwrap());
+    let query = read_query(request_element.as_object().unwrap());
     let mut get = head();
     get.method = "get".to_string();
     get.target = format!("/receipts/query?{query}");
@@ -1011,7 +1026,7 @@ fn a_feed_read_is_revalidated_every_time_under_the_scope_of_its_list() {
     read.mappings = Vec::new();
     read.cache_control = Some("private, max-age=10, stale-while-revalidate=60".to_string());
     let request_element = json!({"filter": {"status": ["held"]}, "feed": {"cursor": "Y3Vyc29y"}});
-    let query = wamn_execution_contract::encode_read_query(request_element.as_object().unwrap());
+    let query = read_query(request_element.as_object().unwrap());
     let mut get = head();
     get.method = "get".to_string();
     get.target = format!("/packaging/query?{query}");
@@ -1158,4 +1173,12 @@ fn a_read_forwards_if_none_match_and_answers_not_modified_with_its_tag_and_no_bo
         backend.deliveries[0].if_none_match, None,
         "a write is never conditional"
     );
+}
+
+fn read_query(request: &serde_json::Map<String, serde_json::Value>) -> String {
+    let mut query = url::form_urlencoded::Serializer::new(String::new());
+    for (name, value) in request {
+        query.append_pair(name, &value.to_string());
+    }
+    query.finish()
 }

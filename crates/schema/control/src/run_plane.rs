@@ -12,12 +12,12 @@ pub use plan::plan_run_plane;
 #[cfg(test)]
 use declarations::{
     AUTHORING_PRIVILEGE_SPECS, AuthoringTableSchema, CHECK_SPECS, RUNS_ADMISSION_PINS_TRIGGER_DEF,
-    RUNS_ADMISSION_PINS_TRIGGER_SQL, helper_specs, trigger_specs,
+    helper_specs, trigger_specs,
 };
 #[cfg(test)]
 use plan::environment_policy_row_security_at_record;
 #[cfg(test)]
-use schema::{index_statements, record_columns, record_tables, table_section};
+use schema::{index_statements, record_columns, record_tables};
 #[cfg(test)]
 use std::collections::BTreeSet;
 #[cfg(test)]
@@ -28,18 +28,14 @@ mod observation_sql;
 mod schema;
 
 #[doc(inline)]
-pub use observation::{
-    RowPolicyObservation, RowSecurityObservation, RunPlaneObservation,
-    ScenarioAuthorRoleObservation,
-};
+pub use observation::{RowPolicyObservation, RowSecurityObservation, RunPlaneObservation};
 #[doc(inline)]
 pub use observation_sql::{
     catalog_schema_present_sql, select_app_run_queue_authority_sql,
-    select_app_scenario_author_membership_sql, select_authoring_effective_column_privileges_sql,
+    select_authoring_effective_column_privileges_sql,
     select_authoring_effective_table_privileges_sql, select_authoring_table_owners_sql,
     select_authoring_table_privileges_sql, select_environment_policy_policies_sql,
     select_environment_policy_row_security_sql, select_run_capture_privileges_sql,
-    select_scenario_author_role_sql, select_scenario_author_schema_usage_sql,
     select_schema_checks_sql, select_schema_columns_sql, select_schema_indexes_sql,
     select_schema_triggers_sql,
 };
@@ -56,14 +52,9 @@ const RUN_QUEUE_SQL: &str = include_str!("../../../../deploy/sql/run-queue.sql")
 /// `runs`, which everything FKs), then the queue.
 const RUN_PLANE_FILES: [&str; 2] = [RUN_STATE_SQL, RUN_QUEUE_SQL];
 
-/// Reserved non-login project-author identity. No production credential inherits
-/// it, and the guest-visible `wamn_app` role is never a member.
-pub const SCENARIO_AUTHOR_ROLE: &str = "wamn_scenario_author";
 /// What one plan action does (for reporting; the SQL is on the action).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RunPlaneActionKind {
-    /// Create or harden the host-only `wamn_scenario_author` NOLOGIN role.
-    EnsureScenarioAuthorRole,
     /// `CREATE SCHEMA IF NOT EXISTS` + role usage grant (the run-state.sql
     /// header, rewritten) — emitted once when any run-plane table is missing.
     EnsureSchema,
@@ -137,24 +128,6 @@ impl RunPlanePlan {
 // `select_replica_identity_sql`). SR12: the pure decision has no pg_catalog —
 // the throwaway-PG gate covers that these really observe the live state.
 // ---------------------------------------------------------------------------
-
-/// Create or harden the host-only scenario-author group role.
-pub fn ensure_scenario_author_role_sql() -> &'static str {
-    "DO $scenario_author$ BEGIN \
-       PERFORM pg_advisory_xact_lock(hashtext('wamn_role_bootstrap')); \
-       IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles \
-                      WHERE rolname = 'wamn_scenario_author') THEN \
-         CREATE ROLE wamn_scenario_author NOLOGIN NOSUPERUSER NOCREATEDB \
-           NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS; \
-       ELSIF EXISTS (SELECT FROM pg_catalog.pg_roles \
-                     WHERE rolname = 'wamn_scenario_author' \
-                       AND (rolcanlogin OR rolsuper OR rolcreatedb OR rolcreaterole \
-                            OR rolinherit OR rolreplication OR rolbypassrls)) THEN \
-         ALTER ROLE wamn_scenario_author NOLOGIN NOSUPERUSER NOCREATEDB \
-           NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS; \
-       END IF; \
-     END $scenario_author$;"
-}
 
 /// Current helper definitions in `$1`.
 pub fn select_run_plane_helper_functions_sql() -> &'static str {

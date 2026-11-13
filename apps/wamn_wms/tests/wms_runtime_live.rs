@@ -7,7 +7,6 @@ mod shape {
 
     fn runtime() -> RuntimePhase {
         RuntimePhase {
-            route_endpoint: "http://10.0.0.2:30999".to_owned(),
             packaging_id: "00000000-0000-0000-0000-000000000301".to_owned(),
             to_location_id: "00000000-0000-0000-0000-000000000202".to_owned(),
         }

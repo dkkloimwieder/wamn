@@ -5,10 +5,9 @@
  * string. Each top-level member is one parameter, and its value is the
  * canonical JSON text of the member, strings included. Parameters and object
  * keys stand in byte order of their UTF-8 names, and every byte outside the
- * RFC 3986 unreserved set is escaped as `%XX` with uppercase hex. The router
- * refuses any other spelling, and the Rust encoder in
- * `apps/platform/execution/contract/src/read_query.rs` reads the same fixture
- * vectors as the test of this module.
+ * RFC 3986 unreserved set is escaped as `%XX` with uppercase hex. The server
+ * accepts other valid spellings and parameter orders. The Rust encoder in
+ * `services/ctl/src/read_query.rs` writes the same form.
  */
 
 import type { JsonValue } from "./wire.js";

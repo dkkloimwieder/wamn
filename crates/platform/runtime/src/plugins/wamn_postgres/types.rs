@@ -192,7 +192,7 @@ impl<'a> tokio_postgres::types::FromSql<'a> for SqlCell {
 
 /// Spell a decoded PostgreSQL timestamp through the shared scalar owner.
 pub fn canonical_timestamptz(value: DateTime<Utc>) -> String {
-    wamn_execution_contract::format_timestamptz(value)
+    wamn_scalar::format_timestamptz(value)
 }
 
 /// Decode Postgres's binary NUMERIC wire format into its canonical string
@@ -520,7 +520,7 @@ mod tests {
                 .unwrap();
             assert_eq!(row.get::<_, String>(0), database);
             assert_eq!(
-                wamn_execution_contract::canonical_numeric(input).as_deref(),
+                wamn_scalar::canonical_numeric(input).as_deref(),
                 Some(shared)
             );
         }
@@ -547,7 +547,7 @@ mod tests {
                 .unwrap();
             assert_eq!(canonical_timestamptz(row.get(0)), database);
             assert_eq!(
-                wamn_execution_contract::canonical_timestamptz(input).as_deref(),
+                wamn_scalar::canonical_timestamptz(input).as_deref(),
                 Some(shared)
             );
         }
@@ -562,7 +562,7 @@ mod tests {
                     .await
                     .is_err()
             );
-            assert_eq!(wamn_execution_contract::canonical_timestamptz(input), None);
+            assert_eq!(wamn_scalar::canonical_timestamptz(input), None);
         }
     }
 }

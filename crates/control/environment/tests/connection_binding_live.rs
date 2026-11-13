@@ -6,6 +6,7 @@ use std::sync::Arc;
 
 use serde_json::json;
 use tokio_postgres::{Client, NoTls};
+use wamn_catalog::ComponentConnectionRequirement;
 use wamn_catalog::{
     AdmittedComponent, AdmittedComponentOperation, ComponentPackageScope, ConnectionTypeDescriptor,
     RequirementType, WiringDocument, WiringNode, WiringTerminal,
@@ -21,7 +22,6 @@ use wamn_runtime::plugins::wamn_postgres::{
     CandidateConnectionBinding, ClassCredentials, ConnectionEffectLookup, DEFAULT_PROJECT,
     WamnPostgres, WamnPostgresConfig,
 };
-use wamn_schema_control::connections::ComponentConnectionRequirement;
 use wamn_test_infrastructure::record_history::assert_stamp;
 
 const ENV_KEY: &str = "connection-binding-tenant--fixture--dev";
@@ -88,7 +88,6 @@ fn wiring() -> WiringDocument {
                 terminal: Some(WiringTerminal::Respond),
             },
         )]),
-        Vec::new(),
         Vec::new(),
     )
     .expect("fixture wiring is structurally valid")
@@ -281,7 +280,6 @@ async fn provision_project(project: &Client, project_url: &str) -> Vec<AdmittedC
                         terminal: Some(WiringTerminal::Respond),
                     },
                 )]),
-                Vec::new(),
                 Vec::new(),
             )
             .unwrap(),
@@ -864,16 +862,22 @@ fn provision_project_components_for_http_manifest()
     [wamn_catalog::ServingComponent {
         package_id: PACKAGE.into(),
         runtime_schema: None,
-        descriptor,
-        operations: BTreeMap::from([(
-            operation.into(),
-            wamn_catalog::ServingComponentOperation {
-                registered_operation: None,
-                permissions: std::collections::BTreeSet::new(),
-                statements: BTreeMap::new(),
-                committed_result_schema: None,
-            },
-        )]),
+        descriptor: {
+            let mut descriptor = descriptor;
+            descriptor.operations = BTreeMap::from([(
+                operation.into(),
+                wamn_catalog::AdmittedComponentOperation {
+                    host_transaction: false,
+                    input_ports: Vec::new(),
+                    output_ports: Vec::new(),
+                    parameters: Vec::new(),
+                    registered_operation: None,
+                    statements: BTreeMap::new(),
+                    committed_result_schema: None,
+                },
+            )]);
+            descriptor
+        },
         statement_instances: BTreeMap::new(),
     }]
     .into()
@@ -904,7 +908,6 @@ async fn read_binding_refuses_post_and_forged_candidate_mode_before_dispatch() {
                 terminal: Some(WiringTerminal::Respond),
             },
         )]),
-        Vec::new(),
         Vec::new(),
     )
     .unwrap();

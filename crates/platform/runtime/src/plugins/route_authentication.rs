@@ -529,7 +529,6 @@ impl RouteAuthenticator for PlatformRouteAuthenticator {
                         token,
                         &authentication.org,
                         &authentication.project,
-                        &scope.environment,
                         &[ADMIN_ROLE],
                     )
                     .instrument(tracing::info_span!("wamn.auth.identity"))
@@ -544,7 +543,7 @@ impl RouteAuthenticator for PlatformRouteAuthenticator {
             };
             let principal = principal.principal();
             match principal.principal_type() {
-                PrincipalType::Platform => return Err(unauthorized()),
+                PrincipalType::Platform | PrincipalType::User => return Err(unauthorized()),
                 PrincipalType::Service if principal.subject().starts_with("connection-") => {
                     let connection = principal
                         .subject()
@@ -572,10 +571,9 @@ impl RouteAuthenticator for PlatformRouteAuthenticator {
                 {
                     return Err(unauthorized());
                 }
-                PrincipalType::Service | PrincipalType::User => {}
+                PrincipalType::Service => {}
             }
-            // A service and a user hold their roles the same way, through
-            // `wamn-ctl grant-role`.
+            // A service receives its roles through `wamn-ctl grant-role`.
             let permissions = authentication
                 .postgres
                 .user_operation_permissions(&authentication.project, &scope.env_key, principal.id())
@@ -690,8 +688,8 @@ pub(crate) mod tests {
 
     use serde_json::{Value, json};
     use wamn_catalog::{
-        AttachmentTarget, AttachmentType, DefinitionHash, PAT_AUTHENTICATION_MODE,
-        PackageCoordinate, ServingAttachment, ServingComponent, ServingComponentOperation,
+        AdmittedComponentOperation, AttachmentTarget, AttachmentType, DefinitionHash,
+        PAT_AUTHENTICATION_MODE, PackageCoordinate, ServingAttachment, ServingComponent,
         ServingManifest, ServingRelease,
     };
     use wamn_engine::flow_http_routing::{FlowHttpRouting, RouteInFlightLimit};
@@ -717,20 +715,26 @@ pub(crate) mod tests {
                 runtime_schema: None,
                 statement_instances: std::collections::BTreeMap::new(),
                 package_id: "cat".into(),
-                operations: BTreeMap::from([(
-                    "request".into(),
-                    ServingComponentOperation {
-                        committed_result_schema: None,
-                        registered_operation: None,
-                        permissions: BTreeSet::new(),
-                        statements: BTreeMap::new(),
-                    },
-                )]),
-                descriptor: wamn_catalog::ComponentDescriptor::named(
-                    "http-request",
-                    "0.1",
-                    digest('a'),
-                ),
+                descriptor: {
+                    let mut descriptor = wamn_catalog::ComponentDescriptor::named(
+                        "http-request",
+                        "0.1",
+                        digest('a'),
+                    );
+                    descriptor.operations = BTreeMap::from([(
+                        "request".into(),
+                        AdmittedComponentOperation {
+                            host_transaction: false,
+                            input_ports: Vec::new(),
+                            output_ports: Vec::new(),
+                            parameters: Vec::new(),
+                            committed_result_schema: None,
+                            registered_operation: None,
+                            statements: BTreeMap::new(),
+                        },
+                    )]);
+                    descriptor
+                },
             }]),
             BTreeSet::from([wamn_catalog::ServingRoute {
                 package_id: "cat".into(),
@@ -740,7 +744,6 @@ pub(crate) mod tests {
                 reads: BTreeSet::new(),
                 revision: None,
                 idempotency: None,
-                canonicalization: None,
             }]),
             BTreeMap::from([(
                 "orders".to_string(),

@@ -6,6 +6,7 @@
 //! PostgreSQL-generated names.
 
 use std::fmt;
+use wamn_scalar::SqlValueType;
 
 use serde::{Deserialize, Serialize};
 
@@ -135,14 +136,14 @@ impl View {
 pub struct ViewColumn {
     name: Box<str>,
     #[serde(rename = "type")]
-    ty: ColumnType,
+    ty: SqlValueType,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     origin: Option<ViewColumnOrigin>,
 }
 
 impl ViewColumn {
     /// Construct one view column without nullability metadata.
-    pub fn new(name: impl Into<Box<str>>, column_type: ColumnType) -> Self {
+    pub fn new(name: impl Into<Box<str>>, column_type: SqlValueType) -> Self {
         Self {
             name: name.into(),
             ty: column_type,
@@ -156,7 +157,7 @@ impl ViewColumn {
     }
 
     /// Frozen `wamn:postgres` transport type.
-    pub const fn column_type(&self) -> ColumnType {
+    pub const fn column_type(&self) -> SqlValueType {
         self.ty
     }
 
@@ -291,7 +292,7 @@ impl Table {
 pub struct Column {
     name: Box<str>,
     #[serde(rename = "type")]
-    ty: ColumnType,
+    ty: SqlValueType,
     nullable: bool,
     default: Option<ColumnDefault>,
     generation: Option<ColumnGeneration>,
@@ -301,7 +302,7 @@ impl Column {
     /// Construct one supported column.
     pub fn new(
         name: impl Into<Box<str>>,
-        column_type: ColumnType,
+        column_type: SqlValueType,
         nullable: bool,
         default: Option<ColumnDefault>,
         generation: Option<ColumnGeneration>,
@@ -321,7 +322,7 @@ impl Column {
     }
 
     /// Frozen `wamn:postgres` transport type.
-    pub const fn column_type(&self) -> ColumnType {
+    pub const fn column_type(&self) -> SqlValueType {
         self.ty
     }
 
@@ -343,8 +344,6 @@ impl Column {
         self.generation.as_ref()
     }
 }
-
-use wamn_catalog::schema::ColumnType;
 
 /// One admitted column default: a named server function, or a literal of the
 /// column's own type carrying its VALUE.
@@ -764,7 +763,7 @@ pub enum IrErrorType {
 pub struct IrError {
     type_: IrErrorType,
     input: Box<str>,
-    column_type: Option<ColumnType>,
+    column_type: Option<SqlValueType>,
 }
 
 impl IrError {
@@ -779,7 +778,7 @@ impl IrError {
     }
 
     /// Column type context for a default refusal.
-    pub const fn column_type(&self) -> Option<ColumnType> {
+    pub const fn column_type(&self) -> Option<SqlValueType> {
         self.column_type
     }
 }
@@ -806,18 +805,18 @@ impl fmt::Display for IrError {
 impl std::error::Error for IrError {}
 
 /// Map a PostgreSQL catalog type spelling to the frozen transport vocabulary.
-pub fn postgres_type(postgres_name: &str) -> Result<ColumnType, IrError> {
+pub fn postgres_type(postgres_name: &str) -> Result<SqlValueType, IrError> {
     match postgres_name {
-        "boolean" => Ok(ColumnType::Boolean),
-        "integer" => Ok(ColumnType::Int32),
-        "bigint" => Ok(ColumnType::Int64),
-        "double precision" => Ok(ColumnType::Float64),
-        "text" => Ok(ColumnType::Text),
-        "bytea" => Ok(ColumnType::Bytes),
-        "numeric" => Ok(ColumnType::Numeric),
-        "timestamp with time zone" => Ok(ColumnType::Timestamptz),
-        "jsonb" => Ok(ColumnType::Json),
-        "uuid" => Ok(ColumnType::Uuid),
+        "boolean" => Ok(SqlValueType::Boolean),
+        "integer" => Ok(SqlValueType::Int32),
+        "bigint" => Ok(SqlValueType::Int64),
+        "double precision" => Ok(SqlValueType::Float64),
+        "text" => Ok(SqlValueType::Text),
+        "bytea" => Ok(SqlValueType::Bytes),
+        "numeric" => Ok(SqlValueType::Numeric),
+        "timestamp with time zone" => Ok(SqlValueType::Timestamptz),
+        "jsonb" => Ok(SqlValueType::Json),
+        "uuid" => Ok(SqlValueType::Uuid),
         unsupported => Err(IrError {
             type_: IrErrorType::UnsupportedType,
             input: unsupported.into(),
@@ -827,14 +826,14 @@ pub fn postgres_type(postgres_name: &str) -> Result<ColumnType, IrError> {
 }
 
 /// Exact typed server expressions shared by defaults and staged expression checks.
-pub(crate) const POSTGRES_SERVER_EXPRESSIONS: &[(ColumnType, &str, ColumnDefault)] = &[
+pub(crate) const POSTGRES_SERVER_EXPRESSIONS: &[(SqlValueType, &str, ColumnDefault)] = &[
     (
-        ColumnType::Uuid,
+        SqlValueType::Uuid,
         "gen_random_uuid()",
         ColumnDefault::GenRandomUuid,
     ),
     (
-        ColumnType::Timestamptz,
+        SqlValueType::Timestamptz,
         "CURRENT_TIMESTAMP",
         ColumnDefault::CurrentTimestamp,
     ),
@@ -847,7 +846,7 @@ pub(crate) const POSTGRES_SERVER_EXPRESSIONS: &[(ColumnType, &str, ColumnDefault
 /// to that same type. An expression, any other function call, and a literal of
 /// a different type all refuse, which is the whole wall this allowlist keeps.
 pub fn postgres_default(
-    column_type: ColumnType,
+    column_type: SqlValueType,
     expression: &str,
 ) -> Result<ColumnDefault, IrError> {
     let normalized = expression.trim();
@@ -869,23 +868,23 @@ pub fn postgres_default(
 
     let literal = strip_own_cast(normalized, column_type).ok_or_else(refuse)?;
     match column_type {
-        ColumnType::Text => quoted_value(literal)
+        SqlValueType::Text => quoted_value(literal)
             .map(ColumnDefault::text)
             .ok_or_else(refuse),
-        ColumnType::Boolean => match unquoted(literal).to_ascii_lowercase().as_str() {
+        SqlValueType::Boolean => match unquoted(literal).to_ascii_lowercase().as_str() {
             "true" => Ok(ColumnDefault::boolean(true)),
             "false" => Ok(ColumnDefault::boolean(false)),
             _ => Err(refuse()),
         },
-        ColumnType::Int32 => unquoted(literal)
+        SqlValueType::Int32 => unquoted(literal)
             .parse::<i32>()
             .map(ColumnDefault::int32)
             .map_err(|_| refuse()),
-        ColumnType::Int64 => unquoted(literal)
+        SqlValueType::Int64 => unquoted(literal)
             .parse::<i64>()
             .map(ColumnDefault::int64)
             .map_err(|_| refuse()),
-        ColumnType::Numeric => {
+        SqlValueType::Numeric => {
             let value = unquoted(literal);
             if is_numeric_literal(&value) {
                 Ok(ColumnDefault::numeric(value))
@@ -903,7 +902,7 @@ pub fn postgres_default(
 ///
 /// A cast to any other type is a type mismatch, not a default, so it refuses by
 /// returning `None` rather than by silently dropping the cast.
-fn strip_own_cast(expression: &str, column_type: ColumnType) -> Option<&str> {
+fn strip_own_cast(expression: &str, column_type: SqlValueType) -> Option<&str> {
     let Some((value, cast)) = expression.rsplit_once("::") else {
         return Some(expression.trim());
     };
@@ -981,7 +980,7 @@ mod tests {
         let catalog = CatalogIr::new(vec![Table::new(
             "app",
             "item",
-            vec![Column::new("id", ColumnType::Int64, false, None, None)],
+            vec![Column::new("id", SqlValueType::Int64, false, None, None)],
             Vec::new(),
             Vec::new(),
         )]);

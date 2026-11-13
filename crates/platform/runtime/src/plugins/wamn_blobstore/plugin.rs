@@ -680,8 +680,8 @@ mod tests {
     use std::collections::{BTreeMap, BTreeSet};
 
     use wamn_catalog::{
-        PackageCoordinate, SERVING_MANIFEST_FORMAT_VERSION, ServingComponent,
-        ServingComponentOperation, ServingRelease,
+        AdmittedComponentOperation, PackageCoordinate, SERVING_MANIFEST_FORMAT_VERSION,
+        ServingComponent, ServingRelease,
     };
 
     use super::*;
@@ -946,30 +946,36 @@ mod tests {
         manifest.components = BTreeSet::from([ServingComponent {
             runtime_schema: None,
             statement_instances: std::collections::BTreeMap::new(),
-            descriptor: wamn_catalog::ComponentDescriptor::named(
-                snapshot
-                    .component
-                    .clone()
-                    .expect("the fixture snapshot names a component"),
-                snapshot
-                    .interface_version
-                    .clone()
-                    .expect("the fixture snapshot names an interface version"),
-                invocation.component_digest.clone(),
-            ),
+            descriptor: {
+                let mut descriptor = wamn_catalog::ComponentDescriptor::named(
+                    snapshot
+                        .component
+                        .clone()
+                        .expect("the fixture snapshot names a component"),
+                    snapshot
+                        .interface_version
+                        .clone()
+                        .expect("the fixture snapshot names an interface version"),
+                    invocation.component_digest.clone(),
+                );
+                descriptor.operations = BTreeMap::from([(
+                    snapshot
+                        .operation
+                        .clone()
+                        .expect("the fixture snapshot names an operation"),
+                    AdmittedComponentOperation {
+                        host_transaction: false,
+                        input_ports: Vec::new(),
+                        output_ports: Vec::new(),
+                        parameters: Vec::new(),
+                        committed_result_schema: None,
+                        registered_operation: snapshot.registered_operation.clone(),
+                        statements: BTreeMap::new(),
+                    },
+                )]);
+                descriptor
+            },
             package_id: invocation.package_id,
-            operations: BTreeMap::from([(
-                snapshot
-                    .operation
-                    .clone()
-                    .expect("the fixture snapshot names an operation"),
-                ServingComponentOperation {
-                    committed_result_schema: None,
-                    registered_operation: snapshot.registered_operation.clone(),
-                    permissions: snapshot.registered_operation.iter().cloned().collect(),
-                    statements: BTreeMap::new(),
-                },
-            )]),
         }]);
         manifest
     }
@@ -1097,7 +1103,6 @@ mod tests {
             reads: BTreeSet::new(),
             revision: None,
             idempotency: None,
-            canonicalization: None,
         });
         assert_eq!(
             authorize_closure(&route, Some(&manifest), None, &snapshot),

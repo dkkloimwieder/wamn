@@ -11,6 +11,7 @@ test-util = ["dep:wamn-test-postgres", "wamn-catalog/test-util"]
 [dependencies]
 wamn-test-postgres = { workspace = true, optional = true }
 jsonwebtoken = { workspace = true }
+wamn-digest.workspace = true
 wamn-credential-store = { workspace = true }
 uuid = { workspace = true }
 anyhow = { workspace = true }
@@ -29,7 +30,6 @@ tokio = { workspace = true, features = ["rt", "sync", "time"] }
 tokio-postgres = { workspace = true, features = ["with-serde_json-1"] }
 # The token profile and its verification.
 wamn-identity-protocol = { workspace = true }
-wamn-execution-contract = { workspace = true }
 # The application role names of a project database.
 wamn-catalog = { workspace = true }
 

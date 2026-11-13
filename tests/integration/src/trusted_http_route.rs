@@ -31,8 +31,8 @@ use tokio_postgres::NoTls;
 use wamn_catalog::component_artifact_reference;
 use wamn_catalog::{
     AdmittedComponent, ComponentConnection, ComponentConnectionType, ComponentDeclaration,
-    ComponentDescriptor, SERVING_MANIFEST_FORMAT_VERSION, ServingComponentOperation,
-    WiringDocument, WiringNode, WiringTerminal,
+    ComponentDescriptor, SERVING_MANIFEST_FORMAT_VERSION, WiringDocument, WiringNode,
+    WiringTerminal,
 };
 use wamn_control_provision::{
     CredentialGeneration, WorkloadRoleFamily, WorkloadRoleScope, workload_generation_role,
@@ -263,7 +263,7 @@ async fn build_with_credentials(
     let wiring_hash = document.wiring_hash().as_str().to_owned();
     let release = Arc::new(
         LoadedRelease::load_canonical_bytes(
-            &wamn_execution_contract::canonical_json_bytes(&release_manifest(&admitted, &document)),
+            &wamn_digest::canonical_json_bytes(&release_manifest(&admitted, &document)),
             "trusted-http-route fixture",
             wamn_engine::release_manifest::ReleaseScope::new(ENV_KEY, ENVIRONMENT)
                 .with_applications(
@@ -399,7 +399,6 @@ fn wiring_document(path_and_query: &str) -> WiringDocument {
             },
         )]),
         edges: Vec::new(),
-        cases: Vec::new(),
     }
 }
 
@@ -411,21 +410,6 @@ fn release_manifest(
     component: &AdmittedComponent,
     _document: &WiringDocument,
 ) -> serde_json::Value {
-    let operations: BTreeMap<_, _> = component
-        .operations
-        .iter()
-        .map(|(name, operation)| {
-            (
-                name.clone(),
-                ServingComponentOperation {
-                    committed_result_schema: None,
-                    registered_operation: operation.registered_operation.clone(),
-                    permissions: operation.registered_operation.iter().cloned().collect(),
-                    statements: operation.statements.clone(),
-                },
-            )
-        })
-        .collect();
     serde_json::json!({
         "format-version": SERVING_MANIFEST_FORMAT_VERSION,
         "release": {
@@ -436,7 +420,6 @@ fn release_manifest(
         },
         "components": [{
             "package-id": PACKAGE,
-            "operations": operations,
             "descriptor": ComponentDescriptor::new(
                 component.clone(),
                 vec![ComponentConnection {
@@ -548,11 +531,7 @@ async fn seed_with_client(
         .context("read the run-state DDL")?;
     let run_queue = std::fs::read_to_string(format!("{root}/deploy/sql/run-queue.sql"))
         .context("read the run-queue DDL")?;
-    let role_bootstrap = format!(
-        "{} {}",
-        wamn_control_provision::sql::ensure_app_acl_role_sql(),
-        wamn_schema_control::ensure_scenario_author_role_sql(),
-    );
+    let role_bootstrap = wamn_control_provision::sql::ensure_app_acl_role_sql();
     client
         .batch_execute(&format!(
             "{role_bootstrap}\n\
@@ -597,7 +576,7 @@ async fn seed_with_client(
         "connections": [],
         "components": {},
     });
-    let package_artifact_digest = wamn_execution_contract::canonical_json_sha256(&package_manifest);
+    let package_artifact_digest = wamn_digest::canonical_json_sha256(&package_manifest);
     client
         .execute(
             "INSERT INTO catalog.packages \
@@ -753,7 +732,7 @@ async fn seed_additional_wirings(
             "INSERT INTO catalog.packages (physical_schema_fingerprint, env_key, package_id, package_version, artifact_digest) \
              VALUES ('sha256:' || repeat('c', 64), $1, $2, $3, $4)",
             &[&ENV_KEY, package, package_version,
-              &wamn_execution_contract::canonical_json_sha256(&manifest)],
+              &wamn_digest::canonical_json_sha256(&manifest)],
         ).await?;
     }
     for document in documents {

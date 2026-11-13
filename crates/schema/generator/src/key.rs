@@ -1,6 +1,6 @@
 //! Primary-key facts shared by generated SQL and contracts.
 
-use wamn_catalog::schema::ColumnType;
+use wamn_scalar::SqlValueType;
 use wamn_schema_introspection::ir::{ConstraintType, Table};
 
 use wamn_catalog::{ManifestError as GenerateError, ManifestErrorType as GenerateErrorType};
@@ -14,11 +14,11 @@ pub(crate) enum KeyType {
 }
 
 impl KeyType {
-    pub(crate) const fn column_type(self) -> ColumnType {
+    pub(crate) const fn column_type(self) -> SqlValueType {
         match self {
-            Self::Uuid => ColumnType::Uuid,
-            Self::Int32 => ColumnType::Int32,
-            Self::Int64 => ColumnType::Int64,
+            Self::Uuid => SqlValueType::Uuid,
+            Self::Int32 => SqlValueType::Int32,
+            Self::Int64 => SqlValueType::Int64,
         }
     }
 }
@@ -39,8 +39,10 @@ pub(crate) fn key_type(table: &Table) -> Result<KeyType, GenerateError> {
         .iter()
         .find(|column| column.name() == "id")
         .expect("the primary key references an introspected column");
-    if matches!(column.column_type(), ColumnType::Int32 | ColumnType::Int64)
-        && column.default().is_none()
+    if matches!(
+        column.column_type(),
+        SqlValueType::Int32 | SqlValueType::Int64
+    ) && column.default().is_none()
         && column.generation().is_none()
     {
         return Err(GenerateError::for_object(
@@ -52,9 +54,9 @@ pub(crate) fn key_type(table: &Table) -> Result<KeyType, GenerateError> {
         ));
     }
     match column.column_type() {
-        ColumnType::Uuid => Ok(KeyType::Uuid),
-        ColumnType::Int32 => Ok(KeyType::Int32),
-        ColumnType::Int64 => Ok(KeyType::Int64),
+        SqlValueType::Uuid => Ok(KeyType::Uuid),
+        SqlValueType::Int32 => Ok(KeyType::Int32),
+        SqlValueType::Int64 => Ok(KeyType::Int64),
         ty => Err(GenerateError::for_object(
             GenerateErrorType::InvalidModel,
             format!(
@@ -84,6 +86,9 @@ pub(crate) fn primary_key(table: &Table) -> Option<&str> {
 pub(crate) fn database_generated(table: &Table) -> bool {
     table.columns().iter().any(|column| {
         column.name() == "id"
-            && matches!(column.column_type(), ColumnType::Int32 | ColumnType::Int64)
+            && matches!(
+                column.column_type(),
+                SqlValueType::Int32 | SqlValueType::Int64
+            )
     })
 }

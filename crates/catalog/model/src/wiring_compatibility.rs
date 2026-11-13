@@ -209,7 +209,7 @@ fn validate_resolved_edges(
         // `error` is router-owned failure data, not a successful component
         // output declaration. The target port still has to exist, but no
         // component output schema can truthfully be compared with it.
-        if edge.from_port == wamn_execution_contract::ERROR_PORT {
+        if edge.from_port == crate::ERROR_PORT {
             continue;
         }
         let Some(source_port) = source
@@ -503,7 +503,6 @@ mod tests {
                 to: "target".to_string(),
                 to_port: Some("record".to_string()),
             }],
-            Vec::new(),
         )
         .expect("fixture wiring is structurally valid")
     }
@@ -664,7 +663,7 @@ mod tests {
     #[test]
     fn error_edges_validate_the_target_without_fabricating_a_component_output_schema() {
         let mut error = wiring();
-        error.edges[0].from_port = wamn_execution_contract::ERROR_PORT.to_string();
+        error.edges[0].from_port = crate::ERROR_PORT.to_string();
         validate_wiring_compatibility(&error, &scope(), &components())
             .expect("the router-owned error payload has no component output schema");
 

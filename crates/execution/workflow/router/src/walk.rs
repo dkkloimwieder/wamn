@@ -15,10 +15,11 @@ use std::collections::{HashMap, VecDeque};
 
 use serde_json::Value;
 
-use crate::outcome::{ERROR_PORT, ErrorDetail, NodeError, NodeOutcome};
+use crate::outcome::{ErrorDetail, NodeError, NodeOutcome};
 use crate::retry::{RetryPolicy, ThrottleKey};
 use crate::terminal::{DEDUP_ID_FIELD, Terminal, Verdict};
 use crate::wiring::Wiring;
+use wamn_catalog::ERROR_PORT;
 
 /// One delivery entering the router: the unit of work a walk carries.
 #[derive(Debug, Clone, PartialEq)]
@@ -568,7 +569,7 @@ impl Wiring {
     /// The error-ROUTE transition shared by all routed failures: clear the
     /// active slot, count the COMPLETED visit (an error-routed emission advances
     /// the node's occurrence exactly as a success does), and enqueue the
-    /// [`ERROR_PORT`](crate::ERROR_PORT) successors carrying `payload`.
+    /// [`ERROR_PORT`](wamn_catalog::ERROR_PORT) successors carrying `payload`.
     /// Deliberately leaves `step_seq` and `result` untouched: an error route is
     /// not a success completion.
     fn route_error(&self, walk: &mut Walk, node: &str, payload: &Value) {

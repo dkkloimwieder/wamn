@@ -1,7 +1,7 @@
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use wamn_catalog::manifest::CursorDirection;
-use wamn_catalog::schema::ColumnType;
+use wamn_scalar::SqlValueType;
 use wamn_schema_generator::{CursorErrorType, CursorV1, CursorValue, decode_cursor, encode_cursor};
 
 const ID: &str = "01234567-89ab-cdef-0123-456789abcdef";
@@ -25,7 +25,7 @@ fn whole_second_timestamp_has_one_literal_wire_spelling() {
             &encoded,
             "created_at",
             CursorDirection::Ascending,
-            ColumnType::Timestamptz,
+            SqlValueType::Timestamptz,
         )
         .unwrap(),
         cursor
@@ -47,7 +47,7 @@ fn numeric_cursor_preserves_postgresql_lexical_scale() {
             &encoded,
             "amount",
             CursorDirection::Descending,
-            ColumnType::Numeric,
+            SqlValueType::Numeric,
         )
         .unwrap()
         .key(),
@@ -80,7 +80,8 @@ fn malformed_or_mismatched_cursor_is_typed_invalid_input() {
         (valid, "created_at", CursorDirection::Descending),
     ];
     for (encoded, field, direction) in cases {
-        let error = decode_cursor(&encoded, field, direction, ColumnType::Timestamptz).unwrap_err();
+        let error =
+            decode_cursor(&encoded, field, direction, SqlValueType::Timestamptz).unwrap_err();
         assert_eq!(error.error_type(), CursorErrorType::InvalidInput);
     }
 }
@@ -98,7 +99,7 @@ fn noncanonical_json_and_unknown_version_never_reset_to_first_page() {
             &encoded,
             "created_at",
             CursorDirection::Ascending,
-            ColumnType::Timestamptz,
+            SqlValueType::Timestamptz,
         )
         .unwrap_err();
         assert_eq!(error.error_type(), CursorErrorType::InvalidInput);
@@ -111,31 +112,31 @@ fn noncanonical_timestamps_and_numeric_spellings_refuse() {
         (
             "2026-08-29T12:34:56Z",
             "2026-08-29T12:34:56.000000Z",
-            ColumnType::Timestamptz,
+            SqlValueType::Timestamptz,
         ),
         (
             "2026-08-29T14:34:56.000000+02:00",
             "2026-08-29T12:34:56.000000Z",
-            ColumnType::Timestamptz,
+            SqlValueType::Timestamptz,
         ),
         (
             "2024-03-01T00:30:00+02:00",
             "2024-02-29T22:30:00.000000Z",
-            ColumnType::Timestamptz,
+            SqlValueType::Timestamptz,
         ),
         (
             "2026-08-29T12:34:56.1234567Z",
             "2026-08-29T12:34:56.123456Z",
-            ColumnType::Timestamptz,
+            SqlValueType::Timestamptz,
         ),
-        ("01.0", "1.0", ColumnType::Numeric),
-        ("1.", "1", ColumnType::Numeric),
-        (".50", "0.50", ColumnType::Numeric),
-        ("-00.00", "-0.00", ColumnType::Numeric),
-        ("12.3400", "12.3400", ColumnType::Numeric),
-        ("-0", "-0", ColumnType::Numeric),
+        ("01.0", "1.0", SqlValueType::Numeric),
+        ("1.", "1", SqlValueType::Numeric),
+        (".50", "0.50", SqlValueType::Numeric),
+        ("-00.00", "-0.00", SqlValueType::Numeric),
+        ("12.3400", "12.3400", SqlValueType::Numeric),
+        ("-0", "-0", SqlValueType::Numeric),
     ] {
-        let key = if column == ColumnType::Numeric {
+        let key = if column == SqlValueType::Numeric {
             CursorValue::Numeric(written.into())
         } else {
             CursorValue::Timestamptz(written.into())

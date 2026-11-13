@@ -12,7 +12,7 @@ The author states a fact once (docs/architecture/data-access.md#manifest-declara
 owns what a statement reads and writes, so no schema here has a relations key:
 the generator derives each custom operation's relations from its statements
 and writes them into generated/wamn.json. A command's envelope bounds and
-canonicalization are defaults, written only to change them, and the detail of
+input bounds are defaults, written only to change them, and the detail of
 idempotency_conflict is derived with the other platform error details. The
 schema owns column checks and stamps: a model's enum_fields come from its
 CHECK col IN ('a', ...) constraints, and its stamp columns are server-owned
@@ -122,14 +122,6 @@ schema StateGuard:
 schema State:
     state: StateGuard
 
-schema LineOrder:
-    ascending_by: str
-    positive_member?: str
-
-schema Canonicalization:
-    excluded_fields: [str] = ["request_id", "value.idempotency_key"]
-    line_order?: LineOrder
-
 schema List:
     model?: str
     key_field: str | [str]
@@ -153,7 +145,6 @@ schema CustomOperation[name: str]:
     transaction?: Transaction
     automatic_retry?: bool
     idempotent_by?: "claim" | "stateless" | State
-    canonicalization?: Canonicalization
     label?: str
     description?: str
     lists?: List
@@ -180,8 +171,6 @@ schema Command[name: str](CustomOperation):
         input.raw_body_maximum = 1048576
     if _claims(idempotent_by) and not input.envelope:
         input.envelope = {minimum = 1, maximum = 100}
-    if _claims(idempotent_by) and not canonicalization:
-        canonicalization = {}
 
 schema Projection[name: str](CustomOperation):
     type = "projection"

@@ -1317,7 +1317,9 @@ mod tests {
         let config = super::super::config::parse_config(&serde_json::to_vec(&document)?)?;
         let (admin, admin_driver) = tokio_postgres::connect(admin_database.url(), NoTls).await?;
         let admin_driver = tokio::spawn(admin_driver);
-        admin.batch_execute("CREATE ROLE wamn_app; CREATE ROLE wamn_scenario_author; CREATE ROLE fixture_reader;").await?;
+        admin
+            .batch_execute("CREATE ROLE wamn_app; CREATE ROLE fixture_reader;")
+            .await?;
         let fingerprint = template_fingerprint("target", "system", config.activation_identity());
         admin
             .batch_execute(&format!(

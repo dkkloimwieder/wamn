@@ -61,7 +61,7 @@ mod tests {
         document.applications.get_mut("fixture").unwrap().client =
             Some(super::super::document::Client {
                 package: "receiving".into(),
-                web: wamn_execution_contract::bytes_sha256(b"web artifact"),
+                web: wamn_digest::bytes_sha256(b"web artifact"),
             });
         verify_client_package(
             &document.applications["fixture"],
@@ -82,13 +82,13 @@ mod tests {
         // DEP2-03 replaces the shared candidate with application publication.
         for application in document.applications.values_mut() {
             application.current = super::super::document::DeclaredRelease::Digest(
-                wamn_execution_contract::bytes_sha256(b"release"),
+                wamn_digest::bytes_sha256(b"release"),
             );
         }
         document.applications.get_mut("fixture").unwrap().client =
             Some(super::super::document::Client {
                 package: "web_fixture".into(),
-                web: wamn_execution_contract::bytes_sha256(b"web artifact"),
+                web: wamn_digest::bytes_sha256(b"web artifact"),
             });
         verify(
             &document.applications["fixture"],

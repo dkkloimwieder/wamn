@@ -24,8 +24,6 @@ const SESSION_TYPE: &str = "wamn-session+jwt";
 pub enum SessionAuthority {
     /// An existing password login and its renewal family.
     Login(PrincipalId),
-    /// The source credential of an optional PAT exchange.
-    Pat(PrincipalId),
 }
 
 /// Required wire claims; deserialization alone does not authenticate them.

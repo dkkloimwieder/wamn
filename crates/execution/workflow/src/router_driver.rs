@@ -543,7 +543,7 @@ fn lower_node_outcome(
                 payload,
                 port: emission
                     .port
-                    .unwrap_or_else(|| wamn_router::MAIN_PORT.to_owned()),
+                    .unwrap_or_else(|| wamn_catalog::MAIN_PORT.to_owned()),
             })
         }
         Err(node_types::NodeError::Retryable(detail)) => Ok(NodeOutcome::Error(

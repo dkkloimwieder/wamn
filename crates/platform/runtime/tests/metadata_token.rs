@@ -15,8 +15,8 @@ use wamn_catalog::{
     AdmittedComponent, ComponentDeclaration, ComponentOperationDeclaration, ComponentPackageScope,
     ComponentPortDeclaration, normalize_component_fact,
 };
+use wamn_digest::bytes_sha256;
 use wamn_engine::artifact_source::{ArtifactSource as _, ComponentArtifactFetchErrorType};
-use wamn_engine::component_admission::component_digest;
 use wamn_package_artifact::registry_credentials::{
     METADATA_HOST_ENV, RegistryCredentialsErrorType, read_metadata_registry_credentials,
 };
@@ -183,7 +183,7 @@ fn admitted(bytes: &[u8]) -> AdmittedComponent {
             )]),
             connections: Vec::new(),
         },
-        component_digest(bytes),
+        bytes_sha256(bytes),
         ["wasi:logging/logging@0.1.0".to_owned()],
         Vec::new(),
     )

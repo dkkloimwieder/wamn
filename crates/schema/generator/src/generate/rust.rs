@@ -1,6 +1,7 @@
 //! Rust projections and accessors.
 
 use std::fmt::Write as _;
+use wamn_scalar::SqlValueType;
 
 use wamn_catalog::manifest::{CustomOperationType, authored_name};
 
@@ -16,7 +17,6 @@ use wamn_catalog::manifest::{
     CrudAction, CustomOperationDeclaration, ModelDeclaration, OperationDeclaration, StaticSqlFetch,
     rust_identifier, rust_type_identifier,
 };
-use wamn_catalog::schema::ColumnType;
 
 /// Clippy's default `too-many-arguments-threshold`. The repository declares no
 /// `clippy.toml`, so this default is what the lint uses. Anyone who adds one
@@ -289,7 +289,7 @@ pub(super) fn wamn_api(
                         .tie_breaker
                         .field;
                     binds.push(bind_for_column(table, tie_breaker, "cursor_id", true));
-                    binds.push(accessor_bind("limit", ColumnType::Int64, false));
+                    binds.push(accessor_bind("limit", SqlValueType::Int64, false));
                     accessors.push(WamnAccessor {
                         name: format!("query_{field}_{}", sql::direction_name(direction)),
                         visibility: RustVisibility::Crate,
@@ -307,7 +307,11 @@ pub(super) fn wamn_api(
                 }
                 if let Some(changes_row) = feed_rows.get(1) {
                     let mut binds = scope_binds(operation);
-                    binds.push(accessor_bind("cursor_transaction", ColumnType::Int64, true));
+                    binds.push(accessor_bind(
+                        "cursor_transaction",
+                        SqlValueType::Int64,
+                        true,
+                    ));
                     binds.push(accessor_bind(
                         "cursor_id",
                         crate::key::key_type(table)
@@ -315,7 +319,7 @@ pub(super) fn wamn_api(
                             .column_type(),
                         true,
                     ));
-                    binds.push(accessor_bind("limit", ColumnType::Int64, false));
+                    binds.push(accessor_bind("limit", SqlValueType::Int64, false));
                     let index = paths.len() - 1;
                     accessors.push(WamnAccessor {
                         name: CHANGES_STATEMENT.to_owned(),
@@ -359,7 +363,7 @@ pub(super) fn wamn_api(
                         accessor_bind(
                             &rust_identifier(field)
                                 .expect("model field names were validated for Rust"),
-                            ColumnType::Text,
+                            SqlValueType::Text,
                             false,
                         )
                     }))
@@ -382,7 +386,7 @@ pub(super) fn wamn_api(
                 for field in &operation.writable_fields {
                     binds.push(accessor_bind(
                         &format!("{field}_present"),
-                        ColumnType::Boolean,
+                        SqlValueType::Boolean,
                         false,
                     ));
                     binds.push(bind_for_column(
@@ -533,10 +537,16 @@ fn scope_binds(operation: &OperationDeclaration) -> Vec<AccessorBind> {
     let mut binds = operation
         .filters
         .iter()
-        .map(|filter| accessor_bind(&format!("{}_filter", filter.field), ColumnType::Json, true))
+        .map(|filter| {
+            accessor_bind(
+                &format!("{}_filter", filter.field),
+                SqlValueType::Json,
+                true,
+            )
+        })
         .collect::<Vec<_>>();
     if operation.search.is_some() {
-        binds.push(accessor_bind("search", ColumnType::Text, true));
+        binds.push(accessor_bind("search", SqlValueType::Text, true));
     }
     binds
 }
@@ -555,7 +565,7 @@ fn feed_rows(
     if !model.feed_enabled() {
         return Vec::new();
     }
-    let member = |name: &str, ty: ColumnType| RustMember {
+    let member = |name: &str, ty: SqlValueType| RustMember {
         name: name.to_owned(),
         rust_type: projected_rust_type(ty, projection, true),
         statement_type: ty,
@@ -585,14 +595,14 @@ fn feed_rows(
     fields.push(RustMember {
         name: "row_version".to_owned(),
         rust_type: "i64".to_owned(),
-        statement_type: ColumnType::Int64,
+        statement_type: SqlValueType::Int64,
         nullable: false,
     });
     vec![
         RustRow {
             name: format!("{model_type}QueryFeedRow"),
             visibility: RustVisibility::Public,
-            fields: std::iter::once(member("feed_cursor", ColumnType::Int64))
+            fields: std::iter::once(member("feed_cursor", SqlValueType::Int64))
                 .chain(model_members.clone())
                 .collect(),
         },
@@ -600,16 +610,16 @@ fn feed_rows(
             name: format!("{model_type}ChangesRow"),
             visibility: RustVisibility::Public,
             fields: [
-                member("feed_end", ColumnType::Int64),
-                member("expired", ColumnType::Boolean),
+                member("feed_end", SqlValueType::Int64),
+                member("expired", SqlValueType::Boolean),
                 member(
                     "change_id",
                     crate::key::key_type(table)
                         .expect("validated model key")
                         .column_type(),
                 ),
-                member("change_transaction", ColumnType::Int64),
-                member("present", ColumnType::Boolean),
+                member("change_transaction", SqlValueType::Int64),
+                member("present", SqlValueType::Boolean),
             ]
             .into_iter()
             .chain(model_members)
@@ -652,7 +662,7 @@ fn operation_result_row(
     let mut fields = vec![RustMember {
         name: "outcome".to_owned(),
         rust_type: "Option<String>".to_owned(),
-        statement_type: ColumnType::Text,
+        statement_type: SqlValueType::Text,
         nullable: true,
     }];
     // Update and delete both report the revision the row carried.
@@ -672,7 +682,7 @@ fn operation_result_row(
             "observed_{}",
             rust_identifier(revision).expect("model field names were validated for Rust")
         ),
-        rust_type: if revision_type == ColumnType::Int32 {
+        rust_type: if revision_type == SqlValueType::Int32 {
             "Option<i32>".to_owned()
         } else {
             "Option<i64>".to_owned()
@@ -713,7 +723,7 @@ fn bind_for_column(
     )
 }
 
-fn accessor_bind(parameter: &str, ty: ColumnType, nullable: bool) -> AccessorBind {
+fn accessor_bind(parameter: &str, ty: SqlValueType, nullable: bool) -> AccessorBind {
     AccessorBind {
         parameter: parameter.to_owned(),
         postgres: sql::postgres_type(ty).to_owned(),
@@ -1030,25 +1040,25 @@ fn optional_rust_type(column: &Column, projection: Projection) -> String {
 }
 
 pub(super) fn projected_rust_type(
-    ty: ColumnType,
+    ty: SqlValueType,
     projection: Projection,
     optional: bool,
 ) -> String {
     let base = match (projection, ty) {
-        (_, ColumnType::Boolean) => "bool",
-        (_, ColumnType::Int32) => "i32",
-        (_, ColumnType::Int64) => "i64",
-        (_, ColumnType::Float64) => "f64",
-        (_, ColumnType::Text) => "String",
-        (_, ColumnType::Bytes) => "Vec<u8>",
-        (Projection::Native, ColumnType::Numeric) => "rust_decimal::Decimal",
-        (Projection::Native, ColumnType::Timestamptz) => "chrono::DateTime<chrono::Utc>",
-        (Projection::Native, ColumnType::Json) => "serde_json::Value",
-        (Projection::Native, ColumnType::Uuid) => "uuid::Uuid",
-        (Projection::Wamn, ColumnType::Numeric) => "wamn_postgres_statements::Numeric",
-        (Projection::Wamn, ColumnType::Timestamptz) => "wamn_postgres_statements::TimestampTz",
-        (Projection::Wamn, ColumnType::Json) => "wamn_postgres_statements::Json",
-        (Projection::Wamn, ColumnType::Uuid) => "wamn_postgres_statements::Uuid",
+        (_, SqlValueType::Boolean) => "bool",
+        (_, SqlValueType::Int32) => "i32",
+        (_, SqlValueType::Int64) => "i64",
+        (_, SqlValueType::Float64) => "f64",
+        (_, SqlValueType::Text) => "String",
+        (_, SqlValueType::Bytes) => "Vec<u8>",
+        (Projection::Native, SqlValueType::Numeric) => "rust_decimal::Decimal",
+        (Projection::Native, SqlValueType::Timestamptz) => "chrono::DateTime<chrono::Utc>",
+        (Projection::Native, SqlValueType::Json) => "serde_json::Value",
+        (Projection::Native, SqlValueType::Uuid) => "uuid::Uuid",
+        (Projection::Wamn, SqlValueType::Numeric) => "wamn_postgres_statements::Numeric",
+        (Projection::Wamn, SqlValueType::Timestamptz) => "wamn_postgres_statements::TimestampTz",
+        (Projection::Wamn, SqlValueType::Json) => "wamn_postgres_statements::Json",
+        (Projection::Wamn, SqlValueType::Uuid) => "wamn_postgres_statements::Uuid",
     };
     if optional {
         format!("Option<{base}>")

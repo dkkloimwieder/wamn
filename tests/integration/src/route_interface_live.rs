@@ -11,6 +11,9 @@
 //! page of a query, the ceiling, and each scope filter mode, the search and
 //! the band.
 
+#[path = "../../../services/ctl/src/read_query.rs"]
+mod read_query;
+
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
@@ -50,7 +53,7 @@ impl Paths {
         let request_element = body[0]
             .as_object()
             .context("a read sends one object request element")?;
-        let query = wamn_execution_contract::encode_read_query(request_element);
+        let query = read_query::encode_read_query(request_element);
         self.send(
             self.client.get(format!("{}{path}?{query}", self.endpoint)),
             path,
@@ -529,9 +532,7 @@ async fn a_route_answers_every_operation_kind_consistently_across_aliases() -> a
     // changes the tag.
     let get_path = format!(
         "/widget/get?{}",
-        wamn_execution_contract::encode_read_query(
-            json!({"id": other}).as_object().context("an item")?
-        )
+        read_query::encode_read_query(json!({"id": other}).as_object().context("an item")?)
     );
     let (status, get_tag, body) = paths.conditional(&get_path, None).await?;
     let get_tag = get_tag
@@ -1010,7 +1011,7 @@ async fn the_feed_of_a_list_read_follows_its_snapshot() -> anyhow::Result<()> {
         );
         let feed_path = format!(
             "/widget/query?{}",
-            wamn_execution_contract::encode_read_query(
+            read_query::encode_read_query(
                 json!({"feed": {"cursor": idle}})
                     .as_object()
                     .context("an item")?
@@ -1247,7 +1248,7 @@ async fn an_authored_view_feed_maps_joined_changes_moves_and_expiry() -> anyhow:
         }
         let idle = screen_changes(&paths, &cursor, None).await?;
         anyhow::ensure!(idle["next_cursor"] == cursor && idle["rows"] == json!([]), "{idle}");
-        let query = wamn_execution_contract::encode_read_query(json!({"feed": {"cursor": cursor}}).as_object().unwrap());
+        let query = read_query::encode_read_query(json!({"feed": {"cursor": cursor}}).as_object().unwrap());
         let path = format!("/feed_line/screen?{query}");
         let (status, tag, _) = paths.conditional(&path, None).await?;
         anyhow::ensure!(status == 200 && tag.is_some(), "feed ETag");

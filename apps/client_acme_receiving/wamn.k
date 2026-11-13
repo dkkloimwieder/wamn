@@ -96,9 +96,7 @@ manifest.Package {
                 quantity_exceeds_remaining = {required = ["field", "id"]}
                 receipt_reference_conflict = {required = ["constraint"]}
             }
-            canonicalization = {
-                line_order = {ascending_by = "purchase_order_line_id", positive_member = "quantity"}
-            }
+
             statements = {
                 record_inspection = manifest.Statement("command/record_receipt", "record_inspection") {
                     fetch = "one"

@@ -3,6 +3,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::path::{Component as PathComponent, Path};
+use wamn_scalar::SqlValueType;
 
 use boon::{Compiler, Draft, Schemas};
 use serde::{Deserialize, Deserializer, Serialize};
@@ -244,29 +245,13 @@ pub enum ComponentEffectProvenance {
     Imported,
 }
 
-/// Closed PostgreSQL value vocabulary carried by one admitted SQL statement.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ComponentSqlValueType {
-    Boolean,
-    Int32,
-    Int64,
-    Float64,
-    Text,
-    Bytes,
-    Numeric,
-    Timestamptz,
-    Json,
-    Uuid,
-}
-
 /// One ordered bind or result column in an admitted SQL statement.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct ComponentSqlField {
     pub name: String,
     #[serde(rename = "type")]
-    pub value_type: ComponentSqlValueType,
+    pub value_type: SqlValueType,
     pub nullable: bool,
 }
 
@@ -383,7 +368,7 @@ fn imports_fingerprint(
     } else {
         serde_json::json!({"imports": imports, "statement-instances": statement_instances})
     };
-    wamn_execution_contract::canonical_json_sha256(&value)
+    wamn_digest::canonical_json_sha256(&value)
 }
 
 /// The admitted facts of one component as a package artifact carries them
@@ -1268,11 +1253,11 @@ mod tests {
         )
         .expect("component fact normalizes");
         let descriptor = ComponentDescriptor::new(facts.component, Vec::new());
-        let bytes = wamn_execution_contract::canonical_json_bytes(
+        let bytes = wamn_digest::canonical_json_bytes(
             &serde_json::to_value(&descriptor).expect("descriptor serializes"),
         );
         assert_eq!(
-            wamn_execution_contract::canonical_json_sha256(
+            wamn_digest::canonical_json_sha256(
                 &serde_json::from_slice::<Value>(&bytes).expect("canonical JSON parses")
             ),
             "sha256:9816d7da4202dcca1363da02b3d40c716a55a5d611b397812c0288a0d92fe8e0"
@@ -1807,12 +1792,12 @@ mod tests {
                 transactional: false,
                 binds: vec![ComponentSqlField {
                     name: "id".to_owned(),
-                    value_type: ComponentSqlValueType::Uuid,
+                    value_type: SqlValueType::Uuid,
                     nullable: false,
                 }],
                 columns: vec![ComponentSqlField {
                     name: "row_version".to_owned(),
-                    value_type: ComponentSqlValueType::Int64,
+                    value_type: SqlValueType::Int64,
                     nullable: false,
                 }],
             },

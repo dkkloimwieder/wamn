@@ -537,7 +537,7 @@ impl ApplicationRoutes<'_> {
             .manifest()
             .components
             .iter()
-            .flat_map(|component| component.operations.values())
+            .flat_map(|component| component.descriptor.operations.values())
             .filter_map(|operation| operation.registered_operation.as_deref())
             .map(sealed_operation_reference)
             .collect();

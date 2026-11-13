@@ -200,8 +200,7 @@ fn workflow(version: u32, operation: &str) -> WiringDocument {
             "shape": {"component": "jsonata", "interface-version": "0.1.0",
                       "operation": JSONATA_OPERATION, "params": {"expression": SHAPE}}
         },
-        "edges": [{"from": "read", "to": "shape", "to-port": "input"}],
-        "cases": []
+        "edges": [{"from": "read", "to": "shape", "to-port": "input"}]
     }))
     .expect("the workflow graph is structurally valid")
 }
@@ -277,7 +276,6 @@ fn start_attachment() -> String {
 struct Fixture {
     admin: Client,
     url: String,
-    control_url: String,
     engine: Arc<wash_runtime::engine::Engine>,
     postgres: Arc<WamnPostgres>,
     logging: Arc<WamnLogging>,
@@ -287,12 +285,11 @@ struct Fixture {
     release: Arc<LoadedRelease>,
     digest: String,
     delivery: HostRouteDelivery,
-    _databases: (wamn_test_postgres::Database, wamn_test_postgres::Database),
+    _database: wamn_test_postgres::Database,
 }
 
 async fn fixture() -> Fixture {
     let database = wamn_test_postgres::database();
-    let control_database = wamn_control_provision::test_database::system();
     let url = database.url().to_owned();
     let admin = connect(&url).await;
     let schema = BareSchemaName::new("wamn_run").unwrap();
@@ -332,8 +329,8 @@ async fn fixture() -> Fixture {
                ('reader', '{START_REFERENCE}'), \
                ('clerk', '{START_REFERENCE}');
              INSERT INTO platform.environment (status) VALUES ('active');
-             INSERT INTO wamn_run.environment_policies (env_key, expected_environment, durability_class) \
-               VALUES ('{ENV_KEY}', '{ENVIRONMENT}', 'standard');
+             INSERT INTO wamn_run.environment_policies (env_key, expected_environment) \
+               VALUES ('{ENV_KEY}', '{ENVIRONMENT}');
              INSERT INTO catalog.packages (physical_schema_fingerprint, env_key, package_id, package_version, artifact_digest) \
                VALUES ('sha256:' || repeat('c', 64), '{ENV_KEY}', '{APPLICATION}', '1.0.0', '{ARTIFACT_DIGEST}');
              CREATE TABLE application_data.orders (id text PRIMARY KEY, total int NOT NULL, status text NOT NULL);
@@ -386,34 +383,9 @@ async fn fixture() -> Fixture {
     let (logging, _capture) = WamnLogging::new_with_capture(&WamnLoggingConfig::default()).unwrap();
     let delivery = host(&postgres, &release);
 
-    // The gate reports of the graphs this file authors.
-    let control = connect(control_database.url()).await;
-    control
-        .execute(
-            "SELECT set_config('app.env_key', $1, false), set_config('app.user_id', $2, false)",
-            &[&ENV_KEY, &READER],
-        )
-        .await
-        .unwrap();
-    for document in [
-        workflow(1, READ),
-        workflow(2, READ),
-        workflow(2, "orders:order/absent@1.0.0"),
-    ] {
-        control
-            .execute(
-                "INSERT INTO wamn_run.gate_reports (env_key, wiring_hash, passed, summary) \
-                 VALUES ($1, $2, true, '{}'::jsonb)",
-                &[&ENV_KEY, &document.wiring_hash().as_str()],
-            )
-            .await
-            .expect("record a green gate report");
-    }
-
     Fixture {
         admin,
         url,
-        control_url: control_database.url().to_owned(),
         engine,
         postgres,
         logging: Arc::new(logging),
@@ -423,7 +395,7 @@ async fn fixture() -> Fixture {
         release,
         digest,
         delivery,
-        _databases: (database, control_database),
+        _database: database,
     }
 }
 
@@ -552,11 +524,10 @@ impl Fixture {
     }
 
     /// Author `document` as `wamn-ctl workflow author` does: over its own
-    /// project and control connections.
+    /// project connection.
     async fn author(&self, document: &WiringDocument) -> anyhow::Result<()> {
         author_workflow_in_databases(
             &self.url,
-            &self.control_url,
             &AuthorWorkflowRequest {
                 org: "manual-live",
                 project: "default",
@@ -741,7 +712,7 @@ impl Fixture {
                    FROM catalog.releases WHERE env_key = $1 \
                  UNION ALL SELECT format('environment %s %s %s', status, created_at, updated_at) \
                    FROM platform.environment \
-                 UNION ALL SELECT format('policy %s %s', expected_environment, durability_class) \
+                 UNION ALL SELECT format('policy %s', expected_environment) \
                    FROM wamn_run.environment_policies WHERE env_key = $1 \
                  ORDER BY 1",
                 &[&ENV_KEY],

@@ -2,9 +2,10 @@
 
 use std::path::PathBuf;
 
+use crate::route_request::request as route_request;
 use anyhow::{Context as _, ensure};
 use clap::{Args, Subcommand};
-use serde_json::{Value, json};
+use serde_json::Value;
 use wamn_catalog::{HostAttachment, HostRouteSet};
 
 /// A route request with a separate, write-only credential file.
@@ -108,44 +109,6 @@ fn request(args: &ConfigurationArgs, operation: &str) -> anyhow::Result<Value> {
     Ok(value)
 }
 
-fn route_request(
-    client: &reqwest::Client,
-    host_url: &str,
-    token: &str,
-    attachment: &HostAttachment,
-    value: &Value,
-) -> anyhow::Result<reqwest::Request> {
-    let mut url = format!(
-        "{}{}",
-        host_url.trim_end_matches('/'),
-        attachment.definition["route"]["path"]
-            .as_str()
-            .context("route path")?
-    );
-    let request = if attachment.route.type_.is_read() {
-        let query = wamn_execution_contract::encode_read_query(
-            value.as_object().context("read request object")?,
-        );
-        if !query.is_empty() {
-            url.push('?');
-            url.push_str(&query);
-        }
-        client.get(url)
-    } else {
-        let request_id = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)?
-            .as_nanos()
-            .to_string();
-        client
-            .post(url)
-            .json(&json!([{"request_id":request_id,"value":value}]))
-    };
-    request
-        .bearer_auth(token)
-        .build()
-        .context("build control request")
-}
-
 /// Call one route with the caller's token and print its response.
 pub async fn configuration(args: ConfigurationArgs, operation: &str) -> anyhow::Result<()> {
     let value = request(&args, operation)?;
@@ -230,6 +193,7 @@ pub async fn integration_type(args: IntegrationTypeArgs) -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
     use wamn_catalog::{HostRouteAuthority, OperationType};
 
     fn args() -> ConfigurationArgs {
@@ -292,7 +256,11 @@ mod tests {
         assert!(request.body().is_none());
         assert_eq!(
             Value::Object(
-                wamn_execution_contract::decode_read_query(request.url().query().unwrap()).unwrap()
+                request
+                    .url()
+                    .query_pairs()
+                    .map(|(name, value)| (name.into_owned(), serde_json::from_str(&value).unwrap()))
+                    .collect()
             ),
             value
         );

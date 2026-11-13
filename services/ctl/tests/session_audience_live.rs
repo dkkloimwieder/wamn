@@ -273,7 +273,6 @@ async fn setup(admin: &Client, system_url: &str) -> anyhow::Result<Client> {
     project
         .batch_execute(&sql::ensure_app_acl_role_sql())
         .await?;
-    project.batch_execute("DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname='wamn_scenario_author') THEN CREATE ROLE wamn_scenario_author NOLOGIN; END IF; END $$;").await?;
     project
         .batch_execute(wamn_catalog::CATALOG_SCHEMA_SQL)
         .await?;

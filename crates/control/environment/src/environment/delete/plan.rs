@@ -1,32 +1,9 @@
 use super::{
     CredentialGeneration, ErrorCode, GetStreamErrorKind, Triple, WorkloadRoleFamily,
-    WorkloadRoleScope, WorkloadRoleScopeKind, cdc_object_name, escape_identifier, escape_literal,
-    project_env_database_name, workload_generation_role,
+    WorkloadRoleScope, WorkloadRoleScopeKind, cdc_object_name, project_env_database_name,
+    workload_generation_role,
 };
 use anyhow::Context as _;
-
-/// The statements that delete one tenant's rows of one control table. An
-/// immutable table gets its trigger off for the one delete only.
-pub fn delete_control_rows_sql(table: &str, trigger: Option<&str>, env_key: &str) -> Vec<String> {
-    let delete = format!(
-        "DELETE FROM {table} WHERE env_key = {}",
-        escape_literal(env_key)
-    );
-    match trigger {
-        Some(trigger) => vec![
-            format!(
-                "ALTER TABLE {table} DISABLE TRIGGER {}",
-                escape_identifier(trigger)
-            ),
-            delete,
-            format!(
-                "ALTER TABLE {table} ENABLE TRIGGER {}",
-                escape_identifier(trigger)
-            ),
-        ],
-        None => vec![delete],
-    }
-}
 
 /// The families whose generation roles name the instance's database: a
 /// control or org family's scope names the control database, so its roles

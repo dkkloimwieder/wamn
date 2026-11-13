@@ -1,4 +1,5 @@
-use wamn_catalog::schema::{ColumnType, ForeignKeyColumn};
+use wamn_catalog::schema::ForeignKeyColumn;
+use wamn_scalar::SqlValueType;
 use wamn_schema_introspection::ir::{
     CatalogIr, Column, ColumnDefault, ColumnGeneration, Constraint, Exclusion,
     ExclusionAccessMethod, ExclusionElement, ExclusionKey, ForeignKeyAction, IdentityMode, Index,
@@ -9,47 +10,47 @@ fn complete_ir(reverse_collections: bool) -> CatalogIr {
     let mut widget_columns = vec![
         Column::new(
             "status",
-            ColumnType::Text,
+            SqlValueType::Text,
             false,
             Some(ColumnDefault::text("open")),
             None,
         ),
         Column::new(
             "row_version",
-            ColumnType::Int64,
+            SqlValueType::Int64,
             false,
             Some(ColumnDefault::int64(1)),
             None,
         ),
-        Column::new("ratio", ColumnType::Float64, false, None, None),
-        Column::new("payload", ColumnType::Bytes, false, None, None),
-        Column::new("metadata", ColumnType::Json, true, None, None),
+        Column::new("ratio", SqlValueType::Float64, false, None, None),
+        Column::new("payload", SqlValueType::Bytes, false, None, None),
+        Column::new("metadata", SqlValueType::Json, true, None, None),
         Column::new(
             "id",
-            ColumnType::Uuid,
+            SqlValueType::Uuid,
             false,
             Some(ColumnDefault::GenRandomUuid),
             None,
         ),
-        Column::new("enabled", ColumnType::Boolean, false, None, None),
+        Column::new("enabled", SqlValueType::Boolean, false, None, None),
         Column::new(
             "created_at",
-            ColumnType::Timestamptz,
+            SqlValueType::Timestamptz,
             false,
             Some(ColumnDefault::CurrentTimestamp),
             None,
         ),
-        Column::new("count", ColumnType::Int32, false, None, None),
+        Column::new("count", SqlValueType::Int32, false, None, None),
         Column::new(
             "amount",
-            ColumnType::Numeric,
+            SqlValueType::Numeric,
             false,
             Some(ColumnDefault::numeric("0")),
             None,
         ),
         Column::new(
             "sequence_id",
-            ColumnType::Int64,
+            SqlValueType::Int64,
             false,
             None,
             Some(ColumnGeneration::Identity {
@@ -58,7 +59,7 @@ fn complete_ir(reverse_collections: bool) -> CatalogIr {
         ),
         Column::new(
             "status_key",
-            ColumnType::Text,
+            SqlValueType::Text,
             false,
             None,
             Some(ColumnGeneration::stored("lower(status)")),
@@ -85,12 +86,12 @@ fn complete_ir(reverse_collections: bool) -> CatalogIr {
     let mut line_columns = vec![
         Column::new(
             "id",
-            ColumnType::Uuid,
+            SqlValueType::Uuid,
             false,
             Some(ColumnDefault::GenRandomUuid),
             None,
         ),
-        Column::new("widget_id", ColumnType::Uuid, false, None, None),
+        Column::new("widget_id", SqlValueType::Uuid, false, None, None),
     ];
     let mut line_constraints = vec![
         Constraint::foreign_key(
@@ -198,22 +199,22 @@ fn frozen_types_and_closed_defaults_refuse_unsupported_input() {
     assert_eq!(index_name_error.error_type(), IrErrorType::EmptyName);
     assert_eq!(index_name_error.to_string(), "index name must not be empty");
 
-    assert_eq!(postgres_type("boolean").unwrap(), ColumnType::Boolean);
-    assert_eq!(postgres_type("integer").unwrap(), ColumnType::Int32);
-    assert_eq!(postgres_type("bigint").unwrap(), ColumnType::Int64);
+    assert_eq!(postgres_type("boolean").unwrap(), SqlValueType::Boolean);
+    assert_eq!(postgres_type("integer").unwrap(), SqlValueType::Int32);
+    assert_eq!(postgres_type("bigint").unwrap(), SqlValueType::Int64);
     assert_eq!(
         postgres_type("double precision").unwrap(),
-        ColumnType::Float64
+        SqlValueType::Float64
     );
-    assert_eq!(postgres_type("text").unwrap(), ColumnType::Text);
-    assert_eq!(postgres_type("bytea").unwrap(), ColumnType::Bytes);
-    assert_eq!(postgres_type("numeric").unwrap(), ColumnType::Numeric);
+    assert_eq!(postgres_type("text").unwrap(), SqlValueType::Text);
+    assert_eq!(postgres_type("bytea").unwrap(), SqlValueType::Bytes);
+    assert_eq!(postgres_type("numeric").unwrap(), SqlValueType::Numeric);
     assert_eq!(
         postgres_type("timestamp with time zone").unwrap(),
-        ColumnType::Timestamptz
+        SqlValueType::Timestamptz
     );
-    assert_eq!(postgres_type("jsonb").unwrap(), ColumnType::Json);
-    assert_eq!(postgres_type("uuid").unwrap(), ColumnType::Uuid);
+    assert_eq!(postgres_type("jsonb").unwrap(), SqlValueType::Json);
+    assert_eq!(postgres_type("uuid").unwrap(), SqlValueType::Uuid);
 
     let type_error = postgres_type("character varying").unwrap_err();
     assert_eq!(type_error.error_type(), IrErrorType::UnsupportedType);
@@ -224,72 +225,72 @@ fn frozen_types_and_closed_defaults_refuse_unsupported_input() {
     );
 
     assert_eq!(
-        postgres_default(ColumnType::Uuid, "gen_random_uuid()").unwrap(),
+        postgres_default(SqlValueType::Uuid, "gen_random_uuid()").unwrap(),
         ColumnDefault::GenRandomUuid
     );
     assert_eq!(
-        postgres_default(ColumnType::Timestamptz, "CURRENT_TIMESTAMP").unwrap(),
+        postgres_default(SqlValueType::Timestamptz, "CURRENT_TIMESTAMP").unwrap(),
         ColumnDefault::CurrentTimestamp
     );
     assert_eq!(
-        postgres_default(ColumnType::Text, "'open'::text").unwrap(),
+        postgres_default(SqlValueType::Text, "'open'::text").unwrap(),
         ColumnDefault::text("open")
     );
     assert_eq!(
-        postgres_default(ColumnType::Text, "'not_required'::text").unwrap(),
+        postgres_default(SqlValueType::Text, "'not_required'::text").unwrap(),
         ColumnDefault::text("not_required")
     );
     for spelling in ["'pending'", "'pending'::text"] {
         assert_eq!(
-            postgres_default(ColumnType::Text, spelling).unwrap(),
+            postgres_default(SqlValueType::Text, spelling).unwrap(),
             ColumnDefault::text("pending")
         );
     }
     assert_eq!(
-        postgres_default(ColumnType::Boolean, "false").unwrap(),
+        postgres_default(SqlValueType::Boolean, "false").unwrap(),
         ColumnDefault::boolean(false)
     );
     assert_eq!(
-        postgres_default(ColumnType::Int64, "1").unwrap(),
+        postgres_default(SqlValueType::Int64, "1").unwrap(),
         ColumnDefault::int64(1)
     );
     // An application integer is int32 by default, so an int4 column carries a
     // literal default like every other admitted type.
     assert_eq!(
-        postgres_default(ColumnType::Int32, "1").unwrap(),
+        postgres_default(SqlValueType::Int32, "1").unwrap(),
         ColumnDefault::int32(1)
     );
     assert_eq!(
-        postgres_default(ColumnType::Int32, "'-12'::integer").unwrap(),
+        postgres_default(SqlValueType::Int32, "'-12'::integer").unwrap(),
         ColumnDefault::int32(-12)
     );
-    assert!(postgres_default(ColumnType::Int32, "2147483648").is_err());
+    assert!(postgres_default(SqlValueType::Int32, "2147483648").is_err());
     assert_eq!(
-        postgres_default(ColumnType::Numeric, "0::numeric").unwrap(),
+        postgres_default(SqlValueType::Numeric, "0::numeric").unwrap(),
         ColumnDefault::numeric("0")
     );
 
     // A word nobody enumerated. Three agents wrote exactly this shape and all
     // three were refused before wamn-frru; the allowlist closes over FORMS now.
     assert_eq!(
-        postgres_default(ColumnType::Text, "'scheduled'::text").unwrap(),
+        postgres_default(SqlValueType::Text, "'scheduled'::text").unwrap(),
         ColumnDefault::text("scheduled")
     );
     assert_eq!(
-        postgres_default(ColumnType::Boolean, "true").unwrap(),
+        postgres_default(SqlValueType::Boolean, "true").unwrap(),
         ColumnDefault::boolean(true)
     );
     assert_eq!(
-        postgres_default(ColumnType::Int64, "'-12'::bigint").unwrap(),
+        postgres_default(SqlValueType::Int64, "'-12'::bigint").unwrap(),
         ColumnDefault::int64(-12)
     );
     assert_eq!(
-        postgres_default(ColumnType::Numeric, "'0.00'::numeric").unwrap(),
+        postgres_default(SqlValueType::Numeric, "'0.00'::numeric").unwrap(),
         ColumnDefault::numeric("0.00")
     );
     // A doubled quote is one quote, and it does not end the literal.
     assert_eq!(
-        postgres_default(ColumnType::Text, "'it''s'::text").unwrap(),
+        postgres_default(SqlValueType::Text, "'it''s'::text").unwrap(),
         ColumnDefault::text("it's")
     );
 
@@ -297,23 +298,23 @@ fn frozen_types_and_closed_defaults_refuse_unsupported_input() {
     // type still refuses, and each of these is a different way to miss it.
     for (column_type, expression) in [
         // an expression, not a literal
-        (ColumnType::Int64, "1 + 1"),
+        (SqlValueType::Int64, "1 + 1"),
         // a function call that is not one of the two admitted by name
-        (ColumnType::Text, "upper('open')"),
-        (ColumnType::Timestamptz, "now()"),
+        (SqlValueType::Text, "upper('open')"),
+        (SqlValueType::Timestamptz, "now()"),
         // the right shape cast to the WRONG type
-        (ColumnType::Text, "'open'::name"),
-        (ColumnType::Int64, "'1'::integer"),
+        (SqlValueType::Text, "'open'::name"),
+        (SqlValueType::Int64, "'1'::integer"),
         // a literal of another type entirely
-        (ColumnType::Boolean, "'open'"),
-        (ColumnType::Int64, "'not a number'"),
-        (ColumnType::Numeric, "'1.2.3'"),
+        (SqlValueType::Boolean, "'open'"),
+        (SqlValueType::Int64, "'not a number'"),
+        (SqlValueType::Numeric, "'1.2.3'"),
         // a bare identifier
-        (ColumnType::Text, "open"),
+        (SqlValueType::Text, "open"),
         // the two named functions on a type they do not serve
-        (ColumnType::Text, "gen_random_uuid()"),
+        (SqlValueType::Text, "gen_random_uuid()"),
         // a type with no literal default form yet
-        (ColumnType::Json, "'{}'::json"),
+        (SqlValueType::Json, "'{}'::json"),
     ] {
         let error = postgres_default(column_type, expression).expect_err(&format!(
             "{expression} is not a default for {column_type:?}"
@@ -326,7 +327,7 @@ fn frozen_types_and_closed_defaults_refuse_unsupported_input() {
         assert_eq!(error.column_type(), Some(column_type), "{expression}");
     }
 
-    let default_error = postgres_default(ColumnType::Text, "upper('open')").unwrap_err();
+    let default_error = postgres_default(SqlValueType::Text, "upper('open')").unwrap_err();
     assert_eq!(
         default_error.to_string(),
         "unsupported PostgreSQL default `upper('open')` for wamn:postgres type `text`"
@@ -368,7 +369,13 @@ fn exclusion_ir(reverse_collections: bool) -> CatalogIr {
         Table::new(
             "inventory",
             "dock_appointment",
-            vec![Column::new("dock_id", ColumnType::Uuid, false, None, None)],
+            vec![Column::new(
+                "dock_id",
+                SqlValueType::Uuid,
+                false,
+                None,
+                None,
+            )],
             vec![Constraint::primary_key("dock_appointment_dock_id_pkey", ["dock_id"]).unwrap()],
             Vec::new(),
         )

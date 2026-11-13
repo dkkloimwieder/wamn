@@ -9,6 +9,7 @@ license.workspace = true
 default = []
 
 [dependencies]
+wamn-digest.workspace = true
 wamn-credential-store = { workspace = true }
 wash-runtime = { workspace = true, features = ["washlet"] }
 anyhow = { workspace = true }
@@ -25,7 +26,6 @@ wasmparser = { workspace = true }
 wamn-package-artifact = { workspace = true }
 wamn-control-provision = { workspace = true }
 wamn-control-registry = { workspace = true }
-wamn-execution-contract = { workspace = true }
 wamn-record-history = { workspace = true }
 wamn-runtime = { workspace = true }
 wamn-engine = { workspace = true }

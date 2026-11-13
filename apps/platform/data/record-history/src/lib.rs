@@ -309,7 +309,7 @@ pub fn retain_columns(text: &str, columns: &[&str], timestamptz: &[&str]) -> Opt
 /// RFC 3339 form, with a `Z` or a numeric offset, or `None`.
 fn canonical_timestamptz(value: &str) -> Option<String> {
     let text = value.strip_prefix('"')?.strip_suffix('"')?;
-    wamn_execution_contract::canonical_timestamptz(text).map(|canonical| format!("\"{canonical}\""))
+    wamn_scalar::canonical_timestamptz(text).map(|canonical| format!("\"{canonical}\""))
 }
 
 /// Split the top-level members of one JSON object without parsing the values.

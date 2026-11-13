@@ -25,15 +25,12 @@ members = [
     "platform/events/registration",
     "platform/events/wire",
     "platform/execution/blob-put",
-    "platform/execution/contract",
     "platform/execution/jsonata",
     "platform/execution/materializer",
     "platform/data/access",
     "platform/data/postgres-statements",
     "platform/data/record-history",
-    "platform/fixtures/busyloop",
     "platform/fixtures/connection-http-standard",
-    "platform/fixtures/sockprobe",
     "platform/fixtures/sqlx-command",
     "platform/fixtures/std-virtualization-probe",
 ]
@@ -105,8 +102,12 @@ edition = "2024"
 license = "Apache-2.0"
 
 [workspace.dependencies]
+wamn-digest = { path = "../crates/platform/digest", version = "0.1.0" }
+wamn-scalar = { path = "../crates/platform/scalar", version = "0.1.0" }
+wamn-catalog = { path = "../crates/catalog/model", version = "0.1.0" }
 # Inherited by the four relocated guest-consumed rlibs, pinned exactly as the
 # root workspace pins them so a crate resolves identically from either side.
+url = "2"
 chrono = { version = "0.4", default-features = false }
 uuid = "1"
 jmespath = "0.5.0"
@@ -124,7 +125,6 @@ wit-bindgen = { version = "0.62.0", default-features = false, features = ["async
 # Guest-owned path identities are independent of the native workspace contract.
 wamn-event-reg = { path = "platform/events/registration", version = "0.1.0" }
 wamn-event-wire = { path = "platform/events/wire", version = "0.1.0" }
-wamn-execution-contract = { path = "platform/execution/contract", version = "0.1.0" }
 wamn-materializer = { path = "platform/events/materializer", version = "0.1.0" }
 wamn-data-access = { path = "platform/data/access", version = "0.1.0" }
 wamn-postgres-statements = { path = "platform/data/postgres-statements", version = "0.1.0" }

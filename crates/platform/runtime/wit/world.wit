@@ -19,9 +19,6 @@ world connection-http-plugin {
 }
 
 /// Host-side bindgen world for the trusted one-frame HTTP effect surface.
-world runner-http-effect-plugin {
-  import wamn:runner/http-effect@0.1.0;
-}
 
 /// Host-owned registration provisioning.
 /// Native wasmcloud:nats owns materializer attachment, delivery and settlement.

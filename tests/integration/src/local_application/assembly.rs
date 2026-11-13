@@ -119,11 +119,7 @@ pub(super) async fn assemble(
         ))
         .await?;
     project
-        .batch_execute(&format!(
-            "{} {}",
-            wamn_control_provision::sql::ensure_app_acl_role_sql(),
-            wamn_schema_control::ensure_scenario_author_role_sql(),
-        ))
+        .batch_execute(&wamn_control_provision::sql::ensure_app_acl_role_sql())
         .await
         .context("create the catalog and application ACL owner roles")?;
     wamn_dev_control::dev::environment::install_journey_platform_floor(&project, "local.invalid")
@@ -398,11 +394,6 @@ pub(super) async fn assemble(
         "local application release is not ready: {readiness:?}"
     );
     let jetstream = Arc::new(WamnJetstream::new(WamnJetstreamConfig::default()));
-    let queue = LocalQueue {
-        driver: Arc::clone(&driver),
-        postgres: Arc::clone(&postgres),
-        release: Arc::clone(&release),
-    };
     let bridge = Arc::new(RouterDeliveryBridge::new(
         driver.operations(),
         jetstream,
@@ -444,6 +435,11 @@ pub(super) async fn assemble(
     )
     .await?;
     tokio::spawn(reader_connection);
+    let queue = LocalQueue {
+        driver,
+        postgres: Arc::clone(&postgres),
+        release: Arc::clone(&release),
+    };
     let routing = Arc::new(
         FlowHttpRouting::new(Some(release), RouteInFlightLimit::default()).with_authenticator(
             Arc::new(
@@ -516,7 +512,7 @@ fn render_declaration(
                     .component_directory
                     .join(format!("{}.wasm", base.component)),
             )?;
-            *digest = wamn_engine::component_admission::component_digest(&bytes).into_boxed_str();
+            *digest = wamn_digest::bytes_sha256(&bytes).into_boxed_str();
         }
     }
     let value = wamn_package_control::component_declaration::render_declaration_document(
@@ -604,7 +600,7 @@ fn selected_attachments(
             };
             attachment.definition["route"]["method"] = Value::String(method.into());
             attachment.definition_hash = wamn_catalog::DefinitionHash::parse(
-                wamn_execution_contract::canonical_json_sha256(&attachment.definition),
+                wamn_digest::canonical_json_sha256(&attachment.definition),
             )?;
             result.insert(id.clone(), attachment);
         }

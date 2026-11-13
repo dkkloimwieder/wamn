@@ -9,12 +9,13 @@ license.workspace = true
 test-util = []
 
 [dependencies]
+wamn-scalar.workspace = true
+wamn-digest.workspace = true
 wamn-credential-store = { workspace = true }
 wamn-catalog = { workspace = true }
 wamn-control-registry = { workspace = true }
 wamn-control-provision = { workspace = true }
 wamn-event-wire = { workspace = true }
-wamn-execution-contract = { workspace = true }
 wamn-platform-identity = { workspace = true }
 wamn-identity-client = { workspace = true }
 wamn-identity-protocol = { workspace = true }

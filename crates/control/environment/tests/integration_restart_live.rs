@@ -323,7 +323,7 @@ fn loaded_release(
 ) -> anyhow::Result<wamn_engine::release_manifest::LoadedRelease> {
     use std::collections::{BTreeMap, BTreeSet};
     use wamn_catalog::{
-        PackageCoordinate, ServingComponent, ServingComponentOperation, ServingManifest,
+        AdmittedComponentOperation, PackageCoordinate, ServingComponent, ServingManifest,
         ServingRelease,
     };
 
@@ -350,20 +350,26 @@ fn loaded_release(
                 runtime_schema: None,
                 statement_instances: BTreeMap::new(),
                 package_id: package.into(),
-                operations: BTreeMap::from([(
-                    "wamn:node/handler@0.1.0".into(),
-                    ServingComponentOperation {
-                        committed_result_schema: None,
-                        registered_operation: None,
-                        permissions: BTreeSet::new(),
-                        statements: BTreeMap::new(),
-                    },
-                )]),
-                descriptor: wamn_catalog::ComponentDescriptor::named(
-                    "reader",
-                    "0.1.0",
-                    format!("sha256:{}", byte.repeat(64)),
-                ),
+                descriptor: {
+                    let mut descriptor = wamn_catalog::ComponentDescriptor::named(
+                        "reader",
+                        "0.1.0",
+                        format!("sha256:{}", byte.repeat(64)),
+                    );
+                    descriptor.operations = BTreeMap::from([(
+                        "wamn:node/handler@0.1.0".into(),
+                        AdmittedComponentOperation {
+                            host_transaction: false,
+                            input_ports: Vec::new(),
+                            output_ports: Vec::new(),
+                            parameters: Vec::new(),
+                            committed_result_schema: None,
+                            registered_operation: None,
+                            statements: BTreeMap::new(),
+                        },
+                    )]);
+                    descriptor
+                },
             })
             .collect(),
         BTreeSet::new(),
@@ -717,9 +723,9 @@ async fn application_releases_keep_independent_integration_versions() -> anyhow:
     let before_generation = reader.store_id("registers").await?.unwrap();
     // The engine counts compiles by the digest of the component bytes.
     let code = |built: &integration::BuiltIntegration| -> anyhow::Result<String> {
-        Ok(wamn_engine::component_admission::component_digest(
-            &std::fs::read(built.directory.join("integration.wasm"))?,
-        ))
+        Ok(wamn_digest::bytes_sha256(&std::fs::read(
+            built.directory.join("integration.wasm"),
+        )?))
     };
     let (first_code, second_code) = (code(&first)?, code(&second)?);
     let compiled = wamn_engine::integration::compile_count(&first_code);

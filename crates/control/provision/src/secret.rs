@@ -202,36 +202,6 @@ pub fn render_control_administration_patch(triple: &Triple, url: Option<&str>) -
     }
 }
 
-/// Render the scoped control-author URL Secret consumed by scenario-worker.
-pub fn render_control_author_secret_manifest(triple: &Triple, namespace: &str, url: &str) -> Value {
-    render_workload_secret_manifest(
-        WorkloadRoleFamily::ControlAuthor,
-        triple,
-        namespace,
-        WorkloadSecretBody::Url(url),
-    )
-}
-
-/// Render the scoped management-admitter URL Secret consumed by scenario-worker.
-///
-/// The sibling of [`render_control_author_secret_manifest`] on the other plane:
-/// control-author's URL names the **control** database, this one names the
-/// **project environment's own** database. Both carry the single `url` key
-/// because scenario-worker reads both through the same `secretKeyRef … key: url`
-/// shape (`wamn-0h0g.8.5.3`).
-pub fn render_management_admitter_secret_manifest(
-    triple: &Triple,
-    namespace: &str,
-    url: &str,
-) -> Value {
-    render_workload_secret_manifest(
-        WorkloadRoleFamily::ManagementAdmitter,
-        triple,
-        namespace,
-        WorkloadSecretBody::Url(url),
-    )
-}
-
 /// Render the scoped per-tenant guest-SQL credential `Secret`
 /// (`wamn-0h0g.22.6.4`).
 ///
@@ -386,80 +356,6 @@ mod tests {
         assert_eq!(s["stringData"]["project"], "billing");
         assert_eq!(s["stringData"]["env"], "dev");
         assert_eq!(s["stringData"]["role"], "wamn_app");
-    }
-
-    #[test]
-    fn control_author_secret_matches_the_scenario_worker_mount() {
-        let triple = Triple::new("acme", "widgets", "dev");
-        let url = "postgres://wamn_control_author_scope_a:secret@control-rw/wamn-system";
-        let secret = render_control_author_secret_manifest(&triple, "wamn-system", url);
-        assert_eq!(
-            secret["metadata"]["name"],
-            "wamn-authoring-acme--widgets--dev"
-        );
-        assert_eq!(secret["stringData"]["url"], url);
-    }
-
-    #[test]
-    fn management_admitter_secret_has_scoped_credentials() {
-        let triple = Triple::new("acme", "receiving", "dev");
-        let url = "postgres://wamn_mgmt_admitter_scope_a:pw@acme-dev-rw:5432/\
-                   wamn-db-acme--widgets--dev--k3m9x2p7";
-        let secret = render_management_admitter_secret_manifest(&triple, "wamn-system", url);
-        assert_eq!(secret["kind"], "Secret");
-        assert_eq!(secret["type"], "Opaque");
-        assert_eq!(
-            secret["metadata"]["labels"]["app.kubernetes.io/component"],
-            "management-admitter-credentials"
-        );
-        assert_eq!(secret["metadata"]["namespace"], "wamn-system");
-        // R8b: its own credential tier is its own Secret — never the control
-        // database's authoring Secret, which the same pod also mounts.
-        assert_ne!(
-            secret["metadata"]["name"],
-            render_control_author_secret_manifest(&triple, "wamn-system", url)["metadata"]["name"]
-        );
-
-        // Exactly one key, whatever it is named, and it carries the URL.
-        let data = secret["stringData"].as_object().unwrap();
-        assert_eq!(data.len(), 1);
-        let key = data.keys().next().expect("the Secret carries one key");
-        assert_eq!(data[key], url);
-    }
-
-    #[test]
-    fn identity_reader_secret_has_separate_scoped_credentials() {
-        let triple = Triple::new("acme", "receiving", "dev");
-        let url = "postgres://wamn_identity_reader_scope_a:pw@wamn-sysdb-rw:5432/wamn_system";
-        let secret = render_workload_secret_manifest(
-            WorkloadRoleFamily::IdentityReader,
-            &triple,
-            "wamn-system",
-            WorkloadSecretBody::Url(url),
-        );
-        assert_eq!(secret["kind"], "Secret");
-        assert_eq!(
-            secret["metadata"]["labels"]["app.kubernetes.io/component"],
-            "identity-reader-credentials"
-        );
-        let data = secret["stringData"].as_object().unwrap();
-        assert_eq!(data.len(), 1);
-        let key = data.keys().next().expect("the Secret carries one key");
-        assert_eq!(data[key], url);
-        let name = secret["metadata"]["name"]
-            .as_str()
-            .expect("the Secret is named");
-
-        // R8b: three credential tiers, three Secrets. This one is never either
-        // of the two the same pod already mounts.
-        for other in [
-            render_control_author_secret_manifest(&triple, "wamn-system", url),
-            render_management_admitter_secret_manifest(&triple, "wamn-system", url),
-        ] {
-            assert_ne!(secret["metadata"]["name"], other["metadata"]["name"]);
-        }
-        // …and it is never the wide owner credential it replaced.
-        assert_ne!(name, "wamn-system-db");
     }
 
     #[test]

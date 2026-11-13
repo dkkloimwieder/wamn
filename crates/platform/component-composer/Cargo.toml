@@ -11,10 +11,10 @@ path = "src/main.rs"
 test = false
 
 [dependencies]
+wamn-digest.workspace = true
 anyhow.workspace = true
 clap = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
-sha2.workspace = true
 wac-graph.workspace = true
 wamn-component-policy.workspace = true
 wasmparser.workspace = true
@@ -24,6 +24,7 @@ wit-component = { workspace = true }
 wit-parser = { workspace = true }
 
 [dev-dependencies]
+sha2.workspace = true
 wit-component = { workspace = true, features = ["dummy-module"] }
 
 [lints]

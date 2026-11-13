@@ -4,7 +4,7 @@
 //! the permission and SQL statements of each export, and route attachments.
 //! Each component is its package, its admitted descriptor (the bytes of the
 //! descriptor layer of its package artifact, docs/operations/building.md#reading-a-pushed-package
-//! ) and its released operations. The descriptor is the one
+//! ). The descriptor is the one
 //! owner of the component name, interface version and digest. An
 //! application's components compose at build into one component. A route
 //! calls one component export. Workflows belong to the environment.
@@ -156,53 +156,6 @@ pub struct ServingRelease {
 }
 
 /// One immutable component artifact in the release closure.
-///
-/// One operation exported by a release component.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case", deny_unknown_fields)]
-pub struct ServingComponentOperation {
-    /// Explicit application permission identity. Palette exports carry none.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub registered_operation: Option<String>,
-    /// The export's own registered operation. The caller must hold it.
-    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
-    pub permissions: BTreeSet<String>,
-    /// Canonical JSON for this registered operation's admitted committed result schema.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub committed_result_schema: Option<String>,
-    /// Exact SQL this export declares.
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub statements: BTreeMap<String, ComponentSqlStatement>,
-}
-
-impl ServingComponentOperation {
-    /// Resolve one release-pinned statement inside this operation's authority.
-    pub fn statement(&self, path: &str) -> Option<&ComponentSqlStatement> {
-        self.statements.get(path)
-    }
-
-    /// Whether this released operation carries the admitted operation's own facts.
-    pub fn carries(&self, admitted: &AdmittedComponentOperation) -> bool {
-        let schema = admitted.committed_result_schema.as_ref().map(|schema| {
-            String::from_utf8(wamn_execution_contract::canonical_json_bytes(
-                &schema.schema,
-            ))
-            .expect("canonical JSON uses UTF-8")
-        });
-        self.registered_operation == admitted.registered_operation
-            && self.committed_result_schema == schema
-            && admitted
-                .registered_operation
-                .as_ref()
-                .is_none_or(|registered| self.permissions.contains(registered))
-            && admitted
-                .statements
-                .iter()
-                .all(|(path, statement)| self.statements.get(path) == Some(statement))
-    }
-}
-
-/// One immutable component artifact in the release closure.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct ServingComponent {
@@ -215,7 +168,6 @@ pub struct ServingComponent {
     /// the release is the one owner of component facts (R2): the name, the
     /// interface version and the digest are read from here.
     pub descriptor: ComponentDescriptor,
-    pub operations: BTreeMap<String, ServingComponentOperation>,
     /// The statement set of each named `statements` import of a composed
     /// component, keyed by import name: each member's own package's declared
     /// statements (docs/architecture/components.md#grouping-and-publication).
@@ -236,7 +188,6 @@ impl Ord for ServingComponent {
             &self.descriptor.component,
             &self.descriptor.interface_version,
             &self.descriptor.component_digest,
-            &self.operations,
             &self.statement_instances,
         )
             .cmp(&(
@@ -245,12 +196,11 @@ impl Ord for ServingComponent {
                 &other.descriptor.component,
                 &other.descriptor.interface_version,
                 &other.descriptor.component_digest,
-                &other.operations,
                 &other.statement_instances,
             ))
             .then_with(|| {
                 let bytes = |descriptor: &ComponentDescriptor| {
-                    wamn_execution_contract::canonical_json_bytes(
+                    wamn_digest::canonical_json_bytes(
                         &serde_json::to_value(descriptor).expect("a descriptor serializes"),
                     )
                 };
@@ -279,26 +229,10 @@ impl ServingComponent {
         connections: Vec<ComponentConnection>,
     ) -> Result<Self, CatalogIdentityError> {
         ArtifactHash::parse(fact.component_digest.clone())?;
-        let mut operations = BTreeMap::new();
-        for (name, operation) in &fact.operations {
-            let released = ServingComponentOperation {
-                registered_operation: operation.registered_operation.clone(),
-                permissions: operation.registered_operation.iter().cloned().collect(),
-                committed_result_schema: operation.committed_result_schema.as_ref().map(|schema| {
-                    String::from_utf8(wamn_execution_contract::canonical_json_bytes(
-                        &schema.schema,
-                    ))
-                    .expect("canonical JSON uses UTF-8")
-                }),
-                statements: operation.statements.clone(),
-            };
-            operations.insert(name.clone(), released);
-        }
         Ok(Self {
             package_id: fact.scope.package_id.clone(),
             runtime_schema: None,
             descriptor: ComponentDescriptor::new(fact.clone(), connections),
-            operations,
             statement_instances: BTreeMap::new(),
         })
     }
@@ -424,145 +358,6 @@ pub struct ServingRoute {
     /// without one keys its intents by the request element `request_id`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub idempotency: Option<String>,
-    /// The canonical form of an input request element, from the generated input
-    /// contract. A route without one takes its request elements as they are sent.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub canonicalization: Option<RouteCanonicalization>,
-}
-
-/// The canonical form of one route's input request element
-/// (`docs/history/host-transaction.md` 7, ruling (a)).
-///
-/// Two spellings of one request are one request: the host respells the
-/// declared leaves and orders the declared lines before it hashes the request element
-/// and before the component gets it. Paths are dotted request element paths, and `[]`
-/// names each element of a list, such as `value.line[].quantity`.
-#[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case", deny_unknown_fields)]
-pub struct RouteCanonicalization {
-    /// Request element paths that the request hash leaves out. The key and the
-    /// `request_id` are never here.
-    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
-    pub excluded: BTreeSet<String>,
-    /// The line list and the member whose ascending order is its canonical
-    /// order.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub lines: Option<RouteLineOrder>,
-    /// The leaves that take the canonical spelling of their type.
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub spelling: BTreeMap<String, CanonicalSpelling>,
-}
-
-/// The line list of a request element and the member that orders it.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case", deny_unknown_fields)]
-pub struct RouteLineOrder {
-    /// The dotted path of the list, such as `value.line`.
-    pub path: String,
-    pub ascending_by: String,
-}
-
-/// The canonical spelling of one leaf type.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case")]
-pub enum CanonicalSpelling {
-    /// PostgreSQL's own text of the value, scale kept.
-    Numeric,
-    /// UTC RFC 3339 with six fractional digits.
-    Timestamptz,
-}
-
-impl RouteCanonicalization {
-    /// Respell the declared leaves of `request_element` and order its declared lines.
-    ///
-    /// A value that the respelling refuses keeps its text, and the component
-    /// refuses it.
-    pub fn apply(&self, request_element: &mut Value) {
-        for (path, spelling) in &self.spelling {
-            let segments = path.split('.').collect::<Vec<_>>();
-            respell(request_element, &segments, *spelling);
-        }
-        if let Some(order) = &self.lines
-            && let Some(Value::Array(lines)) = order
-                .path
-                .split('.')
-                .try_fold(&mut *request_element, |value, name| value.get_mut(name))
-        {
-            lines.sort_by_cached_key(|line| {
-                line.get(&order.ascending_by)
-                    .map_or_else(String::new, Value::to_string)
-            });
-        }
-    }
-
-    /// `request_element` without its excluded paths: what the request hash covers.
-    #[must_use]
-    pub fn hashed(&self, request_element: &Value) -> Value {
-        let mut hashed = request_element.clone();
-        for path in &self.excluded {
-            let segments = path.split('.').collect::<Vec<_>>();
-            remove(&mut hashed, &segments);
-        }
-        hashed
-    }
-}
-
-/// Respell the leaves at `segments` below `value`.
-fn respell(value: &mut Value, segments: &[&str], spelling: CanonicalSpelling) {
-    let Some((first, rest)) = segments.split_first() else {
-        if let Value::String(text) = value {
-            let respelled = match spelling {
-                CanonicalSpelling::Numeric => wamn_execution_contract::canonical_numeric(text),
-                CanonicalSpelling::Timestamptz => {
-                    wamn_execution_contract::canonical_timestamptz(text)
-                }
-            };
-            if let Some(respelled) = respelled {
-                *text = respelled;
-            }
-        }
-        return;
-    };
-    match first.strip_suffix("[]") {
-        Some(name) => {
-            if let Some(Value::Array(elements)) = value.get_mut(name) {
-                for element in elements {
-                    respell(element, rest, spelling);
-                }
-            }
-        }
-        None => {
-            if let Some(member) = value.get_mut(*first) {
-                respell(member, rest, spelling);
-            }
-        }
-    }
-}
-
-/// Remove the members at `segments` below `value`.
-fn remove(value: &mut Value, segments: &[&str]) {
-    match segments {
-        [] => {}
-        [last] => {
-            if let Some(object) = value.as_object_mut() {
-                object.remove(*last);
-            }
-        }
-        [first, rest @ ..] => match first.strip_suffix("[]") {
-            Some(name) => {
-                if let Some(Value::Array(elements)) = value.get_mut(name) {
-                    for element in elements {
-                        remove(element, rest);
-                    }
-                }
-            }
-            None => {
-                if let Some(member) = value.get_mut(*first) {
-                    remove(member, rest);
-                }
-            }
-        },
-    }
 }
 
 /// One relation of a project database, by schema and name.
@@ -1016,15 +811,13 @@ impl ServingManifest {
 
     /// The RFC 8785 canonical bytes mounted by serving processes.
     pub fn canonical_bytes(&self) -> Vec<u8> {
-        wamn_execution_contract::canonical_json_bytes(&self.as_value())
+        wamn_digest::canonical_json_bytes(&self.as_value())
     }
 
     /// The content digest over [`Self::canonical_bytes`].
     pub fn digest(&self) -> ManifestDigest {
-        ManifestDigest::parse(wamn_execution_contract::canonical_json_sha256(
-            &self.as_value(),
-        ))
-        .expect("the shared canonicalizer emits a canonical sha256 digest")
+        ManifestDigest::parse(wamn_digest::canonical_json_sha256(&self.as_value()))
+            .expect("the shared canonicalizer emits a canonical sha256 digest")
     }
 
     /// Parse, validate, and admit only canonical format-11 bytes.
@@ -1043,33 +836,25 @@ impl ServingManifest {
             }
         })?;
         validate_format_version(&document)?;
-        // Retired workflow fields are accepted and dropped on read.
-        let mut current = document.clone();
-        current
-            .as_object_mut()
-            .expect("validated manifest object")
-            .remove("workflow");
-        if current
+        if document
             .get("composed-entry")
             .and_then(Value::as_object)
             .is_some_and(|entry| !entry.contains_key("application"))
         {
             return invalid("the composed entry is missing composed-entry.application");
         }
-        let manifest = serde_json::from_value::<Self>(current.clone()).map_err(|error| {
+        let manifest = serde_json::from_value::<Self>(document.clone()).map_err(|error| {
             CatalogIdentityError::InvalidDefinition {
                 message: format!("serving manifest JSON is invalid: {error}"),
             }
         })?;
         manifest.validate()?;
-        if manifest.as_value() != current
-            || wamn_execution_contract::canonical_json_bytes(&document) != bytes
+        if manifest.as_value() != document || wamn_digest::canonical_json_bytes(&document) != bytes
         {
             return Err(CatalogIdentityError::NonCanonicalJson);
         }
-        let digest =
-            ManifestDigest::parse(wamn_execution_contract::canonical_json_sha256(&document))
-                .expect("the shared canonicalizer emits a canonical sha256 digest");
+        let digest = ManifestDigest::parse(wamn_digest::canonical_json_sha256(&document))
+            .expect("the shared canonicalizer emits a canonical sha256 digest");
         Ok((manifest, digest))
     }
 
@@ -1164,7 +949,7 @@ impl ServingManifest {
             validate_text(&descriptor.component, "component")?;
             validate_text(&descriptor.interface_version, "interface-version")?;
             ArtifactHash::parse(descriptor.component_digest.clone())?;
-            if component.operations.is_empty() {
+            if component.descriptor.operations.is_empty() {
                 return invalid("a serving component must export at least one operation");
             }
             for operation in descriptor.operations.values() {
@@ -1174,23 +959,13 @@ impl ServingManifest {
                     }
                 })?;
             }
-            for (export, operation) in &component.operations {
+            for (export, operation) in &component.descriptor.operations {
                 validate_text(export, "component-operation")?;
                 validate_registered_operation(
                     &package_versions,
                     &component.package_id,
                     operation.registered_operation.as_deref(),
                 )?;
-                if let Some(registered) = &operation.registered_operation
-                    && !operation.permissions.contains(registered)
-                {
-                    return invalid(format!(
-                        "export {export:?} permissions omit its own registered operation"
-                    ));
-                }
-                for permission in &operation.permissions {
-                    validate_release_operation(&package_versions, permission)?;
-                }
                 if operation
                     .registered_operation
                     .as_deref()
@@ -1201,27 +976,12 @@ impl ServingManifest {
                         operation.registered_operation
                     ));
                 }
-                if let Some(schema) = &operation.committed_result_schema {
-                    let value: Value = serde_json::from_str(schema).map_err(|error| {
-                        CatalogIdentityError::InvalidDefinition {
-                            message: format!("committed-result schema is invalid JSON: {error}"),
-                        }
-                    })?;
-                    if wamn_execution_contract::canonical_json_bytes(&value) != schema.as_bytes() {
-                        return invalid("committed-result schema must be canonical JSON");
-                    }
-                    let normalized =
-                        crate::component_facts::normalize_schema(value, "committed-result")
-                            .and_then(|schema| {
-                                crate::component_facts::validate_committed_result_schema(
-                                    operation.registered_operation.as_deref(),
-                                    Some(&schema),
-                                )
-                            });
-                    normalized.map_err(|error| CatalogIdentityError::InvalidDefinition {
-                        message: format!("serving component operation {export:?} carries invalid committed-result facts: {error}"),
-                    })?;
-                }
+                crate::component_facts::validate_committed_result_schema(
+                    operation.registered_operation.as_deref(),
+                    operation.committed_result_schema.as_ref(),
+                ).map_err(|error| CatalogIdentityError::InvalidDefinition {
+                    message: format!("serving component operation {export:?} carries invalid committed-result facts: {error}"),
+                })?;
                 crate::component_facts::validate_operation_statement_facts(
                     export,
                     &operation.statements,
@@ -1251,7 +1011,10 @@ impl ServingManifest {
                 .filter(|component| {
                     component.package_id == route.package_id
                         && component.descriptor.component == route.component
-                        && component.operations.contains_key(&route.operation)
+                        && component
+                            .descriptor
+                            .operations
+                            .contains_key(&route.operation)
                 })
                 .count();
             if providers != 1 {
@@ -1388,24 +1151,6 @@ fn validate_registered_operation(
     validate_canonical_operation_for_package(operation, package_id, package_version)
 }
 
-/// Require an operation identity that belongs to one release package.
-fn validate_release_operation(
-    package_versions: &BTreeMap<&str, &str>,
-    operation: &str,
-) -> Result<(), CatalogIdentityError> {
-    if package_versions
-        .iter()
-        .any(|(package_id, package_version)| {
-            validate_canonical_operation_for_package(operation, package_id, package_version).is_ok()
-        })
-    {
-        return Ok(());
-    }
-    invalid(format!(
-        "permission {operation:?} belongs to no package of the effective release"
-    ))
-}
-
 fn contains_retired_identity(value: &Value) -> bool {
     match value {
         Value::Object(object) => object.iter().any(|(key, value)| {
@@ -1467,41 +1212,29 @@ mod tests {
     }
 
     fn components() -> BTreeSet<ServingComponent> {
-        BTreeSet::from([
-            ServingComponent {
-                runtime_schema: None,
-                statement_instances: std::collections::BTreeMap::new(),
-                package_id: "overlay".into(),
+        [
+            (
+                "overlay",
+                "transform",
+                COMPONENT_B,
+                "overlay:transform/map@3.0.0",
+            ),
+            ("base", "http-request", COMPONENT_A, "base:widget/get@1.0.0"),
+        ]
+        .into_iter()
+        .map(|(package, component, digest, operation)| ServingComponent {
+            runtime_schema: None,
+            statement_instances: BTreeMap::new(),
+            package_id: package.into(),
+            descriptor: ComponentDescriptor {
                 operations: BTreeMap::from([(
-                    "overlay:transform/map@3.0.0".into(),
-                    ServingComponentOperation {
-                        committed_result_schema: None,
-                        registered_operation: Some("overlay:transform/map@3.0.0".into()),
-                        permissions: BTreeSet::from([
-                            "base:widget/get@1.0.0".into(),
-                            "overlay:transform/map@3.0.0".into(),
-                        ]),
-                        statements: BTreeMap::new(),
-                    },
+                    operation.into(),
+                    admitted_operation(operation, None),
                 )]),
-                descriptor: ComponentDescriptor::named("transform", "0.1", COMPONENT_B),
+                ..ComponentDescriptor::named(component, "0.1", digest)
             },
-            ServingComponent {
-                runtime_schema: None,
-                statement_instances: std::collections::BTreeMap::new(),
-                package_id: "base".into(),
-                operations: BTreeMap::from([(
-                    "base:widget/get@1.0.0".into(),
-                    ServingComponentOperation {
-                        committed_result_schema: None,
-                        registered_operation: Some("base:widget/get@1.0.0".into()),
-                        permissions: BTreeSet::from(["base:widget/get@1.0.0".into()]),
-                        statements: BTreeMap::new(),
-                    },
-                )]),
-                descriptor: ComponentDescriptor::named("http-request", "0.1", COMPONENT_A),
-            },
-        ])
+        })
+        .collect()
     }
 
     fn routes() -> BTreeSet<ServingRoute> {
@@ -1513,7 +1246,6 @@ mod tests {
             reads: BTreeSet::new(),
             revision: None,
             idempotency: None,
-            canonicalization: None,
         }])
     }
 
@@ -1730,10 +1462,9 @@ mod tests {
             .as_object_mut()
             .unwrap()
             .remove("application");
-        let error = ServingManifest::from_canonical_bytes(
-            &wamn_execution_contract::canonical_json_bytes(&document),
-        )
-        .expect_err("composed-entry.application is required in format eleven");
+        let error =
+            ServingManifest::from_canonical_bytes(&wamn_digest::canonical_json_bytes(&document))
+                .expect_err("composed-entry.application is required in format eleven");
         assert_eq!(
             error,
             CatalogIdentityError::InvalidDefinition {
@@ -1773,76 +1504,6 @@ mod tests {
             })
             .collect();
         assert!(ServingManifest::from_canonical_bytes(&invalid.canonical_bytes()).is_err());
-    }
-
-    #[test]
-    fn stored_schedules_are_read_with_the_field_ignored() {
-        let manifest = manifest();
-        let mut document = serde_json::to_value(&manifest).unwrap();
-        document["workflow"]["schedules"] = serde_json::json!({
-            "base::hourly": {
-                "package-id": "base",
-                "workflow-id": "hourly",
-                "wiring-id": "orders",
-                "wiring-version": 3,
-                "schedule": "0 * * * *",
-            },
-        });
-        let bytes = wamn_execution_contract::canonical_json_bytes(&document);
-        let (decoded, digest) = ServingManifest::from_canonical_bytes(&bytes).unwrap();
-        assert_eq!(decoded, manifest);
-        assert_eq!(
-            digest.as_str(),
-            wamn_execution_contract::canonical_json_sha256(&document)
-        );
-        assert_ne!(digest, manifest.digest());
-        let mut spaced = bytes;
-        spaced.push(b' ');
-        assert!(ServingManifest::from_canonical_bytes(&spaced).is_err());
-    }
-
-    #[test]
-    fn committed_result_schema_is_canonical_and_changes_the_release_identity() {
-        let original = manifest();
-        let mut document = serde_json::to_value(&original).unwrap();
-        let operation = document["components"][0]["operations"]
-            .as_object()
-            .unwrap()
-            .keys()
-            .next()
-            .unwrap()
-            .clone();
-        document["components"][0]["operations"][&operation]["committed-result-schema"] =
-            serde_json::json!("{\"type\":\"array\"}");
-        let (declared, digest) = ServingManifest::from_canonical_bytes(
-            &wamn_execution_contract::canonical_json_bytes(&document),
-        )
-        .expect("canonical committed schema loads");
-        assert_ne!(digest, original.digest());
-        assert_eq!(serde_json::to_value(&declared).unwrap(), document);
-        for schema in ["{ \"type\": \"array\" }", "{\"type\":\"unknown\"}", "{"] {
-            document["components"][0]["operations"][&operation]["committed-result-schema"] =
-                serde_json::json!(schema);
-            assert!(
-                ServingManifest::from_canonical_bytes(
-                    &wamn_execution_contract::canonical_json_bytes(&document),
-                )
-                .is_err(),
-                "{schema}"
-            );
-        }
-        document["components"][0]["operations"][&operation]["committed-result-schema"] =
-            serde_json::json!("{}");
-        document["components"][0]["operations"][&operation]
-            .as_object_mut()
-            .unwrap()
-            .remove("registered-operation");
-        assert!(
-            ServingManifest::from_canonical_bytes(&wamn_execution_contract::canonical_json_bytes(
-                &document
-            ),)
-            .is_err()
-        );
     }
 
     #[test]
@@ -1972,7 +1633,7 @@ mod tests {
             parameters: Vec::new(),
             statements: statement
                 .map(|sql| {
-                    let digest = crate::digest(sql.as_bytes());
+                    let digest = wamn_digest::bytes_sha256(sql.as_bytes());
                     BTreeMap::from([(
                         digest,
                         ComponentSqlStatement {
@@ -1987,84 +1648,6 @@ mod tests {
                 })
                 .unwrap_or_default(),
         }
-    }
-
-    #[test]
-    fn projection_carries_each_exports_own_statements_only() {
-        const OVERLAY: &str = "overlay:receiving/record@3.0.0";
-        let overlay = admitted(
-            "overlay",
-            "3.0.0",
-            COMPONENT_B,
-            vec![(
-                OVERLAY,
-                admitted_operation(OVERLAY, Some("INSERT INTO inspection DEFAULT VALUES")),
-            )],
-        );
-        let projected =
-            ServingComponent::project(&overlay, Vec::new()).expect("the overlay projects");
-        let entry = &projected.operations[OVERLAY];
-        assert_eq!(
-            entry.permissions,
-            BTreeSet::from([OVERLAY.into()]),
-            "the entry requires its own permission only"
-        );
-        assert_eq!(
-            entry.statements, overlay.operations[OVERLAY].statements,
-            "the entry holds its own SQL; a base's SQL is the base member's"
-        );
-    }
-
-    #[test]
-    fn permissions_hold_the_registered_operation_and_release_packages_only() {
-        let mut missing_own = components();
-        let mut overlay = missing_own
-            .iter()
-            .find(|component| component.package_id == "overlay")
-            .cloned()
-            .unwrap();
-        missing_own.remove(&overlay);
-        overlay
-            .operations
-            .get_mut("overlay:transform/map@3.0.0")
-            .unwrap()
-            .permissions
-            .remove("overlay:transform/map@3.0.0");
-        missing_own.insert(overlay.clone());
-        let error = ServingManifest::new(
-            release(),
-            missing_own,
-            routes(),
-            BTreeMap::from([("orders".to_string(), attachment())]),
-        )
-        .expect_err("permissions without the export's own operation were accepted");
-        assert!(
-            error
-                .to_string()
-                .contains("omit its own registered operation")
-        );
-
-        let mut outside = components();
-        outside.remove(&overlay);
-        let operation = overlay
-            .operations
-            .get_mut("overlay:transform/map@3.0.0")
-            .unwrap();
-        operation
-            .permissions
-            .insert("overlay:transform/map@3.0.0".into());
-        operation
-            .permissions
-            .insert("stranger:widget/get@1.0.0".into());
-        outside.insert(overlay);
-        let error = ServingManifest::new(
-            release(),
-            outside,
-            routes(),
-            BTreeMap::from([("orders".to_string(), attachment())]),
-        )
-        .expect_err("a permission outside the release was accepted");
-        assert!(error.to_string().contains("belongs to no package"));
     }
 
     #[test]
@@ -2084,28 +1667,6 @@ mod tests {
         );
     }
 
-    /// A component is its package, its descriptor and its operations, and
-    /// nothing else: the descriptor is the one owner of the component name,
-    /// interface version and digest. The canonical bytes carry it whole.
-    #[test]
-    fn a_component_holds_its_package_descriptor_and_operations_only() {
-        let manifest = manifest();
-        let value: Value = serde_json::from_slice(&manifest.canonical_bytes()).unwrap();
-        for (index, component) in manifest.components.iter().enumerate() {
-            let keys = value["components"][index]
-                .as_object()
-                .unwrap()
-                .keys()
-                .map(String::as_str)
-                .collect::<Vec<_>>();
-            assert_eq!(keys, ["descriptor", "operations", "package-id"]);
-            assert_eq!(
-                value["components"][index]["descriptor"],
-                serde_json::to_value(&component.descriptor).unwrap()
-            );
-        }
-    }
-
     #[test]
     fn statement_lookup_is_operation_scoped_and_revalidates_its_key() {
         let operation = "base:widget/get@1.0.0";
@@ -2118,7 +1679,8 @@ mod tests {
             .expect("fixture has a base component")
             .clone();
         components.remove(&base);
-        base.operations
+        base.descriptor
+            .operations
             .get_mut(operation)
             .expect("fixture has the base operation")
             .statements
@@ -2149,6 +1711,7 @@ mod tests {
             .iter()
             .find(|component| component.package_id == "base")
             .expect("base component remains present")
+            .descriptor
             .operations[operation]
             .statement(&path);
         assert!(admitted.is_some());
@@ -2158,6 +1721,7 @@ mod tests {
                 .iter()
                 .find(|component| component.package_id == "overlay")
                 .expect("overlay component remains present")
+                .descriptor
                 .operations["overlay:transform/map@3.0.0"]
                 .statement(&path)
                 .is_none()
@@ -2170,7 +1734,8 @@ mod tests {
             .expect("fixture has a base component")
             .clone();
         broken.remove(&base);
-        base.operations
+        base.descriptor
+            .operations
             .get_mut(operation)
             .expect("fixture has the base operation")
             .statements
@@ -2255,6 +1820,7 @@ mod tests {
             .pop_first()
             .expect("fixture has a component");
         let component_operation = component
+            .descriptor
             .operations
             .values_mut()
             .next()
@@ -2542,22 +2108,6 @@ mod tests {
                 .expect_err("an inexact route must refuse");
             assert!(error.to_string().contains(refusal), "{error}");
         }
-    }
-
-    #[test]
-    fn retired_workflow_fields_are_ignored_and_never_written() {
-        let manifest = manifest();
-        let mut value = manifest.as_value();
-        value["workflow"] = serde_json::json!({
-            "wirings": [{"retired": true}],
-            "attachments": {"old": {}},
-            "registrations": {"old": {}}
-        });
-        let bytes = wamn_execution_contract::canonical_json_bytes(&value);
-        let (read, _) = ServingManifest::from_canonical_bytes(&bytes).unwrap();
-        assert_eq!(read, manifest);
-        assert_eq!(read.digest(), manifest.digest());
-        assert!(read.as_value().get("workflow").is_none());
     }
 
     #[test]

@@ -4,7 +4,7 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use anyhow::Context as _;
-use wamn_catalog::{ComponentSqlField, ComponentSqlStatement, ComponentSqlValueType};
+use wamn_catalog::{ComponentSqlField, ComponentSqlStatement};
 use wamn_engine::entry_operation::operation::{self as wit, Begun, Refusal};
 use wamn_engine::flow_http_routing::AuthenticatedCaller;
 use wamn_engine::invocation_trace::{InvocationTrace, RequestTrace};
@@ -17,8 +17,8 @@ use super::claims::{ClaimError, ClaimErrorKind};
 use super::write_log::OpaqueBegun;
 use super::{
     OperationTransaction, PgCommitFailure, PreparedStatementMembers, PreparedStatementSet,
-    ReleaseIdentity, SessionClaims, StatementField, StatementValueType, VerifiedStatement,
-    WAMN_POSTGRES_ID, WamnPostgres,
+    ReleaseIdentity, SessionClaims, StatementField, VerifiedStatement, WAMN_POSTGRES_ID,
+    WamnPostgres,
 };
 
 /// Delivery counters shared by all operations of this PostgreSQL plugin.
@@ -124,7 +124,7 @@ impl WamnPostgres {
                     component.package_id
                 )
             })?;
-            for (id, fact) in &component.operations {
+            for (id, fact) in &component.descriptor.operations {
                 applications.insert(id.clone(), application.to_owned());
                 let read = release
                     .manifest()
@@ -151,6 +151,7 @@ impl WamnPostgres {
         let mut members = BTreeMap::new();
         if application.statement_instances.is_empty() {
             let statements = application
+                .descriptor
                 .operations
                 .values()
                 .flat_map(|fact| fact.statements.clone())
@@ -238,18 +239,7 @@ fn lower_statements(
     statements: &BTreeMap<String, ComponentSqlStatement>,
 ) -> super::VerifiedStatementSet {
     let field = |field: &ComponentSqlField| StatementField {
-        value_type: match field.value_type {
-            ComponentSqlValueType::Boolean => StatementValueType::Boolean,
-            ComponentSqlValueType::Int32 => StatementValueType::Int32,
-            ComponentSqlValueType::Int64 => StatementValueType::Int64,
-            ComponentSqlValueType::Float64 => StatementValueType::Float64,
-            ComponentSqlValueType::Text => StatementValueType::Text,
-            ComponentSqlValueType::Bytes => StatementValueType::Bytes,
-            ComponentSqlValueType::Numeric => StatementValueType::Numeric,
-            ComponentSqlValueType::Timestamptz => StatementValueType::Timestamptz,
-            ComponentSqlValueType::Json => StatementValueType::Json,
-            ComponentSqlValueType::Uuid => StatementValueType::Uuid,
-        },
+        value_type: field.value_type,
         nullable: field.nullable,
     };
     statements

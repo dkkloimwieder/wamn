@@ -456,7 +456,7 @@ mod tests {
         println!(
             "receiving-component-bytes={} digest={}",
             bytes.len(),
-            wamn_engine::component_admission::component_digest(&bytes)
+            wamn_digest::bytes_sha256(&bytes)
         );
         Ok(())
     }

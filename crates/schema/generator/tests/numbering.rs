@@ -4,7 +4,7 @@
 
 use serde_json::{Value, json};
 use wamn_catalog::ManifestErrorType as GenerateErrorType;
-use wamn_catalog::schema::ColumnType;
+use wamn_scalar::SqlValueType;
 use wamn_schema_generator::{DATA_ACCESS_OVERLAY_PATH, GeneratedPackage};
 use wamn_schema_introspection::ir::{CatalogIr, Column, Constraint};
 
@@ -39,7 +39,7 @@ fn numbered() -> Value {
 
 /// The gadget catalog with one more column, such as `created_by` for the
 /// actor.
-fn actor_catalog(name: &str, ty: ColumnType) -> CatalogIr {
+fn actor_catalog(name: &str, ty: SqlValueType) -> CatalogIr {
     let base = catalog(false);
     let gadget = table(&base, "gadget");
     let mut columns = gadget.columns().to_vec();
@@ -57,11 +57,11 @@ fn stamped_catalog() -> CatalogIr {
     let gadget = table(&base, "gadget");
     let mut columns = gadget.columns().to_vec();
     for name in ["created_by", "updated_by"] {
-        columns.push(Column::new(name, ColumnType::Uuid, false, None, None));
+        columns.push(Column::new(name, SqlValueType::Uuid, false, None, None));
     }
     columns.push(Column::new(
         "updated_at",
-        ColumnType::Timestamptz,
+        SqlValueType::Timestamptz,
         false,
         None,
         None,
@@ -83,7 +83,7 @@ fn integer_key_catalog() -> CatalogIr {
             if column.name() == "id" {
                 Column::new(
                     "id",
-                    ColumnType::Int32,
+                    SqlValueType::Int32,
                     false,
                     None,
                     Some(wamn_schema_introspection::ir::ColumnGeneration::Identity {
@@ -271,7 +271,7 @@ fn a_numbered_field_that_is_not_text_takes_only_a_bare_counter() {
         .as_array_mut()
         .unwrap()
         .push(json!("line_no"));
-    for ty in [ColumnType::Int32, ColumnType::Int64] {
+    for ty in [SqlValueType::Int32, SqlValueType::Int64] {
         let catalog = actor_catalog("line_no", ty);
         for pattern in ["{seq:n,width=4}", "L{seq:n}", "{seq:n,reset=stock_id}"] {
             manifest["sequences"]["gadget_number"]["pattern"] = json!(pattern);
@@ -299,7 +299,7 @@ fn a_numbered_field_that_is_not_text_takes_only_a_bare_counter() {
 fn an_actor_field_is_a_uuid_created_by_or_updated_by() {
     let mut manifest = manifest();
     manifest["models"]["gadget"]["fields"] = json!({"checked_by": {"role": "actor"}});
-    let (kind, message) = refusal(&actor_catalog("checked_by", ColumnType::Uuid), &manifest);
+    let (kind, message) = refusal(&actor_catalog("checked_by", SqlValueType::Uuid), &manifest);
     assert_eq!(kind, GenerateErrorType::InvalidModel, "{message}");
     assert!(
         message.contains(
@@ -314,7 +314,7 @@ fn an_actor_field_is_a_uuid_created_by_or_updated_by() {
     let mut base = manifest.clone();
     base["models"]["gadget"]["fields"] = text_actor["models"]["gadget"]["fields"].clone();
     let (kind, message) = refusal_with_base(
-        &actor_catalog("created_by", ColumnType::Text),
+        &actor_catalog("created_by", SqlValueType::Text),
         &text_actor,
         &base,
     );
@@ -355,7 +355,7 @@ fn overlay(mut manifest: Value) -> Value {
 /// reserved column, which an overlay cannot add without an audit log.
 #[test]
 fn an_overlay_is_checked_against_the_relation_owners_fields() {
-    let note = actor_catalog("note", ColumnType::Text);
+    let note = actor_catalog("note", SqlValueType::Text);
     let mut base = numbered();
     let mut numbered = overlay(base.clone());
     numbered["models"]["gadget"]["field_owners"] = json!({"note": "acme_inventory"});
@@ -398,7 +398,7 @@ fn an_overlay_is_checked_against_the_relation_owners_fields() {
     base_actor["models"]["gadget"]["fields"] = json!({"updated_by": {"role": "actor"}});
     base["models"]["gadget"]["fields"] = base_actor["models"]["gadget"]["fields"].clone();
     run_with_bases(
-        &actor_catalog("updated_by", ColumnType::Uuid),
+        &actor_catalog("updated_by", SqlValueType::Uuid),
         &base_actor,
         &QUERY_SOURCES,
         &[base],
@@ -409,16 +409,16 @@ fn an_overlay_is_checked_against_the_relation_owners_fields() {
 #[test]
 fn numbered_fields_accept_only_text_int32_and_int64() {
     for ty in [
-        ColumnType::Boolean,
-        ColumnType::Float64,
-        ColumnType::Bytes,
-        ColumnType::Numeric,
-        ColumnType::Timestamptz,
-        ColumnType::Json,
-        ColumnType::Uuid,
-        ColumnType::Text,
-        ColumnType::Int32,
-        ColumnType::Int64,
+        SqlValueType::Boolean,
+        SqlValueType::Float64,
+        SqlValueType::Bytes,
+        SqlValueType::Numeric,
+        SqlValueType::Timestamptz,
+        SqlValueType::Json,
+        SqlValueType::Uuid,
+        SqlValueType::Text,
+        SqlValueType::Int32,
+        SqlValueType::Int64,
     ] {
         let mut manifest = numbered();
         manifest["models"]["gadget"]["fields"] = json!({"serial": {"number": "gadget_number"}});
@@ -428,7 +428,10 @@ fn numbered_fields_accept_only_text_int32_and_int64() {
             .push(json!("serial"));
         manifest["sequences"]["gadget_number"]["pattern"] = json!("{seq:n}");
         let catalog = actor_catalog("serial", ty);
-        if matches!(ty, ColumnType::Text | ColumnType::Int32 | ColumnType::Int64) {
+        if matches!(
+            ty,
+            SqlValueType::Text | SqlValueType::Int32 | SqlValueType::Int64
+        ) {
             run(&catalog, &manifest, &QUERY_SOURCES).unwrap();
         } else {
             let (kind, message) = refusal(&catalog, &manifest);
@@ -671,7 +674,12 @@ fn live_a_numbered_integer_field_inserts_the_rendered_number() {
         .push(json!("line_no"));
     let create = manifest["models"]["gadget"]["operations"]["create"].clone();
     manifest["models"]["gadget"]["operations"] = json!({"create": create});
-    let package = run(&actor_catalog("line_no", ColumnType::Int32), &manifest, &[]).unwrap();
+    let package = run(
+        &actor_catalog("line_no", SqlValueType::Int32),
+        &manifest,
+        &[],
+    )
+    .unwrap();
     database
         .execute(&[
             "CREATE TABLE public.gadget (id uuid PRIMARY KEY, line_no int NOT NULL, part_code text DEFAULT 'fixture',

@@ -4,6 +4,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
 use std::fs;
 use std::path::{Component, Path, PathBuf};
+#[cfg(test)]
+use wamn_scalar::SqlValueType;
 
 use anyhow::{Context as _, Result, ensure};
 use tokio_postgres::NoTls;
@@ -613,7 +615,7 @@ fn load_compiled_manifest(
         .context("derive the compiled manifest")?;
     // The canonical bytes (RFC 8785) that `wamn build` writes, so a package
     // materialized here and the same package built carry one manifest digest.
-    let compiled = wamn_execution_contract::canonical_json_bytes(
+    let compiled = wamn_digest::canonical_json_bytes(
         &serde_json::from_slice(&derived).context("parse the derived manifest")?,
     );
     let manifest = PackageManifest::from_slice(&compiled).context("parse package manifest")?;
@@ -1025,7 +1027,6 @@ pub(crate) fn existing_files(root: &Path) -> Result<Vec<PathBuf>> {
 mod tests {
     use std::cell::Cell;
 
-    use wamn_catalog::schema::ColumnType;
     use wamn_schema_introspection::ir::{Column, Constraint, Table};
 
     use super::*;
@@ -1187,7 +1188,7 @@ mod tests {
         CatalogIr::new(vec![Table::new(
             "application",
             "thing",
-            vec![Column::new("id", ColumnType::Uuid, false, None, None)],
+            vec![Column::new("id", SqlValueType::Uuid, false, None, None)],
             vec![Constraint::primary_key("thing_id_pkey", ["id"]).expect("construct primary key")],
             Vec::new(),
         )])

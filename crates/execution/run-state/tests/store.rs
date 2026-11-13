@@ -156,10 +156,7 @@ fn run_state_schema_applies_and_isolates_on_postgres() {
            EXECUTE format('DROP ROLE %I', '{app_role}'); \
          END IF; END $$;\n\
          DO $$ BEGIN \
-           IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname='wamn_scenario_author') THEN \
-             CREATE ROLE wamn_scenario_author NOLOGIN NOSUPERUSER NOCREATEDB \
-               NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS; \
-           END IF; \
+            \
          END $$;\n\
          {prepare_app}\n\
          DROP SCHEMA IF EXISTS wamn_run CASCADE;\n\
@@ -185,20 +182,20 @@ fn run_state_schema_applies_and_isolates_on_postgres() {
     script.push('\n');
     script.push_str(
         "INSERT INTO wamn_run.environment_policies \
-           (env_key, expected_environment, durability_class) VALUES \
-           ('t1', 'test', 'standard'), \
-           ('t2', 'test', 'standard'), \
-           ('t3', 'test', 'standard');\n",
+           (env_key, expected_environment) VALUES \
+           ('t1', 'test'), \
+           ('t2', 'test'), \
+           ('t3', 'test');\n",
     );
     // Seed two tenants as the superuser (bypasses RLS): each has one run.
     script.push_str(
         "INSERT INTO wamn_run.runs (\
-           env_key, run_id, flow_id, flow_version, package_id, manifest_digest, environment,\
+           env_key, run_id, wiring_hash,binding_world_json, package_id, manifest_digest, environment,\
            wiring_id, wiring_version, status, idempotency_key\
          ) VALUES\
-           ('t1','run-a','f',1,'run-state-fixture','sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a','test',\
+           ('t1','run-a','sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd','[]'::jsonb,'run-state-fixture','sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a','test',\
             'fixture-wiring',1,'running','k-a'),\
-           ('t2','run-b','f',1,'run-state-fixture','sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a','test',\
+           ('t2','run-b','sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd','[]'::jsonb,'run-state-fixture','sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a','test',\
             'fixture-wiring',1,'running','k-b');\n",
     );
     // The generation's `current_user` derives tenant t1 and sees only that
@@ -227,17 +224,17 @@ fn run_state_schema_applies_and_isolates_on_postgres() {
         "DO $$ BEGIN \
            BEGIN \
              INSERT INTO wamn_run.runs (\
-               env_key, run_id, flow_id, flow_version, package_id, manifest_digest, environment,\
+               env_key, run_id, wiring_hash,binding_world_json, package_id, manifest_digest, environment,\
                wiring_id, wiring_version, idempotency_key\
-             ) VALUES ('t1','run-a2','f',1,'run-state-fixture','sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a','test',\
+             ) VALUES ('t1','run-a2','sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd','[]'::jsonb,'run-state-fixture','sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a','test',\
                'fixture-wiring',1,'k-a'); \
              ASSERT false, 'duplicate idempotency key must be rejected'; \
            EXCEPTION WHEN unique_violation THEN NULL; END; \
          END $$;\n\
          INSERT INTO wamn_run.runs (\
-           env_key, run_id, flow_id, flow_version, package_id, manifest_digest, environment,\
+           env_key, run_id, wiring_hash,binding_world_json, package_id, manifest_digest, environment,\
            wiring_id, wiring_version, idempotency_key\
-         ) VALUES ('t3','run-c','f',1,'run-state-fixture','sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a','test',\
+         ) VALUES ('t3','run-c','sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd','[]'::jsonb,'run-state-fixture','sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a','test',\
            'fixture-wiring',1,'k-a');\n",
     );
     // Ask the INSTALLED status CHECK its own answer, twice over, instead of pinning the
@@ -263,9 +260,9 @@ fn run_state_schema_applies_and_isolates_on_postgres() {
              ordinal := ordinal + 1;\n\
              BEGIN\n\
                INSERT INTO wamn_run.runs (\
-                 env_key, run_id, flow_id, flow_version, package_id, manifest_digest,\
+                 env_key, run_id, wiring_hash,binding_world_json, package_id, manifest_digest,\
                  environment, wiring_id, wiring_version, status, idempotency_key\
-               ) VALUES ('t3', 'status-probe-' || ordinal, 'f', 1, 'run-state-fixture', 'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a',\
+               ) VALUES ('t3', 'status-probe-' || ordinal, 'sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd','[]'::jsonb, 'run-state-fixture', 'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a',\
                  'test', 'fixture-wiring', 1, candidate, 'status-probe-' || ordinal);\n\
                INSERT INTO status_probe VALUES (candidate, 'admitted');\n\
              EXCEPTION WHEN others THEN\n\
@@ -335,7 +332,7 @@ fn run_state_schema_applies_and_isolates_on_postgres() {
              'the App generation reads its own tenant''s policy';\n\
            BEGIN\n\
              INSERT INTO wamn_run.environment_policies\n\
-               (env_key, expected_environment, durability_class) VALUES ('t4', 'test', 'standard');\n\
+               (env_key, expected_environment) VALUES ('t4', 'test');\n\
              ASSERT false, 'the App generation must not write an environment policy';\n\
            EXCEPTION WHEN insufficient_privilege THEN NULL; END;\n\
          END $$;\n\
@@ -453,34 +450,31 @@ DO $$ BEGIN
     'runs carries the causation and release pin carriers';
 END $$;
 
--- An admitted run defaults to no capture and the standard class, and refuses
--- a class or capture outside its vocabulary.
+-- A run defaults to no capture and refuses an unsupported capture mode.
 INSERT INTO wamn_run.runs (
-  env_key, run_id, flow_id, flow_version, package_id, manifest_digest, environment,
+  env_key, run_id, wiring_hash,binding_world_json, package_id, manifest_digest, environment,
   wiring_id, wiring_version, status, idempotency_key
-) VALUES ('t3', 'record-probe', 'f', 1, 'run-state-fixture', 'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a', 'test',
+) VALUES ('t3', 'record-probe', 'sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd','[]'::jsonb, 'run-state-fixture', 'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a', 'test',
           'fixture-wiring', 1, 'running', 'record-probe');
 DO $$ BEGIN
-  ASSERT (SELECT capture_mode || '/' || durability_class FROM wamn_run.runs
-           WHERE env_key = 't3' AND run_id = 'record-probe') = 'off/standard',
-    'an admitted run defaults to capture off and the standard class';
+  ASSERT (SELECT capture_mode FROM wamn_run.runs
+           WHERE env_key = 't3' AND run_id = 'record-probe') = 'off',
+    'an admitted run defaults to capture off';
 END $$;
 DO $$
 DECLARE refused text;
 BEGIN
   FOREACH refused IN ARRAY ARRAY[
-    'durability_class = ''bogus''',
     'capture_mode = ''bogus''',
     'capture_mode = ''full'''
   ] LOOP
     BEGIN
       EXECUTE format(
-        'INSERT INTO wamn_run.runs (env_key, run_id, flow_id, flow_version, package_id, '
+        'INSERT INTO wamn_run.runs (env_key, run_id, wiring_hash,binding_world_json, package_id, '
         'manifest_digest, environment, wiring_id, wiring_version, idempotency_key, '
-        'capture_mode, durability_class) VALUES (''t3'', ''record-refused'', ''f'', 1, '
-        '''run-state-fixture'', ''sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a'', ''test'', ''fixture-wiring'', 1, ''record-refused'', %s, %s)',
-        CASE WHEN refused LIKE 'capture_mode%' THEN split_part(refused, ' = ', 2) ELSE '''off''' END,
-        CASE WHEN refused LIKE 'durability_class%' THEN split_part(refused, ' = ', 2) ELSE '''standard''' END);
+        'capture_mode) VALUES (''t3'', ''record-refused'', ''sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd'',''[]''::jsonb, '
+        '''run-state-fixture'', ''sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a'', ''test'', ''fixture-wiring'', 1, ''record-refused'', %s)',
+        split_part(refused, ' = ', 2));
       ASSERT false, format('a run with %s must be refused', refused);
     EXCEPTION WHEN check_violation THEN NULL; END;
   END LOOP;
@@ -491,10 +485,10 @@ DO $$
 DECLARE assignment text; refusal text;
 BEGIN
   FOREACH assignment IN ARRAY ARRAY[
-    'flow_id = ''g''', 'flow_version = 2', 'package_id = ''other''',
+    'package_id = ''other''',
     'manifest_digest = ''sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855''', 'manifest_digest = NULL',
     'environment = ''other''', 'capture_mode = ''full''',
-    'durability_class = NULL', 'wiring_id = ''other''', 'wiring_version = 2',
+    'wiring_id = ''other''', 'wiring_version = 2',
     'wiring_hash = ''other''', 'binding_world_json = ''{}''::jsonb',
     'service_principal_id = ''00000000-0000-4000-8000-000000000001''::uuid'
   ] LOOP
@@ -528,9 +522,9 @@ DECLARE terminal text;
 BEGIN
   FOREACH terminal IN ARRAY ARRAY['completed', 'failed', 'infrastructure-failure'] LOOP
     INSERT INTO wamn_run.runs (
-      env_key, run_id, flow_id, flow_version, package_id, manifest_digest, environment,
+      env_key, run_id, wiring_hash,binding_world_json, package_id, manifest_digest, environment,
       wiring_id, wiring_version, status, idempotency_key
-    ) VALUES ('t3', 'terminal-' || terminal, 'f', 1, 'run-state-fixture', 'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a', 'test',
+    ) VALUES ('t3', 'terminal-' || terminal, 'sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd','[]'::jsonb, 'run-state-fixture', 'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a', 'test',
               'fixture-wiring', 1, terminal, 'terminal-' || terminal);
     DELETE FROM wamn_run.runs WHERE env_key = 't3' AND run_id = 'terminal-' || terminal;
   END LOOP;
@@ -557,8 +551,8 @@ END $$;
 -- a platform policy that reads every row, and an index on the tenant key.
 DO $$ BEGIN
   BEGIN
-    INSERT INTO wamn_run.environment_policies (env_key, expected_environment, durability_class)
-      VALUES ('t1', 'test', 'standard');
+    INSERT INTO wamn_run.environment_policies (env_key, expected_environment)
+      VALUES ('t1', 'test');
     ASSERT false, 'a second environment policy for one tenant must be refused';
   EXCEPTION WHEN unique_violation THEN NULL; END;
   ASSERT (SELECT relrowsecurity AND relforcerowsecurity FROM pg_class
@@ -591,7 +585,7 @@ BEGIN
         'waiting_child_occurrence','wait_generation','invoke_depth','invoke_root_run_id')
   ), 'retired execution lineage stays absent';
   FOR relation, required IN VALUES
-    ('wamn_run.runs'::regclass, ARRAY['env_key','run_id','flow_id','flow_version',
+    ('wamn_run.runs'::regclass, ARRAY['env_key','run_id','wiring_hash','binding_world_json',
       'status','trigger_source','capture_mode','input_json','result_json','state_json',
       'fail_type','updated_at','package_id','manifest_digest','attachment_id',
       'registration_id','caller_outcome_type','caller_outcome_json','caller_http_status',
@@ -608,9 +602,9 @@ BEGIN
 END $$;
 
 -- Event ancestry must be complete, and each coordinate stays immutable.
-INSERT INTO wamn_run.runs (env_key,run_id,flow_id,flow_version,package_id,environment,
+INSERT INTO wamn_run.runs (env_key,run_id,wiring_hash,binding_world_json,package_id,environment,
   wiring_id,wiring_version,trigger_source,event_source_run_id,event_root_run_id,event_depth)
-VALUES ('t3','lineage-probe','f',1,'run-state-fixture','test','fixture-wiring',1,
+VALUES ('t3','lineage-probe','sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd','[]'::jsonb,'run-state-fixture','test','fixture-wiring',1,
   'event','source','root',1);
 DO $$
 DECLARE assignment text;
@@ -629,9 +623,9 @@ BEGIN
     '''event'',''source'',NULL,1', '''event'',''source'','''',1',
     '''event'',''source'',''root'',NULL'] LOOP
     BEGIN
-      EXECUTE 'INSERT INTO wamn_run.runs (env_key,run_id,flow_id,flow_version,package_id,'
+      EXECUTE 'INSERT INTO wamn_run.runs (env_key,run_id,wiring_hash,binding_world_json,package_id,'
         || 'environment,wiring_id,wiring_version,trigger_source,event_source_run_id,'
-        || 'event_root_run_id,event_depth) VALUES (''t3'',''bad-lineage'',''f'',1,'
+        || 'event_root_run_id,event_depth) VALUES (''t3'',''bad-lineage'',''sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd'',''[]''::jsonb,'
         || '''run-state-fixture'',''test'',''fixture-wiring'',1,' || assignment || ')';
       ASSERT false, 'incomplete event ancestry was admitted';
     EXCEPTION WHEN check_violation THEN NULL; END;
@@ -639,9 +633,9 @@ BEGIN
 END $$;
 
 -- Retention spans terminal states, age, and tenants.
-INSERT INTO wamn_run.runs (env_key,run_id,flow_id,flow_version,package_id,environment,
+INSERT INTO wamn_run.runs (env_key,run_id,wiring_hash,binding_world_json,package_id,environment,
   wiring_id,wiring_version,status,created_at)
-SELECT tenant, 'prune-' || age || '-' || state, 'f',1,'run-state-fixture','test',
+SELECT tenant, 'prune-' || age || '-' || state, 'sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd','[]'::jsonb,'run-state-fixture','test',
   'fixture-wiring',1,state,now()-CASE age WHEN 'old' THEN interval '8 days' ELSE interval '1 day' END
 FROM (VALUES ('t3','old','completed'),('t3','old','failed'),
   ('t3','old','infrastructure-failure'),('t3','old','dispatched'),('t3','old','running'),

@@ -26,9 +26,6 @@ pub struct QueueEntry {
     #[serde(flatten, with = "env_key")]
     pub env_key: String,
     pub run_id: String,
-    /// Persisted compatibility field; the global FIFO does not order by it.
-    #[serde(default)]
-    pub priority: i32,
     /// When this row becomes claimable. Future = queue-parked (for example,
     /// bounded-retry backoff).
     pub available_at: Millis,
@@ -37,15 +34,6 @@ pub struct QueueEntry {
     /// stable admission timestamp retained independently of a later queue wait.
     #[serde(default)]
     pub enqueued_at: Millis,
-    /// The per-flow monotone CDC stream position (D19 §5 / E4): the JetStream
-    /// `stream_seq` a materializer-minted evt run (`<flow>:evt:<seq>`) is keyed
-    /// by, carried as a numeric tiebreak AHEAD of `run_id` in every dispatch
-    /// order so evt runs claim by NUMERIC stream position, never lexical run-id
-    /// order (`f1:evt:10` must not precede `f1:evt:9` — the R6/D20 corruption
-    /// class arriving through a string comparison). `0` for every non-CDC
-    /// enqueue (the column default), which keeps the tiebreak inert there.
-    #[serde(default)]
-    pub stream_seq: i64,
     /// The runner replica currently holding a lease, if any.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub lease_owner: Option<String>,
@@ -98,24 +86,15 @@ impl QueueEntry {
         QueueEntry {
             env_key: env_key.into(),
             run_id: run_id.into(),
-            priority: 0,
             available_at,
             // An immediately-claimable row was enqueued when it became
             // available; a delayed enqueue's `enqueued_at` precedes it (the DB
             // stamps `now()` while `available_at` = `now() + delay`).
             enqueued_at: available_at,
-            stream_seq: 0,
             lease_owner: None,
             lease_expires_at: None,
             attempts: 0,
             max_attempts,
         }
-    }
-
-    /// The same entry carrying a real CDC stream position (E4) — what the
-    /// materializer's evt enqueue stamps; every other writer leaves the 0 default.
-    pub fn with_stream_seq(mut self, stream_seq: i64) -> QueueEntry {
-        self.stream_seq = stream_seq;
-        self
     }
 }

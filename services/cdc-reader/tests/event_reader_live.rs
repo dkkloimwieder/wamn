@@ -381,12 +381,6 @@ async fn reader_streams_one_project_env_to_the_evt_stream() {
     )
     .await
     .expect("wamn_app role (the floor + catalog schema's grant target)");
-    sys.batch_execute(
-        "DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'wamn_scenario_author') \
-         THEN CREATE ROLE wamn_scenario_author NOLOGIN; END IF; END $$",
-    )
-    .await
-    .expect("wamn_scenario_author role (the catalog schema's author-grant target)");
     sys.batch_execute(SYSTEM_SCHEMA)
         .await
         .expect("apply deploy/sql/system-schema.sql");

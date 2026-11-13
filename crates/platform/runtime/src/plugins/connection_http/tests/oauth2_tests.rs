@@ -261,9 +261,6 @@ impl Fixture {
         let mut invocation = invocation();
         invocation.entry = InvocationEntry::Route;
         let mut component = manifest.components.pop_first().unwrap();
-        let operation = component.operations.get_mut(&invocation.operation).unwrap();
-        operation.registered_operation = None;
-        operation.permissions.clear();
         component.descriptor.operations.insert(
             invocation.operation.clone(),
             serde_json::from_value(serde_json::json!({
@@ -280,7 +277,6 @@ impl Fixture {
             reads: BTreeSet::new(),
             revision: None,
             idempotency: None,
-            canonicalization: None,
         });
         let bytes = manifest.canonical_bytes();
         let release = Arc::new(

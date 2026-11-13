@@ -670,6 +670,7 @@ impl FileRoutes {
             })
             .ok_or_else(|| refused(FileRefusal::PermissionDenied, "operation"))?;
         let operation = served
+            .descriptor
             .operations
             .get(&invocation.operation)
             .and_then(|operation| operation.registered_operation.as_deref())
@@ -1139,16 +1140,22 @@ mod tests {
             BTreeSet::from([ServingComponent {
                 package_id: "app".into(),
                 runtime_schema: None,
-                descriptor,
-                operations: BTreeMap::from([(
-                    "request".into(),
-                    wamn_catalog::ServingComponentOperation {
-                        registered_operation: None,
-                        permissions: BTreeSet::new(),
-                        committed_result_schema: None,
-                        statements: BTreeMap::new(),
-                    },
-                )]),
+                descriptor: {
+                    let mut descriptor = descriptor;
+                    descriptor.operations = BTreeMap::from([(
+                        "request".into(),
+                        wamn_catalog::AdmittedComponentOperation {
+                            host_transaction: false,
+                            input_ports: Vec::new(),
+                            output_ports: Vec::new(),
+                            parameters: Vec::new(),
+                            registered_operation: None,
+                            committed_result_schema: None,
+                            statements: BTreeMap::new(),
+                        },
+                    )]);
+                    descriptor
+                },
                 statement_instances: BTreeMap::new(),
             }]),
             BTreeSet::new(),

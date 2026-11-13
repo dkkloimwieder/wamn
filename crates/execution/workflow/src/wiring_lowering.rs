@@ -11,11 +11,12 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use serde_json::{Map, Value};
+use wamn_catalog::ERROR_PORT;
 use wamn_catalog::{
     WiringDocument, WiringNode as CatalogWiringNode, WiringTerminal as CatalogTerminal,
 };
 use wamn_router::{
-    ERROR_PORT, Terminal, Wiring, WiringEdge as RouterEdge, WiringError, WiringNode as RouterNode,
+    Terminal, Wiring, WiringEdge as RouterEdge, WiringError, WiringNode as RouterNode,
 };
 use wamn_runtime::plugins::wamn_postgres::ResolvedActiveWiring;
 
@@ -449,8 +450,9 @@ mod tests {
         ComponentDeclaration, ComponentOperationDeclaration, ComponentPackageScope,
         ComponentParameterDeclaration, ComponentPortDeclaration,
     };
+    use wamn_digest::bytes_sha256;
     use wamn_engine::component_admission::{
-        ComponentAdmissionRequest, component_digest, validate_component_admission,
+        ComponentAdmissionRequest, validate_component_admission,
     };
     use wit_component::{ComponentEncoder, StringEncoding, dummy_module, embed_component_metadata};
     use wit_parser::{ManglingAndAbi, Resolve};
@@ -538,7 +540,7 @@ mod tests {
             .expect("empty-import component admits")
             .component;
 
-        assert_eq!(admitted.component_digest, component_digest(&bytes));
+        assert_eq!(admitted.component_digest, bytes_sha256(&bytes));
         assert_eq!(admitted.imports, [NODE_TYPES_IMPORT]);
         let operation = admitted.operation(OPERATION).expect("operation admits");
         assert_eq!(operation.input_ports[0].name, "input");

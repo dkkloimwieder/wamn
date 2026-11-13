@@ -13,9 +13,9 @@ use wamn_catalog::manifest::{
     SortDeclaration, TombstoneColumn, rust_identifier, validate_identifier,
     validate_operation_vocabulary,
 };
-use wamn_catalog::schema::ColumnType;
 use wamn_catalog::{ManifestError as GenerateError, ManifestErrorType as GenerateErrorType};
 use wamn_record_history::HISTORY_COLUMNS;
+use wamn_scalar::SqlValueType;
 use wamn_schema_introspection::ir::ViewColumn;
 
 /// Refuse a client package name that a package manifest cannot carry.
@@ -352,7 +352,7 @@ fn validate_model(
     validate_tombstone_columns(manifest, model_name, model, table)?;
     for (field, values) in &model.enum_fields {
         let column = validate_field(table, model_name, field)?;
-        if column.column_type() != ColumnType::Text || values.is_empty() {
+        if column.column_type() != SqlValueType::Text || values.is_empty() {
             return Err(GenerateError::new(
                 GenerateErrorType::InvalidModel,
                 format!("{model_name}.{field} enum must be nonempty text"),
@@ -368,7 +368,7 @@ fn validate_model(
     }
     for (field, minimum) in &model.min_lengths {
         let column = validate_field(table, model_name, field)?;
-        if column.column_type() != ColumnType::Text || *minimum == 0 {
+        if column.column_type() != SqlValueType::Text || *minimum == 0 {
             return Err(GenerateError::new(
                 GenerateErrorType::InvalidModel,
                 format!("{model_name}.{field} minimum length must be at least 1 on a text column"),
@@ -518,8 +518,10 @@ fn validate_operation(
         let column = validate_field(table, model_name, revision_field)?;
         // An application integer is int32 by default, and int64 is opt-in, so a
         // revision column carries either width.
-        if !matches!(column.column_type(), ColumnType::Int32 | ColumnType::Int64)
-            || column.nullable()
+        if !matches!(
+            column.column_type(),
+            SqlValueType::Int32 | SqlValueType::Int64
+        ) || column.nullable()
         {
             return Err(GenerateError::new(
                 GenerateErrorType::InvalidOperation,
@@ -642,7 +644,7 @@ fn require_column(
     context: &str,
     table: &Table,
     name: &str,
-    ty: ColumnType,
+    ty: SqlValueType,
 ) -> Result<(), GenerateError> {
     let valid =
         column(table, name).is_some_and(|column| column.column_type() == ty && !column.nullable());
@@ -677,9 +679,9 @@ fn validate_audit_log_columns(
     for selection in selected {
         let ty = match selection {
             RecordHistoryColumn::CreatedAt | RecordHistoryColumn::UpdatedAt => {
-                ColumnType::Timestamptz
+                SqlValueType::Timestamptz
             }
-            RecordHistoryColumn::CreatedBy | RecordHistoryColumn::UpdatedBy => ColumnType::Uuid,
+            RecordHistoryColumn::CreatedBy | RecordHistoryColumn::UpdatedBy => SqlValueType::Uuid,
         };
         require_column(
             GenerateErrorType::InvalidModel,
@@ -736,8 +738,8 @@ fn validate_tombstone_columns(
     if model.delete_mode == Some(DeleteMode::Tombstone) {
         for reserved in TombstoneColumn::ALL {
             let ty = match reserved {
-                TombstoneColumn::DeletedAt => ColumnType::Timestamptz,
-                TombstoneColumn::DeletedBy => ColumnType::Uuid,
+                TombstoneColumn::DeletedAt => SqlValueType::Timestamptz,
+                TombstoneColumn::DeletedBy => SqlValueType::Uuid,
             };
             let name = reserved.as_str();
             // A marker is NULL on a live row, so it is the one reserved pair
@@ -790,17 +792,17 @@ fn validate_query(
         let takes = match filter.match_mode {
             FilterMatch::Exact => None,
             FilterMatch::Contains | FilterMatch::Prefix => Some((
-                column.column_type() == ColumnType::Text
+                column.column_type() == SqlValueType::Text
                     && !model.enum_fields.contains_key(&filter.field),
                 "only a text field with no declared values takes",
             )),
             FilterMatch::Range => Some((
                 matches!(
                     column.column_type(),
-                    ColumnType::Int32
-                        | ColumnType::Float64
-                        | ColumnType::Numeric
-                        | ColumnType::Timestamptz
+                    SqlValueType::Int32
+                        | SqlValueType::Float64
+                        | SqlValueType::Numeric
+                        | SqlValueType::Timestamptz
                 ),
                 "only an int32, float64, numeric or timestamptz field takes",
             )),
@@ -809,7 +811,7 @@ fn validate_query(
         // A band is a required range over time, and only a band has a default.
         if (filter.required
             && (filter.match_mode != FilterMatch::Range
-                || column.column_type() != ColumnType::Timestamptz))
+                || column.column_type() != SqlValueType::Timestamptz))
             || (filter.default.is_some() && !filter.required)
             || filter.default.is_some_and(|default| default.last_days == 0)
         {
@@ -852,7 +854,7 @@ fn validate_query(
             let text = table
                 .columns()
                 .iter()
-                .any(|column| column.name() == field && column.column_type() == ColumnType::Text);
+                .any(|column| column.name() == field && column.column_type() == SqlValueType::Text);
             if !text || !fields.insert(field.as_str()) {
                 return Err(GenerateError::new(
                     GenerateErrorType::InvalidOperation,
@@ -909,7 +911,9 @@ fn validate_query(
     }
     let created_at = validate_field(table, model_name, "created_at")?;
     let id = validate_field(table, model_name, "id")?;
-    if created_at.column_type() != ColumnType::Timestamptz || created_at.nullable() || id.nullable()
+    if created_at.column_type() != SqlValueType::Timestamptz
+        || created_at.nullable()
+        || id.nullable()
     {
         return Err(GenerateError::new(
             GenerateErrorType::InvalidOperation,
@@ -1410,7 +1414,7 @@ fn validate_sort_field(
     if column.nullable()
         || matches!(
             column.column_type(),
-            ColumnType::Float64 | ColumnType::Bytes | ColumnType::Json
+            SqlValueType::Float64 | SqlValueType::Bytes | SqlValueType::Json
         )
     {
         Err(GenerateError::new(
@@ -1716,7 +1720,7 @@ mod tests {
     use crate::data_access::{derive_data_access_overlay, validate_data_access_contribution};
     use serde_json::json;
     use wamn_catalog::manifest::PackageManifest;
-    use wamn_catalog::schema::ColumnType;
+    use wamn_scalar::SqlValueType;
     use wamn_schema_introspection::ir::{
         CatalogIr, Column, Table, View, ViewBaseTable, ViewColumn,
     };
@@ -1726,7 +1730,7 @@ mod tests {
         let catalog = CatalogIr::new(vec![Table::new(
             "inventory",
             "private_item",
-            vec![Column::new("id", ColumnType::Uuid, false, None, None)],
+            vec![Column::new("id", SqlValueType::Uuid, false, None, None)],
             vec![],
             vec![],
         )])
@@ -1734,9 +1738,9 @@ mod tests {
             "inventory",
             "item_report",
             vec![
-                ViewColumn::new("id", ColumnType::Uuid),
-                ViewColumn::new("label", ColumnType::Text),
-                ViewColumn::new("private_note", ColumnType::Text),
+                ViewColumn::new("id", SqlValueType::Uuid),
+                ViewColumn::new("label", SqlValueType::Text),
+                ViewColumn::new("private_note", SqlValueType::Text),
             ],
             vec![ViewBaseTable::new("inventory", "private_item")],
         )]);

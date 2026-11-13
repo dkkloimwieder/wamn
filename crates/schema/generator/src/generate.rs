@@ -1,3 +1,4 @@
+use wamn_scalar::SqlValueType;
 mod authored_feed;
 mod component;
 mod contracts;
@@ -18,8 +19,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use serde::Serialize;
 use serde_json::{Value, json};
-use wamn_catalog::schema::ColumnType;
-use wamn_execution_contract::canonical_json_bytes;
+use wamn_digest::canonical_json_bytes;
 use wamn_record_history::history_table_name;
 use wamn_schema_introspection::ir::{
     CatalogIr, Column, Constraint, ConstraintType, Exclusion, ForeignKeyAction, Table,
@@ -764,7 +764,7 @@ struct RustMember {
     #[serde(rename = "type")]
     rust_type: String,
     #[serde(skip)]
-    statement_type: ColumnType,
+    statement_type: SqlValueType,
     #[serde(skip)]
     nullable: bool,
 }
@@ -777,7 +777,7 @@ struct AccessorBind {
     native_rust: String,
     wamn_rust: String,
     #[serde(skip)]
-    statement_type: ColumnType,
+    statement_type: SqlValueType,
 }
 
 #[derive(Debug, Serialize)]
@@ -831,7 +831,7 @@ struct StatementContract {
 struct StatementValueContract {
     name: String,
     #[serde(rename = "type")]
-    ty: ColumnType,
+    ty: SqlValueType,
     nullable: bool,
 }
 
@@ -883,7 +883,8 @@ fn complete_enum_fields(catalog: &CatalogIr, manifest: &mut PackageManifest) {
                 continue;
             };
             if let Some((field, values)) = check_value_set(expression).filter(|(field, _)| {
-                column(table, field).is_some_and(|column| column.column_type() == ColumnType::Text)
+                column(table, field)
+                    .is_some_and(|column| column.column_type() == SqlValueType::Text)
             }) {
                 model.enum_fields.entry(field).or_insert(values);
             }
@@ -915,7 +916,7 @@ fn model_enum_fields(
         }
         let (field, set) = check_value_set(expression)
             .filter(|(field, _)| {
-                column(table, field).is_some_and(|column| column.column_type() == ColumnType::Text)
+                column(table, field).is_some_and(|column| column.column_type() == SqlValueType::Text)
             })
             .ok_or_else(|| {
                 GenerateError::for_object(
@@ -1096,7 +1097,7 @@ mod tests {
     use super::{Column, Constraint, Table, check_value_set, model_enum_fields};
     use wamn_catalog::ManifestErrorType as GenerateErrorType;
     use wamn_catalog::manifest::ModelDeclaration;
-    use wamn_catalog::schema::ColumnType;
+    use wamn_scalar::SqlValueType;
 
     #[test]
     fn only_the_stored_in_form_is_a_value_set() {
@@ -1126,7 +1127,7 @@ mod tests {
         let table = Table::new(
             "application",
             "widget",
-            vec![Column::new("status", ColumnType::Text, false, None, None)],
+            vec![Column::new("status", SqlValueType::Text, false, None, None)],
             vec![
                 Constraint::check(
                     "widget_status_check",

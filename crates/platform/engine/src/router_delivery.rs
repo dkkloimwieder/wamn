@@ -14,8 +14,8 @@ use std::sync::Arc;
 use anyhow::Context as _;
 use tracing::Instrument as _;
 use wamn_catalog::{
-    AdmittedComponent, AttachmentAuthPolicy, AttachmentTarget, HostAttachment,
-    ServingComponentOperation, ServingManifest, parse_attachment_auth_policy,
+    AdmittedComponent, AdmittedComponentOperation, AttachmentAuthPolicy, AttachmentTarget,
+    HostAttachment, ServingManifest, parse_attachment_auth_policy,
 };
 use wamn_event_wire::Causation;
 use wamn_identity_protocol::PlatformComponent;
@@ -446,7 +446,7 @@ impl std::error::Error for OperationRefusal {}
 /// must hold the entry's own registered operation.
 pub fn authorize_released_operation(
     caller: Option<&AuthenticatedCaller>,
-    released: &ServingComponentOperation,
+    released: &AdmittedComponentOperation,
 ) -> Result<(), OperationRefusal> {
     authorize_registered_operation(caller, released.registered_operation.as_deref())
 }
@@ -500,11 +500,11 @@ mod tests {
     use super::*;
     use crate::flow_http_routing::CredentialType;
 
-    const MANIFEST: &[u8] = br#"{"attachments":{"orders-http":{"auth-policy":{"modes":["none"]},"component":"http-request","definition":{"id":"orders-http","run-deadline-ms":30000,"type":"http"},"definition-hash":"sha256:5555555555555555555555555555555555555555555555555555555555555555","operation":"wamn:node/handler@0.1.0","package-id":"manifest_mint","type":"http"}},"components":[{"descriptor":{"component":"http-request","component-digest":"sha256:1111111111111111111111111111111111111111111111111111111111111111","connections":[],"effects":[],"imports":[],"imports-fingerprint":"","interface-version":"0.1","operations":{}},"operations":{"wamn:node/handler@0.1.0":{}},"package-id":"manifest_mint"},{"descriptor":{"component":"transform","component-digest":"sha256:2222222222222222222222222222222222222222222222222222222222222222","connections":[],"effects":[],"imports":[],"imports-fingerprint":"","interface-version":"0.1","operations":{}},"operations":{"wamn:node/handler@0.1.0":{}},"package-id":"manifest_mint"}],"format-version":11,"release":{"packages":[{"package-id":"manifest_mint","package-version":"1.0.0"}]},"routes":[{"component":"http-request","operation":"wamn:node/handler@0.1.0","package-id":"manifest_mint","type":"command"}]}"#;
+    const MANIFEST: &[u8] = br#"{"attachments":{"orders-http":{"auth-policy":{"modes":["none"]},"component":"http-request","definition":{"id":"orders-http","run-deadline-ms":30000,"type":"http"},"definition-hash":"sha256:5555555555555555555555555555555555555555555555555555555555555555","operation":"wamn:node/handler@0.1.0","package-id":"manifest_mint","type":"http"}},"components":[{"descriptor":{"component":"http-request","component-digest":"sha256:1111111111111111111111111111111111111111111111111111111111111111","connections":[],"effects":[],"imports":[],"imports-fingerprint":"","interface-version":"0.1","operations":{"wamn:node/handler@0.1.0":{"input-ports":[],"output-ports":[],"parameters":[]}}},"package-id":"manifest_mint"},{"descriptor":{"component":"transform","component-digest":"sha256:2222222222222222222222222222222222222222222222222222222222222222","connections":[],"effects":[],"imports":[],"imports-fingerprint":"","interface-version":"0.1","operations":{"wamn:node/handler@0.1.0":{"input-ports":[],"output-ports":[],"parameters":[]}}},"package-id":"manifest_mint"}],"format-version":11,"release":{"packages":[{"package-id":"manifest_mint","package-version":"1.0.0"}]},"routes":[{"component":"http-request","operation":"wamn:node/handler@0.1.0","package-id":"manifest_mint","type":"command"}]}"#;
 
     fn manifest() -> ServingManifest {
         ServingManifest::from_canonical_bytes(MANIFEST)
-            .expect("format-7 fixture is canonical")
+            .expect("fixture is canonical")
             .0
     }
 

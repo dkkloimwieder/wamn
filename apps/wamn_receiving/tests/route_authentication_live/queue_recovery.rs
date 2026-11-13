@@ -1,12 +1,5 @@
-//! A durable queue request element whose host dies during application SQL completes
-//! after the host restarts (wamn-7k2fh; the cluster case that b8199fb4c
-//! deleted).
-//!
-//! The queue services run the real Receiving component in process. The first
-//! one is the host that dies: its serving task is aborted while its
-//! record_receipt statement waits on a purchase order row that this test
-//! holds, and its database backend is terminated, as process death closes
-//! its connections. The second is the restarted host.
+//! An interrupted application command completes once after queue recovery.
+//! The CLI authors and enables the workflow. Its control route starts and replays it.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -20,6 +13,7 @@ use wamn_runtime::plugins::wamn_jetstream::{WamnJetstream, WamnJetstreamConfig};
 use wamn_test_infrastructure::scratch::ScratchRoot;
 use wamn_workflow::{QueueService, QueueServiceConfig};
 
+const RECORD_RECEIPT: &str = "wamn-receiving:receiving/record-receipt";
 const ORDER: &str = "00000000-0000-0000-0000-000000000304";
 const LINE: &str = "00000000-0000-0000-0000-000000000504";
 const IDEMPOTENCY_KEY: &str = "queue-recovery";
@@ -27,11 +21,11 @@ const IDEMPOTENCY_KEY: &str = "queue-recovery";
 const LEASE_TTL_MS: u64 = 2_000;
 
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "requires: env:WAMN_APPLICATION_COMPONENTS, env:WAMN_FLOW_HTTP_COMPONENT, env:WAMN_NATIVE_C_NATS_BIN"]
+#[ignore = "requires: env:WAMN_APPLICATION_COMPONENTS, env:WAMN_FLOW_HTTP_COMPONENT, env:WAMN_NATIVE_C_NATS_BIN, env:WAMN_RECEIVING_DEV_BIN"]
 async fn a_run_killed_during_application_sql_completes_after_the_host_restarts()
 -> anyhow::Result<()> {
     wamn_test_postgres::require_ignored_prerequisites(
-        "requires: env:WAMN_APPLICATION_COMPONENTS, env:WAMN_FLOW_HTTP_COMPONENT, env:WAMN_NATIVE_C_NATS_BIN",
+        "requires: env:WAMN_APPLICATION_COMPONENTS, env:WAMN_FLOW_HTTP_COMPONENT, env:WAMN_NATIVE_C_NATS_BIN, env:WAMN_RECEIVING_DEV_BIN",
     );
     let _lock = wamn_test_postgres::lock();
     let system = wamn_test_postgres::database();
@@ -43,7 +37,7 @@ async fn a_run_killed_during_application_sql_completes_after_the_host_restarts()
     let wiring = wamn_catalog::WiringDocument::parse(&json!({
         "format-version":"0.1","wiring-id":"receiving_record_receipt","version":1,"entry":"operation",
         "nodes":{"operation":{"component":"receiving","interface-version":"0.1.0",
-            "operation":*super::BASE_RECORD_RECEIPT}}
+            "operation":wamn_test_infrastructure::operations::sealed(RECORD_RECEIPT)}}
     }))?;
     // The release publishes the record_receipt route, whose intent the queued
     // call logs in its host-owned request element transaction.
@@ -52,7 +46,7 @@ async fn a_run_killed_during_application_sql_completes_after_the_host_restarts()
     attachments.retain(|_, attachment| {
         matches!(&attachment.target, wamn_catalog::AttachmentTarget::Route { operation, .. }
             if wamn_catalog::sealed_operation_reference(operation)
-                == super::BASE_RECORD_RECEIPT_REFERENCE)
+                == RECORD_RECEIPT)
     });
     ensure!(
         attachments.len() == 1,
@@ -83,13 +77,13 @@ async fn a_run_killed_during_application_sql_completes_after_the_host_restarts()
         }],
     })
     .await?;
-    let queue = application.queue.clone();
     let result = Box::pin(tokio::task::LocalSet::new().run_until(recover(
         &application,
-        &queue,
+        &application.queue,
         project.url(),
         system.url(),
         &wiring,
+        scratch.path(),
     )))
     .await;
     application.shutdown().await?;
@@ -102,6 +96,7 @@ async fn recover(
     project_url: &str,
     system_url: &str,
     wiring: &wamn_catalog::WiringDocument,
+    root: &std::path::Path,
 ) -> anyhow::Result<()> {
     let identity = super::identity();
     let env_key = identity.env_key();
@@ -121,7 +116,7 @@ async fn recover(
         client
             .execute(
                 "INSERT INTO wamn_run.environment_policies \
-                   (env_key, expected_environment, durability_class) VALUES ($1, $2, 'standard')",
+                   (env_key, expected_environment) VALUES ($1, $2)",
                 &[&env_key, &identity.environment.as_str()],
             )
             .await
@@ -136,7 +131,18 @@ async fn recover(
             )
             .await
             .context("seed the queued receipt request element and location")?;
-        super::environment::seed_materializer_order(&client, ORDER, LINE, "PO-304").await?;
+        client.batch_execute(
+            "INSERT INTO receiving.supplier (id, name) VALUES \
+             ('00000000-0000-0000-0000-000000000404', 'SUPPLIER-404'); \
+             INSERT INTO receiving.purchase_order (id, purchase_order_number, supplier_id, status, row_version) \
+             VALUES ('00000000-0000-0000-0000-000000000304', 'PO-304', \
+                     '00000000-0000-0000-0000-000000000404', 'open', 1); \
+             INSERT INTO receiving.purchase_order_line \
+                 (id, purchase_order_id, line_number, item_id, ordered_quantity, received_quantity) \
+             VALUES ('00000000-0000-0000-0000-000000000504', \
+                     '00000000-0000-0000-0000-000000000304', 1, \
+                     '00000000-0000-0000-0000-000000000101', 9.0000, 0.0000);",
+        ).await?;
         // The local application's operator service holds the admin role.
         let principal: String = client
             .query_one(
@@ -147,19 +153,32 @@ async fn recover(
             .await
             .context("read the local operator service")?
             .get(0);
-        wamn_gate_harness::workflow::author_and_enable(
-            system_url, project_url,
-            &wamn_control_registry::Triple::new(&identity.org, &identity.project, identity.environment.as_str()),
-            &wamn_environment_control::author_workflow::AuthorWorkflowRequest {
-                org: &identity.org, project: &identity.project, environment: &identity.environment,
-                application: "receiving",
-                declared: &queue.release.scope().applications,
-                document: wiring, trigger: wamn_environment_control::author_workflow::WorkflowTrigger::Manual,
-                execution: wamn_environment_control::author_workflow::WorkflowExecution::Invoker,
-                created_by: &principal,
-                manifest_digest: queue.release.release().manifest_digest.as_str(),
-            }, None,
-        ).await?;
+        let local = root.join("local-artifacts");
+        std::fs::create_dir_all(&local)?;
+        std::fs::write(local.join(wamn_runtime::local_application::LOCAL_RELEASE_FILE),
+            serde_json::to_vec(&json!({
+                "manifest-digest":queue.release.release().manifest_digest.as_str(),
+                "applications":&queue.release.scope().applications,
+            }))?)?;
+        let document = root.join("workflow.json");
+        std::fs::write(&document, serde_json::to_vec(wiring)?)?;
+        let binary = std::env::var_os("WAMN_RECEIVING_DEV_BIN").context("workflow CLI binary")?;
+        let coordinate = format!("{}/{}/{}", identity.org, identity.project, identity.environment);
+        for verb in ["author", "enable"] {
+            let mut command = tokio::process::Command::new(&binary);
+            command.env_clear().env("WAMN_CONTROL_DATABASE_URL", system_url)
+                .args(["--log-level", "error", "workflow", verb, "--admin-database-url", project_url,
+                    "--environment", &identity.environment, "--coordinate", &coordinate,
+                    "--application", "receiving", "--principal-id", &principal, "--dev-root"])
+                .arg(root).kill_on_drop(true);
+            if verb == "author" {
+                command.arg("--document").arg(&document).args(["--execution-type", "invoker"]);
+            } else {
+                command.args(["--workflow-id", &wiring.wiring_id, "--version", &wiring.version.to_string()]);
+            }
+            let output = command.output().await?;
+            ensure!(output.status.success(), "workflow {verb} failed: {}", String::from_utf8_lossy(&output.stderr));
+        }
         lock.batch_execute("BEGIN").await?;
         lock.query_one(
             "SELECT id FROM receiving.purchase_order WHERE id = $1::text::uuid FOR UPDATE",
@@ -173,7 +192,18 @@ async fn recover(
                 "line":[{"purchase_order_line_id":LINE,"quantity":"9.0000",
                     "location_id":"00000000-0000-0000-0000-000000000201"}]}}]);
 
-        let run = application.start_workflow("receiving", &wiring.wiring_id, &input, IDEMPOTENCY_KEY).await?;
+        let start = async || -> anyhow::Result<String> {
+            let response: Value = reqwest::Client::new()
+                .post(format!("{}/wamn_control/workflow/start", application.endpoint))
+                .header("Host", &application.route_host).bearer_auth(&application.bearer)
+                .json(&json!([{"request_id": IDEMPOTENCY_KEY, "value": {
+                    "application":"receiving", "workflow_id":wiring.wiring_id,
+                    "input_json":input, "idempotency_key":IDEMPOTENCY_KEY,
+                }}])).send().await?.error_for_status()?.json().await?;
+            response[0]["value"]["run_id"].as_str().map(str::to_owned)
+                .with_context(|| format!("workflow.start refused: {response}"))
+        };
+        let run = start().await?;
 
         let (stop_first, first) = serve(queue, "queue-recovery-first").await?;
         let (generation, backend) = blocked_attempt(&client, &run, blocker, 0).await?;
@@ -253,7 +283,7 @@ async fn recover(
             "the completed run leaves the durable queue"
         );
         ensure!(
-            application.start_workflow("receiving", &wiring.wiring_id, &input, IDEMPOTENCY_KEY).await? == run,
+            start().await? == run,
             "admission replay returns the completed run"
         );
         println!(

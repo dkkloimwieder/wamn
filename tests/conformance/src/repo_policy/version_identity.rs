@@ -6,12 +6,10 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use serde_json::Value;
-use wamn_run_state::invocation_context::INVOCATION_CONTEXT_VERSION;
 
 use super::Problems;
 
 const MVP_CARGO_VERSION: &str = "0.1.0";
-const MVP_SCHEMA_VERSION: &str = "0.1";
 
 pub(super) fn check(root: &Path, problems: &mut Problems) {
     for manifest in [root.join("Cargo.toml"), root.join("apps/Cargo.toml")] {
@@ -21,11 +19,6 @@ pub(super) fn check(root: &Path, problems: &mut Problems) {
         }
     }
     wamn_wit_packages_have_one_version(root, problems);
-    problems.require(INVOCATION_CONTEXT_VERSION == MVP_SCHEMA_VERSION, || {
-        format!(
-            "invocation-context owner is {INVOCATION_CONTEXT_VERSION}, expected {MVP_SCHEMA_VERSION}"
-        )
-    });
 }
 
 fn cargo_metadata(workspace_manifest: &Path) -> Result<Value, String> {

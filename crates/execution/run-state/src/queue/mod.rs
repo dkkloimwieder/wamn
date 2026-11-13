@@ -45,9 +45,6 @@
 //! real prepared-statement path (SR12b).
 
 mod claim;
-// Evt-run identity (D19 §5 / E4): dep-free, always-on — the materializer guest
-// links it through the same `default-features = false` core.
-mod evt;
 mod janitor;
 mod lease;
 mod model;
@@ -59,7 +56,6 @@ pub use claim::{
     ClaimPlan, ClaimState, Claimed, ProductionClaimClass, claim_state, classify_production_claim,
     is_claimable, plan_claim,
 };
-pub use evt::mint_evt_run_id;
 pub use janitor::{JanitorVerdict, janitor_verdict, orphans};
 pub use lease::{lease_deadline, lease_live, should_renew};
 pub use model::{MAX_RETRY_BACKOFF_MS, Millis, QueueEntry};
@@ -70,8 +66,8 @@ pub use sql::{
     terminalize_released_production_sql,
 };
 pub use workflow::{
-    insert_automation_run_sql, insert_event_run_sql, insert_manual_run_sql, insert_run_queue_sql,
+    insert_event_run_sql, insert_manual_run_sql, insert_run_queue_sql,
     insert_workflow_schedule_run_sql, list_workflow_runs_sql, park_queued_run_sql,
-    release_parked_run_sql, select_automation_run_sql, select_event_run_sql, select_manual_run_sql,
+    release_parked_run_sql, select_event_run_sql, select_manual_run_sql,
     select_run_queue_state_sql, select_workflow_schedule_run_sql,
 };

@@ -35,7 +35,7 @@
 //! because the environment owns the container, which is the ordinary operation
 //! of the ownership split rather than a deviation from the contract.
 
-use wamn_execution_contract::EffectOutcome;
+use crate::EffectOutcome;
 use wash_runtime::engine::ctx::{ActiveCtx, SharedCtx};
 use wash_runtime::wasmtime::component::{Accessor, Resource};
 

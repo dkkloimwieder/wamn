@@ -67,7 +67,7 @@ fn system_schema_applies_and_enforces_invariants_on_postgres() {
     // would clobber it back to template values and fail here).
     writeln!(
         script,
-        "PREPARE stamp (text,text,text,int,int,text,text,text,text,text,text,text,text) AS {stamp};",
+        "PREPARE stamp (text,text,text,int,int,text,text,text,text,text,text,text) AS {stamp};",
         stamp = wamn_control_registry::sql::stamp_env_policy_sql(),
     )
     .expect("writing to a String cannot fail");
@@ -290,7 +290,7 @@ fn stamp_statements(org: &str, template: &Template) -> String {
         writeln!(
             s,
             "EXECUTE stamp('{org}','{name}','{recovery}',{rank},{inst},\
-             '{storage}','{cpu}','{memory}','{image}','{backup}','{wal}','{hib}','{durability}');",
+             '{storage}','{cpu}','{memory}','{image}','{backup}','{wal}','{hib}');",
             name = p.name,
             rank = p.promotion_rank,
             inst = p.instances,
@@ -301,7 +301,6 @@ fn stamp_statements(org: &str, template: &Template) -> String {
             backup = p.backup_cadence,
             wal = p.wal_retention,
             hib = p.hibernation,
-            durability = p.durability_class.as_sql(),
         )
         .expect("writing to a String cannot fail");
     }
@@ -456,16 +455,6 @@ INSERT INTO registry.env_policies
     (org, name, recovery_domain, promotion_rank, instances, storage, cpu, memory, image)
   VALUES ('acme','dev','"own"'::jsonb,10,1,'2Gi','200m','256Mi','ghcr.io/cloudnative-pg/postgresql:18'),
          ('acme','prod','"own"'::jsonb,30,3,'2Gi','200m','256Mi','ghcr.io/cloudnative-pg/postgresql:18');
-DO $$ BEGIN
-  ASSERT (SELECT durability_class FROM registry.env_policies
-           WHERE org='acme' AND name='dev')='standard',
-    'an omitted durability class takes the standard floor';
-  BEGIN
-    UPDATE registry.env_policies SET durability_class='premium'
-      WHERE org='acme' AND name='dev';
-    ASSERT false, 'an unknown durability class must be rejected';
-  EXCEPTION WHEN check_violation THEN NULL; END;
-END $$;
 INSERT INTO registry.projects (org, id) VALUES ('acme','billing'),('try','demo');
 INSERT INTO registry.project_envs (org, project, env, secret_name, instance_suffix, policy_name)
   VALUES ('acme','billing','prod','wamn-db-acme-prod','k3m9x2p7','prod'),

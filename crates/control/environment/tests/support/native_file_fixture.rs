@@ -42,7 +42,7 @@ pub async fn build_fixture(
         serde_json::to_vec(&json!({"fixture-run-http":{
             "type":"http", "package-id":"file_fixture", "component":"fixture",
             "operation":"file-fixture:fixture/run",
-            "definition-hash":wamn_execution_contract::canonical_json_sha256(&definition),
+            "definition-hash":wamn_digest::canonical_json_sha256(&definition),
             "definition":definition, "auth-policy":{"modes":["session"]},
             "registered-operation":"file-fixture:fixture/run"
         }}))?,
@@ -125,7 +125,7 @@ pub async fn build_fixture(
         build_record.outputs.components.push(BuildComponent {
             name: name.into(),
             path,
-            sha256: wamn_engine::component_admission::component_digest(&bytes),
+            sha256: wamn_digest::bytes_sha256(&bytes),
         });
     }
     std::fs::write(output.join(BUILD_RECORD_FILE), build_record.to_bytes())?;

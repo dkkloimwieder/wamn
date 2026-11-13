@@ -2,9 +2,9 @@
 
 use std::net::{IpAddr, SocketAddr};
 
+use crate::{CanonicalHttpTarget, normalize_portable_http_target};
 use hyper::Uri;
 use url::{Host, Url};
-use wamn_execution_contract::node_contract::{CanonicalHttpTarget, normalize_portable_http_target};
 use wash_runtime::host::allowed_hosts::AllowedHost;
 
 /// Supported outbound HTTP schemes.

@@ -259,7 +259,7 @@ impl Integration {
         bytes: Vec<u8>,
         mut binding: IntegrationBinding,
     ) -> anyhow::Result<PreparedIntegration> {
-        let digest = crate::component_admission::component_digest(&bytes);
+        let digest = wamn_digest::bytes_sha256(&bytes);
         let policy = integration_address_policy(&binding.authority);
         let code = tokio::task::spawn_blocking(move || address_engine(policy))
             .await
@@ -719,7 +719,7 @@ mod declaration_tests {
             .module(&module)?
             .validate(true)
             .encode()?;
-        let digest = crate::component_admission::component_digest(&bytes);
+        let digest = wamn_digest::bytes_sha256(&bytes);
         let first = Integration::load(
             &bytes,
             IntegrationBinding::new("example.com:443", Some("first".into()))?,
@@ -742,7 +742,7 @@ mod declaration_tests {
         let mut changed = bytes;
         // A component custom section changes the digest without changing its WIT.
         changed.extend([0, 2, 1, b'v']);
-        let changed_digest = crate::component_admission::component_digest(&changed);
+        let changed_digest = wamn_digest::bytes_sha256(&changed);
         let third = Integration::load(
             &changed,
             IntegrationBinding::new("example.com:443", Some("third".into()))?,

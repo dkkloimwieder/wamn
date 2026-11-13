@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::sync::Arc;
+use wamn_scalar::SqlValueType;
 
 use sha2::Digest as _;
 use tokio::sync::oneshot;
@@ -21,8 +22,8 @@ use crate::plugins::wamn_postgres::claims::tests::{
     LIVE_PRINCIPAL, ensure_live_user_rows, live_guest_url,
 };
 use crate::plugins::wamn_postgres::{
-    ClassCredentials, ReleaseIdentity, SessionClaims, StatementField, StatementValueType,
-    VerifiedStatement, WAMN_POSTGRES_ID, WamnPostgres, WamnPostgresConfig,
+    ClassCredentials, ReleaseIdentity, SessionClaims, StatementField, VerifiedStatement,
+    WAMN_POSTGRES_ID, WamnPostgres, WamnPostgresConfig,
 };
 use wamn_engine::engine::build_engine;
 
@@ -316,7 +317,7 @@ async fn the_host_owns_the_operation_transaction_and_the_guest_works_in_it() {
                     exact_sql: sql.into(),
                     binds: Box::new([]),
                     columns: Box::new([StatementField {
-                        value_type: StatementValueType::Int32,
+                        value_type: SqlValueType::Int32,
                         nullable: false,
                     }]),
                     transactional: true,

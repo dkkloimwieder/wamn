@@ -1,6 +1,5 @@
 //! Ordered, immutable migration prefix planning shared by every SQL scope.
 
-use crate::connections::prefixed_sha256;
 use crate::package_migrations::{PackageMigrationError, PackageMigrationErrorType};
 use crate::{
     MigrationOutcome, MigrationSource, PACKAGE_MIGRATION_DRIFT_REFUSAL,
@@ -9,6 +8,7 @@ use crate::{
 };
 use std::collections::BTreeSet;
 use wamn_catalog::PackageCoordinate;
+use wamn_digest::bytes_sha256;
 
 /// Pending files and exact SQL, in matching order.
 #[derive(Debug)]
@@ -126,7 +126,7 @@ fn normalized_migrations<'a>(
             Ok(NormalizedMigration {
                 ordinal,
                 source,
-                sha256: prefixed_sha256(&source.bytes),
+                sha256: bytes_sha256(&source.bytes),
             })
         })
         .collect::<Result<Vec<_>, PackageMigrationError>>()?;

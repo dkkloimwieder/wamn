@@ -1,5 +1,8 @@
 //! Application deployment uses product commands; Kubernetes and SQL are observers.
 
+#[path = "../../../../../services/ctl/src/route_request.rs"]
+mod route_request;
+
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
@@ -144,9 +147,8 @@ impl Journey<'_> {
         let request = if route.ends_with("/create") {
             self.client.post(endpoint).json(body)
         } else {
-            let query = wamn_execution_contract::encode_read_query(
-                body[0].as_object().context("read request")?,
-            );
+            let query =
+                route_request::encode_read_query(body[0].as_object().context("read request")?);
             self.client.get(format!("{endpoint}?{query}"))
         };
         let response = request.bearer_auth(self.token).send().await?;
@@ -1076,7 +1078,7 @@ async fn sources(
                 .context("fixture route path")?;
             attachment["definition"]["route"]["path"] = format!("/{app}{path}").into();
             attachment["definition-hash"] =
-                wamn_execution_contract::canonical_json_sha256(&attachment["definition"]).into();
+                wamn_digest::canonical_json_sha256(&attachment["definition"]).into();
         }
         std::fs::write(file, serde_json::to_vec_pretty(&attachments)?)?;
         let query = root.join("query/widget_list.sql");

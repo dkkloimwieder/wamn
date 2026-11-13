@@ -15,10 +15,13 @@
 //
 // These cases return structured results to the application test caller.
 
+#[path = "../../../services/ctl/src/read_query.rs"]
+mod read_query;
+
 use anyhow::Context as _;
 use serde_json::{Value, json};
 
-use wamn_gate_harness::journey::RuntimePhase;
+use crate::business_fixture::RuntimePhase;
 
 const REQUEST_ID_A: &str = "contention-a";
 const REQUEST_ID_B: &str = "contention-b";
@@ -64,7 +67,7 @@ impl Route {
         let request_element = request_element
             .as_object()
             .context("a read sends one object request element")?;
-        let query = wamn_execution_contract::encode_read_query(request_element);
+        let query = read_query::encode_read_query(request_element);
         let response = client
             .get(format!("{}{path}?{query}", self.endpoint))
             .header("Host", &self.host)

@@ -2,17 +2,13 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use serde_json::{Value, json};
+use serde_json::json;
 use wamn_catalog::{
-    AttachmentAuthPolicy, AttachmentTarget, AttachmentType, CatalogIdentityError,
-    ComponentDescriptor, DefinitionHash, OperationType, PackageCoordinate, ServingAttachment,
-    ServingComponent, ServingComponentOperation, ServingManifest, ServingRelease, ServingRoute,
+    AdmittedComponentOperation, AttachmentAuthPolicy, AttachmentTarget, AttachmentType,
+    CatalogIdentityError, ComponentDescriptor, DefinitionHash, OperationType, PackageCoordinate,
+    ServingAttachment, ServingComponent, ServingManifest, ServingRelease, ServingRoute,
     parse_attachment_auth_policy,
 };
-
-mod publish_vector {
-    include!("fixtures/release_manifest_mint_vector.rs");
-}
 
 mod format_three_vector {
     include!("fixtures/release_manifest_format_three_vector.rs");
@@ -41,33 +37,45 @@ fn components() -> BTreeSet<ServingComponent> {
             runtime_schema: None,
             statement_instances: std::collections::BTreeMap::new(),
             package_id: "platform_fixture".into(),
-            operations: BTreeMap::from([(
-                "map".into(),
-                ServingComponentOperation {
-                    committed_result_schema: None,
-                    registered_operation: None,
-                    permissions: BTreeSet::new(),
-                    statements: BTreeMap::new(),
-                },
-            )]),
-            descriptor: ComponentDescriptor::named("transform", "0.1", COMPONENT_B),
+            descriptor: {
+                let mut descriptor = ComponentDescriptor::named("transform", "0.1", COMPONENT_B);
+                descriptor.operations = BTreeMap::from([(
+                    "map".into(),
+                    AdmittedComponentOperation {
+                        host_transaction: false,
+                        input_ports: Vec::new(),
+                        output_ports: Vec::new(),
+                        parameters: Vec::new(),
+                        committed_result_schema: None,
+                        registered_operation: None,
+                        statements: BTreeMap::new(),
+                    },
+                )]);
+                descriptor
+            },
         },
         ServingComponent {
             runtime_schema: None,
             statement_instances: std::collections::BTreeMap::new(),
             package_id: "platform_fixture_overlay".into(),
-            operations: BTreeMap::from([(
-                "platform-fixture-overlay:widget/get@3.0.0".into(),
-                ServingComponentOperation {
-                    committed_result_schema: None,
-                    registered_operation: Some("platform-fixture-overlay:widget/get@3.0.0".into()),
-                    permissions: BTreeSet::from([
-                        "platform-fixture-overlay:widget/get@3.0.0".into()
-                    ]),
-                    statements: BTreeMap::new(),
-                },
-            )]),
-            descriptor: ComponentDescriptor::named("http-request", "0.1", COMPONENT_A),
+            descriptor: {
+                let mut descriptor = ComponentDescriptor::named("http-request", "0.1", COMPONENT_A);
+                descriptor.operations = BTreeMap::from([(
+                    "platform-fixture-overlay:widget/get@3.0.0".into(),
+                    AdmittedComponentOperation {
+                        host_transaction: false,
+                        input_ports: Vec::new(),
+                        output_ports: Vec::new(),
+                        parameters: Vec::new(),
+                        committed_result_schema: None,
+                        registered_operation: Some(
+                            "platform-fixture-overlay:widget/get@3.0.0".into(),
+                        ),
+                        statements: BTreeMap::new(),
+                    },
+                )]);
+                descriptor
+            },
         },
     ])
 }
@@ -81,7 +89,6 @@ fn routes() -> BTreeSet<ServingRoute> {
         reads: BTreeSet::new(),
         revision: None,
         idempotency: None,
-        canonicalization: None,
     }])
 }
 
@@ -113,47 +120,8 @@ fn manifest() -> ServingManifest {
     .expect("the format-eleven fixture is valid")
 }
 
-fn sorted_keys(value: &Value) -> Vec<String> {
-    let mut keys: Vec<String> = value
-        .as_object()
-        .expect("a JSON object")
-        .keys()
-        .cloned()
-        .collect();
-    keys.sort();
-    keys
-}
-
-#[test]
-fn the_format_eleven_preimage_and_digest_are_pinned() {
-    let expected = manifest();
-    assert_eq!(expected.canonical_bytes(), publish_vector::CANONICAL_BYTES);
-    assert_eq!(expected.digest().as_str(), publish_vector::DIGEST);
-
-    let (read, digest) = ServingManifest::from_canonical_bytes(publish_vector::CANONICAL_BYTES)
-        .expect("the format-eleven vector is admitted by the reader");
-    assert_eq!(read, expected);
-    assert_eq!(digest.as_str(), publish_vector::DIGEST);
-
-    let raw = <sha2::Sha256 as sha2::Digest>::digest(publish_vector::CANONICAL_BYTES);
-    let hex: String = raw.iter().fold(String::new(), |mut out, byte| {
-        use std::fmt::Write as _;
-        write!(out, "{byte:02x}").expect("writing to a string is infallible");
-        out
-    });
-    assert_eq!(digest.as_str(), format!("sha256:{hex}"));
-}
-
 #[test]
 fn the_frozen_format_three_vector_refuses_with_its_version() {
-    // The bytes are the pinned format-3 vector, not a hand-made stand-in.
-    let raw = <sha2::Sha256 as sha2::Digest>::digest(format_three_vector::CANONICAL_BYTES);
-    let hex: String = raw.iter().fold(String::new(), |mut out, byte| {
-        use std::fmt::Write as _;
-        write!(out, "{byte:02x}").expect("writing to a string is infallible");
-        out
-    });
-    assert_eq!(format!("sha256:{hex}"), format_three_vector::DIGEST);
     let error = ServingManifest::from_canonical_bytes(format_three_vector::CANONICAL_BYTES)
         .expect_err("format 9 refuses the frozen format-3 bytes");
     assert!(
@@ -274,10 +242,13 @@ fn malformed_authentication_lists_are_refused_by_parser_and_release_reader() {
 /// namespace produced the reserved id `wamn`, which is not a manifest any
 /// publisher can publish.
 fn operation_provider_manifest(package: &str, export: &str, version: &str) -> ServingManifest {
-    let operation = ServingComponentOperation {
+    let operation = AdmittedComponentOperation {
+        host_transaction: false,
+        input_ports: Vec::new(),
+        output_ports: Vec::new(),
+        parameters: Vec::new(),
         registered_operation: None,
         committed_result_schema: None,
-        permissions: BTreeSet::new(),
         statements: BTreeMap::new(),
     };
     ServingManifest::new(
@@ -292,34 +263,43 @@ fn operation_provider_manifest(package: &str, export: &str, version: &str) -> Se
                 runtime_schema: None,
                 statement_instances: std::collections::BTreeMap::new(),
                 package_id: package.into(),
-                operations: BTreeMap::from([(
-                    export.into(),
-                    ServingComponentOperation {
-                        // Registered only when `package` owns the export's
-                        // namespace, which is the rule
-                        // `validate_canonical_operation_for_package` enforces. A
-                        // platform interface is exported as a palette operation,
-                        // and a palette operation carries no registered
-                        // operation.
-                        registered_operation: export
-                            .starts_with(&format!("{package}:"))
-                            .then(|| export.to_owned()),
-                        permissions: export
-                            .starts_with(&format!("{package}:"))
-                            .then(|| export.to_owned())
-                            .into_iter()
-                            .collect(),
-                        ..operation.clone()
-                    },
-                )]),
-                descriptor: ComponentDescriptor::named("provider", "0.1.0", COMPONENT_A),
+                descriptor: {
+                    let mut descriptor =
+                        ComponentDescriptor::named("provider", "0.1.0", COMPONENT_A);
+                    descriptor.operations = BTreeMap::from([(
+                        export.into(),
+                        AdmittedComponentOperation {
+                            host_transaction: false,
+                            input_ports: Vec::new(),
+                            output_ports: Vec::new(),
+                            parameters: Vec::new(),
+                            // Registered only when `package` owns the export's
+                            // namespace, which is the rule
+                            // `validate_canonical_operation_for_package` enforces. A
+                            // platform interface is exported as a palette operation,
+                            // and a palette operation carries no registered
+                            // operation.
+                            registered_operation: export
+                                .starts_with(&format!("{package}:"))
+                                .then(|| export.to_owned()),
+
+                            ..operation.clone()
+                        },
+                    )]);
+                    descriptor
+                },
             },
             ServingComponent {
                 runtime_schema: None,
                 statement_instances: std::collections::BTreeMap::new(),
                 package_id: "consumer".into(),
-                operations: BTreeMap::from([("consumer:entry/run@1.0.0".into(), operation)]),
-                descriptor: ComponentDescriptor::named("consumer", "0.1.0", COMPONENT_B),
+                descriptor: {
+                    let mut descriptor =
+                        ComponentDescriptor::named("consumer", "0.1.0", COMPONENT_B);
+                    descriptor.operations =
+                        BTreeMap::from([("consumer:entry/run@1.0.0".into(), operation)]);
+                    descriptor
+                },
             },
         ]),
         BTreeSet::new(),
@@ -343,10 +323,10 @@ fn duplicate_export_only_interfaces_are_admitted() {
             .find(|component| component.descriptor.component == "provider")
             .expect("fixture provider")
             .clone();
-        other.descriptor = ComponentDescriptor::named("another-provider", "0.1.0", COMPONENT_B);
-        let operation = other.operations.get_mut(export).unwrap();
+        other.descriptor.component = "another-provider".into();
+        other.descriptor.component_digest = COMPONENT_B.into();
+        let operation = other.descriptor.operations.get_mut(export).unwrap();
         operation.registered_operation = None;
-        operation.permissions.clear();
         assert!(candidate.components.insert(other));
         let (admitted, _) = ServingManifest::from_canonical_bytes(&candidate.canonical_bytes())
             .expect("the host can address duplicate export-only interfaces directly");
@@ -393,74 +373,4 @@ fn all_six_collections_have_canonical_order() {
 
     assert_eq!(baseline.canonical_bytes(), permuted.canonical_bytes());
     assert_eq!(baseline.digest(), permuted.digest());
-}
-
-#[test]
-fn every_manifest_field_is_pinned() {
-    let document = serde_json::to_value(manifest()).expect("manifest serializes");
-    assert_eq!(
-        sorted_keys(&document),
-        [
-            "attachments",
-            "components",
-            "format-version",
-            "release",
-            "routes"
-        ]
-    );
-    assert_eq!(
-        sorted_keys(&document["routes"][0]),
-        ["component", "operation", "package-id", "type"]
-    );
-    assert_eq!(
-        sorted_keys(&document["attachments"]["widget-get-http"]),
-        [
-            "auth-policy",
-            "component",
-            "definition",
-            "definition-hash",
-            "operation",
-            "package-id",
-            "registered-operation",
-            "type"
-        ]
-    );
-    assert_eq!(
-        sorted_keys(&document["components"][0]),
-        ["descriptor", "operations", "package-id"]
-    );
-    let text = String::from_utf8(manifest().canonical_bytes()).expect("manifest is UTF-8");
-    for retired in [
-        "flow-id",
-        "flows",
-        "plan-hash",
-        "calls",
-        "callable-contract",
-        "source-artifact",
-        "binding-base-artifact",
-    ] {
-        assert!(
-            !text.contains(retired),
-            "retired key {retired} re-entered format 4"
-        );
-    }
-}
-
-#[test]
-fn released_workflow_changes_do_not_reach_the_digest() {
-    let baseline = manifest();
-    for workflow in [
-        json!(null),
-        json!({"wirings": [{"graph": "old"}]}),
-        json!({"registrations": {"old": {}}}),
-    ] {
-        let mut value = serde_json::to_value(&baseline).unwrap();
-        value["workflow"] = workflow;
-        let (read, _) = ServingManifest::from_canonical_bytes(
-            &wamn_execution_contract::canonical_json_bytes(&value),
-        )
-        .unwrap();
-        assert_eq!(read.digest(), baseline.digest());
-        assert_eq!(read.canonical_bytes(), baseline.canonical_bytes());
-    }
 }

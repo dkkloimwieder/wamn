@@ -9,18 +9,16 @@ license.workspace = true
 test-util = ["tokio/io-util", "tokio/net", "tokio/rt"]
 
 [dependencies]
+wamn-digest.workspace = true
 anyhow = { workspace = true }
-hex = { workspace = true }
 oci-client = { workspace = true }
 # The metadata server token of the registry credential.
 reqwest = { workspace = true, features = ["rustls"] }
-ring = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 tokio = { workspace = true, features = ["time"] }
 tracing = { workspace = true }
 wamn-catalog = { workspace = true }
-wamn-execution-contract = { workspace = true }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "net", "io-util", "rt", "test-util"] }

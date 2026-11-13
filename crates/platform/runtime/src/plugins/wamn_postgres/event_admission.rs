@@ -25,10 +25,6 @@ use super::production_claim::{
 use super::workflow_resolution::{PINNED_RELEASE_SQL, parse_graph};
 use crate::plugins::wamn_postgres::AuthorityClass;
 
-/// The environment durability policy, read under the executor credential.
-const SELECT_DURABILITY_SQL: &str = "SELECT durability_class FROM environment_policies \
-     WHERE env_key = $1 AND expected_environment = $2";
-
 /// One manual workflow run to admit: the enabled workflow version, the
 /// release it gated against, who it executes as, who started it, and the
 /// component digest of every node.
@@ -111,21 +107,9 @@ impl WamnPostgres {
         }
         let result = async {
             require_executor_authority(&connection).await?;
-            let durability: String = connection
-                .query_opt(SELECT_DURABILITY_SQL, &[&env_key, &admission.environment])
-                .await
-                .map_err(|error| storage("read the environment policy", &error))?
-                .ok_or_else(|| {
-                    ProductionClaimError::new(
-                        ProductionClaimErrorType::Contract,
-                        "read the environment policy",
-                        "the environment policy is absent",
-                    )
-                })?
-                .get(0);
             let input = admission.input.to_string();
             let node_digests = admission.node_digests.to_string();
-            let binds: [&(dyn tokio_postgres::types::ToSql + Sync); 14] = [
+            let binds: [&(dyn tokio_postgres::types::ToSql + Sync); 13] = [
                 &env_key,
                 &admission.package_id,
                 &admission.manifest_digest,
@@ -139,7 +123,6 @@ impl WamnPostgres {
                 &node_digests,
                 &admission.idempotency_key,
                 &input,
-                &durability,
             ];
             let inserted = connection
                 .query_opt(&insert_manual_run_sql(), &binds)
@@ -325,17 +308,6 @@ impl WamnPostgres {
                     .collect(),
             )
             .to_string();
-            let durability: String = connection
-                .query_opt(SELECT_DURABILITY_SQL, &[&env_key, &admission.environment])
-                .await
-                .map_err(|error| storage("read the environment policy", &error))?
-                .ok_or_else(|| {
-                    contract(
-                        "read the environment policy",
-                        "the environment policy is absent".to_owned(),
-                    )
-                })?
-                .get(0);
             let principal = workflow_user_id().to_string();
             let role = execution_role.unwrap_or_else(|| ADMIN_ROLE.to_owned());
             let due = due_text(admission.due);
@@ -344,7 +316,7 @@ impl WamnPostgres {
                 admission.application, admission.workflow_id
             );
             let input = serde_json::json!({ "due": due }).to_string();
-            let binds: [&(dyn tokio_postgres::types::ToSql + Sync); 13] = [
+            let binds: [&(dyn tokio_postgres::types::ToSql + Sync); 12] = [
                 &env_key,
                 &admission.application,
                 &admission.manifest_digest,
@@ -357,7 +329,6 @@ impl WamnPostgres {
                 &node_digests,
                 &idempotency_key,
                 &input,
-                &durability,
             ];
             let inserted = connection
                 .query_opt(&insert_workflow_schedule_run_sql(), &binds)

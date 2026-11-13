@@ -2,12 +2,12 @@ use std::collections::{HashMap, VecDeque};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::Mutex;
 
-use wamn_execution_contract::node_contract::{CanonicalHttpTarget, normalize_portable_http_target};
 use wamn_runtime::connection_authority::{
     AuthorityError, AuthorityErrorType, DnsResolver, HttpScheme, NetworkPolicy, TlsIdentity,
     TlsPolicy, TransportDecision, parse_http_connection_authority, resolve_http_redirect,
     resolve_http_request,
 };
+use wamn_runtime::{CanonicalHttpTarget, normalize_portable_http_target};
 use wash_runtime::host::allowed_hosts::AllowedHost;
 
 #[derive(Debug, Default)]

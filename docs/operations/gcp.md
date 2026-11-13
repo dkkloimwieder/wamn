@@ -709,13 +709,3 @@ The script resets database statement counts before each call.
 It divides each statement count by the request count, rounds each ratio, and sums the ratios.
 This excludes setup queries and background polling from the per-request count.
 The [benchmark page](benchmark.md) holds the current baselines.
-
-The conformance test `benchmark::platform_benchmark_gate` compares the newest two result files in semantic version order.
-It fails if get or update `throughput_per_sec` drops more than 20% at c16.
-With fewer than two files, it passes and prints that no comparison ran.
-The workspace sweep includes this test.
-Run it from the repository root:
-
-```bash
-cargo test --offline -p wamn-conformance-tests benchmark::platform_benchmark_gate -- --nocapture
-```

@@ -143,7 +143,7 @@ pub fn workflow(id: &str) -> WiringDocument {
         "format-version": "0.1", "wiring-id": id, "version": 1, "entry": "read",
         "nodes": {"read": {"component": "orders_data", "interface-version": "0.1.0",
             "operation": READ, "params": {}}},
-        "edges": [], "cases": []
+        "edges": []
     }))
     .expect("the workflow graph is structurally valid")
 }
@@ -168,8 +168,6 @@ pub async fn connect(url: &str) -> Client {
 pub struct Fixture {
     pub admin: Client,
     pub url: String,
-    pub control: Client,
-    pub control_url: String,
     pub engine: Arc<wash_runtime::engine::Engine>,
     pub postgres: Arc<WamnPostgres>,
     /// The executor login, which the host's schedule task connects with.
@@ -179,12 +177,11 @@ pub struct Fixture {
     pub read: wamn_catalog::AdmittedComponent,
     pub release: Arc<LoadedRelease>,
     pub digest: String,
-    _databases: (wamn_test_postgres::Database, wamn_test_postgres::Database),
+    _database: wamn_test_postgres::Database,
 }
 
 pub async fn fixture() -> Fixture {
     let database = wamn_test_postgres::database();
-    let control_database = wamn_control_provision::test_database::system();
     let url = database.url().to_owned();
     let admin = connect(&url).await;
     let schema = BareSchemaName::new("wamn_run").unwrap();
@@ -225,8 +222,8 @@ pub async fn fixture() -> Fixture {
              INSERT INTO platform.permission (role_name, permission) VALUES \
                ('reader', '{READ_REFERENCE}');
              INSERT INTO platform.environment (status) VALUES ('active');
-             INSERT INTO wamn_run.environment_policies (env_key, expected_environment, durability_class) \
-               VALUES ('{ENV_KEY}', '{ENVIRONMENT}', 'standard');
+             INSERT INTO wamn_run.environment_policies (env_key, expected_environment) \
+               VALUES ('{ENV_KEY}', '{ENVIRONMENT}');
              INSERT INTO catalog.packages (physical_schema_fingerprint, env_key, package_id, package_version, artifact_digest) \
                VALUES ('sha256:' || repeat('c', 64), '{ENV_KEY}', '{APPLICATION}', '1.0.0', '{ARTIFACT_DIGEST}');"
         ))
@@ -284,20 +281,9 @@ pub async fn fixture() -> Fixture {
 
     let (postgres, executor_url) = scoped_postgres(&admin, &url).await;
     let (logging, _capture) = WamnLogging::new_with_capture(&WamnLoggingConfig::default()).unwrap();
-    let control = connect(control_database.url()).await;
-    control
-        .execute(
-            "SELECT set_config('app.env_key', $1, false), set_config('app.user_id', $2, false)",
-            &[&ENV_KEY, &READER],
-        )
-        .await
-        .unwrap();
-
     Fixture {
         admin,
         url,
-        control,
-        control_url: control_database.url().to_owned(),
         engine,
         postgres,
         executor_url,
@@ -306,7 +292,7 @@ pub async fn fixture() -> Fixture {
         read,
         release,
         digest,
-        _databases: (database, control_database),
+        _database: database,
     }
 }
 
@@ -418,17 +404,9 @@ impl Fixture {
         declared: &wamn_catalog::EnvironmentApplications,
     ) -> anyhow::Result<()> {
         let document = workflow(id);
-        self.control
-            .execute(
-                "INSERT INTO wamn_run.gate_reports (env_key, wiring_hash, passed, summary) \
-                 VALUES ($1, $2, true, '{}'::jsonb) ON CONFLICT DO NOTHING",
-                &[&ENV_KEY, &document.wiring_hash().as_str()],
-            )
-            .await
-            .expect("record a green gate report");
+
         author_workflow_in_databases(
             &self.url,
-            &self.control_url,
             &AuthorWorkflowRequest {
                 org: "schedule-live",
                 project: "default",

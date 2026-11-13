@@ -344,7 +344,7 @@ fn served_references(release: &LoadedRelease) -> BTreeSet<String> {
     let registered = manifest
         .components
         .iter()
-        .flat_map(|component| component.operations.values())
+        .flat_map(|component| component.descriptor.operations.values())
         .filter_map(|operation| operation.registered_operation.as_deref())
         .map(|operation| wamn_catalog::sealed_operation_reference(operation).to_owned());
     let host = manifest

@@ -264,7 +264,7 @@ pub fn resolve_attachment(
     if !names_generated_schema(attachment) {
         return Ok(());
     }
-    let authored = wamn_execution_contract::canonical_json_sha256(&attachment.definition);
+    let authored = wamn_digest::canonical_json_sha256(&attachment.definition);
     if attachment.definition_hash.as_str() != authored {
         return Err(RouteSchemaError::new(
             RouteSchemaErrorType::DefinitionHash,
@@ -276,10 +276,9 @@ pub fn resolve_attachment(
         ));
     }
     resolve(&mut attachment.definition["input-schema"], read)?;
-    attachment.definition_hash = DefinitionHash::parse(
-        wamn_execution_contract::canonical_json_sha256(&attachment.definition),
-    )
-    .expect("the shared canonicalizer emits a valid definition hash");
+    attachment.definition_hash =
+        DefinitionHash::parse(wamn_digest::canonical_json_sha256(&attachment.definition))
+            .expect("the shared canonicalizer emits a valid definition hash");
     Ok(())
 }
 

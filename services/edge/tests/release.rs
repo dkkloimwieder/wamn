@@ -10,12 +10,12 @@ use wamn_catalog::edge_bundle::{
 };
 use wamn_catalog::{
     AdmittedComponent, AdmittedComponentOperation, ComponentDescriptor, ComponentPackageScope,
-    PackageCoordinate, RELEASE_MANIFEST_FILE_NAME, ServingComponent, ServingComponentOperation,
-    ServingManifest, ServingRelease,
+    PackageCoordinate, RELEASE_MANIFEST_FILE_NAME, ServingComponent, ServingManifest,
+    ServingRelease,
 };
+use wamn_digest::bytes_sha256;
 use wamn_edge::release::{EdgeRelease, EdgeReleaseErrorType};
 use wamn_engine::release_manifest::ReleaseScope;
-use wamn_execution_contract::bytes_sha256;
 
 const ENV_KEY: &str = "t1";
 const PACKAGE: &str = "scale";
@@ -36,16 +36,23 @@ fn manifest() -> ServingManifest {
             runtime_schema: None,
             statement_instances: std::collections::BTreeMap::new(),
             package_id: PACKAGE.into(),
-            operations: BTreeMap::from([(
-                OPERATION.into(),
-                ServingComponentOperation {
-                    committed_result_schema: None,
-                    registered_operation: Some(PERMISSION.into()),
-                    permissions: BTreeSet::from([PERMISSION.into()]),
-                    statements: BTreeMap::new(),
-                },
-            )]),
-            descriptor: ComponentDescriptor::named(COMPONENT, "0.1", bytes_sha256(BODY)),
+            descriptor: {
+                let mut descriptor =
+                    ComponentDescriptor::named(COMPONENT, "0.1", bytes_sha256(BODY));
+                descriptor.operations = BTreeMap::from([(
+                    OPERATION.into(),
+                    AdmittedComponentOperation {
+                        host_transaction: false,
+                        input_ports: Vec::new(),
+                        output_ports: Vec::new(),
+                        parameters: Vec::new(),
+                        committed_result_schema: None,
+                        registered_operation: Some(PERMISSION.into()),
+                        statements: BTreeMap::new(),
+                    },
+                )]);
+                descriptor
+            },
         }]),
         BTreeSet::new(),
         BTreeMap::new(),

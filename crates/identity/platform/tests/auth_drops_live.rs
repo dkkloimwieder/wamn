@@ -24,8 +24,8 @@ use wamn_platform_identity::password_login::{
     authenticate_renewal, create_login, revoke_all, revoke_login, rotate_login,
 };
 use wamn_platform_identity::{
-    create_user, disable_principal, grant_project_env_membership, issue_pat, revoke_pat,
-    revoke_project_env_membership,
+    create_service, create_user, disable_principal, grant_project_env_membership, issue_pat,
+    revoke_pat, revoke_project_env_membership,
 };
 
 const ISSUER: &str = "https://identity.example.invalid";
@@ -159,14 +159,17 @@ async fn every_identity_writer_records_a_drop_of_its_principal() {
     );
 
     // The PAT writer finds the principal from the token prefix.
-    let issued = issue_pat(&client, &alice, "laptop", Duration::from_secs(3600))
+    let service = create_service(&client, "api", "API", &mut AuthDrops::default())
+        .await
+        .unwrap();
+    let issued = issue_pat(&client, service.id(), "laptop", Duration::from_secs(3600))
         .await
         .unwrap();
     let mut drops = AuthDrops::default();
     revoke_pat(&client, issued.record().prefix(), &mut drops)
         .await
         .unwrap();
-    assert_eq!(changes(&drops), identity(&alice), "revoke_pat");
+    assert_eq!(changes(&drops), identity(service.id()), "revoke_pat");
 
     // The login writers find the principal from the renewal secret.
     let first = login(&mut client, &alice).await;

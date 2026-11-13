@@ -7,9 +7,9 @@ use std::collections::HashMap;
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
-use crate::component_admission::component_digest;
 use anyhow::Context as _;
 use wamn_catalog::AdmittedComponent;
+use wamn_digest::bytes_sha256;
 use wash_runtime::engine::Engine;
 use wash_runtime::engine::InstancePolicy;
 use wash_runtime::engine::dispatch::DispatchTarget;
@@ -233,7 +233,7 @@ pub fn native_component_name(fact: &AdmittedComponent) -> anyhow::Result<String>
     let value = serde_json::to_value(fact).context("encode admitted component identity")?;
     Ok(format!(
         "wamn-fact:{}",
-        wamn_execution_contract::canonical_json_sha256(&value)
+        wamn_digest::canonical_json_sha256(&value)
     ))
 }
 
@@ -254,7 +254,7 @@ pub(super) async fn load_native_workload(
         // Native trusts a supplied digest even on a cache hit. Check every
         // input, including repeats, before any digest reaches that cache.
         anyhow::ensure!(
-            component_digest(&input.bytes) == input.fact.component_digest,
+            bytes_sha256(&input.bytes) == input.fact.component_digest,
             "native-component-bytes-digest-mismatch"
         );
         let name = native_component_name(&input.fact)?;

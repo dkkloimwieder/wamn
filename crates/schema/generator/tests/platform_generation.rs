@@ -474,7 +474,7 @@ fn ownership_only_models_and_exclusion_owners_are_exact() {
 }
 
 #[test]
-fn retired_workflows_are_dropped_and_line_profiles_are_closed() {
+fn retired_workflows_are_dropped() {
     let mut handler = fixture::manifest();
     let operation = handler["custom_operations"]["widget.archive"]
         .as_object_mut()
@@ -508,75 +508,6 @@ fn retired_workflows_are_dropped_and_line_profiles_are_closed() {
             .get("registration")
             .is_none()
     );
-
-    let mut lineless = fixture::manifest();
-    lineless["custom_operations"]["widget.archive"]["canonicalization"] =
-        json!({"excluded_fields": ["id"]});
-    validate_operation_vocabulary(&parsed(&lineless)).expect("lineless canonicalization");
-
-    let mut lined = lineless;
-    lined["custom_operations"]["widget.archive"]["input"]["line"] =
-        json!({"minimum": 1, "maximum": 10});
-    lined["custom_operations"]["widget.archive"]["input"]["fields"]
-        .as_array_mut()
-        .unwrap()
-        .extend([
-            json!({"path": "line[].entry_id", "type": "uuid", "nullable": false}),
-            json!({"path": "line[].amount", "type": "numeric", "nullable": false}),
-        ]);
-    lined["custom_operations"]["widget.archive"]["canonicalization"]["line_order"] =
-        json!({"ascending_by": "entry_id", "positive_member": "amount"});
-    validate_operation_vocabulary(&parsed(&lined)).expect("valid line profile");
-    for field in ["line", "line_order"] {
-        let mut invalid = lined.clone();
-        let object = if field == "line" {
-            invalid["custom_operations"]["widget.archive"]["input"]
-                .as_object_mut()
-                .unwrap()
-        } else {
-            invalid["custom_operations"]["widget.archive"]["canonicalization"]
-                .as_object_mut()
-                .unwrap()
-        };
-        object.remove(field);
-        assert_eq!(
-            validate_operation_vocabulary(&parsed(&invalid))
-                .expect_err("line input/profile mismatch was accepted")
-                .error_type(),
-            GenerateErrorType::InvalidOperation
-        );
-    }
-
-    let mut missing_positive = lined.clone();
-    missing_positive["custom_operations"]["widget.archive"]["input"]["fields"]
-        .as_array_mut()
-        .unwrap()
-        .retain(|field| field["path"] != "line[].amount");
-    assert_eq!(
-        validate_operation_vocabulary(&parsed(&missing_positive))
-            .expect_err("canonical line profile omitted its positive member")
-            .error_type(),
-        GenerateErrorType::InvalidOperation
-    );
-
-    // The declared member decides. A profile that orders by a member the
-    // command does not declare is refused, whatever the member is called.
-    let mut unknown_member = lined.clone();
-    unknown_member["custom_operations"]["widget.archive"]["canonicalization"]["line_order"] =
-        json!({"ascending_by": "gadget_line_id", "positive_member": "amount"});
-    assert_eq!(
-        validate_operation_vocabulary(&parsed(&unknown_member))
-            .expect_err("canonical line profile ordered by an undeclared member")
-            .error_type(),
-        GenerateErrorType::InvalidOperation
-    );
-
-    // A command with lines and no positive member is valid, and it refuses no
-    // line for being zero.
-    let mut no_positive = lined;
-    no_positive["custom_operations"]["widget.archive"]["canonicalization"]["line_order"] =
-        json!({"ascending_by": "entry_id"});
-    validate_operation_vocabulary(&parsed(&no_positive)).expect("line profile with no quantity");
 }
 
 #[test]
@@ -874,10 +805,8 @@ fn composition_is_exact_and_carries_its_contract() {
     assert!(error.to_string().contains("idempotent_by claim"));
 }
 
-/// The fixture's claim command names its key and the canonical form of its
-/// request element, and its codec claims nothing: the host claims the key in the
-/// operation transaction (`docs/history/host-transaction.md` 4.4). Publish hands
-/// the key and the canonical form to the engine's intent rules.
+/// The fixture's claim command names its key and operation identity.
+/// Publish passes the key field to the engine's intent rules.
 #[test]
 fn a_claim_command_names_its_key_and_its_codec_claims_nothing() {
     let package = fixture::generate_fixture();
@@ -908,9 +837,6 @@ fn a_claim_command_names_its_key_and_its_codec_claims_nothing() {
             "{operation}"
         );
     }
-    assert!(package.file("generated/sql/write_log/claim.sql").is_none());
-    assert!(package.file("generated/wit/write_log_codec.rs").is_none());
-
     let input = artifact(
         &package,
         "generated/contracts/widget/record_batch.input.json",
@@ -919,34 +845,6 @@ fn a_claim_command_names_its_key_and_its_codec_claims_nothing() {
         wamn_schema_generator::client_plan::idempotency_field(&input).as_deref(),
         Some("value.idempotency_key")
     );
-    assert_eq!(
-        wamn_schema_generator::client_plan::route_canonicalization(&input),
-        Some(wamn_catalog::RouteCanonicalization {
-            excluded: std::collections::BTreeSet::new(),
-            lines: Some(wamn_catalog::RouteLineOrder {
-                path: "value.line".to_owned(),
-                ascending_by: "widget_id".to_owned(),
-            }),
-            spelling: std::collections::BTreeMap::from([(
-                "value.line[].amount".to_owned(),
-                wamn_catalog::CanonicalSpelling::Numeric,
-            )]),
-        })
-    );
-
-    for codec in [
-        "generated/wit/widget_record_batch_codec.rs",
-        "generated/wit/widget_create_codec.rs",
-    ] {
-        let codec = std::str::from_utf8(package.file(codec).unwrap().bytes()).unwrap();
-        for absent in ["write_log_codec.rs", "request_bytes", "begin()"] {
-            assert!(!codec.contains(absent), "{absent}\n{codec}");
-        }
-        assert!(
-            codec.contains("wamn_postgres_statements::operation_transaction()"),
-            "{codec}"
-        );
-    }
 }
 
 /// Validation refuses the `claim` object: `idempotent_by: claim` is the whole
@@ -969,8 +867,6 @@ fn a_claim_command_declares_no_claim_object() {
 
     let mut keyless = manifest.clone();
     keyless["custom_operations"]["widget.archive"]["input"]["fields"][0]["path"] = json!("key");
-    keyless["custom_operations"]["widget.archive"]["canonicalization"]["excluded_fields"] =
-        json!(["key"]);
     let error = validate_operation_vocabulary(&parsed(&keyless)).unwrap_err();
     assert_eq!(error.error_type(), GenerateErrorType::InvalidOperation);
     assert!(error.to_string().contains("idempotency_key"), "{error}");

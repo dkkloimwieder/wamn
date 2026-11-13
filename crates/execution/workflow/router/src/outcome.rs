@@ -10,11 +10,7 @@
 
 use serde_json::Value;
 
-/// The default output port a node emits on.
-pub const MAIN_PORT: &str = "main";
-
-/// The reserved error-path port.
-pub const ERROR_PORT: &str = "error";
+use wamn_catalog::MAIN_PORT;
 
 /// What an invoked node returned. `Success` carries the output payload and the
 /// **port** it chose (a branching node selects a named port; most nodes emit on

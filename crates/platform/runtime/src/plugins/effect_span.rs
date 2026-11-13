@@ -112,7 +112,7 @@
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use wamn_execution_contract::EffectOutcome;
+use crate::EffectOutcome;
 
 /// Host-resolved identity of the component performing one effect.
 ///

@@ -7,7 +7,7 @@ use oci_client::manifest::OciImageManifest;
 use serde::Deserialize;
 use wamn_catalog::RuntimeType;
 
-use crate::{PackageRegistry, Repository, ensure_digest, registry_pull, sha256_digest};
+use crate::{PackageRegistry, Repository, bytes_sha256, ensure_digest, registry_pull};
 
 /// OCI artifact type for one integration.
 pub const ARTIFACT_TYPE: &str = "application/vnd.wamn.integration.v1";
@@ -67,7 +67,7 @@ pub async fn pull_from(
     )
     .await?;
     ensure!(
-        sha256_digest(&config) == manifest.config.digest
+        bytes_sha256(&config) == manifest.config.digest
             && usize::try_from(manifest.config.size) == Ok(config.len()),
         "integration configuration differs from its descriptor"
     );
@@ -87,7 +87,7 @@ pub async fn pull_from(
     )
     .await?;
     ensure!(
-        sha256_digest(&component) == descriptor.digest
+        bytes_sha256(&component) == descriptor.digest
             && usize::try_from(descriptor.size) == Ok(component.len()),
         "integration component differs from its descriptor"
     );

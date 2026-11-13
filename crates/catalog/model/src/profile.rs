@@ -102,7 +102,7 @@ pub fn release_profile<'a>(
                 Some((base, component.statement_instances.get(name)?))
             })
             .collect::<Vec<_>>();
-        for (name, operation) in &component.operations {
+        for (name, operation) in &component.descriptor.operations {
             let mut reaches = vec![Reach {
                 package: component.package_id.clone(),
                 operations: vec![name.clone()],
@@ -111,7 +111,7 @@ pub fn release_profile<'a>(
             }];
             reaches.extend(bases.iter().map(|(base, set)| Reach {
                 package: base.package_id.clone(),
-                operations: base.operations.keys().cloned().collect(),
+                operations: base.descriptor.operations.keys().cloned().collect(),
                 imprecise: true,
                 statements: statements(set, relations, views),
             }));
@@ -170,7 +170,7 @@ fn statements(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{ComponentDescriptor, ServingComponentOperation};
+    use crate::{AdmittedComponentOperation, ComponentDescriptor};
 
     fn statement(path: &str, sql: &str) -> (String, ComponentSqlStatement) {
         (
@@ -194,31 +194,37 @@ mod tests {
         ServingComponent {
             runtime_schema: None,
             package_id: package.to_owned(),
-            descriptor: ComponentDescriptor {
-                component: package.to_owned(),
-                interface_version: "1.0.0".to_owned(),
-                component_digest: digest.to_owned(),
-                operations: BTreeMap::new(),
-                imports: Vec::new(),
-                statement_instances: BTreeMap::new(),
-                imports_fingerprint: String::new(),
-                effects: Vec::new(),
-                connections: Vec::new(),
+            descriptor: {
+                let mut descriptor = ComponentDescriptor {
+                    component: package.to_owned(),
+                    interface_version: "1.0.0".to_owned(),
+                    component_digest: digest.to_owned(),
+                    operations: BTreeMap::new(),
+                    imports: Vec::new(),
+                    statement_instances: BTreeMap::new(),
+                    imports_fingerprint: String::new(),
+                    effects: Vec::new(),
+                    connections: Vec::new(),
+                };
+                descriptor.operations = operations
+                    .into_iter()
+                    .map(|(name, statements)| {
+                        (
+                            name,
+                            AdmittedComponentOperation {
+                                host_transaction: false,
+                                input_ports: Vec::new(),
+                                output_ports: Vec::new(),
+                                parameters: Vec::new(),
+                                registered_operation: None,
+                                committed_result_schema: None,
+                                statements,
+                            },
+                        )
+                    })
+                    .collect();
+                descriptor
             },
-            operations: operations
-                .into_iter()
-                .map(|(name, statements)| {
-                    (
-                        name,
-                        ServingComponentOperation {
-                            registered_operation: None,
-                            permissions: BTreeSet::new(),
-                            committed_result_schema: None,
-                            statements,
-                        },
-                    )
-                })
-                .collect(),
             statement_instances: BTreeMap::new(),
         }
     }

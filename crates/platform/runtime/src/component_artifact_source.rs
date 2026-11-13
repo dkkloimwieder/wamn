@@ -442,7 +442,7 @@ fn verify_manifest<'a>(
 mod tests {
     use std::collections::BTreeMap;
 
-    use wamn_engine::component_admission::component_digest;
+    use wamn_digest::bytes_sha256;
 
     use oci_client::errors::DigestError;
     use serde_json::json;
@@ -479,7 +479,7 @@ mod tests {
                 )]),
                 connections: Vec::new(),
             },
-            component_digest(bytes),
+            bytes_sha256(bytes),
             ["wasi:logging/logging@0.1.0".to_owned()],
             Vec::new(),
         )
@@ -503,7 +503,7 @@ mod tests {
             schema_version: layout.manifest_schema_version(),
             config: descriptor(
                 layout.config_media_type(),
-                &component_digest(&config),
+                &bytes_sha256(&config),
                 i64::try_from(config.len()).expect("fixture config size fits"),
             ),
             layers: vec![descriptor(
@@ -647,7 +647,7 @@ mod tests {
             }),
             ("layer-digest", {
                 let mut value = exact.clone();
-                value.layers[0].digest = component_digest(b"other");
+                value.layers[0].digest = bytes_sha256(b"other");
                 value
             }),
             ("config-media", {
@@ -680,8 +680,8 @@ mod tests {
     #[test]
     fn transport_integrity_errors_are_not_classified_as_unavailable() {
         let digest_error = OciDistributionError::DigestError(DigestError::VerificationError {
-            expected: component_digest(b"expected"),
-            actual: component_digest(b"actual"),
+            expected: bytes_sha256(b"expected"),
+            actual: bytes_sha256(b"actual"),
         });
         assert!(transport_is_mismatched(&digest_error));
         assert!(!transport_is_mismatched(

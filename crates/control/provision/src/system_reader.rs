@@ -30,7 +30,7 @@ use crate::workload_role::{
 pub enum SystemReader {
     /// `services/cdc-reader` — `registry.event_readers`, one `SELECT`.
     Registry,
-    /// `services/scenario-worker`'s management surface — `identity.*`, two
+    /// the identity service — `identity.*`, two
     /// `SELECT`s.
     Identity,
     /// Host connection configuration and credentials.
@@ -221,7 +221,7 @@ impl SystemReaderConnection {
 /// Refuse an absent or out-of-scope `WAMN_SYSTEM_URL`, purely.
 ///
 /// The fail-closed gate a reading consumer runs **before any network, database,
-/// or filesystem I/O**, on the [`crate::parse_control_authoring_url`] terms:
+/// or filesystem I/O**, with the same strict URL checks:
 ///
 /// * the input exists, parses, names a host, and carries no query or fragment;
 /// * its path names exactly one database;

@@ -79,6 +79,7 @@ impl EdgeOperation {
             .iter()
             .find_map(|component| {
                 component
+                    .descriptor
                     .operations
                     .get(operation)
                     .map(|fact| (&component.package_id, fact))

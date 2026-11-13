@@ -146,10 +146,8 @@ mod tests {
                     package_id: "scale".into(),
                     component: "device".into(),
                     operation: crate::release::test_util::OPERATION.into(),
-                    definition_hash: DefinitionHash::parse(wamn_execution_contract::bytes_sha256(
-                        b"route",
-                    ))
-                    .unwrap(),
+                    definition_hash: DefinitionHash::parse(wamn_digest::bytes_sha256(b"route"))
+                        .unwrap(),
                     definition: json!({}),
                     auth_policy: json!({"modes":["session"]}),
                     registered_operation: None,

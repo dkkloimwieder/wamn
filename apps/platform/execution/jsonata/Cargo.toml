@@ -5,6 +5,7 @@ edition.workspace = true
 description = "Palette node evaluating one JSONata expression, its configuration, on its input."
 
 [dependencies]
+wamn-catalog.workspace = true
 # The expression engine. `simd` is off: it adds simd-json and gives nothing on
 # wasm. The crate builds for wasm32-wasip2 and passes the reference JSONata
 # suite (wamn-upl3.2 records the measurement).

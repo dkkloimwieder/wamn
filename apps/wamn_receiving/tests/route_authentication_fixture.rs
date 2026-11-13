@@ -22,7 +22,7 @@ use wamn_dev_control::dev::environment::{
 };
 use wamn_environment_control::provision_project_env::read_json;
 use wamn_release_control::delivery::ReleaseIdentity;
-use wamn_test_infrastructure::operations::{package_version, sealed};
+use wamn_test_infrastructure::operations::package_version;
 use wamn_test_infrastructure::scratch::ScratchRoot;
 
 const ADMIN_ROLE: &str = "admin";
@@ -38,9 +38,6 @@ static OVERLAY_PACKAGE_VERSION: LazyLock<&'static str> =
 const OVERLAY_COMPONENT: &str = "client_acme_receiving";
 /// Domain of the platform principal emails in every test tenant.
 const PLATFORM_DOMAIN: &str = "example.invalid";
-const BASE_RECORD_RECEIPT_REFERENCE: &str = "wamn-receiving:receiving/record-receipt";
-static BASE_RECORD_RECEIPT: LazyLock<&'static str> =
-    LazyLock::new(|| sealed(BASE_RECORD_RECEIPT_REFERENCE).leak());
 
 /// The Receiving release from this checkout.
 fn identity() -> &'static ReleaseIdentity {

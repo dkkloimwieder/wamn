@@ -10,6 +10,7 @@
 
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
+use wamn_scalar::SqlValueType;
 
 use super::wit::access_error_literal;
 use super::{AccessorBind, Table, WamnApi, column, insert_bytes, query_variants, sql};
@@ -20,7 +21,6 @@ use wamn_catalog::manifest::{
     PackageManifest, rust_identifier, rust_type_identifier,
 };
 use wamn_catalog::manifest::{FilterMatch, OperationErrorDetailKey, access_operation_error_detail};
-use wamn_catalog::schema::ColumnType;
 
 const HEADER: &str = "// @generated from the package manifest and migration IR; do not edit.\n\n";
 
@@ -53,58 +53,58 @@ const CODES: [AccessOperationErrorLiteral; 12] = [
 
 /// The Rust type a request carries a value of this column type in: the type
 /// of the operation's WIT member.
-pub(super) fn request_type(ty: ColumnType) -> &'static str {
+pub(super) fn request_type(ty: SqlValueType) -> &'static str {
     match ty {
-        ColumnType::Boolean => "bool",
-        ColumnType::Int32 => "i32",
-        ColumnType::Int64 => "i64",
-        ColumnType::Float64 => "f64",
-        ColumnType::Bytes => "Vec<u8>",
-        ColumnType::Text
-        | ColumnType::Numeric
-        | ColumnType::Timestamptz
-        | ColumnType::Json
-        | ColumnType::Uuid => "String",
+        SqlValueType::Boolean => "bool",
+        SqlValueType::Int32 => "i32",
+        SqlValueType::Int64 => "i64",
+        SqlValueType::Float64 => "f64",
+        SqlValueType::Bytes => "Vec<u8>",
+        SqlValueType::Text
+        | SqlValueType::Numeric
+        | SqlValueType::Timestamptz
+        | SqlValueType::Json
+        | SqlValueType::Uuid => "String",
     }
 }
 
 /// The expression that turns one request value into its statement value,
 /// refusing on `path` when it is not in its one spelling.
-pub(super) fn parse(ty: ColumnType, value: &str, path: &str) -> String {
+pub(super) fn parse(ty: SqlValueType, value: &str, path: &str) -> String {
     let parser = match ty {
-        ColumnType::Uuid => "uuid",
-        ColumnType::Timestamptz => "timestamptz",
-        ColumnType::Numeric => "numeric",
-        ColumnType::Json => "json",
-        ColumnType::Boolean
-        | ColumnType::Int32
-        | ColumnType::Int64
-        | ColumnType::Float64
-        | ColumnType::Text
-        | ColumnType::Bytes => return value.to_owned(),
+        SqlValueType::Uuid => "uuid",
+        SqlValueType::Timestamptz => "timestamptz",
+        SqlValueType::Numeric => "numeric",
+        SqlValueType::Json => "json",
+        SqlValueType::Boolean
+        | SqlValueType::Int32
+        | SqlValueType::Int64
+        | SqlValueType::Float64
+        | SqlValueType::Text
+        | SqlValueType::Bytes => return value.to_owned(),
     };
     format!("scalar::{parser}(&{value}).map_err(|Invalid| Error::invalid({path:?}))?")
 }
 
 /// The cursor key type of a sort field, the type its row member holds.
-pub(super) fn cursor_key_type(ty: ColumnType) -> &'static str {
+pub(super) fn cursor_key_type(ty: SqlValueType) -> &'static str {
     match ty {
-        ColumnType::Boolean => "bool",
-        ColumnType::Int32 => "i32",
-        ColumnType::Int64 => "i64",
-        ColumnType::Text => "String",
-        ColumnType::Numeric => "wamn_postgres_statements::Numeric",
-        ColumnType::Timestamptz => "wamn_postgres_statements::TimestampTz",
-        ColumnType::Uuid => "wamn_postgres_statements::Uuid",
-        ColumnType::Float64 | ColumnType::Bytes | ColumnType::Json => {
+        SqlValueType::Boolean => "bool",
+        SqlValueType::Int32 => "i32",
+        SqlValueType::Int64 => "i64",
+        SqlValueType::Text => "String",
+        SqlValueType::Numeric => "wamn_postgres_statements::Numeric",
+        SqlValueType::Timestamptz => "wamn_postgres_statements::TimestampTz",
+        SqlValueType::Uuid => "wamn_postgres_statements::Uuid",
+        SqlValueType::Float64 | SqlValueType::Bytes | SqlValueType::Json => {
             unreachable!("query validation admits only cursor key types as sort fields")
         }
     }
 }
 
 /// A revision as the conflict detail carries it, which is 64 bits wide.
-fn widen(ty: ColumnType, value: &str) -> String {
-    if ty == ColumnType::Int32 {
+fn widen(ty: SqlValueType, value: &str) -> String {
+    if ty == SqlValueType::Int32 {
         format!("i64::from({value})")
     } else {
         value.to_owned()
@@ -169,7 +169,7 @@ pub(super) fn emit_model_data(
     let timestamptz = table
         .columns()
         .iter()
-        .filter(|column| column.column_type() == ColumnType::Timestamptz)
+        .filter(|column| column.column_type() == SqlValueType::Timestamptz)
         .map(|column| format!("{:?}", column.name()))
         .collect::<Vec<_>>();
     writeln!(
@@ -369,16 +369,22 @@ fn emit_create(
 
 /// The key value `next-number` takes for one parsed statement value, the
 /// text of its one spelling, or `None` for a null.
-fn key_text(ty: ColumnType, value: &str, nullable: bool) -> String {
+fn key_text(ty: SqlValueType, value: &str, nullable: bool) -> String {
     let text = |value: &str| match ty {
-        ColumnType::Text => format!("{value}.clone()"),
-        ColumnType::Uuid | ColumnType::Numeric | ColumnType::Timestamptz | ColumnType::Json => {
+        SqlValueType::Text => format!("{value}.clone()"),
+        SqlValueType::Uuid
+        | SqlValueType::Numeric
+        | SqlValueType::Timestamptz
+        | SqlValueType::Json => {
             format!("{value}.0.clone()")
         }
-        ColumnType::Boolean | ColumnType::Int32 | ColumnType::Int64 | ColumnType::Float64 => {
+        SqlValueType::Boolean
+        | SqlValueType::Int32
+        | SqlValueType::Int64
+        | SqlValueType::Float64 => {
             format!("{value}.to_string()")
         }
-        ColumnType::Bytes => unreachable!("validation refuses a bytes field in a pattern"),
+        SqlValueType::Bytes => unreachable!("validation refuses a bytes field in a pattern"),
     };
     if nullable {
         format!("{value}.as_ref().map(|value| {})", text("value"))

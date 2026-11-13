@@ -137,29 +137,23 @@ pub async fn session_is_active(
     project: &str,
     environment: &str,
 ) -> Result<bool, IdentityError> {
-    let (login, pat) = match &claims.authority {
-        SessionAuthority::Login(id) => (Some(id.to_string()), None),
-        SessionAuthority::Pat(id) => (None, Some(id.to_string())),
-    };
+    let SessionAuthority::Login(login) = &claims.authority;
     client
         .query_one(
             "SELECT EXISTS (SELECT 1 FROM identity.principals p \
          JOIN identity.project_env_memberships m ON m.principal_id=p.id \
          WHERE p.id=$1::text::uuid AND p.type='user' AND p.status='active' \
          AND m.org=$2 AND m.project=$3 AND m.env=$4 \
-         AND EXISTS (SELECT 1 FROM identity.org_memberships om WHERE om.principal_id=p.id AND om.org=$2 AND om.status='active') AND ( \
+         AND EXISTS (SELECT 1 FROM identity.org_memberships om WHERE om.principal_id=p.id AND om.org=$2 AND om.status='active') AND \
          EXISTS (SELECT 1 FROM identity.password_logins l WHERE l.id=$5::text::uuid \
-         AND l.principal_id=p.id AND l.issuer=$7 AND l.audience=$8 AND l.revoked_at IS NULL \
-         AND l.expires_at>clock_timestamp() AND l.renewal_expires_at>clock_timestamp()) OR \
-         EXISTS (SELECT 1 FROM identity.pats t WHERE t.id=$6::text::uuid \
-         AND t.principal_id=p.id AND t.revoked_at IS NULL AND t.expires_at>clock_timestamp())))",
+         AND l.principal_id=p.id AND l.issuer=$6 AND l.audience=$7 AND l.revoked_at IS NULL \
+         AND l.expires_at>clock_timestamp() AND l.renewal_expires_at>clock_timestamp()))",
             &[
                 &claims.sub.to_string(),
                 &claims.org,
                 &project,
                 &environment,
-                &login,
-                &pat,
+                &login.to_string(),
                 &claims.iss,
                 &claims.aud,
             ],
