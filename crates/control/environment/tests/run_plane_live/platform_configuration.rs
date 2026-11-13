@@ -279,7 +279,7 @@ async fn env_apply_creates_number_sequences_and_keeps_an_edit_live() {
             .map(|row| row.get(0))
             .collect()
     };
-    let provisioning = wamn_project_state::PlatformComponent::Provisioning
+    let provisioning = wamn_identity_protocol::PlatformComponent::Provisioning
         .principal_id()
         .to_string();
     assert_eq!(

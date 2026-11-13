@@ -437,7 +437,7 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
     admin
         .batch_execute(&format!(
             "CREATE DATABASE {} OWNER wamn_db_owner",
-            wamn_pg_core::quote_ident(&database_name)
+            postgres_protocol::escape::escape_identifier(&database_name)
         ))
         .await?;
 
@@ -600,12 +600,12 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
     for (schema, relation) in relations {
         let table = format!(
             "{}.{}",
-            wamn_pg_core::quote_ident(schema),
-            wamn_pg_core::quote_ident(relation)
+            postgres_protocol::escape::escape_identifier(schema),
+            postgres_protocol::escape::escape_identifier(relation)
         );
         snapshots.push(format!(
             "SELECT jsonb_build_array({}, to_jsonb(t))::text FROM {table} t",
-            wamn_pg_core::quote_literal(&table)
+            postgres_protocol::escape::escape_literal(&table)
         ));
         let sequence: String = observer
             .query_one("SELECT pg_get_serial_sequence($1, 'id')", &[&table])
@@ -613,7 +613,7 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
             .get(0);
         snapshots.push(format!(
             "SELECT jsonb_build_array({}, last_value, is_called)::text FROM {sequence}",
-            wamn_pg_core::quote_literal(&sequence)
+            postgres_protocol::escape::escape_literal(&sequence)
         ));
     }
     let stable_sql = format!("{} ORDER BY 1", snapshots.join(" UNION ALL "));
@@ -639,7 +639,7 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
         "SELECT row(n.nspname,c.relname,a.attname,has_schema_privilege('wamn_app',n.oid,'USAGE'),has_table_privilege('wamn_app',c.oid,'SELECT'),has_table_privilege('wamn_app',c.oid,'UPDATE'),has_column_privilege('wamn_app',c.oid,a.attnum,'SELECT'),has_column_privilege('wamn_app',c.oid,a.attnum,'UPDATE'))::text FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace JOIN pg_attribute a ON a.attrelid=c.oid AND a.attnum>0 AND NOT a.attisdropped WHERE c.relkind IN ('r','p','v') AND n.nspname IN ({}) ORDER BY 1",
         b_schemas
             .into_iter()
-            .map(wamn_pg_core::quote_literal)
+            .map(postgres_protocol::escape::escape_literal)
             .collect::<Vec<_>>()
             .join(","),
     );
@@ -672,7 +672,7 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
     )?;
     let b_permissions = wamn_runtime::plugins::route_authentication::queued_run_caller(
         &observer,
-        b_user.id().as_str(),
+        b_user.id().to_string().as_str(),
         None,
     )
     .await?;
@@ -729,7 +729,7 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
     assert_eq!(before_b_effective, rows(&observer, &b_effective_sql).await?);
     let b_after = wamn_runtime::plugins::route_authentication::queued_run_caller(
         &observer,
-        b_user.id().as_str(),
+        b_user.id().to_string().as_str(),
         None,
     )
     .await?;
@@ -778,7 +778,7 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
         ENV_KEY,
         wamn_platform_identity::application::GrantAuthority::Provisioning,
         wamn_platform_identity::application::GrantChange::UserRole {
-            user_id: b_user.id().as_str(),
+            user_id: b_user.id().to_string().as_str(),
             role: "application-a",
             grant: true,
         },
@@ -864,7 +864,7 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
     drop(postgres);
     let caller = wamn_runtime::plugins::route_authentication::queued_run_caller(
         &observer,
-        a_user.id().as_str(),
+        a_user.id().to_string().as_str(),
         None,
     )
     .await?;
@@ -970,7 +970,7 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
                 ENV_KEY,
                 wamn_platform_identity::application::GrantAuthority::Provisioning,
                 wamn_platform_identity::application::GrantChange::UserRole {
-                    user_id: b_user.id().as_str(),
+                    user_id: b_user.id().to_string().as_str(),
                     role: "application-a",
                     grant: false,
                 },
@@ -1018,7 +1018,7 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
         );
         let caller = wamn_runtime::plugins::route_authentication::queued_run_caller(
             &observer,
-            a_user.id().as_str(),
+            a_user.id().to_string().as_str(),
             None,
         )
         .await?;
@@ -1029,7 +1029,7 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
         assert!(caller.permits("wamn-integration:data/update@1.0.0"));
         let b_after = wamn_runtime::plugins::route_authentication::queued_run_caller(
             &observer,
-            b_user.id().as_str(),
+            b_user.id().to_string().as_str(),
             None,
         )
         .await?;
@@ -1088,7 +1088,7 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
     );
     let caller = wamn_runtime::plugins::route_authentication::queued_run_caller(
         &observer,
-        a_user.id().as_str(),
+        a_user.id().to_string().as_str(),
         None,
     )
     .await?;
@@ -1294,13 +1294,13 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
     admin
         .batch_execute(&format!(
             "DROP DATABASE {} WITH (FORCE)",
-            wamn_pg_core::quote_ident(&database_name),
+            postgres_protocol::escape::escape_identifier(&database_name),
         ))
         .await?;
     admin
         .batch_execute(&format!(
             "CREATE DATABASE {} OWNER wamn_db_owner",
-            wamn_pg_core::quote_ident(&database_name)
+            postgres_protocol::escape::escape_identifier(&database_name)
         ))
         .await?;
     let mut project_admin_url = url::Url::parse(system.url())?;
@@ -1573,7 +1573,7 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
     admin
         .batch_execute(&format!(
             "DROP DATABASE {} WITH (FORCE)",
-            wamn_pg_core::quote_ident(&database_name),
+            postgres_protocol::escape::escape_identifier(&database_name),
         ))
         .await?;
     Ok(())
@@ -1640,7 +1640,7 @@ async fn reset_replays_recorded_project_sql_and_refuses_unreconstructable_histor
     admin
         .batch_execute(&format!(
             "CREATE DATABASE {} OWNER wamn_db_owner",
-            wamn_pg_core::quote_ident(&name)
+            postgres_protocol::escape::escape_identifier(&name)
         ))
         .await?;
     let database = postgres.database(&name)?;
@@ -1731,13 +1731,13 @@ async fn reset_replays_recorded_project_sql_and_refuses_unreconstructable_histor
     admin
         .batch_execute(&format!(
             "DROP DATABASE {} WITH (FORCE)",
-            wamn_pg_core::quote_ident(&name)
+            postgres_protocol::escape::escape_identifier(&name)
         ))
         .await?;
     admin
         .batch_execute(&format!(
             "CREATE DATABASE {} OWNER wamn_db_owner",
-            wamn_pg_core::quote_ident(&name)
+            postgres_protocol::escape::escape_identifier(&name)
         ))
         .await?;
     lock.release().await;

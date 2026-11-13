@@ -7,6 +7,7 @@ use std::time::Duration;
 
 use tokio_postgres::Client;
 use wamn_control_provision::{PlatformComponent, platform_principals_sql, test_database};
+use wamn_identity_protocol::PrincipalId;
 use wamn_platform_identity::application::{
     ApplicationUser, create_role, delete_role, remove_admin, remove_user, write_admin,
     write_environment_status, write_service, write_user,
@@ -23,8 +24,8 @@ use wamn_platform_identity::password_login::{
     authenticate_renewal, create_login, revoke_all, revoke_login, rotate_login,
 };
 use wamn_platform_identity::{
-    PrincipalId, create_user, disable_principal, grant_project_env_membership, issue_pat,
-    revoke_pat, revoke_project_env_membership,
+    create_user, disable_principal, grant_project_env_membership, issue_pat, revoke_pat,
+    revoke_project_env_membership,
 };
 
 const ISSUER: &str = "https://identity.example.invalid";
@@ -53,7 +54,7 @@ async fn connect(url: &str, role: Option<&str>) -> Client {
         .execute(
             "SELECT set_config('app.user_id', $1, false), \
                     set_config('app.operation', 'wamn:provisioning', false)",
-            &[&actor().as_str()],
+            &[&actor().to_string().as_str()],
         )
         .await
         .unwrap();
@@ -74,7 +75,7 @@ async fn login(
 }
 
 fn identity(principal: &PrincipalId) -> Vec<AuthChange> {
-    vec![AuthChange::Identity(principal.as_str().to_owned())]
+    vec![AuthChange::Identity(principal.to_string())]
 }
 
 fn changes(drops: &AuthDrops) -> Vec<AuthChange> {
@@ -92,7 +93,7 @@ async fn every_identity_writer_records_a_drop_of_its_principal() {
         ))
         .await
         .unwrap();
-    let alice = create_user(
+    let alice = *create_user(
         &client,
         "alice@example.invalid",
         "alice@example.invalid",
@@ -100,8 +101,7 @@ async fn every_identity_writer_records_a_drop_of_its_principal() {
     )
     .await
     .unwrap()
-    .id()
-    .clone();
+    .id();
 
     // The org writers.
     activate_org_membership(&client, &alice, "acme")
@@ -253,7 +253,7 @@ async fn every_identity_writer_records_a_drop_of_its_principal() {
 
 #[tokio::test]
 async fn every_application_writer_records_a_drop_of_its_env_key_or_principal() {
-    let database = wamn_project_state::test_database::tenant_platform();
+    let database = wamn_platform_identity::test_database::tenant_platform();
     let client = connect(database.url(), None).await;
     client
         .batch_execute(&platform_principals_sql("example.invalid").unwrap())
@@ -277,7 +277,7 @@ async fn every_application_writer_records_a_drop_of_its_env_key_or_principal() {
     let principal = |id: &PrincipalId| {
         vec![AuthChange::Principal {
             env_key: "t1".to_owned(),
-            principal: id.as_str().to_owned(),
+            principal: id.to_string(),
         }]
     };
     let env_key = vec![AuthChange::EnvKey("t1".to_owned())];
@@ -357,7 +357,7 @@ async fn every_application_writer_records_a_drop_of_its_env_key_or_principal() {
         "t1",
         wamn_platform_identity::application::GrantAuthority::Provisioning,
         wamn_platform_identity::application::GrantChange::UserRole {
-            user_id: bob.as_str(),
+            user_id: bob.to_string().as_str(),
             role: "clerk",
             grant: true,
         },
@@ -373,7 +373,7 @@ async fn every_application_writer_records_a_drop_of_its_env_key_or_principal() {
         "t1",
         wamn_platform_identity::application::GrantAuthority::Provisioning,
         wamn_platform_identity::application::GrantChange::UserRole {
-            user_id: bob.as_str(),
+            user_id: bob.to_string().as_str(),
             role: "clerk",
             grant: false,
         },
@@ -418,7 +418,7 @@ async fn every_application_grant_write_deletes_exactly_its_auth_keys() {
         .unwrap();
     let bucket = auth_bucket(&broker).await.unwrap();
     let publisher = AuthChanges::new(broker);
-    let database = wamn_project_state::test_database::tenant_platform();
+    let database = wamn_platform_identity::test_database::tenant_platform();
     let client = connect(database.url(), None).await;
     client
         .batch_execute(&platform_principals_sql("example.invalid").unwrap())
@@ -433,7 +433,7 @@ async fn every_application_grant_write_deletes_exactly_its_auth_keys() {
             "t1",
             ApplicationUser {
                 principal_id: principal,
-                email: principal.as_str(),
+                email: principal.to_string().as_str(),
                 display_name: "Fixture",
             },
             &mut seed_drops,
@@ -501,7 +501,7 @@ async fn every_application_grant_write_deletes_exactly_its_auth_keys() {
                     "t1",
                     wamn_platform_identity::application::GrantAuthority::Provisioning,
                     wamn_platform_identity::application::GrantChange::UserRole {
-                        user_id: bob.as_str(),
+                        user_id: bob.to_string().as_str(),
                         role: "clerk",
                         grant: true,
                     },
@@ -516,7 +516,7 @@ async fn every_application_grant_write_deletes_exactly_its_auth_keys() {
                     "t1",
                     wamn_platform_identity::application::GrantAuthority::Provisioning,
                     wamn_platform_identity::application::GrantChange::UserRole {
-                        user_id: bob.as_str(),
+                        user_id: bob.to_string().as_str(),
                         role: "clerk",
                         grant: false,
                     },

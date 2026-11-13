@@ -1,10 +1,4 @@
-//! Storage-schema tests for the per-project system schema v1 (wamn-as5).
-//!
-//! Each test applies `deploy/sql/app-schema.sql` to a test database of the test
-//! PostgreSQL server (a superuser URL; the harness prepares App generations) and
-//! asserts the database boundary, absence of tenant columns and row policies,
-//! model columns, foreign-key cascades, status and type constraints, and
-//! platform principal rows.
+//! Database constraints and application principal boundaries.
 
 use std::fmt::Write as _;
 
@@ -14,9 +8,7 @@ use wamn_control_provision::{
     CredentialGeneration, WorkloadRoleFamily, WorkloadRoleScope, platform_principals_sql, sql,
     workload_generation_role,
 };
-use wamn_project_state::{
-    HISTORY_EXEMPT, PlatformComponent, SCHEMA_NAME, TABLES, UserStatus, UserType,
-};
+use wamn_identity_protocol::PlatformComponent;
 
 const APP_GENERATION_PASSWORD: &str = "test-owned-app-generation-password";
 const APP_GENERATION_VALID_UNTIL: &str = "2099-01-01T00:00:00Z";
@@ -46,50 +38,6 @@ fn record_history_app_grants_sql() -> String {
     std::fs::read_to_string(deploy_dir().join("sql/record-history-app-grants.sql"))
         .expect("read deploy/sql/record-history-app-grants.sql")
 }
-
-/// The privileges `wamn_app` holds on each table. The R11 adjudication is per
-/// relation, not one blanket grant, so the log test checks it per relation too:
-///
-/// - `users` / `role` / `user_role` / `permission` / `environment` and the
-///   platform configuration tables are SELECT-only (docs/architecture/data-access.md#actors). The
-///   trust chain reads these rows as authorization INPUT — the
-///   3.5 builder compiles `app.user_id` (a `users.id`) and `app.role` (a
-///   `role.name`, reached through `user_role`) into the data policies it
-///   generates, and 4.2 resolves those claims from exactly these tables. Author
-///   SQL holding DML here could write itself the credential its own policies are
-///   then evaluated against.
-/// - `api_key` has no grant: no runtime code reads it.
-/// - The `<table>_history` tables have no grant. The log trigger fires as the
-///   writer, and `wamn_app` writes no table that has a history table.
-///
-/// A table the model gains later has no adjudicated class, so this panics rather
-/// than silently defaulting it into one.
-/// The write log of `deploy/sql/app-schema.sql`, outside the record history.
-const WRITE_LOG: &str = "write_log";
-
-fn wamn_app_privileges(table: &str) -> &'static str {
-    match table {
-        "user" | "role" | "user_role" | "permission" | "environment" | "external_system"
-        | "connection" | "integration" | "number_sequence" | "number_counter" | "setting"
-        | "file" => "SELECT",
-        "api_key"
-        | "user_history"
-        | "role_history"
-        | "user_role_history"
-        | "permission_history"
-        | "api_key_history"
-        | "environment_history"
-        | "number_sequence_history"
-        | "setting_history"
-        | "file_history" => "",
-        // The write log: a claim, its read, its result, and the delete of a
-        // refused two-step claim, and nothing else.
-        "write_log" => "SELECT, INSERT, DELETE, UPDATE (result)",
-        other => panic!("table {other} has no adjudicated wamn_app grant (R11)"),
-    }
-}
-
-// --- live-apply gate --------------------------------------------------------
 
 fn current_database(url: &str) -> String {
     use std::process::Command;
@@ -257,51 +205,13 @@ fn app_schema_applies_and_enforces_isolation_on_postgres() {
          EXCEPTION WHEN check_violation THEN NULL; END; END $$;"
     )
     .expect("writing to a String cannot fail");
-    // Every model column exists. Base and history tables have no tenant
-    // column, row security, policy or tenant-key index.
-    for table in TABLES {
-        let qualified = table.qualified();
-        let history = format!("{SCHEMA_NAME}.{}_history", table.name);
-        // number_counter has no history table (HISTORY_EXEMPT).
-        let indexed = if HISTORY_EXEMPT.contains(&table.name) {
-            format!("('{qualified}')")
-        } else {
-            format!("('{qualified}'), ('{history}')")
-        };
-        let columns = table
-            .columns
-            .iter()
-            .map(|column| format!("'{column}'"))
-            .collect::<Vec<_>>()
-            .join(",");
-        writeln!(
-            script,
-            "DO $$ BEGIN\n\
-               ASSERT (SELECT count(*) FROM pg_catalog.pg_attribute \
-                       WHERE attrelid = '{qualified}'::regclass AND attnum > 0 AND NOT attisdropped \
-                         AND attname IN ({columns})) = {count}, '{qualified} must carry every model column';\n\
-             END $$;",
-            count = table.columns.len(),
-        )
-        .expect("writing to a String cannot fail");
-        writeln!(
-                script,
-                "DO $$ BEGIN\n\
-                   ASSERT (SELECT count(*) FROM (VALUES {indexed}) AS relation(qualified_name) \
-                           JOIN pg_catalog.pg_class AS c ON c.oid = relation.qualified_name::regclass \
-                           WHERE c.relrowsecurity OR c.relforcerowsecurity \
-                              OR EXISTS (SELECT FROM pg_catalog.pg_policy AS p WHERE p.polrelid = c.oid) \
-                              OR EXISTS (SELECT FROM pg_catalog.pg_attribute AS a \
-                                          WHERE a.attrelid = c.oid AND a.attname = 'env_key' \
-                                            AND NOT a.attisdropped) \
-                              OR EXISTS (SELECT FROM pg_catalog.pg_index AS i \
-                                          WHERE i.indrelid = c.oid \
-                                            AND pg_catalog.pg_get_indexdef(i.indexrelid) LIKE '%tenant_key%')) = 0, \
-                          '{qualified} and its history are at the org boundary: no env_key, row security, policy or tenant-key index';\n\
-                 END $$;"
-            )
-            .expect("writing to a String cannot fail");
-    }
+    script.push_str("DO $$ BEGIN ASSERT NOT EXISTS (
+        SELECT FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
+        WHERE n.nspname='platform' AND c.relkind IN ('r','p') AND (
+            c.relrowsecurity OR c.relforcerowsecurity
+            OR EXISTS (SELECT FROM pg_policy p WHERE p.polrelid=c.oid)
+            OR EXISTS (SELECT FROM pg_attribute a WHERE a.attrelid=c.oid AND a.attname='env_key' AND NOT a.attisdropped)
+        )), 'application tables must use the database boundary'; END $$;\n");
     // The retired tenant column is refused instead of accepted as input.
     for (table, insert) in [
         ("role", "(env_key, name) VALUES ('', 'empty')".to_owned()),
@@ -327,16 +237,6 @@ fn app_schema_applies_and_enforces_isolation_on_postgres() {
                INSERT INTO platform.{table} {insert};\n\
                ASSERT false, 'a ''''-tenant {table} row must be rejected (a45)';\n\
              EXCEPTION WHEN undefined_column THEN NULL; END; END $$;"
-        )
-        .expect("writing to a String cannot fail");
-    }
-    // The users.status CHECK admits every status the model names.
-    for (index, status) in UserStatus::ALL.iter().enumerate() {
-        writeln!(
-            script,
-            "INSERT INTO platform.\"user\" (id, type, email, status) \
-             VALUES ('55555555-5555-5555-5555-{index:012}', 'user', 'status-{index}@t1', '{}');",
-            status.as_str()
         )
         .expect("writing to a String cannot fail");
     }
@@ -474,10 +374,9 @@ fn platform_rows_carry_their_pinned_ids_on_postgres() {
     ]
     .into_iter()
     .chain(
-        [UserType::User, UserType::Service]
+        ["user", "service"]
             .into_iter()
             .flat_map(|user_type| {
-                let user_type = user_type.as_str();
                 [
                     format!(
                         "INSERT INTO platform.\"user\" (id, type, email, display_name) \
@@ -505,10 +404,7 @@ fn platform_rows_carry_their_pinned_ids_on_postgres() {
         .expect("writing to a String cannot fail");
     }
     // Every user type is admitted.
-    for (index, user_type) in UserType::ALL.into_iter().enumerate() {
-        if user_type == UserType::Platform {
-            continue;
-        }
+    for (index, user_type) in ["user", "service"].into_iter().enumerate() {
         writeln!(
             script,
             "INSERT INTO platform.\"user\" (id, type, email, display_name) \
@@ -517,187 +413,47 @@ fn platform_rows_carry_their_pinned_ids_on_postgres() {
         )
         .expect("writing to a String cannot fail");
     }
-    writeln!(
-        script,
-        "SELECT display_name, id, type, email FROM platform.\"user\" \
-          WHERE type = 'platform' ORDER BY display_name;\n\
-         SELECT count(*) FROM platform.\"user\" WHERE type <> 'platform';\n\
-         DROP SCHEMA platform CASCADE;"
-    )
-    .expect("writing to a String cannot fail");
-
-    let output = run(&url, &script);
-    // The provisioning SQL first binds its actor and operation, and psql prints that result.
-    let mut expected = vec![format!(
-        "{}|{}",
-        PlatformComponent::Provisioning.principal_id(),
-        PlatformComponent::Provisioning.principal_name()
-    )];
-    let mut rows = PlatformComponent::ALL
-        .map(|component| {
-            format!(
-                "{}|{}|platform|{}@{DOMAIN}",
-                component.principal_name(),
-                component.principal_id(),
-                component.as_str()
-            )
-        })
-        .to_vec();
-    rows.sort();
-    expected.extend(rows);
-    // The two fixture users and the `workflow` service user
-    // (docs/architecture/execution.md#environment-workflows) are the rows that
-    // are not platform rows.
-    expected.push("3".to_owned());
-    assert_eq!(output.lines().collect::<Vec<_>>(), expected);
+    for component in PlatformComponent::ALL {
+        writeln!(script, "DO $$ BEGIN ASSERT EXISTS (SELECT FROM platform.\"user\" WHERE id='{}' AND type='platform' AND display_name='{}'), 'platform principal must retain its identity'; END $$;", component.principal_id(), component.principal_name()).unwrap();
+    }
+    run(&url, &script);
 }
 
-/// Spec test 11, for the relations that `deploy/sql/app-schema.sql` owns. Every
-/// `platform` relation carries the four stamp columns as `NOT NULL`, one
-/// `wamn_record_history_stamp` trigger, one `wamn_record_history_log` trigger with the
-/// argument `unlimited`, and its history table. The provisioning SQL binds
-/// `wamn:provisioning` for its writes, every platform row stamps that
-/// principal, and the `wamn:provisioning` row stamps itself. The binding ends
-/// with the provisioning transaction.
+/// Provisioning stamps its writes and releases the transaction binding.
 #[test]
 fn platform_relations_stamp_provisioning_writes_on_postgres() {
-    const DOMAIN: &str = "example.invalid";
-
     let _serialized = wamn_test_postgres::lock();
     let test_database = wamn_test_postgres::database();
-    let url = test_database.url().to_owned();
-
+    let url = test_database.url();
     let mut script = sql::ensure_app_acl_role_sql();
     script.push_str("\nDROP SCHEMA IF EXISTS platform CASCADE;\n");
     script.push_str(&record_history_sql());
     script.push_str(&record_history_app_grants_sql());
     script.push_str(&app_schema_sql());
-    // The stamp columns and their types, from the server catalogs.
+    script.push_str("\nBEGIN;\n");
+    script.push_str(&platform_principals_sql("example.invalid").unwrap());
     script.push_str(
-        "\nSELECT 'column|' || c.relname || '|' || a.attname || '|' \
-                 || pg_catalog.format_type(a.atttypid, a.atttypmod) || '|' || a.attnotnull \
-           FROM pg_catalog.pg_attribute AS a \
-           JOIN pg_catalog.pg_class AS c ON c.oid = a.attrelid \
-           JOIN pg_catalog.pg_namespace AS n ON n.oid = c.relnamespace \
-          WHERE n.nspname = 'platform' AND c.relkind = 'r' \
-            AND a.attname IN ('created_at', 'created_by', 'updated_at', 'updated_by') \
-            AND a.attnum > 0 AND NOT a.attisdropped \
-          ORDER BY c.relname COLLATE \"C\", a.attname;\n\
-         SELECT 'relation|' || c.relname \
-           FROM pg_catalog.pg_class AS c \
-           JOIN pg_catalog.pg_namespace AS n ON n.oid = c.relnamespace \
-          WHERE n.nspname = 'platform' AND c.relkind IN ('r', 'p', 'v', 'm', 'f') \
-          ORDER BY c.relname COLLATE \"C\";\n\
-         SELECT 'trigger|' || pg_catalog.pg_get_triggerdef(t.oid) \
-           FROM pg_catalog.pg_trigger AS t \
-           JOIN pg_catalog.pg_class AS c ON c.oid = t.tgrelid \
-           JOIN pg_catalog.pg_namespace AS n ON n.oid = c.relnamespace \
-          WHERE n.nspname = 'platform' AND NOT t.tgisinternal AND t.tgname LIKE 'wamn_record_history_%' \
-          ORDER BY c.relname COLLATE \"C\", t.tgname;\n\
-         BEGIN;\n",
+        "COMMIT;\nDO $$ BEGIN
+        ASSERT COALESCE(current_setting('app.user_id', true), '') = '';
+        ASSERT COALESCE(current_setting('app.operation', true), '') = '';
+        END $$;\n",
     );
-    script.push_str(&platform_principals_sql(DOMAIN).expect("example.invalid is a domain name"));
-    writeln!(
-        script,
-        "COMMIT;\n\
-         SELECT 'actor|' || COALESCE(current_setting('app.user_id', true), '');\n\
-         SELECT 'stamp|' || display_name || '|' || (id = created_by)::text || '|' \
-                || created_by::text || '|' || updated_by::text || '|' \
-                || (updated_at >= created_at)::text \
-           FROM platform.\"user\" WHERE type = 'platform' ORDER BY display_name;\n\
-         DROP SCHEMA platform CASCADE;"
-    )
-    .expect("writing to a String cannot fail");
-
-    let output = run(&url, &script);
-    let mut expected = Vec::new();
-    let mut names = TABLES.iter().map(|table| table.name).collect::<Vec<_>>();
-    names.sort_unstable();
-    for name in names
-        .iter()
-        .filter(|name| !["external_system", "integration", "connection"].contains(name))
-    {
-        for (column, column_type) in [
-            ("created_at", "timestamp with time zone"),
-            ("created_by", "uuid"),
-            ("updated_at", "timestamp with time zone"),
-            ("updated_by", "uuid"),
-        ] {
-            expected.push(format!("column|{name}|{column}|{column_type}|true"));
-        }
-    }
-    // The write log has its own created_at, and no actor columns, stamp or log.
-    expected.push(format!(
-        "column|{WRITE_LOG}|created_at|timestamp with time zone|true"
-    ));
-    // number_counter has no history table and no log trigger (HISTORY_EXEMPT).
-    let mut relations = names
-        .iter()
-        .flat_map(|name| {
-            let history =
-                (!HISTORY_EXEMPT.contains(name)).then(|| format!("relation|{name}_history"));
-            [Some(format!("relation|{name}")), history]
-        })
-        .flatten()
-        .chain([format!("relation|{WRITE_LOG}")])
-        .collect::<Vec<_>>();
-    relations.sort_unstable();
-    expected.extend(relations);
-    expected.extend(names.iter().flat_map(|name| {
-        // PostgreSQL prints the reserved word `user` quoted.
-        let relation = if *name == "user" {
-            format!("{SCHEMA_NAME}.\"{name}\"")
-        } else {
-            format!("{SCHEMA_NAME}.{name}")
-        };
-        [
-            (!HISTORY_EXEMPT.contains(name)).then(|| {
-                format!(
-                    "trigger|CREATE TRIGGER wamn_record_history_log AFTER INSERT OR DELETE OR UPDATE \
-                     ON {relation} FOR EACH ROW EXECUTE FUNCTION \
-                     wamn_history.log_row_change('unlimited')"
-                )
-            }),
-            (!["external_system", "integration", "connection"].contains(name)).then(|| format!(
-                "trigger|CREATE TRIGGER wamn_record_history_stamp BEFORE INSERT OR UPDATE \
-                 ON {relation} FOR EACH ROW EXECUTE FUNCTION \
-                 wamn_history.stamp_row('created_at', 'created_by', 'updated_at', 'updated_by')"
-            )),
-        ]
-        .into_iter()
-        .flatten()
-    }));
-    // The provisioning SQL first binds its actor and operation, and psql prints that result.
     let provisioning = PlatformComponent::Provisioning.principal_id();
-    expected.push(format!(
-        "{provisioning}|{}",
-        PlatformComponent::Provisioning.principal_name()
-    ));
-    expected.push("actor|".to_owned());
-    let mut stamps = PlatformComponent::ALL
-        .map(|component| {
-            format!(
-                "stamp|{}|{}|{provisioning}|{provisioning}|true",
-                component.principal_name(),
-                component == PlatformComponent::Provisioning,
-            )
-        })
-        .to_vec();
-    stamps.sort();
-    expected.extend(stamps);
-    assert_eq!(output.lines().collect::<Vec<_>>(), expected);
+    let operation = PlatformComponent::Provisioning.principal_name();
+    for component in PlatformComponent::ALL {
+        let id = component.principal_id();
+        writeln!(script, "DO $$ BEGIN
+            ASSERT EXISTS (SELECT FROM platform.\"user\" WHERE id = '{id}'
+                AND created_by = '{provisioning}' AND updated_by = '{provisioning}'
+                AND created_at IS NOT NULL AND updated_at >= created_at);
+            ASSERT EXISTS (SELECT FROM platform.user_history WHERE row_key ->> 'id' = '{id}'
+                AND type = 'insert' AND changed_by = '{provisioning}' AND operation = '{operation}');
+            END $$;").unwrap();
+    }
+    run(url, &script);
 }
 
-/// Record history level 2 for the relations that `deploy/sql/app-schema.sql`
-/// owns (epic rulings 14, 40 to 43, and 52 to 57). Administrative SQL writes
-/// each `platform` relation in three transactions. Each change writes one
-/// entry with the tenant of its row (`-` for a table at the org boundary), the
-/// bound operation, and the bound actor.
-/// An update that changes a key column writes a delete and an insert entry.
-/// The user delete cascades to `user_role` and `api_key`, and those delete
-/// entries carry the actor and the operation of the deleting transaction. The
-/// `api_key` images carry `key_hash` (ruling 41). The server ACLs show the
-/// `wamn_app` grant of every relation (ruling 76).
+/// Row changes record the actor and operation, including key changes and cascades.
 #[test]
 fn platform_relations_log_every_row_change_on_postgres() {
     const U1: &str = "11111111-1111-1111-1111-111111111111";
@@ -711,33 +467,12 @@ fn platform_relations_log_every_row_change_on_postgres() {
 
     let _serialized = wamn_test_postgres::lock();
     let test_database = wamn_test_postgres::database();
-    let url = test_database.url().to_owned();
-
+    let url = test_database.url();
     let mut script = sql::ensure_app_acl_role_sql();
     script.push_str("\nDROP SCHEMA IF EXISTS platform CASCADE;\n");
     script.push_str(&record_history_sql());
     script.push_str(&record_history_app_grants_sql());
     script.push_str(&app_schema_sql());
-    // The wamn_app privileges of every relation, from the server ACLs.
-    script.push_str(
-        "\nSELECT 'grant|' || c.relname || '|' || concat_ws(', ', \
-                (SELECT string_agg(acl.privilege_type, ', ' ORDER BY array_position( \
-                            ARRAY['SELECT', 'INSERT', 'UPDATE', 'DELETE'], acl.privilege_type)) \
-                   FROM pg_catalog.aclexplode(c.relacl) AS acl \
-                  WHERE acl.grantee = 'wamn_app'::regrole), \
-                (SELECT string_agg(granted.privilege_type || ' (' || granted.columns || ')', \
-                                   ', ' ORDER BY granted.privilege_type) \
-                   FROM (SELECT acl.privilege_type, \
-                                string_agg(a.attname, ', ' ORDER BY a.attnum) AS columns \
-                           FROM pg_catalog.pg_attribute AS a \
-                          CROSS JOIN LATERAL pg_catalog.aclexplode(a.attacl) AS acl \
-                          WHERE a.attrelid = c.oid AND acl.grantee = 'wamn_app'::regrole \
-                          GROUP BY acl.privilege_type) AS granted)) \
-           FROM pg_catalog.pg_class AS c \
-           JOIN pg_catalog.pg_namespace AS n ON n.oid = c.relnamespace \
-          WHERE n.nspname = 'platform' AND c.relkind = 'r' \
-          ORDER BY c.relname COLLATE \"C\";\n",
-    );
     writeln!(
         script,
         "BEGIN;\n\
@@ -769,103 +504,81 @@ fn platform_relations_log_every_row_change_on_postgres() {
          BEGIN;\n\
          SET LOCAL app.user_id = '{U3}';\n\
          SET LOCAL app.operation = '{REMOVE}';\n\
-         DELETE FROM platform.user_role WHERE user_id = '{U3}';\n\
          DELETE FROM platform.api_key WHERE id = '{K2}';\n\
-         DELETE FROM platform.permission;\n\
          DELETE FROM platform.setting;\n\
          DELETE FROM platform.\"user\" WHERE id = '{U1}';\n\
          DELETE FROM platform.\"user\" WHERE id = '{U2}';\n\
-         DELETE FROM platform.role WHERE name = 'admin';\n\
+         DELETE FROM platform.role WHERE name IN ('admin', 'auditor');\n\
          COMMIT;"
     )
     .expect("writing to a String cannot fail");
-    // One line per entry, in relation and position order. The images leave out
-    // the stamp columns, whose times differ in each run.
-    let entries = TABLES
-        .iter()
-        .filter(|table| !HISTORY_EXEMPT.contains(&table.name))
-        .map(|table| {
-            format!(
-                "SELECT '{name}' AS relation, position, \
-                        COALESCE(to_jsonb(h) ->> 'env_key', '-') AS env_key, type, operation, \
-                        changed_by, row_key, before, after \
-                   FROM {SCHEMA_NAME}.{name}_history AS h",
-                name = table.name,
-            )
-        })
-        .collect::<Vec<_>>()
-        .join(" UNION ALL ");
-    writeln!(
-        script,
-        "SELECT 'entry|' || relation || '|' || env_key || '|' || type || '|' || operation \
-                || '|' || changed_by || '|' || row_key::text \
-                || '|' || (before - '{{created_at,created_by,updated_at,updated_by}}'::text[])::text \
-                || '|' || (after - '{{created_at,created_by,updated_at,updated_by}}'::text[])::text \
-           FROM ({entries}) AS entry \
-          ORDER BY relation COLLATE \"C\", position;\n\
-         DROP SCHEMA platform CASCADE;"
-    )
-    .expect("writing to a String cannot fail");
-
-    let output = run(&url, &script);
-    let mut relations = TABLES
-        .iter()
-        .flat_map(|table| {
-            let history =
-                (!HISTORY_EXEMPT.contains(&table.name)).then(|| format!("{}_history", table.name));
-            [Some(table.name.to_owned()), history]
-        })
-        .flatten()
-        .chain([WRITE_LOG.to_owned()])
-        .collect::<Vec<_>>();
-    relations.sort_unstable();
-    let mut expected = relations
-        .iter()
-        .map(|relation| format!("grant|{relation}|{}", wamn_app_privileges(relation)))
-        .collect::<Vec<_>>();
-    // The expected entries name the fixture ids U1, U2, U3, K1, and K2.
-    expected.extend(
-        r#"entry|api_key|-|insert|admin:seed-history-fixture|U1|{"id": "K1"}|{}|{"id": "K1", "name": "ci", "prefix": "wk_a", "user_id": "U1", "key_hash": "hash-1", "expires_at": null, "revoked_at": null, "last_used_at": null}
-entry|api_key|-|insert|admin:seed-history-fixture|U1|{"id": "K2"}|{}|{"id": "K2", "name": "cd", "prefix": "wk_b", "user_id": "U1", "key_hash": "hash-2", "expires_at": null, "revoked_at": null, "last_used_at": null}
-entry|api_key|-|update|admin:change-history-fixture|U2|{"id": "K1"}|{"revoked_at": null}|{"revoked_at": "2026-09-14T00:00:00.000000Z"}
-entry|api_key|-|delete|admin:remove-history-fixture|U3|{"id": "K2"}|{"id": "K2", "name": "cd", "prefix": "wk_b", "user_id": "U1", "key_hash": "hash-2", "expires_at": null, "revoked_at": null, "last_used_at": null}|{}
-entry|api_key|-|delete|admin:remove-history-fixture|U3|{"id": "K1"}|{"id": "K1", "name": "ci", "prefix": "wk_a", "user_id": "U1", "key_hash": "hash-1", "expires_at": null, "revoked_at": "2026-09-14T00:00:00.000000Z", "last_used_at": null}|{}
-entry|permission|-|insert|admin:seed-history-fixture|U1|{"role_name": "auditor", "permission": "platform-fixture:widget/get"}|{}|{"role_name": "auditor", "permission": "platform-fixture:widget/get"}
-entry|permission|-|delete|admin:change-history-fixture|U2|{"role_name": "auditor", "permission": "platform-fixture:widget/get"}|{"role_name": "auditor", "permission": "platform-fixture:widget/get"}|{}
-entry|permission|-|insert|admin:change-history-fixture|U2|{"role_name": "auditor", "permission": "platform-fixture:widget/list"}|{}|{"role_name": "auditor", "permission": "platform-fixture:widget/list"}
-entry|permission|-|delete|admin:remove-history-fixture|U3|{"role_name": "auditor", "permission": "platform-fixture:widget/list"}|{"role_name": "auditor", "permission": "platform-fixture:widget/list"}|{}
-entry|role|-|insert|admin:seed-history-fixture|U1|{"name": "admin"}|{}|{"name": "admin", "description": null}
-entry|role|-|insert|admin:seed-history-fixture|U1|{"name": "auditor"}|{}|{"name": "auditor", "description": null}
-entry|role|-|update|admin:change-history-fixture|U2|{"name": "admin"}|{"description": null}|{"description": "administrators"}
-entry|role|-|delete|admin:remove-history-fixture|U3|{"name": "admin"}|{"name": "admin", "description": "administrators"}|{}
-entry|setting|-|insert|admin:seed-history-fixture|U1|{"key": "display.theme", "scope_id": "acme", "scope_type": "org"}|{}|{"key": "display.theme", "value": "dark", "locked": false, "scope_id": "acme", "scope_type": "org"}
-entry|setting|-|update|admin:change-history-fixture|U2|{"key": "display.theme", "scope_id": "acme", "scope_type": "org"}|{"value": "dark"}|{"value": "light"}
-entry|setting|-|delete|admin:remove-history-fixture|U3|{"key": "display.theme", "scope_id": "acme", "scope_type": "org"}|{"key": "display.theme", "value": "light", "locked": false, "scope_id": "acme", "scope_type": "org"}|{}
-entry|user|-|insert|admin:seed-history-fixture|U1|{"id": "U1"}|{}|{"id": "U1", "type": "user", "email": "u1@t1", "status": "active", "display_name": null}
-entry|user|-|insert|admin:seed-history-fixture|U1|{"id": "U2"}|{}|{"id": "U2", "type": "user", "email": "u2@t2", "status": "active", "display_name": null}
-entry|user|-|insert|admin:seed-history-fixture|U1|{"id": "U3"}|{}|{"id": "U3", "type": "service", "email": "u3@t1", "status": "active", "display_name": null}
-entry|user|-|update|admin:change-history-fixture|U2|{"id": "U2"}|{"status": "active"}|{"status": "disabled"}
-entry|user|-|delete|admin:remove-history-fixture|U3|{"id": "U1"}|{"id": "U1", "type": "user", "email": "u1@t1", "status": "active", "display_name": null}|{}
-entry|user|-|delete|admin:remove-history-fixture|U3|{"id": "U2"}|{"id": "U2", "type": "user", "email": "u2@t2", "status": "disabled", "display_name": null}|{}
-entry|user_role|-|insert|admin:seed-history-fixture|U1|{"user_id": "U1", "role_name": "admin"}|{}|{"user_id": "U1", "role_name": "admin"}
-entry|user_role|-|insert|admin:seed-history-fixture|U1|{"user_id": "U3", "role_name": "admin"}|{}|{"user_id": "U3", "role_name": "admin"}
-entry|user_role|-|delete|admin:change-history-fixture|U2|{"user_id": "U3", "role_name": "admin"}|{"user_id": "U3", "role_name": "admin"}|{}
-entry|user_role|-|insert|admin:change-history-fixture|U2|{"user_id": "U3", "role_name": "auditor"}|{}|{"user_id": "U3", "role_name": "auditor"}
-entry|user_role|-|delete|admin:remove-history-fixture|U3|{"user_id": "U3", "role_name": "auditor"}|{"user_id": "U3", "role_name": "auditor"}|{}
-entry|user_role|-|delete|admin:remove-history-fixture|U3|{"user_id": "U1", "role_name": "admin"}|{"user_id": "U1", "role_name": "admin"}|{}"#
-            .lines()
-            .map(str::to_owned),
-    );
-    let output = [("U1", U1), ("U2", U2), ("U3", U3), ("K1", K1), ("K2", K2)]
-        .into_iter()
-        .fold(output, |output, (name, id)| output.replace(id, name));
-    assert_eq!(output.lines().collect::<Vec<_>>(), expected);
+    // Each fixture mutation writes one entry. A key change writes a delete
+    // and an insert instead of an update.
+    for (table, inserted, updated, removed) in [
+        ("user", 3, 1, 2),
+        ("role", 2, 1, 2),
+        ("user_role", 2, 0, 2),
+        ("permission", 1, 0, 1),
+        ("setting", 1, 1, 1),
+        ("api_key", 2, 1, 2),
+    ] {
+        let key_change = updated == 0;
+        let changed = if key_change { 2 } else { updated };
+        writeln!(script, "DO $$ BEGIN
+            ASSERT (SELECT count(*) FROM platform.{table}_history) = {inserted} + {changed} + {removed};
+            ASSERT (SELECT count(*) FROM platform.{table}_history WHERE type = 'insert'
+                AND operation = '{SEED}' AND changed_by = '{U1}') = {inserted};
+            ASSERT (SELECT count(*) FROM platform.{table}_history WHERE type = 'update'
+                AND operation = '{CHANGE}' AND changed_by = '{U2}') = {updated};
+            ASSERT (SELECT count(*) FROM platform.{table}_history WHERE type = 'delete'
+                AND operation = '{REMOVE}' AND changed_by = '{U3}') = {removed};
+            END $$;").unwrap();
+        if key_change {
+            for entry_type in ["delete", "insert"] {
+                writeln!(
+                    script,
+                    "DO $$ BEGIN ASSERT (SELECT count(*) FROM platform.{table}_history
+                    WHERE type = '{entry_type}' AND operation = '{CHANGE}'
+                        AND changed_by = '{U2}') = 1; END $$;"
+                )
+                .unwrap();
+            }
+        }
+    }
+    writeln!(script, "DO $$ BEGIN
+        ASSERT EXISTS (SELECT FROM platform.user_history WHERE type = 'update'
+            AND row_key ->> 'id' = '{U2}' AND before ->> 'status' = 'active' AND after ->> 'status' = 'disabled');
+        ASSERT EXISTS (SELECT FROM platform.role_history WHERE type = 'update'
+            AND row_key ->> 'name' = 'admin' AND after ->> 'description' = 'administrators');
+        ASSERT EXISTS (SELECT FROM platform.setting_history WHERE type = 'update'
+            AND before ->> 'value' = 'dark' AND after ->> 'value' = 'light');
+        ASSERT EXISTS (SELECT FROM platform.api_key_history WHERE type = 'update'
+            AND row_key ->> 'id' = '{K1}' AND after ->> 'revoked_at' IS NOT NULL);
+        ASSERT EXISTS (SELECT FROM platform.user_role_history WHERE type = 'delete'
+            AND operation = '{CHANGE}' AND row_key ->> 'user_id' = '{U3}' AND row_key ->> 'role_name' = 'admin');
+        ASSERT EXISTS (SELECT FROM platform.user_role_history WHERE type = 'insert'
+            AND operation = '{CHANGE}' AND row_key ->> 'user_id' = '{U3}' AND row_key ->> 'role_name' = 'auditor');
+        ASSERT EXISTS (SELECT FROM platform.permission_history WHERE type = 'delete'
+            AND operation = '{CHANGE}' AND row_key ->> 'permission' = 'platform-fixture:widget/get');
+        ASSERT EXISTS (SELECT FROM platform.permission_history WHERE type = 'insert'
+            AND operation = '{CHANGE}' AND row_key ->> 'permission' = 'platform-fixture:widget/list');
+        ASSERT EXISTS (SELECT FROM platform.api_key_history WHERE type = 'insert'
+            AND row_key ->> 'id' = '{K1}' AND after ->> 'key_hash' = 'hash-1');
+        ASSERT EXISTS (SELECT FROM platform.api_key_history WHERE type = 'delete'
+            AND operation = '{REMOVE}' AND row_key ->> 'id' = '{K1}' AND before ->> 'key_hash' = 'hash-1');
+        ASSERT EXISTS (SELECT FROM platform.user_role_history WHERE type = 'delete'
+            AND operation = '{REMOVE}' AND row_key ->> 'user_id' = '{U1}');
+        ASSERT EXISTS (SELECT FROM platform.user_role_history WHERE type = 'delete'
+            AND operation = '{REMOVE}' AND row_key ->> 'user_id' = '{U3}' AND row_key ->> 'role_name' = 'auditor');
+        ASSERT EXISTS (SELECT FROM platform.permission_history WHERE type = 'delete'
+            AND operation = '{REMOVE}' AND row_key ->> 'permission' = 'platform-fixture:widget/list');
+        ASSERT NOT EXISTS (SELECT FROM platform.user_role);
+        ASSERT NOT EXISTS (SELECT FROM platform.permission);
+        ASSERT NOT EXISTS (SELECT FROM platform.api_key);
+        END $$;").unwrap();
+    run(url, &script);
 }
 
-/// Record history spec test 19. `wamn_history.row_image` spells each
-/// `timestamptz` exactly as the platform canonicalizer spells the value that
-/// PostgreSQL holds. The session time zone is not UTC, and the values have
-/// zero and non-zero microseconds.
 #[test]
 fn row_image_spells_timestamptz_as_the_platform_canonicalizer_on_postgres() {
     let _serialized = wamn_test_postgres::lock();

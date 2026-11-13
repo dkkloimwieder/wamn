@@ -1,4 +1,4 @@
-use super::quote_literal;
+use super::escape_literal;
 
 /// Delete expired prefixes and advance the watermark in one statement.
 ///
@@ -22,6 +22,6 @@ pub(super) fn prune_history_sql(table: &str) -> String {
                        ON CONFLICT (history_table) DO UPDATE \
                          SET transaction_id = greatest(current.transaction_id, EXCLUDED.transaction_id)) \
           SELECT count(*) FROM removed",
-        table_literal = quote_literal(table),
+        table_literal = escape_literal(table),
     )
 }

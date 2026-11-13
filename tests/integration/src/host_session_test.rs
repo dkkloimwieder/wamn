@@ -16,10 +16,9 @@ use serde_json::Value;
 use tokio::io::AsyncReadExt as _;
 use wamn_control_provision::identity_issuer::validate_identity_issuer;
 use wamn_control_provision::session_target::{session_audience, validate_session_env_key};
-use wamn_session::keys::{PublicSessionKey, SessionJwks, decode_public_key};
-use wamn_session::token::{
-    MAXIMUM_LIFETIME, SessionScope, TOLERANCE, session_key_id, verify_session_token,
-};
+use wamn_identity_protocol::keys::{PublicSessionKey, SessionJwks, decode_public_key};
+use wamn_identity_protocol::test_util::{Scope, verify};
+use wamn_identity_protocol::token::MAXIMUM_LIFETIME;
 
 const MAX_BYTES: usize = 65_536;
 const IO_TIMEOUT: Duration = Duration::from_secs(5);
@@ -128,14 +127,20 @@ fn fixture(bytes: &[u8]) -> anyhow::Result<Fixture> {
         .map_err(|_| anyhow!("host fixture manifest digest refused"))?;
     let principal = fixture
         .user_id
-        .parse::<wamn_platform_identity::PrincipalId>()
+        .parse::<wamn_identity_protocol::PrincipalId>()
         .map_err(|_| anyhow!("host fixture principal refused"))?;
     ensure!(
-        principal.as_str() == fixture.user_id
-            && fixture.user_pat.starts_with(wamn_session::PAT_TOKEN_PREFIX),
+        principal.to_string().as_str() == fixture.user_id
+            && fixture
+                .user_pat
+                .starts_with(wamn_identity_protocol::PAT_TOKEN_PREFIX),
         "host fixture user credential refused"
     );
-    let roles = fixture.roles.iter().collect::<BTreeSet<_>>();
+    let roles = fixture
+        .roles
+        .iter()
+        .map(String::as_str)
+        .collect::<BTreeSet<_>>();
     ensure!(
         !roles.is_empty()
             && roles.len() == fixture.roles.len()
@@ -351,23 +356,37 @@ async fn observe(args: HostSessionTestArgs) -> anyhow::Result<()> {
         exchange.token_type == "Bearer",
         "host test session token type refused"
     );
-    let kid = session_key_id(&exchange.access_token)
-        .map_err(|_| anyhow!("host test signed header refused"))?;
+    let kid = jsonwebtoken::decode_header(&exchange.access_token)
+        .map_err(|_| anyhow!("host test signed header refused"))?
+        .kid
+        .ok_or_else(|| anyhow!("session key ID is absent"))?;
     let key = keys
         .get(&kid)
         .ok_or_else(|| anyhow!("host test signing key is absent from configured JWKS"))?;
-    let scope = SessionScope {
+    let scope = Scope {
         issuer: &args.issuer,
         org: &fixture.org,
         audience: &fixture.audience,
     };
     let received_at = unix_seconds()?;
-    let claims = verify_session_token(&exchange.access_token, key, scope, received_at)
+    let claims = verify(&exchange.access_token, key, scope, received_at)
+        .await
         .map_err(|_| anyhow!("host test session signature, scope, or age refused"))?;
-    let expected_roles = fixture.roles.iter().collect::<BTreeSet<_>>();
-    let actual_roles = claims.roles.iter().collect::<BTreeSet<_>>();
+    let expected_roles = fixture
+        .roles
+        .iter()
+        .map(String::as_str)
+        .collect::<BTreeSet<_>>();
+    let actual_roles = claims
+        .roles
+        .iter()
+        .map(wamn_identity_protocol::RoleName::as_str)
+        .collect::<BTreeSet<_>>();
     ensure!(
-        claims.sub == fixture.user_id
+        claims.sub
+            == fixture
+                .user_id
+                .parse::<wamn_identity_protocol::PrincipalId>()?
             && claims.org == fixture.org
             && claims.aud == fixture.audience
             && actual_roles == expected_roles
@@ -377,12 +396,12 @@ async fn observe(args: HostSessionTestArgs) -> anyhow::Result<()> {
     );
     let expiry_bound = started_at
         .checked_add(MAXIMUM_LIFETIME)
-        .and_then(|value| value.checked_add(TOLERANCE))
+        .and_then(|value| value.checked_add(30))
         .ok_or_else(|| anyhow!("host test exchange age bound overflowed"))?;
     ensure!(
         claims.exp <= expiry_bound
-            && claims.iat >= started_at - TOLERANCE
-            && claims.iat <= received_at + TOLERANCE,
+            && claims.iat >= started_at - 30
+            && claims.iat <= received_at + 30,
         "host test exchange exceeds its observed evidence-age bound"
     );
     for endpoint in &endpoints {
@@ -442,7 +461,8 @@ async fn observe(args: HostSessionTestArgs) -> anyhow::Result<()> {
         unix_seconds()? < claims.exp,
         "host test refusal cannot be attributed to token expiry"
     );
-    verify_session_token(&exchange.access_token, key, scope, unix_seconds()?)
+    verify(&exchange.access_token, key, scope, unix_seconds()?)
+        .await
         .map_err(|_| anyhow!("host test token no longer satisfies its signed age profile"))?;
     if args.jwks_available {
         ensure!(

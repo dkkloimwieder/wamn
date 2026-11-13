@@ -2,14 +2,13 @@
 
 use tokio_postgres::{Client, NoTls};
 use wamn_control_provision::{PlatformComponent, platform_principals_sql, test_database};
+use wamn_identity_protocol::PrincipalId;
 use wamn_platform_identity::application::{ApplicationScope, project_authority};
 use wamn_platform_identity::auth_changes::AuthDrops;
 use wamn_platform_identity::org::{
     activate_org_membership, deactivate_org_membership, grant_project_admin, lock_membership,
 };
-use wamn_platform_identity::{
-    PrincipalId, assign_project_role, create_or_reuse_user, create_service,
-};
+use wamn_platform_identity::{assign_project_role, create_or_reuse_user, create_service};
 
 async fn connect(url: &str) -> anyhow::Result<Client> {
     let (client, connection) = tokio_postgres::connect(url, NoTls).await?;
@@ -61,7 +60,7 @@ async fn inactive_membership_serializes_grants_and_refuses_sessions() -> anyhow:
         .get(0);
     let tx = first.transaction().await?;
     lock_membership(&tx, &user, "acme").await?;
-    let target = user.clone();
+    let target = user;
     let removal = tokio::spawn(async move {
         let tx = second.transaction().await?;
         deactivate_org_membership(&tx, &target, "acme", &mut AuthDrops::default()).await?;
@@ -75,7 +74,7 @@ async fn inactive_membership_serializes_grants_and_refuses_sessions() -> anyhow:
     let remaining: i64 = observer
         .query_one(
             "SELECT count(*) FROM identity.project_roles WHERE principal_id=$1::text::uuid",
-            &[&user.as_str()],
+            &[&user.to_string().as_str()],
         )
         .await?
         .get(0);
@@ -84,7 +83,7 @@ async fn inactive_membership_serializes_grants_and_refuses_sessions() -> anyhow:
     activate_org_membership(&first, &user, "acme").await?;
     let tx = first.transaction().await?;
     deactivate_org_membership(&tx, &user, "acme", &mut AuthDrops::default()).await?;
-    let target = user.clone();
+    let target = user;
     let grant = tokio::spawn(async move {
         let tx = second.transaction().await?;
         let refusal = grant_project_admin(&tx, &target, "acme", "billing")
@@ -102,8 +101,8 @@ async fn inactive_membership_serializes_grants_and_refuses_sessions() -> anyhow:
     let _second = grant.await??;
 
     // Retain inconsistent access rows to test membership independently of roles.
-    first.execute("INSERT INTO identity.project_roles(principal_id,org,project,role) VALUES($1::text::uuid,'acme','billing','project-admin')", &[&user.as_str()]).await?;
-    first.execute("INSERT INTO identity.project_env_memberships(principal_id,org,project,env) VALUES($1::text::uuid,'acme','billing','dev')", &[&user.as_str()]).await?;
+    first.execute("INSERT INTO identity.project_roles(principal_id,org,project,role) VALUES($1::text::uuid,'acme','billing','project-admin')", &[&user.to_string().as_str()]).await?;
+    first.execute("INSERT INTO identity.project_env_memberships(principal_id,org,project,env) VALUES($1::text::uuid,'acme','billing','dev')", &[&user.to_string().as_str()]).await?;
     let issuer = "https://identity.example.test";
     let audience = "urn:wamn:control:acme";
     let tx = first.transaction().await?;
@@ -111,10 +110,12 @@ async fn inactive_membership_serializes_grants_and_refuses_sessions() -> anyhow:
         .await?
         .expect("active global user");
     tx.commit().await?;
-    let claims: wamn_session::token::SessionClaims = serde_json::from_value(serde_json::json!({
-        "iss": issuer, "sub": user.as_str(), "org": "acme", "aud": audience,
-        "roles": ["admin"], "iat": 1, "exp": 901, "jti": "membership-test", "authority": {"login": login.login.id}
-    }))?;
+    let claims: wamn_identity_protocol::token::SessionClaims = serde_json::from_value(
+        serde_json::json!({
+            "iss": issuer, "sub": user.to_string().as_str(), "org": "acme", "aud": audience,
+            "roles": ["admin"], "iat": 1, "exp": 901, "jti": "membership-test", "authority": {"login": login.login.id}
+        }),
+    )?;
     assert!(!wamn_platform_identity::control::control_session_is_active(&first, &claims).await?);
     assert!(
         !wamn_platform_identity::session_token::session_is_active(
@@ -140,7 +141,7 @@ async fn service_admin_projects_without_user_membership_and_stale_admin_is_remov
 -> anyhow::Result<()> {
     let _lock = wamn_test_postgres::lock();
     let system_database = test_database::system();
-    let target_database = wamn_project_state::test_database::tenant_platform();
+    let target_database = wamn_platform_identity::test_database::tenant_platform();
     let mut system = connect(system_database.url()).await?;
     let mut target = connect(target_database.url()).await?;
     system
@@ -161,7 +162,7 @@ async fn service_admin_projects_without_user_membership_and_stale_admin_is_remov
         &mut AuthDrops::default(),
     )
     .await?;
-    let principal: PrincipalId = service.id().clone();
+    let principal: PrincipalId = *service.id();
     let scope = ApplicationScope {
         org: "acme",
         project: "billing",
@@ -183,7 +184,7 @@ async fn service_admin_projects_without_user_membership_and_stale_admin_is_remov
         } else {
             tx.execute(
                 "DELETE FROM identity.project_roles WHERE principal_id=$1::text::uuid",
-                &[&principal.as_str()],
+                &[&principal.to_string().as_str()],
             )
             .await?;
         }
@@ -200,12 +201,12 @@ async fn service_admin_projects_without_user_membership_and_stale_admin_is_remov
         .await?;
         application.commit().await?;
         authority.commit().await?;
-        let admin: bool = target.query_one("SELECT EXISTS(SELECT 1 FROM platform.user_role WHERE user_id=$1::text::uuid AND role_name='admin')", &[&principal.as_str()]).await?.get(0);
+        let admin: bool = target.query_one("SELECT EXISTS(SELECT 1 FROM platform.user_role WHERE user_id=$1::text::uuid AND role_name='admin')", &[&principal.to_string().as_str()]).await?.get(0);
         assert_eq!(admin, expected);
         let service_row: String = target
             .query_one(
                 "SELECT type FROM platform.\"user\" WHERE id=$1::text::uuid",
-                &[&principal.as_str()],
+                &[&principal.to_string().as_str()],
             )
             .await?
             .get(0);
@@ -214,7 +215,7 @@ async fn service_admin_projects_without_user_membership_and_stale_admin_is_remov
     let memberships: i64 = system
         .query_one(
             "SELECT count(*) FROM identity.org_memberships WHERE principal_id=$1::text::uuid",
-            &[&principal.as_str()],
+            &[&principal.to_string().as_str()],
         )
         .await?
         .get(0);
@@ -228,7 +229,7 @@ async fn authored_mutations_refuse_direct_admin_and_escalation() -> anyhow::Resu
         ApplicationUser, GrantAuthority, GrantChange, create_role, mutate_grant, write_user,
     };
     let _lock = wamn_test_postgres::lock();
-    let database = wamn_project_state::test_database::tenant_platform();
+    let database = wamn_platform_identity::test_database::tenant_platform();
     let mut client = connect(database.url()).await?;
     client
         .batch_execute(&platform_principals_sql("example.test")?)
@@ -261,7 +262,7 @@ async fn authored_mutations_refuse_direct_admin_and_escalation() -> anyhow::Resu
         "test",
         GrantAuthority::Provisioning,
         GrantChange::UserRole {
-            user_id: actor.as_str(),
+            user_id: actor.to_string().as_str(),
             role: "delegated",
             grant: true,
         },
@@ -286,7 +287,7 @@ async fn authored_mutations_refuse_direct_admin_and_escalation() -> anyhow::Resu
             "test",
             GrantAuthority::User(&actor),
             GrantChange::UserRole {
-                user_id: target.as_str(),
+                user_id: target.to_string().as_str(),
                 role: "admin",
                 grant,
             },

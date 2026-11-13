@@ -44,9 +44,9 @@ use wamn_environment_control::author_workflow::{
 };
 use wamn_environment_control::workflow_lifecycle::{WorkflowVersion, enable_workflow};
 use wamn_execution_host::{HostRouteDelivery, HostRouteHandlers, OperationHost, OperationScope};
-use wamn_platform_identity::PrincipalId;
+use wamn_identity_protocol::PlatformComponent;
+use wamn_identity_protocol::PrincipalId;
 use wamn_platform_identity::auth_changes::AuthChanges;
-use wamn_project_state::PlatformComponent;
 use wamn_runtime::connection_credentials::ConnectionCredentials;
 use wamn_runtime::plugins::connection_http::transport::HttpTransport;
 use wamn_runtime::plugins::wamn_jetstream::WamnJetstream;
@@ -608,7 +608,7 @@ impl Fixture {
     /// roles a session signs that the user still holds, read by the session
     /// permission reader, and the one active role they give.
     async fn session(&self, user: &str) -> AuthenticatedCaller {
-        let signed: Vec<String> = self
+        let signed: Vec<wamn_identity_protocol::RoleName> = self
             .admin
             .query(
                 "SELECT role_name FROM platform.user_role \
@@ -618,7 +618,7 @@ impl Fixture {
             .await
             .unwrap()
             .iter()
-            .map(|row| row.get(0))
+            .map(|row| row.get::<_, String>(0).parse().unwrap())
             .collect();
         let principal: PrincipalId = user.parse().unwrap();
         let held = self

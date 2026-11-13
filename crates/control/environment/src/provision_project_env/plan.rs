@@ -1,4 +1,4 @@
-use super::{APP_ROLE, WorkloadActionVerb, WorkloadRoleFamily, quote_ident, sql};
+use super::{APP_ROLE, WorkloadActionVerb, WorkloadRoleFamily, escape_identifier, sql};
 
 /// `--<verb>-<family>-generation`, the flag one family's one verb answers to.
 pub fn workload_action_flag(family: WorkloadRoleFamily, verb: WorkloadActionVerb) -> String {
@@ -66,10 +66,10 @@ pub fn role_posture_sql() -> String {
 ///
 /// `pub` for the same reason as [`role_sql`].
 pub fn privilege_sql(database: &str) -> String {
-    let db = quote_ident(database);
+    let db = escape_identifier(database);
     format!(
         "REVOKE CONNECT, TEMPORARY ON DATABASE {db} FROM PUBLIC; \
          REVOKE CONNECT ON DATABASE {db} FROM {app};\n",
-        app = quote_ident(APP_ROLE),
+        app = escape_identifier(APP_ROLE),
     )
 }

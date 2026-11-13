@@ -9,13 +9,14 @@ use tokio::task::JoinSet;
 use tokio_postgres::config::{Host, SslMode};
 use tokio_postgres::{Client, NoTls};
 use wamn_control_provision::SYSTEM_SCHEMA_SQL;
+use wamn_identity_protocol::keys::PublicSessionKey;
+use wamn_identity_protocol::test_util::{Scope, verify};
+use wamn_identity_protocol::token::SessionClaims;
 use wamn_platform_identity::session_keys::{
     activate_session_key, publish_session_key, remove_compromised_session_key, retire_session_keys,
     session_jwks,
 };
 use wamn_platform_identity::session_token::{IssuedSessionToken, sign_session_token};
-use wamn_session::keys::PublicSessionKey;
-use wamn_session::token::{SessionClaims, SessionScope, session_key_id, verify_session_token};
 
 const ISSUER: &str = "https://identity.lifecycle.internal";
 const OTHER_ISSUER: &str = "https://other.lifecycle.internal";
@@ -62,7 +63,7 @@ async fn session_key_lifecycle_on_postgres() {
     let initial = sign_session_token(&mut admin, claims(ISSUER), now())
         .await
         .unwrap();
-    assert_token(&initial, &first);
+    assert_token(&initial, &first).await;
     assert_eq!(
         table_versions(&admin).await,
         before,
@@ -80,7 +81,7 @@ async fn session_key_lifecycle_on_postgres() {
     );
 
     let raced = race_signing_and_rotation(&url, &admin, &second).await;
-    assert_token(&raced, &first);
+    assert_token(&raced, &first).await;
     let cutoff = key_state(&admin, &first.kid).await;
     assert!(cutoff.0.is_some());
     assert!(cutoff.1, "rotation retained old private material");
@@ -119,7 +120,8 @@ async fn session_key_lifecycle_on_postgres() {
             .await
             .unwrap(),
         &second,
-    );
+    )
+    .await;
 
     crash_rotation(&url, &admin, &third).await;
     assert_eq!(
@@ -138,7 +140,8 @@ async fn session_key_lifecycle_on_postgres() {
             .await
             .unwrap(),
         &second,
-    );
+    )
+    .await;
     activate_session_key(&mut restarted, ISSUER, &third.kid)
         .await
         .unwrap();
@@ -147,7 +150,8 @@ async fn session_key_lifecycle_on_postgres() {
             .await
             .unwrap(),
         &third,
-    );
+    )
+    .await;
 
     assert!(
         remove_compromised_session_key(&mut restarted, ISSUER, &third.kid)
@@ -247,7 +251,7 @@ async fn signer_backend_loss_before_commit_does_not_issue_token() {
         assert_token(
             &sign_session_token(&mut admin, claims(ISSUER), now()).await.unwrap(),
             &first,
-        );
+        ).await;
 
         // Both the proxy and the actual PostgreSQL driver abort on test failure.
         let mut tasks = JoinSet::new();
@@ -298,7 +302,7 @@ async fn signer_backend_loss_before_commit_does_not_issue_token() {
         assert_token(
             &sign_session_token(&mut admin, claims(ISSUER), now()).await.unwrap(),
             &second,
-        );
+        ).await;
         tasks.shutdown().await;
         admin.batch_execute("DROP SCHEMA identity CASCADE; DROP SCHEMA provisioning CASCADE; DROP SCHEMA registry CASCADE;")
             .await.expect("remove owned platform test schemas");
@@ -577,32 +581,39 @@ async fn stored_count(client: &Client, issuer: &str, kid: &str) -> i64 {
 fn claims(issuer: &str) -> SessionClaims {
     SessionClaims {
         iss: issuer.into(),
-        sub: "ed7056a9-5639-455f-9640-4678458794c0".into(),
+        sub: "ed7056a9-5639-455f-9640-4678458794c0".parse().unwrap(),
         org: "org-a".into(),
         aud: "environment-id-a-dev".into(),
-        roles: vec!["purchase-reader".into()],
+        roles: vec!["purchase-reader".parse().unwrap()],
         iat: 0,
         exp: 0,
         jti: "fixture-token-id".into(),
-        authority: wamn_session::token::SessionAuthority::Login(
-            "ed7056a9-5639-455f-9640-4678458794c0".into(),
+        authority: wamn_identity_protocol::token::SessionAuthority::Login(
+            "ed7056a9-5639-455f-9640-4678458794c0".parse().unwrap(),
         ),
         csrf: None,
     }
 }
 
-fn assert_token(token: &IssuedSessionToken, key: &PublicSessionKey) {
-    assert_eq!(session_key_id(token.token()).unwrap(), key.kid);
-    let verified = verify_session_token(
+async fn assert_token(token: &IssuedSessionToken, key: &PublicSessionKey) {
+    assert_eq!(
+        jsonwebtoken::decode_header(token.token())
+            .unwrap()
+            .kid
+            .expect("key ID"),
+        key.kid
+    );
+    let verified = verify(
         token.token(),
         key,
-        SessionScope {
+        Scope {
             issuer: ISSUER,
             org: "org-a",
             audience: "environment-id-a-dev",
         },
         now(),
     )
+    .await
     .unwrap();
     assert_eq!(&verified, token.claims());
 }

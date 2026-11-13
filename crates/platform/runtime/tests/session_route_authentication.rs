@@ -651,7 +651,7 @@ async fn sessions_read_permissions_per_request_and_preserve_the_signed_identity(
             "{field}"
         );
     }
-    for (field, value) in [("alg", "EdDSA"), ("typ", "JWT"), ("kid", "unknown-key")] {
+    for (field, value) in [("alg", "Ed25519"), ("typ", "JWT"), ("kid", "unknown-key")] {
         let mut bad = header();
         bad[field] = json!(value);
         assert_eq!(

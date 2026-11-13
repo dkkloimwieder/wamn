@@ -27,7 +27,7 @@ use super::{OneShotResult, WamnPostgres, refuse_unattributed_statement, validate
 #[cfg(test)]
 pub(in super::super) fn causation_emit_sql(c: &Causation) -> String {
     let json = serde_json::to_string(c).expect("Causation serializes to JSON");
-    let literal = wamn_pg_core::quote_literal(&json);
+    let literal = postgres_protocol::escape::escape_literal(&json);
     format!(" SELECT pg_logical_emit_message(true, 'wamn.causation', {literal});")
 }
 

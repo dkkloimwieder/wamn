@@ -20,7 +20,7 @@ use wamn_engine::router_delivery::{
     SourceRef, resolve_authorized_host_route,
 };
 use wamn_identity_client::PatIssuerConfig;
-use wamn_platform_identity::PrincipalId;
+use wamn_identity_protocol::PrincipalId;
 use wamn_platform_identity::auth_changes::AuthChanges;
 use wamn_platform_identity::control::{control_projects_page, is_org_admin, org_projects_page};
 use wamn_platform_identity::paging::Order;
@@ -204,7 +204,7 @@ impl HostRouteDelivery {
                 });
         }
         let principal: PrincipalId = caller.principal_id().parse().map_err(
-            |error: wamn_platform_identity::IdentityError| Refusal::Failed(error.into()),
+            |error: wamn_identity_protocol::ParseIdentityError| Refusal::Failed(error.into()),
         )?;
         match (attachment.route.handler, &self.handlers) {
             (

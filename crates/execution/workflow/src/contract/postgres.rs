@@ -2,7 +2,7 @@
 
 use tokio::sync::Mutex;
 use tokio_postgres::{Client, Transaction};
-use wamn_project_state::PlatformComponent;
+use wamn_identity_protocol::PlatformComponent;
 use wamn_run_state::RunStatus;
 use wamn_run_state::queue::{
     list_workflow_runs_sql, park_queued_run_sql, release_parked_run_sql, select_run_queue_state_sql,

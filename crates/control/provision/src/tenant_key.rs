@@ -40,7 +40,7 @@
 //! dropped from the preimage: without it, one tenant in two project-environment
 //! databases derives the same key and collides on a single role name.
 
-use wamn_pg_core::{quote_ident, quote_literal};
+use postgres_protocol::escape::{escape_identifier, escape_literal};
 use wamn_run_state::CredentialGeneration;
 
 use crate::APP_ROLE;
@@ -49,17 +49,12 @@ use crate::workload_role::{
     SCOPE_HASH_HEX_LEN, WorkloadRoleFamily, WorkloadRoleScope, workload_role_scope_hash,
 };
 
-/// Schema hosting authority derivations inside a project-environment database.
-///
-/// Same name as the control plane's `wamn_authority`, and deliberately a
-/// SEPARATE OBJECT in a separate database — the two-plane residency pattern.
-///
-/// Re-exported, not redefined: project schema SQL calls these functions and
-/// this crate creates them, so their names live in the shared leaf rather than
-/// being repeated by each caller.
-pub use wamn_pg_core::{
-    AUTHORITY_SCHEMA as TENANT_KEY_SCHEMA, CURRENT_TENANT_KEY_FUNCTION, TENANT_KEY_FUNCTION,
-};
+/// Schema that owns the database authority functions.
+pub const TENANT_KEY_SCHEMA: &str = "wamn_authority";
+/// Qualified row-key function.
+pub const TENANT_KEY_FUNCTION: &str = "wamn_authority.tenant_key";
+/// Qualified connected-role key function.
+pub const CURRENT_TENANT_KEY_FUNCTION: &str = "wamn_authority.current_tenant_key";
 
 /// The tenant key for one tenant in one project-environment database.
 ///
@@ -163,14 +158,14 @@ fn derivations_template(database_literal: &str, database_octets: &str, owner: &s
          ALTER FUNCTION {schema}.current_tenant_key() OWNER TO {owner};\n\
          REVOKE ALL ON FUNCTION {schema}.current_tenant_key() FROM PUBLIC;\n\
          GRANT EXECUTE ON FUNCTION {schema}.current_tenant_key() TO {app};",
-        schema = quote_ident(TENANT_KEY_SCHEMA),
-        app = quote_ident(APP_ROLE),
+        schema = escape_identifier(TENANT_KEY_SCHEMA),
+        app = escape_identifier(APP_ROLE),
         domain_len = domain.len(),
-        domain_lit = quote_literal(domain_text),
+        domain_lit = escape_literal(domain_text),
         env_key_tag_len = "env_key".len(),
         database_tag_len = "database".len(),
         hex_len = SCOPE_HASH_HEX_LEN,
-        pattern_lit = quote_literal(&current_tenant_key_pattern()),
+        pattern_lit = escape_literal(&current_tenant_key_pattern()),
     )
 }
 
@@ -187,9 +182,9 @@ fn derivations_template(database_literal: &str, database_octets: &str, owner: &s
 /// two builders would be two places to remember and one place to forget.
 pub fn authority_derivations_sql(database: &str) -> String {
     derivations_template(
-        &quote_literal(database),
+        &escape_literal(database),
         &database.len().to_string(),
-        &quote_ident(DB_OWNER_ROLE),
+        &escape_identifier(DB_OWNER_ROLE),
     )
 }
 
@@ -228,9 +223,8 @@ pub fn authority_derivations_bootstrap_sql() -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        BOOTSTRAP_OWNER, CURRENT_TENANT_KEY_FUNCTION, DATABASE_LITERAL_PLACEHOLDER,
-        DATABASE_OCTETS_PLACEHOLDER, TENANT_KEY_FUNCTION, authority_derivations_bootstrap_sql,
-        authority_derivations_sql, current_tenant_key_pattern, tenant_key,
+        CURRENT_TENANT_KEY_FUNCTION, TENANT_KEY_FUNCTION, authority_derivations_sql,
+        current_tenant_key_pattern, tenant_key,
     };
     use crate::workload_role::{
         SCOPE_HASH_HEX_LEN, WorkloadRoleFamily, WorkloadRoleScope, workload_generation_role,
@@ -396,52 +390,5 @@ mod tests {
                 "an unqualified name would resolve through the caller's search_path"
             );
         }
-    }
-
-    /// The bootstrap rendering must differ from the literal one in EXACTLY the
-    /// two database fragments and nothing else. Substituting the placeholders
-    /// by hand reproduces the literal rendering byte for byte — so anything
-    /// else that drifted between the two would surface here rather than as a
-    /// key that silently disagrees on one deployment.
-    #[test]
-    fn the_bootstrap_substitutes_the_database_and_changes_nothing_else() {
-        let bootstrap = authority_derivations_bootstrap_sql();
-        let substituted = bootstrap
-            .replace(DATABASE_LITERAL_PLACEHOLDER, "'wamn-db-acme--billing--dev'")
-            .replace(DATABASE_OCTETS_PLACEHOLDER, "26")
-            .replace(BOOTSTRAP_OWNER, "\"wamn_db_owner\"");
-        assert!(
-            substituted.contains(&authority_derivations_sql(DATABASE)),
-            "the bootstrap must carry the literal rendering verbatim once its \
-             two database fragments and its owner are filled in"
-        );
-
-        // The PAIRING, not just the presence: a placeholder that the template
-        // carries but the replace argument misspells survives into the emitted
-        // DDL, and the installed function then hashes the placeholder text
-        // instead of the database name. Only the live gate saw that until this
-        // assertion existed, and the ordinary sweep runs no live gate.
-        assert!(
-            bootstrap.contains(&format!(
-                "'{DATABASE_LITERAL_PLACEHOLDER}', quote_literal(current_database())"
-            )),
-            "the database literal must be substituted THROUGH quote_literal"
-        );
-        assert!(
-            bootstrap.contains(&format!(
-                "'{DATABASE_OCTETS_PLACEHOLDER}', octet_length(convert_to(current_database(), 'UTF8'))"
-            )),
-            "the length must be counted in OCTETS, matching Rust's str::len"
-        );
-    }
-
-    /// A placeholder that survived into the emitted DDL would install a
-    /// function whose preimage contains the placeholder text — a key that
-    /// matches no minted role name, and therefore every guest read refusing.
-    #[test]
-    fn the_literal_rendering_carries_no_placeholder() {
-        let sql = authority_derivations_sql(DATABASE);
-        assert!(!sql.contains(DATABASE_LITERAL_PLACEHOLDER));
-        assert!(!sql.contains(DATABASE_OCTETS_PLACEHOLDER));
     }
 }

@@ -26,7 +26,7 @@ use wamn_catalog::{PackageCoordinate, RELEASE_MANIFEST_FILE_NAME, ServingManifes
 use wamn_control_registry::project_env_key;
 use wamn_engine::artifact_source::local_component_path;
 use wamn_execution_contract::bytes_sha256;
-use wamn_project_state::ADMIN_ROLE;
+use wamn_identity_protocol::ADMIN_ROLE;
 use wamn_runtime::local_application::{LOCAL_FACTS_FILE, LocalApplicationFacts};
 
 use super::coordinator::{NODE_CAPABILITY, PACKAGE_COMPONENTS, POSTGRES_CAPABILITY, TemporaryFile};

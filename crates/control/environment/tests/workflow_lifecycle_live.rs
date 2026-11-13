@@ -5,7 +5,7 @@
 //! `workflow` user row.
 //!
 //! The project database carries the production catalog and platform schemas
-//! (`wamn_project_state::test_database::tenant_platform`), and the control
+//! (`wamn_platform_identity::test_database::tenant_platform`), and the control
 //! database the production control store, which holds the gate reports. The
 //! lifecycle lock is an advisory lock, so the project database also serves as
 //! the system database of the lock.
@@ -129,7 +129,7 @@ fn workflow(id: &str, version: u32, node: &str, component: &str) -> WiringDocume
 }
 
 async fn fixture() -> Fixture {
-    let project_database = wamn_project_state::test_database::tenant_platform();
+    let project_database = wamn_platform_identity::test_database::tenant_platform();
     let control_database = wamn_control_provision::test_database::system();
     let project_url = project_database.url().to_owned();
     let project = connect(&project_url).await;
@@ -458,7 +458,7 @@ async fn enable_requires_the_role_of_the_enabler_and_of_the_workflow_user() {
         .query_one(
             "SELECT count(*), min(type), min(email), min(display_name) FROM platform.\"user\" \
               WHERE id = $1::text::uuid",
-            &[&wamn_project_state::workflow_user_id().to_string()],
+            &[&wamn_identity_protocol::workflow_user_id().to_string()],
         )
         .await
         .unwrap();
@@ -508,7 +508,10 @@ async fn enable_requires_the_role_of_the_enabler_and_of_the_workflow_user() {
     assert!(fixture.enabled("approve").await.is_empty());
 
     fixture
-        .grant(&wamn_project_state::workflow_user_id().to_string(), "clerk")
+        .grant(
+            &wamn_identity_protocol::workflow_user_id().to_string(),
+            "clerk",
+        )
         .await;
     fixture
         .enable("approve", 1, BOB)
@@ -665,7 +668,10 @@ async fn event_enable_records_stream_tail_and_requires_admin() {
     );
     fixture.grant(ALICE, "admin").await;
     fixture
-        .grant(&wamn_project_state::workflow_user_id().to_string(), "admin")
+        .grant(
+            &wamn_identity_protocol::workflow_user_id().to_string(),
+            "admin",
+        )
         .await;
     let events = EventBroker {
         nats: wamn_platform_identity::nats::PlatformNats::from_env().unwrap(),

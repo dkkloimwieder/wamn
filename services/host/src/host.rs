@@ -44,6 +44,7 @@ use wamn_execution_host::{
     HostRouteDelivery, HostRouteHandlers, OperationHost, OperationScope, RouterDeliveryBridge,
 };
 use wamn_identity_client::PatIssuerConfig;
+use wamn_identity_protocol::verifier::SessionVerifier;
 use wamn_platform_identity::operator_subject;
 use wamn_runtime::auth_cache::replicate;
 use wamn_runtime::component_artifact_source::{
@@ -62,7 +63,6 @@ use wamn_runtime::plugins::wamn_postgres::AuthorityClass;
 use wamn_runtime::plugins::{ClassCredentials, WamnJetstream, WamnLogging, WamnPostgres};
 use wamn_runtime::release_manifest_source::ReleaseManifestSource;
 use wamn_runtime::session_keys::{IssuerKeys, IssuerKeysConfig};
-use wamn_session::verifier::SessionVerifier;
 use wamn_workflow::{DEFAULT_QUEUE_LEASE_TTL_MS, QueueService, QueueServiceConfig, RouterDriver};
 
 #[expect(

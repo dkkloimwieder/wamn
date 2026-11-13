@@ -481,7 +481,9 @@ async fn ensure_model_schemas(
     ))
     .await
     .context("grant the package history surface")?;
-    let role = wamn_pg_core::quote_ident(&wamn_control_provision::package_owner_role(package));
+    let role = postgres_protocol::escape::escape_identifier(
+        &wamn_control_provision::package_owner_role(package),
+    );
     for schema in schemas {
         let schema = wamn_schema_control::BareSchemaName::new(schema)
             .context("validate manifest model schema for creation")?;

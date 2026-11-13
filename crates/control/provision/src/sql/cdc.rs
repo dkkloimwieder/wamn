@@ -1,6 +1,6 @@
 //! CDC role, publication, replication slot, and relation-map statements.
 
-use super::{quote_ident, quote_literal};
+use super::{escape_identifier, escape_literal};
 
 // --- CDC capture provisioning (wamn-l5i9.9, D19 v3 §4) -----------------------
 //
@@ -41,10 +41,10 @@ pub fn ensure_replication_role_sql(role: &str, password: &str) -> String {
              {nosuperuser} \
            END IF; \
          END $$;",
-        role = quote_ident(role),
-        role_lit = quote_literal(role),
-        pw = quote_literal(password),
-        nosuperuser = super::revoke_superuser_sql(&quote_literal(role)),
+        role = escape_identifier(role),
+        role_lit = escape_literal(role),
+        pw = escape_literal(password),
+        nosuperuser = super::revoke_superuser_sql(&escape_literal(role)),
     )
 }
 
@@ -54,7 +54,7 @@ pub fn ensure_replication_role_sql(role: &str, password: &str) -> String {
 /// schema and still capture everything from the start. Catalog-publish's own
 /// `CREATE SCHEMA IF NOT EXISTS` then no-ops.
 pub fn ensure_schema_sql(schema: &str) -> String {
-    format!("CREATE SCHEMA IF NOT EXISTS {}", quote_ident(schema))
+    format!("CREATE SCHEMA IF NOT EXISTS {}", escape_identifier(schema))
 }
 
 /// Idempotently create the CDC publication over the project-env's app **data**
@@ -92,7 +92,7 @@ pub fn create_publication_schemas_sql(publication: &str, schemas: &[String]) -> 
             " FOR TABLES IN SCHEMA {}",
             schemas
                 .iter()
-                .map(|schema| quote_ident(schema))
+                .map(|schema| escape_identifier(schema))
                 .collect::<Vec<_>>()
                 .join(", ")
         )
@@ -104,9 +104,9 @@ pub fn create_publication_schemas_sql(publication: &str, schemas: &[String]) -> 
                WITH (publish = {publish}); \
            END IF; \
          END $$;",
-        publication = quote_ident(publication),
-        pub_lit = quote_literal(publication),
-        publish = quote_literal(CDC_PUBLISH),
+        publication = escape_identifier(publication),
+        pub_lit = escape_literal(publication),
+        publish = escape_literal(CDC_PUBLISH),
     )
 }
 
@@ -138,7 +138,7 @@ pub fn create_failover_slot_sql(slot: &str) -> String {
              PERFORM pg_create_logical_replication_slot({slot_lit}, 'pgoutput', false, false, true); \
            END IF; \
          END $$;",
-        slot_lit = quote_literal(slot),
+        slot_lit = escape_literal(slot),
     )
 }
 
@@ -161,15 +161,15 @@ pub fn create_failover_slot_sql(slot: &str) -> String {
 /// would otherwise strip it. Idempotent; run connected to the project-env
 /// database AFTER the schema and both classification maps exist.
 pub fn grant_replication_access_sql(database: &str, role: &str, schema: &str) -> String {
-    let role = quote_ident(role);
+    let role = escape_identifier(role);
     format!(
         "GRANT CONNECT ON DATABASE {db} TO {role}; \
          GRANT USAGE ON SCHEMA {schema} TO {role}; \
          REVOKE SELECT ON ALL TABLES IN SCHEMA {schema} FROM {role}; \
          GRANT SELECT ON {schema}.wamn_entities TO {role}; \
          GRANT SELECT ON {schema}.wamn_cdc_exclusions TO {role};",
-        db = quote_ident(database),
-        schema = quote_ident(schema),
+        db = escape_identifier(database),
+        schema = escape_identifier(schema),
     )
 }
 
@@ -188,8 +188,8 @@ pub fn ensure_cdc_exclusion_map_sql(schema: &str) -> String {
            EXECUTE format('ALTER TABLE %I.wamn_cdc_exclusions OWNER TO %I', {schema_lit}, \
              (SELECT pg_get_userbyid(nspowner) FROM pg_namespace WHERE nspname = {schema_lit})); \
          END $map_owner$;",
-        schema = quote_ident(schema),
-        schema_lit = quote_literal(schema),
+        schema = escape_identifier(schema),
+        schema_lit = escape_literal(schema),
     )
 }
 
@@ -206,8 +206,8 @@ pub fn upsert_cdc_exclusion_map_sql(schema: &str) -> String {
            SET table_name = EXCLUDED.table_name \
          WHERE current.package_id = EXCLUDED.package_id \
            AND current.relation_id = EXCLUDED.relation_id",
-        schema = quote_ident(schema),
-        schema_lit = quote_literal(schema),
+        schema = escape_identifier(schema),
+        schema_lit = escape_literal(schema),
     )
 }
 
@@ -232,8 +232,8 @@ pub fn ensure_entity_map_sql(schema: &str) -> String {
            EXECUTE format('ALTER TABLE %I.wamn_entities OWNER TO %I', {schema_lit}, \
              (SELECT pg_get_userbyid(nspowner) FROM pg_namespace WHERE nspname = {schema_lit})); \
          END $map_owner$;",
-        schema = quote_ident(schema),
-        schema_lit = quote_literal(schema),
+        schema = escape_identifier(schema),
+        schema_lit = escape_literal(schema),
     )
 }
 
@@ -255,14 +255,17 @@ pub fn upsert_entity_map_sql(schema: &str) -> String {
            SET table_name = EXCLUDED.table_name \
          WHERE mapped.package_id = EXCLUDED.package_id \
            AND mapped.entity_id = EXCLUDED.entity_id",
-        schema = quote_ident(schema),
-        schema_lit = quote_literal(schema),
+        schema = escape_identifier(schema),
+        schema_lit = escape_literal(schema),
     )
 }
 
 /// `DROP PUBLICATION IF EXISTS "<publication>"` — teardown / gate only.
 pub fn drop_publication_sql(publication: &str) -> String {
-    format!("DROP PUBLICATION IF EXISTS {}", quote_ident(publication))
+    format!(
+        "DROP PUBLICATION IF EXISTS {}",
+        escape_identifier(publication)
+    )
 }
 
 /// Drop the replication slot if it exists (teardown / gate only — dropping a
@@ -275,6 +278,6 @@ pub fn drop_replication_slot_sql(slot: &str) -> String {
              PERFORM pg_drop_replication_slot({slot_lit}); \
            END IF; \
          END $$;",
-        slot_lit = quote_literal(slot),
+        slot_lit = escape_literal(slot),
     )
 }

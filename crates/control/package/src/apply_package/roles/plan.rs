@@ -9,11 +9,14 @@ pub(super) fn foreign_key_tables(
                 && let (Some(schema), Some(relation)) =
                     (table["schemaname"].as_str(), table["relname"].as_str())
             {
-                let relation = wamn_pg_core::quote_ident(relation);
+                let relation = postgres_protocol::escape::escape_identifier(relation);
                 tables.insert(if schema.is_empty() {
                     relation
                 } else {
-                    format!("{}.{relation}", wamn_pg_core::quote_ident(schema))
+                    format!(
+                        "{}.{relation}",
+                        postgres_protocol::escape::escape_identifier(schema)
+                    )
                 });
             }
             for field in fields.values() {

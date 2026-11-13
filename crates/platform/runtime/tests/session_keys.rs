@@ -22,7 +22,7 @@ const ISSUER: &str = "https://identity.example.test/issuer";
 const JWKS_PATH: &str = "/.well-known/jwks.json?fixed=1";
 
 fn key(kid: &str) -> Value {
-    json!({"kid": kid, "kty": "OKP", "crv": "Ed25519", "alg": "Ed25519",
+    json!({"kid": kid, "kty": "OKP", "crv": "Ed25519", "alg": "EdDSA",
         "use": "sig", "x": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"})
 }
 
@@ -576,7 +576,7 @@ async fn invalid_or_private_key_documents_are_not_installed() {
     ];
     for (field, value) in [
         ("d", "private"),
-        ("alg", "EdDSA"),
+        ("alg", "Ed25519"),
         ("kty", "RSA"),
         ("crv", "X25519"),
         ("use", "enc"),

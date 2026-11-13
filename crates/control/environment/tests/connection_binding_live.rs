@@ -291,7 +291,7 @@ async fn provision_project(project: &Client, project_url: &str) -> Vec<AdmittedC
             (env_key, environment, application, workflow_id, version, graph_json, wiring_hash, trigger, execution_type, created_by)
             VALUES ($1, $2, $3, $4, 1, $5::text::jsonb, $6, 'manual', 'invoker', $7::text::uuid)",
             &[&ENV_KEY, &ENVIRONMENT, &application, &document.wiring_id, &serde_json::to_string(&document).unwrap(),
-              &document.wiring_hash().as_str(), &wamn_project_state::workflow_user_id().to_string()]
+              &document.wiring_hash().as_str(), &wamn_identity_protocol::workflow_user_id().to_string()]
         ).await.expect("seed the workflow connection lookup");
     }
     vec![blob_put, http_sidecar]
@@ -597,7 +597,7 @@ async fn rows(project: &Client) -> serde_json::Value {
 #[tokio::test]
 async fn release_bindings_round_trip_through_the_plugins_own_resolution() {
     let _lock = wamn_test_postgres::lock();
-    let project_database = wamn_project_state::test_database::tenant_platform();
+    let project_database = wamn_platform_identity::test_database::tenant_platform();
     let project_url = project_database.url().to_owned();
     let (mut project, project_task) = connect(&project_url).await;
     provision_project(&project, &project_url).await;
@@ -886,7 +886,7 @@ async fn read_binding_refuses_post_and_forged_candidate_mode_before_dispatch() {
         InvocationEntry, WiringPosition, transport::HttpTransport,
     };
     let _lock = wamn_test_postgres::lock();
-    let database = wamn_project_state::test_database::tenant_platform();
+    let database = wamn_platform_identity::test_database::tenant_platform();
     let (mut project, task) = connect(database.url()).await;
     provision_project(&project, database.url()).await;
     let document = WiringDocument::new(
@@ -908,7 +908,7 @@ async fn read_binding_refuses_post_and_forged_candidate_mode_before_dispatch() {
         Vec::new(),
     )
     .unwrap();
-    project.execute("INSERT INTO catalog.workflows (env_key,environment,application,workflow_id,version,graph_json,wiring_hash,trigger,execution_type,created_by) VALUES ($1,$2,$3,'http_read',1,$4::text::jsonb,$5,'manual','invoker',$6::text::uuid)", &[&ENV_KEY,&ENVIRONMENT,&PACKAGE,&serde_json::to_string(&document).unwrap(),&document.wiring_hash().as_str(),&wamn_project_state::workflow_user_id().to_string()]).await.unwrap();
+    project.execute("INSERT INTO catalog.workflows (env_key,environment,application,workflow_id,version,graph_json,wiring_hash,trigger,execution_type,created_by) VALUES ($1,$2,$3,'http_read',1,$4::text::jsonb,$5,'manual','invoker',$6::text::uuid)", &[&ENV_KEY,&ENVIRONMENT,&PACKAGE,&serde_json::to_string(&document).unwrap(),&document.wiring_hash().as_str(),&wamn_identity_protocol::workflow_user_id().to_string()]).await.unwrap();
     let components = provision_project_components_for_http_manifest();
     let manifest = wamn_catalog::ServingManifest::new(
         wamn_catalog::ServingRelease {

@@ -44,8 +44,8 @@ async fn main() -> anyhow::Result<()> {
     client
         .batch_execute(&format!(
             "COMMENT ON DATABASE {} IS {}",
-            wamn_pg_core::quote_ident(row.get(1)),
-            wamn_pg_core::quote_literal(&marker),
+            postgres_protocol::escape::escape_identifier(row.get(1)),
+            postgres_protocol::escape::escape_literal(&marker),
         ))
         .await?;
     apply_local_package(

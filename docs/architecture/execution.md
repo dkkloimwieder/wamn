@@ -723,7 +723,7 @@ The exact audience is `urn:wamn:project-env:{org}:{project}:{env}:{instance_suff
 The configured environment supplies its current suffix.
 Identity offers and mints no audience of an environment whose `registry.project_envs.status` is `inactive`, so the shell does not list it.
 
-Session tokens use Ed25519 with `typ=wamn-session+jwt`.
+Session tokens use Ed25519 keys with `alg=EdDSA` and `typ=wamn-session+jwt`.
 They require `iss`, `sub`, `org`, `aud`, `roles`, `exp`, `iat`, `jti`, and `authority`.
 `authority` is exactly one object: `{"login":"<login UUID>"}` or `{"pat":"<source PAT UUID>"}`.
 The optional `csrf` claim is the lowercase SHA-256 hex of a CSRF token. Only the cookie carrier sets it.
@@ -749,8 +749,8 @@ Age bounds limit delayed admission without promising that identity remains uncha
 
 Authentication deadlines bound new admission and do not cancel work already accepted.
 
-The [session token owner](../../crates/identity/session/src/token.rs) defines the token and time rules.
-The [session verifier](../../crates/identity/session/src/verifier.rs) takes its keys from a key source: the issuer over HTTPS in the cloud, or a key file on the edge.
+The [session token owner](../../crates/identity/protocol/src/token.rs) defines the token and time rules.
+The [session verifier](../../crates/identity/protocol/src/verifier.rs) takes its keys from a key source: the issuer over HTTPS in the cloud, or a key file on the edge.
 PAT exchange keeps no login record or renewal credential.
 The browser client holds no token. `@wamn/web-runtime` signs in with the cookie carrier and renews on load and before expiry.
 Password sessions have no PAT fallback. Renewal happens only when an application request needs a new access token.

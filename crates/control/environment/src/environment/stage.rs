@@ -171,8 +171,8 @@ pub async fn materialize_application_principals(
     packages: &[PackageManifest],
     changes: &wamn_platform_identity::auth_changes::AuthChanges,
 ) -> anyhow::Result<()> {
+    use wamn_identity_protocol::PlatformComponent;
     use wamn_platform_identity::auth_changes::AuthDrops;
-    use wamn_project_state::PlatformComponent;
 
     let applications = packages
         .iter()
@@ -225,14 +225,14 @@ pub async fn materialize_application_principals(
                 "INSERT INTO platform.\"user\" (id, type, email, display_name) \
              VALUES ($1::text::uuid, 'service', $2, $3) ON CONFLICT (id) DO NOTHING",
                 &[
-                    &principal.id().as_str(),
+                    &principal.id().to_string().as_str(),
                     &format!("{subject}@{domain}"),
                     &subject,
                 ],
             )
             .await?;
         if written != 0 {
-            drops.principal(env_key, principal.id().as_str());
+            drops.principal(env_key, principal.id().to_string().as_str());
         }
         let role = format!("application-{}", package.package.id.replace('_', "-"));
         wamn_platform_identity::application::create_role(&transaction, env_key, &role, &mut drops)
@@ -285,7 +285,7 @@ pub async fn write_runtime_grants(
         );
         let active: bool = transaction.query_one(
             "SELECT EXISTS (SELECT FROM platform.\"user\" WHERE id=$1::text::uuid AND type='service' AND status='active')",
-            &[&principal.id().as_str()],
+            &[&principal.id().to_string().as_str()],
         ).await?.get(0);
         ensure!(
             active,
@@ -295,7 +295,7 @@ pub async fn write_runtime_grants(
         let owned: bool = transaction.query_one(
             "SELECT EXISTS (SELECT FROM platform.role WHERE name=$1 AND created_by=$3::text::uuid) \
              AND NOT EXISTS (SELECT FROM platform.user_role WHERE role_name=$1 AND user_id<>$2::text::uuid)",
-            &[&role, &principal.id().as_str(), &wamn_project_state::PlatformComponent::Provisioning.principal_id().to_string()],
+            &[&role, &principal.id().to_string().as_str(), &wamn_identity_protocol::PlatformComponent::Provisioning.principal_id().to_string()],
         ).await?.get(0);
         ensure!(
             owned,
@@ -323,7 +323,7 @@ pub async fn write_runtime_grants(
             env_key,
             wamn_platform_identity::application::GrantAuthority::Provisioning,
             wamn_platform_identity::application::GrantChange::UserRole {
-                user_id: principal.id().as_str(),
+                user_id: principal.id().to_string().as_str(),
                 role: &role,
                 grant: true,
             },
@@ -394,7 +394,7 @@ pub async fn retire(
     )
     .await?;
     tx.batch_execute(&wamn_control_provision::bind_platform_principal_sql(
-        wamn_project_state::PlatformComponent::Provisioning,
+        wamn_identity_protocol::PlatformComponent::Provisioning,
     ))
     .await?;
     tx.query_one("SELECT set_config('app.env_key', $1, true)", &[&env_key])
@@ -499,7 +499,7 @@ pub async fn retire_runtime_grants(
                 );
         }
     }
-    let actor = wamn_project_state::PlatformComponent::Provisioning
+    let actor = wamn_identity_protocol::PlatformComponent::Provisioning
         .principal_id()
         .to_string();
     for (package, permissions) in removed {
@@ -515,7 +515,7 @@ pub async fn retire_runtime_grants(
         let owned: bool = tx.query_one(
             "SELECT EXISTS (SELECT FROM platform.role WHERE name=$1 AND created_by=$2::text::uuid) \
              AND NOT EXISTS (SELECT FROM platform.user_role WHERE role_name=$1 AND user_id<>$3::text::uuid)",
-            &[&role, &actor, &principal.id().as_str()],
+            &[&role, &actor, &principal.id().to_string().as_str()],
         ).await?.get(0);
         ensure!(
             owned,
@@ -572,7 +572,7 @@ pub async fn create_number_sequences(
     let transaction = project.transaction().await?;
     transaction
         .batch_execute(&wamn_control_provision::bind_platform_principal_sql(
-            wamn_project_state::PlatformComponent::Provisioning,
+            wamn_identity_protocol::PlatformComponent::Provisioning,
         ))
         .await
         .context("bind wamn:provisioning as the actor and operation")?;
@@ -694,7 +694,7 @@ mod tests {
     #[tokio::test]
     async fn release_writer_stamps_publisher_and_keeps_first_stamp_on_retry() {
         let _lock = wamn_test_postgres::lock();
-        let database = wamn_project_state::test_database::tenant_platform();
+        let database = wamn_platform_identity::test_database::tenant_platform();
         database
             .execute(&[&format!(
                 "BEGIN; {} COMMIT;",

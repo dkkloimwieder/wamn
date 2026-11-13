@@ -173,7 +173,7 @@ async fn executor_history_targets(
         targets.push((schema.clone(), "wamn_entities".into()));
         let statement = format!(
             "SELECT DISTINCT c.relname::text FROM {}.wamn_entities m JOIN pg_class c ON c.relnamespace = $1::text::regnamespace AND c.relname = m.table_name || '_history'",
-            wamn_pg_core::quote_ident(&schema),
+            postgres_protocol::escape::escape_identifier(&schema),
         );
         for row in client
             .query(&statement, &[&schema])

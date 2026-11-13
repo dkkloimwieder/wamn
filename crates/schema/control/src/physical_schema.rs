@@ -132,7 +132,7 @@ fn quoted_name(name: &str) -> String {
     {
         name.to_owned()
     } else {
-        wamn_pg_core::quote_ident(name)
+        postgres_protocol::escape::escape_identifier(name)
     }
 }
 
@@ -198,11 +198,11 @@ pub fn history_triggers(
             "TRIGGER {STAMP_TRIGGER} BEFORE INSERT OR UPDATE ON {quoted} FOR EACH ROW EXECUTE FUNCTION wamn_history.{stamp_ident}()"))
     });
     let log = model.log_retention().map(|retention| {
-        let history = format!("{}.{}", wamn_pg_core::quote_ident(&model.schema),
-            wamn_pg_core::quote_ident(&history_table_name(&model.table)));
+        let history = format!("{}.{}", postgres_protocol::escape::escape_identifier(&model.schema),
+            postgres_protocol::escape::escape_identifier(&history_table_name(&model.table)));
         (log_function_sql(&log_ident, &history, columns), "$log$", format!(
             "TRIGGER {LOG_TRIGGER} AFTER INSERT OR DELETE OR UPDATE ON {quoted} FOR EACH ROW EXECUTE FUNCTION wamn_history.{log_ident}({})",
-            wamn_pg_core::quote_literal(retention)))
+            postgres_protocol::escape::escape_literal(retention)))
     });
     Ok([
         HistoryTrigger {
@@ -224,8 +224,8 @@ pub fn history_triggers(
 pub fn history_table_sql(model: &ModelDeclaration) -> String {
     format!(
         "SELECT wamn_history.create_history_table({}, {}, false)",
-        wamn_pg_core::quote_literal(&model.schema),
-        wamn_pg_core::quote_literal(&model.table)
+        postgres_protocol::escape::escape_literal(&model.schema),
+        postgres_protocol::escape::escape_literal(&model.table)
     )
 }
 

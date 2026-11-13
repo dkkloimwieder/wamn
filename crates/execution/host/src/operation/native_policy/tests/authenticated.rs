@@ -21,13 +21,13 @@ use wamn_engine::flow_http_routing::{
 };
 use wamn_engine::operation::invocation_policy::InvocationPolicy as _;
 use wamn_engine::release_manifest::LoadedRelease;
+use wamn_identity_protocol::verifier::SessionVerifier;
 use wamn_runtime::plugins::route_authentication::{
     PlatformRouteAuthenticator, SessionRouteAuthentication,
 };
 use wamn_runtime::plugins::wamn_postgres::{
     AuthorityClass, StaticCredentialProvider, WamnPostgres, WamnPostgresConfig,
 };
-use wamn_session::verifier::SessionVerifier;
 
 use super::invoke_native;
 use super::trace::TraceCapture;
@@ -1322,8 +1322,8 @@ async fn pat_caller(
     .await?;
     let admin = connect(admin_url).await?;
     admin.execute("SELECT set_config('app.user_id', $1, false), set_config('app.operation', 'admin:warm-pat-test', false)", &[&FIXTURE_PRINCIPAL]).await?;
-    admin.execute("INSERT INTO platform.\"user\" (id,type,email) VALUES ($1::text::uuid,'user','warm-pat@example.invalid')", &[&principal.id().as_str()]).await?;
-    admin.execute("INSERT INTO platform.user_role (user_id,role_name) VALUES ($1::text::uuid,'native-child')", &[&principal.id().as_str()]).await?;
+    admin.execute("INSERT INTO platform.\"user\" (id,type,email) VALUES ($1::text::uuid,'user','warm-pat@example.invalid')", &[&principal.id().to_string().as_str()]).await?;
+    admin.execute("INSERT INTO platform.user_role (user_id,role_name) VALUES ($1::text::uuid,'native-child')", &[&principal.id().to_string().as_str()]).await?;
     let reader_role = workload_generation_role(
         WorkloadRoleFamily::IdentityReader,
         WorkloadRoleScope::Control {

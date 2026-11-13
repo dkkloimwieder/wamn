@@ -621,7 +621,7 @@ async fn platform_project_schema_runs_only_the_selected_environment_sql_job() ->
     system
         .batch_execute(&format!(
             "CREATE DATABASE {} OWNER wamn_db_owner",
-            wamn_pg_core::quote_ident(&name)
+            postgres_protocol::escape::escape_identifier(&name)
         ))
         .await?;
     let project = postgres.database(&name)?;

@@ -169,12 +169,10 @@ async fn a_pinned_bundle_loads_and_grants_permissions_by_role() {
     assert_eq!(release.components().as_ref(), [fact()]);
     assert_eq!(release.ingress(), INGRESS);
     assert_eq!(
-        release
-            .grants()
-            .permissions(&["operator".into(), "viewer".into()]),
+        release.grants().permissions(&["operator", "viewer"]),
         BTreeSet::from([PERMISSION.to_owned()])
     );
-    assert!(release.grants().permissions(&["viewer".into()]).is_empty());
+    assert!(release.grants().permissions(&["viewer"]).is_empty());
 }
 
 #[tokio::test]

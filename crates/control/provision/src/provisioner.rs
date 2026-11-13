@@ -11,7 +11,7 @@
 //! and `createrole_self_grant = 'set, inherit'`, so that it is a member of
 //! every role it creates.
 
-use wamn_pg_core::{quote_ident, quote_literal};
+use postgres_protocol::escape::{escape_identifier, escape_literal};
 
 use crate::WorkloadRoleFamily;
 use crate::name::DB_OWNER_ROLE;
@@ -58,7 +58,7 @@ pub fn provisioner_statement_sql(scram_verifier: &str) -> String {
         "{}{}ALTER ROLE {PROVISIONER_ROLE} PASSWORD {};\n",
         ensure_provisioner_role_sql(),
         stable_role_admin_sql(),
-        quote_literal(scram_verifier)
+        escape_literal(scram_verifier)
     )
 }
 
@@ -78,8 +78,8 @@ fn stable_role_admin_sql() -> String {
                 "IF EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = {}) THEN \
                    GRANT {} TO {PROVISIONER_ROLE} WITH ADMIN TRUE, INHERIT FALSE, SET FALSE; \
                  END IF; ",
-                quote_literal(role),
-                quote_ident(role)
+                escape_literal(role),
+                escape_identifier(role)
             )
         })
         .collect::<Vec<_>>()

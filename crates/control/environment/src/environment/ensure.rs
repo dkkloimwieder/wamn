@@ -567,7 +567,7 @@ pub(crate) async fn ensure_project_database_with_migrations(
         .await?;
     admin.batch_execute(&format!(
         "GRANT CONNECT ON DATABASE {} TO wamn_apply; GRANT wamn_platform TO wamn_db_owner WITH INHERIT TRUE, SET FALSE;",
-        wamn_pg_core::quote_ident(url::Url::parse(&project_url)?.path().trim_start_matches('/')),
+        postgres_protocol::escape::escape_identifier(url::Url::parse(&project_url)?.path().trim_start_matches('/')),
     )).await?;
     ensure_package_roles(admin, packages).await?;
     let request = crate::reconcile_run_plane::ReconcileRunPlaneRequest {
@@ -619,9 +619,9 @@ pub(super) async fn ensure_package_roles(
         admin
             .batch_execute(&format!(
                 "GRANT {} TO wamn_db_owner WITH ADMIN FALSE, INHERIT TRUE, SET TRUE",
-                wamn_pg_core::quote_ident(&wamn_control_provision::package_owner_role(
-                    &package.package.id
-                ))
+                postgres_protocol::escape::escape_identifier(
+                    &wamn_control_provision::package_owner_role(&package.package.id)
+                )
             ))
             .await?;
     }

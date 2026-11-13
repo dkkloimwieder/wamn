@@ -2401,6 +2401,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "jsonwebtoken"
+version = "11.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e75fe14a82d81e5f5af639997db37d8b96045938a7ac6ab18cdbe1c7467e05e1"
+dependencies = [
+ "aws-lc-rs",
+ "base64 0.22.1",
+ "getrandom 0.2.17",
+ "js-sys",
+ "pem 3.0.6",
+ "serde",
+ "serde_json",
+ "signature",
+ "simple_asn1",
+ "zeroize",
+]
+
+[[package]]
 name = "konst"
 version = "0.2.20"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2819,7 +2837,7 @@ dependencies = [
  "hex",
  "http",
  "http-auth",
- "jsonwebtoken",
+ "jsonwebtoken 10.4.0",
  "lazy_static",
  "oci-spec",
  "olpc-cjson",
@@ -3078,6 +3096,16 @@ name = "peeking_take_while"
 version = "0.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "19b17cddbe7ec3f8bc800887bab5e717348c95ea2ca0b1bf0837fb964dc67099"
+
+[[package]]
+name = "pem"
+version = "3.0.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1d30c53c26bc5b31a98cd02d20f25a7c8567146caf63ed593a9d87b2775291be"
+dependencies = [
+ "base64 0.22.1",
+ "serde_core",
+]
 
 [[package]]
 name = "pem"
@@ -3709,7 +3737,7 @@ version = "0.14.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8774e05a7d0de114588e6a28fe7e71694b82614ed569d86d8b389dfbc98b8ad8"
 dependencies = [
- "pem",
+ "pem 4.0.0",
  "ring",
  "rustls-pki-types",
  "time",
@@ -4402,6 +4430,18 @@ name = "simdutf8"
 version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e3a9fe34e3e7a50316060351f37187a3f546bce95496156754b601a5fa71b76e"
+
+[[package]]
+name = "simple_asn1"
+version = "0.6.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0d585997b0ac10be3c5ee635f1bab02d512760d14b7c468801ac8a01d9ae5f1d"
+dependencies = [
+ "num-bigint",
+ "num-traits",
+ "thiserror 2.0.21",
+ "time",
+]
 
 [[package]]
 name = "siphasher"
@@ -5676,6 +5716,7 @@ dependencies = [
  "clap",
  "futures-util",
  "pg_walstream",
+ "postgres-protocol",
  "rustls",
  "serde_json",
  "tokio",
@@ -5686,7 +5727,6 @@ dependencies = [
  "wamn-control-provision",
  "wamn-control-registry",
  "wamn-event-wire",
- "wamn-pg-core",
  "wamn-test-postgres",
 ]
 
@@ -5781,6 +5821,7 @@ version = "0.1.0"
 dependencies = [
  "async-nats",
  "hex",
+ "postgres-protocol",
  "serde",
  "serde_json",
  "serde_yaml",
@@ -5791,8 +5832,7 @@ dependencies = [
  "wamn-event-wire",
  "wamn-execution-contract",
  "wamn-fixture-package",
- "wamn-pg-core",
- "wamn-project-state",
+ "wamn-identity-protocol",
  "wamn-record-history",
  "wamn-run-state",
  "wamn-schema-control",
@@ -5831,6 +5871,7 @@ dependencies = [
  "anyhow",
  "async-nats",
  "clap",
+ "postgres-protocol",
  "reqwest",
  "rustix 1.1.5",
  "rustls",
@@ -5849,11 +5890,10 @@ dependencies = [
  "wamn-execution-contract",
  "wamn-fixture-package",
  "wamn-identity-client",
+ "wamn-identity-protocol",
  "wamn-package-artifact",
  "wamn-package-control",
- "wamn-pg-core",
  "wamn-platform-identity",
- "wamn-project-state",
  "wamn-release-control",
  "wamn-runtime",
  "wamn-schema-control",
@@ -5877,6 +5917,7 @@ dependencies = [
  "futures-util",
  "hex",
  "oci-client",
+ "postgres-protocol",
  "rcgen",
  "reqwest",
  "ring",
@@ -5906,18 +5947,16 @@ dependencies = [
  "wamn-fixture-package",
  "wamn-gate-harness",
  "wamn-identity-client",
+ "wamn-identity-protocol",
  "wamn-package-artifact",
  "wamn-package-control",
- "wamn-pg-core",
  "wamn-platform-identity",
- "wamn-project-state",
  "wamn-release-control",
  "wamn-run-state",
  "wamn-runtime",
  "wamn-schema-control",
  "wamn-schema-generator",
  "wamn-schema-introspection",
- "wamn-session",
  "wamn-test-infrastructure",
  "wamn-test-postgres",
  "wash-runtime",
@@ -5958,10 +5997,10 @@ dependencies = [
  "wamn-dev-control",
  "wamn-engine",
  "wamn-execution-contract",
+ "wamn-identity-protocol",
  "wamn-run-state",
  "wamn-run-state-sqlite",
  "wamn-schema-generator",
- "wamn-session",
  "wamn-test-postgres",
  "wash-runtime",
 ]
@@ -5987,9 +6026,8 @@ dependencies = [
  "wamn-component-policy",
  "wamn-event-wire",
  "wamn-execution-contract",
- "wamn-project-state",
+ "wamn-identity-protocol",
  "wamn-run-state",
- "wamn-session",
  "wash-runtime",
  "wasmparser 0.261.0",
  "wasmtime",
@@ -6013,6 +6051,7 @@ dependencies = [
  "object_store",
  "oci-client",
  "pg_query",
+ "postgres-protocol",
  "rcgen",
  "reqwest",
  "ring",
@@ -6038,18 +6077,16 @@ dependencies = [
  "wamn-fixture-package",
  "wamn-gate-harness",
  "wamn-identity-client",
+ "wamn-identity-protocol",
  "wamn-package-artifact",
  "wamn-package-control",
- "wamn-pg-core",
  "wamn-platform-identity",
- "wamn-project-state",
  "wamn-release-control",
  "wamn-run-state",
  "wamn-runtime",
  "wamn-schema-control",
  "wamn-schema-generator",
  "wamn-schema-introspection",
- "wamn-session",
  "wamn-test-infrastructure",
  "wamn-test-postgres",
  "wamn-workflow",
@@ -6134,14 +6171,13 @@ dependencies = [
  "wamn-execution-contract",
  "wamn-fixture-package",
  "wamn-identity-client",
+ "wamn-identity-protocol",
  "wamn-package-artifact",
  "wamn-package-control",
  "wamn-platform-identity",
- "wamn-project-state",
  "wamn-release-control",
  "wamn-runtime",
  "wamn-schema-generator",
- "wamn-session",
  "wamn-test-infrastructure",
  "wamn-test-postgres",
  "wash-runtime",
@@ -6231,10 +6267,10 @@ dependencies = [
  "wamn-engine",
  "wamn-execution-host",
  "wamn-identity-client",
+ "wamn-identity-protocol",
  "wamn-package-artifact",
  "wamn-platform-identity",
  "wamn-runtime",
- "wamn-session",
  "wamn-test-postgres",
  "wamn-workflow",
  "wash-runtime",
@@ -6251,6 +6287,8 @@ dependencies = [
  "http-body-util",
  "hyper",
  "hyper-util",
+ "jsonwebtoken 11.1.0",
+ "postgres-protocol",
  "rcgen",
  "reqwest",
  "ring",
@@ -6267,9 +6305,8 @@ dependencies = [
  "wamn-catalog",
  "wamn-control-provision",
  "wamn-control-registry",
- "wamn-pg-core",
+ "wamn-identity-protocol",
  "wamn-platform-identity",
- "wamn-session",
  "wamn-test-infrastructure",
  "wamn-test-postgres",
  "zeroize",
@@ -6289,8 +6326,26 @@ dependencies = [
  "tokio",
  "tokio-rustls",
  "url",
- "wamn-platform-identity",
- "wamn-session",
+ "wamn-identity-protocol",
+]
+
+[[package]]
+name = "wamn-identity-protocol"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "base64 0.22.1",
+ "hex",
+ "jsonwebtoken 11.1.0",
+ "ring",
+ "serde",
+ "serde_json",
+ "sha2 0.11.0",
+ "subtle",
+ "tokio",
+ "uuid",
+ "wamn-identity-protocol",
+ "zeroize",
 ]
 
 [[package]]
@@ -6309,6 +6364,7 @@ dependencies = [
  "http-body-util",
  "hyper",
  "hyper-util",
+ "jsonwebtoken 11.1.0",
  "libc",
  "oci-client",
  "opentelemetry",
@@ -6343,16 +6399,15 @@ dependencies = [
  "wamn-execution-contract",
  "wamn-execution-host",
  "wamn-gate-harness",
+ "wamn-identity-protocol",
  "wamn-package-artifact",
  "wamn-package-control",
  "wamn-platform-identity",
- "wamn-project-state",
  "wamn-release-control",
  "wamn-run-state",
  "wamn-runtime",
  "wamn-schema-control",
  "wamn-schema-generator",
- "wamn-session",
  "wamn-test-infrastructure",
  "wamn-test-postgres",
  "wamn-workflow",
@@ -6403,6 +6458,7 @@ dependencies = [
  "object_store",
  "oci-client",
  "pg_query",
+ "postgres-protocol",
  "reqwest",
  "ring",
  "serde",
@@ -6419,9 +6475,7 @@ dependencies = [
  "wamn-execution-contract",
  "wamn-fixture-package",
  "wamn-package-artifact",
- "wamn-pg-core",
  "wamn-platform-identity",
- "wamn-project-state",
  "wamn-record-history",
  "wamn-runtime",
  "wamn-schema-control",
@@ -6435,10 +6489,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "wamn-pg-core"
-version = "0.1.0"
-
-[[package]]
 name = "wamn-platform-identity"
 version = "0.1.0"
 dependencies = [
@@ -6447,14 +6497,14 @@ dependencies = [
  "async-nats",
  "async-trait",
  "base64 0.22.1",
+ "chrono",
  "futures-util",
- "hex",
+ "jsonwebtoken 11.1.0",
  "ring",
  "rustls",
  "serde",
  "serde_json",
  "sha2 0.11.0",
- "subtle",
  "tokio",
  "tokio-postgres",
  "tracing",
@@ -6463,24 +6513,12 @@ dependencies = [
  "wamn-control-provision",
  "wamn-credential-store",
  "wamn-execution-contract",
- "wamn-project-state",
- "wamn-session",
+ "wamn-identity-protocol",
+ "wamn-platform-identity",
+ "wamn-runtime",
  "wamn-test-infrastructure",
  "wamn-test-postgres",
  "zeroize",
-]
-
-[[package]]
-name = "wamn-project-state"
-version = "0.1.0"
-dependencies = [
- "chrono",
- "uuid",
- "wamn-catalog",
- "wamn-control-provision",
- "wamn-project-state",
- "wamn-runtime",
- "wamn-test-postgres",
 ]
 
 [[package]]
@@ -6522,10 +6560,10 @@ dependencies = [
  "wamn-event-wire",
  "wamn-execution-contract",
  "wamn-gate-harness",
+ "wamn-identity-protocol",
  "wamn-integration-tests",
  "wamn-package-control",
  "wamn-platform-identity",
- "wamn-project-state",
  "wamn-record-history",
  "wamn-release-control",
  "wamn-run-state",
@@ -6572,7 +6610,6 @@ dependencies = [
  "wamn-package-artifact",
  "wamn-package-control",
  "wamn-platform-identity",
- "wamn-project-state",
  "wamn-record-history",
  "wamn-runtime",
  "wamn-schema-control",
@@ -6640,12 +6677,14 @@ dependencies = [
  "http-route",
  "hyper",
  "hyper-util",
+ "jsonwebtoken 11.1.0",
  "moka",
  "object_store",
  "oci-client",
  "opentelemetry",
  "opentelemetry-otlp",
  "opentelemetry_sdk",
+ "postgres-protocol",
  "rcgen",
  "reqwest",
  "ring",
@@ -6671,16 +6710,14 @@ dependencies = [
  "wamn-engine",
  "wamn-event-wire",
  "wamn-execution-contract",
+ "wamn-identity-protocol",
  "wamn-materializer",
  "wamn-number-pattern",
  "wamn-package-artifact",
- "wamn-pg-core",
  "wamn-platform-identity",
- "wamn-project-state",
  "wamn-run-state",
  "wamn-runtime",
  "wamn-schema-control",
- "wamn-session",
  "wamn-test-infrastructure",
  "wamn-test-postgres",
  "wash-runtime",
@@ -6712,12 +6749,12 @@ dependencies = [
  "wamn-control-provision",
  "wamn-control-registry",
  "wamn-execution-contract",
+ "wamn-identity-protocol",
  "wamn-package-artifact",
  "wamn-package-control",
  "wamn-platform-identity",
  "wamn-runtime",
  "wamn-schema-control",
- "wamn-session",
  "wamn-test-infrastructure",
  "wamn-test-postgres",
  "wash-runtime",
@@ -6728,11 +6765,11 @@ name = "wamn-schema-control"
 version = "0.1.0"
 dependencies = [
  "pg_query",
+ "postgres-protocol",
  "serde",
  "serde_json",
  "sha2 0.11.0",
  "wamn-catalog",
- "wamn-pg-core",
  "wamn-record-history",
 ]
 
@@ -6744,6 +6781,7 @@ dependencies = [
  "base64 0.22.1",
  "hex",
  "pg_query",
+ "postgres-protocol",
  "proptest",
  "serde",
  "serde_json",
@@ -6779,18 +6817,6 @@ dependencies = [
  "wamn-fixture-package",
  "wamn-record-history",
  "wamn-test-postgres",
-]
-
-[[package]]
-name = "wamn-session"
-version = "0.1.0"
-dependencies = [
- "async-trait",
- "base64 0.22.1",
- "ring",
- "serde",
- "serde_json",
- "tokio",
 ]
 
 [[package]]
@@ -6895,10 +6921,10 @@ dependencies = [
  "wamn-execution-contract",
  "wamn-gate-harness",
  "wamn-identity-client",
+ "wamn-identity-protocol",
  "wamn-integration-tests",
  "wamn-package-control",
  "wamn-platform-identity",
- "wamn-project-state",
  "wamn-release-control",
  "wamn-runtime",
  "wamn-schema-generator",
@@ -6930,8 +6956,8 @@ dependencies = [
  "wamn-event-wire",
  "wamn-execution-contract",
  "wamn-execution-host",
+ "wamn-identity-protocol",
  "wamn-platform-identity",
- "wamn-project-state",
  "wamn-router",
  "wamn-run-state",
  "wamn-runtime",

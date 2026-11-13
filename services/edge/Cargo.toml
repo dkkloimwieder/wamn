@@ -18,7 +18,7 @@ wamn-run-state = { workspace = true }
 # The one writer of the run-state file on the box.
 wamn-run-state-sqlite = { workspace = true }
 # Local routes verify sessions over a key file, and grants name role slugs.
-wamn-session = { workspace = true }
+wamn-identity-protocol = { workspace = true }
 # The admitted component facts and the serving manifest of a release bundle.
 wamn-catalog = { workspace = true }
 # The `sha256:<hex>` spelling of bundle, file and schema digests.

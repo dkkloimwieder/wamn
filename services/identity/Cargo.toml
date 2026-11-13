@@ -35,15 +35,17 @@ tracing = { workspace = true }
 tracing-subscriber = { workspace = true, features = ["env-filter"] }
 wamn-control-provision = { workspace = true }
 wamn-platform-identity = { workspace = true }
-wamn-session = { workspace = true }
+wamn-identity-protocol = { workspace = true }
 
 [dev-dependencies]
+jsonwebtoken = { workspace = true }
+wamn-identity-protocol = { workspace = true, features = ["test-util"] }
 wamn-test-infrastructure = { workspace = true }
 wamn-catalog = { workspace = true }
 wamn-control-registry = { workspace = true }
 tokio = { workspace = true, features = ["process"] }
 url = { workspace = true }
-wamn-pg-core = { workspace = true }
+postgres-protocol = { workspace = true }
 rcgen = { workspace = true }
 wamn-test-postgres = { workspace = true }
 

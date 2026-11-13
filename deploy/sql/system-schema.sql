@@ -351,7 +351,7 @@ CREATE TRIGGER wamn_record_history_stamp
 -- `type` is user, service, or platform. A platform row names a platform
 -- component that writes in this database, and only wamn:provisioning does. The
 -- row carries its `wamn:<component>` name in `subject` and in `display_name`,
--- and the id that `wamn-project-state` derives from that name.
+-- and the id that `wamn-identity-protocol` derives from that name.
 -- `principals_platform_principal_check` pins the subject, display name, and id
 -- of each platform row, and it refuses a `wamn:` display name on another type.
 -- The subject pattern refuses a colon on another type. PostgreSQL has no

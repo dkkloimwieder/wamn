@@ -9,7 +9,7 @@ license.workspace = true
 pg_query = "=6.2.1"
 wamn-catalog = { workspace = true }
 wamn-record-history = { workspace = true }
-wamn-pg-core = { workspace = true }
+postgres-protocol = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 sha2 = { workspace = true }

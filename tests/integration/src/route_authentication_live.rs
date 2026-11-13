@@ -14,12 +14,12 @@ use wamn_engine::release_manifest::LoadedRelease;
 use wamn_engine::router_delivery::authorize_attachment_for_test;
 use wamn_environment_control::provision_project_env::{self, secret_value};
 use wamn_gate_harness::journey::{journey_document_schema_bytes, parse_journey_document};
+use wamn_identity_protocol::ADMIN_ROLE;
 use wamn_package_control::apply_package::{self, ApplyPackageRequest};
 use wamn_platform_identity::{
     PrincipalType, assign_project_role, create_service, create_user, disable_principal, issue_pat,
     operator_subject, resolve_subject, revoke_pat,
 };
-use wamn_project_state::ADMIN_ROLE;
 use wamn_runtime::plugins::route_authentication::{
     PlatformRouteAuthenticator, RouteAuthentication,
 };
@@ -108,7 +108,7 @@ async fn grant_service_operator(
         .execute(
             "INSERT INTO platform.\"user\" (id, type, email) \
              VALUES ($1::text::uuid, 'service', $2)",
-            &[&principal.id().as_str(), &email],
+            &[&principal.id().to_string().as_str(), &email],
         )
         .await
         .context("write the operator service's user row")?;
@@ -118,7 +118,7 @@ async fn grant_service_operator(
         ENV_KEY,
         wamn_platform_identity::application::GrantAuthority::Provisioning,
         wamn_platform_identity::application::GrantChange::UserRole {
-            user_id: principal.id().as_str(),
+            user_id: principal.id().to_string().as_str(),
             role: ITEM_READER,
             grant: true,
         },
@@ -474,7 +474,10 @@ async fn assert_user_environment_membership(
             "INSERT INTO platform.\"user\" (id, type, email) \
          VALUES ($1::text::uuid, 'user', 'member@example.test'), \
                 ($2::text::uuid, 'user', 'other@example.test')",
-            &[&user.id().as_str(), &other.id().as_str()],
+            &[
+                &user.id().to_string().as_str(),
+                &other.id().to_string().as_str(),
+            ],
         )
         .await?;
     project
@@ -487,7 +490,7 @@ async fn assert_user_environment_membership(
         .execute(
             "INSERT INTO platform.user_role (user_id, role_name) \
          VALUES ($1::text::uuid, 'user-reader'), ($1::text::uuid, 'user-extra')",
-            &[&user.id().as_str()],
+            &[&user.id().to_string().as_str()],
         )
         .await?;
     project
@@ -516,14 +519,14 @@ async fn assert_user_environment_membership(
         .execute(
             "SELECT set_config('app.user_id', $1, false), \
                     set_config('app.operation', 'admin:other-environment-fixture', false)",
-            &[&user.id().as_str()],
+            &[&user.id().to_string().as_str()],
         )
         .await?;
     other_project
         .execute(
             "INSERT INTO platform.\"user\" (id, type, email) \
              VALUES ($1::text::uuid, 'user', 'member@example.test')",
-            &[&user.id().as_str()],
+            &[&user.id().to_string().as_str()],
         )
         .await?;
     other_project
@@ -537,7 +540,7 @@ async fn assert_user_environment_membership(
         .execute(
             "INSERT INTO platform.user_role (user_id, role_name) \
              VALUES ($1::text::uuid, 'user-reader')",
-            &[&user.id().as_str()],
+            &[&user.id().to_string().as_str()],
         )
         .await?;
     drop(other_project);
@@ -566,7 +569,7 @@ async fn assert_user_environment_membership(
         Err(unauthorized.clone())
     );
     for (org, env) in [(ORG, OTHER_ENVIRONMENT), ("other-org", ENVIRONMENT)] {
-        fixture_membership::grant(membership(org, env, user.id().as_str())).await?;
+        fixture_membership::grant(membership(org, env, user.id().to_string().as_str())).await?;
         assert_eq!(
             invoke(
                 route_auth,
@@ -579,7 +582,7 @@ async fn assert_user_environment_membership(
             "membership in {org}/{PROJECT}/{env} authorized a different environment"
         );
     }
-    let mut other_project = membership(ORG, ENVIRONMENT, user.id().as_str());
+    let mut other_project = membership(ORG, ENVIRONMENT, user.id().to_string().as_str());
     other_project.project = OTHER_PROJECT.to_owned();
     fixture_membership::grant(other_project).await?;
     assert_eq!(
@@ -593,7 +596,7 @@ async fn assert_user_environment_membership(
         Err(unauthorized.clone()),
         "membership in another project authorized this route"
     );
-    let mut forbidden_writer = membership(ORG, ENVIRONMENT, user.id().as_str());
+    let mut forbidden_writer = membership(ORG, ENVIRONMENT, user.id().to_string().as_str());
     forbidden_writer.system_database_url = identity_url.to_owned();
     fixture_membership::grant(forbidden_writer)
         .await
@@ -611,14 +614,20 @@ async fn assert_user_environment_membership(
     assert_eq!(admissions, 0, "a nonmember reached application admission");
 
     for _ in 0..2 {
-        fixture_membership::grant(membership(ORG, ENVIRONMENT, user.id().as_str())).await?;
+        fixture_membership::grant(membership(ORG, ENVIRONMENT, user.id().to_string().as_str()))
+            .await?;
     }
     assert_eq!(
         admin
             .query_one(
                 "SELECT count(*) FROM identity.project_env_memberships \
          WHERE principal_id = $1::text::uuid AND org = $2 AND project = $3 AND env = $4",
-                &[&user.id().as_str(), &ORG, &PROJECT, &ENVIRONMENT],
+                &[
+                    &user.id().to_string().as_str(),
+                    &ORG,
+                    &PROJECT,
+                    &ENVIRONMENT
+                ],
             )
             .await?
             .get::<_, i64>(0),
@@ -637,7 +646,7 @@ async fn assert_user_environment_membership(
         .await
         .expect("authenticate user PAT")
         .expect("authenticated caller");
-    assert_eq!(caller.principal_id(), user.id().as_str());
+    assert_eq!(caller.principal_id(), user.id().to_string().as_str());
     assert!(caller.permits(OPERATION));
     assert!(
         caller.permits(EXTRA_OPERATION),
@@ -696,7 +705,12 @@ async fn assert_user_environment_membership(
         );
     }
 
-    fixture_membership::grant(membership(ORG, ENVIRONMENT, other.id().as_str())).await?;
+    fixture_membership::grant(membership(
+        ORG,
+        ENVIRONMENT,
+        other.id().to_string().as_str(),
+    ))
+    .await?;
     let other_token =
         issue_pat(admin, other.id(), "other member", Duration::from_secs(3600)).await?;
     assert_eq!(
@@ -712,7 +726,7 @@ async fn assert_user_environment_membership(
     );
     project.execute(
         "DELETE FROM platform.user_role WHERE user_id = $1::text::uuid AND role_name = 'user-reader'",
-        &[&user.id().as_str()],
+        &[&user.id().to_string().as_str()],
     ).await?;
     assert_eq!(
         invoke(
@@ -727,12 +741,12 @@ async fn assert_user_environment_membership(
     );
     project.execute(
         "INSERT INTO platform.user_role (user_id, role_name) VALUES ($1::text::uuid, 'user-reader')",
-        &[&user.id().as_str()],
+        &[&user.id().to_string().as_str()],
     ).await?;
     project
         .execute(
             "UPDATE platform.\"user\" SET status = 'disabled' WHERE id = $1::text::uuid",
-            &[&user.id().as_str()],
+            &[&user.id().to_string().as_str()],
         )
         .await?;
     assert_eq!(
@@ -748,7 +762,7 @@ async fn assert_user_environment_membership(
     project
         .execute(
             "UPDATE platform.\"user\" SET status = 'active' WHERE id = $1::text::uuid",
-            &[&user.id().as_str()],
+            &[&user.id().to_string().as_str()],
         )
         .await?;
     invoke(
@@ -761,7 +775,7 @@ async fn assert_user_environment_membership(
     .expect("restored environment role authorizes again");
     for _ in 0..2 {
         fixture_membership::revoke(
-            membership(ORG, ENVIRONMENT, user.id().as_str()),
+            membership(ORG, ENVIRONMENT, user.id().to_string().as_str()),
             &AuthChanges::default(),
         )
         .await?;
@@ -776,7 +790,7 @@ async fn assert_user_environment_membership(
             Err(unauthorized.clone())
         );
     }
-    fixture_membership::grant(membership(ORG, ENVIRONMENT, user.id().as_str())).await?;
+    fixture_membership::grant(membership(ORG, ENVIRONMENT, user.id().to_string().as_str())).await?;
     disable_principal(admin, user.id(), &mut AuthDrops::default()).await?;
     assert_eq!(
         invoke(
@@ -1052,7 +1066,12 @@ async fn production_operator_authentication(root: &Path) {
         .execute(
             "DELETE FROM identity.project_roles WHERE principal_id = $1::text::uuid \
              AND org = $2 AND project = $3 AND role = $4",
-            &[&principal.id().as_str(), &ORG, &PROJECT, &ADMIN_ROLE],
+            &[
+                &principal.id().to_string().as_str(),
+                &ORG,
+                &PROJECT,
+                &ADMIN_ROLE,
+            ],
         )
         .await
         .expect("remove the admin project role");
@@ -1132,7 +1151,7 @@ async fn production_operator_authentication(root: &Path) {
     );
     admin.execute(
         "UPDATE identity.principals SET status = 'active', disabled_at = NULL WHERE id = $1::text::uuid",
-        &[&principal.id().as_str()],
+        &[&principal.id().to_string().as_str()],
     ).await.expect("restore the service principal for permission tests");
 
     // An operator revokes a credential that is IN USE. The case above revokes

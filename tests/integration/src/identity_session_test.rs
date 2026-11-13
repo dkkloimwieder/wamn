@@ -17,11 +17,10 @@ use serde::{Deserialize, Serialize};
 use tokio::io::AsyncReadExt as _;
 use wamn_control_provision::identity_issuer::validate_identity_issuer;
 use wamn_control_provision::{PlatformComponent, bind_platform_principal_sql};
+use wamn_identity_protocol::keys::{PublicSessionKey, SessionJwks, decode_public_key};
+use wamn_identity_protocol::test_util::{Scope, verify};
+use wamn_identity_protocol::token::MAXIMUM_LIFETIME;
 use wamn_platform_identity::{create_service, create_user, issue_pat};
-use wamn_session::keys::{PublicSessionKey, SessionJwks, decode_public_key};
-use wamn_session::token::{
-    MAXIMUM_LIFETIME, SessionScope, TOLERANCE, session_key_id, verify_session_token,
-};
 
 const IO_TIMEOUT: Duration = Duration::from_secs(5);
 const TEST_TIMEOUT: Duration = Duration::from_secs(90);
@@ -293,27 +292,41 @@ async fn observe(args: IdentitySessionTestArgs) -> anyhow::Result<()> {
                 response.token_type == "Bearer",
                 "identity session token type refused"
             );
-            let kid = session_key_id(&response.access_token)
-                .map_err(|_| anyhow!("identity session signed header refused"))?;
+            let kid = jsonwebtoken::decode_header(&response.access_token)
+                .map_err(|_| anyhow!("identity session signed header refused"))?
+                .kid
+                .ok_or_else(|| anyhow!("session key ID is absent"))?;
             let key = keys
                 .get(&kid)
                 .ok_or_else(|| anyhow!("identity session signing key is absent"))?;
             let received_at = unix_seconds()?;
-            let claims = verify_session_token(
+            let claims = verify(
                 &response.access_token,
                 key,
-                SessionScope {
+                Scope {
                     issuer: &args.issuer,
                     org: &case.org,
                     audience: &case.audience,
                 },
                 received_at,
             )
+            .await
             .map_err(|_| anyhow!("identity session signature or scope refused"))?;
-            let expected_roles = case.roles.iter().collect::<BTreeSet<_>>();
-            let actual_roles = claims.roles.iter().collect::<BTreeSet<_>>();
+            let expected_roles = case
+                .roles
+                .iter()
+                .map(String::as_str)
+                .collect::<BTreeSet<_>>();
+            let actual_roles = claims
+                .roles
+                .iter()
+                .map(wamn_identity_protocol::RoleName::as_str)
+                .collect::<BTreeSet<_>>();
             ensure!(
-                claims.sub == case.subject
+                claims.sub
+                    == case
+                        .subject
+                        .parse::<wamn_identity_protocol::PrincipalId>()?
                     && claims.org == case.org
                     && claims.aud == case.audience
                     && actual_roles == expected_roles
@@ -322,13 +335,13 @@ async fn observe(args: IdentitySessionTestArgs) -> anyhow::Result<()> {
             );
             let expiry_bound = started_at
                 .checked_add(MAXIMUM_LIFETIME)
-                .and_then(|value| value.checked_add(TOLERANCE))
+                .and_then(|value| value.checked_add(30))
                 .ok_or_else(|| anyhow!("identity session request-start bound overflowed"))?;
             ensure!(
                 claims.exp == response.expires_at
                     && claims.exp <= expiry_bound
-                    && claims.iat >= started_at - TOLERANCE
-                    && claims.iat <= received_at + TOLERANCE,
+                    && claims.iat >= started_at - 30
+                    && claims.iat <= received_at + 30,
                 "identity session age exceeds the client-observed request-start bound"
             );
         }
@@ -461,8 +474,8 @@ async fn create_fixture(url: &str) -> anyhow::Result<Vec<u8>> {
         let service_pat = issue_pat(&transaction, service.id(), "Disposable session test", Duration::from_secs(3600)).await
             .map_err(|_| anyhow!("issue identity session fixture service PAT failed"))?;
         let bytes = serde_json::to_vec(&FixtureDocument {
-            user_id: user.id().as_str(), user_pat: user_pat.token(),
-            service_id: service.id().as_str(), service_pat: service_pat.token(),
+            user_id: user.id().to_string().as_str(), user_pat: user_pat.token(),
+            service_id: service.id().to_string().as_str(), service_pat: service_pat.token(),
         }).map_err(|_| anyhow!("encode private identity session fixture failed"))?;
         transaction.commit().await.map_err(|_| anyhow!("commit identity session fixture failed"))?;
         Ok(bytes)

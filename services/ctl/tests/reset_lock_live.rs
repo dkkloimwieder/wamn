@@ -49,7 +49,7 @@ async fn reset_worker_waits_before_validation_and_pinning() -> anyhow::Result<()
     admin
         .batch_execute(&format!(
             "CREATE DATABASE {} OWNER wamn_db_owner",
-            wamn_pg_core::quote_ident(&name)
+            postgres_protocol::escape::escape_identifier(&name)
         ))
         .await?;
     let mut project_url = url::Url::parse(system.url())?;

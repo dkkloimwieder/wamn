@@ -21,7 +21,8 @@ use serde_json::{Value, json};
 use tokio_postgres::{Client, NoTls};
 use wamn_catalog::manifest::{PackageIdentity, canonical_operation_identity};
 use wamn_catalog::sealed_operation_reference;
-use wamn_platform_identity::{PrincipalId, assign_project_role, create_user, issue_pat};
+use wamn_identity_protocol::PrincipalId;
+use wamn_platform_identity::{assign_project_role, create_user, issue_pat};
 
 const PURCHASE_ORDER_ID: &str = "00000000-0000-0000-0000-000000000301";
 /// The deployed Receiving package whose route this test drives.
@@ -333,7 +334,7 @@ async fn seed_env_key_role(
         .execute(
             "SELECT set_config('app.user_id', $1, false), \
                     set_config('app.operation', 'admin:membership-test-fixture', false)",
-            &[&principal.as_str()],
+            &[&principal.to_string().as_str()],
         )
         .await
         .context("bind the test user as the fixture actor")?;
@@ -344,7 +345,10 @@ async fn seed_env_key_role(
     tx.execute(
         "INSERT INTO platform.\"user\" (id, type, email) \
          VALUES ($1::text::uuid, 'user', $2)",
-        &[&principal.as_str(), &format!("{role}@example.test")],
+        &[
+            &principal.to_string().as_str(),
+            &format!("{role}@example.test"),
+        ],
     )
     .await
     .context("seed the exact platform-issued UUID in the tenant")?;
@@ -375,7 +379,7 @@ async fn seed_env_key_role(
         &wamn_control_registry::project_env_key(&args.org, &args.project, &args.env),
         wamn_platform_identity::application::GrantAuthority::Provisioning,
         wamn_platform_identity::application::GrantChange::UserRole {
-            user_id: principal.as_str(),
+            user_id: principal.to_string().as_str(),
             role,
             grant: true,
         },
@@ -398,7 +402,7 @@ async fn membership(
         org: args.org.clone(),
         project: args.project.clone(),
         env: args.env.clone(),
-        principal_id: principal.as_str().to_owned(),
+        principal_id: principal.to_string(),
         system_database_url: args.system_database_url.clone(),
     };
     tokio::time::timeout(OPERATION_TIMEOUT, async {
@@ -489,7 +493,7 @@ async fn cleanup(
         let tx = project.transaction().await?;
         tx.execute(
             "DELETE FROM platform.\"user\" WHERE id = $1::text::uuid",
-            &[&principal.as_str()],
+            &[&principal.to_string().as_str()],
         )
         .await?;
         let mut drops = AuthDrops::default();
@@ -503,13 +507,13 @@ async fn cleanup(
         let tx = system.transaction().await?;
         tx.execute(
             "DELETE FROM identity.pats WHERE principal_id = $1::text::uuid",
-            &[&principal.as_str()],
+            &[&principal.to_string().as_str()],
         )
         .await?;
         // Cascades remove only this run's project role and membership facts.
         tx.execute(
             "DELETE FROM identity.principals WHERE id = $1::text::uuid",
-            &[&principal.as_str()],
+            &[&principal.to_string().as_str()],
         )
         .await?;
         tx.commit().await?;

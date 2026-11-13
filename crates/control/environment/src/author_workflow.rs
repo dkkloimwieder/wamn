@@ -292,7 +292,7 @@ pub(crate) async fn validate_event_trigger(
         let schema: String = row.get(0);
         let sql = format!(
             "SELECT m.entity_id FROM {}.wamn_entities m JOIN pg_class c ON c.oid = m.relation_oid JOIN pg_namespace n ON n.oid = c.relnamespace WHERE m.package_id = $1 AND n.nspname = $2 AND c.relname = m.table_name",
-            wamn_pg_core::quote_ident(&schema)
+            postgres_protocol::escape::escape_identifier(&schema)
         );
         for model in transaction
             .query(&sql, &[&source_package, &schema])

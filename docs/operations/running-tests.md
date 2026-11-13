@@ -373,7 +373,7 @@ The floors do not take the lock.
 | --- | --- | --- |
 | system | `wamn_control_provision::test_database::system()` | the control store, applied as `wamn_system`, which owns the database |
 | tenant | `wamn_catalog::test_database::tenant()` | `CATALOG_SCHEMA_SQL` and the `wamn_app` and `wamn_scenario_author` roles |
-| tenant+platform | `wamn_project_state::test_database::tenant_platform()` | the tenant floor and `deploy/sql/app-schema.sql` |
+| tenant+platform | `wamn_platform_identity::test_database::tenant_platform()` | the tenant floor and `deploy/sql/app-schema.sql` |
 
 A test of provisioning, migrations, or grants executes that operation and does not start from a floor that already performed it.
 Exercise the intended role because a superuser bypasses row security.

@@ -76,7 +76,7 @@ The id of a platform row is `uuid5(WAMN_NAMESPACE, "wamn:<component>")`.
 `WAMN_NAMESPACE` is `uuid5(NAMESPACE_DNS, "wamn.dev")`, which is `0df299cf-7085-537d-919b-1145b5ef00f8`.
 Every tenant and deployment derives the same id, so no configuration carries it.
 The id of the `workflow` user is `uuid5(WAMN_NAMESPACE, "workflow")`.
-[`wamn-project-state`](../../crates/identity/project-state/src/lib.rs) defines the namespace, the component list, and the derivation.
+[`wamn-identity-protocol`](../../crates/identity/protocol/src/platform.rs) defines the namespace, the component list, and the derivation.
 
 ## Environment names
 

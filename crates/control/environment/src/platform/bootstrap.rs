@@ -292,8 +292,8 @@ enum GenerationState {
 
 /// Inspect real role attributes and direct authority, using the provisioner's catalog query.
 fn generation_state_sql(role: &str, acl: &str) -> String {
-    let role = wamn_pg_core::quote_literal(role);
-    let acl = wamn_pg_core::quote_literal(acl);
+    let role = postgres_protocol::escape::escape_literal(role);
+    let acl = postgres_protocol::escape::escape_literal(acl);
     let state = sql::system_generation_state_sql().replace("$1", &role);
     let stable = sql::system_generation_state_sql().replace("$1", &acl);
     let grants = sql::role_database_grants_sql().replace("$1", &role);
@@ -458,7 +458,7 @@ async fn credential(
         role,
         &format!(
             "SELECT current_user::text = {} AND current_database() = 'wamn_system'",
-            wamn_pg_core::quote_literal(role)
+            postgres_protocol::escape::escape_literal(role)
         ),
     );
     let password = job::credential(

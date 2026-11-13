@@ -374,7 +374,7 @@ async fn queue_writers_stamp_existing_executor_claims() -> anyhow::Result<()> {
     let plugin = &fixture.plugin;
     // Admission already binds the executor in its existing transaction.
     admin.execute("INSERT INTO wamn_run.environment_policies (env_key, expected_environment, durability_class) VALUES ($1, $2, 'standard')", &[&ENV_KEY, &ENVIRONMENT]).await?;
-    let actor = wamn_project_state::PlatformComponent::Executor
+    let actor = wamn_identity_protocol::PlatformComponent::Executor
         .principal_id()
         .to_string();
     let admitted = plugin
@@ -424,7 +424,7 @@ async fn queue_writers_stamp_existing_executor_claims() -> anyhow::Result<()> {
         admin,
         "wamn_run.run_queue",
         "run_id='history-claim'",
-        &wamn_project_state::PlatformComponent::Provisioning
+        &wamn_identity_protocol::PlatformComponent::Provisioning
             .principal_id()
             .to_string(),
         &actor,

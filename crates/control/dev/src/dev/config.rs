@@ -14,6 +14,7 @@ use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::time::Duration;
 
+use crate::identifier::Identifier;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use serde_json::Value;
@@ -22,7 +23,6 @@ use tokio::time::{Instant, timeout_at};
 use tokio_postgres::Config as PostgresConfig;
 use url::Url;
 use wamn_catalog::manifest::{PackageManifest, validate_operation_vocabulary};
-use wamn_pg_core::Identifier;
 
 use super::activation::DevActivationIdentity;
 

@@ -13,8 +13,8 @@ use std::fmt;
 use std::path::Path;
 use std::str::FromStr;
 
+use crate::identifier::Identifier;
 use tokio_postgres::{Client, Config as PostgresConfig, NoTls};
-use wamn_pg_core::Identifier;
 use wamn_schema_introspection::ir::CatalogIr;
 
 use super::activation::DevActivationIdentity;
@@ -1180,7 +1180,7 @@ mod tests {
             .batch_execute(&format!(
                 "COMMENT ON DATABASE {} IS {}",
                 Identifier::new(target.name())?.quoted(),
-                wamn_pg_core::quote_literal(&marker)
+                postgres_protocol::escape::escape_literal(&marker)
             ))
             .await?;
         let scratch = ScratchRoot::create()?;

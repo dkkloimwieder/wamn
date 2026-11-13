@@ -23,7 +23,7 @@ struct Fixture {
 impl Fixture {
     async fn new() -> Self {
         let credentials = crate::connection_credentials::test_util::Fixture::new().await;
-        let database = wamn_project_state::test_database::tenant_platform();
+        let database = wamn_platform_identity::test_database::tenant_platform();
         database
             .execute(
                 &[&wamn_control_provision::sql::ensure_workload_acl_role_sql(

@@ -89,6 +89,7 @@ use pg_walstream::{
 };
 use tokio_postgres::NoTls;
 
+use postgres_protocol::escape::escape_identifier;
 use wamn_control_provision::events::{
     advisory_stream_config, source_stream_config, stream_config_matches,
 };
@@ -98,7 +99,6 @@ use wamn_control_registry::sql::{select_capture_gap_sql, select_event_reader_sql
 #[cfg(test)]
 use wamn_event_wire::stream_subjects;
 use wamn_event_wire::{Causation, Envelope, Op, msg_id, stream_name, subject};
-use wamn_pg_core::quote_ident;
 
 #[derive(Debug, Args)]
 pub struct EventReaderArgs {
@@ -344,8 +344,8 @@ fn relation_classification_lookup_sql(schema: &str) -> String {
            FROM (SELECT $1::oid AS relation_oid) AS lookup \
            LEFT JOIN {}.wamn_entities AS entity USING (relation_oid) \
            LEFT JOIN {}.wamn_cdc_exclusions AS excluded USING (relation_oid)",
-        quote_ident(schema),
-        quote_ident(schema),
+        escape_identifier(schema),
+        escape_identifier(schema),
     )
 }
 

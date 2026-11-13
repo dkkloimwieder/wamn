@@ -28,7 +28,7 @@ async fn rows(client: &Client) -> BTreeSet<String> {
 
 /// Connect to a disposable database with the application schema installed.
 async fn install() -> (LockedDatabase, Client) {
-    let url = locked_database::database(wamn_project_state::test_database::tenant_platform);
+    let url = locked_database::database(wamn_platform_identity::test_database::tenant_platform);
     let (client, connection) = tokio_postgres::connect(&url, NoTls).await.unwrap();
     tokio::spawn(async move {
         let _ = connection.await;

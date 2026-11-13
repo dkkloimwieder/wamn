@@ -1,7 +1,7 @@
 //! Workload credential preparation, retirement, and observed role state.
 
 use super::{
-    WorkloadRoleFamily, platform_group_membership_sql, quote_ident, quote_literal,
+    WorkloadRoleFamily, escape_identifier, escape_literal, platform_group_membership_sql,
     stable_surface_sql,
 };
 
@@ -26,7 +26,7 @@ pub(crate) fn ensure_acl_role_sql(role: &str) -> String {
            END IF; \
          END $workload_acl$;",
         nosuperuser = revoke_superuser_sql("role_name"),
-        role_lit = quote_literal(role),
+        role_lit = escape_literal(role),
     )
 }
 
@@ -52,8 +52,8 @@ pub fn prepare_workload_generation_sql(
     password: &str,
     expires_at: &str,
 ) -> String {
-    let role_ident = quote_ident(role);
-    let role_lit = quote_literal(role);
+    let role_ident = escape_identifier(role);
+    let role_lit = escape_literal(role);
     let membership = normalize_workload_generation_membership_sql(family, role, true);
     let stable_surface =
         stable_surface_sql(family).unwrap_or_else(|| ensure_workload_acl_role_sql(family));
@@ -69,9 +69,9 @@ pub fn prepare_workload_generation_sql(
          ALTER ROLE {role_ident} LOGIN PASSWORD {password} VALID UNTIL {expires_at}; \
          GRANT CONNECT ON DATABASE {database} TO {role_ident};",
         stable_surface = stable_surface,
-        password = quote_literal(password),
-        expires_at = quote_literal(expires_at),
-        database = quote_ident(database),
+        password = escape_literal(password),
+        expires_at = escape_literal(expires_at),
+        database = escape_identifier(database),
     )
 }
 
@@ -83,12 +83,12 @@ pub fn normalize_workload_generation_membership_sql(
     role: &str,
     active: bool,
 ) -> String {
-    let role_ident = quote_ident(role);
+    let role_ident = escape_identifier(role);
     let grant = if active {
         format!(
             "GRANT {acl_role} TO {role_ident} \
                WITH ADMIN FALSE, INHERIT TRUE, SET FALSE;",
-            acl_role = quote_ident(family.acl_role()),
+            acl_role = escape_identifier(family.acl_role()),
         )
     } else {
         String::new()
@@ -100,7 +100,7 @@ pub fn normalize_workload_generation_membership_sql(
          {grant}",
         ensure = ensure_workload_acl_role_sql(family),
         platform_arm = platform_group_membership_sql(family),
-        acl_role = quote_ident(family.acl_role()),
+        acl_role = escape_identifier(family.acl_role()),
         grant = grant,
     )
 }
@@ -115,13 +115,13 @@ pub fn retire_workload_generation_sql(
 }
 
 pub(crate) fn retire_acl_generation_sql(acl_role: &str, database: &str, role: &str) -> String {
-    let role_ident = quote_ident(role);
+    let role_ident = escape_identifier(role);
     format!(
         "REVOKE {acl_role} FROM {role_ident}; \
          REVOKE CONNECT ON DATABASE {database} FROM {role_ident}; \
          ALTER ROLE {role_ident} NOLOGIN PASSWORD NULL VALID UNTIL 'epoch';",
-        acl_role = quote_ident(acl_role),
-        database = quote_ident(database),
+        acl_role = escape_identifier(acl_role),
+        database = escape_identifier(database),
     )
 }
 
@@ -131,7 +131,7 @@ pub(crate) fn retire_acl_generation_sql(acl_role: &str, database: &str, role: &s
 /// A zero timeout only acknowledges the signal. Callers must still require the
 /// inactive state to reject termination failures.
 pub fn terminate_workload_generation_sessions_sql(role: &str) -> String {
-    let role_lit = quote_literal(role);
+    let role_lit = escape_literal(role);
     format!(
         "SELECT pg_terminate_backend(pid, 5000) FROM pg_stat_activity \
            WHERE usename = {role_lit} AND pid <> pg_backend_pid();"

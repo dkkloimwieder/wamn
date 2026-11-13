@@ -414,7 +414,7 @@ async fn development_identity_survives_target_recreation_and_owned_teardown() {
     .await
     .ok()
     .expect("project the user into the application");
-    assert_application_role(&environment.route.database_url, user.as_str()).await;
+    assert_application_role(&environment.route.database_url, user.to_string().as_str()).await;
     let (mut password_admin, connection) =
         tokio_postgres::connect(system.url(), tokio_postgres::NoTls)
             .await
@@ -430,7 +430,7 @@ async fn development_identity_survives_target_recreation_and_owned_teardown() {
     .ok()
     .expect("issue invitation");
     let enrolled = http.post(format!("{endpoint}/password/enroll"))
-        .json(&json!({"principal_id":user.as_str(), "invitation":invitation.secret(), "password":PASSWORD}))
+        .json(&json!({"principal_id":user.to_string().as_str(), "invitation":invitation.secret(), "password":PASSWORD}))
         .send().await.ok().expect("HTTPS enrollment");
     assert_eq!(enrolled.status(), reqwest::StatusCode::NO_CONTENT);
     let login = || {
@@ -465,19 +465,15 @@ async fn development_identity_survives_target_recreation_and_owned_teardown() {
     admin
         .batch_execute(&format!(
             "DROP DATABASE {} WITH (FORCE);",
-            wamn_pg_core::Identifier::new(database.clone())
-                .unwrap()
-                .quoted()
+            postgres_protocol::escape::escape_identifier(&database.clone())
         ))
         .await
         .unwrap();
     admin
         .batch_execute(&format!(
             "CREATE DATABASE {} TEMPLATE {}",
-            wamn_pg_core::Identifier::new(database).unwrap().quoted(),
-            wamn_pg_core::Identifier::new(environment.template.clone())
-                .unwrap()
-                .quoted()
+            postgres_protocol::escape::escape_identifier(&database),
+            postgres_protocol::escape::escape_identifier(&environment.template.clone())
         ))
         .await
         .unwrap();
@@ -493,7 +489,7 @@ async fn development_identity_survives_target_recreation_and_owned_teardown() {
     .await
     .ok()
     .expect("restore application membership after recreation");
-    assert_application_role(&environment.route.database_url, user.as_str()).await;
+    assert_application_role(&environment.route.database_url, user.to_string().as_str()).await;
     let second = login()
         .send()
         .await
@@ -648,7 +644,7 @@ async fn reset_worker_restores_a_recreated_database() -> anyhow::Result<()> {
     admin
         .batch_execute(&format!(
             "CREATE DATABASE {} OWNER wamn_db_owner",
-            wamn_pg_core::quote_ident(&name)
+            postgres_protocol::escape::escape_identifier(&name)
         ))
         .await?;
     ensure::ensure_project_database(&platform, &document, &[], &admin, system.url()).await?;
@@ -662,13 +658,13 @@ async fn reset_worker_restores_a_recreated_database() -> anyhow::Result<()> {
     admin
         .batch_execute(&format!(
             "DROP DATABASE {} WITH (FORCE)",
-            wamn_pg_core::quote_ident(&name),
+            postgres_protocol::escape::escape_identifier(&name),
         ))
         .await?;
     admin
         .batch_execute(&format!(
             "CREATE DATABASE {} OWNER wamn_db_owner",
-            wamn_pg_core::quote_ident(&name)
+            postgres_protocol::escape::escape_identifier(&name)
         ))
         .await?;
     let nats = start_platform_nats(&scratch.path().join("nats"));

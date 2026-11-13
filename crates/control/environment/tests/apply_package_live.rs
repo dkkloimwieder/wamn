@@ -2019,7 +2019,10 @@ async fn database_comment(client: &Client) -> Option<String> {
 }
 
 async fn set_database_comment(client: &Client, comment: Option<&str>) {
-    let comment = comment.map_or_else(|| "NULL".to_owned(), wamn_pg_core::quote_literal);
+    let comment = comment.map_or_else(
+        || "NULL".to_owned(),
+        postgres_protocol::escape::escape_literal,
+    );
     client
         .batch_execute(&format!(
             "DO $comment$ BEGIN \

@@ -162,7 +162,7 @@ async fn provision_org_creates_the_first_admin_then_names_existing_users_only() 
     assert_eq!(users(&client).await, before, "no user is created");
     assert_eq!(
         admin_rows(&client, "beta").await,
-        expected(second.id().as_str())
+        expected(second.id().to_string().as_str())
     );
 
     // 3. Users exist: an unknown email is refused, and nothing is written.

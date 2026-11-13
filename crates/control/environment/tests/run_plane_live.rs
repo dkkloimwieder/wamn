@@ -224,7 +224,7 @@ async fn env_key_identity_leg(su: &Client) {
                 provisioning.to_string(),
             ),
             (
-                wamn_project_state::workflow_user_id().to_string(),
+                wamn_identity_protocol::workflow_user_id().to_string(),
                 "service".to_string(),
                 "workflow@example.invalid".to_string(),
                 provisioning.to_string(),

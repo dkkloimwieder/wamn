@@ -141,7 +141,7 @@ pub(super) async fn assemble(
     project
         .execute(
             "INSERT INTO platform.\"user\" (id,type,email) VALUES ($1::text::uuid,'service','local@example.invalid')",
-            &[&principal.id().as_str()],
+            &[&principal.id().to_string().as_str()],
         )
         .await?;
     project
@@ -153,7 +153,7 @@ pub(super) async fn assemble(
     project
         .execute(
             "INSERT INTO platform.user_role (user_id,role_name) VALUES ($1::text::uuid,$2)",
-            &[&principal.id().as_str(), &input.caller_role],
+            &[&principal.id().to_string().as_str(), &input.caller_role],
         )
         .await?;
 

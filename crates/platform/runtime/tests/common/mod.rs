@@ -40,7 +40,7 @@ pub async fn connect(url: &str) -> anyhow::Result<Client> {
             eprintln!("production-claim live connection failed: {error}");
         }
     });
-    let actor = wamn_project_state::PlatformComponent::Provisioning;
+    let actor = wamn_identity_protocol::PlatformComponent::Provisioning;
     client.execute("SELECT set_config('app.user_id', $1, false), set_config('app.operation', 'admin:claim-fixture', false)", &[&actor.principal_id().to_string()]).await?;
     Ok(client)
 }
@@ -352,10 +352,10 @@ pub async fn install_fixture(url: &str) -> anyhow::Result<LiveFixture> {
         statement_timeout_ms: 10_000,
         row_limit: 10_000,
     })?);
-    let executor = wamn_project_state::PlatformComponent::Executor;
+    let executor = wamn_identity_protocol::PlatformComponent::Executor;
     for component in [COMPONENT, ROLLED_COMPONENT] {
         plugin.set_user_id(component, &executor.principal_id().to_string())?;
-        plugin.set_operation(component, executor.principal_name())?;
+        plugin.set_operation(component, &executor.principal_name())?;
     }
     plugin.set_env_key(COMPONENT, ENV_KEY)?;
     plugin.set_schema(COMPONENT, SCHEMA)?;

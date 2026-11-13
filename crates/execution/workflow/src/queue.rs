@@ -11,7 +11,7 @@ use wamn_engine::entry_operation::postgres_types::PgError;
 use wamn_engine::release_manifest::LoadedRelease;
 use wamn_engine::router_delivery::{OperationRefusal, OperationRefusalType};
 use wamn_event_wire::Causation;
-use wamn_project_state::PlatformComponent;
+use wamn_identity_protocol::PlatformComponent;
 use wamn_run_state::{FailType, RunStore as _};
 use wamn_runtime::plugins::wamn_jetstream::{DerivedPublishRequest, WamnJetstream};
 use wamn_runtime::plugins::wamn_postgres::{
@@ -102,7 +102,7 @@ impl QueueService {
                     runner: Some(config.runner),
                     role: None,
                     user_id: Some(PlatformComponent::Executor.principal_id().to_string()),
-                    operation: Some(PlatformComponent::Executor.principal_name().to_owned()),
+                    operation: Some(PlatformComponent::Executor.principal_name().clone()),
                     // The queue serves every application of the release.
                     application: None,
                     release: Some(ReleaseIdentity::from_loaded(release)),

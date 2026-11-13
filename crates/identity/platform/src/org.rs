@@ -58,7 +58,10 @@ pub async fn activate_org_membership(
 ) -> Result<(), IdentityError> {
     let org = checked_scope_segment("org", org)?;
     client
-        .execute(ACTIVATE_MEMBERSHIP_SQL, &[&principal_id.as_str(), &org])
+        .execute(
+            ACTIVATE_MEMBERSHIP_SQL,
+            &[&principal_id.to_string().as_str(), &org],
+        )
         .await
         .map_err(|error| database_error(&error))?;
     Ok(())
@@ -73,7 +76,8 @@ pub async fn grant_org_admin(
     org: &str,
 ) -> Result<(), IdentityError> {
     let org = active_member(client, principal_id, org).await?;
-    let principal = principal_id.as_str();
+    let principal_text = principal_id.to_string();
+    let principal = principal_text.as_str();
     let all: Option<&str> = None;
     client
         .execute(ORG_ROLE_SQL, &[&principal, &org, &ORG_ADMIN_ROLE])
@@ -116,7 +120,8 @@ pub async fn grant_project_admin(
             format!("project {project} is not a project of org {org}"),
         ));
     }
-    let principal = principal_id.as_str();
+    let principal_text = principal_id.to_string();
+    let principal = principal_text.as_str();
     let one = Some(project.as_str());
     client
         .execute(
@@ -187,7 +192,7 @@ pub async fn revoke_member(
         .query_one(
             HOLDS_PROJECT_ADMIN_SQL,
             &[
-                &principal_id.as_str(),
+                &principal_id.to_string().as_str(),
                 &org,
                 &project,
                 &control::PROJECT_ADMIN_ROLE,
@@ -226,12 +231,12 @@ pub async fn revoke_project_admin(
     lock_membership(client, principal_id, &org).await?;
     let project = checked_scope_segment("project", project)?;
     refuse_under_org_admin(client, principal_id, &org).await?;
-    drops.identity(principal_id.as_str());
+    drops.identity(principal_id.to_string().as_str());
     client
         .execute(
             DROP_PROJECT_ADMIN_SQL,
             &[
-                &principal_id.as_str(),
+                &principal_id.to_string().as_str(),
                 &org,
                 &project,
                 &control::PROJECT_ADMIN_ROLE,
@@ -251,7 +256,7 @@ async fn refuse_under_org_admin(
     let covered: bool = client
         .query_one(
             HOLDS_ORG_ADMIN_SQL,
-            &[&principal_id.as_str(), &org, &ORG_ADMIN_ROLE],
+            &[&principal_id.to_string().as_str(), &org, &ORG_ADMIN_ROLE],
         )
         .await
         .map_err(|error| database_error(&error))?
@@ -448,7 +453,10 @@ pub async fn reactivate_org_membership(
 ) -> Result<(), IdentityError> {
     let org = member(client, principal_id, org).await?;
     client
-        .execute(REACTIVATE_MEMBERSHIP_SQL, &[&principal_id.as_str(), &org])
+        .execute(
+            REACTIVATE_MEMBERSHIP_SQL,
+            &[&principal_id.to_string().as_str(), &org],
+        )
         .await
         .map_err(|error| database_error(&error))?;
     Ok(())
@@ -465,7 +473,8 @@ pub async fn deactivate_org_membership(
     drops: &mut AuthDrops,
 ) -> Result<(), IdentityError> {
     let org = member(client, principal_id, org).await?;
-    let principal = principal_id.as_str();
+    let principal_text = principal_id.to_string();
+    let principal = principal_text.as_str();
     drops.identity(principal);
     let every: Option<&str> = None;
     client
@@ -497,7 +506,8 @@ pub async fn revoke_org_admin(
 ) -> Result<(), IdentityError> {
     let org = checked_scope_segment("org", org)?;
     lock_membership(client, principal_id, &org).await?;
-    let principal = principal_id.as_str();
+    let principal_text = principal_id.to_string();
+    let principal = principal_text.as_str();
     drops.identity(principal);
     client
         .execute(
@@ -701,7 +711,7 @@ pub async fn user_contact(
     principal_id: &PrincipalId,
 ) -> Result<(String, String), IdentityError> {
     let row = client
-        .query_opt(USER_CONTACT_SQL, &[&principal_id.as_str()])
+        .query_opt(USER_CONTACT_SQL, &[&principal_id.to_string().as_str()])
         .await
         .map_err(|error| database_error(&error))?
         .ok_or_else(|| {
@@ -874,7 +884,7 @@ pub async fn lock_membership(
     org: &str,
 ) -> Result<Option<String>, IdentityError> {
     client
-        .query_opt(ACTIVE_MEMBER_SQL, &[&principal.as_str(), &org])
+        .query_opt(ACTIVE_MEMBER_SQL, &[&principal.to_string().as_str(), &org])
         .await
         .map(|row| row.map(|row| row.get(0)))
         .map_err(|error| database_error(&error))

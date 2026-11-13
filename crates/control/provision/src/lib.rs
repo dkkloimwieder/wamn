@@ -132,7 +132,7 @@ pub use secret::{
     render_project_env_secret_manifest, render_workload_secret_manifest,
 };
 /// The platform component list, for callers that bind a component as the actor.
-pub use wamn_project_state::PlatformComponent;
+pub use wamn_identity_protocol::PlatformComponent;
 pub use wamn_run_state::CredentialGeneration;
 pub use workload_role::{
     ADMINISTRATION_ROLE, AUDIT_RETENTION_ROLE, CONTROL_AUTHOR_ROLE, CONTROL_ROLE,

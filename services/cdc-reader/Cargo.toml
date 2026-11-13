@@ -26,7 +26,7 @@ pg_walstream = { workspace = true }
 # The draft envelope/subject/Nats-Msg-Id wire contract.
 wamn-event-wire = { workspace = true }
 # Canonical PostgreSQL identifier quoting shared with the guest-safe planners.
-wamn-pg-core = { workspace = true }
+postgres-protocol = { workspace = true }
 # registry.event_readers registration lookup.
 wamn-control-registry = { workspace = true }
 # The scoped registry-reader credential contract (wamn-0h0g.12.116): the pure,

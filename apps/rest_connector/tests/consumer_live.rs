@@ -45,7 +45,7 @@ pub async fn execution_role(
         .execute(
             "SELECT set_config('app.user_id', $1, false), \
                     set_config('app.operation', 'admin:schedule-fixture', false)",
-            &[&wamn_project_state::PlatformComponent::Provisioning
+            &[&wamn_identity_protocol::PlatformComponent::Provisioning
                 .principal_id()
                 .to_string()],
         )
@@ -69,7 +69,7 @@ pub async fn execution_role(
             )
             .await?;
     }
-    let workflow_user = wamn_project_state::workflow_user_id().to_string();
+    let workflow_user = wamn_identity_protocol::workflow_user_id().to_string();
     for user in [ENABLER, workflow_user.as_str()] {
         project
             .execute(
@@ -101,7 +101,7 @@ pub async fn workflow_host(
     admin
         .execute(
             "SELECT set_config('app.user_id', $1, false)",
-            &[&wamn_project_state::PlatformComponent::Provisioning
+            &[&wamn_identity_protocol::PlatformComponent::Provisioning
                 .principal_id()
                 .to_string()],
         )
@@ -312,7 +312,8 @@ pub async fn run_caller(
     let principal: String = row.get(0);
     let execution_role: String = row.get(1);
     anyhow::ensure!(
-        principal == wamn_project_state::workflow_user_id().to_string() && execution_role == role,
+        principal == wamn_identity_protocol::workflow_user_id().to_string()
+            && execution_role == role,
         "the schedule run executes as {principal} with {execution_role}, not the workflow user with {role}"
     );
     host.workflow_node_caller("test", ENV_KEY, &principal, &execution_role)
@@ -396,7 +397,7 @@ pub async fn install(
     system.execute(&[
         "BEGIN",
         &wamn_control_provision::bind_platform_principal_sql(
-            wamn_project_state::PlatformComponent::Provisioning,
+            wamn_identity_protocol::PlatformComponent::Provisioning,
         ),
         "UPDATE registry.meta SET platform_domain = 'example.test'",
         "COMMIT",

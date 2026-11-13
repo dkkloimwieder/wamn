@@ -30,7 +30,7 @@ pub use wamn_environment_control::workflow_lifecycle::{
     enable_workflow,
 };
 pub use wamn_execution_host::{OperationHost, OperationScope};
-pub use wamn_project_state::{PlatformComponent, workflow_user_id};
+pub use wamn_identity_protocol::{PlatformComponent, workflow_user_id};
 pub use wamn_runtime::connection_credentials::ConnectionCredentials;
 pub use wamn_runtime::plugins::connection_http::transport::HttpTransport;
 pub use wamn_runtime::plugins::wamn_jetstream::WamnJetstream;

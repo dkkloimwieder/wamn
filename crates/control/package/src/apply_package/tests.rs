@@ -6,7 +6,7 @@ async fn auth_drops_ensure_admin_role_records_only_changed_grants() {
     use wamn_platform_identity::auth_changes::AuthDrops;
 
     let _lock = wamn_test_postgres::lock();
-    let database = wamn_project_state::test_database::tenant_platform();
+    let database = wamn_platform_identity::test_database::tenant_platform();
     let (mut client, connection) = tokio_postgres::connect(database.url(), NoTls)
         .await
         .unwrap();
@@ -70,7 +70,7 @@ async fn auth_drops_apply_package_publishes_the_committed_admin_role_drop() {
     wamn_test_postgres::require_ignored_prerequisites("requires: env:WAMN_NATIVE_C_NATS_BIN");
 
     let _lock = wamn_test_postgres::lock();
-    let database = wamn_project_state::test_database::tenant_platform();
+    let database = wamn_platform_identity::test_database::tenant_platform();
     database.execute(&[
         &wamn_control_provision::sql::install_platform_extensions_sql(),
         wamn_control_provision::sql::ensure_db_owner_role_sql(),

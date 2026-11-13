@@ -15,7 +15,7 @@ pub struct PublicSessionKey {
     pub kty: String,
     /// Must be `Ed25519`.
     pub crv: String,
-    /// Must be the fully specified `Ed25519`, not `EdDSA`.
+    /// Must be `EdDSA`.
     pub alg: String,
     /// Must be `sig`.
     pub r#use: String,
@@ -36,7 +36,7 @@ pub fn decode_public_key(key: &PublicSessionKey) -> Result<[u8; 32], SessionErro
     if key.kid.is_empty()
         || key.kty != "OKP"
         || key.crv != "Ed25519"
-        || key.alg != "Ed25519"
+        || key.alg != "EdDSA"
         || key.r#use != "sig"
     {
         return Err(invalid(
@@ -52,4 +52,18 @@ pub fn decode_public_key(key: &PublicSessionKey) -> Result<[u8; 32], SessionErro
 
 fn invalid(message: &'static str) -> SessionError {
     SessionError::new(SessionErrorType::InvalidKey, message)
+}
+
+impl PublicSessionKey {
+    /// Build the public document for one Ed25519 key generation.
+    pub fn new(kid: String, bytes: &[u8]) -> Self {
+        Self {
+            kid,
+            kty: "OKP".into(),
+            crv: "Ed25519".into(),
+            alg: "EdDSA".into(),
+            r#use: "sig".into(),
+            x: URL_SAFE_NO_PAD.encode(bytes),
+        }
+    }
 }

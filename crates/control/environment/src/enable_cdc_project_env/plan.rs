@@ -13,8 +13,8 @@ pub(crate) fn cdc_sql_bundle(schemas: &[String], cdc_name: &str, db_name: &str) 
         writeln!(
             bundle,
             "\nGRANT CONNECT ON DATABASE {} TO {};",
-            wamn_pg_core::quote_ident(db_name),
-            wamn_pg_core::quote_ident(cdc_name)
+            postgres_protocol::escape::escape_identifier(db_name),
+            postgres_protocol::escape::escape_identifier(cdc_name)
         )
         .expect("write the empty capture grant");
     }

@@ -154,7 +154,7 @@ async fn project_admin_authorize_and_public_pkce_callback() -> anyhow::Result<()
         call(
             &delivery,
             "connection/authorize",
-            outsider.as_str(),
+            outsider.to_string().as_str(),
             selection.clone()
         )
         .await
@@ -171,16 +171,21 @@ async fn project_admin_authorize_and_public_pkce_callback() -> anyhow::Result<()
     let metadata = call(
         &delivery,
         "connection/get",
-        boss.as_str(),
+        boss.to_string().as_str(),
         selection.clone(),
     )
     .await
     .unwrap();
     assert_eq!(metadata["redirect_uri"], oauth.redirect_uri());
     assert!(metadata.get("credential").is_none());
-    let answer = call(&delivery, "connection/authorize", boss.as_str(), selection)
-        .await
-        .unwrap();
+    let answer = call(
+        &delivery,
+        "connection/authorize",
+        boss.to_string().as_str(),
+        selection,
+    )
+    .await
+    .unwrap();
     let url = url::Url::parse(answer["authorization_url"].as_str().unwrap())?;
     let query: std::collections::HashMap<_, _> = url.query_pairs().into_owned().collect();
     assert_eq!(query["existing"], "a+b");
@@ -191,7 +196,7 @@ async fn project_admin_authorize_and_public_pkce_callback() -> anyhow::Result<()
     let row = admin.query_one("SELECT created_by,expires_at>clock_timestamp()+interval '9 minutes' AS recent,code_verifier FROM identity.oauth_authorization WHERE state=$1",&[state]).await?;
     assert_eq!(
         row.get::<_, uuid::Uuid>("created_by").to_string(),
-        boss.as_str()
+        boss.to_string().as_str()
     );
     assert!(row.get::<_, bool>("recent"));
     assert_ne!(row.get::<_, Vec<u8>>("code_verifier").len(), 43);
@@ -216,7 +221,7 @@ async fn project_admin_authorize_and_public_pkce_callback() -> anyhow::Result<()
     let pending_url = callback_url.clone();
     let pending = tokio::spawn(async move { pending_client.get(pending_url).send().await });
     tokio::time::timeout(std::time::Duration::from_secs(5), arrival).await??;
-    let write = tokio::time::timeout(std::time::Duration::from_secs(5), call(&delivery, "connection/write", boss.as_str(), json!({"project":"billing","env":"dev","name":"other","parameters":{"primary-authority":provider_base,"tls-verification":"disabled"}}))).await.expect("another connection write finishes before the callback provider answers").unwrap();
+    let write = tokio::time::timeout(std::time::Duration::from_secs(5), call(&delivery, "connection/write", boss.to_string().as_str(), json!({"project":"billing","env":"dev","name":"other","parameters":{"primary-authority":provider_base,"tls-verification":"disabled"}}))).await.expect("another connection write finishes before the callback provider answers").unwrap();
     assert_eq!(write["name"], "other");
     assert!(
         !pending.is_finished(),

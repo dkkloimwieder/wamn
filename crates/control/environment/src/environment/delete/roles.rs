@@ -1,13 +1,13 @@
 //! Environment-scoped logins on the shared control database.
 
 use anyhow::Context as _;
+use postgres_protocol::escape::escape_identifier;
 use wamn_control_provision::{
     CredentialGeneration, WorkloadRoleFamily, WorkloadRoleScope, WorkloadRoleScopeKind,
     workload_generation_role,
 };
 use wamn_control_registry::Triple;
 use wamn_package_control::database::connect;
-use wamn_pg_core::quote_ident;
 
 pub(super) async fn delete_control_roles(
     admin_url: &str,
@@ -44,7 +44,7 @@ pub(super) async fn delete_control_roles(
                     )
                     .await?;
                 transaction
-                    .batch_execute(&format!("DROP ROLE {}", quote_ident(&role)))
+                    .batch_execute(&format!("DROP ROLE {}", escape_identifier(&role)))
                     .await
                     .with_context(|| format!("drop environment control role {role}"))?;
                 transaction.commit().await?;

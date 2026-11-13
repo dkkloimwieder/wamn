@@ -25,7 +25,7 @@ use wamn_engine::flow_http_routing::AuthenticatedCaller;
 use wamn_engine::release_manifest::{LoadedRelease, validate_component_in_release};
 use wamn_engine::router_delivery::bounded_node_deadline_ms;
 use wamn_event_wire::Causation;
-use wamn_project_state::PlatformComponent;
+use wamn_identity_protocol::PlatformComponent;
 use wamn_runtime::connection_facts::ConnectionFacts;
 use wamn_runtime::plugins::EffectEvidence;
 use wamn_runtime::plugins::connection_http::transport::HttpTransport;

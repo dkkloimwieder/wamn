@@ -21,7 +21,8 @@ use wamn_control_provision::identity_issuer::{
 use wamn_control_provision::{
     CredentialGeneration, PlatformComponent, SYSTEM_SCHEMA_SQL, bind_platform_principal_sql, sql,
 };
-use wamn_platform_identity::{PrincipalId, authenticate_pat, issue_pat};
+use wamn_identity_protocol::PrincipalId;
+use wamn_platform_identity::{authenticate_pat, issue_pat};
 use wamn_test_infrastructure::locked_database;
 
 /// The generation state with the role's real password state. The test connects

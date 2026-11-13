@@ -409,7 +409,7 @@ async fn assert_authority(admin: &Client, credential_url: &str) {
 
 #[tokio::test]
 async fn prune_removes_only_the_expired_prefix_of_each_row() {
-    let url = locked_database::database(wamn_project_state::test_database::tenant_platform);
+    let url = locked_database::database(wamn_platform_identity::test_database::tenant_platform);
     let admin = connect(&url).await;
     let database = current_database(&admin).await;
     provision(&admin).await;
@@ -678,7 +678,7 @@ async fn wait_for_blocker(observer: &Client, application: &str, blocker: i32) {
 
 #[tokio::test]
 async fn history_table_creation_waits_for_a_running_prune() {
-    let url = locked_database::database(wamn_project_state::test_database::tenant_platform);
+    let url = locked_database::database(wamn_platform_identity::test_database::tenant_platform);
     let admin = connect(&url).await;
     provision(&admin).await;
     let package = fixture_root("prune-record-history-lock");

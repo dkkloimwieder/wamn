@@ -40,8 +40,9 @@ use wamn_authoring_model::{
     GetReportRefusal, PublishRefusal, QueryRefusal, ReportProjection, SCHEMA_VERSION,
     ValidatedDraftRef, decode_document,
 };
+use wamn_identity_protocol::RoleName;
 use wamn_platform_identity::{
-    AuthenticatedPrincipal, PrincipalType, ProjectRole, authenticate_pat, project_roles,
+    AuthenticatedPrincipal, PrincipalType, authenticate_pat, project_roles,
 };
 
 use wamn_control_provision::{
@@ -300,7 +301,7 @@ async fn role_for(
 
 /// Return the strongest admitted role, ignoring slugs this boundary attaches no
 /// meaning to.
-fn admitted_role(roles: &[ProjectRole]) -> Option<ManagementRole> {
+fn admitted_role(roles: &[RoleName]) -> Option<ManagementRole> {
     roles
         .iter()
         .filter_map(|role| ManagementRole::parse(role.as_str()))
@@ -313,7 +314,7 @@ fn author_from_authenticated(
 ) -> AuthorizedAuthor {
     let principal = authenticated.principal();
     AuthorizedAuthor {
-        principal_id: principal.id().as_str().into(),
+        principal_id: principal.id().to_string().as_str().into(),
         principal_type: principal.principal_type(),
         subject: principal.subject().into(),
         role,

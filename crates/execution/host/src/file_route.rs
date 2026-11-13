@@ -27,7 +27,7 @@ use wamn_engine::flow_http_routing::{
     AuthenticatedCaller, CredentialType, FlowHttpRouting, Header,
 };
 use wamn_engine::release_manifest::LoadedRelease;
-use wamn_platform_identity::PrincipalId;
+use wamn_identity_protocol::PrincipalId;
 use wamn_runtime::plugins::wamn_blobstore::files::{
     FileStorageError, FileStorageErrorKind, FileStore, MAX_URL_LIFETIME,
 };

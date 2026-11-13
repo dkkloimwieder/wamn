@@ -248,7 +248,7 @@ pub(super) struct ApplicationHost {
     pub(super) delivery: Arc<HostRouteDelivery>,
     pub(super) first: String,
     _clocks: (
-        wamn_session::verifier::SessionTestClock,
+        wamn_identity_protocol::verifier::SessionTestClock,
         wamn_runtime::session_keys::TestClock,
     ),
     _database: wamn_test_postgres::OwnedDatabase,

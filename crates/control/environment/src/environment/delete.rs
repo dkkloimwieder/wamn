@@ -29,6 +29,7 @@ pub use rows::delete_registry_rows;
 use anyhow::{Context as _, bail};
 use async_nats::jetstream::context::GetStreamErrorKind;
 use async_nats::jetstream::{self, ErrorCode};
+use postgres_protocol::escape::{escape_identifier, escape_literal};
 use wamn_control_provision::sql::drop_replication_slot_sql;
 use wamn_control_provision::workload_role::{
     WorkloadRoleFamily, WorkloadRoleScope, WorkloadRoleScopeKind, workload_generation_role,
@@ -39,7 +40,6 @@ use wamn_control_provision::{
 };
 use wamn_control_registry::Triple;
 use wamn_event_wire::delivery_advisory_stream;
-use wamn_pg_core::{quote_ident, quote_literal};
 
 use super::Platform;
 use super::analyse::application_releases;
@@ -428,7 +428,7 @@ async fn delete_locked(
         let roles = instance_roles(triple, &instance, &env_key)?;
         for role in &roles {
             admin
-                .batch_execute(&format!("DROP ROLE IF EXISTS {}", quote_ident(role)))
+                .batch_execute(&format!("DROP ROLE IF EXISTS {}", escape_identifier(role)))
                 .await
                 .with_context(|| format!("drop role {role}"))?;
         }

@@ -13,7 +13,7 @@ wamn-execution-contract = { workspace = true }
 # The route path, the operation host, and the delivery bridge. This crate sits
 # above it, and it never depends on this crate.
 wamn-execution-host = { workspace = true }
-wamn-project-state = { workspace = true }
+wamn-identity-protocol = { workspace = true }
 wamn-run-state = { workspace = true }
 wamn-router = { workspace = true }
 wamn-runtime = { workspace = true }

@@ -545,7 +545,7 @@ async fn executor_platform_surface_live() -> anyhow::Result<()> {
     )?;
     plugin.set_operation(
         COMPONENT,
-        wamn_control_provision::PlatformComponent::Executor.principal_name(),
+        &wamn_control_provision::PlatformComponent::Executor.principal_name(),
     )?;
     plugin.set_env_key(COMPONENT, ENV_KEY)?;
     plugin.set_schema(COMPONENT, "wamn_run")?;

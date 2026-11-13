@@ -8,9 +8,8 @@
 
 use std::fmt;
 
-use ring::rand::{SecureRandom as _, SystemRandom};
-use sha2::{Digest as _, Sha256};
 use tokio_postgres::{Row, Transaction};
+use wamn_identity_protocol::secret::{SecretToken, SecretType};
 use zeroize::Zeroizing;
 
 use crate::auth_changes::AuthDrops;
@@ -18,7 +17,6 @@ use crate::{
     AuthenticatedPrincipal, IdentityError, IdentityErrorType, PrincipalId, resolve_principal,
 };
 
-const PREFIX: &str = "wamn_renew_";
 /// Maximum login duration from password authentication, in seconds.
 pub const ABSOLUTE_LIFETIME: i64 = 8 * 60 * 60;
 /// Maximum time between successful renewals, in seconds.
@@ -70,27 +68,10 @@ fn decode(row: &Row) -> Result<Login, IdentityError> {
         expires_at: row.get(3),
     })
 }
-fn hash(secret: &str) -> Option<Vec<u8>> {
-    let value = secret.strip_prefix(PREFIX)?;
-    if value.len() != 64
-        || !value
-            .bytes()
-            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
-    {
-        return None;
-    }
-    Some(Sha256::digest(secret.as_bytes()).to_vec())
-}
 async fn credential(tx: &Transaction<'_>, login: Login) -> Result<Renewal, IdentityError> {
-    let mut bytes = Zeroizing::new([0; 32]);
-    SystemRandom::new().fill(bytes.as_mut()).map_err(|_| {
-        IdentityError::new(
-            IdentityErrorType::Entropy,
-            "renewal credential generation failed",
-        )
-    })?;
-    let secret = Zeroizing::new(format!("{PREFIX}{}", hex::encode(*bytes)));
-    let digest = Sha256::digest(secret.as_bytes()).to_vec();
+    let token = SecretToken::mint(SecretType::Renewal)?;
+    let digest = token.digest();
+    let secret = token.into_secret();
     tx.execute(
         "INSERT INTO identity.renewal_credentials (token_hash,login_id) VALUES ($1,$2::text::uuid)",
         &[&digest, &login.id],
@@ -111,7 +92,7 @@ pub async fn lock_principal(
     Ok(tx
         .query_one(
             "SELECT identity.lock_password_principal($1::text::uuid)",
-            &[&principal.as_str()],
+            &[&principal.to_string().as_str()],
         )
         .await
         .map_err(|error| database(&error))?
@@ -136,7 +117,7 @@ pub async fn create_login(
          INSERT INTO identity.password_logins (principal_id,issuer,audience,authenticated_at,expires_at,renewal_expires_at) \
          SELECT $1::text::uuid,$2,$3,at,at+($4::bigint*interval '1 second'),at+($5::bigint*interval '1 second') FROM instant \
          RETURNING id::text,principal_id::text,extract(epoch FROM authenticated_at)::bigint,extract(epoch FROM expires_at)::bigint",
-        &[&principal.as_str(),&issuer,&audience,&ABSOLUTE_LIFETIME,&INACTIVITY_LIFETIME],
+        &[&principal.to_string().as_str(),&issuer,&audience,&ABSOLUTE_LIFETIME,&INACTIVITY_LIFETIME],
     ).await.map_err(|error| database(&error))?;
     Ok(Some(credential(tx, decode(&row)?).await?))
 }
@@ -178,7 +159,10 @@ pub async fn authenticate_renewal(
     secret: &str,
     drops: &mut AuthDrops,
 ) -> Result<Option<AuthenticatedPrincipal>, IdentityError> {
-    let Some(digest) = hash(secret) else {
+    let Some(digest) = SecretToken::parse(SecretType::Renewal, secret)
+        .ok()
+        .map(|token| token.digest())
+    else {
         return Ok(None);
     };
     let Some((login, consumed, usable)) = lookup(tx, issuer, audience, &digest).await? else {
@@ -186,7 +170,7 @@ pub async fn authenticate_renewal(
     };
     tx.execute(
         "SELECT set_config('app.user_id', $1, true)",
-        &[&login.principal.as_str()],
+        &[&login.principal.to_string().as_str()],
     )
     .await
     .map_err(|error| database(&error))?;
@@ -216,7 +200,10 @@ pub async fn rotate_login(
     secret: &str,
     drops: &mut AuthDrops,
 ) -> Result<Option<Renewal>, IdentityError> {
-    let Some(digest) = hash(secret) else {
+    let Some(digest) = SecretToken::parse(SecretType::Renewal, secret)
+        .ok()
+        .map(|token| token.digest())
+    else {
         return Ok(None);
     };
     let Some((login, consumed, usable)) = lookup(tx, issuer, audience, &digest).await? else {
@@ -244,7 +231,7 @@ async fn revoke_family(
     drops: &mut AuthDrops,
 ) -> Result<(), IdentityError> {
     tx.execute("UPDATE identity.password_logins SET revoked_at=COALESCE(revoked_at,clock_timestamp()) WHERE id=$1::text::uuid", &[&login.id]).await.map_err(|error| database(&error))?;
-    drops.identity(login.principal.as_str());
+    drops.identity(login.principal.to_string().as_str());
     Ok(())
 }
 
@@ -256,7 +243,9 @@ pub async fn revoke_login(
     secret: &str,
     drops: &mut AuthDrops,
 ) -> Result<(), IdentityError> {
-    if let Some(digest) = hash(secret)
+    if let Some(digest) = SecretToken::parse(SecretType::Renewal, secret)
+        .ok()
+        .map(|token| token.digest())
         && let Some((login, _, _)) = lookup(tx, issuer, audience, &digest).await?
     {
         revoke_family(tx, &login, drops).await?;
@@ -273,8 +262,8 @@ pub async fn revoke_all(
     drops: &mut AuthDrops,
 ) -> Result<(), IdentityError> {
     lock_principal(tx, principal).await?;
-    tx.execute("UPDATE identity.password_logins SET revoked_at=clock_timestamp() WHERE principal_id=$1::text::uuid AND revoked_at IS NULL", &[&principal.as_str()]).await.map_err(|error| database(&error))?;
-    drops.identity(principal.as_str());
+    tx.execute("UPDATE identity.password_logins SET revoked_at=clock_timestamp() WHERE principal_id=$1::text::uuid AND revoked_at IS NULL", &[&principal.to_string().as_str()]).await.map_err(|error| database(&error))?;
+    drops.identity(principal.to_string().as_str());
     Ok(())
 }
 

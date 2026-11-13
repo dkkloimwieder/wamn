@@ -154,8 +154,8 @@ pub(crate) async fn restore_database_access(
             transaction
                 .batch_execute(&format!(
                     "GRANT CONNECT ON DATABASE {} TO {}",
-                    wamn_pg_core::quote_ident(&database),
-                    wamn_pg_core::quote_ident(&role)
+                    postgres_protocol::escape::escape_identifier(&database),
+                    postgres_protocol::escape::escape_identifier(&role)
                 ))
                 .await?;
         }

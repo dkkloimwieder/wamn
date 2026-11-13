@@ -29,14 +29,14 @@ use wamn_catalog::{
 use wamn_control_provision::operation_grants::OPERATION_GRANT_LOCK_SQL;
 use wamn_engine::flow_http_routing::AuthenticatedCaller;
 use wamn_engine::release_manifest::LoadedRelease;
-use wamn_platform_identity::PrincipalId;
+use wamn_identity_protocol::PrincipalId;
+use wamn_identity_protocol::{ADMIN_ROLE, workflow_user_id};
 use wamn_platform_identity::application::{
     AdministrationError, AdministrationRefusal, GrantAuthority, GrantChange, application_users,
     create_role, delete_role, mutate_grant, permission_is_grantable, permission_rows, role_names,
 };
 use wamn_platform_identity::auth_changes::{AuthChanges, AuthDrops};
 use wamn_platform_identity::control::is_project_admin;
-use wamn_project_state::{ADMIN_ROLE, workflow_user_id};
 use wamn_runtime::plugins::wamn_postgres::{
     CounterSet, CounterSetRefusal, ManualRunAdmission, ManualRunAdmitted, WamnPostgres,
 };
@@ -124,7 +124,7 @@ fn declared(refusal: &AdministrationRefusal) -> Refusal {
         AdministrationRefusal::AdminTakesNoPermission
         | AdministrationRefusal::AdminCreated
         | AdministrationRefusal::AdminDeleted => ("admin_fixed", "role"),
-        AdministrationRefusal::NotRoleName { .. } => ("invalid_input", "role"),
+        AdministrationRefusal::NotProjectRole { .. } => ("invalid_input", "role"),
         AdministrationRefusal::RoleNotFound { .. } => ("role_not_found", "role"),
         AdministrationRefusal::NotGrantable { .. } => ("operation_not_grantable", "operation"),
         AdministrationRefusal::NotHeld { .. } => ("permission_not_held", "operation"),
@@ -405,7 +405,8 @@ impl ApplicationRoutes<'_> {
             HostHandler::UserRoleGrant => {
                 let request: UserRoleRequest = parse(payload)?;
                 let user: PrincipalId = request.user_id.parse()?;
-                let user_id = user.as_str();
+                let user_text = user.to_string();
+                let user_id = user_text.as_str();
                 self.run(attachment, principal, true, async |client| {
                     let granted = mutate_grant(
                         client,
@@ -426,7 +427,8 @@ impl ApplicationRoutes<'_> {
             HostHandler::UserRoleRevoke => {
                 let request: UserRoleRequest = parse(payload)?;
                 let user: PrincipalId = request.user_id.parse()?;
-                let user_id = user.as_str();
+                let user_text = user.to_string();
+                let user_id = user_text.as_str();
                 self.run(attachment, principal, true, async |client| {
                     let revoked = mutate_grant(
                         client,
@@ -476,7 +478,7 @@ impl ApplicationRoutes<'_> {
             .set_number_counter(
                 self.project,
                 self.release.scope().env_key.as_str(),
-                principal.as_str(),
+                principal.to_string().as_str(),
                 &attachment.operation,
                 request_id.unwrap_or_default(),
                 &set,

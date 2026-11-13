@@ -31,7 +31,7 @@ wamn-package-artifact = { workspace = true }
 wamn-control-provision = { workspace = true }
 wamn-control-registry = { workspace = true }
 wamn-execution-contract = { workspace = true }
-wamn-pg-core = { workspace = true }
+postgres-protocol = { workspace = true }
 wamn-platform-identity = { workspace = true }
 wamn-record-history = { workspace = true }
 wamn-runtime = { workspace = true }
@@ -50,7 +50,7 @@ tokio = { workspace = true, features = ["io-util", "macros", "net", "rt", "sync"
 tokio-postgres = { workspace = true, features = ["with-chrono-0_4", "with-uuid-1"] }
 wamn-catalog = { workspace = true, features = ["test-util"] }
 wamn-control-provision = { workspace = true, features = ["test-util"] }
-wamn-project-state = { workspace = true, features = ["test-util"] }
+wamn-platform-identity = { workspace = true, features = ["test-util"] }
 wamn-test-infrastructure = { workspace = true }
 wamn-test-postgres = { workspace = true }
 wit-component = { workspace = true, features = ["dummy-module"] }

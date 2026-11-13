@@ -119,7 +119,11 @@ impl MigrationTable<'_> {
             .iter()
             .enumerate()
             .map(|(index, (column, _))| {
-                format!("{} = ${}", wamn_pg_core::quote_ident(column), index + 1)
+                format!(
+                    "{} = ${}",
+                    postgres_protocol::escape::escape_identifier(column),
+                    index + 1
+                )
             })
             .collect::<Vec<_>>();
         let conjunction = if predicates.is_empty() {

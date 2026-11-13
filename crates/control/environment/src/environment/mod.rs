@@ -478,7 +478,7 @@ async fn apply_selection(
         let publisher = if let Some(actor) = actor {
             actor
         } else {
-            provisioning = wamn_project_state::PlatformComponent::Provisioning
+            provisioning = wamn_identity_protocol::PlatformComponent::Provisioning
                 .principal_id()
                 .to_string();
             &provisioning

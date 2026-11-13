@@ -294,7 +294,7 @@ impl Fixture {
         let manifest_digest = release.release().manifest_digest.as_str();
         let mut projects = HashMap::new();
         for project in ["project-a", "project-b"] {
-            let database = wamn_project_state::test_database::tenant_platform();
+            let database = wamn_platform_identity::test_database::tenant_platform();
             let (admin, driver) = tokio_postgres::connect(database.url(), tokio_postgres::NoTls)
                 .await
                 .unwrap();

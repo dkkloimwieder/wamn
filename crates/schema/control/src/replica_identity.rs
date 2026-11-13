@@ -108,8 +108,8 @@ pub fn reconcile_replica_identity(
 pub fn alter_replica_identity_sql(schema: &str, table: &str, to: ReplicaIdentity) -> String {
     format!(
         "ALTER TABLE {}.{} REPLICA IDENTITY {}",
-        wamn_pg_core::quote_ident(schema),
-        wamn_pg_core::quote_ident(table),
+        postgres_protocol::escape::escape_identifier(schema),
+        postgres_protocol::escape::escape_identifier(table),
         to.keyword(),
     )
 }

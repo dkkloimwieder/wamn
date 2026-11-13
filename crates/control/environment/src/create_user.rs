@@ -47,7 +47,7 @@ pub async fn create_user_principal(
             .await
             .context("create the user principal")?;
         let mut drops = AuthDrops::default();
-        drops.identity(principal.id().as_str());
+        drops.identity(principal.id().to_string().as_str());
         transaction
             .commit()
             .await

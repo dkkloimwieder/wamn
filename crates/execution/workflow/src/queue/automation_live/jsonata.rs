@@ -190,7 +190,7 @@ async fn event_run(
     assert_eq!(stored.get::<_, String>(2), "event");
     assert_eq!(
         stored.get::<_, String>(3),
-        wamn_project_state::workflow_user_id().to_string()
+        wamn_identity_protocol::workflow_user_id().to_string()
     );
     assert!(
         stored.get::<_, bool>(4),

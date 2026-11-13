@@ -1182,7 +1182,10 @@ async fn observer(journey: &Journey<'_>) -> anyhow::Result<tokio_postgres::Clien
         .await?
         .get(0);
     client
-        .batch_execute(&format!("SET ROLE {}", wamn_pg_core::quote_ident(&owner)))
+        .batch_execute(&format!(
+            "SET ROLE {}",
+            postgres_protocol::escape::escape_identifier(&owner)
+        ))
         .await?;
     client
         .batch_execute("SET default_transaction_read_only = on")

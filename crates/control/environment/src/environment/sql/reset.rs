@@ -741,7 +741,7 @@ async fn recreate(
         admin
             .batch_execute(&format!(
                 "ALTER DATABASE {} ALLOW_CONNECTIONS false",
-                wamn_pg_core::quote_ident(&name)
+                postgres_protocol::escape::escape_identifier(&name)
             ))
             .await?;
     }

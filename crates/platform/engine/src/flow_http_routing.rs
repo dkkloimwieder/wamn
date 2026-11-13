@@ -35,7 +35,7 @@ use wamn_catalog::{
     AttachmentAuthPolicy, AttachmentRef, AttachmentType, OperationType, ServedAttachment,
     ServingManifest, parse_attachment_auth_policy,
 };
-use wamn_session::PAT_TOKEN_PREFIX;
+use wamn_identity_protocol::PAT_TOKEN_PREFIX;
 use wash_runtime::engine::ctx::{ActiveCtx, SharedCtx, extract_active_ctx};
 use wash_runtime::engine::workload::{ResolvedWorkload, WorkloadItem};
 use wash_runtime::plugin::{HostPlugin, WitInterfaces};

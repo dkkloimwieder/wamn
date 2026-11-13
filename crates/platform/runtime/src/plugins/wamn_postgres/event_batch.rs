@@ -1,8 +1,8 @@
 //! Atomic admission of every matching event workflow for one delivery.
 
 use wamn_engine::release_manifest::LoadedRelease;
+use wamn_identity_protocol::{ADMIN_ROLE, PlatformComponent, workflow_user_id};
 use wamn_materializer::workflow::{EventTrigger, SourceEvent};
-use wamn_project_state::{ADMIN_ROLE, PlatformComponent, workflow_user_id};
 use wamn_run_state::queue::{insert_event_run_sql, insert_run_queue_sql, select_event_run_sql};
 
 use super::production_claim::{
@@ -119,7 +119,7 @@ impl WamnPostgres {
                 None,
                 None,
                 Some(&executor),
-                Some(PlatformComponent::Executor.principal_name()),
+                Some(&PlatformComponent::Executor.principal_name()),
                 None,
                 None,
                 policy.statement_timeout_ms,
@@ -233,7 +233,7 @@ async fn history_actor(
         .map_err(|error| storage("read entity map schemas", error))?;
     for row in schemas {
         let schema: String = row.get(0);
-        let quoted_schema = wamn_pg_core::quote_ident(&schema);
+        let quoted_schema = postgres_protocol::escape::escape_identifier(&schema);
         let sql = format!(
             "SELECT c.oid, c.relname::text FROM {quoted_schema}.wamn_entities m JOIN pg_class c ON c.oid = m.relation_oid WHERE m.package_id = $1 AND m.entity_id = $2 AND c.relname = m.table_name AND c.relnamespace = $3::text::regnamespace"
         );
@@ -248,7 +248,7 @@ async fn history_actor(
         let table: String = model.get(1);
         let history = format!(
             "{quoted_schema}.{}",
-            wamn_pg_core::quote_ident(&format!("{table}_history"))
+            postgres_protocol::escape::escape_identifier(&format!("{table}_history"))
         );
         let present: bool = connection
             .query_one("SELECT to_regclass($1) IS NOT NULL", &[&history])
@@ -267,7 +267,10 @@ async fn history_actor(
         let image = serde_json::Value::Object(image.clone()).to_string();
         // History stores a full xid8. CDC carries its low 32 bits. Build the
         // primary key from the same columns and timestamp spelling as history.
-        let table = format!("{quoted_schema}.{}", wamn_pg_core::quote_ident(&table));
+        let table = format!(
+            "{quoted_schema}.{}",
+            postgres_protocol::escape::escape_identifier(&table)
+        );
         let sql = format!(
             "WITH image AS (SELECT to_jsonb(jsonb_populate_record(NULL::{table}, $3::text::jsonb)) AS value) SELECT h.changed_by::text FROM {history} h WHERE h.transaction_id % 4294967296 = $1 AND h.type = $2 AND h.row_key = (SELECT jsonb_object_agg(a.attname, CASE WHEN a.atttypid = 'timestamptz'::regtype AND isfinite((image.value ->> a.attname)::timestamptz) THEN to_jsonb(to_char((image.value ->> a.attname)::timestamptz AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"')) ELSE image.value -> a.attname END) FROM image, pg_index i JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = ANY(i.indkey) WHERE i.indrelid = $4 AND i.indisprimary) ORDER BY h.position DESC LIMIT 1"
         );

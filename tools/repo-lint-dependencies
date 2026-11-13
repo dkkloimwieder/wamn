@@ -9,7 +9,7 @@ EDGE_REFUSED = {
     "wamn-workflow": "the edge links no workflow layer",
     "wamn-router": "routes-router rule 7: the base platform and the edge do not link the router",
     "wamn-execution-host": "the cloud execution host depends on wamn-runtime",
-    "wamn-platform-identity": "it links tokio-postgres; the edge verifies sessions through wamn-session",
+    "wamn-platform-identity": "it links tokio-postgres; the edge verifies sessions through wamn-identity-protocol",
     "tokio-postgres": "the edge links no Postgres",
     "deadpool-postgres": "the edge links no Postgres",
     "postgres-types": "the edge links no Postgres",

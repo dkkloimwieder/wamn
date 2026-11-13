@@ -617,7 +617,7 @@ async fn converge_env_key_identity(
             .query(
                 "SELECT user_id::text FROM platform.user_role \
                   WHERE role_name = $1",
-                &[&wamn_project_state::ADMIN_ROLE],
+                &[&wamn_identity_protocol::ADMIN_ROLE],
             )
             .await
             .context("read the tenant's admin rows")?
@@ -637,7 +637,7 @@ async fn converge_env_key_identity(
     if !apply
         || (app_schema_present
             && missing_platform.is_empty()
-            && present_users.contains(&wamn_project_state::workflow_user_id().to_string())
+            && present_users.contains(&wamn_identity_protocol::workflow_user_id().to_string())
             && missing_services.is_empty()
             && missing_users.is_empty()
             && stale_users.is_empty()
@@ -680,7 +680,7 @@ async fn converge_env_key_identity(
         transaction
             .batch_execute(&format!(
                 "SET LOCAL ROLE {}; {APP_SCHEMA_SQL} RESET ROLE;",
-                wamn_pg_core::quote_ident(&owner)
+                postgres_protocol::escape::escape_identifier(&owner)
             ))
             .await
             .context("install deploy/sql/app-schema.sql")?;
@@ -722,7 +722,7 @@ async fn converge_env_key_identity(
             .await
             .context("bind wamn:provisioning for the service and user rows")?;
         for service in &missing_services {
-            let principal_id: wamn_platform_identity::PrincipalId = service.id.parse()?;
+            let principal_id: wamn_identity_protocol::PrincipalId = service.id.parse()?;
             wamn_platform_identity::application::write_service(
                 &transaction,
                 env_key,
@@ -915,7 +915,10 @@ pub async fn reconcile(
             .await?
             .get(0);
         client
-            .batch_execute(&format!("SET ROLE {}", wamn_pg_core::quote_ident(&owner)))
+            .batch_execute(&format!(
+                "SET ROLE {}",
+                postgres_protocol::escape::escape_identifier(&owner)
+            ))
             .await?;
         for action in &plan.actions {
             client

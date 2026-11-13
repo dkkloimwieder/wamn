@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use serde_json::{Value, json};
 use wamn_catalog::HostAttachment;
-use wamn_platform_identity::PrincipalId;
+use wamn_identity_protocol::PrincipalId;
 use wamn_platform_identity::connections::administration;
 
 use super::{ControlRoutes, Refusal};

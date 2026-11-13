@@ -1,6 +1,6 @@
 //! The environment apply login and its system database grants.
 
-use wamn_pg_core::quote_literal;
+use postgres_protocol::escape::escape_literal;
 
 /// The fixed login used outside the privileged provisioning phase.
 pub const APPLY_ROLE: &str = "wamn_apply";
@@ -21,7 +21,7 @@ pub fn ensure_apply_role_sql() -> &'static str {
 pub fn apply_password_sql(password: &str) -> String {
     format!(
         "ALTER ROLE wamn_apply PASSWORD {};",
-        quote_literal(password)
+        escape_literal(password)
     )
 }
 

@@ -8,6 +8,7 @@ use std::collections::BTreeSet;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use wamn_platform_identity::auth_changes::AuthDrops;
 
+use postgres_protocol::escape::escape_identifier;
 use rcgen::{BasicConstraints, CertificateParams, IsCa, Issuer, KeyPair, KeyUsagePurpose};
 use serde_json::{Value, json};
 use tokio::net::TcpListener;
@@ -30,15 +31,13 @@ use wamn_control_provision::{
 };
 use wamn_control_registry::Triple;
 use wamn_identity::{IdentityConfig, IdentityService, serve, tls_config};
-use wamn_pg_core::quote_ident;
+use wamn_identity_protocol::keys::SessionJwks;
+use wamn_identity_protocol::test_util::{Scope, verify};
+use wamn_identity_protocol::token::{MAXIMUM_LIFETIME, SessionClaims};
 use wamn_platform_identity::session_keys::{activate_session_key, publish_session_key};
 use wamn_platform_identity::{
     Principal, create_service, create_user, disable_principal, grant_project_env_membership,
     issue_pat, revoke_pat, revoke_project_env_membership,
-};
-use wamn_session::keys::SessionJwks;
-use wamn_session::token::{
-    MAXIMUM_LIFETIME, SessionClaims, SessionScope, session_key_id, verify_session_token,
 };
 
 #[path = "session_exchange/password_lifecycle.rs"]
@@ -209,7 +208,7 @@ async fn exercise(fixture: &Fixture, https: &Https) {
             .client
             .query_one(
                 "SELECT EXISTS (SELECT FROM platform.user_role WHERE user_id=$1::text::uuid)",
-                &[&alice.id().as_str()]
+                &[&alice.id().to_string().as_str()]
             )
             .await
             .expect_redacted("other environment keeps Alice's role")
@@ -408,7 +407,7 @@ async fn exercise(fixture: &Fixture, https: &Https) {
 
     dev.execute(
         "DELETE FROM platform.user_role WHERE user_id=$1::text::uuid",
-        &[&alice.id().as_str()],
+        &[&alice.id().to_string().as_str()],
     )
     .await
     .expect_redacted("remove only target principal roles");
@@ -418,7 +417,7 @@ async fn exercise(fixture: &Fixture, https: &Https) {
     for status in ["disabled", "invited"] {
         dev.execute(
             "UPDATE platform.\"user\" SET status=$1 WHERE id=$2::text::uuid",
-            &[&status, &alice.id().as_str()],
+            &[&status, &alice.id().to_string().as_str()],
         )
         .await
         .expect_redacted("tenant user status control");
@@ -426,7 +425,7 @@ async fn exercise(fixture: &Fixture, https: &Https) {
     }
     dev.execute(
         "DELETE FROM platform.\"user\" WHERE id=$1::text::uuid",
-        &[&alice.id().as_str()],
+        &[&alice.id().to_string().as_str()],
     )
     .await
     .expect_redacted("remove target tenant user");
@@ -456,7 +455,7 @@ async fn exercise(fixture: &Fixture, https: &Https) {
         .await
         .expect_redacted("disable principal");
     refuse(https, alice_pat.token(), aud).await;
-    system.execute("UPDATE identity.principals SET status='active', disabled_at=NULL WHERE id=$1::text::uuid", &[&alice.id().as_str()])
+    system.execute("UPDATE identity.principals SET status='active', disabled_at=NULL WHERE id=$1::text::uuid", &[&alice.id().to_string().as_str()])
         .await.expect_redacted("restore fixture principal");
     let expired = issue_pat(
         system,
@@ -496,7 +495,7 @@ async fn exercise(fixture: &Fixture, https: &Https) {
     system
         .batch_execute(&format!(
             "REVOKE SELECT (token_hash) ON identity.pats FROM {}",
-            quote_ident(IDENTITY_ISSUER_ROLE)
+            escape_identifier(IDENTITY_ISSUER_ROLE)
         ))
         .await
         .expect_redacted("backend permission failure control");
@@ -689,44 +688,52 @@ async fn verify_response(
     let token = body["access_token"]
         .as_str()
         .expect_redacted("bearer string");
-    let kid = session_key_id(token).expect_redacted("fixed signature profile");
+    let kid = jsonwebtoken::decode_header(token)
+        .expect_redacted("fixed signature profile")
+        .kid
+        .expect("key ID");
     let key = jwks
         .keys
         .iter()
         .find(|key| key.kid == kid)
         .expect_redacted("key from actual public JWKS");
-    let scope = SessionScope {
+    let scope = Scope {
         issuer: ISSUER,
         org: &target.triple().org,
         audience: target.audience(),
     };
-    let claims = verify_session_token(token, key, scope, unix_seconds())
+    let claims = verify(token, key, scope, unix_seconds())
+        .await
         .expect_redacted("public signature and exact scope");
+    assert!(claims.sub == *principal.id(), "exact authenticated subject");
     assert!(
-        claims.sub == principal.id().as_str(),
-        "exact authenticated subject"
+        claims.roles
+            == roles
+                .iter()
+                .map(|role| role.parse::<wamn_identity_protocol::RoleName>().unwrap())
+                .collect::<Vec<_>>(),
+        "exact current tenant roles"
     );
-    assert!(claims.roles == roles, "exact current tenant roles");
     assert_eq!(body["expires_at"].as_i64(), Some(claims.exp));
     if renewable {
-        assert_eq!(body["sub"], claims.sub);
+        assert_eq!(body["sub"], serde_json::to_value(claims.sub).unwrap());
     }
     for wrong in [
-        SessionScope {
+        Scope {
             issuer: "https://wrong-issuer.invalid",
             ..scope
         },
-        SessionScope {
+        Scope {
             org: "wrong-org",
             ..scope
         },
-        SessionScope {
+        Scope {
             audience: "wrong-audience",
             ..scope
         },
     ] {
         assert!(
-            verify_session_token(token, key, wrong, unix_seconds()).is_err(),
+            verify(token, key, wrong, unix_seconds()).await.is_err(),
             "signed claims cannot change configured scope"
         );
     }
@@ -911,7 +918,7 @@ async fn failed_role_queries_discard_reader(
 
     dev.batch_execute(&format!(
         "REVOKE SELECT (role_name) ON platform.user_role FROM {}",
-        quote_ident(WorkloadRoleFamily::SessionRoleReader.acl_role())
+        escape_identifier(WorkloadRoleFamily::SessionRoleReader.acl_role())
     ))
     .await
     .expect_redacted("role query permission failure control");
@@ -1067,7 +1074,7 @@ async fn retained_successor_allows_real_retirement(
     wait_reader_closed(dev, &successor_target).await;
     dev.batch_execute(&format!(
         "DROP OWNED BY {role}; DROP ROLE {role}",
-        role = quote_ident(&successor_role)
+        role = escape_identifier(&successor_role)
     ))
     .await
     .expect_redacted("remove exact successor fixture role");
@@ -1163,7 +1170,7 @@ async fn snapshots(fixture: &Fixture) -> Vec<(String, Vec<String>)> {
         for table in tables {
             let schema: String = table.get(0);
             let name: String = table.get(1);
-            let versions: Vec<String> = database.client.query_one(&format!("SELECT coalesce(array_agg(md5(row_to_json(t)::text)||':'||t.xmin::text||':'||t.ctid::text ORDER BY t.ctid),ARRAY[]::text[]) FROM {}.{} t", quote_ident(&schema), quote_ident(&name)), &[])
+            let versions: Vec<String> = database.client.query_one(&format!("SELECT coalesce(array_agg(md5(row_to_json(t)::text)||':'||t.xmin::text||':'||t.ctid::text ORDER BY t.ctid),ARRAY[]::text[]) FROM {}.{} t", escape_identifier(&schema), escape_identifier(&name)), &[])
                 .await.expect_redacted("server-side opaque row-version snapshot").get(0);
             snapshots.push((format!("{index}:{schema}.{name}"), versions));
         }
@@ -1172,7 +1179,7 @@ async fn snapshots(fixture: &Fixture) -> Vec<(String, Vec<String>)> {
 }
 
 async fn seed_user(client: &Client, principal: &Principal, role: &str) {
-    client.execute("INSERT INTO platform.\"user\" (id,type,email) VALUES ($1::text::uuid,'user',$2) ON CONFLICT (id) DO UPDATE SET status='active'", &[&principal.id().as_str(), &format!("{}@fixture.invalid", principal.id())])
+    client.execute("INSERT INTO platform.\"user\" (id,type,email) VALUES ($1::text::uuid,'user',$2) ON CONFLICT (id) DO UPDATE SET status='active'", &[&principal.id().to_string().as_str(), &format!("{}@fixture.invalid", principal.id())])
         .await.expect_redacted("tenant user fixture");
     client
         .execute(
@@ -1181,7 +1188,7 @@ async fn seed_user(client: &Client, principal: &Principal, role: &str) {
         )
         .await
         .expect_redacted("tenant role fixture");
-    client.execute("INSERT INTO platform.user_role (user_id,role_name) VALUES ($1::text::uuid,$2) ON CONFLICT DO NOTHING", &[&principal.id().as_str(), &role])
+    client.execute("INSERT INTO platform.user_role (user_id,role_name) VALUES ($1::text::uuid,$2) ON CONFLICT DO NOTHING", &[&principal.id().to_string().as_str(), &role])
         .await.expect_redacted("exact tenant/principal role fixture");
 }
 
@@ -1282,7 +1289,7 @@ async fn setup(raw: &str) -> Fixture {
     for name in &databases {
         system
             .client
-            .batch_execute(&format!("CREATE DATABASE {}", quote_ident(name)))
+            .batch_execute(&format!("CREATE DATABASE {}", escape_identifier(name)))
             .await
             .expect_redacted("create exact disposable environment");
     }
@@ -1351,7 +1358,7 @@ async fn setup(raw: &str) -> Fixture {
             .client
             .batch_execute(&format!(
                 "REVOKE TEMPORARY ON DATABASE {} FROM PUBLIC",
-                quote_ident(target.connection().database())
+                escape_identifier(target.connection().database())
             ))
             .await
             .expect_redacted("environment TEMP floor");
@@ -1399,7 +1406,7 @@ async fn cleanup(fixture: Fixture) {
             .client
             .batch_execute(&format!(
                 "DROP DATABASE {} WITH (FORCE)",
-                quote_ident(target.connection().database())
+                escape_identifier(target.connection().database())
             ))
             .await
             .expect_redacted("remove only owned disposable environment");
@@ -1410,7 +1417,7 @@ async fn cleanup(fixture: Fixture) {
             .client
             .batch_execute(&format!(
                 "DROP OWNED BY {role}; DROP ROLE {role}",
-                role = quote_ident(&role)
+                role = escape_identifier(&role)
             ))
             .await
             .expect_redacted("remove exact fixture authority role");
@@ -1594,13 +1601,13 @@ async fn password_enrollment_and_sessions_preserve_current_authority() {
     let denied = post(
         &https,
         "/invitations",
-        json!({"principal_id":alice.id().as_str()}),
+        json!({"principal_id":alice.id().to_string().as_str()}),
     )
     .send()
     .await
     .unwrap();
     assert_eq!(denied.status(), 403);
-    let enroll = json!({"principal_id":alice.id().as_str(),"invitation":invitation.secret(),"password":PASSWORD});
+    let enroll = json!({"principal_id":alice.id().to_string().as_str(),"invitation":invitation.secret(),"password":PASSWORD});
     assert_eq!(
         post(&https, "/password/enroll", enroll.clone())
             .send()
@@ -1669,7 +1676,7 @@ async fn password_enrollment_and_sessions_preserve_current_authority() {
         .client
         .execute(
             "UPDATE platform.\"user\" SET status='disabled' WHERE id=$1::text::uuid",
-            &[&alice.id().as_str()],
+            &[&alice.id().to_string().as_str()],
         )
         .await
         .unwrap();
@@ -1685,7 +1692,7 @@ async fn password_enrollment_and_sessions_preserve_current_authority() {
         .client
         .execute(
             "UPDATE platform.\"user\" SET status='active' WHERE id=$1::text::uuid",
-            &[&alice.id().as_str()],
+            &[&alice.id().to_string().as_str()],
         )
         .await
         .unwrap();
@@ -1781,7 +1788,7 @@ async fn password_environment_discovery_requires_current_authority() {
         );
     let https = start_config(config).await;
     let response = https.client.post(format!("{}/password/enroll", https.endpoint))
-        .json(&json!({"principal_id":alice.id().as_str(), "invitation":invitation.secret(), "password":PASSWORD}))
+        .json(&json!({"principal_id":alice.id().to_string().as_str(), "invitation":invitation.secret(), "password":PASSWORD}))
         .send().await.expect_redacted("enroll discovery account");
     assert_eq!(response.status(), 204);
     let credentials = json!({"email":" DISCOVERY@EXAMPLE.INVALID ", "password":PASSWORD});
@@ -1837,7 +1844,7 @@ async fn password_environment_discovery_requires_current_authority() {
         .client
         .execute(
             "DELETE FROM platform.user_role WHERE user_id=$1::text::uuid",
-            &[&alice.id().as_str()],
+            &[&alice.id().to_string().as_str()],
         )
         .await
         .unwrap();
@@ -1846,7 +1853,7 @@ async fn password_environment_discovery_requires_current_authority() {
         .client
         .execute(
             "UPDATE platform.\"user\" SET status='disabled' WHERE id=$1::text::uuid",
-            &[&alice.id().as_str()],
+            &[&alice.id().to_string().as_str()],
         )
         .await
         .unwrap();
@@ -1948,7 +1955,7 @@ async fn password_environment_discovery_requires_current_authority() {
         .client
         .query_one(
             "SELECT count(*) FROM identity.pats WHERE principal_id=$1::text::uuid",
-            &[&alice.id().as_str()],
+            &[&alice.id().to_string().as_str()],
         )
         .await
         .unwrap()

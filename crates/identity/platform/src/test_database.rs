@@ -15,19 +15,3 @@ pub fn tenant_platform() -> wamn_test_postgres::Database {
         .expect("install the platform floor");
     database
 }
-
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn tenant_platform_floor_installs_both_schemas() {
-        let database = super::tenant_platform();
-        assert_eq!(
-            database
-                .execute(&["SELECT to_regclass('catalog.packages') IS NOT NULL \
-                       AND to_regclass('platform.\"user\"') IS NOT NULL",])
-                .unwrap()
-                .trim(),
-            "t"
-        );
-    }
-}

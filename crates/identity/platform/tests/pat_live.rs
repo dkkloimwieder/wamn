@@ -6,11 +6,12 @@ use wamn_platform_identity::auth_changes::AuthDrops;
 use tokio_postgres::error::SqlState;
 use tokio_postgres::{Client, Transaction};
 use wamn_control_provision::{PlatformComponent, SYSTEM_SCHEMA_SQL, bind_platform_principal_sql};
+use wamn_identity_protocol::PAT_TOKEN_PREFIX;
+use wamn_identity_protocol::PrincipalId;
 use wamn_platform_identity::{
-    IdentityErrorType, PrincipalId, PrincipalType, authenticate_pat, create_service, create_user,
+    IdentityErrorType, PrincipalType, authenticate_pat, create_service, create_user,
     disable_principal, issue_pat, list_pats, revoke_pat,
 };
-use wamn_session::PAT_TOKEN_PREFIX;
 
 const TTL: Duration = Duration::from_secs(3600);
 
@@ -460,7 +461,7 @@ async fn token_rows_refuse_malformed_values(
                        (principal_id, principal_type, token_prefix, token_hash, label, expires_at) \
                      VALUES ($1::text::uuid, 'user', $2, $3, 'malformed', {expiry})"
                 ),
-                &[&principal.as_str(), &token_prefix, &token_hash],
+                &[&principal.to_string().as_str(), &token_prefix, &token_hash],
             )
             .await
             .expect_err("a malformed token row must refuse");
@@ -469,7 +470,7 @@ async fn token_rows_refuse_malformed_values(
     let error = client
         .execute(
             "DELETE FROM identity.principals WHERE id = $1::text::uuid",
-            &[&principal.as_str()],
+            &[&principal.to_string().as_str()],
         )
         .await
         .expect_err("a principal that holds a token must not be deleted");

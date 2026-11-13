@@ -31,7 +31,7 @@ use wash_runtime::host::probes::Liveness;
 
 use crate::{PostgresWorkflows, RouterDriver, WorkflowErrorType, Workflows as _};
 use wamn_execution_host::{OperationHost, OperationScope};
-use wamn_project_state::PlatformComponent;
+use wamn_identity_protocol::PlatformComponent;
 
 #[path = "automation_live/jsonata.rs"]
 mod jsonata;
@@ -275,7 +275,7 @@ async fn run_automation(mode: Mode) -> anyhow::Result<()> {
           "operations":{(node.operation.clone()):node.serving}}],
         "routes":[],"attachments":{},"host-routes":["application"]
     }))?;
-    let workflow_user = wamn_project_state::workflow_user_id().to_string();
+    let workflow_user = wamn_identity_protocol::workflow_user_id().to_string();
     admin.execute("INSERT INTO platform.user_role (user_id, role_name) VALUES ($1::text::uuid, 'automation')", &[&workflow_user]).await?;
     admin.execute("INSERT INTO catalog.workflows (env_key, environment, application, workflow_id, version, graph_json, wiring_hash, trigger, source_package, entity, ops, enable_sequence, execution_type, execution_role, enabled, created_by) VALUES ($1, 'test', 'automation', 'echo', 1, $2::text::jsonb, $3, 'event', 'automation', 'movement', ARRAY['insert'], 0, 'role', 'automation', true, $4::text::uuid)", &[&ENV_KEY, &serde_json::to_string(&document)?, &graph_hash.as_str(), &workflow_user]).await?;
     let mut manual = document.clone();
@@ -377,7 +377,7 @@ async fn run_automation(mode: Mode) -> anyhow::Result<()> {
                 schema: Some("wamn_run".to_owned()),
                 runner: Some("automation-live".to_owned()),
                 user_id: Some(PlatformComponent::Executor.principal_id().to_string()),
-                operation: Some(PlatformComponent::Executor.principal_name().to_owned()),
+                operation: Some(PlatformComponent::Executor.principal_name().clone()),
                 release: Some(ReleaseIdentity::for_test(
                     release.release().manifest_digest.clone(),
                 )),

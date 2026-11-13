@@ -57,7 +57,7 @@ fn valid_key(order: Order, key: &Value) -> bool {
             text(email)
                 && id.as_str().is_some_and(|id| {
                     id.parse::<PrincipalId>()
-                        .is_ok_and(|parsed| parsed.as_str() == id)
+                        .is_ok_and(|parsed| parsed.to_string().as_str() == id)
                 })
         }
         (Order::Audience, [kind, audience]) => {

@@ -83,7 +83,7 @@ fn package_and_apply_create_maps_with_schema_ownership_in_either_order() {
             "cdc_apply_first"
         };
         let owner = wamn_control_provision::package_owner_role(database);
-        let quoted_owner = wamn_pg_core::quote_ident(&owner);
+        let quoted_owner = postgres_protocol::escape::escape_identifier(&owner);
         run_ok(
             &url,
             &format!(

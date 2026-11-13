@@ -11,13 +11,14 @@ path = "src/bin/docker-credential-wamn.rs"
 test = false
 
 [features]
-test-util = ["wamn-engine/test-util", "wamn-session/test-util"]
+test-util = ["wamn-engine/test-util", "wamn-identity-protocol/test-util"]
 wasm_component_model_implements = [
     "wash-runtime/wasm_component_model_implements",
     "wamn-engine/wasm_component_model_implements",
 ]
 
 [dependencies]
+jsonwebtoken = { workspace = true }
 wamn-credential-store = { workspace = true }
 # Activation compares the native broker declarations from this library.
 wamn-control-provision = { workspace = true }
@@ -35,9 +36,8 @@ wamn-event-wire = { workspace = true }
 wamn-materializer = { workspace = true }
 wamn-execution-contract = { workspace = true }
 wamn-platform-identity = { workspace = true }
-wamn-project-state = { workspace = true }
-wamn-session = { workspace = true }
-wamn-pg-core = { workspace = true }
+wamn-identity-protocol = { workspace = true }
+postgres-protocol = { workspace = true }
 # The one parser of document-number patterns, which the renderer renders.
 wamn-number-pattern = { workspace = true }
 # `tenant-key`: the shipped runtime needs the framed scope digest to check a
@@ -107,7 +107,7 @@ rcgen = { workspace = true }
 # normal wamn-catalog dependency above. That deletes the fence for every crate
 # downstream of it.
 wamn-catalog = { workspace = true, features = ["test-util"] }
-wamn-project-state = { workspace = true, features = ["test-util"] }
+wamn-platform-identity = { workspace = true, features = ["test-util"] }
 wamn-control-provision = { workspace = true, features = ["test-util"] }
 # wamn-0h0g.15.53: the executor plugins' host functions live behind each
 # plugin's private `mod bindings`, so the only way to reach them from outside
@@ -123,7 +123,6 @@ wamn-test-postgres = { workspace = true }
 # The route authentication tests call the route plugin's test entry point.
 wamn-engine = { workspace = true, features = ["test-util"] }
 # The session verifier tests bind a fixed token clock.
-wamn-session = { workspace = true, features = ["test-util"] }
 # M-TEST-UTIL: the unit tests and tests/common build a ReleaseIdentity with no
 # loaded release. Under resolver 2 a dev-dependency feature does not reach a
 # lib-only build, so production code still builds it only from a loaded release.

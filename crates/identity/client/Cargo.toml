@@ -14,8 +14,7 @@ serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 tokio = { workspace = true, features = ["time"] }
 url = { workspace = true }
-wamn-platform-identity = { workspace = true }
-wamn-session = { workspace = true }
+wamn-identity-protocol = { workspace = true }
 
 [dev-dependencies]
 rcgen = { workspace = true }

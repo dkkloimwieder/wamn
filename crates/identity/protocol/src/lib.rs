@@ -1,29 +1,4 @@
-//! Session-token verification over a key source, with no database and no HTTPS
-//! client (docs/history/edge.md section 4.4).
-//!
-//! This crate exports:
-//!
-//! - [`token`]: the fixed Ed25519 token profile, its claims, and
-//!   [`verify_session_token`](token::verify_session_token).
-//! - [`keys`]: the public JWK profile and its decoder.
-//! - [`verifier`]: the [`KeySource`](verifier::KeySource) trait and the
-//!   [`SessionVerifier`](verifier::SessionVerifier) over it.
-//! - [`file_keys`]: [`FileKeys`](file_keys::FileKeys), the key source that
-//!   reads a key set from a local file.
-//! - [`SessionError`]: the error of this crate.
-//! - [`PAT_TOKEN_PREFIX`]: the marker of a personal access token, which
-//!   tells a PAT from a session token on the same carrier.
-//!
-//! The cloud key source, `IssuerKeys`, fetches the issuer's keys over HTTPS and
-//! lives in `wamn-runtime`. Signing and every database read stay in
-//! `wamn-platform-identity`.
-//!
-//! This crate refuses to depend on:
-//!
-//! - Postgres: `tokio-postgres`, and `wamn-platform-identity`, which links it.
-//! - HTTP clients: `reqwest`, `hyper`, `hyper-util`, `hyper-rustls`.
-//!
-//! The edge links this crate, and the edge dependency test refuses Postgres.
+//! Identity types, credential formats, wire messages and session verification.
 
 use std::fmt;
 
@@ -31,6 +6,19 @@ use std::fmt;
 /// `wamn_pat_<16 hex lookup digits>_<64 hex secret digits>`; the lookup half is
 /// stored in the clear as the index key, the whole string only as a digest.
 pub const PAT_TOKEN_PREFIX: &str = "wamn_pat_";
+
+mod principal;
+pub use principal::{ParseIdentityError, PrincipalId, RoleName};
+pub mod secret;
+#[cfg(feature = "test-util")]
+pub mod test_util;
+pub mod wire;
+
+mod platform;
+pub use platform::{
+    ADMIN_ROLE, PLATFORM_PRINCIPAL_PREFIX, PlatformComponent, WAMN_NAMESPACE, WORKFLOW_USER_NAME,
+    workflow_user_id,
+};
 
 pub mod file_keys;
 pub mod keys;

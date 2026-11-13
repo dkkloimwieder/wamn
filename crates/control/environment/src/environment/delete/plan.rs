@@ -1,7 +1,7 @@
 use super::{
     CredentialGeneration, ErrorCode, GetStreamErrorKind, Triple, WorkloadRoleFamily,
-    WorkloadRoleScope, WorkloadRoleScopeKind, cdc_object_name, project_env_database_name,
-    quote_ident, quote_literal, workload_generation_role,
+    WorkloadRoleScope, WorkloadRoleScopeKind, cdc_object_name, escape_identifier, escape_literal,
+    project_env_database_name, workload_generation_role,
 };
 use anyhow::Context as _;
 
@@ -10,18 +10,18 @@ use anyhow::Context as _;
 pub fn delete_control_rows_sql(table: &str, trigger: Option<&str>, env_key: &str) -> Vec<String> {
     let delete = format!(
         "DELETE FROM {table} WHERE env_key = {}",
-        quote_literal(env_key)
+        escape_literal(env_key)
     );
     match trigger {
         Some(trigger) => vec![
             format!(
                 "ALTER TABLE {table} DISABLE TRIGGER {}",
-                quote_ident(trigger)
+                escape_identifier(trigger)
             ),
             delete,
             format!(
                 "ALTER TABLE {table} ENABLE TRIGGER {}",
-                quote_ident(trigger)
+                escape_identifier(trigger)
             ),
         ],
         None => vec![delete],

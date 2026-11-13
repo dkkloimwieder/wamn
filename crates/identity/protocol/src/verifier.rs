@@ -120,7 +120,7 @@ impl<K: KeySource> SessionVerifier<K> {
 
 /// Signed claims with key evidence, before the host's final request admission.
 pub struct VerifiedSession<E> {
-    claims: SessionClaims,
+    pub(crate) claims: SessionClaims,
     evidence: E,
     clock: Clock,
 }

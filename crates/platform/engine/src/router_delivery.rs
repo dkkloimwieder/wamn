@@ -18,7 +18,7 @@ use wamn_catalog::{
     ServingComponentOperation, ServingManifest, parse_attachment_auth_policy,
 };
 use wamn_event_wire::Causation;
-use wamn_project_state::PlatformComponent;
+use wamn_identity_protocol::PlatformComponent;
 use wash_runtime::engine::ctx::{ActiveCtx, SharedCtx, extract_active_ctx};
 use wash_runtime::engine::workload::WorkloadItem;
 use wash_runtime::plugin::{HostPlugin, WitInterfaces};

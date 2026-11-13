@@ -17,8 +17,8 @@ use wamn_catalog::{
 };
 use wamn_engine::component_admission::component_digest;
 use wamn_engine::release_manifest::LoadedRelease;
+use wamn_identity_protocol::PlatformComponent;
 use wamn_platform_identity::connection_changes::ConnectionChanges;
-use wamn_project_state::PlatformComponent;
 use wamn_runtime::connection_credentials::ConnectionCredentials;
 use wamn_runtime::connection_facts::ConnectionFacts;
 use wamn_runtime::connection_memory::ConnectionMemory;

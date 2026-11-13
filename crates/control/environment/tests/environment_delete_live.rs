@@ -107,7 +107,7 @@ esac
     system
         .batch_execute(&format!(
             "CREATE DATABASE {} OWNER wamn_db_owner",
-            wamn_pg_core::quote_ident(&project_name)
+            postgres_protocol::escape::escape_identifier(&project_name)
         ))
         .await?;
     let mut project_url = url::Url::parse(database.url())?;

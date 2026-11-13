@@ -905,7 +905,7 @@ mod tests {
         let row=authority.admin.query_one("SELECT c.id::text,i.id::text FROM registry.connection c JOIN registry.integration i ON i.id=c.integration_id WHERE c.project='project-a' AND i.name='erp'",&[]).await.unwrap();
         let connection: String = row.get(0);
         let integration: String = row.get(1);
-        let database = wamn_project_state::test_database::tenant_platform();
+        let database = wamn_platform_identity::test_database::tenant_platform();
         let (client, driver) = tokio_postgres::connect(database.url(), tokio_postgres::NoTls)
             .await
             .unwrap();

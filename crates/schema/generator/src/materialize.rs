@@ -157,7 +157,7 @@ async fn classify_with_existing_grants(
     corpus: &BTreeMap<String, Vec<u8>>,
     schema: &str,
 ) -> Result<StatementTransactionality> {
-    let search_path = format!("\"{}\"", schema.replace('"', "\"\""));
+    let search_path = postgres_protocol::escape::escape_identifier(schema);
     transaction
         .query_one(
             "SELECT set_config('search_path', $1, true)",
@@ -247,7 +247,7 @@ async fn classify_statements_in_transaction(
 /// it with the production attributes. The rollback removes the role, the
 /// revocations, and the grants.
 fn application_role_sql(schemas: &[String], grants: &str) -> String {
-    let quote = |name: &str| format!("\"{}\"", name.replace('"', "\"\""));
+    let quote = postgres_protocol::escape::escape_identifier;
     let role = quote(DATA_ACCESS_ROLE);
     let mut sql = format!(
         "DO $application_role$ BEGIN \

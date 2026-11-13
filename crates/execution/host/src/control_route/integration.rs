@@ -6,8 +6,9 @@ use anyhow::Context as _;
 use serde_json::{Value, json};
 use tokio_postgres::{Client, NoTls, Transaction};
 use wamn_catalog::HostAttachment;
+use wamn_identity_protocol::PrincipalId;
+use wamn_platform_identity::auth_changes::AuthDrops;
 use wamn_platform_identity::connection_changes::{ConnectionChanges, ConnectionDrops};
-use wamn_platform_identity::{PrincipalId, auth_changes::AuthDrops};
 
 use super::{ControlRoutes, ProjectScope, Refusal, incomplete, parse};
 use wamn_platform_identity::connections::{ConnectionError, administration, references};
@@ -77,6 +78,7 @@ impl ControlRoutes<'_> {
             )
             .await?;
             let caller = caller
+                .to_string()
                 .as_str()
                 .parse::<uuid::Uuid>()
                 .map_err(|error| Refusal::Failed(error.into()))?;
@@ -189,7 +191,7 @@ impl ControlRoutes<'_> {
             target
                 .execute(
                     "SELECT set_config('app.user_id',$1,true),set_config('app.operation',$2,true)",
-                    &[&caller.as_str(), &attachment.operation],
+                    &[&caller.to_string().as_str(), &attachment.operation],
                 )
                 .await?;
             if let Some(id) = &identity {

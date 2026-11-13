@@ -3,9 +3,10 @@
 use sha2::{Digest as _, Sha256};
 use tokio_postgres::Client;
 use wamn_control_provision::{identity_issuer::grant_identity_issuer_surface_sql, test_database};
+use wamn_identity_protocol::PrincipalId;
 use wamn_platform_identity::auth_changes::AuthDrops;
 use wamn_platform_identity::password_login::{self as login, Renewal};
-use wamn_platform_identity::{PrincipalId, create_user, disable_principal};
+use wamn_platform_identity::{create_user, disable_principal};
 
 const ISSUER: &str = "https://identity.example.invalid";
 const AUDIENCE: &str = "demo:widgets:dev:a1b2c3d4";
@@ -27,7 +28,7 @@ async fn connect(url: &str, role: &str) -> Client {
     client
 }
 async fn user(client: &Client) -> PrincipalId {
-    create_user(
+    *create_user(
         client,
         "alice@example.invalid",
         "alice@example.invalid",
@@ -36,7 +37,6 @@ async fn user(client: &Client) -> PrincipalId {
     .await
     .unwrap()
     .id()
-    .clone()
 }
 async fn create(client: &mut Client, user: &PrincipalId) -> Renewal {
     let tx = client.transaction().await.unwrap();
@@ -303,7 +303,7 @@ async fn disable_waits_for_issuance_and_reenable_cannot_restore_a_family() {
         .await
         .unwrap()
         .unwrap();
-    let principal = user.clone();
+    let principal = user;
     let racing = tokio::spawn(async move {
         disable_principal(&second, &principal, &mut AuthDrops::default())
             .await
@@ -313,7 +313,7 @@ async fn disable_waits_for_issuance_and_reenable_cannot_restore_a_family() {
     tx.commit().await.unwrap();
     racing.await.unwrap();
     assert!(rotate(&mut first, issued.secret()).await.is_none());
-    first.execute("UPDATE identity.principals SET status='active',disabled_at=NULL WHERE id=$1::text::uuid",&[&user.as_str()]).await.unwrap();
+    first.execute("UPDATE identity.principals SET status='active',disabled_at=NULL WHERE id=$1::text::uuid",&[&user.to_string().as_str()]).await.unwrap();
     assert!(rotate(&mut first, issued.secret()).await.is_none());
     let fresh = create(&mut first, &user).await;
     let tx = first.transaction().await.unwrap();

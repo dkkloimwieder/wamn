@@ -21,7 +21,7 @@ use wamn_execution_host::{
     CallIntents, DeadlineAdjustment, InvocationSite, NativeFacts, NodeAcquisition, OperationHost,
     component_invocation, invocation_span, node_trace_context, remote_trace_context,
 };
-use wamn_project_state::PlatformComponent;
+use wamn_identity_protocol::PlatformComponent;
 use wamn_router::{
     ActiveWiring, Delivery, ErrorDetail, NodeError, NodeOutcome, Outcome, RateLimitDetail, Step,
 };

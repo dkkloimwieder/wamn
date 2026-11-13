@@ -895,7 +895,7 @@ async fn the_local_grant_reconcile_records_the_presented_manifest_hash() {
             "DO $comment$ BEGIN \
                EXECUTE format('COMMENT ON DATABASE %I IS %L', current_database(), {}::text); \
              END $comment$;",
-            wamn_pg_core::quote_literal(&marker)
+            postgres_protocol::escape::escape_literal(&marker)
         ))
         .await
         .expect("mark the local target");

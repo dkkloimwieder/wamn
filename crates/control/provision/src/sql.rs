@@ -7,6 +7,8 @@
 //! `wamn_app` role name is a pinned constant. Values that vary (a probed role
 //! name, a role password) travel as `$n` params or quoted literals.
 
+use crate::tenant_key::{TENANT_KEY_FUNCTION, TENANT_KEY_SCHEMA};
+
 mod cdc;
 mod credentials;
 mod database;
@@ -59,8 +61,8 @@ use crate::workload_role::{
     ADMINISTRATION_ROLE, EVENT_MATERIALIZER_ROLE, EXECUTOR_PLATFORM_ROLE, HTTP_ADMITTER_ROLE,
     MANAGEMENT_ADMITTER_ROLE, PLATFORM_GROUP_ROLE, SESSION_ROLE_READER_ROLE, WorkloadRoleFamily,
 };
-pub(crate) use wamn_pg_core::quote_ident;
-use wamn_pg_core::quote_literal;
+pub(crate) use postgres_protocol::escape::escape_identifier;
+use postgres_protocol::escape::escape_literal;
 
 /// Insert the declared tenant identity without replacing an existing row.
 pub fn insert_env_key_environment_sql() -> &'static str {
@@ -110,9 +112,9 @@ pub fn ensure_app_acl_role_sql() -> String {
              NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS; \
            {nosuperuser} \
          END $app_role$;",
-        role = quote_ident(APP_ROLE),
-        role_lit = quote_literal(APP_ROLE),
-        nosuperuser = revoke_superuser_sql(&quote_literal(APP_ROLE)),
+        role = escape_identifier(APP_ROLE),
+        role_lit = escape_literal(APP_ROLE),
+        nosuperuser = revoke_superuser_sql(&escape_literal(APP_ROLE)),
     )
 }
 
@@ -136,7 +138,7 @@ pub fn drain_app_role_sessions_sql() -> String {
                MESSAGE = 'wamn-app-session-drain-incomplete'; \
            END IF; \
          END $app_drain$;",
-        role_lit = quote_literal(APP_ROLE),
+        role_lit = escape_literal(APP_ROLE),
     )
 }
 
@@ -338,7 +340,7 @@ pub fn ensure_platform_group_role_sql() -> String {
            END IF; \
          EXCEPTION WHEN duplicate_object THEN NULL; \
          END $platform_group$;",
-        role_lit = quote_literal(PLATFORM_GROUP_ROLE),
+        role_lit = escape_literal(PLATFORM_GROUP_ROLE),
         nosuperuser = revoke_superuser_sql("role_name"),
     )
 }
@@ -369,10 +371,10 @@ pub fn ensure_platform_group_role_sql() -> String {
 /// guard, so a caller that has not created the role yet gets a no-op rather than
 /// an error.
 pub fn platform_group_membership_sql(family: WorkloadRoleFamily) -> String {
-    let acl_role = quote_ident(family.acl_role());
-    let acl_role_lit = quote_literal(family.acl_role());
-    let group = quote_ident(PLATFORM_GROUP_ROLE);
-    let group_lit = quote_literal(PLATFORM_GROUP_ROLE);
+    let acl_role = escape_identifier(family.acl_role());
+    let acl_role_lit = escape_literal(family.acl_role());
+    let group = escape_identifier(PLATFORM_GROUP_ROLE);
+    let group_lit = escape_literal(PLATFORM_GROUP_ROLE);
     let edges = format!(
         "SELECT FROM pg_auth_members m \
            JOIN pg_roles g ON g.oid = m.roleid JOIN pg_roles r ON r.oid = m.member \
@@ -438,8 +440,8 @@ pub fn platform_group_membership_sql(family: WorkloadRoleFamily) -> String {
 fn grant_tenant_key_execute_sql(role: &str) -> String {
     format!(
         "GRANT EXECUTE ON FUNCTION {schema}.tenant_key(text) TO {role};",
-        schema = quote_ident(crate::tenant_key::TENANT_KEY_SCHEMA),
-        role = quote_ident(role),
+        schema = escape_identifier(crate::tenant_key::TENANT_KEY_SCHEMA),
+        role = escape_identifier(role),
     )
 }
 
@@ -448,9 +450,9 @@ fn grant_tenant_key_execute_sql(role: &str) -> String {
 /// The family reads wiring facts and appends immutable wirings.
 /// Revocation removes stale table, column, and schema privileges before grants.
 pub fn grant_management_admitter_surface_sql(schema: &str) -> String {
-    let role = quote_ident(MANAGEMENT_ADMITTER_ROLE);
-    let schema_literal = quote_literal(schema);
-    let schema = quote_ident(schema);
+    let role = escape_identifier(MANAGEMENT_ADMITTER_ROLE);
+    let schema_literal = escape_literal(schema);
+    let schema = escape_identifier(schema);
     let mut sql = format!(
         "{ensure} \
          REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA catalog, {schema} FROM {role}; \
@@ -472,13 +474,13 @@ pub fn grant_management_admitter_surface_sql(schema: &str) -> String {
          REVOKE ALL PRIVILEGES ON SCHEMA catalog, {schema} FROM {role}; \
          GRANT USAGE ON SCHEMA catalog TO {role};",
         ensure = ensure_workload_acl_role_sql(WorkloadRoleFamily::ManagementAdmitter),
-        role_literal = quote_literal(MANAGEMENT_ADMITTER_ROLE),
+        role_literal = escape_literal(MANAGEMENT_ADMITTER_ROLE),
     );
     for relation in MANAGEMENT_ADMITTER_CATALOG_RELATIONS {
         write!(
             sql,
             " GRANT SELECT ON TABLE catalog.{relation} TO {role};",
-            relation = quote_ident(relation),
+            relation = escape_identifier(relation),
         )
         .expect("writing to a String cannot fail");
     }
@@ -490,7 +492,7 @@ pub fn grant_management_admitter_surface_sql(schema: &str) -> String {
 fn quoted_column_list(columns: &[&str]) -> String {
     columns
         .iter()
-        .map(|column| quote_ident(column))
+        .map(|column| escape_identifier(column))
         .collect::<Vec<_>>()
         .join(", ")
 }
@@ -526,8 +528,8 @@ fn quoted_column_list(columns: &[&str]) -> String {
 /// `wamn_catalog::CATALOG_SCHEMA_SQL` and the run-plane files have been applied —
 /// the `REVOKE`/`GRANT` name relations that must already exist.
 pub fn grant_http_admitter_surface_sql(schema: &str) -> String {
-    let role = quote_ident(HTTP_ADMITTER_ROLE);
-    let schema = quote_ident(schema);
+    let role = escape_identifier(HTTP_ADMITTER_ROLE);
+    let schema = escape_identifier(schema);
     let schemas = HTTP_ADMITTER_SCHEMAS.join(", ");
     let mut sql = format!(
         "{ensure} \
@@ -543,13 +545,13 @@ pub fn grant_http_admitter_surface_sql(schema: &str) -> String {
         write!(
             sql,
             " GRANT SELECT ON TABLE {schema}.{relation} TO {role};",
-            relation = quote_ident(relation),
+            relation = escape_identifier(relation),
         )
         .expect("writing to a String cannot fail");
     }
     let columns = HTTP_ADMITTER_WORKFLOW_COLUMNS
         .iter()
-        .map(|column| quote_ident(column))
+        .map(|column| escape_identifier(column))
         .collect::<Vec<_>>()
         .join(", ");
     write!(
@@ -595,15 +597,15 @@ pub const ADMINISTRATION_RELATIONS: [&str; 11] = [
 /// reads `catalog.releases` only, for the control host's `release.profile`.
 /// It holds nothing on the run plane. `schema` is the run-plane revoke scope.
 pub fn grant_administration_surface_sql(schema: &str) -> String {
-    let role = quote_ident(ADMINISTRATION_ROLE);
-    let schema = quote_ident(schema);
+    let role = escape_identifier(ADMINISTRATION_ROLE);
+    let schema = escape_identifier(schema);
     let mut sql = format!(
         "{ensure} \
          REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA catalog, platform, {schema} FROM {role}; \
          REVOKE ALL PRIVILEGES ON ALL ROUTINES IN SCHEMA catalog, platform, wamn_history, {schema} \
          FROM {role}; \
          REVOKE ALL PRIVILEGES ON SCHEMA catalog, platform, wamn_history, {schema} FROM {role}; \
-         REVOKE EXECUTE ON FUNCTION wamn_authority.tenant_key(text) FROM {role}; \
+         REVOKE EXECUTE ON FUNCTION {TENANT_KEY_FUNCTION}(text) FROM {role}; \
          GRANT USAGE ON SCHEMA catalog, platform, wamn_history TO {role}; \
          GRANT EXECUTE ON FUNCTION wamn_history.row_image(record) TO {role}; \
          GRANT SELECT ON TABLE catalog.releases TO {role}; \
@@ -614,11 +616,11 @@ pub fn grant_administration_surface_sql(schema: &str) -> String {
         write!(
             sql,
             " GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE platform.{} TO {role};",
-            quote_ident(relation)
+            escape_identifier(relation)
         )
         .expect("writing to a String cannot fail");
         if !["external_system", "integration", "connection"].contains(&relation) {
-            write!(sql, " GRANT INSERT (row_key, type, operation, changed_by, changed_at, transaction_id, before, after) ON TABLE platform.{} TO {role};", quote_ident(&format!("{relation}_history")))
+            write!(sql, " GRANT INSERT (row_key, type, operation, changed_by, changed_at, transaction_id, before, after) ON TABLE platform.{} TO {role};", escape_identifier(&format!("{relation}_history")))
                 .expect("writing to a String cannot fail");
         }
     }
@@ -631,19 +633,19 @@ pub fn grant_administration_surface_sql(schema: &str) -> String {
 /// Apply after the project schemas exist. The connection selects the environment database for these reads. Revoke column
 /// ACLs as well as table ACLs so replay removes a widened read or write.
 pub fn grant_session_role_reader_surface_sql() -> String {
-    let role = quote_ident(SESSION_ROLE_READER_ROLE);
+    let role = escape_identifier(SESSION_ROLE_READER_ROLE);
     format!(
         "{ensure} \
-         REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA catalog, platform, wamn_run, wamn_authority FROM {role}; \
-         REVOKE ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA catalog, platform, wamn_run, wamn_authority FROM {role}; \
-         REVOKE ALL PRIVILEGES ON ALL ROUTINES IN SCHEMA catalog, platform, wamn_run, wamn_authority FROM {role}; \
+         REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA catalog, platform, wamn_run, {TENANT_KEY_SCHEMA} FROM {role}; \
+         REVOKE ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA catalog, platform, wamn_run, {TENANT_KEY_SCHEMA} FROM {role}; \
+         REVOKE ALL PRIVILEGES ON ALL ROUTINES IN SCHEMA catalog, platform, wamn_run, {TENANT_KEY_SCHEMA} FROM {role}; \
          DO $session_column_acl$ DECLARE target record; BEGIN \
            FOR target IN \
              SELECT n.nspname, c.relname, a.attname \
                FROM pg_catalog.pg_attribute a \
                JOIN pg_catalog.pg_class c ON c.oid = a.attrelid \
                JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace \
-              WHERE n.nspname IN ('catalog', 'platform', 'wamn_run', 'wamn_authority') \
+              WHERE n.nspname IN ('catalog', 'platform', 'wamn_run', '{TENANT_KEY_SCHEMA}') \
                 AND c.relkind IN ('r', 'p', 'v', 'm', 'f') \
                 AND a.attnum > 0 AND NOT a.attisdropped AND a.attacl IS NOT NULL \
            LOOP \
@@ -651,12 +653,12 @@ pub fn grant_session_role_reader_surface_sql() -> String {
                target.attname, target.nspname, target.relname, {role_literal}); \
            END LOOP; \
          END $session_column_acl$; \
-         REVOKE ALL PRIVILEGES ON SCHEMA catalog, platform, wamn_run, wamn_authority FROM {role}; \
+         REVOKE ALL PRIVILEGES ON SCHEMA catalog, platform, wamn_run, {TENANT_KEY_SCHEMA} FROM {role}; \
          GRANT USAGE ON SCHEMA platform TO {role}; \
          GRANT SELECT (id, status) ON TABLE platform.\"user\" TO {role}; \
          GRANT SELECT (user_id, role_name) ON TABLE platform.user_role TO {role};",
         ensure = ensure_workload_acl_role_sql(WorkloadRoleFamily::SessionRoleReader),
-        role_literal = quote_literal(SESSION_ROLE_READER_ROLE),
+        role_literal = escape_literal(SESSION_ROLE_READER_ROLE),
     )
 }
 
@@ -704,8 +706,8 @@ pub fn grant_session_role_reader_surface_sql() -> String {
 /// column-level ACL entries with it, which is what makes the column-exact
 /// `UPDATE` sets convergent rather than merely additive.
 pub fn grant_executor_platform_surface_sql(schema: &str) -> String {
-    let role = quote_ident(EXECUTOR_PLATFORM_ROLE);
-    let schema = quote_ident(schema);
+    let role = escape_identifier(EXECUTOR_PLATFORM_ROLE);
+    let schema = escape_identifier(schema);
     let mut sql = format!(
         "{ensure} \
          REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA catalog, platform, {schema} FROM {role}; \
@@ -718,7 +720,7 @@ pub fn grant_executor_platform_surface_sql(schema: &str) -> String {
         write!(
             sql,
             " GRANT SELECT ON TABLE catalog.{relation} TO {role};",
-            relation = quote_ident(relation),
+            relation = escape_identifier(relation),
         )
         .expect("writing to a String cannot fail");
     }
@@ -726,7 +728,7 @@ pub fn grant_executor_platform_surface_sql(schema: &str) -> String {
         write!(
             sql,
             " GRANT SELECT ON TABLE platform.{} TO {role};",
-            quote_ident(relation)
+            escape_identifier(relation)
         )
         .expect("writing to a String cannot fail");
     }
@@ -770,8 +772,8 @@ pub fn grant_executor_history_reads_sql() -> String {
              EXECUTE format('GRANT SELECT (row_key, type, transaction_id, position, changed_by) ON TABLE %I.%I TO {role}', s.nspname, h.relname); \
            END LOOP; \
          END LOOP; END $event_history$;",
-        role = quote_ident(EXECUTOR_PLATFORM_ROLE),
-        role_name = quote_literal(EXECUTOR_PLATFORM_ROLE),
+        role = escape_identifier(EXECUTOR_PLATFORM_ROLE),
+        role_name = escape_literal(EXECUTOR_PLATFORM_ROLE),
     )
 }
 
@@ -784,13 +786,13 @@ pub const EVENT_MATERIALIZER_CATALOG_RELATIONS: [&str; 1] = ["packages"];
 /// read surface. Revocation spans every authority-bearing project schema so an
 /// out-of-band widening is removed on replay.
 pub fn grant_event_materializer_surface_sql(schema: &str) -> String {
-    let role = quote_ident(EVENT_MATERIALIZER_ROLE);
-    let schema = quote_ident(schema);
+    let role = escape_identifier(EVENT_MATERIALIZER_ROLE);
+    let schema = escape_identifier(schema);
     let mut sql = format!(
         "{ensure} \
-         REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA catalog, platform, wamn_authority, {schema} FROM {role}; \
-         REVOKE ALL PRIVILEGES ON ALL ROUTINES IN SCHEMA catalog, platform, wamn_authority, {schema} FROM {role}; \
-         REVOKE ALL PRIVILEGES ON SCHEMA catalog, platform, wamn_authority, {schema} FROM {role}; \
+         REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA catalog, platform, {TENANT_KEY_SCHEMA}, {schema} FROM {role}; \
+         REVOKE ALL PRIVILEGES ON ALL ROUTINES IN SCHEMA catalog, platform, {TENANT_KEY_SCHEMA}, {schema} FROM {role}; \
+         REVOKE ALL PRIVILEGES ON SCHEMA catalog, platform, {TENANT_KEY_SCHEMA}, {schema} FROM {role}; \
          GRANT USAGE ON SCHEMA catalog TO {role};",
         ensure = ensure_workload_acl_role_sql(WorkloadRoleFamily::EventMaterializer),
     );
@@ -798,7 +800,7 @@ pub fn grant_event_materializer_surface_sql(schema: &str) -> String {
         write!(
             sql,
             " GRANT SELECT ON TABLE catalog.{relation} TO {role};",
-            relation = quote_ident(relation),
+            relation = escape_identifier(relation),
         )
         .expect("writing to a String cannot fail");
     }
@@ -879,13 +881,13 @@ fn grant_system_reader_surface_sql(
         SYSTEM_PLANE_SCHEMAS.contains(&schema),
         "a system-plane reader grants inside a system-plane schema"
     );
-    let role = quote_ident(family.acl_role());
+    let role = escape_identifier(family.acl_role());
     let plane = SYSTEM_PLANE_SCHEMAS
         .iter()
-        .map(|name| quote_ident(name))
+        .map(|name| escape_identifier(name))
         .collect::<Vec<_>>()
         .join(", ");
-    let schema = quote_ident(schema);
+    let schema = escape_identifier(schema);
     let mut sql = format!(
         "{ensure} \
          REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA {plane} FROM {role}; \
@@ -897,7 +899,7 @@ fn grant_system_reader_surface_sql(
         write!(
             sql,
             " GRANT SELECT ON TABLE {schema}.{relation} TO {role};",
-            relation = quote_ident(relation),
+            relation = escape_identifier(relation),
         )
         .expect("writing to a String cannot fail");
     }
@@ -955,7 +957,7 @@ pub fn grant_identity_reader_surface_sql() -> String {
 pub fn grant_connection_reader_surface_sql() -> String {
     let mut sql =
         grant_system_reader_surface_sql(WorkloadRoleFamily::ConnectionReader, "registry", &[]);
-    let role = quote_ident(WorkloadRoleFamily::ConnectionReader.acl_role());
+    let role = escape_identifier(WorkloadRoleFamily::ConnectionReader.acl_role());
     write!(
         sql,
         " REVOKE ALL PRIVILEGES ON ALL FUNCTIONS IN SCHEMA registry, identity FROM {role}; GRANT EXECUTE ON FUNCTION registry.lock_oauth_connection(text,text,text,uuid), registry.read_file_connection(text,text,text,uuid), registry.read_connection_fact(text,text,text,uuid), registry.read_connection_generation(text,text,text,uuid,bigint), registry.read_connection_secret(text,text,text,uuid), registry.read_env_connections(text,text,text), registry.read_integration_version(text,integer) TO {role};"
@@ -1027,15 +1029,15 @@ pub fn grant_control_surface_sql() -> String {
 ///
 /// The control owner can apply these grants without permission to create roles.
 pub fn control_surface_grants_sql() -> String {
-    let role = quote_ident(WorkloadRoleFamily::Control.acl_role());
+    let role = escape_identifier(WorkloadRoleFamily::Control.acl_role());
     let plane = SYSTEM_PLANE_SCHEMAS
         .iter()
-        .map(|name| quote_ident(name))
+        .map(|name| escape_identifier(name))
         .collect::<Vec<_>>()
         .join(", ");
     let schemas = CONTROL_SCHEMAS
         .iter()
-        .map(|name| quote_ident(name))
+        .map(|name| escape_identifier(name))
         .collect::<Vec<_>>()
         .join(", ");
     let mut sql = format!(
@@ -1048,8 +1050,8 @@ pub fn control_surface_grants_sql() -> String {
             sql,
             " GRANT {privileges} ON TABLE {schema}.{relation} TO {role};",
             privileges = privileges.join(", "),
-            schema = quote_ident(schema),
-            relation = quote_ident(relation),
+            schema = escape_identifier(schema),
+            relation = escape_identifier(relation),
         )
         .expect("writing to a String cannot fail");
     }
@@ -1059,11 +1061,11 @@ pub fn control_surface_grants_sql() -> String {
             " GRANT {privilege} ({columns}) ON TABLE {schema}.{relation} TO {role};",
             columns = columns
                 .iter()
-                .map(|column| quote_ident(column))
+                .map(|column| escape_identifier(column))
                 .collect::<Vec<_>>()
                 .join(", "),
-            schema = quote_ident(schema),
-            relation = quote_ident(relation),
+            schema = escape_identifier(schema),
+            relation = escape_identifier(relation),
         )
         .expect("writing to a String cannot fail");
     }

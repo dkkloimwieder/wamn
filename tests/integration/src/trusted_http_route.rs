@@ -132,7 +132,7 @@ impl TrustedHttpRoute {
                 wiring_hash: self.wiring_hash.clone(),
                 node_digests: BTreeMap::from([(NODE_ID.to_owned(), self.component_digest.clone())]),
                 identity: wamn_workflow::WorkflowIdentity {
-                    principal_id: wamn_project_state::workflow_user_id().to_string(),
+                    principal_id: wamn_identity_protocol::workflow_user_id().to_string(),
                     role: "admin".to_owned(),
                 },
                 causation: None,
@@ -577,7 +577,7 @@ async fn seed_with_client(
         .batch_execute("INSERT INTO platform.role (name) VALUES ('admin') ON CONFLICT DO NOTHING")
         .await?;
     client.execute("INSERT INTO platform.user_role (user_id, role_name) VALUES ($1::text::uuid, 'admin') ON CONFLICT DO NOTHING",
-        &[&wamn_project_state::workflow_user_id().to_string()]).await?;
+        &[&wamn_identity_protocol::workflow_user_id().to_string()]).await?;
     let wiring_version = i32::try_from(WIRING_VERSION).expect("fixture wiring version fits");
     let graph_json = serde_json::to_string(document).context("serialize the wiring document")?;
     let wiring_hash = document.wiring_hash().as_str().to_owned();
@@ -637,7 +637,7 @@ async fn seed_with_client(
                 &wiring_version,
                 &graph_json,
                 &wiring_hash,
-                &wamn_project_state::workflow_user_id().to_string(),
+                &wamn_identity_protocol::workflow_user_id().to_string(),
             ],
         )
         .await
@@ -771,7 +771,7 @@ async fn seed_additional_wirings(
                     &version,
                     &serde_json::to_string(document)?,
                     &wiring_hash,
-                    &wamn_project_state::workflow_user_id().to_string(),
+                    &wamn_identity_protocol::workflow_user_id().to_string(),
                 ],
             )
             .await

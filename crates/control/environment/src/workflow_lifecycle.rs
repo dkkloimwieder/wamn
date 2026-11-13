@@ -26,7 +26,7 @@ pub(super) mod plan;
 use tokio_postgres::{Client, Transaction};
 use wamn_catalog::WiringDocument;
 use wamn_control_registry::Triple;
-use wamn_project_state::{ADMIN_ROLE, workflow_user_id};
+use wamn_identity_protocol::{ADMIN_ROLE, workflow_user_id};
 
 use crate::author_workflow::{AuthorWorkflowError, AuthorWorkflowErrorType, gate_against_release};
 use crate::environment::lock::{DEPLOYMENT_IN_PROGRESS, LifecycleLock};

@@ -11,7 +11,7 @@
 
 use chrono::{DateTime, SecondsFormat, Utc};
 use wamn_catalog::{ServingManifest, gate_workflow_document, resolve_workflow_components};
-use wamn_project_state::{ADMIN_ROLE, PlatformComponent, workflow_user_id};
+use wamn_identity_protocol::{ADMIN_ROLE, PlatformComponent, workflow_user_id};
 use wamn_run_state::queue::{
     insert_manual_run_sql, insert_run_queue_sql, insert_workflow_schedule_run_sql,
     select_manual_run_sql, select_workflow_schedule_run_sql,
@@ -95,7 +95,7 @@ impl WamnPostgres {
                 None,
                 None,
                 Some(&executor),
-                Some(PlatformComponent::Executor.principal_name()),
+                Some(&PlatformComponent::Executor.principal_name()),
                 None,
                 None,
                 policy.statement_timeout_ms,
@@ -254,7 +254,7 @@ impl WamnPostgres {
                 None,
                 None,
                 Some(&executor),
-                Some(PlatformComponent::Executor.principal_name()),
+                Some(&PlatformComponent::Executor.principal_name()),
                 None,
                 None,
                 policy.statement_timeout_ms,

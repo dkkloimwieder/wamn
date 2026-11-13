@@ -10,8 +10,12 @@ use anyhow::Context as _;
 use chrono::DateTime;
 use serde::Deserialize;
 use url::Url;
-use wamn_platform_identity::PrincipalId;
-use wamn_session::PAT_TOKEN_PREFIX;
+use wamn_identity_protocol::PrincipalId;
+use wamn_identity_protocol::secret::PatToken;
+use wamn_identity_protocol::wire::PatResponse;
+use wamn_identity_protocol::wire::{
+    InvitationRequest, IssuePatRequest, UserRequest, UserResponse as UserBody,
+};
 
 /// Each provisioning request attempt stops after five seconds.
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(5);
@@ -161,11 +165,11 @@ impl PatClient {
         label: &str,
         lifetime: Duration,
     ) -> anyhow::Result<PatResponse> {
-        let body = serde_json::to_vec(&serde_json::json!({
-            "principal_id": principal_id.as_str(),
-            "label": label,
-            "lifetime_seconds": lifetime.as_secs(),
-        }))
+        let body = serde_json::to_vec(&IssuePatRequest {
+            principal_id: *principal_id,
+            label,
+            lifetime_seconds: lifetime.as_secs(),
+        })
         .map_err(|_| anyhow::anyhow!("PAT request encoding failed"))?;
         let mut waits = CONNECT_BACKOFF.iter();
         let mut response = loop {
@@ -226,28 +230,6 @@ impl PatClient {
     }
 }
 
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-/// One issued PAT.
-pub struct PatResponse {
-    /// The token, shown once.
-    pub token: String,
-    /// The lookup prefix of the token.
-    pub token_prefix: String,
-    principal_id: String,
-    created_at: String,
-    /// The expiry instant, RFC 3339.
-    pub expires_at: String,
-}
-
-impl fmt::Debug for PatResponse {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter
-            .debug_struct("PatResponse")
-            .finish_non_exhaustive()
-    }
-}
-
 fn service_endpoint(value: &str, route: &str) -> anyhow::Result<Url> {
     let mut endpoint = Url::parse(value).map_err(|_| {
         anyhow::anyhow!("PAT issuer must be an HTTPS URL without credentials, query, or fragment")
@@ -281,23 +263,12 @@ fn decode_response(
         .map_err(|_| anyhow::anyhow!("PAT issuer response metadata is invalid"))?;
     let expires_at = DateTime::parse_from_rfc3339(&response.expires_at)
         .map_err(|_| anyhow::anyhow!("PAT issuer response metadata is invalid"))?;
-    let token_parts = response
+    let token_matches = response
         .token
-        .strip_prefix(PAT_TOKEN_PREFIX)
-        .and_then(|token| token.split_once('_'));
-    // Identity tokens carry a 16-hex lookup prefix and a 64-hex secret.
-    // The caller also authenticates the full token against the system database.
-    let token_matches = token_parts.is_some_and(|(prefix, secret)| {
-        prefix == response.token_prefix
-            && prefix.len() == 16
-            && secret.len() == 64
-            && prefix
-                .bytes()
-                .chain(secret.bytes())
-                .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
-    });
+        .parse::<PatToken>()
+        .is_ok_and(|token| token.lookup() == response.token_prefix);
     anyhow::ensure!(
-        response.principal_id == principal_id.as_str()
+        response.principal_id == *principal_id
             && token_matches
             && expires_at.signed_duration_since(created_at).to_std().ok() == Some(lifetime),
         "PAT issuer response metadata is invalid"
@@ -317,8 +288,10 @@ pub struct InvitationReply {
 
 /// The invitation request body for one user principal.
 fn invitation_body(principal_id: &PrincipalId) -> anyhow::Result<Vec<u8>> {
-    serde_json::to_vec(&serde_json::json!({ "principal_id": principal_id.as_str() }))
-        .map_err(|_| anyhow::anyhow!("invitation request encoding failed"))
+    serde_json::to_vec(&InvitationRequest {
+        principal_id: *principal_id,
+    })
+    .map_err(|_| anyhow::anyhow!("invitation request encoding failed"))
 }
 
 /// Ask identity to mail an invitation to one user principal, as the operator
@@ -363,13 +336,6 @@ pub struct UserReply {
 }
 
 #[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct UserBody {
-    principal_id: String,
-    enrolled: bool,
-}
-
-#[derive(Deserialize)]
 struct RefusalBody {
     error: String,
 }
@@ -389,8 +355,11 @@ impl std::error::Error for UserRefused {}
 
 /// The request body of one user.
 fn user_body(email: &str, display_name: &str) -> anyhow::Result<Vec<u8>> {
-    serde_json::to_vec(&serde_json::json!({ "email": email, "display_name": display_name }))
-        .map_err(|_| anyhow::anyhow!("user request encoding failed"))
+    serde_json::to_vec(&UserRequest {
+        email,
+        display_name,
+    })
+    .map_err(|_| anyhow::anyhow!("user request encoding failed"))
 }
 
 /// Ask identity to create the user of `email`, or to reuse the user that has
@@ -436,10 +405,7 @@ pub async fn create_user(
     let body: UserBody =
         serde_json::from_slice(&bytes).map_err(|_| anyhow::anyhow!("user reply is invalid"))?;
     Ok(UserReply {
-        principal_id: body
-            .principal_id
-            .parse()
-            .map_err(|_| anyhow::anyhow!("user reply is invalid"))?,
+        principal_id: body.principal_id,
         enrolled: body.enrolled,
     })
 }
@@ -848,7 +814,7 @@ mod tests {
             assert!(!diagnostic.contains("https://"));
             assert!(!diagnostic.contains("?token="));
             assert!(!diagnostic.contains(&token));
-            assert!(!diagnostic.contains(PAT_TOKEN_PREFIX));
+            assert!(!diagnostic.contains(wamn_identity_protocol::PAT_TOKEN_PREFIX));
         }
     }
 

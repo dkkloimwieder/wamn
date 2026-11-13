@@ -15,11 +15,8 @@ use std::fmt::Write as _;
 
 use std::fmt;
 
-use wamn_pg_core::quote_literal;
-use wamn_project_state::{
-    OPERATION_CLAIM, PlatformComponent, USER, USER_ID_CLAIM, UserType, WORKFLOW_USER_NAME,
-    workflow_user_id,
-};
+use postgres_protocol::escape::escape_literal;
+use wamn_identity_protocol::{PlatformComponent, WORKFLOW_USER_NAME, workflow_user_id};
 
 /// The longest domain name in text form, in bytes.
 const MAX_DOMAIN_LEN: usize = 253;
@@ -62,10 +59,10 @@ impl std::error::Error for PlatformDomainError {}
 pub fn bind_platform_principal_sql(component: PlatformComponent) -> String {
     format!(
         "SELECT pg_catalog.set_config({}, {}, true), pg_catalog.set_config({}, {}, true);\n",
-        quote_literal(USER_ID_CLAIM),
-        quote_literal(&component.principal_id().to_string()),
-        quote_literal(OPERATION_CLAIM),
-        quote_literal(component.principal_name()),
+        escape_literal("app.user_id"),
+        escape_literal(&component.principal_id().to_string()),
+        escape_literal("app.operation"),
+        escape_literal(&component.principal_name()),
     )
 }
 
@@ -100,23 +97,21 @@ pub fn platform_principals_sql(platform_domain: &str) -> Result<String, Platform
     for component in components {
         writeln!(
             sql,
-            "INSERT INTO {} (id, type, email, display_name) VALUES ({}, {}, {}, {}) ON CONFLICT (id) DO NOTHING;",
-            USER.qualified(),
-            quote_literal(&component.principal_id().to_string()),
-            quote_literal(UserType::Platform.as_str()),
-            quote_literal(&format!("{}@{platform_domain}", component.as_str())),
-            quote_literal(component.principal_name()),
+            "INSERT INTO platform.\"user\" (id, type, email, display_name) VALUES ({}, {}, {}, {}) ON CONFLICT (id) DO NOTHING;",
+            escape_literal(&component.principal_id().to_string()),
+            escape_literal("platform"),
+            escape_literal(&format!("{}@{platform_domain}", component.as_str())),
+            escape_literal(&component.principal_name()),
         )
         .expect("writing to a String cannot fail");
     }
     writeln!(
         sql,
-        "INSERT INTO {} (id, type, email, display_name) VALUES ({}, {}, {}, {}) ON CONFLICT (id) DO NOTHING;",
-        USER.qualified(),
-        quote_literal(&workflow_user_id().to_string()),
-        quote_literal(UserType::Service.as_str()),
-        quote_literal(&format!("{WORKFLOW_USER_NAME}@{platform_domain}")),
-        quote_literal(WORKFLOW_USER_NAME),
+        "INSERT INTO platform.\"user\" (id, type, email, display_name) VALUES ({}, {}, {}, {}) ON CONFLICT (id) DO NOTHING;",
+        escape_literal(&workflow_user_id().to_string()),
+        escape_literal("service"),
+        escape_literal(&format!("{WORKFLOW_USER_NAME}@{platform_domain}")),
+        escape_literal(WORKFLOW_USER_NAME),
     )
     .expect("writing to a String cannot fail");
     Ok(sql)

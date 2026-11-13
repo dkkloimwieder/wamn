@@ -11,13 +11,13 @@ use hyper::{Request, Response, StatusCode, body::Incoming};
 use ring::rand::{SecureRandom as _, SystemRandom};
 use serde::{Deserialize, Serialize};
 use tokio_postgres::GenericClient;
+use wamn_identity_protocol::token::{SessionAuthority, SessionClaims};
 use wamn_platform_identity::{
     AuthenticatedPrincipal, PrincipalType, authenticate_pat,
     control::{control_audience_org, control_projects, is_org_admin},
     has_project_env_membership,
     session_token::{IssuedSessionToken, sign_session_token},
 };
-use wamn_session::token::{SessionAuthority, SessionClaims};
 
 use crate::{ConfiguredTarget, IO_TIMEOUT, Inner, connect_database, response, unavailable};
 
@@ -145,7 +145,13 @@ pub(super) async fn mint_for_principal(
     configured: &ConfiguredTarget,
     started_at: i64,
 ) -> Result<IssuedSessionToken, ExchangeFailure> {
-    let authority = SessionAuthority::Pat(principal.pat_id().ok_or_else(refused)?.to_owned());
+    let authority = SessionAuthority::Pat(
+        principal
+            .pat_id()
+            .ok_or_else(refused)?
+            .parse()
+            .map_err(|_| refused())?,
+    );
     let claims = claims_for_principal(inner, principal, configured, authority).await?;
     let mut signing = inner.signing.as_ref().ok_or_else(failed)?.lock().await;
     inner.reopen(&mut signing).await.map_err(|_| failed())?;
@@ -256,10 +262,13 @@ fn claims(
     });
     Ok(SessionClaims {
         iss: inner.issuer.clone(),
-        sub: principal.principal().id().to_string(),
+        sub: *principal.principal().id(),
         org: org.to_owned(),
         aud: audience.to_owned(),
-        roles,
+        roles: roles
+            .into_iter()
+            .map(|role| role.parse().map_err(|_| refused()))
+            .collect::<Result<_, _>>()?,
         exp: 0,
         iat: 0,
         jti,
@@ -320,7 +329,10 @@ pub(super) async fn authorized_roles(
     };
     let rows = roles_database
         .client
-        .query(ENVIRONMENT_ROLES_SQL, &[&principal.id().as_str()])
+        .query(
+            ENVIRONMENT_ROLES_SQL,
+            &[&principal.id().to_string().as_str()],
+        )
         .await
         .map_err(|_| failed())?;
     let roles: Vec<String> = rows.iter().map(|row| row.get(0)).collect();

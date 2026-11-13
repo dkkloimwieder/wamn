@@ -22,6 +22,7 @@ use std::str::FromStr as _;
 use std::sync::Arc;
 use std::time::Duration;
 
+use crate::identifier::Identifier;
 use anyhow::Context as _;
 use reqwest::Url;
 use tokio_postgres::{Client, Config as PostgresConfig, NoTls};
@@ -34,7 +35,6 @@ use wamn_environment_control::provision_project_env::{
 };
 use wamn_environment_control::reconcile_run_plane::{self, ReconcileRunPlaneRequest};
 use wamn_identity_client::PatIssuerConfig;
-use wamn_pg_core::Identifier;
 
 use crate::dev::activation::DevActivationIdentity;
 use wamn_control_registry::Template;
@@ -580,7 +580,7 @@ pub async fn prepare_target_template(
         .batch_execute(&format!(
             "COMMENT ON DATABASE {} IS {}",
             Identifier::new(template.clone())?.quoted(),
-            wamn_pg_core::quote_literal(&fingerprint)
+            postgres_protocol::escape::escape_literal(&fingerprint)
         ))
         .await
         .context("stamp the template with its standup fingerprint")?;
@@ -600,7 +600,7 @@ pub async fn prepare_target_template(
         .batch_execute(&format!(
             "COMMENT ON DATABASE {} IS {}",
             Identifier::new(target)?.quoted(),
-            wamn_pg_core::quote_literal(&marker),
+            postgres_protocol::escape::escape_literal(&marker),
         ))
         .await
         .context("stamp the provisioned local target")?;

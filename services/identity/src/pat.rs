@@ -5,31 +5,15 @@ use std::time::Duration;
 use bytes::Bytes;
 use http_body_util::{BodyExt as _, Full, Limited};
 use hyper::{Request, Response, StatusCode, body::Incoming};
-use serde::{Deserialize, Serialize};
 use wamn_control_provision::{PlatformComponent, bind_platform_principal_sql};
-use wamn_platform_identity::{IdentityErrorType, IssuedPat, PrincipalId, issue_pat};
+use wamn_identity_protocol::PrincipalId;
+use wamn_identity_protocol::wire::{IssuePatRequest as IssueRequest, PatResponse as IssueResponse};
+use wamn_platform_identity::{IdentityErrorType, IssuedPat, issue_pat};
 
 use crate::{IO_TIMEOUT, Inner, response, unavailable};
 
 // One principal ID, a library-bounded label, and an integer lifetime fit here.
 const MAX_REQUEST_BYTES: usize = 1024;
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct IssueRequest {
-    principal_id: String,
-    label: String,
-    lifetime_seconds: u64,
-}
-
-#[derive(Serialize)]
-struct IssueResponse<'a> {
-    token: &'a str,
-    token_prefix: &'a str,
-    principal_id: &'a str,
-    created_at: &'a str,
-    expires_at: &'a str,
-}
 
 pub(super) async fn respond(
     inner: &Inner,
@@ -69,9 +53,7 @@ async fn issue(inner: &Inner, request: Request<Incoming>) -> Response<Full<Bytes
     let Ok(request) = serde_json::from_slice::<IssueRequest>(&body.to_bytes()) else {
         return invalid_request();
     };
-    let Ok(principal) = request.principal_id.parse::<PrincipalId>() else {
-        return invalid_request();
-    };
+    let principal = request.principal_id;
     // Issuance has no user caller yet, so the token row stamps wamn:provisioning.
     let mut issuance = inner.issuance.lock().await;
     if inner.reopen(&mut issuance).await.is_err() {
@@ -115,7 +97,7 @@ fn token_response(token: &IssuedPat, principal: &PrincipalId) -> Response<Full<B
     match serde_json::to_vec(&IssueResponse {
         token: token.token(),
         token_prefix: token.record().prefix(),
-        principal_id: principal.as_str(),
+        principal_id: *principal,
         created_at: token.record().created_at(),
         expires_at: token.record().expires_at(),
     }) {
@@ -134,7 +116,7 @@ fn invalid_request() -> Response<Full<Bytes>> {
 
 #[cfg(test)]
 mod tests {
-    use super::{IssueRequest, IssueResponse};
+    use super::IssueRequest;
 
     #[test]
     fn pat_request_refuses_extra_duplicate_and_non_integer_fields() {
@@ -151,28 +133,6 @@ mod tests {
         assert!(
             serde_json::from_str::<IssueRequest>(&format!("{{{base},\"lifetime_seconds\":1}}"))
                 .is_ok()
-        );
-    }
-
-    #[test]
-    fn pat_response_has_one_wire_shape() {
-        let value = serde_json::to_value(IssueResponse {
-            token: "fixture-token",
-            token_prefix: "fixture-prefix",
-            principal_id: "fixture-principal",
-            created_at: "2026-09-10T00:00:00Z",
-            expires_at: "2026-09-11T00:00:00Z",
-        })
-        .expect("fixture response");
-        assert_eq!(
-            value,
-            serde_json::json!({
-                "token": "fixture-token",
-                "token_prefix": "fixture-prefix",
-                "principal_id": "fixture-principal",
-                "created_at": "2026-09-10T00:00:00Z",
-                "expires_at": "2026-09-11T00:00:00Z"
-            })
         );
     }
 }

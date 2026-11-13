@@ -53,12 +53,12 @@ use wamn_control_provision::{
     WorkloadRoleFamily, control_author_generation_role, management_admitter_generation_role, sql,
     system_reader_generation_role,
 };
+use wamn_identity_protocol::PAT_TOKEN_PREFIX;
 use wamn_platform_identity::{
     IssuedPat, assign_project_role, create_service, create_user, issue_pat, resolve_subject,
     revoke_pat,
 };
 use wamn_schema_control::connections::ComponentConnectionRequirement;
-use wamn_session::PAT_TOKEN_PREFIX;
 
 const CURRENT_DATABASE_PUBLIC_CONNECT_SQL: &str =
     include_str!("../../../test-support/fixtures/sql/current-database-public-connect.sql");
@@ -1833,13 +1833,13 @@ async fn management_surface_authenticates_and_attributes_authoring_commands() {
         .iter()
         .find(|row| row.0 == "alice@example.com" && row.2 == "gate")
         .expect("the gate is attributed to the token principal");
-    assert_eq!(alice_row.1, alice_principal.id().as_str());
+    assert_eq!(alice_row.1, alice_principal.id().to_string().as_str());
     assert_eq!(alice_row.2, "gate");
     assert_eq!(alice_row.3, "project-author", "a header widened a role");
     assert!(
         !attributed
             .iter()
-            .any(|row| row.1 == bob_principal.id().as_str()),
+            .any(|row| row.1 == bob_principal.id().to_string().as_str()),
         "a header attributed a command to the wrong principal: {attributed:?}"
     );
 
@@ -1969,7 +1969,7 @@ async fn management_surface_authenticates_and_attributes_authoring_commands() {
         alice_row.1, bob_row.1,
         "two principals ran the same command and are not distinguishable"
     );
-    assert_eq!(bob_row.1, bob_principal.id().as_str());
+    assert_eq!(bob_row.1, bob_principal.id().to_string().as_str());
     assert_eq!(bob_row.2, "gate");
     assert_eq!(bob_row.3, "project-admin");
 

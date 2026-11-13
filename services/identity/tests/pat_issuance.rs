@@ -9,6 +9,7 @@ use std::process::Stdio;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use wamn_platform_identity::auth_changes::AuthDrops;
 
+use postgres_protocol::escape::escape_identifier;
 use rcgen::{
     BasicConstraints, CertificateParams, ExtendedKeyUsagePurpose, IsCa, Issuer, KeyPair,
     KeyUsagePurpose, date_time_ymd,
@@ -30,13 +31,13 @@ use wamn_control_provision::{
 };
 use wamn_control_registry::Triple;
 use wamn_identity::tls_config_with_operator_ca;
-use wamn_pg_core::quote_ident;
+use wamn_identity_protocol::PrincipalId;
+use wamn_identity_protocol::token::SessionClaims;
 use wamn_platform_identity::session_keys::{activate_session_key, publish_session_key};
 use wamn_platform_identity::session_token::sign_session_token;
 use wamn_platform_identity::{
-    PrincipalId, authenticate_pat, create_service, create_user, disable_principal, revoke_pat,
+    authenticate_pat, create_service, create_user, disable_principal, revoke_pat,
 };
-use wamn_session::token::SessionClaims;
 
 const ISSUER: &str = "https://identity.pat-test.internal";
 const PASSWORD: &str = "operator-pat-disposable-fixture-password";
@@ -241,15 +242,15 @@ async fn operator_pat_issuance_over_https() {
         &mut system,
         SessionClaims {
             iss: ISSUER.to_owned(),
-            sub: user.id().to_string(),
+            sub: *user.id(),
             org: "acme".to_owned(),
             aud: target.audience().to_owned(),
-            roles: vec!["admin".to_owned()],
+            roles: vec!["admin".parse().unwrap()],
             exp: 0,
             iat: 0,
             jti: "operator-denial-control".to_owned(),
-            authority: wamn_session::token::SessionAuthority::Login(
-                "ed7056a9-5639-455f-9640-4678458794c0".into(),
+            authority: wamn_identity_protocol::token::SessionAuthority::Login(
+                "ed7056a9-5639-455f-9640-4678458794c0".parse().unwrap(),
             ),
             csrf: None,
         },
@@ -431,7 +432,7 @@ async fn operator_pat_issuance_over_https() {
     system
         .batch_execute(&format!(
             "REVOKE INSERT (principal_id, principal_type, token_prefix, token_hash, label, expires_at) ON identity.pats FROM {}",
-            quote_ident(IDENTITY_ISSUER_ROLE)
+            escape_identifier(IDENTITY_ISSUER_ROLE)
         ))
         .await
         .expect_redacted("database authority failure control");
@@ -493,8 +494,8 @@ async fn operator_pat_issuance_over_https() {
     system
         .batch_execute(&format!(
             "DROP OWNED BY {role}; DROP ROLE {role}; DROP OWNED BY {stable}; DROP ROLE {stable};",
-            role = quote_ident(&role),
-            stable = quote_ident(IDENTITY_ISSUER_ROLE)
+            role = escape_identifier(&role),
+            stable = escape_identifier(IDENTITY_ISSUER_ROLE)
         ))
         .await
         .expect_redacted("remove exact fixture authority roles");
@@ -516,7 +517,7 @@ fn request(
         .post(format!("{endpoint}/pats"))
         .header("content-type", "application/json")
         .body(
-            json!({"principal_id":principal.as_str(),"label":label,"lifetime_seconds":lifetime})
+            json!({"principal_id":principal.to_string().as_str(),"label":label,"lifetime_seconds":lifetime})
                 .to_string(),
         )
 }
@@ -558,7 +559,7 @@ async fn success(
             "expires_at"
         ])
     );
-    assert_eq!(value["principal_id"], principal.as_str());
+    assert_eq!(value["principal_id"], principal.to_string().as_str());
     let token = value["token"].as_str().expect("PAT string");
     let authenticated = authenticate_pat(system, token)
         .await
@@ -567,7 +568,7 @@ async fn success(
     assert_eq!(authenticated.principal().id(), principal);
     let record = system.query_one("SELECT principal_id::text, token_hash, label, extract(epoch FROM expires_at-created_at)::bigint, created_by::text, updated_by::text FROM identity.pats WHERE token_prefix=$1", &[&value["token_prefix"].as_str().expect("token prefix")])
         .await.expect_redacted("persisted PAT record");
-    assert_eq!(record.get::<_, String>(0), principal.as_str());
+    assert_eq!(record.get::<_, String>(0), principal.to_string().as_str());
     assert!(
         record.get::<_, String>(1) != token,
         "storage retains no raw PAT"
@@ -611,11 +612,11 @@ async fn malformed_requests(
     disabled: &PrincipalId,
 ) {
     for (id, label, ttl) in [
-        (principal.as_str(), "", 3600),
-        (principal.as_str(), "   ", 3600),
-        (principal.as_str(), "fixture", 0),
-        (principal.as_str(), "fixture", 31_536_001),
-        (disabled.as_str(), "fixture", 3600),
+        (principal.to_string().as_str(), "", 3600),
+        (principal.to_string().as_str(), "   ", 3600),
+        (principal.to_string().as_str(), "fixture", 0),
+        (principal.to_string().as_str(), "fixture", 31_536_001),
+        (disabled.to_string().as_str(), "fixture", 3600),
         ("00000000-0000-0000-0000-000000000001", "fixture", 3600),
         ("not-a-principal", "fixture", 3600),
     ] {
@@ -631,8 +632,7 @@ async fn malformed_requests(
         )
         .await;
     }
-    let valid =
-        json!({"principal_id":principal.as_str(),"label":"fixture","lifetime_seconds":3600});
+    let valid = json!({"principal_id":principal.to_string().as_str(),"label":"fixture","lifetime_seconds":3600});
     let mut extra = valid.clone();
     extra["roles"] = json!(["admin"]);
     let mut oversized = valid.clone();
@@ -743,7 +743,7 @@ async fn snapshots(system: &Client, exclude_pats: bool) -> Vec<Vec<String>> {
     for table in tables {
         let schema: String = table.get(0);
         let name: String = table.get(1);
-        snapshots.push(system.query_one(&format!("SELECT coalesce(array_agg(md5(row_to_json(t)::text)||':'||t.xmin::text||':'||t.ctid::text ORDER BY t.ctid),ARRAY[]::text[]) FROM {}.{} t", quote_ident(&schema), quote_ident(&name)), &[])
+        snapshots.push(system.query_one(&format!("SELECT coalesce(array_agg(md5(row_to_json(t)::text)||':'||t.xmin::text||':'||t.ctid::text ORDER BY t.ctid),ARRAY[]::text[]) FROM {}.{} t", escape_identifier(&schema), escape_identifier(&name)), &[])
             .await.expect_redacted("opaque row-version snapshot").get(0));
     }
     snapshots

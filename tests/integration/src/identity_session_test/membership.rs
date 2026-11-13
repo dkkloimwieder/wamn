@@ -7,10 +7,9 @@ use anyhow::Context as _;
 use tokio_postgres::NoTls;
 use wamn_control_provision::validate_project_env;
 use wamn_environment_control::provision_project_env::provisioning_transaction;
+use wamn_identity_protocol::PrincipalId;
 use wamn_platform_identity::auth_changes::{AuthChanges, AuthDrops};
-use wamn_platform_identity::{
-    PrincipalId, grant_project_env_membership, revoke_project_env_membership,
-};
+use wamn_platform_identity::{grant_project_env_membership, revoke_project_env_membership};
 
 /// Inputs that name one existing user and one existing project environment.
 #[derive(Debug)]
@@ -92,7 +91,7 @@ async fn run(
                 )
                 .await
                 .context("grant project environment membership")?;
-                drops.identity(principal_id.as_str());
+                drops.identity(principal_id.to_string().as_str());
             }
             Action::Revoke => {
                 revoke_project_env_membership(
@@ -138,7 +137,7 @@ mod tests {
     #[test]
     fn an_exact_membership_request_names_its_principal() {
         assert_eq!(
-            validate_args(&request()).unwrap().as_str(),
+            validate_args(&request()).unwrap().to_string().as_str(),
             "00112233-4455-6677-8899-aabbccddeeff"
         );
     }
@@ -199,7 +198,7 @@ mod tests {
         transaction.commit().await.unwrap();
         let arguments = || MembershipRequest {
             system_database_url: database.url().to_owned(),
-            principal_id: user.principal_id.as_str().to_owned(),
+            principal_id: user.principal_id.to_string().as_str().to_owned(),
             ..request()
         };
         for _ in 0..2 {
@@ -208,7 +207,7 @@ mod tests {
         let row = client.query_one(
             "SELECT created_by::text, updated_by::text FROM identity.project_env_memberships \
              WHERE principal_id = $1::text::uuid AND org = 'acme' AND project = 'billing' AND env = 'dev'",
-            &[&user.principal_id.as_str()],
+            &[&user.principal_id.to_string().as_str()],
         ).await.unwrap();
         let provisioning = PlatformComponent::Provisioning.principal_id().to_string();
         assert_eq!(row.get::<_, String>(0), provisioning);
@@ -223,7 +222,7 @@ mod tests {
             .unwrap();
         let row = client.query_one(
             "SELECT count(*) FROM identity.project_env_memberships WHERE principal_id = $1::text::uuid",
-            &[&user.principal_id.as_str()],
+            &[&user.principal_id.to_string().as_str()],
         ).await.unwrap();
         assert_eq!(row.get::<_, i64>(0), 0);
         drop(client);

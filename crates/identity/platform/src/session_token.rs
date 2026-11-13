@@ -1,6 +1,6 @@
 //! Session-token signing and the active-session read.
 //!
-//! The token profile and its verification live in `wamn-session`. This module
+//! The token profile and its verification live in `wamn-identity-protocol`. This module
 //! signs with the issuer's active key in Postgres and reads whether a session's
 //! authority is still active. No token is persisted or logged.
 
@@ -9,15 +9,14 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use tokio_postgres::{Client, GenericClient, Transaction};
-use wamn_session::token::{
-    MAXIMUM_LIFETIME, SessionAuthority, SessionClaims, SessionHeader, validate_claim_shape,
+use wamn_identity_protocol::token::{
+    MAXIMUM_LIFETIME, SessionAuthority, SessionClaims, session_header,
 };
 
 use crate::{
     IdentityError, IdentityErrorType,
-    session_keys::{key_database_error, sign_message},
+    session_keys::{corrupt_key, key_database_error, sign_message},
 };
 
 /// A bearer token with redacted diagnostics and no persistence behavior.
@@ -93,9 +92,9 @@ pub async fn sign_session_token_in_transaction(
     validation_started_at: i64,
     absolute_expiry: Option<i64>,
 ) -> Result<IssuedSessionToken, IdentityError> {
-    validate_claim_shape(&claims)?;
+    claims.validate()?;
     let issuer = claims.iss.clone();
-    let token = sign_message(transaction, &issuer, |kid| {
+    let token = sign_message(transaction, &issuer, |kid, key| {
         let now = unix_seconds()?;
         (claims.iat, claims.exp) = minting_times(validation_started_at, now)?;
         if let Some(deadline) = absolute_expiry {
@@ -104,13 +103,8 @@ pub async fn sign_session_token_in_transaction(
                 return Err(refused());
             }
         }
-        let header = serde_json::to_vec(&SessionHeader::new(kid)).map_err(|_| refused())?;
-        let body = serde_json::to_vec(&claims).map_err(|_| refused())?;
-        Ok(format!(
-            "{}.{}",
-            URL_SAFE_NO_PAD.encode(header),
-            URL_SAFE_NO_PAD.encode(body)
-        ))
+        let header = session_header(kid);
+        jsonwebtoken::encode(&header, &claims, key).map_err(|_| corrupt_key())
     })
     .await?;
     // A delayed commit must not deliver an already-expired exchange result.
@@ -144,8 +138,8 @@ pub async fn session_is_active(
     environment: &str,
 ) -> Result<bool, IdentityError> {
     let (login, pat) = match &claims.authority {
-        SessionAuthority::Login(id) => (Some(id.as_str()), None),
-        SessionAuthority::Pat(id) => (None, Some(id.as_str())),
+        SessionAuthority::Login(id) => (Some(id.to_string()), None),
+        SessionAuthority::Pat(id) => (None, Some(id.to_string())),
     };
     client
         .query_one(
@@ -160,7 +154,7 @@ pub async fn session_is_active(
          EXISTS (SELECT 1 FROM identity.pats t WHERE t.id=$6::text::uuid \
          AND t.principal_id=p.id AND t.revoked_at IS NULL AND t.expires_at>clock_timestamp())))",
             &[
-                &claims.sub,
+                &claims.sub.to_string(),
                 &claims.org,
                 &project,
                 &environment,

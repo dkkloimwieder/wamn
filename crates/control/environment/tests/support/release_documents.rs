@@ -643,7 +643,7 @@ pub mod workflow {
             .execute(
                 "SELECT set_config('app.user_id', $1, false), \
                     set_config('app.operation', 'admin:schedule-fixture', false)",
-                &[&wamn_project_state::PlatformComponent::Provisioning
+                &[&wamn_identity_protocol::PlatformComponent::Provisioning
                     .principal_id()
                     .to_string()],
             )
@@ -696,7 +696,7 @@ pub mod workflow {
             .session_operation_permissions(
                 "default",
                 environment.env_key,
-                &["admin".to_owned()],
+                &["admin".parse().unwrap()],
                 &ENABLER.parse()?,
             )
             .await?;
@@ -838,7 +838,7 @@ pub mod workflow {
                     workflow_id,
                     workflow_version: workflow.version,
                     wiring_hash: &workflow.wiring_hash,
-                    execution_principal_id: &wamn_project_state::workflow_user_id().to_string(),
+                    execution_principal_id: &wamn_identity_protocol::workflow_user_id().to_string(),
                     execution_role: role,
                     invoked_by_user_id: ENABLER,
                     node_digests: &Value::Object(node_digests),
@@ -901,7 +901,7 @@ pub mod workflow {
             .execute(
                 "SELECT set_config('app.user_id', $1, false), \
                     set_config('app.operation', 'admin:schedule-fixture', false)",
-                &[&wamn_project_state::PlatformComponent::Provisioning
+                &[&wamn_identity_protocol::PlatformComponent::Provisioning
                     .principal_id()
                     .to_string()],
             )

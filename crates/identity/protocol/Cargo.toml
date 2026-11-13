@@ -1,12 +1,9 @@
 [package]
-name = "wamn-session"
-description = "Session-token verification over a key source, with no database and no HTTPS client."
+name = "wamn-identity-protocol"
+description = "Identity types, credential formats, wire messages and session verification, without database or HTTP clients."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-
-[lib]
-test = false
 
 [features]
 # A fixed token clock for tests. Never a production feature.
@@ -15,11 +12,18 @@ test-util = []
 [dependencies]
 async-trait = { workspace = true }
 base64 = { workspace = true }
+jsonwebtoken = { workspace = true }
 ring = { workspace = true }
+uuid = { workspace = true, features = ["v5", "serde"] }
+hex = { workspace = true }
+sha2 = { workspace = true }
+subtle = { workspace = true }
+zeroize = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 
 [dev-dependencies]
+wamn-identity-protocol = { path = ".", features = ["test-util"] }
 tokio = { workspace = true, features = ["macros", "rt"] }
 
 [lints]
