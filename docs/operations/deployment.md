@@ -924,7 +924,10 @@ The other apply phases use the restricted credential.
 Kubernetes Secrets hold connection credentials. Each environment has one Secret with one entry per credential UUID.
 The database stores the Secret name and entry name. It accepts only `k8s` references.
 File-backed credential storage and `WAMN_CREDENTIAL_DIR` are removed.
-Native hosts that read connection credentials need access to the cluster through a ServiceAccount.
+Deployed hosts read connection credentials through their in-cluster ServiceAccount.
+Local development hosts have no connection credential store.
+A credential read returns `no credential store in local mode` and logs that reason.
+The HTTP interface keeps its `credential-unavailable` result.
 
 `wamn-kubernetes` owns Secret reads and writes. Each update preserves `resourceVersion` and retries concurrent changes.
 `wamn-broker` owns the NATS authorization Secret. Platform install and environment provisioning call the same writer.

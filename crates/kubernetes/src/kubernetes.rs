@@ -1,7 +1,7 @@
 //! One typed Secret per environment, with one entry per credential UUID.
 
 use crate::{
-    Error, Store, StoreVersion, failure,
+    Error, ErrorType, Store, StoreVersion, failure,
     kubernetes_api::{KubernetesApi, successful},
     secret::Secret,
 };
@@ -17,6 +17,11 @@ pub struct KubernetesStore {
 
 impl KubernetesStore {
     pub fn in_cluster() -> Result<Self, Error> {
+        if std::env::var_os("KUBERNETES_SERVICE_HOST").is_none() {
+            let mut error = failure("read endpoint", "k8s", std::env::VarError::NotPresent);
+            error.type_ = Some(ErrorType::NoCluster);
+            return Err(error);
+        }
         Ok(Self {
             api: KubernetesApi::in_cluster()?,
         })

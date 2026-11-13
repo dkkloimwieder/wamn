@@ -25,9 +25,17 @@ pub struct StoreVersion {
 /// A store failure with operation context and its source.
 #[derive(Debug)]
 pub struct Error {
+    pub type_: Option<ErrorType>,
     pub operation: &'static str,
     pub reference: String,
     source: Box<dyn StdError + Send + Sync>,
+}
+
+/// A classified failure at the credential-store boundary.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ErrorType {
+    /// The process has no in-cluster API endpoint.
+    NoCluster,
 }
 
 impl fmt::Display for Error {
@@ -52,6 +60,7 @@ pub(crate) fn failure(
     source: impl Into<Box<dyn StdError + Send + Sync>>,
 ) -> Error {
     Error {
+        type_: None,
         operation,
         reference: reference.to_owned(),
         source: source.into(),

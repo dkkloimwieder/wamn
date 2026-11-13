@@ -97,7 +97,18 @@ impl ConnectionCredentials {
         let backend: &dyn wamn_kubernetes::Store = if let Some(backend) = self.store.as_deref() {
             backend
         } else {
-            configured = wamn_kubernetes::kubernetes::KubernetesStore::in_cluster()?;
+            configured =
+                wamn_kubernetes::kubernetes::KubernetesStore::in_cluster().map_err(|error| {
+                    let local = error.type_ == Some(wamn_kubernetes::ErrorType::NoCluster);
+                    let error = anyhow::Error::new(error);
+                    if local {
+                        let reason = "no credential store in local mode";
+                        tracing::warn!("{reason}");
+                        error.context(reason)
+                    } else {
+                        error
+                    }
+                })?;
             &configured
         };
         let value = backend.get(&reference, &version).await?;
