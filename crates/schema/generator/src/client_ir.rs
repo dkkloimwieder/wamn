@@ -18,12 +18,12 @@
 //! Every collection is ordered deterministically and the whole IR serializes
 //! through the platform's shared canonicalization, so regenerating from an
 //! unchanged release yields identical bytes. That is the property the exit
-//! gate asserts, and it is why nothing here iterates a `HashMap`.
+//! condition asserts, and it is why nothing here iterates a `HashMap`.
 //!
 //! Canonical means order-independent **only for sets**. Some contract members
 //! are ordered on purpose — `cursor.member_order` IS an ordering — and an IR
 //! that reported identical bytes after reversing one of those would be wrong,
-//! not canonical. The reorder-and-compare gate therefore has to know which
+//! not canonical. The reorder-and-compare condition therefore has to know which
 //! lists are sets; a version of it that reversed every array failed against a
 //! correct IR before that distinction was drawn.
 
@@ -584,7 +584,7 @@ pub struct ErrorCaseIr {
 }
 
 impl ClientContractIr {
-    /// Canonical bytes — the comparable form the byte-stability gate compares.
+    /// Canonical bytes — the comparable form the byte-stability condition compares.
     ///
     /// Goes through the platform's shared canonicalization rather than
     /// `serde_json::to_vec`, so an IR digest is comparable with every other

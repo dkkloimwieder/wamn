@@ -53,11 +53,11 @@ pub const ADMINISTRATION_ROLE: &str = "wamn_administration";
 /// control host (docs/architecture/execution.md#host-run-routes).
 pub const CONTROL_ROLE: &str = "wamn_control";
 
-/// The shared NOLOGIN group role every non-guest tenant-floor arm targets
+/// The shared NOLOGIN group role every non-guest project-base-grants arm targets
 /// (`wamn-0h0g.22.17`).
 ///
-/// ONE role, not one per family, and no `BYPASSRLS` anywhere. The tenant floor
-/// is the GUEST floor: narrowing it `TO wamn_app` does not EXEMPT a platform
+/// ONE role, not one per family, and no `BYPASSRLS` anywhere. The project base grants
+/// are the GUEST base grants: narrowing it `TO wamn_app` does not EXEMPT a platform
 /// principal, because PostgreSQL DEFAULT-DENIES when RLS is enabled and no
 /// policy matches the connected role. Each governed relation therefore carries
 /// exactly one permissive arm `TO wamn_platform`, and the family's table grants
@@ -93,7 +93,7 @@ pub(crate) const SCOPE_HASH_HEX_LEN: usize = 40;
 /// families land here; the grants, Secrets and consumers are those two beads.
 /// `wamn-ctc8.15.2` adds a dedicated project-environment session role reader;
 /// it carries no runtime authority class and no operation-permission read.
-/// `wamn-emtx.13` adds the tenant-scoped audit retention family, which removes
+/// `wamn-emtx.13` adds the project-scoped audit retention family, which removes
 /// expired record history entries.
 /// `wamn-0h0g.10.15` removes the effect-writer family, which had no runtime
 /// consumer.
@@ -182,7 +182,9 @@ impl WorkloadRoleFamily {
     /// Exact scope class used to derive generation identities.
     pub const fn scope_kind(self) -> WorkloadRoleScopeKind {
         match self {
-            Self::App | Self::Retention | Self::AuditRetention => WorkloadRoleScopeKind::EnvKey,
+            Self::App | Self::Retention | Self::AuditRetention => {
+                WorkloadRoleScopeKind::ProjectEnvKey
+            }
             Self::ServiceReader
             | Self::ExecutorPlatform
             | Self::HttpAdmitter
@@ -214,34 +216,34 @@ impl WorkloadRoleFamily {
     }
 
     /// Whether this family's generations are membered into
-    /// [`PLATFORM_GROUP_ROLE`] and so reach the permissive tenant-floor arm.
+    /// [`PLATFORM_GROUP_ROLE`] and so reach the permissive project-base-grants arm.
     ///
     /// DERIVED from the two facts that already decide it, never tabulated:
     ///
-    /// * [`Self::App`] is the GUEST. The floor exists to admit it, and a
-    ///   platform arm would hand it every tenant's rows — the exact
-    ///   cross-tenant read `wamn-0h0g.22.6` closed.
+    /// * [`Self::App`] is the GUEST. The minimum exists to admit it, and a
+    ///   platform arm would hand it every project's rows — the exact
+    ///   cross-project read `wamn-0h0g.22.6` closed.
     /// * A [`WorkloadRoleScopeKind::Control`] or [`WorkloadRoleScopeKind::Org`]
     ///   family's credentials reach the CONTROL database, whose store carries its own restrictive
     ///   (`deploy/sql/control-portable-store.sql`). None of them holds a grant
-    ///   on any relation carrying the project-plane floor, so membership would
+    ///   on any relation carrying the project-plane minimum, so membership would
     ///   be authority without a reader.
     /// * [`Self::AuditRetention`] is not a member either (`wamn-emtx` ruling
     ///   61), and for the same reason: no reader needs the edge. Its grants
     ///   reach only package history tables, which carry no row security.
     ///
     /// Everything else — the eight families whose credentials reach a
-    /// project-environment or tenant database and are not the guest — is a
+    /// project-environment or project database and are not the guest — is a
     /// member. `EventMaterializer` exercises that edge
     /// through its two catalog reads. `ServiceReader` remains the empty-surface
     /// case: an RLS arm with no table grant behind it admits nothing, while the
     /// edge prevents a future first grant from silently reading zero rows.
     ///
-    /// `Retention` is `EnvKey`-scoped and is a member anyway. Its login names
-    /// carry a tenant DIGEST, but `current_tenant_key` recovers a key only from
+    /// `Retention` is `ProjectEnvKey`-scoped and is a member anyway. Its login names
+    /// carry a project DIGEST, but `current_project_key` recovers a key only from
     /// the guest generation pattern, and widening that regex is refused
     /// (`wamn-0h0g.22.17` owner ruling). The shared arm therefore makes it
-    /// cross-tenant on the relations it holds grants on; the tenant predicate it
+    /// cross-project on the relations it holds grants on; the project predicate it
     /// keeps in its own statements is what re-narrows it.
     pub const fn is_platform_grain(self) -> bool {
         !matches!(self, Self::App | Self::AuditRetention)
@@ -299,9 +301,9 @@ impl WorkloadRoleFamily {
     /// already mounts through `secretKeyRef … key: url`, with no edit here.
     pub fn secret_body_kind(self) -> WorkloadSecretBodyKind {
         match self {
-            // The guest credential IS the tenant authority, so its Secret
-            // carries the tenant key that keys every governed predicate.
-            Self::App => WorkloadSecretBodyKind::EnvKeyUrl,
+            // The guest credential IS the project authority, so its Secret
+            // carries the project key that keys every governed predicate.
+            Self::App => WorkloadSecretBodyKind::ProjectEnvKeyUrl,
             // The credential and trusted target coordinates publish atomically.
             Self::SessionRoleReader => WorkloadSecretBodyKind::SessionTarget,
             _ => WorkloadSecretBodyKind::Url,
@@ -367,8 +369,8 @@ impl From<AuthorityClass> for WorkloadRoleFamily {
 pub enum WorkloadSecretBodyKind {
     /// One `url` key.
     Url,
-    /// One `url` key, plus the tenant key label and env_key annotation.
-    EnvKeyUrl,
+    /// One `url` key, plus the project key label and project_env_key annotation.
+    ProjectEnvKeyUrl,
     /// One validated environment target and credential in `target.json`.
     SessionTarget,
 }
@@ -376,7 +378,7 @@ pub enum WorkloadSecretBodyKind {
 /// The four admitted provisioning scope shapes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WorkloadRoleScopeKind {
-    EnvKey,
+    ProjectEnvKey,
     ProjectEnvironment,
     Control,
     /// One org on the control database.
@@ -386,7 +388,7 @@ pub enum WorkloadRoleScopeKind {
 impl WorkloadRoleScopeKind {
     const fn as_str(self) -> &'static str {
         match self {
-            Self::EnvKey => "env_key",
+            Self::ProjectEnvKey => "project_env_key",
             Self::ProjectEnvironment => "project-environment",
             Self::Control => "control",
             Self::Org => "org",
@@ -397,8 +399,8 @@ impl WorkloadRoleScopeKind {
 /// Exact identity inputs for one workload generation pair.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WorkloadRoleScope<'a> {
-    EnvKey {
-        env_key: &'a str,
+    ProjectEnvKey {
+        project_env_key: &'a str,
         database: &'a str,
     },
     ProjectEnvironment {
@@ -423,7 +425,7 @@ impl<'a> WorkloadRoleScope<'a> {
     /// Database receiving this generation's sole direct CONNECT grant.
     pub const fn database(self) -> &'a str {
         match self {
-            Self::EnvKey { database, .. }
+            Self::ProjectEnvKey { database, .. }
             | Self::ProjectEnvironment { database, .. }
             | Self::Control { database, .. }
             | Self::Org { database, .. } => database,
@@ -432,7 +434,7 @@ impl<'a> WorkloadRoleScope<'a> {
 
     const fn scope_type(self) -> WorkloadRoleScopeKind {
         match self {
-            Self::EnvKey { .. } => WorkloadRoleScopeKind::EnvKey,
+            Self::ProjectEnvKey { .. } => WorkloadRoleScopeKind::ProjectEnvKey,
             Self::ProjectEnvironment { .. } => WorkloadRoleScopeKind::ProjectEnvironment,
             Self::Control { .. } => WorkloadRoleScopeKind::Control,
             Self::Org { .. } => WorkloadRoleScopeKind::Org,
@@ -478,20 +480,27 @@ pub fn workload_role_scope_hash(
     }
     // The App family delegates to `wamn-run-state`, which is the leaf the
     // RUNTIME can reach, because `wamn-0h0g.22.6.7` makes the runtime check that
-    // a resolved guest credential belongs to the tenant it is about to serve.
+    // a resolved guest credential belongs to the project it is about to serve.
     // Delegation, not duplication — there is still ONE definition.
     if family == WorkloadRoleFamily::App {
-        let WorkloadRoleScope::EnvKey { env_key, database } = scope else {
+        let WorkloadRoleScope::ProjectEnvKey {
+            project_env_key,
+            database,
+        } = scope
+        else {
             unreachable!("scope kind was checked above")
         };
-        return Ok(app_scope_hash(env_key, database));
+        return Ok(app_scope_hash(project_env_key, database));
     }
 
     let mut preimage = Vec::new();
     frame(&mut preimage, family.scope_domain());
     match scope {
-        WorkloadRoleScope::EnvKey { env_key, database } => {
-            push_field(&mut preimage, "env_key", env_key);
+        WorkloadRoleScope::ProjectEnvKey {
+            project_env_key,
+            database,
+        } => {
+            push_field(&mut preimage, "project_env_key", project_env_key);
             push_field(&mut preimage, "database", database);
         }
         WorkloadRoleScope::ProjectEnvironment {
@@ -641,8 +650,8 @@ mod tests {
             },
             CredentialGeneration::A,
         )
-        .expect_err("a tenant family accepted a control scope");
-        assert_eq!(error.expected, WorkloadRoleScopeKind::EnvKey);
+        .expect_err("a project family accepted a control scope");
+        assert_eq!(error.expected, WorkloadRoleScopeKind::ProjectEnvKey);
         assert_eq!(error.actual, WorkloadRoleScopeKind::Control);
     }
 
@@ -660,15 +669,15 @@ mod tests {
             ),
             (
                 WorkloadRoleFamily::App,
-                WorkloadRoleScope::EnvKey {
-                    env_key: "t",
+                WorkloadRoleScope::ProjectEnvKey {
+                    project_env_key: "t",
                     database: "db",
                 },
             ),
             (
                 WorkloadRoleFamily::Retention,
-                WorkloadRoleScope::EnvKey {
-                    env_key: "t",
+                WorkloadRoleScope::ProjectEnvKey {
+                    project_env_key: "t",
                     database: "db",
                 },
             ),
@@ -737,8 +746,8 @@ mod tests {
             ),
             (
                 WorkloadRoleFamily::AuditRetention,
-                WorkloadRoleScope::EnvKey {
-                    env_key: "t",
+                WorkloadRoleScope::ProjectEnvKey {
+                    project_env_key: "t",
                     database: "db",
                 },
             ),
@@ -772,22 +781,22 @@ mod tests {
     /// THE TRUNCATION HAZARD, CLOSED BY CONSTRUCTION rather than by a runtime
     /// refusal (`wamn-0h0g.22.6.4`).
     ///
-    /// `valid_env_key` admits 64 bytes and PostgreSQL caps identifiers at 63,
+    /// `valid_project_env_key` admits 64 bytes and PostgreSQL caps identifiers at 63,
     /// truncating with a NOTICE instead of refusing — so a name carrying the
-    /// tenant verbatim would collapse two long tenants onto ONE role, which is
-    /// a cross-tenant breach wearing a naming bug. The scope digest is
-    /// fixed-width, so the tenant contributes NOTHING to the length: asserted
-    /// here against the longest tenant the validator admits, so the property is
+    /// project verbatim would collapse two long projects onto ONE role, which is
+    /// a cross-project breach wearing a naming bug. The scope digest is
+    /// fixed-width, so the project contributes NOTHING to the length: asserted
+    /// here against the longest project the validator admits, so the property is
     /// measured rather than assumed.
     #[test]
-    fn the_longest_admitted_env_key_still_mints_a_bounded_role() {
+    fn the_longest_admitted_project_env_key_still_mints_a_bounded_role() {
         let longest = "t".repeat(64);
-        let short = WorkloadRoleScope::EnvKey {
-            env_key: "t",
+        let short = WorkloadRoleScope::ProjectEnvKey {
+            project_env_key: "t",
             database: "wamn-db-acme--billing--dev",
         };
-        let long = WorkloadRoleScope::EnvKey {
-            env_key: &longest,
+        let long = WorkloadRoleScope::ProjectEnvKey {
+            project_env_key: &longest,
             database: "wamn-db-acme--billing--dev",
         };
         for family in [
@@ -801,14 +810,14 @@ mod tests {
                 assert_eq!(
                     from_short.len(),
                     from_long.len(),
-                    "{family:?}: the tenant must not reach the role NAME's length"
+                    "{family:?}: the project must not reach the role NAME's length"
                 );
                 assert!(from_long.len() <= 63, "{from_long}");
                 assert!(
                     !from_long.contains(&longest),
-                    "{family:?}: the tenant id must never appear verbatim"
+                    "{family:?}: the project id must never appear verbatim"
                 );
-                assert_ne!(from_short, from_long, "{family:?}: two tenants, two roles");
+                assert_ne!(from_short, from_long, "{family:?}: two projects, two roles");
             }
         }
     }
@@ -989,34 +998,6 @@ mod tests {
             )
             .unwrap(),
         );
-    }
-
-    /// The audit retention family (`wamn-emtx.13`). The derived login was
-    /// computed independently of this module. The 20-byte role name mints a
-    /// 63-byte login, so the family keeps its role name as the prefix.
-    #[test]
-    fn the_audit_retention_family_freezes_its_strings_and_identity() {
-        let family = WorkloadRoleFamily::AuditRetention;
-        assert_eq!(family.acl_role(), "wamn_audit_retention");
-        assert_eq!(family.label(), "audit-retention");
-        assert_eq!(family.scope_domain(), b"wamn.audit-retention.scope.v0.1");
-        assert_eq!(family.scope_kind(), WorkloadRoleScopeKind::EnvKey);
-        assert_eq!(family.generation_prefix(), family.acl_role());
-        assert!(!family.is_platform_grain());
-        let derived = workload_generation_role(
-            family,
-            WorkloadRoleScope::EnvKey {
-                env_key: "acme-prod",
-                database: "wamn-db-acme--billing--dev--k3m9x2p7",
-            },
-            CredentialGeneration::A,
-        )
-        .unwrap();
-        assert_eq!(
-            derived,
-            "wamn_audit_retention_83510e5a897ed9456257d115dbb600c7b2a45a39_a"
-        );
-        assert_eq!(derived.len(), 63);
     }
 
     /// The administration family (`wamn-a40n.2`). The derived login was

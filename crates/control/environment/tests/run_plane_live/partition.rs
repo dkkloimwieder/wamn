@@ -16,11 +16,11 @@ pub(super) async fn global_fifo_queue_leg(su: &Client) {
     seed_run_admission_facts(su, "partition", "cat", "dev").await;
     su.batch_execute(&format!(
         "INSERT INTO {SCHEMA}.runs \
-           (env_key,run_id,wiring_id,wiring_version,wiring_hash,binding_world_json,package_id, \
+           (project_env_key,run_id,wiring_id,wiring_version,wiring_hash,binding_world_json,package_id, \
             environment) \
          VALUES ('partition','retained-run','fixture-wiring',1,'sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd','[]'::jsonb,'cat','dev'); \
          INSERT INTO {SCHEMA}.run_queue \
-           (env_key,run_id) \
+           (project_env_key,run_id) \
          VALUES ('partition','retained-run');"
     ))
     .await
@@ -31,7 +31,7 @@ pub(super) async fn global_fifo_queue_leg(su: &Client) {
             &format!(
                 "SELECT lease_owner,lease_generation,attempts \
                    FROM {SCHEMA}.run_queue \
-                  WHERE env_key='partition' AND run_id='retained-run'"
+                  WHERE project_env_key='partition' AND run_id='retained-run'"
             ),
             &[],
         )

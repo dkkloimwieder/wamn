@@ -534,8 +534,8 @@ pub trait RouteAuthenticator: Send + Sync + std::fmt::Debug {
 /// `authentication-unavailable`.
 #[async_trait::async_trait]
 pub trait EnvironmentStatus: Send + Sync + std::fmt::Debug {
-    /// Whether the environment of `env_key` is inactive.
-    async fn inactive(&self, env_key: &str) -> anyhow::Result<bool>;
+    /// Whether the environment of `project_env_key` is inactive.
+    async fn inactive(&self, project_env_key: &str) -> anyhow::Result<bool>;
 }
 
 /// One request to a protected route, as the route plugin resolved it.
@@ -543,7 +543,7 @@ pub trait EnvironmentStatus: Send + Sync + std::fmt::Debug {
 pub struct AuthenticationRequest<'a> {
     /// The loaded release that carries the attachment.
     pub manifest: &'a ServingManifest,
-    /// The tenant and environment of the host that serves the route.
+    /// The project and environment of the host that serves the route.
     pub scope: &'a ReleaseScope,
     pub attachment_id: &'a str,
     pub attachment: ServedAttachment<'a>,
@@ -570,7 +570,7 @@ impl std::fmt::Debug for AuthenticationRequest<'_> {
 /// Authoritative HTTP route supply for the flow-http adapter.
 pub struct FlowHttpRouting {
     /// `None` in a process that was given no manifest root. Absence is a
-    /// deployment fact, not a fallback: a gate or a bench runs this host with
+    /// deployment fact, not a fallback: a condition or a bench runs this host with
     /// nothing mounted, and every `routes` call on it refuses rather than serving
     /// routes from somewhere else. A *serving* pod is given a manifest root, and a
     /// root it cannot load refuses host construction outright — that decision is
@@ -749,7 +749,7 @@ impl FlowHttpRouting {
         let manifest = loaded_release.manifest();
         if let Some(environment) = &self.environment {
             let inactive = environment
-                .inactive(&loaded_release.scope().env_key)
+                .inactive(&loaded_release.scope().project_env_key)
                 .await
                 .map_err(|error| {
                     tracing::warn!(error = %error, "environment status unavailable");
@@ -1683,17 +1683,16 @@ mod tests {
             Arc::new(
                 LoadedRelease::load_from(
                     &self.root,
-                    crate::release_manifest::ReleaseScope::new("tenant-a", "prod")
-                        .with_applications(
-                            [(
-                                "catalog".to_owned(),
-                                wamn_catalog::ApplicationDefinition {
-                                    connections: std::collections::BTreeMap::new(),
-                                    packages: ["cat".to_owned()].into(),
-                                },
-                            )]
-                            .into(),
-                        ),
+                    crate::release_manifest::ReleaseScope::new("org-a", "prod").with_applications(
+                        [(
+                            "catalog".to_owned(),
+                            wamn_catalog::ApplicationDefinition {
+                                connections: std::collections::BTreeMap::new(),
+                                packages: ["cat".to_owned()].into(),
+                            },
+                        )]
+                        .into(),
+                    ),
                 )
                 .expect("fixture mount loads"),
             )

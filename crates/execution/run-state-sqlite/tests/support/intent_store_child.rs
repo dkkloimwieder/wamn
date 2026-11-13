@@ -17,7 +17,7 @@ fn main() {
             let store = SqliteIntentStore::open(path).expect("open");
             let begun = store
                 .begin(&Intent {
-                    tenant: "tenant-a",
+                    partition: "org-a",
                     release: "release-1",
                     package: "scale",
                     operation: "record_sample",

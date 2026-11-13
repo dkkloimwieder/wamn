@@ -241,13 +241,13 @@ Effort: M
 Area: crates/control/lib/src/dev/coordinator.rs  
 Evidence: `crates/control/lib/src/dev/coordinator.rs:1416`, `crates/control/lib/src/dev/coordinator.rs:1455`, `docs/operations/development-loop.md:266`, `apps/wamn_receiving/tests/route_authentication_live/dev/local_delivery.rs:172`
 
-Problem: A changed package input digest calls `shutdown()` during preparation, before Generate, Build, or Gate. A later failure therefore leaves no previous application serving requests. This contradicts the documented promise that build and gate failures preserve the running application. The invalid-SQL acceptance case requires the previous application to remain reachable.
+Problem: A changed package input digest calls `shutdown()` during preparation, before Generate, Build, or Condition. A later failure therefore leaves no previous application serving requests. This contradicts the documented promise that build and condition failures preserve the running application. The invalid-SQL acceptance case requires the previous application to remain reachable.
 
 Proposal: Prepare artifacts before stopping the active host. Keep the stop boundary at activation for compatible changes, and stop earlier only when database changes require exclusive access.
 
 Deletes: Remove unconditional shutdown on a changed package digest.
 
-Risk: Running an old component against an incompatible schema can break requests. Extend the existing invalid-SQL case to cover compiler failure, gate refusal, and an incompatible migration.
+Risk: Running an old component against an incompatible schema can break requests. Extend the existing invalid-SQL case to cover compiler failure, condition refusal, and an incompatible migration.
 
 Owner review 2026-10-31: keep, Group 2 Do, as written. Fix before any stack rework.
 
@@ -414,7 +414,7 @@ Proposal: Record the following current path once from a cold checkout and once w
    `--platform-ui` defaults to `apps/platform_ui/dist`. `--local-bindings` supplies explicit connection selections when needed. Time: unmeasured. Control and web startup has a 120-second readiness limit (`crates/control/lib/src/dev/control.rs:217`).
 
 7. Write `environment.k` beside `dev.json`, with its application map and coordinate. For declared connections, set `WAMN_CONTROL_URL` and `WAMN_TOKEN`, then write the connection and its initial credential. Time: unmeasured.
-8. Run `wamn dev --config "$DEV_ROOT/dev.json" --overlay-root "$PWD/apps/wamn_receiving" --watch`. Use `--hold` for a persistent one-shot run. Without either mode, the application stops after activation. Time: unmeasured. The loop reports Prepare, Migrate, Introspect, Generate, Build, Virtualize, ACL, Admit, Gate, Release, and Activate. Endpoint reachability has a shared five-second budget. HTTP workload readiness allows 120 seconds, and CDC streaming allows 60 seconds (`crates/control/lib/src/dev/config.rs:26`, `crates/control/lib/src/dev/activation.rs:35`, `crates/control/lib/src/dev/cdc_reader.rs:21`).
+8. Run `wamn dev --config "$DEV_ROOT/dev.json" --overlay-root "$PWD/apps/wamn_receiving" --watch`. Use `--hold` for a persistent one-shot run. Without either mode, the application stops after activation. Time: unmeasured. The loop reports Prepare, Migrate, Introspect, Generate, Build, Virtualize, ACL, Admit, Condition, Release, and Activate. Endpoint reachability has a shared five-second budget. HTTP workload readiness allows 120 seconds, and CDC streaming allows 60 seconds (`crates/control/lib/src/dev/config.rs:26`, `crates/control/lib/src/dev/activation.rs:35`, `crates/control/lib/src/dev/cdc_reader.rs:21`).
 9. Open the emitted application URL and complete local invitation sign-in when needed. API requests return 503 before application activation. Stop the loop, then run `wamn dev down --root "$DEV_ROOT"` and stop external services separately. Time: unmeasured (`docs/operations/development-loop.md:109`, `docs/operations/development-loop.md:120`, `docs/operations/development-loop.md:125`).
 
 Deletes: Replace scattered startup recipes with the selected application path. Retain detailed provisioning instructions for external-service overrides.

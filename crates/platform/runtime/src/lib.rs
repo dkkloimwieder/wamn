@@ -1,6 +1,6 @@
 //! Shared native runtime configuration and wasmCloud host capability adapters.
 //!
-//! MVP outcome: crash floor · M0 execution · flow composition.
+//! MVP outcome: crash minimum · M0 execution · flow composition.
 
 pub mod auth_cache;
 pub mod component_artifact_source;

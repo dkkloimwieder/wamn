@@ -3,7 +3,7 @@
 //!
 //! `wamn dev` was testable before it was startable: every value its strict
 //! configuration needs — five credential URLs, the verification database, the
-//! Gate and its bearer token — only existed inside the live test. This module
+//! Condition and its bearer token — only existed inside the live test. This module
 //! is the argument-building layer over the platform verbs that mint them, so
 //! `[WAMN-DEV-LIVE]`, `[RECEIVING-ROUTE-JOURNEY]` and the `wamn dev up`
 //! operator command stand up one environment by one path (wamn-10yt.10.32).
@@ -165,10 +165,10 @@ pub async fn provision(
     provision_project_env::provision_project_env(&args).await?;
     let project_url = prepare_route_database(system_url, admin, root).await?;
 
-    // Only the platform floor. The product command remains the sole owner of
+    // Only the platform base grants. The product command remains the sole owner of
     // both package migrations and their generated ACL union.
     let (project, project_task) = connect(&project_url).await?;
-    install_journey_platform_floor(project.as_ref(), platform_domain).await?;
+    install_journey_platform_base_grants(project.as_ref(), platform_domain).await?;
     drop(project);
     project_task.abort();
 
@@ -227,9 +227,9 @@ pub const PROJECT: &str = "receiving";
 
 pub const ENVIRONMENT: &str = "dev";
 
-/// The `env_key` of the coordinate, as `project_env_key(ORG, PROJECT, ENVIRONMENT)`
+/// The `project_env_key` of the coordinate, as `project_env_key(ORG, PROJECT, ENVIRONMENT)`
 /// derives it.
-pub const ENV_KEY: &str = "acme--receiving--dev";
+pub const PROJECT_ENV_KEY: &str = "acme--receiving--dev";
 
 /// The org, project, and environment that one journey provisions.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -241,7 +241,7 @@ pub struct JourneyScope {
 
 impl JourneyScope {
     /// The composed environment key derived from the environment coordinate.
-    pub fn env_key(&self) -> String {
+    pub fn project_env_key(&self) -> String {
         wamn_control_registry::project_env_key(&self.org, &self.project, &self.environment)
     }
 }
@@ -532,7 +532,7 @@ pub async fn prepare_target_template(
         .context("write the captured database-level ACL")?;
 
     // CREATE DATABASE ... TEMPLATE refuses while another session is connected to
-    // the source, so the copy is taken before the Gate opens.
+    // the source, so the copy is taken before the Condition opens.
     admin
         .batch_execute(&format!(
             "DROP DATABASE IF EXISTS {} WITH (FORCE)",
@@ -554,7 +554,7 @@ pub async fn prepare_target_template(
             Identifier::new(template.clone())?.quoted(),
         ))
         .await
-        .context("preserve the cluster PUBLIC CONNECT floor on the template")?;
+        .context("preserve the cluster PUBLIC CONNECT base grants on the template")?;
 
     // The fingerprint is stamped ON the template, so it cannot be separated
     // from the thing it describes. A run compares it before it drops anything.
@@ -578,7 +578,7 @@ pub async fn prepare_target_template(
         .await?
         .get(0);
     let marker = wamn_runtime::local_application::local_target_marker(
-        &identity.env_key(),
+        &identity.project_env_key(),
         &identity.environment,
         instance,
     );
@@ -645,7 +645,7 @@ async fn render_database_acl(admin: &Client, database: &str) -> anyhow::Result<S
 }
 
 /// Install the catalog, the application authorization schema and the platform principal rows.
-pub async fn install_journey_platform_floor(
+pub async fn install_journey_platform_base_grants(
     project: &Client,
     platform_domain: &str,
 ) -> anyhow::Result<()> {
@@ -701,7 +701,7 @@ pub async fn grant_operator_admin_role(
     org: &str,
     project: &str,
     environment: &str,
-    env_key: &str,
+    project_env_key: &str,
     platform_domain: &str,
 ) -> anyhow::Result<()> {
     let subject = wamn_platform_identity::operator_subject(org, project, environment)?;
@@ -740,7 +740,7 @@ pub async fn grant_operator_admin_role(
             org,
             project,
             env: environment,
-            env_key,
+            project_env_key,
         };
         wamn_platform_identity::application::project_authority(
             &authority,
@@ -760,7 +760,7 @@ pub async fn grant_operator_admin_role(
     let _ = target_connection.await;
     let _ = system_connection.await;
     result.with_context(|| {
-        format!("grant system administration to {subject}@{platform_domain} in {env_key}")
+        format!("grant system administration to {subject}@{platform_domain} in {project_env_key}")
     })
 }
 
@@ -945,7 +945,7 @@ pub fn write_dev_config(
         "stream_replicas": inputs.stream_replicas,
         "dup_window_secs": inputs.dup_window_secs,
         "otel_exporter_otlp_endpoint": inputs.otel_exporter_otlp_endpoint.as_str(),
-        "gate_bearer_token": route
+        "condition_bearer_token": route
             .management_token
             .as_deref()
             .context("project provisioning emitted no management-author PAT")?,
@@ -992,19 +992,19 @@ mod tests {
         assert_eq!(identity.project, "stock");
         assert_eq!(identity.environment, "preview");
         assert_eq!(
-            identity.env_key(),
+            identity.project_env_key(),
             wamn_control_registry::project_env_key(&document.org, &document.project, &document.env)
         );
     }
 
     #[test]
-    fn the_journey_env_key_is_the_coordinate_env_key() {
+    fn the_journey_project_env_key_is_the_coordinate_project_env_key() {
         assert_eq!(
-            JourneyScope::receiving().env_key().as_bytes(),
+            JourneyScope::receiving().project_env_key().as_bytes(),
             b"acme--receiving--dev"
         );
         assert_eq!(
-            ENV_KEY,
+            PROJECT_ENV_KEY,
             wamn_control_registry::project_env_key(ORG, PROJECT, ENVIRONMENT)
         );
     }

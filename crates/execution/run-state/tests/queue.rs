@@ -108,9 +108,9 @@ fn lease_arithmetic_remains_stable() {
 
 #[test]
 fn queue_entry_round_trips_without_partition_plane() {
-    let entry = QueueEntry::ready("tenant", "run", 42, 5);
+    let entry = QueueEntry::ready("project", "run", 42, 5);
     let value = serde_json::to_value(&entry).unwrap();
-    assert_eq!(value["env_key"], json!("tenant"));
+    assert_eq!(value["project_env_key"], json!("project"));
     assert!(value.get("partition-key").is_none());
     assert!(value.get("partition-policy").is_none());
     assert_eq!(serde_json::from_value::<QueueEntry>(value).unwrap(), entry);

@@ -1,7 +1,7 @@
-//! The gate of an environment workflow graph against a serving release
+//! The condition of an environment workflow graph against a serving release
 //! (docs/architecture/execution.md#environment-workflows).
 //!
-//! A workflow graph is a [`WiringDocument`]. It is gated against the release
+//! A workflow graph is a [`WiringDocument`]. It is subject to the conditions of the release
 //! an environment serves, not against one package: each node resolves to the
 //! component of that release whose descriptor carries the node's component,
 //! interface version and operation, and
@@ -13,7 +13,7 @@
 //! operation needs that permission in the run's role, checked per node like
 //! every other call.
 //!
-//! Authoring, enable and the host's `workflow.start` admission all gate
+//! Authoring, enable and the host's `workflow.start` admission all condition
 //! through this one owner.
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -23,14 +23,14 @@ use crate::{
     validate_resolved_wiring_compatibility,
 };
 
-/// A workflow graph that does not gate against a serving release.
+/// A workflow graph that does not meet the conditions of a serving release.
 #[derive(Debug)]
-pub struct WorkflowGateError {
+pub struct WorkflowConditionError {
     detail: String,
     source: Option<Box<dyn std::error::Error + Send + Sync>>,
 }
 
-impl WorkflowGateError {
+impl WorkflowConditionError {
     fn new(detail: impl Into<String>) -> Self {
         Self {
             detail: detail.into(),
@@ -39,13 +39,13 @@ impl WorkflowGateError {
     }
 }
 
-impl std::fmt::Display for WorkflowGateError {
+impl std::fmt::Display for WorkflowConditionError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter.write_str(&self.detail)
     }
 }
 
-impl std::error::Error for WorkflowGateError {
+impl std::error::Error for WorkflowConditionError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         self.source.as_deref().map(|source| source as _)
     }
@@ -61,11 +61,11 @@ impl std::error::Error for WorkflowGateError {
 /// two different digests there refuse as ambiguous. A declared package the
 /// release does not carry refuses.
 pub fn resolve_workflow_components(
-    env_key: &str,
+    project_env_key: &str,
     application_packages: &BTreeSet<String>,
     manifest: &ServingManifest,
     document: &WiringDocument,
-) -> Result<BTreeMap<String, AdmittedComponent>, WorkflowGateError> {
+) -> Result<BTreeMap<String, AdmittedComponent>, WorkflowConditionError> {
     let versions: BTreeMap<&str, &str> = manifest
         .release
         .packages
@@ -76,7 +76,7 @@ pub fn resolve_workflow_components(
         .iter()
         .find(|package| !versions.contains_key(package.as_str()))
     {
-        return Err(WorkflowGateError::new(format!(
+        return Err(WorkflowConditionError::new(format!(
             "the serving release does not carry package {package:?} of the application"
         )));
     }
@@ -101,7 +101,7 @@ pub fn resolve_workflow_components(
         let chosen = match (in_application.as_slice(), serving.as_slice()) {
             ([component], _) => **component,
             ([], []) => {
-                return Err(WorkflowGateError::new(format!(
+                return Err(WorkflowConditionError::new(format!(
                     "workflow node {node_id:?} names component {:?} interface {:?} \
                      operation {:?}, which the serving release does not carry",
                     node.component, node.interface_version, node.operation
@@ -118,7 +118,7 @@ pub fn resolve_workflow_components(
             _ => return Err(ambiguous(node_id)),
         };
         let scope = ComponentPackageScope {
-            env_key: env_key.to_owned(),
+            project_env_key: project_env_key.to_owned(),
             package_id: chosen.package_id.clone(),
             package_version: versions[chosen.package_id.as_str()].to_owned(),
         };
@@ -130,24 +130,24 @@ pub fn resolve_workflow_components(
     Ok(resolved)
 }
 
-fn ambiguous(node_id: &str) -> WorkflowGateError {
-    WorkflowGateError::new(format!(
+fn ambiguous(node_id: &str) -> WorkflowConditionError {
+    WorkflowConditionError::new(format!(
         "workflow node {node_id:?} resolves to more than one component of the release"
     ))
 }
 
-/// Gate `document` against the per-node facts of `manifest` and derive its
-/// hash. The hash is produced only on the far side of the gate.
-pub fn gate_workflow_document(
-    env_key: &str,
+/// Condition `document` against the per-node facts of `manifest` and derive its
+/// hash. The hash is produced only on the far side of the condition.
+pub fn condition_workflow_document(
+    project_env_key: &str,
     application_packages: &BTreeSet<String>,
     manifest: &ServingManifest,
     document: &WiringDocument,
-) -> Result<DefinitionHash, WorkflowGateError> {
+) -> Result<DefinitionHash, WorkflowConditionError> {
     let components =
-        resolve_workflow_components(env_key, application_packages, manifest, document)?;
+        resolve_workflow_components(project_env_key, application_packages, manifest, document)?;
     validate_resolved_wiring_compatibility(document, &components).map_err(|error| {
-        WorkflowGateError {
+        WorkflowConditionError {
             detail: format!(
                 "workflow {:?} version {} is not compatible with the serving release",
                 document.wiring_id, document.version
@@ -200,7 +200,7 @@ mod tests {
     ) -> ServingComponent {
         let fact = AdmittedComponent {
             scope: ComponentPackageScope {
-                env_key: "t1".to_owned(),
+                project_env_key: "t1".to_owned(),
                 package_id: package.to_owned(),
                 package_version: "1.0.0".to_owned(),
             },
@@ -252,14 +252,14 @@ mod tests {
     }
 
     #[test]
-    fn an_application_operation_gates_with_its_scope() {
+    fn an_application_operation_conditions_with_its_scope() {
         let manifest = manifest(vec![component(APPLICATION, "data", ORDERS_GET, true)]);
         let document = document("data", ORDERS_GET);
         let resolved =
             resolve_workflow_components("t1", &packages(), &manifest, &document).unwrap();
         assert_eq!(resolved["node"].scope.package_version, "1.0.0");
         assert_eq!(
-            gate_workflow_document("t1", &packages(), &manifest, &document).unwrap(),
+            condition_workflow_document("t1", &packages(), &manifest, &document).unwrap(),
             document.wiring_hash()
         );
     }
@@ -290,10 +290,10 @@ mod tests {
     fn a_node_the_release_does_not_carry_refuses() {
         let manifest = manifest(vec![component(APPLICATION, "data", ORDERS_GET, true)]);
         for document in [document("data", "put"), document("other", ORDERS_GET)] {
-            gate_workflow_document("t1", &packages(), &manifest, &document)
+            condition_workflow_document("t1", &packages(), &manifest, &document)
                 .expect_err("a node absent from the release refuses");
         }
-        gate_workflow_document(
+        condition_workflow_document(
             "t1",
             &BTreeSet::from(["absent".to_owned()]),
             &manifest,

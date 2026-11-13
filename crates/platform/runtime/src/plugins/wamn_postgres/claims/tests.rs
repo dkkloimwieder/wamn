@@ -94,24 +94,24 @@ async fn a_platform_checkout_refuses_the_guest_authority() {
 /// database is this test. It asserts the composed credential actually
 /// reaches resolution, and that composing without one resolves NOTHING
 /// rather than falling back.
-/// A guest credential url for `env_key` in `database`, named the way
-/// provisioning names one: the login carries the env_key as its scope
+/// A guest credential url for `project_env_key` in `database`, named the way
+/// provisioning names one: the login carries the project_env_key as its scope
 /// digest (`wamn-0h0g.22.6.4`).
-fn guest_url(env_key: &str, database: &str) -> String {
+fn guest_url(project_env_key: &str, database: &str) -> String {
     format!(
         "postgres://wamn_app_{}_a:pw@db/{database}",
-        wamn_run_state::app_scope_hash(env_key, database)
+        wamn_run_state::app_scope_hash(project_env_key, database)
     )
 }
 
 /// *** THE REFUSAL THAT MAKES THE CREDENTIAL THE AUTHORITY. ***
 ///
-/// After `wamn-0h0g.22.6` a guest's env_key is its LOGIN, so handing back a
-/// credential minted for another env_key is not a mis-selection, it is a
-/// cross-env_key read. Resolution refuses instead, and refuses again when the
-/// caller names no env_key at all.
+/// After `wamn-0h0g.22.6` a guest's project_env_key is its LOGIN, so handing back a
+/// credential minted for another project_env_key is not a mis-selection, it is a
+/// cross-project_env_key read. Resolution refuses instead, and refuses again when the
+/// caller names no project_env_key at all.
 #[test]
-fn a_guest_credential_resolves_for_its_own_env_key_and_no_other() {
+fn a_guest_credential_resolves_for_its_own_project_env_key_and_no_other() {
     let host = WamnPostgres::from_env(Some(ClassCredentials::every_class(guest_url(
         "fixture",
         "host-default",
@@ -120,27 +120,27 @@ fn a_guest_credential_resolves_for_its_own_env_key_and_no_other() {
     assert!(
         host.provider
             .resolve(DEFAULT_PROJECT, AuthorityClass::GuestSql, Some("fixture"))
-            .expect("the credential's own env_key resolves")
+            .expect("the credential's own project_env_key resolves")
             .is_some()
     );
     assert!(
         host.provider
             .resolve(DEFAULT_PROJECT, AuthorityClass::GuestSql, Some("evil"))
             .is_err(),
-        "a credential minted for another env_key must be REFUSED, not borrowed"
+        "a credential minted for another project_env_key must be REFUSED, not borrowed"
     );
     assert!(
         host.provider
             .resolve(DEFAULT_PROJECT, AuthorityClass::GuestSql, None)
             .is_err(),
-        "guest resolution without an env_key has no authority to check"
+        "guest resolution without an project_env_key has no authority to check"
     );
-    // Platform classes are project-environment scoped, so the env_key is not
+    // Platform classes are project-environment scoped, so the project_env_key is not
     // part of their binding and its absence is not an error.
     assert!(
         host.provider
             .resolve(DEFAULT_PROJECT, AuthorityClass::ExecutorPlatform, None)
-            .expect("platform resolution needs no env_key")
+            .expect("platform resolution needs no project_env_key")
             .is_some()
     );
 }
@@ -292,23 +292,23 @@ fn manifest_digest_shape_matches_the_run_plane_check() {
 #[test]
 fn guard_rejects_set_and_reset_variants() {
     for s in [
-        "SET app.env_key = 'victim'",
-        "set local app.env_key = 'victim'",
-        "SET SESSION app.env_key TO 'victim'",
+        "SET app.project_env_key = 'victim'",
+        "set local app.project_env_key = 'victim'",
+        "SET SESSION app.project_env_key TO 'victim'",
         "SET ROLE postgres",
         "set session authorization postgres",
         // wamn-0h0g.23.1 — the two claims CLAIM_SQL now injects. Overriding
         // either is the privilege escalation the binding would otherwise open:
-        // `app.role` clears an exempt-role gate, `app.user_id` reassigns row
+        // `app.role` clears an exempt-role condition, `app.user_id` reassigns row
         // ownership.
         "SET app.role = 'admin'",
         "set local app.user_id = '00000000-0000-4000-8000-000000000000'",
         "RESET app.role",
-        "RESET app.env_key",
+        "RESET app.project_env_key",
         "RESET ALL",
-        "   \n\t SET app.env_key='victim'",
-        "/* sneaky */ SET app.env_key='victim'",
-        "-- lead\nSET app.env_key='victim'",
+        "   \n\t SET app.project_env_key='victim'",
+        "/* sneaky */ SET app.project_env_key='victim'",
+        "-- lead\nSET app.project_env_key='victim'",
     ] {
         assert!(statement_mutates_session(s), "should reject: {s:?}");
         assert!(reject_claim_mutation(s).is_err(), "should reject: {s:?}");
@@ -318,10 +318,10 @@ fn guard_rejects_set_and_reset_variants() {
 #[test]
 fn guard_rejects_set_config_anywhere() {
     for s in [
-        "SELECT set_config('app.env_key','victim',false)",
-        "WITH t AS (SELECT set_config('app.env_key','victim',true)) SELECT 1",
-        "select pg_catalog.set_config('app.env_key','victim',false)",
-        "SELECT SET_CONFIG('app.env_key','victim',false)",
+        "SELECT set_config('app.project_env_key','victim',false)",
+        "WITH t AS (SELECT set_config('app.project_env_key','victim',true)) SELECT 1",
+        "select pg_catalog.set_config('app.project_env_key','victim',false)",
+        "SELECT SET_CONFIG('app.project_env_key','victim',false)",
         "SELECT set_config('app.role','admin',true)",
         "WITH t AS (SELECT set_config('app.user_id','00000000-0000-4000-8000-000000000000',true)) SELECT 1",
     ] {
@@ -333,9 +333,9 @@ fn guard_rejects_set_config_anywhere() {
 fn guard_allows_normal_statements_and_current_setting() {
     for s in [
         "SELECT count(*) FROM s2.rls_secrets WHERE secret LIKE $1",
-        "INSERT INTO t (env_key, k) VALUES (current_setting('app.env_key', true), $1)",
+        "INSERT INTO t (project_env_key, k) VALUES (current_setting('app.project_env_key', true), $1)",
         "UPDATE t SET a = 1 WHERE id = $1",
-        "SELECT current_setting('app.env_key', true)",
+        "SELECT current_setting('app.project_env_key', true)",
         "SELECT * FROM settings",
         "DELETE FROM assets WHERE id = $1",
     ] {
@@ -490,10 +490,10 @@ fn validate_claims_rejects_malformed_identities() {
         .is_ok()
     );
     assert!(validate_claims("fixture", None, None, None, None, None, None).is_ok());
-    assert!(validate_claims("bad'tenant", None, None, None, None, None, None).is_err());
+    assert!(validate_claims("bad'project", None, None, None, None, None, None).is_err());
     assert!(validate_claims("fixture", Some("has-hyphen"), None, None, None, None, None).is_err());
     assert!(validate_claims("fixture", None, Some("bad;runner"), None, None, None, None).is_err());
-    // `''` is the deny floor, never a claim.
+    // `''` is the base denial policy, never a claim.
     assert!(validate_claims("fixture", None, None, Some(""), None, None, None).is_err());
     // A non-uuid user id would raise 22P02 inside every ownership predicate.
     assert!(validate_claims("fixture", None, None, None, Some("not-a-uuid"), None, None).is_err());
@@ -627,7 +627,7 @@ fn clear_component_claims_reaps_all_registries_for_the_workload() {
     let pg = WamnPostgres::with_provider(Arc::new(StaticCredentialProvider::default_only(None)));
     // Two components under workload "wl-a", one under "wl-b".
     for c in ["wl-a-component-0", "wl-b-component-0"] {
-        pg.set_env_key(c, "fixture").unwrap();
+        pg.set_project_env_key(c, "fixture").unwrap();
         pg.set_project(c, "proj").unwrap();
         pg.set_schema(c, "s_run").unwrap();
         pg.set_runner(c, "owner-1").unwrap();
@@ -653,14 +653,14 @@ fn clear_component_claims_reaps_all_registries_for_the_workload() {
     // Unbinding an UNKNOWN workload clears nothing.
     pg.clear_component_claims("wl-unknown");
     assert_eq!(
-        pg.env_key_for("wl-a-component-0").as_deref(),
+        pg.project_env_key_for("wl-a-component-0").as_deref(),
         Some("fixture")
     );
 
     pg.clear_component_claims("wl-a");
 
     // Every registry emptied for the unbound workload's component.
-    assert_eq!(pg.env_key_for("wl-a-component-0"), None);
+    assert_eq!(pg.project_env_key_for("wl-a-component-0"), None);
     // project_for falls back to DEFAULT_PROJECT once the claim is gone.
     assert_eq!(pg.project_for("wl-a-component-0"), DEFAULT_PROJECT);
     assert_eq!(pg.schema_for("wl-a-component-0"), None);
@@ -678,7 +678,7 @@ fn clear_component_claims_reaps_all_registries_for_the_workload() {
 
     // The other workload's component is untouched across the board.
     assert_eq!(
-        pg.env_key_for("wl-b-component-0").as_deref(),
+        pg.project_env_key_for("wl-b-component-0").as_deref(),
         Some("fixture")
     );
     assert_eq!(pg.project_for("wl-b-component-0"), "proj");
@@ -724,8 +724,8 @@ fn clear_component_claims_reaps_all_registries_for_the_workload() {
 // and creates + drops its own objects.
 // ------------------------------------------------------------------
 
-/// The env_key every live guest checkout in this module authenticates for.
-const LIVE_ENV_KEY: &str = "fixture";
+/// The project_env_key every live guest checkout in this module authenticates for.
+const LIVE_PROJECT_ENV_KEY: &str = "fixture";
 
 /// The executing principal a live transactional statement binds.
 pub(in crate::plugins::wamn_postgres) const LIVE_PRINCIPAL: &str =
@@ -748,13 +748,13 @@ const ENSURE_GUEST_ACL_ROLE_SQL: &str = "DO $acl$ BEGIN \
 /// The platform principal id `wamn-identity-protocol` derives for `wamn:executor`.
 const LIVE_PLATFORM_PRINCIPAL: &str = "d318d033-29ea-5cb0-ab56-24340413fbcc";
 
-/// The `platform."user"` floor the provisioning check reads
+/// The `platform."user"` minimum the provisioning check reads
 /// (`wamn-0h0g.9.19`).
 ///
 /// Only the column the check names, because row existence is the whole
 /// question. `deploy/sql/app-schema.sql` owns the production table with its
 /// type checks. The guest login reads it, so the
-/// fixture grants the stable ACL role what the production floor grants: usage
+/// fixture grants the stable ACL role what the production minimum grants: usage
 /// on the schema and select on the table.
 const ENSURE_LIVE_USER_TABLE_SQL: &str = "CREATE SCHEMA IF NOT EXISTS platform; \
      CREATE TABLE IF NOT EXISTS platform.\"user\" ( \
@@ -763,7 +763,7 @@ const ENSURE_LIVE_USER_TABLE_SQL: &str = "CREATE SCHEMA IF NOT EXISTS platform; 
      GRANT USAGE ON SCHEMA platform TO wamn_app; \
      GRANT SELECT ON platform.\"user\" TO wamn_app;";
 
-/// Install the user floor in one disposable database and name the principals
+/// Install the user minimum in one disposable database and name the principals
 /// that own a row there.
 pub(in crate::plugins::wamn_postgres) async fn ensure_live_user_rows(
     admin_url: &str,
@@ -775,7 +775,7 @@ pub(in crate::plugins::wamn_postgres) async fn ensure_live_user_rows(
             "{ENSURE_GUEST_ACL_ROLE_SQL} {ENSURE_LIVE_USER_TABLE_SQL}"
         ))
         .await
-        .expect("install the live platform.\"user\" floor");
+        .expect("install the live platform.\"user\" minimum");
     for principal in principals {
         admin
             .execute(
@@ -799,20 +799,20 @@ fn live_database(admin_url: &str) -> String {
 /// Rewrite a disposable-database URL onto a PROPERLY NAMED guest generation,
 /// creating the login if it is missing.
 ///
-/// `wamn-0h0g.22.6.7` binds a guest credential to its env_key: resolution
-/// verifies that the login carries `app_scope_hash(env_key, database)`, so a
+/// `wamn-0h0g.22.6.7` binds a guest credential to its project_env_key: resolution
+/// verifies that the login carries `app_scope_hash(project_env_key, database)`, so a
 /// URL naming an arbitrary user no longer resolves for the guest class.
 /// That is the point — a shared login is exactly what item 2 retires — and
 /// it means a live guest test has to authenticate as a real generation.
 pub(in crate::plugins::wamn_postgres) async fn live_guest_url(
     admin_url: &str,
-    env_key: &str,
+    project_env_key: &str,
 ) -> String {
     let mut url = url::Url::parse(admin_url).expect("parse the live test url");
     let database = live_database(admin_url);
     let role = format!(
         "wamn_app_{}_a",
-        wamn_run_state::app_scope_hash(env_key, &database)
+        wamn_run_state::app_scope_hash(project_env_key, &database)
     );
     let admin = connect_raw(admin_url).await;
     admin
@@ -877,7 +877,7 @@ async fn live_bound_claims_are_injection_inert_and_txn_local() {
     let stmt = client.prepare(CLAIM_SQL).await.unwrap();
     let timeout = "5000";
 
-    // (1) app.env_key / app.runner / app.role / app.user_id are free-form
+    // (1) app.project_env_key / app.runner / app.role / app.user_id are free-form
     //     custom GUCs: injection-shaped
     //     + unicode values bind as DATA and round-trip VERBATIM; the absent
     //     schema ($3 NULL) leaves the server-default search_path untouched.
@@ -886,7 +886,7 @@ async fn live_bound_claims_are_injection_inert_and_txn_local() {
         .await
         .unwrap()
         .get(0);
-    let evil_env_key = format!("x'; DROP TABLE public.{marker}; -- 😀Ω");
+    let evil_project_env_key = format!("x'; DROP TABLE public.{marker}; -- 😀Ω");
     let evil_runner = format!("r'; DELETE FROM public.{marker}; --");
     let evil_role = format!("admin'); DROP TABLE public.{marker}; --");
     let evil_user = format!("u'; TRUNCATE public.{marker}; --");
@@ -895,7 +895,7 @@ async fn live_bound_claims_are_injection_inert_and_txn_local() {
     let no_schema: Option<&str> = None;
     client.batch_execute("BEGIN").await.unwrap();
     let params: [&(dyn ToSql + Sync); 8] = [
-        &evil_env_key,
+        &evil_project_env_key,
         &timeout,
         &no_schema,
         &evil_runner,
@@ -906,12 +906,15 @@ async fn live_bound_claims_are_injection_inert_and_txn_local() {
     ];
     client.execute(&stmt, &params).await.unwrap();
 
-    let got_env_key: Option<String> = client
-        .query_one("SELECT current_setting('app.env_key', true)", &[])
+    let got_project_env_key: Option<String> = client
+        .query_one("SELECT current_setting('app.project_env_key', true)", &[])
         .await
         .unwrap()
         .get(0);
-    assert_eq!(got_env_key.as_deref(), Some(evil_env_key.as_str()));
+    assert_eq!(
+        got_project_env_key.as_deref(),
+        Some(evil_project_env_key.as_str())
+    );
     let got_runner: Option<String> = client
         .query_one("SELECT current_setting('app.runner', true)", &[])
         .await
@@ -963,9 +966,9 @@ async fn live_bound_claims_are_injection_inert_and_txn_local() {
 
     // SET LOCAL equivalence: after COMMIT the txn-local claim is gone. Per the
     // custom-GUC gotcha a touched GUC reverts to '' (NOT NULL) — the value the
-    // RLS floor NULLIFs.
+    // RLS base grants NULLIFs.
     let after: Option<String> = client
-        .query_one("SELECT current_setting('app.env_key', true)", &[])
+        .query_one("SELECT current_setting('app.project_env_key', true)", &[])
         .await
         .unwrap()
         .get(0);
@@ -977,7 +980,7 @@ async fn live_bound_claims_are_injection_inert_and_txn_local() {
     client.batch_execute("BEGIN").await.unwrap();
     let evil_schema: Option<&str> = Some("s'; DROP TABLE public.foo; --");
     let params2: [&(dyn ToSql + Sync); 8] = [
-        &evil_env_key,
+        &evil_project_env_key,
         &timeout,
         &evil_schema,
         &evil_runner,
@@ -1008,17 +1011,17 @@ async fn live_bound_claims_are_injection_inert_and_txn_local() {
 
 // R2/R16 — the REAL plugin path: begin_with_claims injects the guest claim
 // set via the bound statement, they are visible in-txn, and revert after the
-// txn. `app.env_key` is NOT among them (`wamn-0h0g.22.6.7`): a guest's env_key
+// txn. `app.project_env_key` is NOT among them (`wamn-0h0g.22.6.7`): a guest's project_env_key
 // is its LOGIN, and injecting a GUC nothing it can read consults would be a
 // second, settable statement about an authority derived elsewhere.
 #[tokio::test]
-async fn live_begin_with_claims_sets_the_guest_set_without_a_env_key_claim() {
+async fn live_begin_with_claims_sets_the_guest_set_without_a_project_env_key_claim() {
     let _lock = wamn_test_postgres::lock();
     let database = wamn_test_postgres::database();
     let admin_url = database.url();
     let pg = WamnPostgres::new(WamnPostgresConfig {
         credentials: Some(ClassCredentials::every_class(
-            live_guest_url(admin_url, LIVE_ENV_KEY).await,
+            live_guest_url(admin_url, LIVE_PROJECT_ENV_KEY).await,
         )),
         guest_pool_max_size: 2,
         platform_pool_max_size: 2,
@@ -1031,7 +1034,7 @@ async fn live_begin_with_claims_sets_the_guest_set_without_a_env_key_claim() {
     let operation = "platform-fixture:widget/update@1.0.0";
     let application = "platform_fixture";
     let (conn, _pp) = pg
-        .checkout_guest(DEFAULT_PROJECT, LIVE_ENV_KEY)
+        .checkout_guest(DEFAULT_PROJECT, LIVE_PROJECT_ENV_KEY)
         .await
         .unwrap();
     pg.begin_with_claims(
@@ -1052,7 +1055,7 @@ async fn live_begin_with_claims_sets_the_guest_set_without_a_env_key_claim() {
     .unwrap();
     let row = conn
         .query_one(
-            "SELECT current_setting('app.env_key', true), \
+            "SELECT current_setting('app.project_env_key', true), \
                  current_setting('statement_timeout', true), \
                  current_setting('search_path', true), \
                  current_setting('app.runner', true), \
@@ -1064,7 +1067,7 @@ async fn live_begin_with_claims_sets_the_guest_set_without_a_env_key_claim() {
         )
         .await
         .unwrap();
-    let env_key: Option<String> = row.get(0);
+    let project_env_key: Option<String> = row.get(0);
     let timeout: Option<String> = row.get(1);
     let sp: Option<String> = row.get(2);
     let runner: Option<String> = row.get(3);
@@ -1076,13 +1079,13 @@ async fn live_begin_with_claims_sets_the_guest_set_without_a_env_key_claim() {
     // reads back as the EMPTY STRING once it has been set and the SET LOCAL
     // scope ended; it reads NULL only if it was never set in this session at
     // all. So `None` here says more than "the claim was cleared": it says
-    // the guest transaction never touched `app.env_key`.
+    // the guest transaction never touched `app.project_env_key`.
     assert_eq!(
-        env_key, None,
-        "the guest claim set must NOT inject app.env_key"
+        project_env_key, None,
+        "the guest claim set must NOT inject app.project_env_key"
     );
-    // …and the session it runs on authenticates as the env_key's own
-    // generation, which is where its env_key actually comes from.
+    // …and the session it runs on authenticates as the project_env_key's own
+    // generation, which is where its project_env_key actually comes from.
     let who: String = conn
         .query_one("SELECT current_user::text", &[])
         .await
@@ -1090,10 +1093,10 @@ async fn live_begin_with_claims_sets_the_guest_set_without_a_env_key_claim() {
         .get(0);
     assert!(
         who.contains(&wamn_run_state::app_scope_hash(
-            LIVE_ENV_KEY,
+            LIVE_PROJECT_ENV_KEY,
             &live_database(admin_url)
         )),
-        "the guest session must authenticate as {LIVE_ENV_KEY}'s generation, got {who:?}"
+        "the guest session must authenticate as {LIVE_PROJECT_ENV_KEY}'s generation, got {who:?}"
     );
     assert_eq!(timeout.as_deref(), Some("4321ms"));
     assert_eq!(sp.as_deref(), Some("public"));
@@ -1127,20 +1130,20 @@ async fn visible_rows(pg: &WamnPostgres, component: &str, sql: &str) -> usize {
     }
 }
 
-/// SCAFFOLDING FLOOR, NOT THE PRODUCTION ONE. Production keys the permissive
-/// floor on `current_user` through `wamn_authority.tenant_key`
+/// SCAFFOLDING MINIMUM, NOT THE PRODUCTION ONE. Production keys the permissive
+/// minimum on `current_user` through `wamn_authority.project_key`
 /// (`wamn-0h0g.22.6`), which needs the authority derivations installed — and
 /// those are built by the provisioner, which the shipped runtime
-/// deliberately does not link. The floor is not this fixture's subject: the
+/// deliberately does not link. The minimum is not this fixture's subject: the
 /// RESTRICTIVE per-role and per-user layer is, and that is a different claim
-/// class item 2 leaves alone. The production floor is shown live by
+/// class item 2 leaves alone. The production minimum is shown live by
 /// `crates/control/provision/tests/deploy_sql_authority.rs` and the static
 /// `deploy/sql/app-schema.sql` contract.
 ///
-/// The 3.2 env_key floor plus the row-ownership rule documented by
+/// The 3.2 project_env_key minimum plus the row-ownership rule documented by
 /// `deploy/sql/app-schema.sql`, over a table the probe role does not own so
 /// RLS applies to it.
-fn rls_fixture_sql(schema: &str, probe: &str, env_key: &str, u1: &str, u2: &str) -> String {
+fn rls_fixture_sql(schema: &str, probe: &str, project_env_key: &str, u1: &str, u2: &str) -> String {
     format!(
         "DROP SCHEMA IF EXISTS {schema} CASCADE; \
              DROP ROLE IF EXISTS {probe}; \
@@ -1149,24 +1152,24 @@ fn rls_fixture_sql(schema: &str, probe: &str, env_key: &str, u1: &str, u2: &str)
              GRANT wamn_app TO {probe}; \
              CREATE SCHEMA {schema}; \
              CREATE TABLE {schema}.dispositions ( \
-                 env_key text NOT NULL, id int NOT NULL, inspector_id uuid NOT NULL); \
+                 project_env_key text NOT NULL, id int NOT NULL, inspector_id uuid NOT NULL); \
              ALTER TABLE {schema}.dispositions ENABLE ROW LEVEL SECURITY; \
-             CREATE POLICY dispositions_tenant ON {schema}.dispositions \
-                 USING (env_key = '{env_key}'); \
+             CREATE POLICY dispositions_project ON {schema}.dispositions \
+                 USING (project_env_key = '{project_env_key}'); \
              CREATE POLICY \"dispositions_owner_0\" ON {schema}.dispositions AS RESTRICTIVE \
                  FOR ALL \
                  USING (COALESCE(current_setting('app.role', true), '') IN ('supervisor', 'admin') \
                         OR \"inspector_id\" = NULLIF(current_setting('app.user_id', true), '')::uuid); \
-             INSERT INTO {schema}.dispositions VALUES ('{env_key}', 1, '{u1}'), ('{env_key}', 2, '{u2}'); \
+             INSERT INTO {schema}.dispositions VALUES ('{project_env_key}', 1, '{u1}'), ('{project_env_key}', 2, '{u2}'); \
              GRANT USAGE ON SCHEMA {schema} TO {probe}; \
              GRANT SELECT ON {schema}.dispositions TO {probe};"
     )
 }
 
 // wamn-0h0g.23.1 — the compiled per-user / per-role rules key on `app.role`
-// and `app.user_id`, and under their COALESCE / NULLIF deny floors a policy
+// and `app.user_id`, and under their COALESCE / NULLIF base denial policys a policy
 // that is never handed those claims denies EVERYTHING. Before this bead
-// `CLAIM_SQL` bound only env_key / statement_timeout / search_path /
+// `CLAIM_SQL` bound only project_env_key / statement_timeout / search_path /
 // app.runner, so every per-user policy silently denied on the production
 // path while isolated policy tests passed on hand-written `SET LOCAL`.
 // This drives the REAL plugin (`one_shot`) as a NOSUPERUSER
@@ -1174,7 +1177,7 @@ fn rls_fixture_sql(schema: &str, probe: &str, env_key: &str, u1: &str, u2: &str)
 // the caller's identity.
 #[tokio::test]
 async fn live_compiled_per_user_policy_permits_the_injected_caller() {
-    const ENV_KEY: &str = "rls-claim-live";
+    const PROJECT_ENV_KEY: &str = "rls-claim-live";
     const COMPONENT: &str = "rls-claim-live-component";
     const U1: &str = "11111111-1111-4111-8111-111111111111";
     const U2: &str = "22222222-2222-4222-8222-222222222222";
@@ -1184,20 +1187,20 @@ async fn live_compiled_per_user_policy_permits_the_injected_caller() {
     let admin_url = database.url();
     let suffix = std::process::id();
     let schema = format!("wamn_rls_claim_{suffix}");
-    // The probe login is NAMED AS A GUEST GENERATION for this test's env_key:
+    // The probe login is NAMED AS A GUEST GENERATION for this test's project_env_key:
     // guest credential resolution verifies that the login carries
-    // `app_scope_hash(env_key, database)` (`wamn-0h0g.22.6.7`), so a probe
+    // `app_scope_hash(project_env_key, database)` (`wamn-0h0g.22.6.7`), so a probe
     // with an arbitrary name would be refused before the policy under test
-    // ever ran. The two env_keys differ per test, so the derived logins do
+    // ever ran. The two project_env_keys differ per test, so the derived logins do
     // too and the tests stay parallel-safe.
     let probe = format!(
         "wamn_app_{}_a",
-        wamn_run_state::app_scope_hash(ENV_KEY, &live_database(admin_url))
+        wamn_run_state::app_scope_hash(PROJECT_ENV_KEY, &live_database(admin_url))
     );
     let _ = suffix;
     let admin = connect_raw(admin_url).await;
     admin
-        .batch_execute(&rls_fixture_sql(&schema, &probe, ENV_KEY, U1, U2))
+        .batch_execute(&rls_fixture_sql(&schema, &probe, PROJECT_ENV_KEY, U1, U2))
         .await
         .expect("seed the per-user RLS fixture as the superuser owner");
 
@@ -1212,7 +1215,7 @@ async fn live_compiled_per_user_policy_permits_the_injected_caller() {
         row_limit: 1_000,
     })
     .unwrap();
-    pg.set_env_key(COMPONENT, ENV_KEY).unwrap();
+    pg.set_project_env_key(COMPONENT, PROJECT_ENV_KEY).unwrap();
     pg.set_schema(COMPONENT, &schema).unwrap();
     pg.set_role(COMPONENT, "inspector").unwrap();
     pg.set_user_id(COMPONENT, U1).unwrap();
@@ -1248,7 +1251,7 @@ async fn live_compiled_per_user_policy_permits_the_injected_caller() {
     assert_eq!(
         visible_rows(&pg, COMPONENT, "SELECT id FROM dispositions ORDER BY id").await,
         2,
-        "the injected app.role must satisfy the exempt-role gate"
+        "the injected app.role must satisfy the exempt-role condition"
     );
 
     admin
@@ -1260,7 +1263,7 @@ async fn live_compiled_per_user_policy_permits_the_injected_caller() {
 }
 
 // wamn-0h0g.23.1 — the SET-override refusal, on the two claims the fix now
-// injects. `reject_claim_mutation` (wamn-cjv.2) is the mechanism the env_key
+// injects. `reject_claim_mutation` (wamn-cjv.2) is the mechanism the project_env_key
 // claim already carries and it is GUC-agnostic, so it covers these the moment
 // they exist — but coverage that is never exercised is not coverage, and a
 // binding WITHOUT refusal turns a silent-deny bug into privilege escalation.
@@ -1268,7 +1271,7 @@ async fn live_compiled_per_user_policy_permits_the_injected_caller() {
 // follows is load-bearing rather than vacuous.
 #[tokio::test]
 async fn live_guest_cannot_override_the_injected_role_or_user_claim() {
-    const ENV_KEY: &str = "rls-override-live";
+    const PROJECT_ENV_KEY: &str = "rls-override-live";
     const COMPONENT: &str = "rls-override-live-component";
     const U1: &str = "11111111-1111-4111-8111-111111111111";
     const U2: &str = "22222222-2222-4222-8222-222222222222";
@@ -1278,20 +1281,20 @@ async fn live_guest_cannot_override_the_injected_role_or_user_claim() {
     let admin_url = database.url();
     let suffix = std::process::id();
     let schema = format!("wamn_rls_override_{suffix}");
-    // The probe login is NAMED AS A GUEST GENERATION for this test's env_key:
+    // The probe login is NAMED AS A GUEST GENERATION for this test's project_env_key:
     // guest credential resolution verifies that the login carries
-    // `app_scope_hash(env_key, database)` (`wamn-0h0g.22.6.7`), so a probe
+    // `app_scope_hash(project_env_key, database)` (`wamn-0h0g.22.6.7`), so a probe
     // with an arbitrary name would be refused before the policy under test
-    // ever ran. The two env_keys differ per test, so the derived logins do
+    // ever ran. The two project_env_keys differ per test, so the derived logins do
     // too and the tests stay parallel-safe.
     let probe = format!(
         "wamn_app_{}_a",
-        wamn_run_state::app_scope_hash(ENV_KEY, &live_database(admin_url))
+        wamn_run_state::app_scope_hash(PROJECT_ENV_KEY, &live_database(admin_url))
     );
     let _ = suffix;
     let admin = connect_raw(admin_url).await;
     admin
-        .batch_execute(&rls_fixture_sql(&schema, &probe, ENV_KEY, U1, U2))
+        .batch_execute(&rls_fixture_sql(&schema, &probe, PROJECT_ENV_KEY, U1, U2))
         .await
         .expect("seed the per-user RLS fixture as the superuser owner");
 
@@ -1306,21 +1309,24 @@ async fn live_guest_cannot_override_the_injected_role_or_user_claim() {
         row_limit: 1_000,
     })
     .unwrap();
-    pg.set_env_key(COMPONENT, ENV_KEY).unwrap();
+    pg.set_project_env_key(COMPONENT, PROJECT_ENV_KEY).unwrap();
     pg.set_schema(COMPONENT, &schema).unwrap();
     pg.set_role(COMPONENT, "inspector").unwrap();
     pg.set_user_id(COMPONENT, U1).unwrap();
 
     // CONTROL: inside ONE plugin-managed transaction the injected claims admit
     // the caller's own row — and a bare `SET LOCAL` on that same transaction
-    // clears the exempt-role gate and reveals BOTH. So the escalation the
+    // clears the exempt-role condition and reveals BOTH. So the escalation the
     // guard refuses below is real, not hypothetical.
-    let (conn, _pp) = pg.checkout_guest(DEFAULT_PROJECT, ENV_KEY).await.unwrap();
+    let (conn, _pp) = pg
+        .checkout_guest(DEFAULT_PROJECT, PROJECT_ENV_KEY)
+        .await
+        .unwrap();
     pg.begin_with_claims(
         &conn,
         AuthorityClass::GuestSql,
         false,
-        ENV_KEY,
+        PROJECT_ENV_KEY,
         Some(&schema),
         None,
         Some("inspector"),
@@ -1385,7 +1391,7 @@ async fn live_guest_cannot_override_the_injected_role_or_user_claim() {
         .expect("drop the per-user RLS fixture");
 }
 
-/// wamn-0h0g.17.7 — `ConnectionHttp` freezes its `(env_key, project)` at store
+/// wamn-0h0g.17.7 — `ConnectionHttp` freezes its `(project_env_key, project)` at store
 /// construction and cannot be rebound at checkout, so the registry has to
 /// refuse it when the two disagree.
 ///
@@ -1394,7 +1400,7 @@ async fn live_guest_cannot_override_the_injected_role_or_user_claim() {
 /// to the (absent) connection. Both halves are asserted, because a guard
 /// that refused everything would pass the first alone.
 #[tokio::test]
-async fn effect_snapshot_refuses_a_env_key_that_disagrees_with_the_bound_claim() {
+async fn effect_snapshot_refuses_a_project_env_key_that_disagrees_with_the_bound_claim() {
     const COMPONENT: &str = "warm-instance-0";
     let pg = Arc::new(
         WamnPostgres::new(WamnPostgresConfig {
@@ -1410,19 +1416,19 @@ async fn effect_snapshot_refuses_a_env_key_that_disagrees_with_the_bound_claim()
     pg.bind_session_claims(
         COMPONENT,
         &SessionClaims {
-            env_key: "tenant-b".to_string(),
+            project_env_key: "org-b".to_string(),
             ..SessionClaims::default()
         },
     )
     .await
-    .expect("the acquiring env_key binds");
+    .expect("the acquiring project_env_key binds");
 
     let facts = crate::connection_facts::ConnectionFacts::new(
         Arc::new(crate::connection_memory::ConnectionMemory::default()),
         wamn_broker::Publisher::default(),
         Arc::new(crate::connection_credentials::ConnectionCredentials::empty()),
         Arc::clone(&pg),
-        "tenant-a",
+        "org-a",
         DEFAULT_PROJECT,
         "dev",
     );
@@ -1450,30 +1456,30 @@ async fn effect_snapshot_refuses_a_env_key_that_disagrees_with_the_bound_claim()
         candidate_binding: None,
     };
 
-    // A stale ConnectionHttp still carrying the env_key its store was BUILT
+    // A stale ConnectionHttp still carrying the project_env_key its store was BUILT
     // for is refused before it can read a row.
     let stale = pg
-        .connection_effect_snapshot(COMPONENT, DEFAULT_PROJECT, "tenant-a", &lookup, &facts)
+        .connection_effect_snapshot(COMPONENT, DEFAULT_PROJECT, "org-a", &lookup, &facts)
         .await
-        .expect_err("a disagreeing env_key is refused");
+        .expect_err("a disagreeing project_env_key is refused");
     assert!(
         stale.to_string().contains(
-            "HTTP effect authorization env_key \"tenant-a\" disagrees with the env_key bound"
+            "HTTP effect authorization project_env_key \"org-a\" disagrees with the project_env_key bound"
         ),
         "the refusal names the divergence rather than any other failure: {stale}"
     );
 
-    // The agreeing env_key gets past the guard and fails only on the absent
+    // The agreeing project_env_key gets past the guard and fails only on the absent
     // connection, so the guard is not simply refusing everything.
     let agreeing = pg
-        .connection_effect_snapshot(COMPONENT, DEFAULT_PROJECT, "tenant-b", &lookup, &facts)
+        .connection_effect_snapshot(COMPONENT, DEFAULT_PROJECT, "org-b", &lookup, &facts)
         .await
         .expect_err("an offline plugin has no connection to resolve against");
     assert!(
         !agreeing
             .to_string()
-            .contains("disagrees with the env_key bound"),
-        "the bound env_key must pass the guard: {agreeing}"
+            .contains("disagrees with the project_env_key bound"),
+        "the bound project_env_key must pass the guard: {agreeing}"
     );
 }
 
@@ -1482,15 +1488,15 @@ async fn effect_snapshot_refuses_a_env_key_that_disagrees_with_the_bound_claim()
 ///
 /// Agreement with the registry carries no information when the registry has
 /// no entry, so an unbound claim scope must be refused rather than trusted
-/// with whatever env_key the caller froze. This is the same deny floor
-/// `require_env_key` applies to every other read: an instance that skipped a
+/// with whatever project_env_key the caller froze. This is the same base denial policy
+/// `require_project_env_key` applies to every other read: an instance that skipped a
 /// bind resolves nothing.
 ///
 /// Offline on purpose: the refusal lands before any pool is reached, and the
 /// message is asserted so a mutant that lets the unbound case fall through
 /// fails on the message rather than passing on the (also absent) connection.
 #[tokio::test]
-async fn effect_snapshot_refuses_a_component_with_no_bound_env_key() {
+async fn effect_snapshot_refuses_a_component_with_no_bound_project_env_key() {
     const COMPONENT: &str = "never-acquired-instance";
     let pg = Arc::new(
         WamnPostgres::new(WamnPostgresConfig {
@@ -1514,7 +1520,7 @@ async fn effect_snapshot_refuses_a_component_with_no_bound_env_key() {
         wamn_broker::Publisher::default(),
         Arc::new(crate::connection_credentials::ConnectionCredentials::empty()),
         Arc::clone(&pg),
-        "tenant-a",
+        "org-a",
         DEFAULT_PROJECT,
         "dev",
     );
@@ -1543,13 +1549,13 @@ async fn effect_snapshot_refuses_a_component_with_no_bound_env_key() {
     };
 
     let unbound = pg
-        .connection_effect_snapshot(COMPONENT, DEFAULT_PROJECT, "tenant-a", &lookup, &facts)
+        .connection_effect_snapshot(COMPONENT, DEFAULT_PROJECT, "org-a", &lookup, &facts)
         .await
         .expect_err("an unbound claim scope resolves nothing");
     assert!(
         unbound.to_string().contains(
             "HTTP effect authorization for component \"never-acquired-instance\" has no \
-                 bound env_key claim"
+                 bound project_env_key claim"
         ),
         "the refusal names the missing claim rather than any other failure: {unbound}"
     );
@@ -1576,13 +1582,13 @@ async fn workload_binding_selects_only_the_materializer_authority() {
         .expect_err("no other explicit authority is admitted");
 
     assert!(
-        pg.checkout_workload("materializer", DEFAULT_PROJECT, "tenant-a")
+        pg.checkout_workload("materializer", DEFAULT_PROJECT, "org-a")
             .await
             .is_err(),
         "the recording provider deliberately names no credential"
     );
     assert!(
-        pg.checkout_workload("ordinary-guest", DEFAULT_PROJECT, "tenant-a")
+        pg.checkout_workload("ordinary-guest", DEFAULT_PROJECT, "org-a")
             .await
             .is_err(),
         "the recording provider deliberately names no credential"
@@ -1604,7 +1610,7 @@ impl CredentialProvider for RecordingProvider {
         &self,
         _project: &str,
         class: AuthorityClass,
-        _env_key: Option<&str>,
+        _project_env_key: Option<&str>,
     ) -> anyhow::Result<Option<ResolvedCredential>> {
         self.asked
             .lock()
@@ -1641,19 +1647,19 @@ async fn effect_snapshot_checks_out_under_the_callable_http_authority() {
     pg.bind_session_claims(
         COMPONENT,
         &SessionClaims {
-            env_key: "tenant-a".to_string(),
+            project_env_key: "org-a".to_string(),
             ..SessionClaims::default()
         },
     )
     .await
-    .expect("the acquiring env_key binds");
+    .expect("the acquiring project_env_key binds");
 
     let facts = crate::connection_facts::ConnectionFacts::new(
         Arc::new(crate::connection_memory::ConnectionMemory::default()),
         wamn_broker::Publisher::default(),
         Arc::new(crate::connection_credentials::ConnectionCredentials::empty()),
         Arc::clone(&pg),
-        "tenant-a",
+        "org-a",
         DEFAULT_PROJECT,
         "dev",
     );
@@ -1682,14 +1688,14 @@ async fn effect_snapshot_checks_out_under_the_callable_http_authority() {
     };
 
     let refused = pg
-        .connection_effect_snapshot(COMPONENT, DEFAULT_PROJECT, "tenant-a", &lookup, &facts)
+        .connection_effect_snapshot(COMPONENT, DEFAULT_PROJECT, "org-a", &lookup, &facts)
         .await
         .expect_err("a provider that names no credential resolves nothing");
     assert!(
         !refused
             .to_string()
-            .contains("disagrees with the env_key bound"),
-        "the bound env_key must reach the checkout, or the class below is \
+            .contains("disagrees with the project_env_key bound"),
+        "the bound project_env_key must reach the checkout, or the class below is \
              never asked for: {refused}"
     );
 
@@ -1714,7 +1720,7 @@ async fn user_operation_permissions_reuse_only_the_callable_http_authority() {
         .parse()
         .expect("user UUID");
 
-    pg.user_operation_permissions(DEFAULT_PROJECT, "tenant-a", &principal_id)
+    pg.user_operation_permissions(DEFAULT_PROJECT, "org-a", &principal_id)
         .await
         .expect_err("a provider that names no credential resolves nothing");
 
@@ -1726,16 +1732,16 @@ async fn user_operation_permissions_reuse_only_the_callable_http_authority() {
     assert_eq!(asked, vec![AuthorityClass::CallableHttp]);
 }
 
-/// The env_key floor over rows belonging to TWO env_keys, keyed on
+/// The project_env_key minimum over rows belonging to TWO project_env_keys, keyed on
 /// `current_user` — the shape `wamn-0h0g.22.6` put in production.
 ///
-/// The literal role names stand in for `wamn_authority.tenant_key`, which
+/// The literal role names stand in for `wamn_authority.project_key`, which
 /// this crate cannot install (the derivations are built by the provisioner,
 /// which the shipped runtime deliberately does not link). What the fixture
 /// reproduces faithfully is the thing under test: the row filter reads the
-/// CONNECTED ROLE, so a session cannot talk its way into another env_key's
+/// CONNECTED ROLE, so a session cannot talk its way into another project_env_key's
 /// rows — there is no claim to rewrite.
-fn two_env_key_rls_fixture_sql(
+fn two_project_env_key_rls_fixture_sql(
     schema: &str,
     role_a: &str,
     role_b: &str,
@@ -1755,11 +1761,11 @@ fn two_env_key_rls_fixture_sql(
              CREATE ROLE {role_b} LOGIN PASSWORD 'live-guest' NOSUPERUSER NOBYPASSRLS; \
              GRANT wamn_app TO {role_a}, {role_b}; \
              CREATE SCHEMA {schema}; \
-             CREATE TABLE {schema}.dispositions (env_key text NOT NULL, id int NOT NULL); \
+             CREATE TABLE {schema}.dispositions (project_env_key text NOT NULL, id int NOT NULL); \
              ALTER TABLE {schema}.dispositions ENABLE ROW LEVEL SECURITY; \
-             CREATE POLICY dispositions_tenant ON {schema}.dispositions \
-                 USING ((env_key = '{a}' AND current_user = '{role_a}') \
-                     OR (env_key = '{b}' AND current_user = '{role_b}')); \
+             CREATE POLICY dispositions_project ON {schema}.dispositions \
+                 USING ((project_env_key = '{a}' AND current_user = '{role_a}') \
+                     OR (project_env_key = '{b}' AND current_user = '{role_b}')); \
              INSERT INTO {schema}.dispositions \
                  VALUES ('{a}', 1), ('{a}', 2), ('{b}', 3); \
              GRANT USAGE ON SCHEMA {schema} TO {role_a}, {role_b}; \
@@ -1771,17 +1777,18 @@ fn two_env_key_rls_fixture_sql(
 ///
 /// This test used to show that two interleaved CLAIM sets each saw only
 /// their own rows. That subject is retired: after `wamn-0h0g.22.6` a guest's
-/// env_key is its LOGIN, and under the owner ruling on `wamn-0h0g.22.6.7` a
+/// project_env_key is its LOGIN, and under the owner ruling on `wamn-0h0g.22.6.7` a
 /// host holds ONE guest credential per project-environment. So the property
-/// worth showing is stronger and simpler — a second env_key is REFUSED rather
+/// worth showing is stronger and simpler — a second project_env_key is REFUSED rather
 /// than quietly served the credential the host does hold.
 ///
 /// The logins are NOSUPERUSER NOBYPASSRLS, so the server cannot be talked
-/// out of the floor either.
+/// out of the minimum either.
 #[tokio::test]
-async fn live_a_second_env_key_is_refused_rather_than_served_the_first_env_keys_rows() {
-    const ENV_KEY_A: &str = "seam-live-a";
-    const ENV_KEY_B: &str = "seam-live-b";
+async fn live_a_second_project_env_key_is_refused_rather_than_served_the_first_project_env_keys_rows()
+ {
+    const PROJECT_ENV_KEY_A: &str = "seam-live-a";
+    const PROJECT_ENV_KEY_B: &str = "seam-live-b";
 
     let _lock = wamn_test_postgres::lock();
     let test_database = wamn_test_postgres::database();
@@ -1790,22 +1797,26 @@ async fn live_a_second_env_key_is_refused_rather_than_served_the_first_env_keys_
     let schema = format!("wamn_seam_{suffix}");
     let database = live_database(admin_url);
     // Named exactly as provisioning names a guest generation, so the
-    // credential the host resolves is bound to ENV_KEY_A by its own digest.
+    // credential the host resolves is bound to PROJECT_ENV_KEY_A by its own digest.
     let role_a = format!(
         "wamn_app_{}_a",
-        wamn_run_state::app_scope_hash(ENV_KEY_A, &database)
+        wamn_run_state::app_scope_hash(PROJECT_ENV_KEY_A, &database)
     );
     let role_b = format!(
         "wamn_app_{}_a",
-        wamn_run_state::app_scope_hash(ENV_KEY_B, &database)
+        wamn_run_state::app_scope_hash(PROJECT_ENV_KEY_B, &database)
     );
     let admin = connect_raw(admin_url).await;
     admin
-        .batch_execute(&two_env_key_rls_fixture_sql(
-            &schema, &role_a, &role_b, ENV_KEY_A, ENV_KEY_B,
+        .batch_execute(&two_project_env_key_rls_fixture_sql(
+            &schema,
+            &role_a,
+            &role_b,
+            PROJECT_ENV_KEY_A,
+            PROJECT_ENV_KEY_B,
         ))
         .await
-        .expect("seed the two-env_key RLS fixture as the superuser owner");
+        .expect("seed the two-project_env_key RLS fixture as the superuser owner");
 
     let mut url = url::Url::parse(admin_url).expect("parse the live test url");
     url.set_username(&role_a).expect("set A's login");
@@ -1823,17 +1834,17 @@ async fn live_a_second_env_key_is_refused_rather_than_served_the_first_env_keys_
 
     let scope_a = "warm-instance-0";
     let scope_b = "warm-instance-1";
-    let claims = |env_key: &str| SessionClaims {
-        env_key: env_key.to_string(),
+    let claims = |project_env_key: &str| SessionClaims {
+        project_env_key: project_env_key.to_string(),
         schema: Some(schema.clone()),
         ..SessionClaims::default()
     };
-    pg.bind_session_claims(scope_a, &claims(ENV_KEY_A))
+    pg.bind_session_claims(scope_a, &claims(PROJECT_ENV_KEY_A))
         .await
-        .expect("env_key A's acquisition binds");
-    pg.bind_session_claims(scope_b, &claims(ENV_KEY_B))
+        .expect("project_env_key A's acquisition binds");
+    pg.bind_session_claims(scope_b, &claims(PROJECT_ENV_KEY_B))
         .await
-        .expect("env_key B's acquisition binds");
+        .expect("project_env_key B's acquisition binds");
 
     // CONTROL: the table is reachable on this path at all, so the refusal
     // below is a refusal and not a broken fixture or search_path.
@@ -1845,17 +1856,17 @@ async fn live_a_second_env_key_is_refused_rather_than_served_the_first_env_keys_
 
     // B's acquisition is legitimate; the HOST simply holds no credential for
     // it. That must refuse. Serving A's credential would hand B two rows
-    // belonging to another env_key, which is the failure this design exists
+    // belonging to another project_env_key, which is the failure this design exists
     // to make impossible.
     let refused = pg
         .one_shot(scope_b, "SELECT id FROM dispositions", &[], true)
         .await
         .err()
-        .expect("an env_key this host holds no credential for cannot query");
+        .expect("an project_env_key this host holds no credential for cannot query");
     assert!(
         matches!(&refused, PgError::ConnectionUnavailable),
-        "a second env_key must be REFUSED at credential resolution, not served \
-             the first env_key's connection: {refused:?}"
+        "a second project_env_key must be REFUSED at credential resolution, not served \
+             the first project_env_key's connection: {refused:?}"
     );
 
     assert_eq!(
@@ -1876,7 +1887,7 @@ async fn live_a_second_env_key_is_refused_rather_than_served_the_first_env_keys_
         .expect("an unbound claim scope cannot query at all");
     assert!(
         matches!(&unbound, PgError::QueryError((code, _)) if code == "WAMN0"),
-        "an instance whose checkout ended must resolve NO env_key, not merely \
+        "an instance whose checkout ended must resolve NO project_env_key, not merely \
              fail for some other reason: {unbound:?}"
     );
 
@@ -1899,7 +1910,7 @@ async fn live_connect_asserts_standard_conforming_strings() {
     let admin_url = database.url();
     let pg = WamnPostgres::new(WamnPostgresConfig {
         credentials: Some(ClassCredentials::every_class(
-            live_guest_url(admin_url, LIVE_ENV_KEY).await,
+            live_guest_url(admin_url, LIVE_PROJECT_ENV_KEY).await,
         )),
         guest_pool_max_size: 1,
         platform_pool_max_size: 1,
@@ -1911,7 +1922,7 @@ async fn live_connect_asserts_standard_conforming_strings() {
     // The checkout builds the pool (with the R18 hook) and creates a physical
     // connection; the hook must pass for this to be Ok.
     let (conn, _pp) = pg
-        .checkout_guest(DEFAULT_PROJECT, LIVE_ENV_KEY)
+        .checkout_guest(DEFAULT_PROJECT, LIVE_PROJECT_ENV_KEY)
         .await
         .expect("checkout ok (scs=on)");
     let scs: String = conn
@@ -1927,7 +1938,7 @@ async fn live_size_one_guest_and_platform_pools_isolate_sessions_under_interleav
     let _lock = wamn_test_postgres::lock();
     let test_database = wamn_test_postgres::database();
     let admin_url = test_database.url();
-    let url = live_guest_url(admin_url, LIVE_ENV_KEY).await;
+    let url = live_guest_url(admin_url, LIVE_PROJECT_ENV_KEY).await;
     let database = live_database(admin_url);
     let family = wamn_control_provision::WorkloadRoleFamily::ExecutorPlatform;
     let role = wamn_control_provision::workload_generation_role(
@@ -1975,7 +1986,7 @@ async fn live_size_one_guest_and_platform_pools_isolate_sessions_under_interleav
     .expect("construct size-one lifecycle pools");
 
     let (guest, _) = postgres
-        .checkout_guest(DEFAULT_PROJECT, LIVE_ENV_KEY)
+        .checkout_guest(DEFAULT_PROJECT, LIVE_PROJECT_ENV_KEY)
         .await
         .expect("hold the only guest connection");
     let guest_row = guest
@@ -2017,7 +2028,7 @@ async fn live_size_one_guest_and_platform_pools_isolate_sessions_under_interleav
     drop(guest);
 
     let (guest_again, _) = postgres
-        .checkout_guest(DEFAULT_PROJECT, LIVE_ENV_KEY)
+        .checkout_guest(DEFAULT_PROJECT, LIVE_PROJECT_ENV_KEY)
         .await
         .expect("reacquire guest lifecycle");
     let guest_again_row = guest_again
@@ -2095,7 +2106,7 @@ async fn live_scs_off_server_fails_checkout_closed() {
     // user would now be refused at RESOLUTION (`wamn-0h0g.22.6.7`) — the same
     // `connection-unavailable` variant for a different reason, which is
     // exactly the false positive this test's second half exists to rule out.
-    let guest_url = live_guest_url(&url, LIVE_ENV_KEY).await;
+    let guest_url = live_guest_url(&url, LIVE_PROJECT_ENV_KEY).await;
     let pg = WamnPostgres::new(WamnPostgresConfig {
         credentials: Some(ClassCredentials::every_class(guest_url)),
         guest_pool_max_size: 1,
@@ -2106,7 +2117,9 @@ async fn live_scs_off_server_fails_checkout_closed() {
     })
     .unwrap();
     // (`matches!`, not `expect_err`, so the Ok type need not be `Debug`.)
-    let result = pg.checkout_guest(DEFAULT_PROJECT, LIVE_ENV_KEY).await;
+    let result = pg
+        .checkout_guest(DEFAULT_PROJECT, LIVE_PROJECT_ENV_KEY)
+        .await;
     assert!(
         matches!(result, Err(PgError::ConnectionUnavailable)),
         "scs=off must fail CLOSED as the guest-visible connection-unavailable \
@@ -2194,16 +2207,16 @@ fn cold_parse_statement() -> VerifiedStatement {
 /// two branches of the `join!`, fails this every run.
 #[tokio::test]
 async fn live_a_cold_connection_parses_inside_the_claim_transaction() {
-    const ENV_KEY: &str = "coldparse";
+    const PROJECT_ENV_KEY: &str = "coldparse";
     let _lock = wamn_test_postgres::lock();
     let database = wamn_test_postgres::database();
     let admin_url = database.url();
     let schema = format!("wamn_coldparse_{}", std::process::id());
     let role = format!(
         "wamn_app_{}_a",
-        wamn_run_state::app_scope_hash(ENV_KEY, &live_database(admin_url))
+        wamn_run_state::app_scope_hash(PROJECT_ENV_KEY, &live_database(admin_url))
     );
-    let guest_url = live_guest_url(admin_url, ENV_KEY).await;
+    let guest_url = live_guest_url(admin_url, PROJECT_ENV_KEY).await;
     ensure_live_user_rows(admin_url, &[LIVE_PRINCIPAL]).await;
     let admin = connect_raw(admin_url).await;
     admin
@@ -2227,7 +2240,7 @@ async fn live_a_cold_connection_parses_inside_the_claim_transaction() {
     pg.bind_session_claims(
         scope,
         &SessionClaims {
-            env_key: ENV_KEY.to_string(),
+            project_env_key: PROJECT_ENV_KEY.to_string(),
             schema: Some(schema.clone()),
             user_id: Some(LIVE_PRINCIPAL.to_string()),
             ..SessionClaims::default()
@@ -2293,7 +2306,7 @@ async fn a_transactional_statement_without_an_executing_principal_is_refused() {
     pg.bind_session_claims(
         scope,
         &SessionClaims {
-            env_key: LIVE_ENV_KEY.to_string(),
+            project_env_key: LIVE_PROJECT_ENV_KEY.to_string(),
             ..SessionClaims::default()
         },
     )
@@ -2368,16 +2381,16 @@ fn an_explicit_transaction_statement_without_an_executing_principal_is_refused()
 /// session carries no `app.user_id`.
 #[tokio::test]
 async fn live_a_transaction_binds_the_executing_principal_and_a_read_stays_autocommit() {
-    const ENV_KEY: &str = "principal";
+    const PROJECT_ENV_KEY: &str = "principal";
     const PRINCIPAL_B: &str = "00000000-0000-0000-0000-000000000020";
     let _lock = wamn_test_postgres::lock();
     let database = wamn_test_postgres::database();
     let admin_url = database.url();
     let role = format!(
         "wamn_app_{}_a",
-        wamn_run_state::app_scope_hash(ENV_KEY, &live_database(admin_url))
+        wamn_run_state::app_scope_hash(PROJECT_ENV_KEY, &live_database(admin_url))
     );
-    let guest_url = live_guest_url(admin_url, ENV_KEY).await;
+    let guest_url = live_guest_url(admin_url, PROJECT_ENV_KEY).await;
     ensure_live_user_rows(admin_url, &[LIVE_PRINCIPAL, PRINCIPAL_B]).await;
     let pg = WamnPostgres::new(WamnPostgresConfig {
         credentials: Some(ClassCredentials::every_class(guest_url)),
@@ -2392,7 +2405,7 @@ async fn live_a_transaction_binds_the_executing_principal_and_a_read_stays_autoc
     pg.bind_session_claims(
         scope,
         &SessionClaims {
-            env_key: ENV_KEY.to_string(),
+            project_env_key: PROJECT_ENV_KEY.to_string(),
             user_id: Some(LIVE_PRINCIPAL.to_string()),
             ..SessionClaims::default()
         },
@@ -2434,12 +2447,16 @@ async fn live_a_transaction_binds_the_executing_principal_and_a_read_stays_autoc
     );
 
     // B borrows the same physical connection after A's transaction and read.
-    let before = pg.probe_checkout(ENV_KEY).await.unwrap().backend_pid;
+    let before = pg
+        .probe_checkout(PROJECT_ENV_KEY)
+        .await
+        .unwrap()
+        .backend_pid;
     pg.revoke_session_claims(scope);
     pg.bind_session_claims(
         scope,
         &SessionClaims {
-            env_key: ENV_KEY.into(),
+            project_env_key: PROJECT_ENV_KEY.into(),
             user_id: Some(PRINCIPAL_B.into()),
             ..SessionClaims::default()
         },
@@ -2469,7 +2486,10 @@ async fn live_a_transaction_binds_the_executing_principal_and_a_read_stays_autoc
         .unwrap();
     assert!(matches!(&read.rows[0][0], SqlValue::Text(value) if value.is_empty()));
     assert_eq!(
-        pg.probe_checkout(ENV_KEY).await.unwrap().backend_pid,
+        pg.probe_checkout(PROJECT_ENV_KEY)
+            .await
+            .unwrap()
+            .backend_pid,
         before
     );
 
@@ -2482,9 +2502,9 @@ async fn live_a_transaction_binds_the_executing_principal_and_a_read_stays_autoc
 }
 
 /// The bind refuses a principal that owns no `platform."user"` row in the
-/// env_key, and the refusal names the cause (`wamn-0h0g.9.19`).
+/// project_env_key, and the refusal names the cause (`wamn-0h0g.9.19`).
 ///
-/// The floor is installed and the row is left out, so the refusal is a
+/// The minimum is installed and the row is left out, so the refusal is a
 /// refusal and not a missing table or an unreachable database. The control
 /// half is the same plugin binding a principal that owns a row, which proves
 /// a guard that refused everything would not pass this test.
@@ -2493,16 +2513,16 @@ async fn live_a_transaction_binds_the_executing_principal_and_a_read_stays_autoc
 /// row, which provisioning writes, so it binds like any other principal.
 #[tokio::test]
 async fn live_a_bind_refuses_a_principal_with_no_user_row() {
-    const ENV_KEY: &str = "unprovisioned";
+    const PROJECT_ENV_KEY: &str = "unprovisioned";
     const ABSENT_PRINCIPAL: &str = "11111111-2222-4333-8444-555555555555";
     let _lock = wamn_test_postgres::lock();
     let database = wamn_test_postgres::database();
     let admin_url = database.url();
     let role = format!(
         "wamn_app_{}_a",
-        wamn_run_state::app_scope_hash(ENV_KEY, &live_database(admin_url))
+        wamn_run_state::app_scope_hash(PROJECT_ENV_KEY, &live_database(admin_url))
     );
-    let guest_url = live_guest_url(admin_url, ENV_KEY).await;
+    let guest_url = live_guest_url(admin_url, PROJECT_ENV_KEY).await;
     ensure_live_user_rows(admin_url, &[LIVE_PRINCIPAL, LIVE_PLATFORM_PRINCIPAL]).await;
     let pg = WamnPostgres::new(WamnPostgresConfig {
         credentials: Some(ClassCredentials::every_class(guest_url)),
@@ -2515,7 +2535,7 @@ async fn live_a_bind_refuses_a_principal_with_no_user_row() {
     .expect("the plugin builds from the guest generation's url");
     let scope = "unprovisioned-instance-0";
     let claims = |principal: &str| SessionClaims {
-        env_key: ENV_KEY.to_string(),
+        project_env_key: PROJECT_ENV_KEY.to_string(),
         user_id: Some(principal.to_string()),
         ..SessionClaims::default()
     };
@@ -2528,7 +2548,7 @@ async fn live_a_bind_refuses_a_principal_with_no_user_row() {
         .downcast_ref::<UnprovisionedPrincipal>()
         .expect("the refusal names the missing user row");
     assert_eq!(denial.principal_id(), ABSENT_PRINCIPAL);
-    assert_eq!(denial.env_key(), ENV_KEY);
+    assert_eq!(denial.project_env_key(), PROJECT_ENV_KEY);
     assert_eq!(denial.project(), DEFAULT_PROJECT);
 
     // CONTROL: the provisioned principal binds.
@@ -2563,16 +2583,16 @@ async fn live_a_bind_refuses_a_principal_with_no_user_row() {
 #[tokio::test]
 #[ignore = "requires: env:WAMN_NATIVE_C_NATS_BIN"]
 async fn live_a_removed_user_row_is_refused_once_the_auth_memory_clears() {
-    const ENV_KEY: &str = "removed";
+    const PROJECT_ENV_KEY: &str = "removed";
     wamn_test_postgres::require_ignored_prerequisites("requires: env:WAMN_NATIVE_C_NATS_BIN");
     let _lock = wamn_test_postgres::lock();
     let database = wamn_test_postgres::database();
     let admin_url = database.url();
     let role = format!(
         "wamn_app_{}_a",
-        wamn_run_state::app_scope_hash(ENV_KEY, &live_database(admin_url))
+        wamn_run_state::app_scope_hash(PROJECT_ENV_KEY, &live_database(admin_url))
     );
-    let guest_url = live_guest_url(admin_url, ENV_KEY).await;
+    let guest_url = live_guest_url(admin_url, PROJECT_ENV_KEY).await;
     ensure_live_user_rows(admin_url, &[LIVE_PRINCIPAL]).await;
     let pg = Arc::new(
         WamnPostgres::new(WamnPostgresConfig {
@@ -2586,10 +2606,10 @@ async fn live_a_removed_user_row_is_refused_once_the_auth_memory_clears() {
         .expect("the plugin builds from the guest generation's url"),
     );
     let (_nats, client) = crate::auth_cache::tests::nats().await;
-    crate::auth_cache::tests::watched(&client, Some(ENV_KEY), Arc::clone(&pg)).await;
+    crate::auth_cache::tests::watched(&client, Some(PROJECT_ENV_KEY), Arc::clone(&pg)).await;
     let scope = "removed-instance-0";
     let claims = SessionClaims {
-        env_key: ENV_KEY.to_string(),
+        project_env_key: PROJECT_ENV_KEY.to_string(),
         user_id: Some(LIVE_PRINCIPAL.to_string()),
         ..SessionClaims::default()
     };
@@ -2634,16 +2654,16 @@ async fn live_a_removed_user_row_is_refused_once_the_auth_memory_clears() {
 #[tokio::test]
 #[ignore = "requires: env:WAMN_NATIVE_C_NATS_BIN"]
 async fn live_a_drop_refuses_a_removed_user_row_on_the_next_bind() {
-    const ENV_KEY: &str = "dropped";
+    const PROJECT_ENV_KEY: &str = "dropped";
     wamn_test_postgres::require_ignored_prerequisites("requires: env:WAMN_NATIVE_C_NATS_BIN");
     let _lock = wamn_test_postgres::lock();
     let database = wamn_test_postgres::database();
     let admin_url = database.url();
     let role = format!(
         "wamn_app_{}_a",
-        wamn_run_state::app_scope_hash(ENV_KEY, &live_database(admin_url))
+        wamn_run_state::app_scope_hash(PROJECT_ENV_KEY, &live_database(admin_url))
     );
-    let guest_url = live_guest_url(admin_url, ENV_KEY).await;
+    let guest_url = live_guest_url(admin_url, PROJECT_ENV_KEY).await;
     ensure_live_user_rows(admin_url, &[LIVE_PRINCIPAL]).await;
     let mut pg = WamnPostgres::new(WamnPostgresConfig {
         credentials: Some(ClassCredentials::every_class(guest_url)),
@@ -2658,10 +2678,11 @@ async fn live_a_drop_refuses_a_removed_user_row_on_the_next_bind() {
     pg.auth = crate::auth_cache::AuthCache::with_ttl(ttl);
     let pg = Arc::new(pg);
     let (_nats, client) = crate::auth_cache::tests::nats().await;
-    let writer = crate::auth_cache::tests::watched(&client, Some(ENV_KEY), Arc::clone(&pg)).await;
+    let writer =
+        crate::auth_cache::tests::watched(&client, Some(PROJECT_ENV_KEY), Arc::clone(&pg)).await;
     let scope = "dropped-instance-0";
     let claims = SessionClaims {
-        env_key: ENV_KEY.to_string(),
+        project_env_key: PROJECT_ENV_KEY.to_string(),
         user_id: Some(LIVE_PRINCIPAL.to_string()),
         ..SessionClaims::default()
     };
@@ -2670,7 +2691,7 @@ async fn live_a_drop_refuses_a_removed_user_row_on_the_next_bind() {
         .await
         .expect("the provisioned principal binds");
     assert_eq!(
-        pg.auth_cache().provisioned(ENV_KEY, LIVE_PRINCIPAL),
+        pg.auth_cache().provisioned(PROJECT_ENV_KEY, LIVE_PRINCIPAL),
         Ok(()),
         "the memory keeps the read"
     );
@@ -2684,11 +2705,11 @@ async fn live_a_drop_refuses_a_removed_user_row_on_the_next_bind() {
         .await
         .expect("remove the user row after issuance");
     let mut drops = wamn_broker::auth_changes::AuthDrops::default();
-    drops.principal(ENV_KEY, LIVE_PRINCIPAL);
+    drops.principal(PROJECT_ENV_KEY, LIVE_PRINCIPAL);
     writer.publish(drops).await;
     crate::auth_cache::tests::until("the drop reaches the memory", || {
         pg.auth_cache()
-            .provisioned(ENV_KEY, LIVE_PRINCIPAL)
+            .provisioned(PROJECT_ENV_KEY, LIVE_PRINCIPAL)
             .is_err()
     })
     .await;
@@ -2737,7 +2758,7 @@ async fn an_acquisition_binds_its_operation_and_the_next_one_does_not_inherit_it
     )));
     let scope = "operation-instance-0";
     let claims = SessionClaims {
-        env_key: LIVE_ENV_KEY.to_string(),
+        project_env_key: LIVE_PROJECT_ENV_KEY.to_string(),
         operation: Some(OPERATION.to_string()),
         ..SessionClaims::default()
     };
@@ -2781,16 +2802,16 @@ async fn an_acquisition_binds_its_operation_and_the_next_one_does_not_inherit_it
 /// connection does not reach the next transaction, which has no operation.
 #[tokio::test]
 async fn live_a_transaction_binds_the_executing_operation_and_a_pooled_connection_keeps_none() {
-    const ENV_KEY: &str = "operation";
+    const PROJECT_ENV_KEY: &str = "operation";
     const OPERATION: &str = "platform-fixture:widget/update@1.0.0";
     let _lock = wamn_test_postgres::lock();
     let database = wamn_test_postgres::database();
     let admin_url = database.url();
     let role = format!(
         "wamn_app_{}_a",
-        wamn_run_state::app_scope_hash(ENV_KEY, &live_database(admin_url))
+        wamn_run_state::app_scope_hash(PROJECT_ENV_KEY, &live_database(admin_url))
     );
-    let guest_url = live_guest_url(admin_url, ENV_KEY).await;
+    let guest_url = live_guest_url(admin_url, PROJECT_ENV_KEY).await;
     ensure_live_user_rows(admin_url, &[LIVE_PRINCIPAL]).await;
     let pg = WamnPostgres::new(WamnPostgresConfig {
         credentials: Some(ClassCredentials::every_class(guest_url)),
@@ -2803,7 +2824,7 @@ async fn live_a_transaction_binds_the_executing_operation_and_a_pooled_connectio
     .expect("the plugin builds from the guest generation's url");
     let scope = "operation-instance-1";
     let claims = SessionClaims {
-        env_key: ENV_KEY.to_string(),
+        project_env_key: PROJECT_ENV_KEY.to_string(),
         user_id: Some(LIVE_PRINCIPAL.to_string()),
         operation: Some(OPERATION.to_string()),
         ..SessionClaims::default()
@@ -2846,7 +2867,7 @@ async fn live_a_transaction_binds_the_executing_operation_and_a_pooled_connectio
     // Leave a session-level value on the one pooled connection. The pool
     // recycles without a reset, so only the bound claim clears it.
     let (connection, _policy) = pg
-        .checkout_guest(DEFAULT_PROJECT, ENV_KEY)
+        .checkout_guest(DEFAULT_PROJECT, PROJECT_ENV_KEY)
         .await
         .expect("check out the pooled connection");
     connection
@@ -2916,7 +2937,7 @@ async fn an_acquisition_binds_its_application_and_the_next_one_does_not_inherit_
     )));
     let scope = "application-instance-0";
     let claims = SessionClaims {
-        env_key: LIVE_ENV_KEY.to_string(),
+        project_env_key: LIVE_PROJECT_ENV_KEY.to_string(),
         application: Some("platform_fixture".to_string()),
         ..SessionClaims::default()
     };
@@ -2963,7 +2984,7 @@ async fn an_acquisition_binds_its_application_and_the_next_one_does_not_inherit_
 /// value that guest SQL names, which the claim guard refuses.
 #[tokio::test]
 async fn live_a_transaction_carries_only_the_application_its_host_bound() {
-    const ENV_KEY: &str = "application";
+    const PROJECT_ENV_KEY: &str = "application";
     const APPLICATION_A: &str = "platform_fixture";
     const APPLICATION_B: &str = "platform_fixture_overlay";
     let _lock = wamn_test_postgres::lock();
@@ -2971,9 +2992,9 @@ async fn live_a_transaction_carries_only_the_application_its_host_bound() {
     let admin_url = database.url();
     let role = format!(
         "wamn_app_{}_a",
-        wamn_run_state::app_scope_hash(ENV_KEY, &live_database(admin_url))
+        wamn_run_state::app_scope_hash(PROJECT_ENV_KEY, &live_database(admin_url))
     );
-    let guest_url = live_guest_url(admin_url, ENV_KEY).await;
+    let guest_url = live_guest_url(admin_url, PROJECT_ENV_KEY).await;
     ensure_live_user_rows(admin_url, &[LIVE_PRINCIPAL]).await;
     let pg = WamnPostgres::new(WamnPostgresConfig {
         credentials: Some(ClassCredentials::every_class(guest_url)),
@@ -2985,7 +3006,7 @@ async fn live_a_transaction_carries_only_the_application_its_host_bound() {
     })
     .expect("the plugin builds from the guest generation's url");
     let claims = |application: &str| SessionClaims {
-        env_key: ENV_KEY.to_string(),
+        project_env_key: PROJECT_ENV_KEY.to_string(),
         user_id: Some(LIVE_PRINCIPAL.to_string()),
         application: Some(application.to_string()),
         ..SessionClaims::default()
@@ -3025,7 +3046,7 @@ async fn live_a_transaction_carries_only_the_application_its_host_bound() {
     // Leave B's name as a session-level value on the one pooled connection.
     // The pool recycles without a reset, so only the bound claim clears it.
     let (connection, _policy) = pg
-        .checkout_guest(DEFAULT_PROJECT, ENV_KEY)
+        .checkout_guest(DEFAULT_PROJECT, PROJECT_ENV_KEY)
         .await
         .expect("check out the pooled connection");
     connection
@@ -3086,15 +3107,15 @@ async fn live_a_transaction_carries_only_the_application_its_host_bound() {
 async fn live_a_read_invocation_transaction_reads_one_snapshot() {
     use super::super::resources::{begin_statement_transaction, run_verified_query, take_conn};
 
-    const ENV_KEY: &str = "read-snapshot";
+    const PROJECT_ENV_KEY: &str = "read-snapshot";
     let _lock = wamn_test_postgres::lock();
     let database = wamn_test_postgres::database();
     let admin_url = database.url();
     let role = format!(
         "wamn_app_{}_a",
-        wamn_run_state::app_scope_hash(ENV_KEY, &live_database(admin_url))
+        wamn_run_state::app_scope_hash(PROJECT_ENV_KEY, &live_database(admin_url))
     );
-    let guest_url = live_guest_url(admin_url, ENV_KEY).await;
+    let guest_url = live_guest_url(admin_url, PROJECT_ENV_KEY).await;
     let admin = connect_raw(admin_url).await;
     admin
         .batch_execute(
@@ -3117,7 +3138,7 @@ async fn live_a_read_invocation_transaction_reads_one_snapshot() {
     pg.bind_session_claims(
         scope,
         &SessionClaims {
-            env_key: ENV_KEY.to_string(),
+            project_env_key: PROJECT_ENV_KEY.to_string(),
             ..SessionClaims::default()
         },
     )
@@ -3214,7 +3235,7 @@ async fn live_a_read_invocation_transaction_reads_one_snapshot() {
 /// applies before the query, including a cold Parse on the same connection.
 #[tokio::test]
 async fn live_autocommit_settings_are_reused_only_on_their_connection() {
-    const ENV_KEY: &str = "settings";
+    const PROJECT_ENV_KEY: &str = "settings";
     let mut server =
         wamn_test_postgres::start(&[("shared_preload_libraries", "pg_stat_statements")])
             .expect("start PostgreSQL with statement statistics");
@@ -3224,7 +3245,7 @@ async fn live_autocommit_settings_are_reused_only_on_their_connection() {
         .batch_execute("CREATE EXTENSION pg_stat_statements")
         .await
         .unwrap();
-    let guest_url = live_guest_url(database.url(), ENV_KEY).await;
+    let guest_url = live_guest_url(database.url(), PROJECT_ENV_KEY).await;
     let pg = WamnPostgres::new(WamnPostgresConfig {
         credentials: Some(ClassCredentials::every_class(guest_url)),
         guest_pool_max_size: 1,
@@ -3265,7 +3286,7 @@ async fn live_autocommit_settings_are_reused_only_on_their_connection() {
         pg.bind_session_claims(
             "settings",
             &SessionClaims {
-                env_key: ENV_KEY.into(),
+                project_env_key: PROJECT_ENV_KEY.into(),
                 schema: schema.map(str::to_owned),
                 runner: runner.map(str::to_owned),
                 ..SessionClaims::default()
@@ -3329,14 +3350,14 @@ async fn live_autocommit_settings_are_reused_only_on_their_connection() {
 async fn live_stream_reads_once_and_scopes_claims() {
     use super::super::run_stream::open_stream;
 
-    const ENV_KEY: &str = "stream-sequence";
+    const PROJECT_ENV_KEY: &str = "stream-sequence";
     const SQL: &str = "SELECT current_setting('app.role', true), \
         current_setting('app.runner', true), current_setting('transaction_read_only'), \
         value FROM stream_probe";
     let mut server = wamn_test_postgres::start(&[("log_statement", "all")]).unwrap();
     let database = server.create_database("stream_sequence").unwrap();
     let admin = connect_raw(database.url()).await;
-    let guest_url = live_guest_url(database.url(), ENV_KEY).await;
+    let guest_url = live_guest_url(database.url(), PROJECT_ENV_KEY).await;
     admin
         .batch_execute(
             "CREATE SCHEMA stream_sequence; \
@@ -3370,7 +3391,7 @@ async fn live_stream_reads_once_and_scopes_claims() {
         pg.bind_session_claims(
             scope,
             &SessionClaims {
-                env_key: ENV_KEY.into(),
+                project_env_key: PROJECT_ENV_KEY.into(),
                 schema: Some("stream_sequence".into()),
                 runner: Some("stream-test".into()),
                 role: role.map(str::to_owned),
@@ -3467,7 +3488,10 @@ async fn live_stream_reads_once_and_scopes_claims() {
                 }
             }
         }
-        let (connection, _) = pg.checkout_guest(DEFAULT_PROJECT, ENV_KEY).await.unwrap();
+        let (connection, _) = pg
+            .checkout_guest(DEFAULT_PROJECT, PROJECT_ENV_KEY)
+            .await
+            .unwrap();
         let role_after: Option<String> = connection
             .query_one("SELECT current_setting('app.role', true)", &[])
             .await
@@ -3663,15 +3687,15 @@ async fn an_unchecked_declared_statement_is_refused_before_a_stream_opens() {
 async fn live_an_unchecked_declared_statement_is_refused_when_it_runs() {
     use super::super::resources::run_verified_query;
 
-    const ENV_KEY: &str = "unchecked-sql";
+    const PROJECT_ENV_KEY: &str = "unchecked-sql";
     let _lock = wamn_test_postgres::lock();
     let database = wamn_test_postgres::database();
     let admin_url = database.url();
     let role = format!(
         "wamn_app_{}_a",
-        wamn_run_state::app_scope_hash(ENV_KEY, &live_database(admin_url))
+        wamn_run_state::app_scope_hash(PROJECT_ENV_KEY, &live_database(admin_url))
     );
-    let guest_url = live_guest_url(admin_url, ENV_KEY).await;
+    let guest_url = live_guest_url(admin_url, PROJECT_ENV_KEY).await;
     let admin = connect_raw(admin_url).await;
     let pg = WamnPostgres::new(WamnPostgresConfig {
         credentials: Some(ClassCredentials::every_class(guest_url)),
@@ -3683,7 +3707,7 @@ async fn live_an_unchecked_declared_statement_is_refused_when_it_runs() {
     })
     .expect("the plugin builds from the guest generation's url");
     let (connection, _policy) = pg
-        .checkout_guest(DEFAULT_PROJECT, ENV_KEY)
+        .checkout_guest(DEFAULT_PROJECT, PROJECT_ENV_KEY)
         .await
         .expect("check out a guest connection");
     // CONTROL: a declared statement runs on this connection, so each refusal
@@ -3729,7 +3753,7 @@ async fn live_a_drop_refuses_a_revoked_pat_on_the_next_request() {
 
     let _lock = wamn_test_postgres::lock();
     let system = wamn_control_provision::test_database::system();
-    let project = wamn_platform_identity::test_database::tenant_platform();
+    let project = wamn_platform_identity::test_database::project_platform();
     let admin = connect_raw(system.url()).await;
     admin.batch_execute(&format!(
         "SET ROLE wamn_system; \
@@ -3857,8 +3881,7 @@ async fn live_a_drop_refuses_a_revoked_pat_on_the_next_request() {
             PlatformRouteAuthenticator::default().with_authentication(Arc::new(authentication)),
         ));
     let (_nats, client) = crate::auth_cache::tests::nats().await;
-    let writer =
-        crate::auth_cache::tests::watched(&client, Some("tenant-a"), Arc::clone(&pg)).await;
+    let writer = crate::auth_cache::tests::watched(&client, Some("org-a"), Arc::clone(&pg)).await;
     let authorization = format!("Bearer {}", issued.token());
     let request = || route.authenticate_authorization_for_test("orders", Some(&authorization));
     let cached_at = std::time::Instant::now();
@@ -3891,7 +3914,7 @@ async fn live_a_drop_refuses_a_revoked_pat_on_the_next_request() {
 #[tokio::test]
 async fn live_sessions_refuse_unheld_service_roles_and_services_have_no_active_user_role() {
     let _lock = wamn_test_postgres::lock();
-    let database = wamn_platform_identity::test_database::tenant_platform();
+    let database = wamn_platform_identity::test_database::project_platform();
     let admin = connect_raw(database.url()).await;
     admin.batch_execute(&format!(
         "SET app.user_id='{LIVE_PLATFORM_PRINCIPAL}'; SET app.operation='admin:role-refusal-fixture';
@@ -3948,7 +3971,7 @@ async fn queued_caller_retains_typed_connection_unavailable() -> anyhow::Result<
         None,
     )));
     let error = postgres
-        .queued_run_caller("default", "tenant-a", "principal", None)
+        .queued_run_caller("default", "org-a", "principal", None)
         .await
         .expect_err("an unavailable credential refuses the caller lookup");
     assert!(matches!(

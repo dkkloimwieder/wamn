@@ -140,7 +140,7 @@ fn control_portable_store_enforces_the_current_record_on_postgres() {
         "check the installed release record",
         r"
 SET ROLE wamn_system;
-SET app.env_key = 'tenant-a';
+SET app.project_env_key = 'org-a';
 DO $shape$
 DECLARE
   rls_gap text;
@@ -150,7 +150,7 @@ BEGIN
     FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
    WHERE n.nspname IN ('catalog', 'wamn_run') AND c.relkind = 'r'
      AND NOT (c.relrowsecurity AND c.relforcerowsecurity);
-  ASSERT rls_gap IS NULL, format('RLS floor missing: %s', rls_gap);
+  ASSERT rls_gap IS NULL, format('RLS base grants missing: %s', rls_gap);
 
   SELECT string_agg(n.nspname || '.' || c.relname || ':' || acl.privilege_type,
                     ', ' ORDER BY 1) INTO public_acl

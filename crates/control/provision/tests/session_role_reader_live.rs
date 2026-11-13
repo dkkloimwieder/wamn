@@ -2,7 +2,7 @@
 //!
 //! The test starts its own PostgreSQL server with a wamn_session_role_reader_test
 //! database: it resets its four project schemas and named fixture roles, and
-//! revokes the server's PUBLIC CONNECT floor. It never connects to a deployed
+//! revokes the server's PUBLIC CONNECT base grants. It never connects to a deployed
 //! database.
 
 use std::io::Write as _;
@@ -199,7 +199,7 @@ fn dedicated_session_reader_columns_and_generations_execute_on_postgres() {
         ] {
             run(&admin, artifact);
         }
-        run(&admin, sql::revoke_public_connect_floor_sql());
+        run(&admin, sql::revoke_public_connect_base_grants_sql());
         run(
             &admin,
             &format!(
@@ -269,8 +269,8 @@ fn dedicated_session_reader_columns_and_generations_execute_on_postgres() {
                 run(
                     &admin,
                     &format!(
-                        "SELECT NOT has_function_privilege('{role}', 'wamn_authority.tenant_key(text)', 'EXECUTE') \
-                         AND NOT has_function_privilege('{role}', 'wamn_authority.current_tenant_key()', 'EXECUTE')",
+                        "SELECT NOT has_function_privilege('{role}', 'wamn_authority.project_key(text)', 'EXECUTE') \
+                         AND NOT has_function_privilege('{role}', 'wamn_authority.current_project_key()', 'EXECUTE')",
                         role = role(generation),
                     ),
                 ),
@@ -284,7 +284,7 @@ fn dedicated_session_reader_columns_and_generations_execute_on_postgres() {
             assert_eq!(
                 run(
                     url,
-                    "SELECT count(*) FROM information_schema.columns WHERE table_schema = 'platform' AND table_name = 'user_role' AND column_name = 'env_key'"
+                    "SELECT count(*) FROM information_schema.columns WHERE table_schema = 'platform' AND table_name = 'user_role' AND column_name = 'project_env_key'"
                 ),
                 "0"
             );
@@ -299,7 +299,7 @@ fn dedicated_session_reader_columns_and_generations_execute_on_postgres() {
                 "UPDATE platform.\"user\" SET status = 'disabled'",
                 "DELETE FROM platform.user_role",
                 "TRUNCATE platform.\"user\" CASCADE",
-                "SELECT wamn_authority.tenant_key('fixture-a')",
+                "SELECT wamn_authority.project_key('fixture-a')",
                 "SET ROLE wamn_platform",
                 "SET ROLE wamn_session_role_reader",
             ] {
@@ -335,7 +335,7 @@ fn dedicated_session_reader_columns_and_generations_execute_on_postgres() {
             GRANT SELECT ON platform.permission TO wamn_session_role_reader; \
             GRANT USAGE ON SCHEMA catalog, wamn_run, wamn_authority TO wamn_session_role_reader; \
             GRANT SELECT ON catalog.packages, wamn_run.runs TO wamn_session_role_reader; \
-            GRANT EXECUTE ON FUNCTION wamn_authority.tenant_key(text) TO wamn_session_role_reader;",
+            GRANT EXECUTE ON FUNCTION wamn_authority.project_key(text) TO wamn_session_role_reader;",
         );
         run(&admin, &sql::grant_session_role_reader_surface_sql());
         assert_surface(&admin);

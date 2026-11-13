@@ -1,7 +1,7 @@
 //! Observe and reconcile the current run plane and its runtime identities.
 //!
 //! Dry runs read database facts without changing roles or schema.
-//! Apply requires SUPERUSER or BYPASSRLS to observe every tenant row.
+//! Apply requires SUPERUSER or BYPASSRLS to observe every project row.
 
 use std::collections::BTreeSet;
 use std::error::Error as StdError;
@@ -60,7 +60,7 @@ pub struct ReconcileRunPlaneRequest {
 
 impl ReconcileRunPlaneRequest {
     /// The composed environment key derived from the environment coordinate.
-    pub fn env_key(&self) -> String {
+    pub fn project_env_key(&self) -> String {
         wamn_control_registry::project_env_key(&self.org, &self.project, &self.env)
     }
 }
@@ -70,10 +70,10 @@ impl ReconcileRunPlaneRequest {
 pub struct ReconcileRunPlaneOutcome {
     /// The plan that was applied, or that would apply under a dry run.
     pub plan: RunPlanePlan,
-    /// Whether the tenant's environment policy changed, or would change.
+    /// Whether the project's environment policy changed, or would change.
     pub policy_changed: bool,
-    /// What the tenant's `platform` schema and identity rows needed.
-    pub env_key_identity: EnvKeyIdentityOutcome,
+    /// What the project's `platform` schema and identity rows needed.
+    pub project_env_key_identity: ProjectEnvKeyIdentityOutcome,
 }
 
 /// Stable class for a run-plane target-identity refusal.
@@ -286,7 +286,7 @@ pub async fn reconcile_run_plane_with_migrations(
         let policy_changed = converge_environment_policy(
             &mut client,
             &schema,
-            &args.env_key(),
+            &args.project_env_key(),
             &args.env,
             &source_policy,
             !args.dry_run,
@@ -302,19 +302,23 @@ pub async fn reconcile_run_plane_with_migrations(
             if !args.dry_run {
                 wamn_platform_identity::org::lock_org_memberships(&authority, &args.org).await?;
             }
-            let identity_source =
-                read_env_key_identity_source(&authority, &args.org, &args.project, &args.env)
-                    .await?;
-            let env_key = args.env_key();
+            let identity_source = read_project_env_key_identity_source(
+                &authority,
+                &args.org,
+                &args.project,
+                &args.env,
+            )
+            .await?;
+            let project_env_key = args.project_env_key();
             let scope = wamn_platform_identity::application::ApplicationScope {
                 org: &args.org,
                 project: &args.project,
                 env: &args.env,
-                env_key: &env_key,
+                project_env_key: &project_env_key,
             };
-            let outcome = converge_env_key_identity(
+            let outcome = converge_project_env_key_identity(
                 &mut client,
-                &env_key,
+                &project_env_key,
                 &identity_source,
                 !args.dry_run,
                 &args.changes,
@@ -328,24 +332,26 @@ pub async fn reconcile_run_plane_with_migrations(
         .await;
         drop(system);
         let _ = connection.await;
-        let env_key_identity = identity_result?;
-        if !args.dry_run && (env_key_identity.app_schema_installed || reset_sources.is_some()) {
+        let project_env_key_identity = identity_result?;
+        if !args.dry_run
+            && (project_env_key_identity.app_schema_installed || reset_sources.is_some())
+        {
             crate::platform_migrations::initialize_project(
                 &mut client,
                 reset_sources.as_deref().unwrap_or(sources),
             )
             .await?;
         }
-        Ok::<_, anyhow::Error>((plan, policy_changed, env_key_identity))
+        Ok::<_, anyhow::Error>((plan, policy_changed, project_env_key_identity))
     }
     .await;
     drop(client);
     let _ = conn_task.await;
-    let (plan, policy_changed, env_key_identity) = result?;
+    let (plan, policy_changed, project_env_key_identity) = result?;
     Ok(ReconcileRunPlaneOutcome {
         plan,
         policy_changed,
-        env_key_identity,
+        project_env_key_identity,
     })
 }
 
@@ -363,13 +369,13 @@ struct UserPrincipal {
     id: String,
 }
 
-/// The deployment and registry facts a tenant's identity rows are built from.
+/// The deployment and registry facts a project's identity rows are built from.
 ///
-/// All of them come from the system registry, never from the tenant database,
-/// so a tenant cannot name its own platform rows, invent a service principal,
+/// All of them come from the system registry, never from the project database,
+/// so a project cannot name its own platform rows, invent a service principal,
 /// or admit a user who was never granted a membership.
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct EnvKeyIdentitySource {
+struct ProjectEnvKeyIdentitySource {
     /// `registry.meta.platform_domain`, absent until the bootstrap sets it.
     platform_domain: Option<String>,
     services: Vec<ServicePrincipal>,
@@ -380,7 +386,7 @@ struct EnvKeyIdentitySource {
 
 /// Every service principal holding a role in one project, with the deployment
 /// platform domain that names the platform rows.
-const ENV_KEY_IDENTITY_SOURCE_SQL: &str = "SELECT p.id::text, p.subject, p.display_name \
+const PROJECT_ENV_KEY_IDENTITY_SOURCE_SQL: &str = "SELECT p.id::text, p.subject, p.display_name \
      FROM identity.project_roles AS r \
      JOIN identity.principals AS p ON p.id = r.principal_id \
      WHERE r.org = $1 AND r.project = $2 \
@@ -392,10 +398,10 @@ const ENV_KEY_IDENTITY_SOURCE_SQL: &str = "SELECT p.id::text, p.subject, p.displ
 /// project environment (`wamn-0h0g.9.18`).
 ///
 /// `identity.project_env_memberships` carries `org`, `project` and `env`
-/// itself, so the tenant needs no join beyond the principal that names the
-/// user. The env narrows the read: one tenant database serves one project
-/// environment, and a member of `dev` gets no row in the `prod` tenant.
-const ENV_KEY_IDENTITY_USERS_SQL: &str = "SELECT p.id::text, p.email, p.display_name \
+/// itself, so the project needs no join beyond the principal that names the
+/// user. The env narrows the read: one project database serves one project
+/// environment, and a member of `dev` gets no row in the `prod` project.
+const PROJECT_ENV_KEY_IDENTITY_USERS_SQL: &str = "SELECT p.id::text, p.email, p.display_name \
      FROM identity.project_env_memberships AS m \
      JOIN identity.principals AS p ON p.id = m.principal_id \
      WHERE m.org = $1 AND m.project = $2 AND m.env = $3 \
@@ -405,7 +411,7 @@ const ENV_KEY_IDENTITY_USERS_SQL: &str = "SELECT p.id::text, p.email, p.display_
 
 /// Every user member of ONE project environment who holds `project-admin` in
 /// its project.
-const ENV_KEY_IDENTITY_ADMINS_SQL: &str = "SELECT p.id::text FROM identity.principals p \
+const PROJECT_ENV_KEY_IDENTITY_ADMINS_SQL: &str = "SELECT p.id::text FROM identity.principals p \
     WHERE p.status='active' AND (EXISTS (SELECT 1 FROM identity.project_roles r \
     WHERE r.principal_id=p.id AND r.org=$1 AND r.project=$2 AND r.role=$4) \
     OR EXISTS (SELECT 1 FROM identity.org_roles r WHERE r.principal_id=p.id AND r.org=$1 AND r.role='org-admin')) \
@@ -413,19 +419,19 @@ const ENV_KEY_IDENTITY_ADMINS_SQL: &str = "SELECT p.id::text FROM identity.princ
     AND EXISTS (SELECT 1 FROM identity.org_memberships om WHERE om.principal_id=p.id AND om.org=$1 AND om.status='active') \
     AND EXISTS (SELECT 1 FROM identity.project_env_memberships m WHERE m.principal_id=p.id AND m.org=$1 AND m.project=$2 AND m.env=$3)))";
 
-async fn read_env_key_identity_source(
+async fn read_project_env_key_identity_source(
     client: &tokio_postgres::Transaction<'_>,
     org: &str,
     project: &str,
     env: &str,
-) -> anyhow::Result<EnvKeyIdentitySource> {
+) -> anyhow::Result<ProjectEnvKeyIdentitySource> {
     let platform_domain: Option<String> = client
         .query_one("SELECT platform_domain FROM registry.meta", &[])
         .await
         .context("read the deployment platform domain")?
         .get(0);
     let services = client
-        .query(ENV_KEY_IDENTITY_SOURCE_SQL, &[&org, &project])
+        .query(PROJECT_ENV_KEY_IDENTITY_SOURCE_SQL, &[&org, &project])
         .await
         .context("read the project's service principals")?
         .into_iter()
@@ -436,7 +442,7 @@ async fn read_env_key_identity_source(
         })
         .collect();
     let users = client
-        .query(ENV_KEY_IDENTITY_USERS_SQL, &[&org, &project, &env])
+        .query(PROJECT_ENV_KEY_IDENTITY_USERS_SQL, &[&org, &project, &env])
         .await
         .context("read the project environment's user members")?
         .into_iter()
@@ -444,7 +450,7 @@ async fn read_env_key_identity_source(
         .collect();
     let admins = client
         .query(
-            ENV_KEY_IDENTITY_ADMINS_SQL,
+            PROJECT_ENV_KEY_IDENTITY_ADMINS_SQL,
             &[
                 &org,
                 &project,
@@ -457,7 +463,7 @@ async fn read_env_key_identity_source(
         .into_iter()
         .map(|row| row.get(0))
         .collect();
-    Ok::<_, anyhow::Error>(EnvKeyIdentitySource {
+    Ok::<_, anyhow::Error>(ProjectEnvKeyIdentitySource {
         platform_domain,
         services,
         users,
@@ -465,9 +471,9 @@ async fn read_env_key_identity_source(
     })
 }
 
-/// What one env_keyentity convergence did, or would do under a dry run.
+/// What one project_env_keyentity convergence did, or would do under a dry run.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
-pub struct EnvKeyIdentityOutcome {
+pub struct ProjectEnvKeyIdentityOutcome {
     /// `deploy/sql/app-schema.sql` was absent and was installed.
     pub app_schema_installed: bool,
     /// Platform rows written, out of the closed component list.
@@ -484,12 +490,12 @@ pub struct EnvKeyIdentityOutcome {
     pub admin_rows_written: usize,
 }
 
-/// Install the tenant's `platform` schema and its identity rows
+/// Install the project's `platform` schema and its identity rows
 /// (`wamn-0h0g.9.15`).
 ///
 /// This is the production application of `deploy/sql/app-schema.sql` and of the
 /// platform principal rows. Both were manual `psql` steps that
-/// `docs/operations/deployment.md` told an operator to run, and a tenant that
+/// `docs/operations/deployment.md` told an operator to run, and a project that
 /// skipped them refused every stamped write with `actor-required`.
 ///
 /// It runs here and not in `provision-project-env` because this verb already
@@ -500,13 +506,13 @@ pub struct EnvKeyIdentityOutcome {
 /// A service row is written for every service principal holding a role in the
 /// project. Its email is `<subject>@<platform-domain>`: a service is not a
 /// user, so it carries the deployment's own domain, like a platform row, and
-/// the subject keeps it unique inside the tenant.
+/// the subject keeps it unique inside the project.
 ///
 /// A user row is written for every user that `grant-project-env-membership`
 /// admitted to this environment (`wamn-0h0g.9.18`). It carries the user's own
 /// `identity.principals.email` and display name. A new member gets the row at
 /// the next reconcile, not at the moment of the grant, because the grant flow
-/// holds no tenant connection.
+/// holds no project connection.
 ///
 /// A user row whose user is not in that source any more is removed, and the
 /// foreign keys remove its role assignments and API keys
@@ -514,17 +520,17 @@ pub struct EnvKeyIdentityOutcome {
 /// Service and platform rows keep their own sources, so this removes neither.
 ///
 /// `apply=false` observes only and writes nothing.
-async fn converge_env_key_identity(
+async fn converge_project_env_key_identity(
     client: &mut tokio_postgres::Client,
-    env_key: &str,
-    source: &EnvKeyIdentitySource,
+    project_env_key: &str,
+    source: &ProjectEnvKeyIdentitySource,
     apply: bool,
     changes: &wamn_broker::Publisher,
     system: &tokio_postgres::Transaction<'_>,
     scope: wamn_platform_identity::application::ApplicationScope<'_>,
-) -> anyhow::Result<EnvKeyIdentityOutcome> {
-    anyhow::ensure!(!env_key.is_empty(), "tenant must not be empty");
-    let mut outcome = EnvKeyIdentityOutcome::default();
+) -> anyhow::Result<ProjectEnvKeyIdentityOutcome> {
+    anyhow::ensure!(!project_env_key.is_empty(), "project must not be empty");
+    let mut outcome = ProjectEnvKeyIdentityOutcome::default();
     let app_schema_present: bool = client
         .query_one("SELECT to_regclass('platform.\"user\"') IS NOT NULL", &[])
         .await
@@ -533,7 +539,7 @@ async fn converge_env_key_identity(
 
     // Every relation app-schema.sql creates has a stamp trigger, so the
     // record-history function has to exist before the file runs. The catalog
-    // composition carries it, and this same reconcile installs that. A tenant
+    // composition carries it, and this same reconcile installs that. A project
     // whose catalog predates record-history reaches here without it, and the
     // failure is clearer here than inside a CREATE TRIGGER.
     let stamp_function_present: bool = client
@@ -554,7 +560,7 @@ async fn converge_env_key_identity(
                 &[],
             )
             .await
-            .context("read the tenant's platform rows")?
+            .context("read the project's platform rows")?
             .into_iter()
             .map(|row| row.get::<_, String>(0))
             .collect();
@@ -571,7 +577,7 @@ async fn converge_env_key_identity(
             client
                 .query("SELECT id::text, type = 'user' FROM platform.\"user\"", &[])
                 .await
-                .context("read the tenant's user rows")?
+                .context("read the project's user rows")?
                 .into_iter()
                 .fold(Default::default(), |(mut all, mut users), row| {
                     let id: String = row.get(0);
@@ -613,7 +619,7 @@ async fn converge_env_key_identity(
                 &[&wamn_identity_protocol::ADMIN_ROLE],
             )
             .await
-            .context("read the tenant's admin rows")?
+            .context("read the project's admin rows")?
             .into_iter()
             .map(|row| row.get(0))
             .collect()
@@ -644,7 +650,7 @@ async fn converge_env_key_identity(
         stamp_function_present,
         "record-history-absent: this database has no wamn_history.stamp_row function, which every \
          platform stamp trigger calls. deploy/sql/record-history.sql arrives with the catalog \
-         schema, so reconcile the catalog schema before the tenant identity rows"
+         schema, so reconcile the catalog schema before the project identity rows"
     );
     let Some(platform_domain) = source.platform_domain.as_deref() else {
         anyhow::bail!(
@@ -660,7 +666,7 @@ async fn converge_env_key_identity(
     let transaction = client
         .transaction()
         .await
-        .context("open the tenant identity transaction")?;
+        .context("open the project identity transaction")?;
     let mut drops = wamn_broker::auth_changes::AuthDrops::default();
     if !app_schema_present {
         let owner: String = transaction
@@ -700,7 +706,7 @@ async fn converge_env_key_identity(
     transaction
         .batch_execute(&platform_rows)
         .await
-        .context("write the tenant's platform principal rows")?;
+        .context("write the project's platform principal rows")?;
     if !missing_services.is_empty()
         || !missing_users.is_empty()
         || !stale_users.is_empty()
@@ -718,7 +724,7 @@ async fn converge_env_key_identity(
             let principal_id: wamn_identity_protocol::PrincipalId = service.id.parse()?;
             wamn_platform_identity::application::write_service(
                 &transaction,
-                env_key,
+                project_env_key,
                 wamn_platform_identity::application::ApplicationUser {
                     principal_id: &principal_id,
                     email: &format!("{}@{platform_domain}", service.subject),
@@ -747,7 +753,7 @@ async fn converge_env_key_identity(
     transaction
         .commit()
         .await
-        .context("commit the tenant identity rows")?;
+        .context("commit the project identity rows")?;
     changes.publish(drops).await;
     Ok(outcome)
 }
@@ -764,12 +770,12 @@ async fn converge_env_key_identity(
 pub(crate) async fn converge_environment_policy(
     client: &mut tokio_postgres::Client,
     schema: &BareSchemaName,
-    env_key: &str,
+    project_env_key: &str,
     environment: &str,
     source: &wamn_release_control::verification_policy::AuthoritativeEnvironmentPolicy,
     apply: bool,
 ) -> anyhow::Result<bool> {
-    anyhow::ensure!(!env_key.is_empty(), "tenant must not be empty");
+    anyhow::ensure!(!project_env_key.is_empty(), "project must not be empty");
     let table_present: bool = client
         .query_one(
             "SELECT pg_catalog.to_regclass(pg_catalog.format('%I.environment_policies', $1::text)) IS NOT NULL",
@@ -800,10 +806,10 @@ pub(crate) async fn converge_environment_policy(
                 &format!(
                     "SELECT expected_environment, \
                             source_policy_org, source_policy_hash \
-                       FROM {}.environment_policies WHERE env_key = $1",
+                       FROM {}.environment_policies WHERE project_env_key = $1",
                     schema.quoted()
                 ),
-                &[&env_key],
+                &[&project_env_key],
             )
             .await
             .context("observe project-local environment policy")?
@@ -840,10 +846,10 @@ pub(crate) async fn converge_environment_policy(
             .execute(
                 &format!(
                     "INSERT INTO {}.environment_policies \
-                       (env_key, expected_environment, \
+                       (project_env_key, expected_environment, \
                         source_policy_org, source_policy_hash) \
                      VALUES ($1, $2, $3, $4) \
-                     ON CONFLICT (env_key) DO UPDATE SET \
+                     ON CONFLICT (project_env_key) DO UPDATE SET \
                        expected_environment = EXCLUDED.expected_environment, \
                        source_policy_org = EXCLUDED.source_policy_org, \
                        source_policy_hash = EXCLUDED.source_policy_hash \
@@ -856,7 +862,7 @@ pub(crate) async fn converge_environment_policy(
                     schema.quoted()
                 ),
                 &[
-                    &env_key,
+                    &project_env_key,
                     &environment,
                     &source.source_policy_org.as_ref(),
                     &source.source_policy_hash.as_ref(),
@@ -871,8 +877,8 @@ pub(crate) async fn converge_environment_policy(
 
 /// The reusable core: observe the schema, plan, and — when `apply` — ensure the
 /// `wamn_app` role the sections GRANT to and execute the actions in order.
-/// Returns the plan (for reporting / gate assertions). Shared by the CLI verb
-/// and the live gate so both exercise one code path.
+/// Returns the plan (for reporting / condition assertions). Shared by the CLI verb
+/// and the live acceptance test so both exercise one code path.
 pub async fn reconcile(
     client: &tokio_postgres::Client,
     schema: &BareSchemaName,

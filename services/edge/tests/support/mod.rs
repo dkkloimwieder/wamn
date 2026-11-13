@@ -42,9 +42,9 @@ pub const HOST: &str = "receiving.localhost";
 pub const PATH: &str = "/sample/read";
 pub const ISSUER: &str = "https://identity.example.test";
 pub const ORG: &str = "org-a";
-pub const AUDIENCE: &str = "tenant-a/edge";
+pub const AUDIENCE: &str = "org-a/edge";
 pub const PRINCIPAL: &str = "0b5c7f3e-9a41-4d2e-8f6a-1c2d3e4f5a6b";
-/// The tenant and environment of the release.
+/// The project and environment of the release.
 pub const PROJECT: &str = "plant";
 pub const ENVIRONMENT: &str = "edge";
 

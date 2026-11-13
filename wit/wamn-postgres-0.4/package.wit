@@ -6,11 +6,11 @@ package wamn:postgres@0.4.0;
 /// `transaction-view` resource. A component built against 0.3.0 does not fit.
 /// This is the one version in the tree, and the host serves only it.
 
-/// Host-plugin interface for tenant-scoped Postgres access.
+/// Host-plugin interface for project-scoped Postgres access.
 /// Security invariants (enforced by the HOST, invisible to the guest):
 /// - The guest NEVER holds a socket. It holds resources or scoped views. Connections
 ///   live in the plugin's pool.
-/// - RLS claims (tenant/user/role) are derived from the executing
+/// - RLS claims (project/user/role) are derived from the executing
 ///   workload's identity and injected by the plugin via SET LOCAL inside
 ///   the plugin-managed transaction. There is deliberately NO way for a
 ///   guest to set or override its own claims through this interface.
@@ -20,7 +20,7 @@ package wamn:postgres@0.4.0;
 ///   returned to the pool). See plan 2.2.
 /// - No LISTEN/NOTIFY surface (event delivery is outbox + dispatcher).
 /// - Schema selection is host-injected per-workload config (`wamn.schema`),
-///   like the tenant claim: the guest names tables unqualified and cannot
+///   like the project claim: the guest names tables unqualified and cannot
 ///   choose its own schema. It is NOT part of this interface (validated in
 ///   S6, where a test host swapped in an ephemeral schema with zero guest
 ///   change).
@@ -85,7 +85,7 @@ interface types {
     /// 23P01 with constraint name.
     exclusion-violation(string),
     /// RLS or privilege denial. Deliberately carries no detail about
-    /// which policy denied (no cross-tenant reconnaissance).
+    /// which policy denied (no cross-project reconnaissance).
     permission-denied,
     /// Anything else: sqlstate + message.
     query-error(tuple<string, string>),

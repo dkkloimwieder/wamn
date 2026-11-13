@@ -63,7 +63,7 @@ fn acquisition_binds_its_executing_principal_operation_and_application() {
     };
     let acquisition = NodeAcquisition {
         claims: SessionClaims {
-            env_key: "tenant-a".to_owned(),
+            project_env_key: "org-a".to_owned(),
             project: Some("project-a".to_owned()),
             schema: Some("app".to_owned()),
             runner: Some("executor-a".to_owned()),

@@ -359,7 +359,7 @@
         }
       },
       "format": "rust",
-      "fragment": "                        .with_class(AuthorityClass::GuestSql, &guest_url)\n                        .with_class(AuthorityClass::ExecutorPlatform, database.url()),\n                    guest_pool_max_size: 2,\n                    platform_pool_max_size: 2,\n                    wait_timeout_ms: 5000,\n                    statement_timeout_ms: 10000,\n                    row_limit: 1000,\n                },\n            )]),\n            None,\n        ),\n    )));\n    let host = OperationHost::new(\n        Arc::new(wamn_engine::build_engine(&[])?),\n        Arc::clone(&postgres),\n        Arc::new(HttpTransport::new()?),\n        Arc::new(wamn_runtime::connection_facts::ConnectionFacts::new(\n            Arc::new(wamn_runtime::connection_memory::ConnectionMemory::default()),\n            wamn_platform_identity::connection_changes::ConnectionChanges::default(),\n            Arc::new(ConnectionCredentials::empty()),\n            postgres,\n            ENV_KEY,\n            \"test\",\n            \"test\",\n        )),\n        Arc::new(WamnLogging::new(&WamnLoggingConfig::default())?),\n        Arc::from([]),\n        release,\n        Arc::new(LocalComponentSource::new(PathBuf::new())),\n        OperationScope {\n            project: \"test\".into(),\n            schema: Some(\"wamn_integration\".into()),\n            owner_prefix: \"netsuite-checkpoint-live\".into(),",
+      "fragment": "                        .with_class(AuthorityClass::GuestSql, &guest_url)\n                        .with_class(AuthorityClass::ExecutorPlatform, database.url()),\n                    guest_pool_max_size: 2,\n                    platform_pool_max_size: 2,\n                    wait_timeout_ms: 5000,\n                    statement_timeout_ms: 10000,\n                    row_limit: 1000,\n                },\n            )]),\n            None,\n        ),\n    )));\n    let host = OperationHost::new(\n        Arc::new(wamn_engine::build_engine(&[])?),\n        Arc::clone(&postgres),\n        Arc::new(HttpTransport::new()?),\n        Arc::new(wamn_runtime::connection_facts::ConnectionFacts::new(\n            Arc::new(wamn_runtime::connection_memory::ConnectionMemory::default()),\n            wamn_platform_identity::connection_changes::ConnectionChanges::default(),\n            Arc::new(ConnectionCredentials::empty()),\n            postgres,\n            PROJECT_ENV_KEY,\n            \"test\",\n            \"test\",\n        )),\n        Arc::new(WamnLogging::new(&WamnLoggingConfig::default())?),\n        Arc::from([]),\n        release,\n        Arc::new(LocalComponentSource::new(PathBuf::new())),\n        OperationScope {\n            project: \"test\".into(),\n            schema: Some(\"wamn_integration\".into()),\n            owner_prefix: \"netsuite-checkpoint-live\".into(),",
       "isNew": false,
       "kind": "exact",
       "lines": 33,
@@ -473,7 +473,7 @@
         }
       },
       "format": "rust",
-      "fragment": "        base,\n        destination,\n        component,\n        support::admit(\n            &connector,\n            \"http-page\",\n            Some(\"apps/platform/no-std/http-page/declaration.json.in\"),\n            BTreeSet::new(),\n        ),\n        support::admit(\n            &connector,\n            \"jsonata\",\n            Some(\"apps/platform/execution/jsonata/declaration.json.in\"),\n            BTreeSet::new(),\n        ),\n    ];\n    let scope = ComponentPackageScope {\n        env_key: \"rest--publication--test\".into(),\n        package_id: \"netsuite\".into(),",
+      "fragment": "        base,\n        destination,\n        component,\n        support::admit(\n            &connector,\n            \"http-page\",\n            Some(\"apps/platform/no-std/http-page/declaration.json.in\"),\n            BTreeSet::new(),\n        ),\n        support::admit(\n            &connector,\n            \"jsonata\",\n            Some(\"apps/platform/execution/jsonata/declaration.json.in\"),\n            BTreeSet::new(),\n        ),\n    ];\n    let scope = ComponentPackageScope {\n        project_env_key: \"rest--publication--test\".into(),\n        package_id: \"netsuite\".into(),",
       "isNew": false,
       "kind": "exact",
       "lines": 19,
@@ -2715,7 +2715,7 @@
         }
       },
       "format": "rust",
-      "fragment": "        postcommit_case::assert_gates_layers(resources).await?;\n        let gates_evidence = resources.evidence.join(\"gates-image\");\n        fs::create_dir(&gates_evidence)?;\n        workload::image_ready(\n            &resources.lifecycle,\n            &resources.name,\n            &resources.work,\n            resources\n                .gates_image\n                .as_deref()\n                .context(\"the test built its gates image\")?,\n            \"release\",\n            &gates_evidence,\n        )\n        .await?;",
+      "fragment": "        postcommit_case::assert_acceptance_tests_layers(resources).await?;\n        let acceptance_tests_evidence = resources.evidence.join(\"acceptance-tests-image\");\n        fs::create_dir(&acceptance_tests_evidence)?;\n        workload::image_ready(\n            &resources.lifecycle,\n            &resources.name,\n            &resources.work,\n            resources\n                .acceptance_tests_image\n                .as_deref()\n                .context(\"the test built its acceptance test image\")?,\n            \"release\",\n            &acceptance_tests_evidence,\n        )\n        .await?;",
       "isNew": false,
       "kind": "exact",
       "lines": 15,
@@ -2791,7 +2791,7 @@
         }
       },
       "format": "rust",
-      "fragment": "use wamn_control::environment::EventBroker;\n\nuse wamn_control_provision::events::{advisory_stream_config, source_stream_config};\nuse wamn_control_registry::Triple;\nuse wamn_gate_harness::delivery::{\n    self, Application, Inputs, application_directory, coordinate_name, share_kubeconfig,\n};\nuse wamn_gate_harness::journey::JourneyDocument;\nuse wamn_gate_harness::session_issuer::{IssuerCluster, prepare_application};\nuse wamn_test_infrastructure::delivery_cluster::{\n    KeptCluster, NAMESPACE, ensure_database, start_container,\n};\nuse wamn_test_infrastructure::event_broker;\nuse wamn_test_infrastructure::secrets::{",
+      "fragment": "use wamn_control::environment::EventBroker;\n\nuse wamn_control_provision::events::{advisory_stream_config, source_stream_config};\nuse wamn_control_registry::Triple;\nuse wamn_acceptance_test_harness::delivery::{\n    self, Application, Inputs, application_directory, coordinate_name, share_kubeconfig,\n};\nuse wamn_acceptance_test_harness::journey::JourneyDocument;\nuse wamn_acceptance_test_harness::session_issuer::{IssuerCluster, prepare_application};\nuse wamn_test_infrastructure::delivery_cluster::{\n    KeptCluster, NAMESPACE, ensure_database, start_container,\n};\nuse wamn_test_infrastructure::event_broker;\nuse wamn_test_infrastructure::secrets::{",
       "isNew": false,
       "kind": "exact",
       "lines": 14,
@@ -2867,7 +2867,7 @@
         }
       },
       "format": "rust",
-      "fragment": "    let consumers = super::declared_consumers(roots.iter().map(PathBuf::as_path))?;\n    let broker = event_broker::prepare(\n        &work,\n        &triple,\n        identity().env_key().as_str(),\n        &source,\n        &advisory,\n        &consumers,\n    )?;\n    let nats = start_container(\n        &format!(\"{owner}-nats\"),\n        &[\n            \"--volume\",\n            &format!(\n                \"{}:/etc/nats/event-nats.conf:ro\",\n                broker.configuration.display()\n            ),\n            \"nats:2.10-alpine\",\n            \"--config\",\n            \"/etc/nats/event-nats.conf\",\n            \"--jetstream\",\n            \"--store_dir\",\n            \"/data\",\n        ],\n    )\n    .await?;\n    let nats_url = format!(\"nats://{nats}:4222\");",
+      "fragment": "    let consumers = super::declared_consumers(roots.iter().map(PathBuf::as_path))?;\n    let broker = event_broker::prepare(\n        &work,\n        &triple,\n        identity().project_env_key().as_str(),\n        &source,\n        &advisory,\n        &consumers,\n    )?;\n    let nats = start_container(\n        &format!(\"{owner}-nats\"),\n        &[\n            \"--volume\",\n            &format!(\n                \"{}:/etc/nats/event-nats.conf:ro\",\n                broker.configuration.display()\n            ),\n            \"nats:2.10-alpine\",\n            \"--config\",\n            \"/etc/nats/event-nats.conf\",\n            \"--jetstream\",\n            \"--store_dir\",\n            \"/data\",\n        ],\n    )\n    .await?;\n    let nats_url = format!(\"nats://{nats}:4222\");",
       "isNew": false,
       "kind": "exact",
       "lines": 27,
@@ -3247,7 +3247,7 @@
         }
       },
       "format": "rust",
-      "fragment": "pub(super) async fn registry_files(\n    candidate: &Candidate,\n    work: &std::path::Path,\n    images: &[&str],\n) -> anyhow::Result<()> {\n    let (authority, _) = candidate\n        .images\n        .host\n        .split_once('/')\n        .context(\"the candidate's host image has a registry authority\")?;\n    if let Some(endpoint) = wamn_gate_harness::case_release::registry_endpoint(authority).await? {\n        wamn_gate_harness::case_release::registry_files(&endpoint, &candidate.images.host, work)\n    } else {\n        wamn_gate_harness::case_release::node_image_archives(candidate, images, work).await\n    }\n}",
+      "fragment": "pub(super) async fn registry_files(\n    candidate: &Candidate,\n    work: &std::path::Path,\n    images: &[&str],\n) -> anyhow::Result<()> {\n    let (authority, _) = candidate\n        .images\n        .host\n        .split_once('/')\n        .context(\"the candidate's host image has a registry authority\")?;\n    if let Some(endpoint) = wamn_acceptance_test_harness::case_release::registry_endpoint(authority).await? {\n        wamn_acceptance_test_harness::case_release::registry_files(&endpoint, &candidate.images.host, work)\n    } else {\n        wamn_acceptance_test_harness::case_release::node_image_archives(candidate, images, work).await\n    }\n}",
       "isNew": false,
       "kind": "exact",
       "lines": 16,
@@ -3399,7 +3399,7 @@
         }
       },
       "format": "rust",
-      "fragment": "        &overlay_package_root().join(\"publication/wirings/quality_create_inspection.json\"),\n    )?;\n    let (project, task) = connect(&route.database_url).await?;\n    let digest: String = project\n        .query_one(\n            \"SELECT manifest_digest FROM catalog.releases WHERE env_key = $1\",\n            &[&identity().env_key().as_str()],\n        )\n        .await?\n        .get(0);\n    task.abort();\n    let declared = BTreeMap::from([(",
+      "fragment": "        &overlay_package_root().join(\"publication/wirings/quality_create_inspection.json\"),\n    )?;\n    let (project, task) = connect(&route.database_url).await?;\n    let digest: String = project\n        .query_one(\n            \"SELECT manifest_digest FROM catalog.releases WHERE project_env_key = $1\",\n            &[&identity().project_env_key().as_str()],\n        )\n        .await?\n        .get(0);\n    task.abort();\n    let declared = BTreeMap::from([(",
       "isNew": false,
       "kind": "exact",
       "lines": 12,
@@ -3437,7 +3437,7 @@
         }
       },
       "format": "rust",
-      "fragment": "            ]),\n        },\n    )]);\n    wamn_gate_harness::workflow::author_and_enable(\n        &inputs.system_pg_url,\n        &route.database_url,\n        &wamn_control_registry::Triple::new(\n            &identity().org,\n            &identity().project,\n            identity().environment.as_str(),\n        ),\n        &AuthorWorkflowRequest {\n            org: &identity().org,\n            project: &identity().project,\n            environment: identity().environment.as_str(),\n            application: \"receiving\",",
+      "fragment": "            ]),\n        },\n    )]);\n    wamn_acceptance_test_harness::workflow::author_and_enable(\n        &inputs.system_pg_url,\n        &route.database_url,\n        &wamn_control_registry::Triple::new(\n            &identity().org,\n            &identity().project,\n            identity().environment.as_str(),\n        ),\n        &AuthorWorkflowRequest {\n            org: &identity().org,\n            project: &identity().project,\n            environment: identity().environment.as_str(),\n            application: \"receiving\",",
       "isNew": false,
       "kind": "exact",
       "lines": 16,
@@ -4235,7 +4235,7 @@
         }
       },
       "format": "rust",
-      "fragment": "    )\n    .await?;\n    wamn_control::dev::environment::grant_operator_admin_role(\n        &route.database_url,\n        identity().org.as_str(),\n        identity().project.as_str(),\n        identity().environment.as_str(),\n        identity().env_key().as_str(),\n        PLATFORM_DOMAIN,\n    )\n    .await?;",
+      "fragment": "    )\n    .await?;\n    wamn_control::dev::environment::grant_operator_admin_role(\n        &route.database_url,\n        identity().org.as_str(),\n        identity().project.as_str(),\n        identity().environment.as_str(),\n        identity().project_env_key().as_str(),\n        PLATFORM_DOMAIN,\n    )\n    .await?;",
       "isNew": false,
       "kind": "exact",
       "lines": 11,
@@ -4919,7 +4919,7 @@
         }
       },
       "format": "rust",
-      "fragment": "    };\n    let components = PathBuf::from(std::env::var(\"WAMN_APPLICATION_COMPONENTS\")?);\n    let flow_http = PathBuf::from(std::env::var(\"WAMN_FLOW_HTTP_COMPONENT\")?);\n    std::fs::write(\n        scratch.path().join(\"environment.k\"),\n        include_str!(\"../../../tests/integration/fixtures/local-environments/wms.k\"),\n    )?;\n    let application = LocalApplication::start(LocalApplicationConfig {\n        system_database_url: system.url(),\n        database_url: project.url(),\n        scratch: scratch.path(),\n        component_directory: &components,\n        flow_http_wasm: &flow_http,\n        env_key: crate::environment::identity().env_key().as_str(),\n        org: crate::environment::identity().org.as_str(),\n        project: crate::environment::identity().project.as_str(),\n        environment: crate::environment::identity().environment.as_str(),\n        schema: crate::environment::SCHEMA,\n        caller_role: \"admin\",\n        route_host: \"wms.local.test\",\n        packages: &[LocalPackage {\n            root: &app,\n            component: \"wms\",\n        }],\n        attachments: &attachments,\n    })\n    .await?;\n    let (admin, connection) = tokio_postgres::connect(project.url(), tokio_postgres::NoTls).await?;\n    let connection = tokio::spawn(connection);",
+      "fragment": "    };\n    let components = PathBuf::from(std::env::var(\"WAMN_APPLICATION_COMPONENTS\")?);\n    let flow_http = PathBuf::from(std::env::var(\"WAMN_FLOW_HTTP_COMPONENT\")?);\n    std::fs::write(\n        scratch.path().join(\"environment.k\"),\n        include_str!(\"../../../tests/integration/fixtures/local-environments/wms.k\"),\n    )?;\n    let application = LocalApplication::start(LocalApplicationConfig {\n        system_database_url: system.url(),\n        database_url: project.url(),\n        scratch: scratch.path(),\n        component_directory: &components,\n        flow_http_wasm: &flow_http,\n        project_env_key: crate::environment::identity().project_env_key().as_str(),\n        org: crate::environment::identity().org.as_str(),\n        project: crate::environment::identity().project.as_str(),\n        environment: crate::environment::identity().environment.as_str(),\n        schema: crate::environment::SCHEMA,\n        caller_role: \"admin\",\n        route_host: \"wms.local.test\",\n        packages: &[LocalPackage {\n            root: &app,\n            component: \"wms\",\n        }],\n        attachments: &attachments,\n    })\n    .await?;\n    let (admin, connection) = tokio_postgres::connect(project.url(), tokio_postgres::NoTls).await?;\n    let connection = tokio::spawn(connection);",
       "isNew": false,
       "kind": "exact",
       "lines": 29,
@@ -4957,7 +4957,7 @@
         }
       },
       "format": "rust",
-      "fragment": "async fn the_packaging_screen_follows_a_write_and_a_delete() -> anyhow::Result<()> {\n    wamn_test_postgres::require_prerequisites(&[\n        \"WAMN_APPLICATION_COMPONENTS\",\n        \"WAMN_FLOW_HTTP_COMPONENT\",\n        \"WAMN_NATIVE_C_NATS_BIN\",\n        \"node\",\n    ]);\n    let _lock = wamn_test_postgres::lock();\n    let system = wamn_test_postgres::database();\n    let project = wamn_test_postgres::database();\n    let scratch = ScratchRoot::create()?;\n    let app = PathBuf::from(env!(\"CARGO_MANIFEST_DIR\"))\n        .parent()\n        .context(\"the WMS test crate has an application parent\")?\n        .to_owned();\n    let attachments: BTreeMap<String, ServingAttachment> =\n        wamn_schema_generator::route_schema::read_package_attachments(&app)?;\n    let components = PathBuf::from(std::env::var(\"WAMN_APPLICATION_COMPONENTS\")?);\n    let flow_http = PathBuf::from(std::env::var(\"WAMN_FLOW_HTTP_COMPONENT\")?);\n    std::fs::write(\n        scratch.path().join(\"environment.k\"),\n        include_str!(\"../../../tests/integration/fixtures/local-environments/wms.k\"),\n    )?;\n    let application = LocalApplication::start(LocalApplicationConfig {\n        system_database_url: system.url(),\n        database_url: project.url(),\n        scratch: scratch.path(),\n        component_directory: &components,\n        flow_http_wasm: &flow_http,\n        env_key: crate::environment::identity().env_key().as_str(),\n        org: crate::environment::identity().org.as_str(),\n        project: crate::environment::identity().project.as_str(),\n        environment: crate::environment::identity().environment.as_str(),\n        schema: crate::environment::SCHEMA,\n        caller_role: \"admin\",\n        route_host: \"wms.local.test\",\n        packages: &[LocalPackage {\n            root: &app,\n            component: \"wms\",\n        }],\n        attachments: &attachments,\n    })\n    .await?;\n    let (admin, connection) = tokio_postgres::connect(project.url(), tokio_postgres::NoTls).await?;\n    let connection = tokio::spawn(connection);\n    let (identity, identity_connection) =\n        tokio_postgres::connect(system.url(), tokio_postgres::NoTls).await?;\n    let identity_connection = tokio::spawn(identity_connection);\n    let result = async {\n        let scope = crate::environment::identity();\n        let subject = wamn_platform_identity::operator_subject(\n            &scope.org,\n            &scope.project,\n            &scope.environment,\n        )?;\n        let user = wamn_platform_identity::resolve_subject(\n            &identity,\n            wamn_platform_identity::PrincipalType::Service,\n            &subject,\n        )\n        .await?\n        .context(\"the local application's operator principal\")?;\n        // This PAT fixture has no registered session instance or identity service.\n        // The browser's mocked session uses this test-only instance suffix.\n        let audience = wamn_control_provision::session_target::session_audience(\n            &wamn_control_registry::Triple::new(\n                scope.org.clone(),\n                scope.project.clone(),\n                scope.environment.as_str(),\n            ),\n            \"localapp\",\n        )?;\n        crate::business_fixture::seed_fixture(&admin, 1).await?;",
+      "fragment": "async fn the_packaging_screen_follows_a_write_and_a_delete() -> anyhow::Result<()> {\n    wamn_test_postgres::require_prerequisites(&[\n        \"WAMN_APPLICATION_COMPONENTS\",\n        \"WAMN_FLOW_HTTP_COMPONENT\",\n        \"WAMN_NATIVE_C_NATS_BIN\",\n        \"node\",\n    ]);\n    let _lock = wamn_test_postgres::lock();\n    let system = wamn_test_postgres::database();\n    let project = wamn_test_postgres::database();\n    let scratch = ScratchRoot::create()?;\n    let app = PathBuf::from(env!(\"CARGO_MANIFEST_DIR\"))\n        .parent()\n        .context(\"the WMS test crate has an application parent\")?\n        .to_owned();\n    let attachments: BTreeMap<String, ServingAttachment> =\n        wamn_schema_generator::route_schema::read_package_attachments(&app)?;\n    let components = PathBuf::from(std::env::var(\"WAMN_APPLICATION_COMPONENTS\")?);\n    let flow_http = PathBuf::from(std::env::var(\"WAMN_FLOW_HTTP_COMPONENT\")?);\n    std::fs::write(\n        scratch.path().join(\"environment.k\"),\n        include_str!(\"../../../tests/integration/fixtures/local-environments/wms.k\"),\n    )?;\n    let application = LocalApplication::start(LocalApplicationConfig {\n        system_database_url: system.url(),\n        database_url: project.url(),\n        scratch: scratch.path(),\n        component_directory: &components,\n        flow_http_wasm: &flow_http,\n        project_env_key: crate::environment::identity().project_env_key().as_str(),\n        org: crate::environment::identity().org.as_str(),\n        project: crate::environment::identity().project.as_str(),\n        environment: crate::environment::identity().environment.as_str(),\n        schema: crate::environment::SCHEMA,\n        caller_role: \"admin\",\n        route_host: \"wms.local.test\",\n        packages: &[LocalPackage {\n            root: &app,\n            component: \"wms\",\n        }],\n        attachments: &attachments,\n    })\n    .await?;\n    let (admin, connection) = tokio_postgres::connect(project.url(), tokio_postgres::NoTls).await?;\n    let connection = tokio::spawn(connection);\n    let (identity, identity_connection) =\n        tokio_postgres::connect(system.url(), tokio_postgres::NoTls).await?;\n    let identity_connection = tokio::spawn(identity_connection);\n    let result = async {\n        let scope = crate::environment::identity();\n        let subject = wamn_platform_identity::operator_subject(\n            &scope.org,\n            &scope.project,\n            &scope.environment,\n        )?;\n        let user = wamn_platform_identity::resolve_subject(\n            &identity,\n            wamn_platform_identity::PrincipalType::Service,\n            &subject,\n        )\n        .await?\n        .context(\"the local application's operator principal\")?;\n        // This PAT fixture has no registered session instance or identity service.\n        // The browser's mocked session uses this test-only instance suffix.\n        let audience = wamn_control_provision::session_target::session_audience(\n            &wamn_control_registry::Triple::new(\n                scope.org.clone(),\n                scope.project.clone(),\n                scope.environment.as_str(),\n            ),\n            \"localapp\",\n        )?;\n        crate::business_fixture::seed_fixture(&admin, 1).await?;",
       "isNew": false,
       "kind": "exact",
       "lines": 73,
@@ -5100,7 +5100,7 @@
           "line": 85,
           "position": 2911
         },
-        "name": "/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/authoring/model/src/gate.rs",
+        "name": "/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/authoring/model/src/condition.rs",
         "start": 73,
         "startLoc": {
           "column": 35,
@@ -5109,7 +5109,7 @@
         }
       },
       "format": "rust",
-      "fragment": "            serde_json::from_value(json!({\n                \"scope\": {\"env_key\": \"tenant-a\", \"package-id\": \"orders\", \"package-version\": \"1.0.0\"},\n                \"component\": \"transform\", \"interface-version\": \"0.1.0\",\n                \"operations\": {\"run\": {\n                    \"registered-operation\": null, \"committed-result-schema\": null,\n                    \"input-ports\": [{\"name\": \"input\", \"schema\": {}}],\n                    \"output-ports\": [], \"parameters\": []\n                }},\n                \"connections\": []\n            })).unwrap(),\n            format!(\"sha256:{}\", \"7\".repeat(64)),\n            Vec::new(),\n            Vec::new(),",
+      "fragment": "            serde_json::from_value(json!({\n                \"scope\": {\"project_env_key\": \"org-a\", \"package-id\": \"orders\", \"package-version\": \"1.0.0\"},\n                \"component\": \"transform\", \"interface-version\": \"0.1.0\",\n                \"operations\": {\"run\": {\n                    \"registered-operation\": null, \"committed-result-schema\": null,\n                    \"input-ports\": [{\"name\": \"input\", \"schema\": {}}],\n                    \"output-ports\": [], \"parameters\": []\n                }},\n                \"connections\": []\n            })).unwrap(),\n            format!(\"sha256:{}\", \"7\".repeat(64)),\n            Vec::new(),\n            Vec::new(),",
       "isNew": false,
       "kind": "exact",
       "lines": 13,
@@ -5717,7 +5717,7 @@
         }
       },
       "format": "rust",
-      "fragment": "    env_key: &str,\n) -> Result<Value, ComponentDeclarationError> {\n    let bytes =\n        fs::read(template).map_err(|source| ComponentDeclarationError::read(template, source))?;\n    let mut document: Value = serde_json::from_slice(&bytes)\n        .map_err(|source| ComponentDeclarationError::parse(template, source))?;\n    let invalid = |detail: String| {\n        ComponentDeclarationError::invalid(\n            ComponentDeclarationErrorType::TemplateInvalid,\n            template,\n            detail,\n        )\n    };",
+      "fragment": "    project_env_key: &str,\n) -> Result<Value, ComponentDeclarationError> {\n    let bytes =\n        fs::read(template).map_err(|source| ComponentDeclarationError::read(template, source))?;\n    let mut document: Value = serde_json::from_slice(&bytes)\n        .map_err(|source| ComponentDeclarationError::parse(template, source))?;\n    let invalid = |detail: String| {\n        ComponentDeclarationError::invalid(\n            ComponentDeclarationErrorType::TemplateInvalid,\n            template,\n            detail,\n        )\n    };",
       "isNew": false,
       "kind": "exact",
       "lines": 13,
@@ -5755,7 +5755,7 @@
         }
       },
       "format": "rust",
-      "fragment": "    async fn changes_during_a_run_form_one_serialized_next_suffix() {\n        let events = FakeEvents::with([DevInvalidation::Rerun {\n            from: DevStage::Build,\n        }]);\n        let mut source = FakeSource::new(events.clone());\n        let mut runner = WatchRunner::inject_during(\n            DevStage::Gate,\n            vec![\n                DevInvalidation::Rerun {\n                    from: DevStage::Acl,",
+      "fragment": "    async fn changes_during_a_run_form_one_serialized_next_suffix() {\n        let events = FakeEvents::with([DevInvalidation::Rerun {\n            from: DevStage::Build,\n        }]);\n        let mut source = FakeSource::new(events.clone());\n        let mut runner = WatchRunner::inject_during(\n            DevStage::Condition,\n            vec![\n                DevInvalidation::Rerun {\n                    from: DevStage::Acl,",
       "isNew": false,
       "kind": "exact",
       "lines": 10,
@@ -6287,7 +6287,7 @@
         }
       },
       "format": "rust",
-      "fragment": "        assert_eq!(initial.cursor, Value::Null);\n        tx.commit().await.unwrap();\n        assert_stamp(\n            &client,\n            \"catalog.package_upgrade_stages\",\n            &format!(\n                \"env_key = 'stage-test' AND package_version = '{}'\",\n                identity.package_version\n            ),\n            &wamn_control_provision::PlatformComponent::ApplyPackage\n                .principal_id()\n                .to_string(),\n            &wamn_control_provision::PlatformComponent::ApplyPackage\n                .principal_id()\n                .to_string(),\n        )\n        .await;\n\n        let tx = client.transaction().await.unwrap();\n        crate::apply_package::bind_apply_package_principal(&tx)\n            .await\n            .unwrap();",
+      "fragment": "        assert_eq!(initial.cursor, Value::Null);\n        tx.commit().await.unwrap();\n        assert_stamp(\n            &client,\n            \"catalog.package_upgrade_stages\",\n            &format!(\n                \"project_env_key = 'stage-test' AND package_version = '{}'\",\n                identity.package_version\n            ),\n            &wamn_control_provision::PlatformComponent::ApplyPackage\n                .principal_id()\n                .to_string(),\n            &wamn_control_provision::PlatformComponent::ApplyPackage\n                .principal_id()\n                .to_string(),\n        )\n        .await;\n\n        let tx = client.transaction().await.unwrap();\n        crate::apply_package::bind_apply_package_principal(&tx)\n            .await\n            .unwrap();",
       "isNew": false,
       "kind": "exact",
       "lines": 22,
@@ -6325,7 +6325,7 @@
         }
       },
       "format": "rust",
-      "fragment": "        assert_eq!(initial.cursor, Value::Null);\n        tx.commit().await.unwrap();\n        assert_stamp(\n            &client,\n            \"catalog.package_upgrade_stages\",\n            &format!(\n                \"env_key = 'stage-test' AND package_version = '{}'\",\n                identity.package_version\n            ),\n            &wamn_control_provision::PlatformComponent::ApplyPackage\n                .principal_id()\n                .to_string(),\n            &wamn_control_provision::PlatformComponent::ApplyPackage\n                .principal_id()\n                .to_string(),\n        )\n        .await;",
+      "fragment": "        assert_eq!(initial.cursor, Value::Null);\n        tx.commit().await.unwrap();\n        assert_stamp(\n            &client,\n            \"catalog.package_upgrade_stages\",\n            &format!(\n                \"project_env_key = 'stage-test' AND package_version = '{}'\",\n                identity.package_version\n            ),\n            &wamn_control_provision::PlatformComponent::ApplyPackage\n                .principal_id()\n                .to_string(),\n            &wamn_control_provision::PlatformComponent::ApplyPackage\n                .principal_id()\n                .to_string(),\n        )\n        .await;",
       "isNew": false,
       "kind": "exact",
       "lines": 17,
@@ -6363,7 +6363,7 @@
         }
       },
       "format": "rust",
-      "fragment": "        assert_eq!(initial.cursor, Value::Null);\n        tx.commit().await.unwrap();\n        assert_stamp(\n            &client,\n            \"catalog.package_upgrade_stages\",\n            &format!(\n                \"env_key = 'stage-test' AND package_version = '{}'\",\n                identity.package_version\n            ),\n            &wamn_control_provision::PlatformComponent::ApplyPackage\n                .principal_id()\n                .to_string(),\n            &wamn_control_provision::PlatformComponent::ApplyPackage\n                .principal_id()\n                .to_string(),\n        )\n        .await;\n\n        let tx = client.transaction().await.unwrap();\n        crate::apply_package::bind_apply_package_principal(&tx)\n            .await\n            .unwrap();",
+      "fragment": "        assert_eq!(initial.cursor, Value::Null);\n        tx.commit().await.unwrap();\n        assert_stamp(\n            &client,\n            \"catalog.package_upgrade_stages\",\n            &format!(\n                \"project_env_key = 'stage-test' AND package_version = '{}'\",\n                identity.package_version\n            ),\n            &wamn_control_provision::PlatformComponent::ApplyPackage\n                .principal_id()\n                .to_string(),\n            &wamn_control_provision::PlatformComponent::ApplyPackage\n                .principal_id()\n                .to_string(),\n        )\n        .await;\n\n        let tx = client.transaction().await.unwrap();\n        crate::apply_package::bind_apply_package_principal(&tx)\n            .await\n            .unwrap();",
       "isNew": false,
       "kind": "exact",
       "lines": 22,
@@ -7085,7 +7085,7 @@
         }
       },
       "format": "rust",
-      "fragment": "        .context(\"read connected audit retention identity\")?;\n    let role: String = row.get(\"role\");\n    let database: String = row.get(\"database\");\n    let scope = WorkloadRoleScope::EnvKey {\n        env_key,\n        database: &database,\n    };\n    let mut expected = Vec::new();\n    for generation in [CredentialGeneration::A, CredentialGeneration::B] {\n        expected.push(\n            workload_generation_role(WorkloadRoleFamily::AuditRetention, scope, generation)",
+      "fragment": "        .context(\"read connected audit retention identity\")?;\n    let role: String = row.get(\"role\");\n    let database: String = row.get(\"database\");\n    let scope = WorkloadRoleScope::ProjectEnvKey {\n        project_env_key,\n        database: &database,\n    };\n    let mut expected = Vec::new();\n    for generation in [CredentialGeneration::A, CredentialGeneration::B] {\n        expected.push(\n            workload_generation_role(WorkloadRoleFamily::AuditRetention, scope, generation)",
       "isNew": false,
       "kind": "exact",
       "lines": 11,
@@ -7655,7 +7655,7 @@
         }
       },
       "format": "rust",
-      "fragment": "            .query_one(\"SELECT to_regclass('inventory.panel') IS NOT NULL\", &[])\n            .await\n            .unwrap()\n            .get::<_, bool>(0)\n    );\n    assert_eq!(\n        client\n            .query_one(\n                \"SELECT count(*) FROM catalog.package_migrations \\\n                 WHERE env_key = $1 AND package_id = $2 AND package_version = $3\",\n                &[&ENV_KEY, &\"wamn_inventory\", &\"1.0.0\"],\n            )\n            .await\n            .unwrap()\n            .get::<_, i64>(0),\n        1\n    );",
+      "fragment": "            .query_one(\"SELECT to_regclass('inventory.panel') IS NOT NULL\", &[])\n            .await\n            .unwrap()\n            .get::<_, bool>(0)\n    );\n    assert_eq!(\n        client\n            .query_one(\n                \"SELECT count(*) FROM catalog.package_migrations \\\n                 WHERE project_env_key = $1 AND package_id = $2 AND package_version = $3\",\n                &[&PROJECT_ENV_KEY, &\"wamn_inventory\", &\"1.0.0\"],\n            )\n            .await\n            .unwrap()\n            .get::<_, i64>(0),\n        1\n    );",
       "isNew": false,
       "kind": "exact",
       "lines": 17,
@@ -7693,7 +7693,7 @@
         }
       },
       "format": "rust",
-      "fragment": "    write_receipt(&package);\n    client\n        .execute(\n            \"INSERT INTO catalog.releases (env_key, manifest_digest, canonical_bytes) \\\n             SELECT $1, 'sha256:' || encode(sha256(bytes), 'hex'), bytes \\\n               FROM (SELECT convert_to($2, 'UTF8') AS bytes) AS release\",\n            &[&ENV_KEY, &r#\"{\"release\":{\"packages\":[{\"package-id\":\"wamn_inventory\",\"package-version\":\"1.0.0\"}]}}\"#],\n        )\n        .await\n        .expect(\"seal the applied package coordinate through release membership\");",
+      "fragment": "    write_receipt(&package);\n    client\n        .execute(\n            \"INSERT INTO catalog.releases (project_env_key, manifest_digest, canonical_bytes) \\\n             SELECT $1, 'sha256:' || encode(sha256(bytes), 'hex'), bytes \\\n               FROM (SELECT convert_to($2, 'UTF8') AS bytes) AS release\",\n            &[&PROJECT_ENV_KEY, &r#\"{\"release\":{\"packages\":[{\"package-id\":\"wamn_inventory\",\"package-version\":\"1.0.0\"}]}}\"#],\n        )\n        .await\n        .expect(\"seal the applied package coordinate through release membership\");",
       "isNew": false,
       "kind": "exact",
       "lines": 10,
@@ -7845,7 +7845,7 @@
         }
       },
       "format": "rust",
-      "fragment": "        .expect(\"register the component's tenant\");\n    let facts = Arc::new(ConnectionFacts::new(\n        Arc::new(ConnectionMemory::default()),\n        wamn_platform_identity::connection_changes::ConnectionChanges::default(),\n        Arc::new(authority.reader().await),\n        Arc::clone(&postgres),\n        ENV_KEY,\n        DEFAULT_PROJECT,\n        ENVIRONMENT,\n    ));\n    let _reader = wamn_runtime::plugins::wamn_blobstore::plugin::WamnBlobstore::new(\n        Arc::clone(&postgres),\n        Arc::clone(&facts),\n        ENV_KEY,\n        DEFAULT_PROJECT,\n        None,\n    );\n    let release: &'static str = Box::leak(digest_of(RELEASE_BYTES).into_boxed_str());",
+      "fragment": "        .expect(\"register the component's project\");\n    let facts = Arc::new(ConnectionFacts::new(\n        Arc::new(ConnectionMemory::default()),\n        wamn_platform_identity::connection_changes::ConnectionChanges::default(),\n        Arc::new(authority.reader().await),\n        Arc::clone(&postgres),\n        PROJECT_ENV_KEY,\n        DEFAULT_PROJECT,\n        ENVIRONMENT,\n    ));\n    let _reader = wamn_runtime::plugins::wamn_blobstore::plugin::WamnBlobstore::new(\n        Arc::clone(&postgres),\n        Arc::clone(&facts),\n        PROJECT_ENV_KEY,\n        DEFAULT_PROJECT,\n        None,\n    );\n    let release: &'static str = Box::leak(digest_of(RELEASE_BYTES).into_boxed_str());",
       "isNew": false,
       "kind": "exact",
       "lines": 18,
@@ -8073,7 +8073,7 @@
         }
       },
       "format": "rust",
-      "fragment": "        .expect(\"reset package data-access fixture\");\n    admin\n        .batch_execute(sql::ensure_db_owner_role_sql())\n        .await\n        .expect(\"ensure the production package-owner role\");\n    admin\n        .batch_execute(\n            \"DO $grant$ BEGIN \\\n               EXECUTE format(\\\n                 'GRANT CREATE ON DATABASE %I TO wamn_db_owner', current_database()\\\n               ); \\\n             END $grant$;\",\n        )\n        .await\n        .expect(\"grant the package-owner role its production-equivalent database authority\");\n    admin\n        .batch_execute(CATALOG_SCHEMA)\n        .await\n        .expect(\"install package catalog\");\n    admin\n        .batch_execute(APP_SCHEMA)\n        .await\n        .expect(\"install application authorization floor\");",
+      "fragment": "        .expect(\"reset package data-access fixture\");\n    admin\n        .batch_execute(sql::ensure_db_owner_role_sql())\n        .await\n        .expect(\"ensure the production package-owner role\");\n    admin\n        .batch_execute(\n            \"DO $grant$ BEGIN \\\n               EXECUTE format(\\\n                 'GRANT CREATE ON DATABASE %I TO wamn_db_owner', current_database()\\\n               ); \\\n             END $grant$;\",\n        )\n        .await\n        .expect(\"grant the package-owner role its production-equivalent database authority\");\n    admin\n        .batch_execute(CATALOG_SCHEMA)\n        .await\n        .expect(\"install package catalog\");\n    admin\n        .batch_execute(APP_SCHEMA)\n        .await\n        .expect(\"install application authorization base grants\");",
       "isNew": false,
       "kind": "exact",
       "lines": 23,
@@ -8339,7 +8339,7 @@
         }
       },
       "format": "rust",
-      "fragment": "pub async fn start_workflow(\n    work: &Path,\n    environment: &WorkflowEnvironment<'_>,\n    application: &str,\n    workflow_id: &str,\n    input: &Value,\n    key: &str,\n) -> anyhow::Result<String> {\n    let (project, task) = connect_owned(environment.project_url).await?;\n    let result = wamn_gate_harness::run_check::check(\n        work,",
+      "fragment": "pub async fn start_workflow(\n    work: &Path,\n    environment: &WorkflowEnvironment<'_>,\n    application: &str,\n    workflow_id: &str,\n    input: &Value,\n    key: &str,\n) -> anyhow::Result<String> {\n    let (project, task) = connect_owned(environment.project_url).await?;\n    let result = wamn_acceptance_test_harness::run_check::check(\n        work,",
       "isNew": false,
       "kind": "exact",
       "lines": 11,
@@ -8453,7 +8453,7 @@
         }
       },
       "format": "rust",
-      "fragment": "    include_str!(\"../../../../apps/platform/execution/jsonata/declaration.json.in\");\n\nconst NODE_TYPES: &str = r#\"\n      (import \"wamn:node/types@0.1.0\" (instance $node\n        (type $json' string)\n        (export \"json\" (type $json (eq $json')))\n        (type $context' (record\n          (field \"wiring-id\" string) (field \"wiring-version\" u32)\n          (field \"node-id\" string) (field \"delivery-id\" string)\n          (field \"input-port\" (option string)) (field \"occurrence\" u32)\n          (field \"traceparent\" (option string)) (field \"tracestate\" (option string))\n          (field \"deadline-ms\" (option u64)) (field \"config\" $json)))\n        (export \"node-context\" (type $context (eq $context')))\n        (type $detail' (record (field \"message\" string) (field \"code\" (option string))))\n        (export \"error-detail\" (type $detail (eq $detail')))\n        (type $rate' (record (field \"detail\" $detail) (field \"retry-after-ms\" (option u64))))\n        (export \"rate-limit-detail\" (type $rate (eq $rate')))\n        (type $error' (variant (case \"retryable\" $detail) (case \"rate-limited\" $rate)\n          (case \"terminal\" $detail) (case \"invalid-input\" $detail) (case \"cancelled\")))\n        (export \"node-error\" (type $error (eq $error')))\n        (type $emission' (record (field \"payload\" $json) (field \"port\" (option string))))\n        (export \"emission\" (type $emission (eq $emission')))))\n      (alias export $node \"json\" (type $json))\n      (alias export $node \"node-context\" (type $context))\n      (alias export $node \"node-error\" (type $error))\n      (alias export $node \"emission\" (type $emission))\n\"#;\n\n/// The read: a node that ignores its input and emits [`ROWS`] from a data\n/// segment. It imports nothing, so it can write nothing.\nfn read_component() -> Vec<u8> {\n    wat::parse_str(format!(\n        r#\"(component\n      {NODE_TYPES}\n      (core module $memory\n        (memory (export \"memory\") 16)\n        (data (i32.const 512) \"{data}\")\n        (global $next (mut i32) (i32.const 1024))\n        (func (export \"realloc\") (param i32 i32 i32) (param $size i32) (result i32)\n          (local $old i32) global.get $next local.tee $old\n          local.get $size i32.add global.set $next local.get $old))\n      (core instance $memory (instantiate $memory))\n      (core module $main\n        (import \"memory\" \"memory\" (memory 16))\n        (func (export \"run\") (param $input i32) (result i32)\n          i32.const 264 i32.const 512 i32.store\n          i32.const 268 i32.const {length} i32.store\n          i32.const 256))\n      (core instance $main (instantiate $main (with \"memory\" (instance $memory))))\n      (func $run (param \"ctx\" $context) (param \"input\" $json)\n        (result (result $emission (error $error)))\n        (canon lift (core func $main \"run\") (memory $memory \"memory\")\n          (realloc (func $memory \"realloc\"))))\n      (instance $handler\n        (export \"json\" (type $json)) (export \"node-context\" (type $context))\n        (export \"node-error\" (type $error)) (export \"emission\" (type $emission))\n        (export \"run\" (func $run)))\n      (export \"{READ}\" (instance $handler)))\"#,\n        data = ROWS.replace('\"', \"\\\\\\\"\"),\n        length = ROWS.len(),\n    ))\n    .expect(\"the read component is valid WAT\")\n}\n\nfn read_declaration() -> Value {\n    json!({\n        \"scope\": {\"env_key\": ENV_KEY, \"package-id\": APPLICATION, \"package-version\": \"1.0.0\"},\n        \"component\": \"orders_data\", \"interface-version\": \"0.1.0\",\n        \"operations\": {(READ): {\"registered-operation\": READ,\n            \"input-ports\": [{\"name\": \"input\", \"schema\": {}}],\n            \"output-ports\": [{\"name\": \"main\", \"schema\": {}}],\n            \"parameters\": []}},\n        \"connections\": []\n    })\n}",
+      "fragment": "    include_str!(\"../../../../apps/platform/execution/jsonata/declaration.json.in\");\n\nconst NODE_TYPES: &str = r#\"\n      (import \"wamn:node/types@0.1.0\" (instance $node\n        (type $json' string)\n        (export \"json\" (type $json (eq $json')))\n        (type $context' (record\n          (field \"wiring-id\" string) (field \"wiring-version\" u32)\n          (field \"node-id\" string) (field \"delivery-id\" string)\n          (field \"input-port\" (option string)) (field \"occurrence\" u32)\n          (field \"traceparent\" (option string)) (field \"tracestate\" (option string))\n          (field \"deadline-ms\" (option u64)) (field \"config\" $json)))\n        (export \"node-context\" (type $context (eq $context')))\n        (type $detail' (record (field \"message\" string) (field \"code\" (option string))))\n        (export \"error-detail\" (type $detail (eq $detail')))\n        (type $rate' (record (field \"detail\" $detail) (field \"retry-after-ms\" (option u64))))\n        (export \"rate-limit-detail\" (type $rate (eq $rate')))\n        (type $error' (variant (case \"retryable\" $detail) (case \"rate-limited\" $rate)\n          (case \"terminal\" $detail) (case \"invalid-input\" $detail) (case \"cancelled\")))\n        (export \"node-error\" (type $error (eq $error')))\n        (type $emission' (record (field \"payload\" $json) (field \"port\" (option string))))\n        (export \"emission\" (type $emission (eq $emission')))))\n      (alias export $node \"json\" (type $json))\n      (alias export $node \"node-context\" (type $context))\n      (alias export $node \"node-error\" (type $error))\n      (alias export $node \"emission\" (type $emission))\n\"#;\n\n/// The read: a node that ignores its input and emits [`ROWS`] from a data\n/// segment. It imports nothing, so it can write nothing.\nfn read_component() -> Vec<u8> {\n    wat::parse_str(format!(\n        r#\"(component\n      {NODE_TYPES}\n      (core module $memory\n        (memory (export \"memory\") 16)\n        (data (i32.const 512) \"{data}\")\n        (global $next (mut i32) (i32.const 1024))\n        (func (export \"realloc\") (param i32 i32 i32) (param $size i32) (result i32)\n          (local $old i32) global.get $next local.tee $old\n          local.get $size i32.add global.set $next local.get $old))\n      (core instance $memory (instantiate $memory))\n      (core module $main\n        (import \"memory\" \"memory\" (memory 16))\n        (func (export \"run\") (param $input i32) (result i32)\n          i32.const 264 i32.const 512 i32.store\n          i32.const 268 i32.const {length} i32.store\n          i32.const 256))\n      (core instance $main (instantiate $main (with \"memory\" (instance $memory))))\n      (func $run (param \"ctx\" $context) (param \"input\" $json)\n        (result (result $emission (error $error)))\n        (canon lift (core func $main \"run\") (memory $memory \"memory\")\n          (realloc (func $memory \"realloc\"))))\n      (instance $handler\n        (export \"json\" (type $json)) (export \"node-context\" (type $context))\n        (export \"node-error\" (type $error)) (export \"emission\" (type $emission))\n        (export \"run\" (func $run)))\n      (export \"{READ}\" (instance $handler)))\"#,\n        data = ROWS.replace('\"', \"\\\\\\\"\"),\n        length = ROWS.len(),\n    ))\n    .expect(\"the read component is valid WAT\")\n}\n\nfn read_declaration() -> Value {\n    json!({\n        \"scope\": {\"project_env_key\": PROJECT_ENV_KEY, \"package-id\": APPLICATION, \"package-version\": \"1.0.0\"},\n        \"component\": \"orders_data\", \"interface-version\": \"0.1.0\",\n        \"operations\": {(READ): {\"registered-operation\": READ,\n            \"input-ports\": [{\"name\": \"input\", \"schema\": {}}],\n            \"output-ports\": [{\"name\": \"main\", \"schema\": {}}],\n            \"parameters\": []}},\n        \"connections\": []\n    })\n}",
       "isNew": false,
       "kind": "exact",
       "lines": 75,
@@ -8757,7 +8757,7 @@
         }
       },
       "format": "rust",
-      "fragment": "        .get(0);\n    let mut credentials = ClassCredentials::default();\n    for (family, class) in [\n        (WorkloadRoleFamily::App, AuthorityClass::GuestSql),\n        (\n            WorkloadRoleFamily::ExecutorPlatform,\n            AuthorityClass::ExecutorPlatform,\n        ),\n        (\n            WorkloadRoleFamily::HttpAdmitter,\n            AuthorityClass::CallableHttp,\n        ),\n    ] {\n        let scope = if family == WorkloadRoleFamily::App {\n            WorkloadRoleScope::EnvKey {\n                env_key: ENV_KEY,",
+      "fragment": "        .get(0);\n    let mut credentials = ClassCredentials::default();\n    for (family, class) in [\n        (WorkloadRoleFamily::App, AuthorityClass::GuestSql),\n        (\n            WorkloadRoleFamily::ExecutorPlatform,\n            AuthorityClass::ExecutorPlatform,\n        ),\n        (\n            WorkloadRoleFamily::HttpAdmitter,\n            AuthorityClass::CallableHttp,\n        ),\n    ] {\n        let scope = if family == WorkloadRoleFamily::App {\n            WorkloadRoleScope::ProjectEnvKey {\n                project_env_key: PROJECT_ENV_KEY,",
       "isNew": false,
       "kind": "exact",
       "lines": 16,
@@ -8795,7 +8795,7 @@
         }
       },
       "format": "rust",
-      "fragment": "    let mut credentials = ClassCredentials::default();\n    for (family, class) in [\n        (WorkloadRoleFamily::App, AuthorityClass::GuestSql),\n        (\n            WorkloadRoleFamily::ExecutorPlatform,\n            AuthorityClass::ExecutorPlatform,\n        ),\n        (\n            WorkloadRoleFamily::HttpAdmitter,\n            AuthorityClass::CallableHttp,\n        ),\n    ] {\n        let scope = if family == WorkloadRoleFamily::App {\n            WorkloadRoleScope::EnvKey {\n                env_key: ENV_KEY,\n                database: &database,\n            }\n        } else {\n            WorkloadRoleScope::ProjectEnvironment {\n                org: ENV_KEY,\n                project: PROJECT,\n                environment: ENVIRONMENT,\n                database: &database,\n            }\n        };\n        let role = workload_generation_role(family, scope, CredentialGeneration::A).unwrap();\n        admin\n            .batch_execute(&sql::prepare_workload_generation_sql(\n                family,\n                &database,\n                &role,\n                PASSWORD,\n                \"2099-01-01T00:00:00Z\",\n            ))\n            .await\n            .expect(\"prepare the scoped login\");\n        admin\n            .batch_execute(&format!(\n                \"ALTER ROLE \\\"{role}\\\" SET search_path = application_data\"\n            ))\n            .await\n            .unwrap();\n        let mut login = url::Url::parse(url).unwrap();\n        login.set_username(&role).unwrap();\n        login.set_password(Some(PASSWORD)).unwrap();",
+      "fragment": "    let mut credentials = ClassCredentials::default();\n    for (family, class) in [\n        (WorkloadRoleFamily::App, AuthorityClass::GuestSql),\n        (\n            WorkloadRoleFamily::ExecutorPlatform,\n            AuthorityClass::ExecutorPlatform,\n        ),\n        (\n            WorkloadRoleFamily::HttpAdmitter,\n            AuthorityClass::CallableHttp,\n        ),\n    ] {\n        let scope = if family == WorkloadRoleFamily::App {\n            WorkloadRoleScope::ProjectEnvKey {\n                project_env_key: PROJECT_ENV_KEY,\n                database: &database,\n            }\n        } else {\n            WorkloadRoleScope::ProjectEnvironment {\n                org: PROJECT_ENV_KEY,\n                project: PROJECT,\n                environment: ENVIRONMENT,\n                database: &database,\n            }\n        };\n        let role = workload_generation_role(family, scope, CredentialGeneration::A).unwrap();\n        admin\n            .batch_execute(&sql::prepare_workload_generation_sql(\n                family,\n                &database,\n                &role,\n                PASSWORD,\n                \"2099-01-01T00:00:00Z\",\n            ))\n            .await\n            .expect(\"prepare the scoped login\");\n        admin\n            .batch_execute(&format!(\n                \"ALTER ROLE \\\"{role}\\\" SET search_path = application_data\"\n            ))\n            .await\n            .unwrap();\n        let mut login = url::Url::parse(url).unwrap();\n        login.set_username(&role).unwrap();\n        login.set_password(Some(PASSWORD)).unwrap();",
       "isNew": false,
       "kind": "exact",
       "lines": 45,
@@ -8871,7 +8871,7 @@
         }
       },
       "format": "rust",
-      "fragment": "        connect(&fixture.executor_url).await,\n        Arc::clone(&fixture.postgres),\n        PROJECT,\n        ENV_KEY,\n        ENVIRONMENT,\n        declared(),\n        &fixture.digest,\n    );\n    let (stop, stopping) = tokio::sync::watch::channel(false);\n    let (clock, mut ticks) = ScheduleClock::new();\n    let serving_clock = clock.clone();\n    let task = tokio::spawn(async move {\n        wamn_workflow::schedule::serve_with_clock(\n            &schedules,\n            stopping,\n            || *serving_clock.now.borrow(),\n            |tick| serving_clock.wait_until(tick),\n        )\n        .await\n    });\n\n    let first = next_tick(&mut ticks).await;\n    assert_eq!(first, due(\"2026-10-20T10:16:00Z\"));",
+      "fragment": "        connect(&fixture.executor_url).await,\n        Arc::clone(&fixture.postgres),\n        PROJECT,\n        PROJECT_ENV_KEY,\n        ENVIRONMENT,\n        declared(),\n        &fixture.digest,\n    );\n    let (stop, stopping) = tokio::sync::watch::channel(false);\n    let (clock, mut ticks) = ScheduleClock::new();\n    let serving_clock = clock.clone();\n    let task = tokio::spawn(async move {\n        wamn_workflow::schedule::serve_with_clock(\n            &schedules,\n            stopping,\n            || *serving_clock.now.borrow(),\n            |tick| serving_clock.wait_until(tick),\n        )\n        .await\n    });\n\n    let first = next_tick(&mut ticks).await;\n    assert_eq!(first, due(\"2026-10-20T10:16:00Z\"));",
       "isNew": false,
       "kind": "exact",
       "lines": 23,
@@ -9718,7 +9718,7 @@
           "line": 99,
           "position": 3620
         },
-        "name": "/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/control/provision/tests/tenant_key_live.rs",
+        "name": "/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/control/provision/tests/project_key_live.rs",
         "start": 84,
         "startLoc": {
           "column": 0,
@@ -10885,7 +10885,7 @@
         }
       },
       "format": "rust",
-      "fragment": "                wamn_engine::release_manifest::ReleaseScope::new(\"tenant-a\", \"test\")\n                    .with_applications(\n                        serde_json::from_value(\n                            serde_json::json!({\"receiving\": {\"packages\": [\"root\", \"child\"]}}),\n                        )\n                        .unwrap(),\n                    ),\n            )\n            .expect(\"admit the exact release manifest\"),\n        );\n        let postgres = postgres.unwrap_or_else(|| {\n            Arc::new(WamnPostgres::with_provider(Arc::new(\n                StaticCredentialProvider::new(HashMap::new(), None),\n            )))\n        });\n        let facts = Arc::new(ConnectionFacts::new(",
+      "fragment": "                wamn_engine::release_manifest::ReleaseScope::new(\"org-a\", \"test\")\n                    .with_applications(\n                        serde_json::from_value(\n                            serde_json::json!({\"receiving\": {\"packages\": [\"root\", \"child\"]}}),\n                        )\n                        .unwrap(),\n                    ),\n            )\n            .expect(\"admit the exact release manifest\"),\n        );\n        let postgres = postgres.unwrap_or_else(|| {\n            Arc::new(WamnPostgres::with_provider(Arc::new(\n                StaticCredentialProvider::new(HashMap::new(), None),\n            )))\n        });\n        let facts = Arc::new(ConnectionFacts::new(",
       "isNew": false,
       "kind": "exact",
       "lines": 16,
@@ -12063,7 +12063,7 @@
         }
       },
       "format": "rust",
-      "fragment": "     WHERE con.conrelid = 'wamn_run.effect_attempts'::regclass AND con.contype = 'u'\n       AND (SELECT array_agg(att.attname::text ORDER BY key.ordinality)\n              FROM unnest(con.conkey) WITH ORDINALITY AS key(attnum, ordinality)\n              JOIN pg_attribute AS att\n                ON att.attrelid = con.conrelid AND att.attnum = key.attnum)\n           = ARRAY['env_key', 'run_id', 'frame_id', 'local_node_id', 'occurrence']\n  ), 'effect_attempts is unique per tenant, run, frame, node and occurrence';",
+      "fragment": "     WHERE con.conrelid = 'wamn_run.effect_attempts'::regclass AND con.contype = 'u'\n       AND (SELECT array_agg(att.attname::text ORDER BY key.ordinality)\n              FROM unnest(con.conkey) WITH ORDINALITY AS key(attnum, ordinality)\n              JOIN pg_attribute AS att\n                ON att.attrelid = con.conrelid AND att.attnum = key.attnum)\n           = ARRAY['project_env_key', 'run_id', 'frame_id', 'local_node_id', 'occurrence']\n  ), 'effect_attempts is unique per project, run, frame, node and occurrence';",
       "isNew": false,
       "kind": "exact",
       "lines": 7,
@@ -12253,7 +12253,7 @@
         }
       },
       "format": "rust",
-      "fragment": "        Arc::new(HttpTransport::new()?),\n        Arc::new(wamn_runtime::connection_facts::ConnectionFacts::new(\n            Arc::new(wamn_runtime::connection_memory::ConnectionMemory::default()),\n            wamn_platform_identity::connection_changes::ConnectionChanges::default(),\n            Arc::new(ConnectionCredentials::empty()),\n            Arc::clone(&postgres),\n            ENV_KEY,",
+      "fragment": "        Arc::new(HttpTransport::new()?),\n        Arc::new(wamn_runtime::connection_facts::ConnectionFacts::new(\n            Arc::new(wamn_runtime::connection_memory::ConnectionMemory::default()),\n            wamn_platform_identity::connection_changes::ConnectionChanges::default(),\n            Arc::new(ConnectionCredentials::empty()),\n            Arc::clone(&postgres),\n            PROJECT_ENV_KEY,",
       "isNew": false,
       "kind": "exact",
       "lines": 7,
@@ -12405,7 +12405,7 @@
         }
       },
       "format": "rust",
-      "fragment": "            .expect(\"fixture component encodes\")\n    }\n\n    fn request() -> ComponentAdmissionRequest {\n        ComponentAdmissionRequest {\n            declaration: ComponentDeclaration {\n                scope: ComponentPackageScope {\n                    env_key: \"tenant-a\".to_string(),\n                    package_id: \"orders\".to_string(),\n                    package_version: \"1.0.0\".to_string(),\n                },\n                component: \"transform\".to_string(),\n                interface_version: \"0.1.0\".to_string(),\n                operations: BTreeMap::from([(\n                    OPERATION.to_string(),\n                    ComponentOperationDeclaration {\n                        committed_result_schema: None,\n                        registered_operation: None,\n                        input_ports: vec![ComponentPortDeclaration {\n                            name: \"input\".to_string(),\n                            schema: json!({\"type\": \"object\"}),\n                        }],\n                        output_ports: vec![ComponentPortDeclaration {\n                            name: \"main\".to_string(),\n                            schema: json!({\"type\": \"object\"}),\n                        }],\n                        parameters: vec![ComponentParameterDeclaration {\n                            name: \"mapping\".to_string(),\n                            schema: json!({\"type\": \"object\"}),\n                            required: true,\n                        }],\n                    },\n                )]),\n                connections: Vec::new(),\n            },\n            admitted_platform_packages: BTreeSet::new(),\n            base_digests: BTreeSet::new(),\n        }\n    }\n\n    #[test]\n    fn exact_bytes_mint_digest_and_normalized_fact_without_io() {",
+      "fragment": "            .expect(\"fixture component encodes\")\n    }\n\n    fn request() -> ComponentAdmissionRequest {\n        ComponentAdmissionRequest {\n            declaration: ComponentDeclaration {\n                scope: ComponentPackageScope {\n                    project_env_key: \"org-a\".to_string(),\n                    package_id: \"orders\".to_string(),\n                    package_version: \"1.0.0\".to_string(),\n                },\n                component: \"transform\".to_string(),\n                interface_version: \"0.1.0\".to_string(),\n                operations: BTreeMap::from([(\n                    OPERATION.to_string(),\n                    ComponentOperationDeclaration {\n                        committed_result_schema: None,\n                        registered_operation: None,\n                        input_ports: vec![ComponentPortDeclaration {\n                            name: \"input\".to_string(),\n                            schema: json!({\"type\": \"object\"}),\n                        }],\n                        output_ports: vec![ComponentPortDeclaration {\n                            name: \"main\".to_string(),\n                            schema: json!({\"type\": \"object\"}),\n                        }],\n                        parameters: vec![ComponentParameterDeclaration {\n                            name: \"mapping\".to_string(),\n                            schema: json!({\"type\": \"object\"}),\n                            required: true,\n                        }],\n                    },\n                )]),\n                connections: Vec::new(),\n            },\n            admitted_platform_packages: BTreeSet::new(),\n            base_digests: BTreeSet::new(),\n        }\n    }\n\n    #[test]\n    fn exact_bytes_mint_digest_and_normalized_fact_without_io() {",
       "isNew": false,
       "kind": "exact",
       "lines": 42,
@@ -13089,7 +13089,7 @@
         }
       },
       "format": "rust",
-      "fragment": "    use crate::component_artifact::component_artifact_config_bytes;\n\n    fn admitted(bytes: &[u8]) -> AdmittedComponent {\n        normalize_component_fact(\n            ComponentDeclaration {\n                scope: ComponentPackageScope {\n                    env_key: \"tenant-a\".to_owned(),\n                    package_id: \"orders\".to_owned(),\n                    package_version: \"1.0.0\".to_owned(),\n                },\n                component: \"transform\".to_owned(),\n                interface_version: \"0.1.0\".to_owned(),\n                operations: BTreeMap::from([(\n                    \"run\".to_owned(),\n                    ComponentOperationDeclaration {\n                        committed_result_schema: None,\n                        registered_operation: None,\n                        input_ports: vec![ComponentPortDeclaration {\n                            name: \"input\".to_owned(),\n                            schema: json!({}),\n                        }],\n                        output_ports: Vec::new(),\n                        parameters: Vec::new(),\n                    },\n                )]),\n                connections: Vec::new(),\n            },\n            component_digest(bytes),\n            [\"wasi:logging/logging@0.1.0\".to_owned()],\n            Vec::new(),\n        )\n        .expect(\"fixture admits\")\n        .component\n    }",
+      "fragment": "    use crate::component_artifact::component_artifact_config_bytes;\n\n    fn admitted(bytes: &[u8]) -> AdmittedComponent {\n        normalize_component_fact(\n            ComponentDeclaration {\n                scope: ComponentPackageScope {\n                    project_env_key: \"org-a\".to_owned(),\n                    package_id: \"orders\".to_owned(),\n                    package_version: \"1.0.0\".to_owned(),\n                },\n                component: \"transform\".to_owned(),\n                interface_version: \"0.1.0\".to_owned(),\n                operations: BTreeMap::from([(\n                    \"run\".to_owned(),\n                    ComponentOperationDeclaration {\n                        committed_result_schema: None,\n                        registered_operation: None,\n                        input_ports: vec![ComponentPortDeclaration {\n                            name: \"input\".to_owned(),\n                            schema: json!({}),\n                        }],\n                        output_ports: Vec::new(),\n                        parameters: Vec::new(),\n                    },\n                )]),\n                connections: Vec::new(),\n            },\n            component_digest(bytes),\n            [\"wasi:logging/logging@0.1.0\".to_owned()],\n            Vec::new(),\n        )\n        .expect(\"fixture admits\")\n        .component\n    }",
       "isNew": false,
       "kind": "exact",
       "lines": 34,
@@ -13127,7 +13127,7 @@
         }
       },
       "format": "rust",
-      "fragment": "    fn admitted(bytes: &[u8]) -> AdmittedComponent {\n        normalize_component_fact(\n            ComponentDeclaration {\n                scope: ComponentPackageScope {\n                    env_key: \"tenant-a\".to_owned(),\n                    package_id: \"orders\".to_owned(),\n                    package_version: \"1.0.0\".to_owned(),\n                },\n                component: \"transform\".to_owned(),\n                interface_version: \"0.1.0\".to_owned(),\n                operations: BTreeMap::from([(\n                    \"run\".to_owned(),\n                    ComponentOperationDeclaration {\n                        committed_result_schema: None,\n                        registered_operation: None,\n                        input_ports: vec![ComponentPortDeclaration {\n                            name: \"input\".to_owned(),\n                            schema: json!({}),\n                        }],\n                        output_ports: Vec::new(),\n                        parameters: Vec::new(),\n                    },\n                )]),\n                connections: Vec::new(),\n            },\n            component_digest(bytes),\n            [\"wasi:logging/logging@0.1.0\".to_owned()],\n            Vec::new(),\n        )\n        .expect(\"fixture admits\")\n        .component\n    }\n\n    #[tokio::test]",
+      "fragment": "    fn admitted(bytes: &[u8]) -> AdmittedComponent {\n        normalize_component_fact(\n            ComponentDeclaration {\n                scope: ComponentPackageScope {\n                    project_env_key: \"org-a\".to_owned(),\n                    package_id: \"orders\".to_owned(),\n                    package_version: \"1.0.0\".to_owned(),\n                },\n                component: \"transform\".to_owned(),\n                interface_version: \"0.1.0\".to_owned(),\n                operations: BTreeMap::from([(\n                    \"run\".to_owned(),\n                    ComponentOperationDeclaration {\n                        committed_result_schema: None,\n                        registered_operation: None,\n                        input_ports: vec![ComponentPortDeclaration {\n                            name: \"input\".to_owned(),\n                            schema: json!({}),\n                        }],\n                        output_ports: Vec::new(),\n                        parameters: Vec::new(),\n                    },\n                )]),\n                connections: Vec::new(),\n            },\n            component_digest(bytes),\n            [\"wasi:logging/logging@0.1.0\".to_owned()],\n            Vec::new(),\n        )\n        .expect(\"fixture admits\")\n        .component\n    }\n\n    #[tokio::test]",
       "isNew": false,
       "kind": "exact",
       "lines": 34,
@@ -13393,7 +13393,7 @@
         }
       },
       "format": "rust",
-      "fragment": "                    crate::release_manifest::ReleaseScope::new(\"tenant-a\", \"prod\")\n                        .with_applications(\n                            [(\n                                \"catalog\".to_owned(),\n                                wamn_catalog::ApplicationDefinition {\n                                    connections: std::collections::BTreeMap::new(),\n                                    packages: [\"cat\".to_owned()].into(),\n                                },\n                            )]\n                            .into(),\n                        ),\n                )\n                .expect(\"fixture mount loads\"),",
+      "fragment": "                    crate::release_manifest::ReleaseScope::new(\"org-a\", \"prod\")\n                        .with_applications(\n                            [(\n                                \"catalog\".to_owned(),\n                                wamn_catalog::ApplicationDefinition {\n                                    connections: std::collections::BTreeMap::new(),\n                                    packages: [\"cat\".to_owned()].into(),\n                                },\n                            )]\n                            .into(),\n                        ),\n                )\n                .expect(\"fixture mount loads\"),",
       "isNew": false,
       "kind": "exact",
       "lines": 13,
@@ -13469,7 +13469,7 @@
         }
       },
       "format": "rust",
-      "fragment": "    let memory = Arc::new(ConnectionMemory::with_ttl(ttl));\n    let changes = replicate(&client, Some(ENV_KEY), Arc::clone(&memory));\n    until(\"the connection watch runs\", || memory.watched()).await;\n    let (mut fixture, facts, id) = setup(Arc::clone(&memory), changes).await;\n    let old = facts.connection(&id).await.unwrap().unwrap();\n    let drops = write(&mut fixture, \"new\").await;",
+      "fragment": "    let memory = Arc::new(ConnectionMemory::with_ttl(ttl));\n    let changes = replicate(&client, Some(PROJECT_ENV_KEY), Arc::clone(&memory));\n    until(\"the connection watch runs\", || memory.watched()).await;\n    let (mut fixture, facts, id) = setup(Arc::clone(&memory), changes).await;\n    let old = facts.connection(&id).await.unwrap().unwrap();\n    let drops = write(&mut fixture, \"new\").await;",
       "isNew": false,
       "kind": "exact",
       "lines": 6,
@@ -13545,7 +13545,7 @@
         }
       },
       "format": "rust",
-      "fragment": "        let entry = entry_lookup(&invocation)?;\n        let snapshot = self\n            .postgres\n            .connection_effect_snapshot(\n                component_id,\n                &self.project,\n                &self.env_key,\n                &ConnectionEffectLookup {\n                    package_id: &invocation.package_id,\n                    entry,\n                    origin_package_id: &invocation.origin.package_id,\n                    origin_component_digest: &invocation.origin.component_digest,\n                    origin_component: &invocation.origin.component,\n                    origin_interface_version: &invocation.origin.interface_version,\n                    origin_operation: &invocation.origin.operation,\n                    operation: &invocation.operation,\n                    manifest_digest,",
+      "fragment": "        let entry = entry_lookup(&invocation)?;\n        let snapshot = self\n            .postgres\n            .connection_effect_snapshot(\n                component_id,\n                &self.project,\n                &self.project_env_key,\n                &ConnectionEffectLookup {\n                    package_id: &invocation.package_id,\n                    entry,\n                    origin_package_id: &invocation.origin.package_id,\n                    origin_component_digest: &invocation.origin.component_digest,\n                    origin_component: &invocation.origin.component,\n                    origin_interface_version: &invocation.origin.interface_version,\n                    origin_operation: &invocation.origin.operation,\n                    operation: &invocation.operation,\n                    manifest_digest,",
       "isNew": false,
       "kind": "exact",
       "lines": 17,
@@ -13887,7 +13887,7 @@
         }
       },
       "format": "rust",
-      "fragment": "    let schema = format!(\"wamn_rls_claim_{suffix}\");\n    // The probe login is NAMED AS A GUEST GENERATION for this test's env_key:\n    // guest credential resolution verifies that the login carries\n    // `app_scope_hash(env_key, database)` (`wamn-0h0g.22.6.7`), so a probe\n    // with an arbitrary name would be refused before the policy under test\n    // ever ran. The two env_keys differ per test, so the derived logins do\n    // too and the tests stay parallel-safe.\n    let probe = format!(\n        \"wamn_app_{}_a\",\n        wamn_run_state::app_scope_hash(ENV_KEY, &live_database(admin_url))\n    );\n    let _ = suffix;\n    let admin = connect_raw(admin_url).await;\n    admin\n        .batch_execute(&rls_fixture_sql(&schema, &probe, ENV_KEY, U1, U2))\n        .await\n        .expect(\"seed the per-user RLS fixture as the superuser owner\");\n\n    let pg = WamnPostgres::new(WamnPostgresConfig {\n        credentials: Some(ClassCredentials::every_class(database_url_for_role(\n            admin_url, &probe, &probe,\n        ))),\n        guest_pool_max_size: 2,\n        platform_pool_max_size: 2,\n        wait_timeout_ms: 2_000,\n        statement_timeout_ms: 5_000,\n        row_limit: 1_000,\n    })\n    .unwrap();\n    pg.set_env_key(COMPONENT, ENV_KEY).unwrap();\n    pg.set_schema(COMPONENT, &schema).unwrap();\n    pg.set_role(COMPONENT, \"inspector\").unwrap();\n    pg.set_user_id(COMPONENT, U1).unwrap();",
+      "fragment": "    let schema = format!(\"wamn_rls_claim_{suffix}\");\n    // The probe login is NAMED AS A GUEST GENERATION for this test's project_env_key:\n    // guest credential resolution verifies that the login carries\n    // `app_scope_hash(project_env_key, database)` (`wamn-0h0g.22.6.7`), so a probe\n    // with an arbitrary name would be refused before the policy under test\n    // ever ran. The two project_env_keys differ per test, so the derived logins do\n    // too and the tests stay parallel-safe.\n    let probe = format!(\n        \"wamn_app_{}_a\",\n        wamn_run_state::app_scope_hash(PROJECT_ENV_KEY, &live_database(admin_url))\n    );\n    let _ = suffix;\n    let admin = connect_raw(admin_url).await;\n    admin\n        .batch_execute(&rls_fixture_sql(&schema, &probe, PROJECT_ENV_KEY, U1, U2))\n        .await\n        .expect(\"seed the per-user RLS fixture as the superuser owner\");\n\n    let pg = WamnPostgres::new(WamnPostgresConfig {\n        credentials: Some(ClassCredentials::every_class(database_url_for_role(\n            admin_url, &probe, &probe,\n        ))),\n        guest_pool_max_size: 2,\n        platform_pool_max_size: 2,\n        wait_timeout_ms: 2_000,\n        statement_timeout_ms: 5_000,\n        row_limit: 1_000,\n    })\n    .unwrap();\n    pg.set_project_env_key(COMPONENT, PROJECT_ENV_KEY).unwrap();\n    pg.set_schema(COMPONENT, &schema).unwrap();\n    pg.set_role(COMPONENT, \"inspector\").unwrap();\n    pg.set_user_id(COMPONENT, U1).unwrap();",
       "isNew": false,
       "kind": "exact",
       "lines": 33,
@@ -13925,7 +13925,7 @@
         }
       },
       "format": "rust",
-      "fragment": "            env_key: \"tenant-b\".to_string(),\n            ..SessionClaims::default()\n        },\n    )\n    .await\n    .expect(\"the acquiring env_key binds\");\n\n    let facts = crate::connection_facts::ConnectionFacts::new(\n        Arc::new(crate::connection_memory::ConnectionMemory::default()),\n        wamn_platform_identity::connection_changes::ConnectionChanges::default(),\n        Arc::new(crate::connection_credentials::ConnectionCredentials::empty()),\n        Arc::clone(&pg),\n        \"tenant-a\",\n        DEFAULT_PROJECT,\n        \"dev\",\n    );\n\n    let lookup = ConnectionEffectLookup {\n        entry: crate::plugins::wamn_postgres::ConnectionEntryLookup {\n            package_id: \"catalog\",\n            wiring: Some(crate::plugins::wamn_postgres::WiringLookup {\n                wiring_id: \"wiring\",\n                wiring_version: 1,\n                node_id: \"node\",\n            }),\n        },\n        origin_package_id: \"catalog\",\n        origin_component_digest: \"digest\",\n        origin_component: \"component\",\n        origin_interface_version: \"0.1.0\",\n        origin_operation: \"operation\",\n        package_id: \"catalog\",\n        operation: \"operation\",\n        manifest_digest: \"sha256:release\",\n        environment: \"dev\",\n        component_digest: \"digest\",\n        store_alias: \"manager\",\n        candidate_binding: None,\n    };",
+      "fragment": "            project_env_key: \"org-b\".to_string(),\n            ..SessionClaims::default()\n        },\n    )\n    .await\n    .expect(\"the acquiring project_env_key binds\");\n\n    let facts = crate::connection_facts::ConnectionFacts::new(\n        Arc::new(crate::connection_memory::ConnectionMemory::default()),\n        wamn_platform_identity::connection_changes::ConnectionChanges::default(),\n        Arc::new(crate::connection_credentials::ConnectionCredentials::empty()),\n        Arc::clone(&pg),\n        \"org-a\",\n        DEFAULT_PROJECT,\n        \"dev\",\n    );\n\n    let lookup = ConnectionEffectLookup {\n        entry: crate::plugins::wamn_postgres::ConnectionEntryLookup {\n            package_id: \"catalog\",\n            wiring: Some(crate::plugins::wamn_postgres::WiringLookup {\n                wiring_id: \"wiring\",\n                wiring_version: 1,\n                node_id: \"node\",\n            }),\n        },\n        origin_package_id: \"catalog\",\n        origin_component_digest: \"digest\",\n        origin_component: \"component\",\n        origin_interface_version: \"0.1.0\",\n        origin_operation: \"operation\",\n        package_id: \"catalog\",\n        operation: \"operation\",\n        manifest_digest: \"sha256:release\",\n        environment: \"dev\",\n        component_digest: \"digest\",\n        store_alias: \"manager\",\n        candidate_binding: None,\n    };",
       "isNew": false,
       "kind": "exact",
       "lines": 39,
@@ -13963,7 +13963,7 @@
         }
       },
       "format": "rust",
-      "fragment": "    .expect(\"the acquiring env_key binds\");\n\n    let facts = crate::connection_facts::ConnectionFacts::new(\n        Arc::new(crate::connection_memory::ConnectionMemory::default()),\n        wamn_platform_identity::connection_changes::ConnectionChanges::default(),\n        Arc::new(crate::connection_credentials::ConnectionCredentials::empty()),\n        Arc::clone(&pg),\n        \"tenant-a\",\n        DEFAULT_PROJECT,\n        \"dev\",\n    );\n\n    let lookup = ConnectionEffectLookup {\n        entry: crate::plugins::wamn_postgres::ConnectionEntryLookup {\n            package_id: \"catalog\",\n            wiring: Some(crate::plugins::wamn_postgres::WiringLookup {\n                wiring_id: \"wiring\",\n                wiring_version: 1,\n                node_id: \"node\",\n            }),\n        },\n        origin_package_id: \"catalog\",\n        origin_component_digest: \"digest\",\n        origin_component: \"component\",\n        origin_interface_version: \"0.1.0\",\n        origin_operation: \"operation\",\n        package_id: \"catalog\",\n        operation: \"operation\",\n        manifest_digest: \"sha256:release\",\n        environment: \"dev\",\n        component_digest: \"digest\",\n        store_alias: \"manager\",\n        candidate_binding: None,\n    };",
+      "fragment": "    .expect(\"the acquiring project_env_key binds\");\n\n    let facts = crate::connection_facts::ConnectionFacts::new(\n        Arc::new(crate::connection_memory::ConnectionMemory::default()),\n        wamn_platform_identity::connection_changes::ConnectionChanges::default(),\n        Arc::new(crate::connection_credentials::ConnectionCredentials::empty()),\n        Arc::clone(&pg),\n        \"org-a\",\n        DEFAULT_PROJECT,\n        \"dev\",\n    );\n\n    let lookup = ConnectionEffectLookup {\n        entry: crate::plugins::wamn_postgres::ConnectionEntryLookup {\n            package_id: \"catalog\",\n            wiring: Some(crate::plugins::wamn_postgres::WiringLookup {\n                wiring_id: \"wiring\",\n                wiring_version: 1,\n                node_id: \"node\",\n            }),\n        },\n        origin_package_id: \"catalog\",\n        origin_component_digest: \"digest\",\n        origin_component: \"component\",\n        origin_interface_version: \"0.1.0\",\n        origin_operation: \"operation\",\n        package_id: \"catalog\",\n        operation: \"operation\",\n        manifest_digest: \"sha256:release\",\n        environment: \"dev\",\n        component_digest: \"digest\",\n        store_alias: \"manager\",\n        candidate_binding: None,\n    };",
       "isNew": false,
       "kind": "exact",
       "lines": 34,
@@ -14039,7 +14039,7 @@
         }
       },
       "format": "rust",
-      "fragment": "    const PRINCIPAL_B: &str = \"00000000-0000-0000-0000-000000000020\";\n    let _lock = wamn_test_postgres::lock();\n    let database = wamn_test_postgres::database();\n    let admin_url = database.url();\n    let role = format!(\n        \"wamn_app_{}_a\",\n        wamn_run_state::app_scope_hash(ENV_KEY, &live_database(admin_url))\n    );\n    let guest_url = live_guest_url(admin_url, ENV_KEY).await;\n    ensure_live_user_rows(admin_url, &[LIVE_PRINCIPAL, PRINCIPAL_B]).await;",
+      "fragment": "    const PRINCIPAL_B: &str = \"00000000-0000-0000-0000-000000000020\";\n    let _lock = wamn_test_postgres::lock();\n    let database = wamn_test_postgres::database();\n    let admin_url = database.url();\n    let role = format!(\n        \"wamn_app_{}_a\",\n        wamn_run_state::app_scope_hash(PROJECT_ENV_KEY, &live_database(admin_url))\n    );\n    let guest_url = live_guest_url(admin_url, PROJECT_ENV_KEY).await;\n    ensure_live_user_rows(admin_url, &[LIVE_PRINCIPAL, PRINCIPAL_B]).await;",
       "isNew": false,
       "kind": "exact",
       "lines": 10,
@@ -14077,7 +14077,7 @@
         }
       },
       "format": "rust",
-      "fragment": "    const PRINCIPAL_B: &str = \"00000000-0000-0000-0000-000000000020\";\n    let _lock = wamn_test_postgres::lock();\n    let database = wamn_test_postgres::database();\n    let admin_url = database.url();\n    let role = format!(\n        \"wamn_app_{}_a\",\n        wamn_run_state::app_scope_hash(ENV_KEY, &live_database(admin_url))\n    );\n    let guest_url = live_guest_url(admin_url, ENV_KEY).await;\n    ensure_live_user_rows(admin_url, &[LIVE_PRINCIPAL, PRINCIPAL_B]).await;",
+      "fragment": "    const PRINCIPAL_B: &str = \"00000000-0000-0000-0000-000000000020\";\n    let _lock = wamn_test_postgres::lock();\n    let database = wamn_test_postgres::database();\n    let admin_url = database.url();\n    let role = format!(\n        \"wamn_app_{}_a\",\n        wamn_run_state::app_scope_hash(PROJECT_ENV_KEY, &live_database(admin_url))\n    );\n    let guest_url = live_guest_url(admin_url, PROJECT_ENV_KEY).await;\n    ensure_live_user_rows(admin_url, &[LIVE_PRINCIPAL, PRINCIPAL_B]).await;",
       "isNew": false,
       "kind": "exact",
       "lines": 10,
@@ -14115,7 +14115,7 @@
         }
       },
       "format": "rust",
-      "fragment": "    const PRINCIPAL_B: &str = \"00000000-0000-0000-0000-000000000020\";\n    let _lock = wamn_test_postgres::lock();\n    let database = wamn_test_postgres::database();\n    let admin_url = database.url();\n    let role = format!(\n        \"wamn_app_{}_a\",\n        wamn_run_state::app_scope_hash(ENV_KEY, &live_database(admin_url))\n    );\n    let guest_url = live_guest_url(admin_url, ENV_KEY).await;\n    ensure_live_user_rows(admin_url, &[LIVE_PRINCIPAL, PRINCIPAL_B]).await;",
+      "fragment": "    const PRINCIPAL_B: &str = \"00000000-0000-0000-0000-000000000020\";\n    let _lock = wamn_test_postgres::lock();\n    let database = wamn_test_postgres::database();\n    let admin_url = database.url();\n    let role = format!(\n        \"wamn_app_{}_a\",\n        wamn_run_state::app_scope_hash(PROJECT_ENV_KEY, &live_database(admin_url))\n    );\n    let guest_url = live_guest_url(admin_url, PROJECT_ENV_KEY).await;\n    ensure_live_user_rows(admin_url, &[LIVE_PRINCIPAL, PRINCIPAL_B]).await;",
       "isNew": false,
       "kind": "exact",
       "lines": 10,
@@ -14153,7 +14153,7 @@
         }
       },
       "format": "rust",
-      "fragment": "    const PRINCIPAL_B: &str = \"00000000-0000-0000-0000-000000000020\";\n    let _lock = wamn_test_postgres::lock();\n    let database = wamn_test_postgres::database();\n    let admin_url = database.url();\n    let role = format!(\n        \"wamn_app_{}_a\",\n        wamn_run_state::app_scope_hash(ENV_KEY, &live_database(admin_url))\n    );\n    let guest_url = live_guest_url(admin_url, ENV_KEY).await;\n    ensure_live_user_rows(admin_url, &[LIVE_PRINCIPAL, PRINCIPAL_B]).await;",
+      "fragment": "    const PRINCIPAL_B: &str = \"00000000-0000-0000-0000-000000000020\";\n    let _lock = wamn_test_postgres::lock();\n    let database = wamn_test_postgres::database();\n    let admin_url = database.url();\n    let role = format!(\n        \"wamn_app_{}_a\",\n        wamn_run_state::app_scope_hash(PROJECT_ENV_KEY, &live_database(admin_url))\n    );\n    let guest_url = live_guest_url(admin_url, PROJECT_ENV_KEY).await;\n    ensure_live_user_rows(admin_url, &[LIVE_PRINCIPAL, PRINCIPAL_B]).await;",
       "isNew": false,
       "kind": "exact",
       "lines": 10,
@@ -14191,7 +14191,7 @@
         }
       },
       "format": "rust",
-      "fragment": "    const PRINCIPAL_B: &str = \"00000000-0000-0000-0000-000000000020\";\n    let _lock = wamn_test_postgres::lock();\n    let database = wamn_test_postgres::database();\n    let admin_url = database.url();\n    let role = format!(\n        \"wamn_app_{}_a\",\n        wamn_run_state::app_scope_hash(ENV_KEY, &live_database(admin_url))\n    );\n    let guest_url = live_guest_url(admin_url, ENV_KEY).await;\n    ensure_live_user_rows(admin_url, &[LIVE_PRINCIPAL, PRINCIPAL_B]).await;",
+      "fragment": "    const PRINCIPAL_B: &str = \"00000000-0000-0000-0000-000000000020\";\n    let _lock = wamn_test_postgres::lock();\n    let database = wamn_test_postgres::database();\n    let admin_url = database.url();\n    let role = format!(\n        \"wamn_app_{}_a\",\n        wamn_run_state::app_scope_hash(PROJECT_ENV_KEY, &live_database(admin_url))\n    );\n    let guest_url = live_guest_url(admin_url, PROJECT_ENV_KEY).await;\n    ensure_live_user_rows(admin_url, &[LIVE_PRINCIPAL, PRINCIPAL_B]).await;",
       "isNew": false,
       "kind": "exact",
       "lines": 10,
@@ -14229,7 +14229,7 @@
         }
       },
       "format": "rust",
-      "fragment": "    let _lock = wamn_test_postgres::lock();\n    let database = wamn_test_postgres::database();\n    let admin_url = database.url();\n    let role = format!(\n        \"wamn_app_{}_a\",\n        wamn_run_state::app_scope_hash(ENV_KEY, &live_database(admin_url))\n    );\n    let guest_url = live_guest_url(admin_url, ENV_KEY).await;\n    ensure_live_user_rows(admin_url, &[LIVE_PRINCIPAL]).await;\n    let pg = Arc::new(",
+      "fragment": "    let _lock = wamn_test_postgres::lock();\n    let database = wamn_test_postgres::database();\n    let admin_url = database.url();\n    let role = format!(\n        \"wamn_app_{}_a\",\n        wamn_run_state::app_scope_hash(PROJECT_ENV_KEY, &live_database(admin_url))\n    );\n    let guest_url = live_guest_url(admin_url, PROJECT_ENV_KEY).await;\n    ensure_live_user_rows(admin_url, &[LIVE_PRINCIPAL]).await;\n    let pg = Arc::new(",
       "isNew": false,
       "kind": "exact",
       "lines": 10,
@@ -14267,7 +14267,7 @@
         }
       },
       "format": "rust",
-      "fragment": "    let _lock = wamn_test_postgres::lock();\n    let database = wamn_test_postgres::database();\n    let admin_url = database.url();\n    let role = format!(\n        \"wamn_app_{}_a\",\n        wamn_run_state::app_scope_hash(ENV_KEY, &live_database(admin_url))\n    );\n    let guest_url = live_guest_url(admin_url, ENV_KEY).await;\n    ensure_live_user_rows(admin_url, &[LIVE_PRINCIPAL]).await;\n    let pg = Arc::new(",
+      "fragment": "    let _lock = wamn_test_postgres::lock();\n    let database = wamn_test_postgres::database();\n    let admin_url = database.url();\n    let role = format!(\n        \"wamn_app_{}_a\",\n        wamn_run_state::app_scope_hash(PROJECT_ENV_KEY, &live_database(admin_url))\n    );\n    let guest_url = live_guest_url(admin_url, PROJECT_ENV_KEY).await;\n    ensure_live_user_rows(admin_url, &[LIVE_PRINCIPAL]).await;\n    let pg = Arc::new(",
       "isNew": false,
       "kind": "exact",
       "lines": 10,
@@ -14305,7 +14305,7 @@
         }
       },
       "format": "rust",
-      "fragment": "    let _lock = wamn_test_postgres::lock();\n    let database = wamn_test_postgres::database();\n    let admin_url = database.url();\n    let role = format!(\n        \"wamn_app_{}_a\",\n        wamn_run_state::app_scope_hash(ENV_KEY, &live_database(admin_url))\n    );\n    let guest_url = live_guest_url(admin_url, ENV_KEY).await;\n    ensure_live_user_rows(admin_url, &[LIVE_PRINCIPAL]).await;\n    let pg = Arc::new(",
+      "fragment": "    let _lock = wamn_test_postgres::lock();\n    let database = wamn_test_postgres::database();\n    let admin_url = database.url();\n    let role = format!(\n        \"wamn_app_{}_a\",\n        wamn_run_state::app_scope_hash(PROJECT_ENV_KEY, &live_database(admin_url))\n    );\n    let guest_url = live_guest_url(admin_url, PROJECT_ENV_KEY).await;\n    ensure_live_user_rows(admin_url, &[LIVE_PRINCIPAL]).await;\n    let pg = Arc::new(",
       "isNew": false,
       "kind": "exact",
       "lines": 10,
@@ -14343,7 +14343,7 @@
         }
       },
       "format": "rust",
-      "fragment": "    let database = wamn_test_postgres::database();\n    let admin_url = database.url();\n    let role = format!(\n        \"wamn_app_{}_a\",\n        wamn_run_state::app_scope_hash(ENV_KEY, &live_database(admin_url))\n    );\n    let guest_url = live_guest_url(admin_url, ENV_KEY).await;\n    ensure_live_user_rows(admin_url, &[LIVE_PRINCIPAL]).await;\n    let pg = WamnPostgres::new(WamnPostgresConfig {\n        credentials: Some(ClassCredentials::every_class(guest_url)),\n        guest_pool_max_size: 1,\n        platform_pool_max_size: 1,\n        wait_timeout_ms: 2_000,\n        statement_timeout_ms: 5_000,\n        row_limit: 1_000,\n    })\n    .expect(\"the plugin builds from the guest generation's url\");\n    let scope = \"operation-instance-1\";",
+      "fragment": "    let database = wamn_test_postgres::database();\n    let admin_url = database.url();\n    let role = format!(\n        \"wamn_app_{}_a\",\n        wamn_run_state::app_scope_hash(PROJECT_ENV_KEY, &live_database(admin_url))\n    );\n    let guest_url = live_guest_url(admin_url, PROJECT_ENV_KEY).await;\n    ensure_live_user_rows(admin_url, &[LIVE_PRINCIPAL]).await;\n    let pg = WamnPostgres::new(WamnPostgresConfig {\n        credentials: Some(ClassCredentials::every_class(guest_url)),\n        guest_pool_max_size: 1,\n        platform_pool_max_size: 1,\n        wait_timeout_ms: 2_000,\n        statement_timeout_ms: 5_000,\n        row_limit: 1_000,\n    })\n    .expect(\"the plugin builds from the guest generation's url\");\n    let scope = \"operation-instance-1\";",
       "isNew": false,
       "kind": "exact",
       "lines": 18,
@@ -14381,7 +14381,7 @@
         }
       },
       "format": "rust",
-      "fragment": "    const ENV_KEY: &str = \"read-snapshot\";\n    let _lock = wamn_test_postgres::lock();\n    let database = wamn_test_postgres::database();\n    let admin_url = database.url();\n    let role = format!(\n        \"wamn_app_{}_a\",\n        wamn_run_state::app_scope_hash(ENV_KEY, &live_database(admin_url))\n    );\n    let guest_url = live_guest_url(admin_url, ENV_KEY).await;\n    let admin = connect_raw(admin_url).await;",
+      "fragment": "    const PROJECT_ENV_KEY: &str = \"read-snapshot\";\n    let _lock = wamn_test_postgres::lock();\n    let database = wamn_test_postgres::database();\n    let admin_url = database.url();\n    let role = format!(\n        \"wamn_app_{}_a\",\n        wamn_run_state::app_scope_hash(PROJECT_ENV_KEY, &live_database(admin_url))\n    );\n    let guest_url = live_guest_url(admin_url, PROJECT_ENV_KEY).await;\n    let admin = connect_raw(admin_url).await;",
       "isNew": false,
       "kind": "exact",
       "lines": 10,
@@ -14419,7 +14419,7 @@
         }
       },
       "format": "rust",
-      "fragment": "    pub(in super::super) async fn begin_with_claims(\n        &self,\n        conn: &Object,\n        class: AuthorityClass,\n        read: bool,\n        env_key: &str,\n        schema: Option<&str>,\n        runner: Option<&str>,\n        role: Option<&str>,\n        user_id: Option<&str>,\n        operation: Option<&str>,\n        application: Option<&str>,\n        run: Option<&Causation>,\n        statement_timeout_ms: u32,\n    ) -> Result<(), PgError> {",
+      "fragment": "    pub(in super::super) async fn begin_with_claims(\n        &self,\n        conn: &Object,\n        class: AuthorityClass,\n        read: bool,\n        project_env_key: &str,\n        schema: Option<&str>,\n        runner: Option<&str>,\n        role: Option<&str>,\n        user_id: Option<&str>,\n        operation: Option<&str>,\n        application: Option<&str>,\n        run: Option<&Causation>,\n        statement_timeout_ms: u32,\n    ) -> Result<(), PgError> {",
       "isNew": false,
       "kind": "exact",
       "lines": 15,
@@ -14457,7 +14457,7 @@
         }
       },
       "format": "rust",
-      "fragment": "                    \"checkout manual admission connection\",\n                    format!(\"{error:?}\"),\n                )\n            })?;\n        let executor = PlatformComponent::Executor.principal_id().to_string();\n        if let Err(error) = self\n            .begin_with_claims(\n                &connection,\n                AuthorityClass::ExecutorPlatform,\n                false,\n                env_key,\n                Some(\"wamn_run\"),\n                None,\n                None,\n                Some(&executor),\n                Some(PlatformComponent::Executor.principal_name()),\n                None,\n                None,\n                policy.statement_timeout_ms,\n            )\n            .await\n        {\n            self.destroy(connection);\n            return Err(ProductionClaimError::new(\n                ProductionClaimErrorType::Storage,",
+      "fragment": "                    \"checkout manual admission connection\",\n                    format!(\"{error:?}\"),\n                )\n            })?;\n        let executor = PlatformComponent::Executor.principal_id().to_string();\n        if let Err(error) = self\n            .begin_with_claims(\n                &connection,\n                AuthorityClass::ExecutorPlatform,\n                false,\n                project_env_key,\n                Some(\"wamn_run\"),\n                None,\n                None,\n                Some(&executor),\n                Some(PlatformComponent::Executor.principal_name()),\n                None,\n                None,\n                policy.statement_timeout_ms,\n            )\n            .await\n        {\n            self.destroy(connection);\n            return Err(ProductionClaimError::new(\n                ProductionClaimErrorType::Storage,",
       "isNew": false,
       "kind": "exact",
       "lines": 25,
@@ -14495,7 +14495,7 @@
         }
       },
       "format": "rust",
-      "fragment": "            })?;\n        let executor = PlatformComponent::Executor.principal_id().to_string();\n        if let Err(error) = self\n            .begin_with_claims(\n                &connection,\n                AuthorityClass::ExecutorPlatform,\n                false,\n                env_key,\n                Some(\"wamn_run\"),\n                None,\n                None,\n                Some(&executor),\n                Some(PlatformComponent::Executor.principal_name()),\n                None,\n                None,\n                policy.statement_timeout_ms,\n            )\n            .await\n        {\n            self.destroy(connection);\n            return Err(ProductionClaimError::new(",
+      "fragment": "            })?;\n        let executor = PlatformComponent::Executor.principal_id().to_string();\n        if let Err(error) = self\n            .begin_with_claims(\n                &connection,\n                AuthorityClass::ExecutorPlatform,\n                false,\n                project_env_key,\n                Some(\"wamn_run\"),\n                None,\n                None,\n                Some(&executor),\n                Some(PlatformComponent::Executor.principal_name()),\n                None,\n                None,\n                policy.statement_timeout_ms,\n            )\n            .await\n        {\n            self.destroy(connection);\n            return Err(ProductionClaimError::new(",
       "isNew": false,
       "kind": "exact",
       "lines": 21,
@@ -14989,7 +14989,7 @@
         }
       },
       "format": "rust",
-      "fragment": "                    \"checkout project connection\",\n                    format!(\"{error:?}\"),\n                )\n            })?;\n        if let Err(error) = self\n            .begin_with_claims(\n                &connection,\n                AuthorityClass::ExecutorPlatform,\n                false,\n                &env_key,\n                schema.as_deref(),\n                Some(&runner),\n                None,\n                user_id.as_deref(),\n                operation.as_deref(),\n                application.as_deref(),\n                None,\n                policy.statement_timeout_ms,\n            )\n            .await\n        {\n            self.destroy(connection);\n            return Err(ProductionClaimError::new(\n                ProductionClaimErrorType::Storage,",
+      "fragment": "                    \"checkout project connection\",\n                    format!(\"{error:?}\"),\n                )\n            })?;\n        if let Err(error) = self\n            .begin_with_claims(\n                &connection,\n                AuthorityClass::ExecutorPlatform,\n                false,\n                &project_env_key,\n                schema.as_deref(),\n                Some(&runner),\n                None,\n                user_id.as_deref(),\n                operation.as_deref(),\n                application.as_deref(),\n                None,\n                policy.statement_timeout_ms,\n            )\n            .await\n        {\n            self.destroy(connection);\n            return Err(ProductionClaimError::new(\n                ProductionClaimErrorType::Storage,",
       "isNew": false,
       "kind": "exact",
       "lines": 24,
@@ -15027,7 +15027,7 @@
         }
       },
       "format": "rust",
-      "fragment": "                    \"checkout project connection\",\n                    format!(\"{error:?}\"),\n                )\n            })?;\n        if let Err(error) = self\n            .begin_with_claims(\n                &connection,\n                AuthorityClass::ExecutorPlatform,\n                false,\n                &env_key,\n                schema.as_deref(),\n                Some(&runner),\n                None,\n                user_id.as_deref(),\n                operation.as_deref(),\n                application.as_deref(),\n                None,\n                policy.statement_timeout_ms,\n            )\n            .await\n        {\n            self.destroy(connection);\n            return Err(ProductionClaimError::new(\n                ProductionClaimErrorType::Storage,",
+      "fragment": "                    \"checkout project connection\",\n                    format!(\"{error:?}\"),\n                )\n            })?;\n        if let Err(error) = self\n            .begin_with_claims(\n                &connection,\n                AuthorityClass::ExecutorPlatform,\n                false,\n                &project_env_key,\n                schema.as_deref(),\n                Some(&runner),\n                None,\n                user_id.as_deref(),\n                operation.as_deref(),\n                application.as_deref(),\n                None,\n                policy.statement_timeout_ms,\n            )\n            .await\n        {\n            self.destroy(connection);\n            return Err(ProductionClaimError::new(\n                ProductionClaimErrorType::Storage,",
       "isNew": false,
       "kind": "exact",
       "lines": 24,
@@ -15065,7 +15065,7 @@
         }
       },
       "format": "rust",
-      "fragment": "                    \"checkout project connection\",\n                    format!(\"{error:?}\"),\n                )\n            })?;\n        if let Err(error) = self\n            .begin_with_claims(\n                &connection,\n                AuthorityClass::ExecutorPlatform,\n                false,\n                &env_key,\n                schema.as_deref(),\n                Some(&runner),\n                None,\n                user_id.as_deref(),\n                operation.as_deref(),\n                application.as_deref(),\n                None,\n                policy.statement_timeout_ms,\n            )\n            .await\n        {\n            self.destroy(connection);\n            return Err(ProductionClaimError::new(\n                ProductionClaimErrorType::Storage,",
+      "fragment": "                    \"checkout project connection\",\n                    format!(\"{error:?}\"),\n                )\n            })?;\n        if let Err(error) = self\n            .begin_with_claims(\n                &connection,\n                AuthorityClass::ExecutorPlatform,\n                false,\n                &project_env_key,\n                schema.as_deref(),\n                Some(&runner),\n                None,\n                user_id.as_deref(),\n                operation.as_deref(),\n                application.as_deref(),\n                None,\n                policy.statement_timeout_ms,\n            )\n            .await\n        {\n            self.destroy(connection);\n            return Err(ProductionClaimError::new(\n                ProductionClaimErrorType::Storage,",
       "isNew": false,
       "kind": "exact",
       "lines": 24,
@@ -15103,7 +15103,7 @@
         }
       },
       "format": "rust",
-      "fragment": "                    \"checkout project connection\",\n                    format!(\"{error:?}\"),\n                )\n            })?;\n        if let Err(error) = self\n            .begin_with_claims(\n                &connection,\n                AuthorityClass::ExecutorPlatform,\n                false,\n                &env_key,\n                schema.as_deref(),\n                Some(&runner),\n                None,\n                user_id.as_deref(),\n                operation.as_deref(),\n                application.as_deref(),\n                None,\n                policy.statement_timeout_ms,\n            )\n            .await\n        {\n            self.destroy(connection);\n            return Err(ProductionClaimError::new(\n                ProductionClaimErrorType::Storage,",
+      "fragment": "                    \"checkout project connection\",\n                    format!(\"{error:?}\"),\n                )\n            })?;\n        if let Err(error) = self\n            .begin_with_claims(\n                &connection,\n                AuthorityClass::ExecutorPlatform,\n                false,\n                &project_env_key,\n                schema.as_deref(),\n                Some(&runner),\n                None,\n                user_id.as_deref(),\n                operation.as_deref(),\n                application.as_deref(),\n                None,\n                policy.statement_timeout_ms,\n            )\n            .await\n        {\n            self.destroy(connection);\n            return Err(ProductionClaimError::new(\n                ProductionClaimErrorType::Storage,",
       "isNew": false,
       "kind": "exact",
       "lines": 24,
@@ -15331,7 +15331,7 @@
         }
       },
       "format": "rust",
-      "fragment": "                    \"checkout renewal connection\",\n                    format!(\"{error:?}\"),\n                )\n            })?;\n        let connection = StatementConnectionGuard::new(connection, Arc::clone(&self.destroyed));\n        if let Err(error) = self\n            .begin_with_claims(\n                connection.connection(),\n                AuthorityClass::ExecutorPlatform,\n                false,\n                &env_key,\n                schema.as_deref(),\n                Some(&runner),\n                None,\n                user_id.as_deref(),\n                operation.as_deref(),\n                application.as_deref(),\n                None,\n                policy.statement_timeout_ms,\n            )\n            .await\n        {\n            return Err(ProductionClaimError::new(\n                ProductionClaimErrorType::Storage,",
+      "fragment": "                    \"checkout renewal connection\",\n                    format!(\"{error:?}\"),\n                )\n            })?;\n        let connection = StatementConnectionGuard::new(connection, Arc::clone(&self.destroyed));\n        if let Err(error) = self\n            .begin_with_claims(\n                connection.connection(),\n                AuthorityClass::ExecutorPlatform,\n                false,\n                &project_env_key,\n                schema.as_deref(),\n                Some(&runner),\n                None,\n                user_id.as_deref(),\n                operation.as_deref(),\n                application.as_deref(),\n                None,\n                policy.statement_timeout_ms,\n            )\n            .await\n        {\n            return Err(ProductionClaimError::new(\n                ProductionClaimErrorType::Storage,",
       "isNew": false,
       "kind": "exact",
       "lines": 24,
@@ -15369,7 +15369,7 @@
         }
       },
       "format": "rust",
-      "fragment": ") -> Result<PgTransaction, PgError> {\n    let env_key = plugin.require_env_key(component_id)?;\n    let schema = plugin.schema_for(component_id);\n    let runner = plugin.runner_for(component_id);\n    let role = plugin.role_for(component_id);\n    let user_id = plugin.user_id_for(component_id);\n    let operation = plugin.operation_for(component_id);\n    let application = plugin.application_for(component_id);\n    let run = plugin.current_run_for(component_id);",
+      "fragment": ") -> Result<PgTransaction, PgError> {\n    let project_env_key = plugin.require_project_env_key(component_id)?;\n    let schema = plugin.schema_for(component_id);\n    let runner = plugin.runner_for(component_id);\n    let role = plugin.role_for(component_id);\n    let user_id = plugin.user_id_for(component_id);\n    let operation = plugin.operation_for(component_id);\n    let application = plugin.application_for(component_id);\n    let run = plugin.current_run_for(component_id);",
       "isNew": false,
       "kind": "exact",
       "lines": 9,
@@ -16167,7 +16167,7 @@
         }
       },
       "format": "rust",
-      "fragment": "        let (connection, policy) = self\n            .checkout_platform(project, AuthorityClass::ExecutorPlatform)\n            .await\n            .map_err(|error| anyhow::anyhow!(error.to_string()))?;\n        if let Err(error) = self\n            .begin_with_claims(\n                &connection,\n                AuthorityClass::ExecutorPlatform,\n                false,\n                env_key,\n                None,\n                None,\n                None,\n                None,\n                None,\n                None,\n                None,\n                policy.statement_timeout_ms,\n            )\n            .await\n        {\n            self.destroy(connection);\n            return Err(anyhow::anyhow!(error.to_string()));\n        }\n\n        let result = if let Some(local) = &self.local_application {",
+      "fragment": "        let (connection, policy) = self\n            .checkout_platform(project, AuthorityClass::ExecutorPlatform)\n            .await\n            .map_err(|error| anyhow::anyhow!(error.to_string()))?;\n        if let Err(error) = self\n            .begin_with_claims(\n                &connection,\n                AuthorityClass::ExecutorPlatform,\n                false,\n                project_env_key,\n                None,\n                None,\n                None,\n                None,\n                None,\n                None,\n                None,\n                policy.statement_timeout_ms,\n            )\n            .await\n        {\n            self.destroy(connection);\n            return Err(anyhow::anyhow!(error.to_string()));\n        }\n\n        let result = if let Some(local) = &self.local_application {",
       "isNew": false,
       "kind": "exact",
       "lines": 26,
@@ -16205,7 +16205,7 @@
         }
       },
       "format": "rust",
-      "fragment": "async fn the_claim_of_a_request_element_commits_with_its_transaction() {\n    let _lock = wamn_test_postgres::lock();\n    let (database, postgres) = env_key_database(\"writelogtx\").await;\n    postgres\n        .bind_session_claims(\n            SCOPE,\n            &SessionClaims {\n                env_key: \"writelogtx\".into(),\n                user_id: Some(LIVE_PRINCIPAL.into()),\n                operation: Some(\"base:widget/create@1.0.0\".into()),\n                ..SessionClaims::default()\n            },\n        )\n        .await\n        .expect(\"claims bind\");",
+      "fragment": "async fn the_claim_of_a_request_element_commits_with_its_transaction() {\n    let _lock = wamn_test_postgres::lock();\n    let (database, postgres) = project_env_key_database(\"writelogtx\").await;\n    postgres\n        .bind_session_claims(\n            SCOPE,\n            &SessionClaims {\n                project_env_key: \"writelogtx\".into(),\n                user_id: Some(LIVE_PRINCIPAL.into()),\n                operation: Some(\"base:widget/create@1.0.0\".into()),\n                ..SessionClaims::default()\n            },\n        )\n        .await\n        .expect(\"claims bind\");",
       "isNew": false,
       "kind": "exact",
       "lines": 15,
@@ -16433,7 +16433,7 @@
         }
       },
       "format": "rust",
-      "fragment": "async fn mixed_retries_end_with_the_last_cause() -> anyhow::Result<()> {\n    let _lock = wamn_test_postgres::lock();\n    let database = wamn_catalog::test_database::tenant();\n    let fixture = install_fixture(database.url()).await?;\n    let admin = &fixture.admin;\n    let plugin = &fixture.plugin;\n    let packages = [PACKAGE_ID.to_owned()];\n    for last_release in [true, false] {",
+      "fragment": "async fn mixed_retries_end_with_the_last_cause() -> anyhow::Result<()> {\n    let _lock = wamn_test_postgres::lock();\n    let database = wamn_catalog::test_database::project();\n    let fixture = install_fixture(database.url()).await?;\n    let admin = &fixture.admin;\n    let plugin = &fixture.plugin;\n    let packages = [PACKAGE_ID.to_owned()];\n    for last_release in [true, false] {",
       "isNew": false,
       "kind": "exact",
       "lines": 8,
@@ -18067,7 +18067,7 @@
         }
       },
       "format": "rust",
-      "fragment": "    let outcome = tokio::spawn(run_gate(admin_config, fixture)).await;\n    let teardown_fixture = Fixture {\n        database,\n        role,\n        password: String::new(),\n        migration_path: PathBuf::new(),\n    };\n    remove_fixture(&admin, &teardown_fixture).await;\n\n    let gone = admin\n        .query_one(\n            \"SELECT NOT EXISTS (SELECT 1 FROM pg_catalog.pg_database WHERE datname=$1), \\\n                    NOT EXISTS (SELECT 1 FROM pg_catalog.pg_roles WHERE rolname=$2)\",\n            &[&teardown_fixture.database, &teardown_fixture.role],\n        )\n        .await\n        .expect(\"record clean fixture teardown\");\n    assert!(gone.get::<_, bool>(0), \"fixture database was removed\");\n    assert!(gone.get::<_, bool>(1), \"fixture role was removed\");\n    outcome.expect(\"live gate scenario completed without panic\");",
+      "fragment": "    let outcome = tokio::spawn(run_acceptance_test(admin_config, fixture)).await;\n    let teardown_fixture = Fixture {\n        database,\n        role,\n        password: String::new(),\n        migration_path: PathBuf::new(),\n    };\n    remove_fixture(&admin, &teardown_fixture).await;\n\n    let gone = admin\n        .query_one(\n            \"SELECT NOT EXISTS (SELECT 1 FROM pg_catalog.pg_database WHERE datname=$1), \\\n                    NOT EXISTS (SELECT 1 FROM pg_catalog.pg_roles WHERE rolname=$2)\",\n            &[&teardown_fixture.database, &teardown_fixture.role],\n        )\n        .await\n        .expect(\"record clean fixture teardown\");\n    assert!(gone.get::<_, bool>(0), \"fixture database was removed\");\n    assert!(gone.get::<_, bool>(1), \"fixture role was removed\");\n    outcome.expect(\"live acceptance test scenario completed without panic\");",
       "isNew": false,
       "kind": "exact",
       "lines": 20,
@@ -18105,7 +18105,7 @@
         }
       },
       "format": "sql",
-      "fragment": "-- (`wamn-0h0g.22.6`). Guest tenant authority comes from `current_user`, not\n-- from a claim the session can set: a session that can set its own tenant can\n-- read every tenant.\n--\n-- GENERATED — this block is `authority_derivations_bootstrap_sql()` verbatim,\n-- pinned by a byte-equality guard in wamn-control-provision. Do not hand-edit;\n-- change the builder.\n--\n-- It is the BOOTSTRAP rendering because this file is applied to databases whose\n-- names are not known here, and `tenant_key` must bake the name in as a literal\n-- to stay `IMMUTABLE` — without which the expression indexes below are not even\n-- creatable.\n-- ---------------------------------------------------------------------------\nDO $wamn_authority_bootstrap$\nBEGIN\n    EXECUTE replace(replace($wamn_authority_derivations$CREATE SCHEMA IF NOT EXISTS \"wamn_authority\" AUTHORIZATION CURRENT_USER;\nREVOKE ALL ON SCHEMA \"wamn_authority\" FROM PUBLIC;\nGRANT USAGE ON SCHEMA \"wamn_authority\" TO \"wamn_app\";\nCREATE OR REPLACE FUNCTION \"wamn_authority\".tenant_key(env_key text)\nRETURNS text\nLANGUAGE sql\nIMMUTABLE\nPARALLEL SAFE\nSTRICT\nSET search_path = pg_catalog\nAS $$\n    SELECT substr(encode(sha256(\n           int8send(19::bigint) || convert_to('wamn.app.scope.v0.1', 'UTF8')\n        || int8send(7::bigint) || convert_to('env_key', 'UTF8')\n        || int8send(octet_length(convert_to(env_key, 'UTF8'))::bigint) || convert_to(env_key, 'UTF8')\n        || int8send(8::bigint) || convert_to('database', 'UTF8')\n        || int8send(@wamn_database_octets@::bigint) || convert_to(@wamn_database_literal@, 'UTF8')\n       ), 'hex'), 1, 40)\n$$;\nALTER FUNCTION \"wamn_authority\".tenant_key(text) OWNER TO CURRENT_USER;\nREVOKE ALL ON FUNCTION \"wamn_authority\".tenant_key(text) FROM PUBLIC;\nGRANT EXECUTE ON FUNCTION \"wamn_authority\".tenant_key(text) TO \"wamn_app\";\nCREATE OR REPLACE FUNCTION \"wamn_authority\".current_tenant_key()\nRETURNS text\nLANGUAGE sql\nSTABLE\nPARALLEL SAFE\nSET search_path = pg_catalog\nAS $$\n    SELECT substring(current_user::text from '^wamn_app_([0-9a-f]{40})_[ab]$')\n$$;\nALTER FUNCTION \"wamn_authority\".current_tenant_key() OWNER TO CURRENT_USER;\nREVOKE ALL ON FUNCTION \"wamn_authority\".current_tenant_key() FROM PUBLIC;\nGRANT EXECUTE ON FUNCTION \"wamn_authority\".current_tenant_key() TO \"wamn_app\";$wamn_authority_derivations$,\n        '@wamn_database_literal@', quote_literal(current_database())),\n        '@wamn_database_octets@', octet_length(convert_to(current_database(), 'UTF8'))::text);\nEND\n$wamn_authority_bootstrap$;\n\n-- ---------------------------------------------------------------------------",
+      "fragment": "-- (`wamn-0h0g.22.6`). Guest project authority comes from `current_user`, not\n-- from a claim the session can set: a session that can set its own project can\n-- read every project.\n--\n-- GENERATED — this block is `authority_derivations_bootstrap_sql()` verbatim,\n-- pinned by a byte-equality guard in wamn-control-provision. Do not hand-edit;\n-- change the builder.\n--\n-- It is the BOOTSTRAP rendering because this file is applied to databases whose\n-- names are not known here, and `project_key` must bake the name in as a literal\n-- to stay `IMMUTABLE` — without which the expression indexes below are not even\n-- creatable.\n-- ---------------------------------------------------------------------------\nDO $wamn_authority_bootstrap$\nBEGIN\n    EXECUTE replace(replace($wamn_authority_derivations$CREATE SCHEMA IF NOT EXISTS \"wamn_authority\" AUTHORIZATION CURRENT_USER;\nREVOKE ALL ON SCHEMA \"wamn_authority\" FROM PUBLIC;\nGRANT USAGE ON SCHEMA \"wamn_authority\" TO \"wamn_app\";\nCREATE OR REPLACE FUNCTION \"wamn_authority\".project_key(project_env_key text)\nRETURNS text\nLANGUAGE sql\nIMMUTABLE\nPARALLEL SAFE\nSTRICT\nSET search_path = pg_catalog\nAS $$\n    SELECT substr(encode(sha256(\n           int8send(19::bigint) || convert_to('wamn.app.scope.v0.1', 'UTF8')\n        || int8send(15::bigint) || convert_to('project_env_key', 'UTF8')\n        || int8send(octet_length(convert_to(project_env_key, 'UTF8'))::bigint) || convert_to(project_env_key, 'UTF8')\n        || int8send(8::bigint) || convert_to('database', 'UTF8')\n        || int8send(@wamn_database_octets@::bigint) || convert_to(@wamn_database_literal@, 'UTF8')\n       ), 'hex'), 1, 40)\n$$;\nALTER FUNCTION \"wamn_authority\".project_key(text) OWNER TO CURRENT_USER;\nREVOKE ALL ON FUNCTION \"wamn_authority\".project_key(text) FROM PUBLIC;\nGRANT EXECUTE ON FUNCTION \"wamn_authority\".project_key(text) TO \"wamn_app\";\nCREATE OR REPLACE FUNCTION \"wamn_authority\".current_project_key()\nRETURNS text\nLANGUAGE sql\nSTABLE\nPARALLEL SAFE\nSET search_path = pg_catalog\nAS $$\n    SELECT substring(current_user::text from '^wamn_app_([0-9a-f]{40})_[ab]$')\n$$;\nALTER FUNCTION \"wamn_authority\".current_project_key() OWNER TO CURRENT_USER;\nREVOKE ALL ON FUNCTION \"wamn_authority\".current_project_key() FROM PUBLIC;\nGRANT EXECUTE ON FUNCTION \"wamn_authority\".current_project_key() TO \"wamn_app\";$wamn_authority_derivations$,\n        '@wamn_database_literal@', quote_literal(current_database())),\n        '@wamn_database_octets@', octet_length(convert_to(current_database(), 'UTF8'))::text);\nEND\n$wamn_authority_bootstrap$;\n\n-- ---------------------------------------------------------------------------",
       "isNew": false,
       "kind": "exact",
       "lines": 55,
@@ -18143,7 +18143,7 @@
         }
       },
       "format": "sql",
-      "fragment": "DO $wamn_authority_bootstrap$\nBEGIN\n    EXECUTE replace(replace($wamn_authority_derivations$CREATE SCHEMA IF NOT EXISTS \"wamn_authority\" AUTHORIZATION CURRENT_USER;\nREVOKE ALL ON SCHEMA \"wamn_authority\" FROM PUBLIC;\nGRANT USAGE ON SCHEMA \"wamn_authority\" TO \"wamn_app\";\nCREATE OR REPLACE FUNCTION \"wamn_authority\".tenant_key(env_key text)\nRETURNS text\nLANGUAGE sql\nIMMUTABLE\nPARALLEL SAFE\nSTRICT\nSET search_path = pg_catalog\nAS $$\n    SELECT substr(encode(sha256(\n           int8send(19::bigint) || convert_to('wamn.app.scope.v0.1', 'UTF8')\n        || int8send(7::bigint) || convert_to('env_key', 'UTF8')\n        || int8send(octet_length(convert_to(env_key, 'UTF8'))::bigint) || convert_to(env_key, 'UTF8')\n        || int8send(8::bigint) || convert_to('database', 'UTF8')\n        || int8send(@wamn_database_octets@::bigint) || convert_to(@wamn_database_literal@, 'UTF8')\n       ), 'hex'), 1, 40)\n$$;\nALTER FUNCTION \"wamn_authority\".tenant_key(text) OWNER TO CURRENT_USER;\nREVOKE ALL ON FUNCTION \"wamn_authority\".tenant_key(text) FROM PUBLIC;\nGRANT EXECUTE ON FUNCTION \"wamn_authority\".tenant_key(text) TO \"wamn_app\";\nCREATE OR REPLACE FUNCTION \"wamn_authority\".current_tenant_key()\nRETURNS text\nLANGUAGE sql\nSTABLE\nPARALLEL SAFE\nSET search_path = pg_catalog\nAS $$\n    SELECT substring(current_user::text from '^wamn_app_([0-9a-f]{40})_[ab]$')\n$$;\nALTER FUNCTION \"wamn_authority\".current_tenant_key() OWNER TO CURRENT_USER;\nREVOKE ALL ON FUNCTION \"wamn_authority\".current_tenant_key() FROM PUBLIC;\nGRANT EXECUTE ON FUNCTION \"wamn_authority\".current_tenant_key() TO \"wamn_app\";$wamn_authority_derivations$,\n        '@wamn_database_literal@', quote_literal(current_database())),\n        '@wamn_database_octets@', octet_length(convert_to(current_database(), 'UTF8'))::text);\nEND\n$wamn_authority_bootstrap$;",
+      "fragment": "DO $wamn_authority_bootstrap$\nBEGIN\n    EXECUTE replace(replace($wamn_authority_derivations$CREATE SCHEMA IF NOT EXISTS \"wamn_authority\" AUTHORIZATION CURRENT_USER;\nREVOKE ALL ON SCHEMA \"wamn_authority\" FROM PUBLIC;\nGRANT USAGE ON SCHEMA \"wamn_authority\" TO \"wamn_app\";\nCREATE OR REPLACE FUNCTION \"wamn_authority\".project_key(project_env_key text)\nRETURNS text\nLANGUAGE sql\nIMMUTABLE\nPARALLEL SAFE\nSTRICT\nSET search_path = pg_catalog\nAS $$\n    SELECT substr(encode(sha256(\n           int8send(19::bigint) || convert_to('wamn.app.scope.v0.1', 'UTF8')\n        || int8send(15::bigint) || convert_to('project_env_key', 'UTF8')\n        || int8send(octet_length(convert_to(project_env_key, 'UTF8'))::bigint) || convert_to(project_env_key, 'UTF8')\n        || int8send(8::bigint) || convert_to('database', 'UTF8')\n        || int8send(@wamn_database_octets@::bigint) || convert_to(@wamn_database_literal@, 'UTF8')\n       ), 'hex'), 1, 40)\n$$;\nALTER FUNCTION \"wamn_authority\".project_key(text) OWNER TO CURRENT_USER;\nREVOKE ALL ON FUNCTION \"wamn_authority\".project_key(text) FROM PUBLIC;\nGRANT EXECUTE ON FUNCTION \"wamn_authority\".project_key(text) TO \"wamn_app\";\nCREATE OR REPLACE FUNCTION \"wamn_authority\".current_project_key()\nRETURNS text\nLANGUAGE sql\nSTABLE\nPARALLEL SAFE\nSET search_path = pg_catalog\nAS $$\n    SELECT substring(current_user::text from '^wamn_app_([0-9a-f]{40})_[ab]$')\n$$;\nALTER FUNCTION \"wamn_authority\".current_project_key() OWNER TO CURRENT_USER;\nREVOKE ALL ON FUNCTION \"wamn_authority\".current_project_key() FROM PUBLIC;\nGRANT EXECUTE ON FUNCTION \"wamn_authority\".current_project_key() TO \"wamn_app\";$wamn_authority_derivations$,\n        '@wamn_database_literal@', quote_literal(current_database())),\n        '@wamn_database_octets@', octet_length(convert_to(current_database(), 'UTF8'))::text);\nEND\n$wamn_authority_bootstrap$;",
       "isNew": false,
       "kind": "exact",
       "lines": 40,
@@ -18181,7 +18181,7 @@
         }
       },
       "format": "sql",
-      "fragment": "GRANT USAGE ON SCHEMA s2 TO wamn_app;\n\n-- ---------------------------------------------------------------------------\n-- The per-database authority derivations every tenant policy below calls\n-- (`wamn-0h0g.22.6`). Guest tenant authority comes from `current_user`, not\n-- from a claim the session can set: a session that can set its own tenant can\n-- read every tenant.\n--\n-- GENERATED — this block is `authority_derivations_bootstrap_sql()` verbatim,\n-- pinned by a byte-equality guard in wamn-control-provision. Do not hand-edit;\n-- change the builder.\n--\n-- It is the BOOTSTRAP rendering because this file is applied to databases whose\n-- names are not known here, and `tenant_key` must bake the name in as a literal\n-- to stay `IMMUTABLE` — without which the expression indexes below are not even\n-- creatable.\n-- ---------------------------------------------------------------------------\nDO $wamn_authority_bootstrap$\nBEGIN\n    EXECUTE replace(replace($wamn_authority_derivations$CREATE SCHEMA IF NOT EXISTS \"wamn_authority\" AUTHORIZATION CURRENT_USER;\nREVOKE ALL ON SCHEMA \"wamn_authority\" FROM PUBLIC;\nGRANT USAGE ON SCHEMA \"wamn_authority\" TO \"wamn_app\";\nCREATE OR REPLACE FUNCTION \"wamn_authority\".tenant_key(env_key text)\nRETURNS text\nLANGUAGE sql\nIMMUTABLE\nPARALLEL SAFE\nSTRICT\nSET search_path = pg_catalog\nAS $$\n    SELECT substr(encode(sha256(\n           int8send(19::bigint) || convert_to('wamn.app.scope.v0.1', 'UTF8')\n        || int8send(7::bigint) || convert_to('env_key', 'UTF8')\n        || int8send(octet_length(convert_to(env_key, 'UTF8'))::bigint) || convert_to(env_key, 'UTF8')\n        || int8send(8::bigint) || convert_to('database', 'UTF8')\n        || int8send(@wamn_database_octets@::bigint) || convert_to(@wamn_database_literal@, 'UTF8')\n       ), 'hex'), 1, 40)\n$$;\nALTER FUNCTION \"wamn_authority\".tenant_key(text) OWNER TO CURRENT_USER;\nREVOKE ALL ON FUNCTION \"wamn_authority\".tenant_key(text) FROM PUBLIC;\nGRANT EXECUTE ON FUNCTION \"wamn_authority\".tenant_key(text) TO \"wamn_app\";\nCREATE OR REPLACE FUNCTION \"wamn_authority\".current_tenant_key()\nRETURNS text\nLANGUAGE sql\nSTABLE\nPARALLEL SAFE\nSET search_path = pg_catalog\nAS $$\n    SELECT substring(current_user::text from '^wamn_app_([0-9a-f]{40})_[ab]$')\n$$;\nALTER FUNCTION \"wamn_authority\".current_tenant_key() OWNER TO CURRENT_USER;\nREVOKE ALL ON FUNCTION \"wamn_authority\".current_tenant_key() FROM PUBLIC;\nGRANT EXECUTE ON FUNCTION \"wamn_authority\".current_tenant_key() TO \"wamn_app\";$wamn_authority_derivations$,\n        '@wamn_database_literal@', quote_literal(current_database())),\n        '@wamn_database_octets@', octet_length(convert_to(current_database(), 'UTF8'))::text);\nEND\n$wamn_authority_bootstrap$;",
+      "fragment": "GRANT USAGE ON SCHEMA s2 TO wamn_app;\n\n-- ---------------------------------------------------------------------------\n-- The per-database authority derivations every project policy below calls\n-- (`wamn-0h0g.22.6`). Guest project authority comes from `current_user`, not\n-- from a claim the session can set: a session that can set its own project can\n-- read every project.\n--\n-- GENERATED — this block is `authority_derivations_bootstrap_sql()` verbatim,\n-- pinned by a byte-equality guard in wamn-control-provision. Do not hand-edit;\n-- change the builder.\n--\n-- It is the BOOTSTRAP rendering because this file is applied to databases whose\n-- names are not known here, and `project_key` must bake the name in as a literal\n-- to stay `IMMUTABLE` — without which the expression indexes below are not even\n-- creatable.\n-- ---------------------------------------------------------------------------\nDO $wamn_authority_bootstrap$\nBEGIN\n    EXECUTE replace(replace($wamn_authority_derivations$CREATE SCHEMA IF NOT EXISTS \"wamn_authority\" AUTHORIZATION CURRENT_USER;\nREVOKE ALL ON SCHEMA \"wamn_authority\" FROM PUBLIC;\nGRANT USAGE ON SCHEMA \"wamn_authority\" TO \"wamn_app\";\nCREATE OR REPLACE FUNCTION \"wamn_authority\".project_key(project_env_key text)\nRETURNS text\nLANGUAGE sql\nIMMUTABLE\nPARALLEL SAFE\nSTRICT\nSET search_path = pg_catalog\nAS $$\n    SELECT substr(encode(sha256(\n           int8send(19::bigint) || convert_to('wamn.app.scope.v0.1', 'UTF8')\n        || int8send(15::bigint) || convert_to('project_env_key', 'UTF8')\n        || int8send(octet_length(convert_to(project_env_key, 'UTF8'))::bigint) || convert_to(project_env_key, 'UTF8')\n        || int8send(8::bigint) || convert_to('database', 'UTF8')\n        || int8send(@wamn_database_octets@::bigint) || convert_to(@wamn_database_literal@, 'UTF8')\n       ), 'hex'), 1, 40)\n$$;\nALTER FUNCTION \"wamn_authority\".project_key(text) OWNER TO CURRENT_USER;\nREVOKE ALL ON FUNCTION \"wamn_authority\".project_key(text) FROM PUBLIC;\nGRANT EXECUTE ON FUNCTION \"wamn_authority\".project_key(text) TO \"wamn_app\";\nCREATE OR REPLACE FUNCTION \"wamn_authority\".current_project_key()\nRETURNS text\nLANGUAGE sql\nSTABLE\nPARALLEL SAFE\nSET search_path = pg_catalog\nAS $$\n    SELECT substring(current_user::text from '^wamn_app_([0-9a-f]{40})_[ab]$')\n$$;\nALTER FUNCTION \"wamn_authority\".current_project_key() OWNER TO CURRENT_USER;\nREVOKE ALL ON FUNCTION \"wamn_authority\".current_project_key() FROM PUBLIC;\nGRANT EXECUTE ON FUNCTION \"wamn_authority\".current_project_key() TO \"wamn_app\";$wamn_authority_derivations$,\n        '@wamn_database_literal@', quote_literal(current_database())),\n        '@wamn_database_octets@', octet_length(convert_to(current_database(), 'UTF8'))::text);\nEND\n$wamn_authority_bootstrap$;",
       "isNew": false,
       "kind": "exact",
       "lines": 57,
@@ -19511,7 +19511,7 @@
         }
       },
       "format": "rust",
-      "fragment": "async fn run_connection_gate_case(case: ConnectionGateCase) {\n    let _lock = wamn_test_postgres::lock();\n    let database = wamn_test_postgres::database();\n    let url = database.url();\n    let (mut admin, admin_task) = connect(url).await.expect(\"connect as the gate admin\");\n    provision(&mut admin, url)\n        .await\n        .expect(\"provision the gate\");\n    let (project, project_task) = provision_project(&admin, url)\n        .await\n        .expect(\"provision the project plane\");",
+      "fragment": "async fn run_connection_acceptance_test_case(case: ConnectionAcceptanceTestCase) {\n    let _lock = wamn_test_postgres::lock();\n    let database = wamn_test_postgres::database();\n    let url = database.url();\n    let (mut admin, admin_task) = connect(url).await.expect(\"connect as the condition admin\");\n    provision(&mut admin, url)\n        .await\n        .expect(\"provision the condition\");\n    let (project, project_task) = provision_project(&admin, url)\n        .await\n        .expect(\"provision the project plane\");",
       "isNew": false,
       "kind": "exact",
       "lines": 11,
@@ -20054,7 +20054,7 @@
           "line": 153,
           "position": 5034
         },
-        "name": "/home/kaalin/dev/wamn/.claude/worktrees/audit/tests/conformance/tests/kind_gate_image_remove.rs",
+        "name": "/home/kaalin/dev/wamn/.claude/worktrees/audit/tests/conformance/tests/kind_acceptance_test_image_remove.rs",
         "start": 119,
         "startLoc": {
           "column": 53,
@@ -20092,7 +20092,7 @@
           "line": 159,
           "position": 5403
         },
-        "name": "/home/kaalin/dev/wamn/.claude/worktrees/audit/tests/conformance/tests/kubernetes_gate_runner.rs",
+        "name": "/home/kaalin/dev/wamn/.claude/worktrees/audit/tests/conformance/tests/kubernetes_acceptance_test_runner.rs",
         "start": 125,
         "startLoc": {
           "column": 53,
@@ -20168,7 +20168,7 @@
           "line": 14,
           "position": 363
         },
-        "name": "/home/kaalin/dev/wamn/.claude/worktrees/audit/tests/conformance/tests/kind_gate_image_remove.rs",
+        "name": "/home/kaalin/dev/wamn/.claude/worktrees/audit/tests/conformance/tests/kind_acceptance_test_image_remove.rs",
         "start": 6,
         "startLoc": {
           "column": 0,
@@ -20186,7 +20186,7 @@
           "line": 10,
           "position": 288
         },
-        "name": "/home/kaalin/dev/wamn/.claude/worktrees/audit/tests/conformance/tests/kind_gate_image_remove.rs",
+        "name": "/home/kaalin/dev/wamn/.claude/worktrees/audit/tests/conformance/tests/kind_acceptance_test_image_remove.rs",
         "start": 5,
         "startLoc": {
           "column": 0,
@@ -20206,7 +20206,7 @@
           "line": 8,
           "position": 281
         },
-        "name": "/home/kaalin/dev/wamn/.claude/worktrees/audit/tests/conformance/tests/kubernetes_gate_runner.rs",
+        "name": "/home/kaalin/dev/wamn/.claude/worktrees/audit/tests/conformance/tests/kubernetes_acceptance_test_runner.rs",
         "start": 3,
         "startLoc": {
           "column": 0,
@@ -20224,7 +20224,7 @@
           "line": 434,
           "position": 15138
         },
-        "name": "/home/kaalin/dev/wamn/.claude/worktrees/audit/tests/conformance/tests/kind_gate_image_remove.rs",
+        "name": "/home/kaalin/dev/wamn/.claude/worktrees/audit/tests/conformance/tests/kind_acceptance_test_image_remove.rs",
         "start": 416,
         "startLoc": {
           "column": 79,
@@ -20233,7 +20233,7 @@
         }
       },
       "format": "rust",
-      "fragment": "        \"image\": { \"image\": CONFIG_ID, \"userSpecifiedImage\": \"wamn-gates:dev\" },\n        \"imageId\": CONFIG_ID,\n        \"imageRef\": CONFIG_ID,\n        \"state\": \"CONTAINER_EXITED\",\n        \"labels\": { \"io.kubernetes.pod.uid\": \"deleted-pod\" }\n    });\n    let directory = setup(false, &[container]);\n    let output = run(\n        &directory,\n        \"\",\n        &[\n            \"--image\",\n            SELECTED,\n            \"--apply\",\n            \"--remove-orphaned-containers\",\n        ],\n    );\n    assert!(!output.status.success());\n    assert!(String::from_utf8_lossy(&output.stderr).contains(\"container-image-not-selected\"));",
+      "fragment": "        \"image\": { \"image\": CONFIG_ID, \"userSpecifiedImage\": \"wamn-acceptance-tests:dev\" },\n        \"imageId\": CONFIG_ID,\n        \"imageRef\": CONFIG_ID,\n        \"state\": \"CONTAINER_EXITED\",\n        \"labels\": { \"io.kubernetes.pod.uid\": \"deleted-pod\" }\n    });\n    let directory = setup(false, &[container]);\n    let output = run(\n        &directory,\n        \"\",\n        &[\n            \"--image\",\n            SELECTED,\n            \"--apply\",\n            \"--remove-orphaned-containers\",\n        ],\n    );\n    assert!(!output.status.success());\n    assert!(String::from_utf8_lossy(&output.stderr).contains(\"container-image-not-selected\"));",
       "isNew": false,
       "kind": "exact",
       "lines": 19,
@@ -20244,7 +20244,7 @@
           "line": 461,
           "position": 15971
         },
-        "name": "/home/kaalin/dev/wamn/.claude/worktrees/audit/tests/conformance/tests/kind_gate_image_remove.rs",
+        "name": "/home/kaalin/dev/wamn/.claude/worktrees/audit/tests/conformance/tests/kind_acceptance_test_image_remove.rs",
         "start": 443,
         "startLoc": {
           "column": 38,
@@ -20613,7 +20613,7 @@
         }
       },
       "format": "rust",
-      "fragment": "        \"preflight-images\",\n        Command::new(&resources.lifecycle).arg(\"images\"),\n    )\n    .await?;\n    for image in [\n        &resources.host_image,\n        &resources.gates_image,\n        &resources.postgres_image,\n    ] {\n        ensure!(\n            !String::from_utf8_lossy(&images)\n                .lines()\n                .any(|line| line == image),",
+      "fragment": "        \"preflight-images\",\n        Command::new(&resources.lifecycle).arg(\"images\"),\n    )\n    .await?;\n    for image in [\n        &resources.host_image,\n        &resources.acceptance_tests_image,\n        &resources.postgres_image,\n    ] {\n        ensure!(\n            !String::from_utf8_lossy(&images)\n                .lines()\n                .any(|line| line == image),",
       "isNew": false,
       "kind": "exact",
       "lines": 13,
@@ -20689,7 +20689,7 @@
         }
       },
       "format": "rust",
-      "fragment": "    let attachments = attachments(&app)?;\n    std::fs::write(\n        scratch.path().join(\"environment.k\"),\n        include_str!(\"../fixtures/local-environments/platform.k\"),\n    )?;\n    let application = LocalApplication::start(LocalApplicationConfig {\n        system_database_url: system_url,\n        database_url: project_url,\n        scratch: scratch.path(),\n        component_directory: &components,\n        flow_http_wasm: &flow_http,\n        env_key: \"route-interface\",",
+      "fragment": "    let attachments = attachments(&app)?;\n    std::fs::write(\n        scratch.path().join(\"environment.k\"),\n        include_str!(\"../fixtures/local-environments/platform.k\"),\n    )?;\n    let application = LocalApplication::start(LocalApplicationConfig {\n        system_database_url: system_url,\n        database_url: project_url,\n        scratch: scratch.path(),\n        component_directory: &components,\n        flow_http_wasm: &flow_http,\n        project_env_key: \"route-interface\",",
       "isNew": false,
       "kind": "exact",
       "lines": 12,
@@ -21630,7 +21630,7 @@
           "line": 26,
           "position": 2112
         },
-        "name": "/home/kaalin/dev/wamn/.claude/worktrees/audit/tools/bench/pg-floor/receipt.sql",
+        "name": "/home/kaalin/dev/wamn/.claude/worktrees/audit/tools/bench/pg-minimum/receipt.sql",
         "start": 21,
         "startLoc": {
           "column": 52,
@@ -21650,7 +21650,7 @@
           "line": 31,
           "position": 2565
         },
-        "name": "/home/kaalin/dev/wamn/.claude/worktrees/audit/tools/bench/pg-floor/update.sql",
+        "name": "/home/kaalin/dev/wamn/.claude/worktrees/audit/tools/bench/pg-minimum/update.sql",
         "start": 26,
         "startLoc": {
           "column": 108,
@@ -21829,7 +21829,7 @@
         }
       },
       "format": "bash",
-      "fragment": "    '{name:$name,container:\"identity-keys-test\",expectation:\"positive\",exit_code:0,image:$image,log_contains:$result_line}')\n  run env KUBECTL=\"$work_dir/kubectl\" \"$repo_root/tools/kubernetes-gate-run\" \\\n    --namespace \"$namespace\" --timeout-secs 180 --manifest \"$evidence_dir/$name.json\" \\\n    --verdict-record \"$evidence_dir/$name-verdict.json\" --job \"$spec\" \\\n    2>&1 | tee \"$evidence_dir/$name-run.log\" || status=$?\n  run \"${kube[@]}\" -n \"$namespace\" get job \"$name\" -o json >\"$evidence_dir/$name-state.json\"\n  run \"${kube[@]}\" -n \"$namespace\" get pods -l \"job-name=$name\" -o json >\"$evidence_dir/$name-pods.json\"\n  run \"${kube[@]}\" -n \"$namespace\" logs \"job/$name\" -c identity-keys-test >\"$evidence_dir/$name.log\"",
+      "fragment": "    '{name:$name,container:\"identity-keys-test\",expectation:\"positive\",exit_code:0,image:$image,log_contains:$result_line}')\n  run env KUBECTL=\"$work_dir/kubectl\" \"$repo_root/tools/kubernetes-acceptance-test-run\" \\\n    --namespace \"$namespace\" --timeout-secs 180 --manifest \"$evidence_dir/$name.json\" \\\n    --verdict-record \"$evidence_dir/$name-verdict.json\" --job \"$spec\" \\\n    2>&1 | tee \"$evidence_dir/$name-run.log\" || status=$?\n  run \"${kube[@]}\" -n \"$namespace\" get job \"$name\" -o json >\"$evidence_dir/$name-state.json\"\n  run \"${kube[@]}\" -n \"$namespace\" get pods -l \"job-name=$name\" -o json >\"$evidence_dir/$name-pods.json\"\n  run \"${kube[@]}\" -n \"$namespace\" logs \"job/$name\" -c identity-keys-test >\"$evidence_dir/$name.log\"",
       "isNew": false,
       "kind": "exact",
       "lines": 8,

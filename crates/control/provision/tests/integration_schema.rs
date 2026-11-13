@@ -38,7 +38,7 @@ fn one_connection_per_integration_and_environment() {
              FROM registry.connection WHERE id='00000000-0000-0000-0000-000000000031';
              ASSERT false, 'a second connection for one integration and environment must refuse';
            EXCEPTION WHEN unique_violation THEN
-             ASSERT SQLERRM LIKE '%connection_integration_id_env_key%', SQLERRM;
+             ASSERT SQLERRM LIKE '%connection_integration_id_project_env_key%', SQLERRM;
            END;
          END $$;",
     );

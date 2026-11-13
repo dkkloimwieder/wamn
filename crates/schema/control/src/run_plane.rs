@@ -126,7 +126,7 @@ impl RunPlanePlan {
 // ---------------------------------------------------------------------------
 // Observation SQL (the shell binds these; pinned by tests like the RI module's
 // `select_replica_identity_sql`). SR12: the pure decision has no pg_catalog —
-// the throwaway-PG gate covers that these really observe the live state.
+// the throwaway-PG condition covers that these really observe the live state.
 // ---------------------------------------------------------------------------
 
 /// Current helper definitions in `$1`.

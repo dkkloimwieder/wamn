@@ -69,7 +69,7 @@ impl fmt::Debug for EdgeRelease {
 impl EdgeRelease {
     /// Load the bundle in `directory` whose `edge-release.json` has
     /// `bundle_digest`, and read every component body once. `scope` is the
-    /// env_key and environment of the box, from its configuration.
+    /// project_env_key and environment of the box, from its configuration.
     pub async fn load(
         directory: &Path,
         bundle_digest: &str,
@@ -284,7 +284,7 @@ pub(crate) mod test_util {
         };
         let fact = AdmittedComponent {
             scope: ComponentPackageScope {
-                env_key: "tenant-a".into(),
+                project_env_key: "org-a".into(),
                 package_id: "scale".into(),
                 package_version: "1.0.0".into(),
             },
@@ -352,7 +352,7 @@ pub(crate) mod test_util {
         }))
         .unwrap();
         std::fs::write(directory.join(BUNDLE_FILE_NAME), &bundle).unwrap();
-        let scope = ReleaseScope::new("tenant-a", "edge").with_applications(BTreeMap::from([(
+        let scope = ReleaseScope::new("org-a", "edge").with_applications(BTreeMap::from([(
             "scale".into(),
             wamn_catalog::ApplicationDefinition {
                 packages: BTreeSet::from(["scale".into()]),

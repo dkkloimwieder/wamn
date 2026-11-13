@@ -282,7 +282,7 @@ pub fn resolve_authorized_host_route(
     )
 }
 
-/// Exercise the exact production attachment resolver and authorization gate.
+/// Exercise the exact production attachment resolver and authorization condition.
 #[cfg(feature = "test-util")]
 pub fn authorize_attachment_for_test(
     release: &crate::release_manifest::LoadedRelease,

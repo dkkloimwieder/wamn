@@ -53,7 +53,7 @@ wat = "=1.254.2"
 wit-component = { workspace = true, features = ["dummy-module"] }
 wit-parser = { workspace = true }
 # The release-manifest tests build manifests from parts, which wamn-catalog
-# gates behind `test-util`. Never add this feature to the normal dependency.
+# conditions behind `test-util`. Never add this feature to the normal dependency.
 wamn-catalog = { workspace = true, features = ["test-util"] }
 
 [lints]

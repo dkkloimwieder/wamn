@@ -69,7 +69,7 @@ The following counts describe additional non-optional local packages reachable f
 | `project-state → provision → project-state` | 12 | Provisioning and generation enter schema tests |
 | `project-state → runtime → project-state` | 20 | Wasmtime, cloud adapters, OCI, and telemetry dependencies |
 | `platform-identity → test-infrastructure → platform-identity` | 11 | General infrastructure, provisioning, and generation |
-| `control → gate-harness → control` | 2 | Two broad support libraries and their compilation units |
+| `control → acceptance-test-harness → control` | 2 | Two broad support libraries and their compilation units |
 
 The runtime dependency in project-state tests serves timestamp comparisons at `crates/identity/project-state/tests/schema.rs:902`. The identity infrastructure dependency supplies a stamp assertion at `crates/identity/platform/tests/session_keys_live.rs:37`. These are concrete examples of small test needs selecting large libraries.
 
@@ -94,7 +94,7 @@ Proposal: Consolidate OCI transfer and artifact formats in package-artifact. Kee
 
 Deletes: Runtime-owned artifact transport implementations after consolidation, duplicate transport helpers, and control’s runtime dependency once its remaining imports move.
 
-Risk: Registry trust, digest refusal, and local-target authority can change. Preserve `release_manifest_source`, component admission, and local-target tests, together with the engine dependency boundary gate.
+Risk: Registry trust, digest refusal, and local-target authority can change. Preserve `release_manifest_source`, component admission, and local-target tests, together with the engine dependency boundary condition.
 
 Owner review 2026-10-31: Group 4, after A5. Runtime's shape changes under A5. Do not consolidate transport before that.
 
@@ -120,7 +120,7 @@ Owner review 2026-10-31: deferred. Group 1 deletes `upgrade_environment.rs`, `pa
 Severity: medium  
 Effort: M  
 Area: `crates/catalog/model`  
-Evidence: `crates/catalog/model/src/lib.rs:13`, `crates/catalog/model/src/lib.rs:101`, `crates/catalog/model/src/host_route.rs:25`, `crates/catalog/model/src/host_route.rs:55`, `crates/catalog/model/src/workflow_gate.rs:16`, `crates/catalog/model/src/serving_manifest.rs:823`.
+Evidence: `crates/catalog/model/src/lib.rs:13`, `crates/catalog/model/src/lib.rs:101`, `crates/catalog/model/src/host_route.rs:25`, `crates/catalog/model/src/host_route.rs:55`, `crates/catalog/model/src/workflow_condition.rs:16`, `crates/catalog/model/src/serving_manifest.rs:823`.
 
 Problem: Catalog combines immutable identities with schema bootstrap, built-in control routes, workflow admission, and schedule parsing. Its foundational position makes these unrelated changes affect many consumers. Manifest inspection finds 17 direct non-optional local dependents across the three workspaces. Measurements.md section 2 records 10,062 source lines.
 
@@ -147,14 +147,14 @@ Deletes: Guest paths into native runtime and router directories, followed by obs
 
 Risk: Interface identity and generated guest bytes can change. Extend the guest-workspace closure test to cover WIT paths and preserve guest digest and import-admission tests.
 
-## Finding B1-7: The graph gate does not enforce the complete architecture
+## Finding B1-7: The graph condition does not enforce the complete architecture
 
 Severity: low  
 Effort: M  
 Area: `tools/repo-lint-dependencies`, architecture index, workspace graph measurements  
 Evidence: `tools/repo-lint-dependencies:87`, `tools/repo-lint-dependencies:110`, `docs/architecture/README.md:3`, `crates/identity/project-state/Cargo.toml:11`, `apps/Cargo.toml:112`, `Cargo.toml:232`.
 
-Problem: The existing gate enforces selected edge, engine, and workflow boundaries through normal dependency trees. It does not encode the complete control/build separation or the six development back-edges. Measurements.md section 10 omits dependencies outside native workspace membership and includes optional declarations, so its rows cannot establish production reachability. For example, project-state’s catalog dependency belongs to `test-util`, while native dependencies on application-owned contract libraries disappear from the reduced graph.
+Problem: The existing condition enforces selected edge, engine, and workflow boundaries through normal dependency trees. It does not encode the complete control/build separation or the six development back-edges. Measurements.md section 10 omits dependencies outside native workspace membership and includes optional declarations, so its rows cannot establish production reachability. For example, project-state’s catalog dependency belongs to `test-util`, while native dependencies on application-owned contract libraries disappear from the reduced graph.
 
 Rejected as written (owner review 2026-10-31): no extension of the check to three workspaces, dependency kinds and feature selections, and no deliberate-violation fixtures. `tools/repo-lint-dependencies` gains one rule per crate move that lands in Group 4, nothing before.
 
@@ -174,7 +174,7 @@ Answered 2026-10-31: no timings are supplied for the six development edges, and 
 
 Replace the `wamn-control` umbrella with package, release, and environment owners. Keep registry declarations, provisioning policy, and schema decisions separate.
 
-Standing (owner review 2026-10-31): there is no delivery tool and no `tools/delivery`. `docs/plan/delivery.md` is deferred and there is no PR-gated CI. Where this part said delivery tool, the owner is the existing `wamn-ctl` verb (`build-platform`, `publish-release`, `qualify-release`) run locally or by an agent. Developer sessions stay where they are until the B1-4 and B2-5 question is answered.
+Standing (owner review 2026-10-31): there is no delivery tool and no `tools/delivery`. `docs/plan/delivery.md` is deferred and there is no PR-conditioned CI. Where this part said delivery tool, the owner is the existing `wamn-ctl` verb (`build-platform`, `publish-release`, `qualify-release`) run locally or by an agent. Developer sessions stay where they are until the B1-4 and B2-5 question is answered.
 
 Measurements.md section 2 records 80,688 source lines, 32,437 test lines, and 71 `Command::new` expressions in `control/lib`. The current checkout contains those expressions in 26 source files. Including integration tests and support files gives the issue’s 37 files.
 
@@ -348,7 +348,7 @@ T15. `wamn-client`: Native generated-client transport. Retain its separate packa
 
 T16. `wamn-test-postgres`: Private PostgreSQL processes and prerequisite handling. Retain this small test foundation. Allowed repository dependencies: none.
 
-T17. `wamn-test-support`: Fixture packages, environment setup, schema baselines, and check helpers. It combines `wamn-fixture-package`, `wamn-test-infrastructure`, and `wamn-gate-harness`. Allowed repository dependencies: T01, T03–T11, T16. Production packages use it only through development dependencies.
+T17. `wamn-test-support`: Fixture packages, environment setup, schema baselines, and check helpers. It combines `wamn-fixture-package`, `wamn-test-infrastructure`, and `wamn-acceptance-test-harness`. Allowed repository dependencies: T01, T03–T11, T16. Production packages use it only through development dependencies.
 
 T18. `wamn-test`: Conformance, integration, system, Receiving, and WMS test targets, plus their existing command binaries. It absorbs the four `tests/` packages, two application test packages, `wamn-bench`, `wamn-submodule-check`, and `http-fixture`. Allowed repository dependencies: T01–T17 and guest libraries or artifacts needed by a named test. No production package depends on T18.
 
@@ -479,7 +479,7 @@ Effort: M
 Area: tests, test-support, application tests, Rust tools  
 Evidence: `tests/orchestrator/src/main.rs:10`, `tests/integration/src/lib.rs:16`, `test-support/harness/Cargo.toml:14`, `test-support/infrastructure/Cargo.toml:34`, `test-support/postgres/Cargo.toml:11`, `crates/catalog/model/Cargo.toml:8`.  
 Problem: The check binary already routes commands into separate test packages. Application tests consume shared integration helpers, while harness and infrastructure both assemble substantial platform environments. Merging their package ownership is possible, but moving test construction authority into production dependencies breaks an existing compile-time restriction.  
-Proposal: Use T17 for reusable fixtures and T18 for test execution, tool binaries, and named suites. Preserve test tiers as modules and test targets. Keep T16 independent so lower-level tests can start PostgreSQL without importing the full environment harness. Move schema baselines out of T01 while retaining feature-gated constructors for synthetic contract values. Keep application test sources in their application homes through explicit target paths.  
+Proposal: Use T17 for reusable fixtures and T18 for test execution, tool binaries, and named suites. Preserve test tiers as modules and test targets. Keep T16 independent so lower-level tests can start PostgreSQL without importing the full environment harness. Move schema baselines out of T01 while retaining constructors enabled by a feature for synthetic contract values. Keep application test sources in their application homes through explicit target paths.
 Deletes: Seven redundant manifests from the eight test and tool packages combined into T18. Delete two redundant support manifests. Remove facade imports between the merged owners.  
 Risk: Test discovery, executable paths, and feature propagation can change. Preserve manifest inheritance and the constructor restriction through `tests/conformance/src/manifest_dependencies.rs:292` and line 320. Retain suite-selection evidence at `tests/conformance/tests/test_changes.rs:460` and zero-executed-case refusal at line 707. Update the current catalog-specific constructor test at `tests/conformance/src/manifest_dependencies.rs:300` to the new contract owner. A renamed test must retain the production restriction.
 

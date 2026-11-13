@@ -83,7 +83,7 @@ fn input(env: &str) -> ValuesInput {
     .expect("yaml");
     group.insert("env".into(), base);
     let mut config = Mapping::new();
-    config.insert("wamn.env_key".into(), "acme".into());
+    config.insert("wamn.project_env_key".into(), "acme".into());
     ValuesInput {
         org: "acme".into(),
         project: "wms".into(),

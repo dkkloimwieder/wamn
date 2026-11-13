@@ -1,4 +1,4 @@
-//! Password enrollment uses the real system floor under its non-superuser owner.
+//! Password enrollment uses the real system base grants under its non-superuser owner.
 
 use sha2::{Digest as _, Sha256};
 use tokio_postgres::{Client, error::SqlState};

@@ -20,19 +20,19 @@
 -- here is HOST-INJECTED, not guest-settable. Re-keying it onto `current_user`
 -- would be change without a threat, and would break the host writers that do
 -- reach it. FORCE RLS therefore stays keyed on
--- NULLIF(current_setting('app.env_key', true), ''), NULL (=> zero rows) when no
+-- NULLIF(current_setting('app.project_env_key', true), ''), NULL (=> zero rows) when no
 -- claim was injected — PG resets a custom GUC to '' (not NULL) after SET LOCAL,
--- and CHECK (env_key <> '') forbids a ''-tenant row, so an empty claim
+-- and CHECK (project_env_key <> '') forbids a ''-project row, so an empty claim
 -- matches nothing structurally.
 --
 -- SCOPE: the SKIP LOCKED queue + write-ahead + single-owner leases + janitor +
--- reconciliation. Every row shares one tenant-global FIFO ordered by
+-- reconciliation. Every row shares one project-global FIFO ordered by
 -- `(available_at, run_id)`. Runs have no event ordering guarantee.
 -- (Row events are the D19 v3 event plane's — CDC reader → JetStream →
 -- materializer; the outbox table + poller were torn down at l5i9.19.)
 
 -- ---------------------------------------------------------------------------
--- run_queue: one row per pending/in-flight run. `available_at` gates visibility
+-- run_queue: one row per pending/in-flight run. `available_at` conditions visibility
 -- (future = a queue-parked/backed-off run); a live `lease_expires_at` marks a
 -- row a replica currently owns, and once it expires another replica may reclaim
 -- it (crash-safe failover). `attempts` counts expired lease reclaims and releases
@@ -51,7 +51,7 @@ CREATE TABLE wamn_run.run_queue (
     created_by uuid NOT NULL,
     updated_at timestamptz NOT NULL,
     updated_by uuid NOT NULL,
-    env_key          text NOT NULL CHECK (env_key <> ''),
+    project_env_key          text NOT NULL CHECK (project_env_key <> ''),
     run_id           text NOT NULL,
     available_at     timestamptz NOT NULL DEFAULT now(),
     lease_owner      text,
@@ -63,8 +63,8 @@ CREATE TABLE wamn_run.run_queue (
     -- Backoff cap: crates/execution/run-state/src/queue/model.rs.
     max_attempts     int  NOT NULL DEFAULT 20,
     enqueued_at      timestamptz NOT NULL DEFAULT now(),
-    PRIMARY KEY (env_key, run_id),
-    FOREIGN KEY (env_key, run_id) REFERENCES wamn_run.runs (env_key, run_id) ON DELETE CASCADE
+    PRIMARY KEY (project_env_key, run_id),
+    FOREIGN KEY (project_env_key, run_id) REFERENCES wamn_run.runs (project_env_key, run_id) ON DELETE CASCADE
 );
 CREATE TRIGGER wamn_record_history_stamp
     BEFORE INSERT OR UPDATE ON wamn_run.run_queue
@@ -75,11 +75,11 @@ CREATE TRIGGER wamn_record_history_stamp
 -- `ORDER BY available_at, run_id` is index-supported;
 -- `lease_expires_at` remains the trailing in-index filter column.
 CREATE INDEX run_queue_claimable ON wamn_run.run_queue
-    (env_key, available_at, run_id, lease_expires_at);
+    (project_env_key, available_at, run_id, lease_expires_at);
 ALTER TABLE wamn_run.run_queue ENABLE ROW LEVEL SECURITY;
 ALTER TABLE wamn_run.run_queue FORCE ROW LEVEL SECURITY;
-CREATE POLICY run_queue_env_key ON wamn_run.run_queue
-    USING (env_key = NULLIF(current_setting('app.env_key', true), ''))
-    WITH CHECK (env_key = NULLIF(current_setting('app.env_key', true), ''));
+CREATE POLICY run_queue_project_env_key ON wamn_run.run_queue
+    USING (project_env_key = NULLIF(current_setting('app.project_env_key', true), ''))
+    WITH CHECK (project_env_key = NULLIF(current_setting('app.project_env_key', true), ''));
 REVOKE ALL PRIVILEGES ON TABLE wamn_run.run_queue
     FROM PUBLIC, wamn_app;

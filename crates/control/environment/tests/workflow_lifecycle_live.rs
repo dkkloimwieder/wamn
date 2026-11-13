@@ -5,7 +5,7 @@
 //! `workflow` user row.
 //!
 //! The project database carries the production catalog and platform schemas
-//! (`wamn_platform_identity::test_database::tenant_platform`), and the control
+//! (`wamn_platform_identity::test_database::project_platform`), and the control
 //! database the production control store. The
 //! lifecycle lock is an advisory lock, so the project database also serves as
 //! the system database of the lock.
@@ -29,7 +29,7 @@ use wamn_environment_control::workflow_lifecycle::{
     enable_workflow,
 };
 
-const ENV_KEY: &str = "workflow-tenant--fixture--dev";
+const PROJECT_ENV_KEY: &str = "workflow-project--fixture--dev";
 const ENVIRONMENT: &str = "dev";
 const APPLICATION: &str = "orders";
 
@@ -70,7 +70,7 @@ async fn connect(url: &str) -> Client {
 fn release() -> ServingManifest {
     let fact = AdmittedComponent {
         scope: ComponentPackageScope {
-            env_key: ENV_KEY.to_owned(),
+            project_env_key: PROJECT_ENV_KEY.to_owned(),
             package_id: APPLICATION.to_owned(),
             package_version: "1.0.0".to_owned(),
         },
@@ -127,7 +127,7 @@ fn workflow(id: &str, version: u32, node: &str, component: &str) -> WiringDocume
 }
 
 async fn fixture() -> Fixture {
-    let project_database = wamn_platform_identity::test_database::tenant_platform();
+    let project_database = wamn_platform_identity::test_database::project_platform();
     let project_url = project_database.url().to_owned();
     let project = connect(&project_url).await;
     project.batch_execute(&format!("SELECT set_config('app.user_id', '{}', false), set_config('app.operation', 'admin:seed-workflow-fixture', false)", PlatformComponent::Provisioning.principal_id())).await.unwrap();
@@ -136,9 +136,9 @@ async fn fixture() -> Fixture {
     let digest = manifest.digest().as_str().to_owned();
     project
         .execute(
-            "INSERT INTO catalog.releases (env_key, manifest_digest, canonical_bytes) \
+            "INSERT INTO catalog.releases (project_env_key, manifest_digest, canonical_bytes) \
              VALUES ($1, $2, $3)",
-            &[&ENV_KEY, &digest, &bytes],
+            &[&PROJECT_ENV_KEY, &digest, &bytes],
         )
         .await
         .expect("install the serving release");
@@ -193,7 +193,7 @@ impl Fixture {
         author_workflow(
             &transaction,
             &AuthorWorkflowRequest {
-                org: "workflow-tenant",
+                org: "workflow-project",
                 project: "fixture",
                 environment: ENVIRONMENT,
                 application: APPLICATION,
@@ -246,8 +246,8 @@ impl Fixture {
         self.project
             .query(
                 "SELECT version FROM catalog.workflows \
-                  WHERE env_key = $1 AND workflow_id = $2 AND enabled ORDER BY version",
-                &[&ENV_KEY, &id],
+                  WHERE project_env_key = $1 AND workflow_id = $2 AND enabled ORDER BY version",
+                &[&PROJECT_ENV_KEY, &id],
             )
             .await
             .unwrap()
@@ -263,7 +263,7 @@ fn triple() -> Triple {
 
 fn key(id: &str, version: u32) -> WorkflowVersion<'_> {
     WorkflowVersion {
-        org: "workflow-tenant",
+        org: "workflow-project",
         project: "fixture",
         environment: ENVIRONMENT,
         application: APPLICATION,
@@ -278,13 +278,13 @@ async fn authorship_converges_and_refuses_graphs_outside_the_release() {
     let mut fixture = fixture().await;
 
     // No green report under the graph's hash.
-    let ungated = workflow("nightly", 1, "read", "orders_data");
+    let unconditioned = workflow("nightly", 1, "read", "orders_data");
     fixture
-        .author(&ungated, WorkflowExecution::Invoker)
+        .author(&unconditioned, WorkflowExecution::Invoker)
         .await
-        .expect("a gated graph is authored");
+        .expect("a conditioned graph is authored");
     fixture
-        .author(&ungated, WorkflowExecution::Invoker)
+        .author(&unconditioned, WorkflowExecution::Invoker)
         .await
         .expect("the same bytes converge");
     let (count, enabled, created_by): (i64, bool, String) = {
@@ -317,7 +317,7 @@ async fn authorship_converges_and_refuses_graphs_outside_the_release() {
         .author(&absent, WorkflowExecution::Invoker)
         .await
         .expect_err("a node absent from the release refuses");
-    assert_eq!(refusal.error_type(), AuthorWorkflowErrorType::Gate);
+    assert_eq!(refusal.error_type(), AuthorWorkflowErrorType::Condition);
 }
 
 #[tokio::test]
@@ -593,8 +593,8 @@ async fn event_enable_records_stream_tail_and_requires_admin() {
     let graph = workflow("changed", 1, "get", "orders_data");
 
     let release_bytes = fixture.project.query_one(
-        "SELECT canonical_bytes FROM catalog.releases WHERE env_key = $1 AND manifest_digest = $2",
-        &[&ENV_KEY, &fixture.digest],
+        "SELECT canonical_bytes FROM catalog.releases WHERE project_env_key = $1 AND manifest_digest = $2",
+        &[&PROJECT_ENV_KEY, &fixture.digest],
     ).await.unwrap().get::<_, Vec<u8>>(0);
     assert!(
         serde_json::from_slice::<serde_json::Value>(&release_bytes)
@@ -617,8 +617,8 @@ async fn event_enable_records_stream_tail_and_requires_admin() {
         .unwrap();
     assert_eq!(
         fixture.project.query_one(
-            "SELECT canonical_bytes FROM catalog.releases WHERE env_key = $1 AND manifest_digest = $2",
-            &[&ENV_KEY, &fixture.digest],
+            "SELECT canonical_bytes FROM catalog.releases WHERE project_env_key = $1 AND manifest_digest = $2",
+            &[&PROJECT_ENV_KEY, &fixture.digest],
         ).await.unwrap().get::<_, Vec<u8>>(0),
         release_bytes,
         "author, enable and disable leave the release digest unchanged",
@@ -684,8 +684,8 @@ async fn event_enable_records_stream_tail_and_requires_admin() {
     .unwrap();
     assert_eq!(
         fixture.project.query_one(
-            "SELECT canonical_bytes FROM catalog.releases WHERE env_key = $1 AND manifest_digest = $2",
-            &[&ENV_KEY, &fixture.digest],
+            "SELECT canonical_bytes FROM catalog.releases WHERE project_env_key = $1 AND manifest_digest = $2",
+            &[&PROJECT_ENV_KEY, &fixture.digest],
         ).await.unwrap().get::<_, Vec<u8>>(0),
         release_bytes,
         "author, enable and disable leave the release digest unchanged",
@@ -719,8 +719,8 @@ async fn event_enable_records_stream_tail_and_requires_admin() {
     );
     assert_eq!(
         fixture.project.query_one(
-            "SELECT canonical_bytes FROM catalog.releases WHERE env_key = $1 AND manifest_digest = $2",
-            &[&ENV_KEY, &fixture.digest],
+            "SELECT canonical_bytes FROM catalog.releases WHERE project_env_key = $1 AND manifest_digest = $2",
+            &[&PROJECT_ENV_KEY, &fixture.digest],
         ).await.unwrap().get::<_, Vec<u8>>(0),
         release_bytes,
         "author, enable and disable leave the release digest unchanged",

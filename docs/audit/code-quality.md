@@ -20,13 +20,13 @@ Area: `tests/integration/src/startup_burst.rs`
 
 Evidence: `tests/integration/src/lib.rs:27`; `tests/integration/src/startup_burst.rs:461`; `tests/integration/src/startup_burst.rs:757`; `tests/orchestrator/src/main.rs:34`.
 
-Problem: The 826-line module exports a live startup measurement runner, but no repository caller invokes it. The gate command enum exposes no startup command. Its three unit tests exercise a reducer inside the same module, so they cannot establish that the runner works.
+Problem: The 826-line module exports a live startup measurement runner, but no repository caller invokes it. The condition command enum exposes no startup command. Its three unit tests exercise a reducer inside the same module, so they cannot establish that the runner works.
 
 Proposal: Delete the dormant runner and its private reducer tests. Keep startup measurement only when an owned command or journey executes it.
 
 Deletes: Approximately 827 lines, including the module declaration.
 
-Risk: Removes an unavailable measurement capability. Compile every integration target and retain the existing gate command tests. No current live test exercises `assert_startup`.
+Risk: Removes an unavailable measurement capability. Compile every integration target and retain the existing condition command tests. No current live test exercises `assert_startup`.
 
 Owner review 2026-10-31: delete, Group 4 Do, in the per-crate commit.
 
@@ -260,13 +260,13 @@ Evidence: `crates/execution/workflow/router/src/lib.rs:51`; `crates/execution/wo
 
 Problem: Router and queue invariant evaluators serve tests but remain ordinary production APIs. Shared intent cases, schema-drift assertions, and database fixtures live behind production-crate test features. These helpers can have test-support ownership without deleting their coverage.
 
-Proposal: Move the portable evaluators, intent cases, schema-drift helpers, database fixtures, and synchronous router test driver into test support. Keep small feature-gated hooks that require private state inside their owning crate. The NATS process launcher can move separately from `watched`, which reads private cache state.
+Proposal: Move the portable evaluators, intent cases, schema-drift helpers, database fixtures, and synchronous router test driver into test support. Keep small hooks that need private state inside their owning crate. Enable those hooks through a feature. The NATS process launcher can move separately from `watched`, which reads private cache state.
 
-Test and benchmark binaries already have explicit consumers or entry points. `wamn-benchmark-gate` belongs to conformance, `wamn-test-postgres` belongs to test support, and the two integration benchmark binaries remain callable tools. Fixture guests are build inputs at `crates/control/lib/src/platform_build/inputs.rs:25`; relocation into test support requires moving their build ownership too.
+Test and benchmark binaries already have explicit consumers or entry points. `wamn-benchmark-acceptance-test` belongs to conformance, `wamn-test-postgres` belongs to test support, and the two integration benchmark binaries remain callable tools. Fixture guests are build inputs at `crates/control/lib/src/platform_build/inputs.rs:25`; relocation into test support requires moving their build ownership too.
 
 Deletes: At least 1,331 lines leave production source directories through relocation: 538 invariant lines, 639 case/drift lines, and 154 database-fixture lines. Net repository deletion is approximately zero.
 
-Risk: Preserve router property tests, queue tests, SQLite and PostgreSQL intent cases, schema-drift tests, and database-fixture installation tests. Keep production features `ops` and `wasm_component_model_implements`; their consumers are explicit. `tenant-key` is the retired tenant feature and is not kept. It goes with the removal of that feature, which is still in progress.
+Risk: Preserve router property tests, queue tests, SQLite and PostgreSQL intent cases, schema-drift tests, and database-fixture installation tests. Keep production features `ops` and `wasm_component_model_implements`; their consumers are explicit. `project-key` is the retired project feature and is not kept. It goes with the removal of that feature, which is still in progress.
 
 Owner review 2026-10-31: In passing. Relocation, zero net deletion.
 
@@ -387,9 +387,9 @@ Owner review 2026-10-31: In passing, after A5. The begin-operation and commit im
 
 Severity: medium  
 Effort: M  
-Area: `deploy/sql`, `crates/control/provision/src/tenant_key.rs`
+Area: `deploy/sql`, `crates/control/provision/src/project_key.rs`
 
-Evidence: `deploy/sql/catalog-schema-prefix.sql:45`; `deploy/sql/run-state.sql:98`; `deploy/sql/postgres-init.sql:170`; `deploy/sql/app-schema.sql:127`; `crates/control/provision/src/tenant_key.rs:208`.
+Evidence: `deploy/sql/catalog-schema-prefix.sql:45`; `deploy/sql/run-state.sql:98`; `deploy/sql/postgres-init.sql:170`; `deploy/sql/app-schema.sql:127`; `crates/control/provision/src/project_key.rs:208`.
 
 Problem: Four schema artifacts embed the same 40-line authority bootstrap. The files already identify a shared builder, so this is repeated distribution content rather than four independent designs. Keeping each schema standalone makes every authority change touch several authored artifacts.
 
@@ -397,9 +397,9 @@ Proposal: One authority SQL file. Provisioning concatenates it with the schema b
 
 Deletes: Approximately 120–150 net lines from the four embedded copies.
 
-Risk: Installation order, function ownership, database-name substitution, and expression indexes must remain correct. Use `the_bootstrap_and_literal_renderings_install_the_same_object` and the live deployment SQL authority suite (`crates/control/provision/tests/tenant_key_live.rs:512`, `crates/control/provision/tests/deploy_sql_authority.rs:16`).
+Risk: Installation order, function ownership, database-name substitution, and expression indexes must remain correct. Use `the_bootstrap_and_literal_renderings_install_the_same_object` and the live deployment SQL authority suite (`crates/control/provision/tests/project_key_live.rs:512`, `crates/control/provision/tests/deploy_sql_authority.rs:16`).
 
-Owner review 2026-10-31: In passing, inside the C1-1 baseline work, which already touches every file in `deploy/sql`. Question 1 is answered: authored SQL stays directly readable and executable. The installer composes, nothing generates. `crates/control/provision/src/tenant_key.rs` is part of the tenant feature removal in progress, not a target here.
+Owner review 2026-10-31: In passing, inside the C1-1 baseline work, which already touches every file in `deploy/sql`. Question 1 is answered: authored SQL stays directly readable and executable. The installer composes, nothing generates. `crates/control/provision/src/project_key.rs` is part of the project feature removal in progress, not a target here.
 
 ## Finding A2-6: Database setup has three homes and repeated schema composition
 

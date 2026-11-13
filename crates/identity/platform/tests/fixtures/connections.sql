@@ -11,27 +11,27 @@ INSERT INTO platform.connection (id,integration_id,integration_type,status) VALU
     ('20000000-0000-4000-8000-000000000002','10000000-0000-4000-8000-000000000002','s3','active'),
     ('20000000-0000-4000-8000-000000000003','10000000-0000-4000-8000-000000000003','modbus','active'),
     ('20000000-0000-4000-8000-000000000004','10000000-0000-4000-8000-000000000004','http','active');
-INSERT INTO catalog.releases (env_key,manifest_digest,canonical_bytes)
+INSERT INTO catalog.releases (project_env_key,manifest_digest,canonical_bytes)
 VALUES ('test','sha256:' || encode(sha256('{}'::bytea),'hex'),'{}'::bytea);
-INSERT INTO catalog.connection_requirement (env_key,component_digest,package_id,name,interface,mode)
+INSERT INTO catalog.connection_requirement (project_env_key,component_digest,package_id,name,interface,mode)
 VALUES ('test','sha256:' || repeat('a',64),'fixture','erp','wamn:connection/http@0.1.0','read');
 DO $$
 DECLARE label text;
 BEGIN
     FOREACH label IN ARRAY ARRAY['', 'Upper', 'has_underscore', repeat('a',64)] LOOP
         BEGIN
-            INSERT INTO catalog.connection_requirement (env_key,component_digest,package_id,name,interface,mode)
+            INSERT INTO catalog.connection_requirement (project_env_key,component_digest,package_id,name,interface,mode)
             VALUES ('test','sha256:' || repeat('b',64),'fixture',label,'wamn:connection/http@0.1.0','read');
             RAISE EXCEPTION 'an invalid connection label was accepted';
         EXCEPTION WHEN check_violation THEN NULL;
         END;
     END LOOP;
 END $$;
-INSERT INTO catalog.release_connection (env_key,manifest_digest,connection_id,version) VALUES
+INSERT INTO catalog.release_connection (project_env_key,manifest_digest,connection_id,version) VALUES
     ('test','sha256:' || encode(sha256('{}'::bytea),'hex'),'20000000-0000-4000-8000-000000000001',1),
     ('test','sha256:' || encode(sha256('{}'::bytea),'hex'),'20000000-0000-4000-8000-000000000002',1),
     ('test','sha256:' || encode(sha256('{}'::bytea),'hex'),'20000000-0000-4000-8000-000000000004',1);
-INSERT INTO catalog.connection_binding (env_key,manifest_digest,component_digest,package_id,name,connection_id)
+INSERT INTO catalog.connection_binding (project_env_key,manifest_digest,component_digest,package_id,name,connection_id)
 VALUES ('test','sha256:' || encode(sha256('{}'::bytea),'hex'),'sha256:' || repeat('a',64),'fixture','erp','20000000-0000-4000-8000-000000000001');
 DO $$
 DECLARE refused_connection uuid;

@@ -364,18 +364,18 @@ Take the lock before you create the database.
 A test that changes the whole server, such as a control store that revokes PUBLIC CONNECT on every database, holds the lock or starts its own server.
 Dropping the server stops it and removes its directory.
 
-Floor setup functions create a database with the schema that a test starts from.
+Minimum setup functions create a database with the schema that a test starts from.
 Each lives beside the crate that owns its SQL, behind that crate's `test-util` feature.
 Enable the feature on a dev-dependency.
-The floors do not take the lock.
+The minimums do not take the lock.
 
-| Floor | Function | Installs |
+| Minimum | Function | Installs |
 | --- | --- | --- |
 | system | `wamn_control_provision::test_database::system()` | the control store, applied as `wamn_system`, which owns the database |
-| tenant | `wamn_catalog::test_database::tenant()` | `CATALOG_SCHEMA_SQL` and the `wamn_app` role |
-| tenant+platform | `wamn_platform_identity::test_database::tenant_platform()` | the tenant floor and `deploy/sql/app-schema.sql` |
+| project | `wamn_catalog::test_database::project()` | `CATALOG_SCHEMA_SQL` and the `wamn_app` role |
+| project+platform | `wamn_platform_identity::test_database::project_platform()` | the project base grants and `deploy/sql/app-schema.sql` |
 
-A test of provisioning, migrations, or grants executes that operation and does not start from a floor that already performed it.
+A test of provisioning, migrations, or grants executes that operation and does not start from a minimum that already performed it.
 Exercise the intended role because a superuser bypasses row security.
 
 An [ignored test](#ignored-tests) takes its database from the same functions.
@@ -577,7 +577,7 @@ A failure prints both paths.
 ### Record history retention test
 
 `services/ctl/tests/prune_record_history_live.rs` tests the record history retention verb.
-It creates roles, so each case holds the process lock and starts from the tenant+platform floor.
+It creates roles, so each case holds the process lock and starts from the project+platform base grants.
 The `ops` feature builds `wamn-ctl-ops` beside the test binary:
 
 ```bash
@@ -591,7 +591,7 @@ The case applies a fixture package through `wamn-ctl apply-package` and runs `wa
 ### Run history retention test
 
 `services/ctl/tests/prune_run_history_live.rs` tests the run history retention verb.
-It creates roles, so it holds the process lock and starts from the tenant floor.
+It creates roles, so it holds the process lock and starts from the project base grants.
 It needs the `ops` feature:
 
 ```bash

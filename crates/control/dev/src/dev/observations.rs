@@ -280,7 +280,7 @@ mod tests {
             vec![]
         } else {
             vec![
-                json!({"key":"wamn.env_key", "value":{"stringValue":reader.identity.env_key()}}),
+                json!({"key":"wamn.project_env_key", "value":{"stringValue":reader.identity.project_env_key()}}),
                 json!({"key":"wamn.project", "value":{"stringValue":reader.identity.project}}),
                 json!({"key":"wamn.environment", "value":{"stringValue":reader.identity.environment}}),
             ]

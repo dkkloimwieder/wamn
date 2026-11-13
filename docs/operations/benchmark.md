@@ -1,6 +1,6 @@
 # Benchmark
 
-This page holds the current baselines of the Receiving benchmark: the tier 2 run on `wamn-dev` with the collector in place, the PostgreSQL floor, and the local run.
+This page holds the current baselines of the Receiving benchmark: the tier 2 run on `wamn-dev` with the collector in place, the PostgreSQL minimum, and the local run.
 The procedure for the tier 2 run is in [Google Cloud operations](gcp.md#58-benchmark).
 `tools/bench/tier.sh` writes one result per platform version to `tests/bench/platform-<version>.json`.
 Latency is in milliseconds.
@@ -112,19 +112,19 @@ PostgreSQL also samples 1% of transactions and 1% of individual statement durati
 These duration logs cover transaction controls such as `COMMIT`, which have no execution plan.
 The runner captures the PostgreSQL container logs in `postgres.log` before removing its own container.
 
-The PostgreSQL floor records the same statistics for each replay and built-in workload.
+The PostgreSQL minimum records the same statistics for each replay and built-in workload.
 It also records `pgbench -r` command timings and transaction mean and maximum latency.
 Pipeline command timings overlap. Do not add them as independent statement costs.
 Use server statement times and sampled commit durations to explain the replay gap. Compare means, not sums of percentiles.
 
-Run `tools/bench/local.sh --pg-floor` to measure PostgreSQL without a host, edge, broker, or collector.
+Run `tools/bench/local.sh --pg-minimum` to measure PostgreSQL without a host, edge, broker, or collector.
 It uses the same PostgreSQL image, base parameters, instrumentation, and CPU assignments as the full local run.
 The existing package applier installs Receiving, including its history triggers and generated grants.
 The run loads the 1000-order seed and initializes pgbench at scale 10.
 
-The floor requires PostgreSQL 18 `pgbench` and uses its prepared protocol.
+The minimum requires PostgreSQL 18 `pgbench` and uses its prepared protocol.
 It runs select-only, simple-update, get replay, and update replay at concurrency 16 for 60 seconds each.
-The replay scripts live in `tools/bench/pg-floor/`.
+The replay scripts live in `tools/bench/pg-minimum/`.
 Their comments describe the captured SQL and parameter choices.
 The update replay retains the host transaction, including the write log and logical message.
 
@@ -133,11 +133,11 @@ Update clients use separate order slices, so no two clients update the same orde
 The finish payload uses a representative row value with its pre-update audit timestamps.
 The runner requires one changed row and one finished claim for every completed update.
 
-The floor result is `tests/bench/local-pg-<version>.json`, in the same format as the platform results.
+The minimum result is `tests/bench/local-pg-<version>.json`, in the same format as the platform results.
 TPS means completed transactions per second.
 The p50 and p99 values come from [pgbench's completed-transaction logs](https://www.postgresql.org/docs/18/pgbench.html), in milliseconds.
 
-Compare select-only and simple-update with the [GCP floor](#postgres-floor) to locate database or storage differences.
+Compare select-only and simple-update with the [GCP minimum](#postgres-minimum) to locate database or storage differences.
 Compare the replays with full local get and update to distinguish database work from request-path work.
 These timings use different clients, so subtracting their percentiles does not measure host overhead.
 
@@ -163,8 +163,8 @@ The reader uses sampled traces directly and does not multiply their times by ten
 
 Compare this mode with full local get and update to locate changes in the host and guest path.
 Use the full run's `--no-edge` variant when comparing direct host latency.
-If the Postgres floor changes while the application span parts stay stable, investigate the database layer.
-If application span parts change while the floor stays stable, investigate those host or guest parts.
+If the Postgres minimum changes while the application span parts stay stable, investigate the database layer.
+If application span parts change while the minimum stays stable, investigate those host or guest parts.
 If only the full run changes, inspect its application SQL, payload, and edge behavior.
 
 Run `tools/bench/local.sh --mix --profile` and `tools/bench/local.sh --call update --profile` for function profiles.
@@ -224,11 +224,11 @@ The newest local result is [`local-0.1.102.json`](../../tests/bench/local-0.1.10
 | get | 2010/s | 6.86 | 16.83 | 25.30 | 1 | 1.51 |
 | update | 815/s | 18.16 | 32.33 | 47.07 | 7 | 2.22 |
 
-## Postgres floor
+## Postgres minimum
 
-`tools/bench/pg-floor/gcp.sh` runs the replays of `local.sh --pg-floor` against `wamn-pg-1` on GCP tier 2.
-PostgreSQL runs alone on pool `pg`. The pgbench client runs in the Job `tools/bench/pg-floor/gcp-client.yaml` on pool `bench`.
-The runner installs Receiving into its own database `wamn_pg_floor`. The environment databases keep the Cluster statistics settings.
+`tools/bench/pg-minimum/gcp.sh` runs the replays of `local.sh --pg-minimum` against `wamn-pg-1` on GCP tier 2.
+PostgreSQL runs alone on pool `pg`. The pgbench client runs in the Job `tools/bench/pg-minimum/gcp-client.yaml` on pool `bench`.
+The runner installs Receiving into its own database `wamn_pg_minimum`. The environment databases keep the Cluster statistics settings.
 The newest result is [`gcp-pg-0.1.36-c8a5v.2.json`](../history/evidence/bench/gcp-pg-0.1.36-c8a5v.2.json). Each call ran at concurrency 16 for 60 seconds with 0 errors.
 The row "update, triggers off" is the update replay with both record-history triggers disabled. It ran after the update replay on the same data.
 

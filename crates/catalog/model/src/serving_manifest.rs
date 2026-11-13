@@ -13,10 +13,10 @@
 //! conversion. Attachment authentication uses a closed modes list, without a
 //! scalar-mode fallback.
 //!
-//! The manifest names no tenant, environment, org, project, route host or
+//! The manifest names no project, environment, org, project, route host or
 //! integer id, so one release hashes identically in every environment
 //! (docs/architecture/overview.md#release-identity). A serving process takes
-//! its tenant and environment from its own configuration.
+//! its project and environment from its own configuration.
 //!
 //! The document identity is the SHA-256 of its RFC 8785 canonical JSON. Sets and
 //! maps make each collection's order deterministic, while
@@ -1532,7 +1532,7 @@ mod tests {
     ) -> AdmittedComponent {
         AdmittedComponent {
             scope: crate::ComponentPackageScope {
-                env_key: "t1".into(),
+                project_env_key: "t1".into(),
                 package_id: package_id.into(),
                 package_version: package_version.into(),
             },

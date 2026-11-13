@@ -10,7 +10,7 @@ use wamn_runtime::plugins::wamn_postgres::{
     ClassCredentials, ProductionClaimResult, ReleaseIdentity, WamnPostgres, WamnPostgresConfig,
 };
 
-pub const ENV_KEY: &str = "claim-live";
+pub const PROJECT_ENV_KEY: &str = "claim-live";
 pub const COMPONENT: &str = "claim-live-runner";
 pub const PACKAGE_ID: &str = "cat_main";
 pub const ENVIRONMENT: &str = "test";
@@ -52,7 +52,7 @@ pub fn quote_literal(value: &str) -> String {
 const RUN_STATE_SQL: &str = include_str!("../../../../../deploy/sql/run-state.sql");
 const RUN_QUEUE_SQL: &str = include_str!("../../../../../deploy/sql/run-queue.sql");
 
-/// Apply the run plane of record on the tenant floor, with the two releases
+/// Apply the run plane of record on the project base grants, with the two releases
 /// the pods mount.
 pub async fn install_schema(client: &Client) -> anyhow::Result<()> {
     client.batch_execute(RUN_STATE_SQL).await?;
@@ -62,9 +62,9 @@ pub async fn install_schema(client: &Client) -> anyhow::Result<()> {
         .await?;
     client
         .batch_execute(&format!(
-            "INSERT INTO catalog.releases (env_key, manifest_digest, canonical_bytes) \
-             VALUES ('{ENV_KEY}', '{POD_MANIFEST_DIGEST}', '{POD_MANIFEST_BYTES}'), \
-                    ('{ENV_KEY}', '{ROLLED_MANIFEST_DIGEST}', '{ROLLED_MANIFEST_BYTES}');"
+            "INSERT INTO catalog.releases (project_env_key, manifest_digest, canonical_bytes) \
+             VALUES ('{PROJECT_ENV_KEY}', '{POD_MANIFEST_DIGEST}', '{POD_MANIFEST_BYTES}'), \
+                    ('{PROJECT_ENV_KEY}', '{ROLLED_MANIFEST_DIGEST}', '{ROLLED_MANIFEST_BYTES}');"
         ))
         .await?;
     Ok(())
@@ -127,22 +127,22 @@ pub async fn seed_run(client: &Client, run_id: &str, package_id: &str) -> anyhow
         .execute(
             &format!(
                 "INSERT INTO {SCHEMA}.runs \
-                   (env_key,run_id,wiring_hash,status,package_id,manifest_digest, \
+                   (project_env_key,run_id,wiring_hash,status,package_id,manifest_digest, \
                     environment,wiring_id,wiring_version,input_json,trigger_source) \
                  VALUES ($1,$2,'sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd','dispatched',$3,'{POD_MANIFEST_DIGEST}','test',$4,$5, \
                          '{{\"input\":true}}','http')"
             ),
-            &[&ENV_KEY, &run_id, &package_id, &WIRING_ID, &WIRING_VERSION],
+            &[&PROJECT_ENV_KEY, &run_id, &package_id, &WIRING_ID, &WIRING_VERSION],
         )
         .await?;
     client
         .execute(
             &format!(
                 "INSERT INTO {SCHEMA}.run_queue \
-                   (env_key,run_id,available_at) \
+                   (project_env_key,run_id,available_at) \
                  VALUES ($1,$2,'2000-01-01 00:00:00+00')"
             ),
-            &[&ENV_KEY, &run_id],
+            &[&PROJECT_ENV_KEY, &run_id],
         )
         .await?;
     Ok(())
@@ -153,9 +153,9 @@ pub async fn expire_effect_run(client: &Client, run_id: &str) -> anyhow::Result<
         .execute(
             &format!(
                 "UPDATE {SCHEMA}.run_queue SET lease_expires_at='2000-01-01' \
-                  WHERE env_key=$1 AND run_id=$2"
+                  WHERE project_env_key=$1 AND run_id=$2"
             ),
-            &[&ENV_KEY, &run_id],
+            &[&PROJECT_ENV_KEY, &run_id],
         )
         .await?;
     Ok(())
@@ -169,9 +169,9 @@ pub async fn seed_exhausted_run(client: &Client, run_id: &str) -> anyhow::Result
                 "UPDATE {SCHEMA}.run_queue \
                     SET lease_owner='dead', lease_expires_at='2000-01-01', \
                         attempts=max_attempts \
-                  WHERE env_key=$1 AND run_id=$2"
+                  WHERE project_env_key=$1 AND run_id=$2"
             ),
-            &[&ENV_KEY, &run_id],
+            &[&PROJECT_ENV_KEY, &run_id],
         )
         .await?;
     Ok(())
@@ -182,9 +182,9 @@ pub async fn make_callerless(client: &Client, run_id: &str) -> anyhow::Result<()
         .execute(
             &format!(
                 "UPDATE {SCHEMA}.runs SET trigger_source=NULL \
-                  WHERE env_key=$1 AND run_id=$2"
+                  WHERE project_env_key=$1 AND run_id=$2"
             ),
-            &[&ENV_KEY, &run_id],
+            &[&PROJECT_ENV_KEY, &run_id],
         )
         .await?;
     Ok(())
@@ -200,9 +200,9 @@ pub async fn install_prior_caller_winner(client: &Client, run_id: &str) -> anyho
                         caller_http_status=207, caller_release_node_id='prior-node', \
                         caller_outcome_hash=$3, \
                         caller_released_at='2025-01-02T03:04:05.123456Z' \
-                  WHERE env_key=$1 AND run_id=$2"
+                  WHERE project_env_key=$1 AND run_id=$2"
             ),
-            &[&ENV_KEY, &run_id, &PRIOR_WINNER_HASH],
+            &[&PROJECT_ENV_KEY, &run_id, &PRIOR_WINNER_HASH],
         )
         .await?;
     caller_fields(client, run_id).await
@@ -212,8 +212,10 @@ pub async fn install_prior_caller_winner(client: &Client, run_id: &str) -> anyho
 pub async fn queue_attempts(client: &Client, run_id: &str) -> anyhow::Result<i32> {
     Ok(client
         .query_one(
-            &format!("SELECT attempts FROM {SCHEMA}.run_queue WHERE env_key=$1 AND run_id=$2"),
-            &[&ENV_KEY, &run_id],
+            &format!(
+                "SELECT attempts FROM {SCHEMA}.run_queue WHERE project_env_key=$1 AND run_id=$2"
+            ),
+            &[&PROJECT_ENV_KEY, &run_id],
         )
         .await?
         .get(0))
@@ -225,9 +227,9 @@ pub async fn release_record(client: &Client, run_id: &str) -> anyhow::Result<Opt
         .query_one(
             &format!(
                 "SELECT manifest_digest \
-                   FROM {SCHEMA}.runs WHERE env_key=$1 AND run_id=$2"
+                   FROM {SCHEMA}.runs WHERE project_env_key=$1 AND run_id=$2"
             ),
-            &[&ENV_KEY, &run_id],
+            &[&PROJECT_ENV_KEY, &run_id],
         )
         .await?;
     Ok(row.get(0))
@@ -241,9 +243,9 @@ pub async fn caller_fields(client: &Client, run_id: &str) -> anyhow::Result<Valu
                     'kind',caller_outcome_type, 'body',caller_outcome_json, \
                     'status',caller_http_status, 'node',caller_release_node_id, \
                     'hash',caller_outcome_hash, 'released-at',caller_released_at)::text \
-                   FROM {SCHEMA}.runs WHERE env_key=$1 AND run_id=$2"
+                   FROM {SCHEMA}.runs WHERE project_env_key=$1 AND run_id=$2"
             ),
-            &[&ENV_KEY, &run_id],
+            &[&PROJECT_ENV_KEY, &run_id],
         )
         .await?
         .get(0);
@@ -295,10 +297,10 @@ pub async fn assert_terminal_status_dequeued(
             &format!(
                 "SELECT status, NOT EXISTS ( \
                     SELECT 1 FROM {SCHEMA}.run_queue q \
-                     WHERE q.env_key=r.env_key AND q.run_id=r.run_id) \
-                   FROM {SCHEMA}.runs r WHERE env_key=$1 AND run_id=$2"
+                     WHERE q.project_env_key=r.project_env_key AND q.run_id=r.run_id) \
+                   FROM {SCHEMA}.runs r WHERE project_env_key=$1 AND run_id=$2"
             ),
-            &[&ENV_KEY, &run_id],
+            &[&PROJECT_ENV_KEY, &run_id],
         )
         .await?;
     assert_eq!(row.get::<_, String>(0), status);
@@ -347,14 +349,14 @@ pub async fn install_fixture(url: &str) -> anyhow::Result<LiveFixture> {
         plugin.set_user_id(component, &executor.principal_id().to_string())?;
         plugin.set_operation(component, &executor.principal_name())?;
     }
-    plugin.set_env_key(COMPONENT, ENV_KEY)?;
+    plugin.set_project_env_key(COMPONENT, PROJECT_ENV_KEY)?;
     plugin.set_schema(COMPONENT, SCHEMA)?;
     plugin.set_runner(COMPONENT, COMPONENT)?;
     plugin.set_release_identity(
         COMPONENT,
         ReleaseIdentity::for_test(wamn_catalog::ManifestDigest::parse(POD_MANIFEST_DIGEST)?),
     )?;
-    plugin.set_env_key(ROLLED_COMPONENT, ENV_KEY)?;
+    plugin.set_project_env_key(ROLLED_COMPONENT, PROJECT_ENV_KEY)?;
     plugin.set_schema(ROLLED_COMPONENT, SCHEMA)?;
     plugin.set_runner(ROLLED_COMPONENT, ROLLED_COMPONENT)?;
     plugin.set_release_identity(

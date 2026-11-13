@@ -170,7 +170,7 @@ async fn push(
         )
         .await?;
     let mut drops = AuthDrops::default();
-    let env_key = format!("{org}--{project}--{env}");
+    let project_env_key = format!("{org}--{project}--{env}");
     for row in document["principal"]
         .as_array()
         .context("connection principal projection")?
@@ -189,7 +189,7 @@ async fn push(
             &[&id, &email, &text(row, "display_name")?, &text(row, "status")?],
         ).await?;
         if changed != 0 || disabled.contains(&connection_id) {
-            drops.principal(&env_key, &id);
+            drops.principal(&project_env_key, &id);
         }
     }
     Ok(drops)

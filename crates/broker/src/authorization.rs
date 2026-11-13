@@ -152,11 +152,11 @@ fn read_authorization(live: Option<&str>) -> anyhow::Result<Authorization> {
 }
 
 fn render(scope: &wamn_control_registry::Triple, authorization: &mut Authorization) -> Vec<Value> {
-    let env_key =
+    let project_env_key =
         wamn_control_registry::project_env_key(&scope.org, &scope.project, scope.env.as_str());
     let source = source_stream_config(scope, 1, Duration::from_secs(120));
     let advisory = advisory_stream_config(scope, 1);
-    let user = wamn_control_registry::environment_nats_user(&env_key);
+    let user = wamn_control_registry::environment_nats_user(&project_env_key);
     // The environment's events, and what its host and its materializer read
     // on that environment's own stream: every consumer of the stream, by
     // wildcard. The materializer creates application consumers with filters
@@ -175,7 +175,7 @@ fn render(scope: &wamn_control_registry::Triple, authorization: &mut Authorizati
         format!("$JS.ACK.{}.>", source.name),
     ]);
     for bucket in ["wamn-auth", "wamn-connection"] {
-        publish.extend(memory_subjects(bucket, &env_key));
+        publish.extend(memory_subjects(bucket, &project_env_key));
     }
     publish.push(format!(
         "$JS.API.CONSUMER.CREATE.KV_wamn-auth.*.$KV.wamn-auth.{}.>",
@@ -200,7 +200,7 @@ fn render(scope: &wamn_control_registry::Triple, authorization: &mut Authorizati
     );
     // Environment provisioning owns the materializer and its host's data binding.
     vec![environment_certificate(
-        &format!("wamn-nats-{env_key}"),
+        &format!("wamn-nats-{project_env_key}"),
         &user,
     )]
 }
@@ -489,11 +489,11 @@ mod tests {
             tokio::time::sleep(Duration::from_millis(50)).await;
         };
         crate::kv_memory::create_buckets(&admin).await.unwrap();
-        let env_key = wamn_control_registry::project_env_key("test", "one", "dev");
+        let project_env_key = wamn_control_registry::project_env_key("test", "one", "dev");
         for (user, scope) in [
             (
-                wamn_control_registry::environment_nats_user(&env_key),
-                Some(env_key.as_str()),
+                wamn_control_registry::environment_nats_user(&project_env_key),
+                Some(project_env_key.as_str()),
             ),
             (wamn_control_registry::control_nats_user("test"), None),
         ] {

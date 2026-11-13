@@ -43,7 +43,8 @@ const REQUEST_ID: &str = "request_id";
 #[derive(Clone, Copy)]
 pub struct IntentContext<'a> {
     pub store: &'a dyn IntentStore,
-    pub tenant: &'a str,
+    /// The caller's partition, as defined by [`Intent::partition`].
+    pub partition: &'a str,
     /// The release that serves the call.
     pub release: &'a str,
     pub package: &'a str,
@@ -58,7 +59,7 @@ impl fmt::Debug for IntentContext<'_> {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
             .debug_struct("IntentContext")
-            .field("tenant", &self.tenant)
+            .field("partition", &self.partition)
             .field("release", &self.release)
             .field("package", &self.package)
             .field("kind", &self.kind)
@@ -359,7 +360,7 @@ async fn settle_request_element<H: ApplicationHost>(
     let begun = intent
         .store
         .begin(&Intent {
-            tenant: intent.tenant,
+            partition: intent.partition,
             release: intent.release,
             package: intent.package,
             operation: call.operation,

@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# The Postgres floor on GCP (wamn-c8a5v.1): the replays of local.sh --pg-floor
+# The Postgres minimum on GCP (wamn-c8a5v.1): the replays of local.sh --pg-minimum
 # against wamn-pg-1, with pgbench in the Job gcp-client.yaml on pool bench.
 # update-no-triggers is the update replay with both record-history triggers
-# disabled (perf-arch.md M4). It runs only in the database wamn_pg_floor,
+# disabled (perf-arch.md M4). It runs only in the database wamn_pg_minimum,
 # never in an environment database. receipt-<n> is the record_receipt replay
 # with n lines per receipt (perf-arch.md M7). It runs only when CALLS names
 # it, for example CALLS="receipt-1 receipt-5 receipt-20".
@@ -10,7 +10,7 @@
 # The caller exports CLOUDSDK_CONFIG and KUBECONFIG for wamn-dev, keeps the
 # PostgreSQL forward on 127.0.0.1:15432, and sets
 # CARGO_TARGET_DIR to the target that holds a debug build of
-# `cargo build -p wamn-dev-control --example pg_floor_database`. Run `wamn build
+# `cargo build -p wamn-dev-control --example pg_minimum_database`. Run `wamn build
 # apps/wamn_receiving` first: the replay reads its operation contract.
 set -euo pipefail
 cd "$(git rev-parse --show-toplevel)"
@@ -45,7 +45,7 @@ for number, value in (("$1", ":purchase_order_id::uuid"), ("$2", ":line::jsonb")
                       ("$3", ":request_id::text"), ("$4", "'2026-10-17T00:00:00Z'::timestamptz")):
     command = command.replace(number, value)
 assert "$" not in command
-replay = Path("tools/bench/pg-floor/receipt.sql").read_text()
+replay = Path("tools/bench/pg-minimum/receipt.sql").read_text()
 assert replay.count("-- record_receipt.sql\n") == 1
 Path(sys.argv[1]).write_text(replay.replace("-- record_receipt.sql\n", command))
 PYTHON
@@ -54,44 +54,44 @@ PGPASSWORD=$(kubectl -n platform get secret wamn-pg-superuser -o jsonpath='{.dat
 export PGPASSWORD
 # A TLS handshake through kubectl port-forward ends the forward, so every
 # forwarded URL disables TLS.
-database_url="postgresql://postgres@127.0.0.1:15432/wamn_pg_floor?sslmode=disable"
-client_url="postgresql://postgres@wamn-pg-rw.platform.svc:5432/wamn_pg_floor"
+database_url="postgresql://postgres@127.0.0.1:15432/wamn_pg_minimum?sslmode=disable"
+client_url="postgresql://postgres@wamn-pg-rw.platform.svc:5432/wamn_pg_minimum"
 cleanup() {
-  kubectl -n platform delete job pg-floor-client --ignore-not-found --wait=false >/dev/null
+  kubectl -n platform delete job pg-minimum-client --ignore-not-found --wait=false >/dev/null
 }
 trap cleanup EXIT
 
-# The floor database carries the statement statistics and the auto_explain
+# The minimum database carries the statement statistics and the auto_explain
 # values of local.sh. The environment databases keep the Cluster's track=top
 # and a silent auto_explain.
 psql "postgresql://postgres@127.0.0.1:15432/postgres?sslmode=disable" -X -v ON_ERROR_STOP=1 >"$work/database.log" <<'SQL'
-DROP DATABASE IF EXISTS wamn_pg_floor WITH (FORCE);
-CREATE DATABASE wamn_pg_floor;
-ALTER DATABASE wamn_pg_floor SET pg_stat_statements.track = 'all';
-ALTER DATABASE wamn_pg_floor SET pg_stat_statements.track_planning = on;
-ALTER DATABASE wamn_pg_floor SET track_io_timing = on;
-ALTER DATABASE wamn_pg_floor SET track_wal_io_timing = on;
-ALTER DATABASE wamn_pg_floor SET log_transaction_sample_rate = 0.01;
-ALTER DATABASE wamn_pg_floor SET log_min_duration_sample = 0;
-ALTER DATABASE wamn_pg_floor SET log_statement_sample_rate = 0.01;
-ALTER DATABASE wamn_pg_floor SET auto_explain.log_min_duration = 0;
-ALTER DATABASE wamn_pg_floor SET auto_explain.log_analyze = on;
-ALTER DATABASE wamn_pg_floor SET auto_explain.log_buffers = on;
-ALTER DATABASE wamn_pg_floor SET auto_explain.log_wal = on;
-ALTER DATABASE wamn_pg_floor SET auto_explain.log_nested_statements = on;
-ALTER DATABASE wamn_pg_floor SET auto_explain.log_timing = off;
-ALTER DATABASE wamn_pg_floor SET auto_explain.sample_rate = 0.01;
-ALTER DATABASE wamn_pg_floor SET auto_explain.log_format = json;
+DROP DATABASE IF EXISTS wamn_pg_minimum WITH (FORCE);
+CREATE DATABASE wamn_pg_minimum;
+ALTER DATABASE wamn_pg_minimum SET pg_stat_statements.track = 'all';
+ALTER DATABASE wamn_pg_minimum SET pg_stat_statements.track_planning = on;
+ALTER DATABASE wamn_pg_minimum SET track_io_timing = on;
+ALTER DATABASE wamn_pg_minimum SET track_wal_io_timing = on;
+ALTER DATABASE wamn_pg_minimum SET log_transaction_sample_rate = 0.01;
+ALTER DATABASE wamn_pg_minimum SET log_min_duration_sample = 0;
+ALTER DATABASE wamn_pg_minimum SET log_statement_sample_rate = 0.01;
+ALTER DATABASE wamn_pg_minimum SET auto_explain.log_min_duration = 0;
+ALTER DATABASE wamn_pg_minimum SET auto_explain.log_analyze = on;
+ALTER DATABASE wamn_pg_minimum SET auto_explain.log_buffers = on;
+ALTER DATABASE wamn_pg_minimum SET auto_explain.log_wal = on;
+ALTER DATABASE wamn_pg_minimum SET auto_explain.log_nested_statements = on;
+ALTER DATABASE wamn_pg_minimum SET auto_explain.log_timing = off;
+ALTER DATABASE wamn_pg_minimum SET auto_explain.sample_rate = 0.01;
+ALTER DATABASE wamn_pg_minimum SET auto_explain.log_format = json;
 SQL
-# COMMIT_DELAY=<microseconds> turns on group commit for the floor database
+# COMMIT_DELAY=<microseconds> turns on group commit for the minimum database
 # alone (perf-arch.md M6).
 if [[ -n ${COMMIT_DELAY:-} ]]; then
   psql "postgresql://postgres@127.0.0.1:15432/postgres?sslmode=disable" -X -v ON_ERROR_STOP=1 \
-    -c "ALTER DATABASE wamn_pg_floor SET commit_delay = $COMMIT_DELAY" \
-    -c "ALTER DATABASE wamn_pg_floor SET commit_siblings = 5" >>"$work/database.log"
+    -c "ALTER DATABASE wamn_pg_minimum SET commit_delay = $COMMIT_DELAY" \
+    -c "ALTER DATABASE wamn_pg_minimum SET commit_siblings = 5" >>"$work/database.log"
 fi
-"$CARGO_TARGET_DIR/debug/examples/pg_floor_database" \
-  "postgresql://postgres:$PGPASSWORD@127.0.0.1:15432/wamn_pg_floor?sslmode=disable" \
+"$CARGO_TARGET_DIR/debug/examples/pg_minimum_database" \
+  "postgresql://postgres:$PGPASSWORD@127.0.0.1:15432/wamn_pg_minimum?sslmode=disable" \
   "$repository/apps/wamn_receiving" >>"$work/database.log" 2>&1 || {
     cat "$work/database.log" >&2
     exit 1
@@ -112,20 +112,20 @@ stop_database_profile() {
 seed_receiving 1000
 psql "$database_url" -X -v ON_ERROR_STOP=1 -c 'CREATE EXTENSION IF NOT EXISTS pg_stat_statements' >"$work/extension.log" 2>&1
 
-kubectl apply -f tools/bench/pg-floor/gcp-client.yaml >/dev/null
-until [[ -n $(kubectl -n platform get pod -l job-name=pg-floor-client -o name) ]]; do sleep 2; done
-kubectl -n platform wait pod -l job-name=pg-floor-client --for=condition=Ready --timeout=600s >/dev/null
-client=$(kubectl -n platform get pod -l job-name=pg-floor-client -o jsonpath='{.items[0].metadata.name}')
+kubectl apply -f tools/bench/pg-minimum/gcp-client.yaml >/dev/null
+until [[ -n $(kubectl -n platform get pod -l job-name=pg-minimum-client -o name) ]]; do sleep 2; done
+kubectl -n platform wait pod -l job-name=pg-minimum-client --for=condition=Ready --timeout=600s >/dev/null
+client=$(kubectl -n platform get pod -l job-name=pg-minimum-client -o jsonpath='{.items[0].metadata.name}')
 kubectl -n platform get pod "$client" -o jsonpath='{.spec.nodeName}' >"$work/client-node"
-kubectl -n platform exec "$client" -- mkdir -p /tmp/floor
+kubectl -n platform exec "$client" -- mkdir -p /tmp/minimum
 for script in get update; do
-  kubectl -n platform cp "tools/bench/pg-floor/$script.sql" "$client:/tmp/floor/$script.sql"
+  kubectl -n platform cp "tools/bench/pg-minimum/$script.sql" "$client:/tmp/minimum/$script.sql"
 done
-kubectl -n platform cp "$work/receipt.sql" "$client:/tmp/floor/receipt.sql"
+kubectl -n platform cp "$work/receipt.sql" "$client:/tmp/minimum/receipt.sql"
 kubectl -n platform exec "$client" -- pgbench "$client_url" -i -s 10 >"$work/pgbench-init.log" 2>&1
 
 for call in "${calls[@]}"; do
-  echo "Postgres floor: $call (c$concurrency, ${duration}s)"
+  echo "Postgres minimum: $call (c$concurrency, ${duration}s)"
   # Each replay claims its own request IDs.
   run=$(date +%s)
   url=$client_url
@@ -134,15 +134,15 @@ for call in "${calls[@]}"; do
     select-only|simple-update) script=(-b "$call") ;;
     receipt-*)
       psql "$database_url" -XAt -v ON_ERROR_STOP=1 -v clients="$concurrency" -v lines="${call#receipt-}" \
-        -f tools/bench/pg-floor/receipt-slots.sql >"$work/$call.slots.log"
+        -f tools/bench/pg-minimum/receipt-slots.sql >"$work/$call.slots.log"
       # pg_stat_reset clears pg_stat_user_functions, the trigger time.
       psql "$database_url" -XAt -v ON_ERROR_STOP=1 -c 'SELECT pg_stat_reset()' >>"$work/$call.slots.log"
-      script=(-f /tmp/floor/receipt.sql)
+      script=(-f /tmp/minimum/receipt.sql)
       call_operation=$receipt_operation
       url="$client_url?options=-csearch_path%3Dreceiving,public%20-cstatement_timeout%3D5000%20-crole%3Dwamn_app%20-ctrack_functions%3Dpl"
       ;;
     *)
-      script=(-f "/tmp/floor/${call%-no-triggers}.sql")
+      script=(-f "/tmp/minimum/${call%-no-triggers}.sql")
       url="$client_url?options=-csearch_path%3Dreceiving,public%20-cstatement_timeout%3D5000%20-crole%3Dwamn_app"
       ;;
   esac
@@ -154,7 +154,7 @@ for call in "${calls[@]}"; do
   psql "$database_url" -XAt -v ON_ERROR_STOP=1 -c 'SELECT pg_stat_statements_reset()' >"$work/$call.reset.log"
   start_database_profile "$call"
   kubectl -n platform exec "$client" -- pgbench "$url" -n -M prepared -c "$concurrency" -j 2 \
-    -T "$duration" -r -l --log-prefix="/tmp/floor/$call.latencies" \
+    -T "$duration" -r -l --log-prefix="/tmp/minimum/$call.latencies" \
     -D clients="$concurrency" -D sequence=0 -D run="$run" \
     -D operation="$call_operation" -D claim_operation="${call_operation%@*}" \
     -D statement_timeout=5000 -D schema=receiving \
@@ -186,5 +186,5 @@ SQL
       >>"$work/$call.triggers.log"
   fi
 done
-kubectl -n platform exec "$client" -- tar -C /tmp/floor -cf - . | tar -C "$work" --wildcards -xf - './*.latencies.*'
-python3 -B tools/bench/pg-floor/result.py "$work" "$output" "$concurrency"
+kubectl -n platform exec "$client" -- tar -C /tmp/minimum -cf - . | tar -C "$work" --wildcards -xf - './*.latencies.*'
+python3 -B tools/bench/pg-minimum/result.py "$work" "$output" "$concurrency"

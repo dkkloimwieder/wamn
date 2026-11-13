@@ -14,8 +14,8 @@ use sha2::{Digest as _, Sha256};
 use crate::error::ProvisionError;
 use crate::workload_role::WorkloadRoleFamily;
 
-/// The single shared, cluster-global application role. Every generated tenant
-/// floor and hand-written schema grants to it. It holds no database `CONNECT`:
+/// The single shared, cluster-global application role. Every generated project
+/// minimum and hand-written schema grants to it. It holds no database `CONNECT`:
 /// every App generation inherits it, so provisioning revokes that privilege and
 /// grants `CONNECT` to each generation on its own database instead.
 pub const APP_ROLE: &str = "wamn_app";
@@ -36,14 +36,14 @@ pub fn package_owner_role(package: &str) -> String {
     )
 }
 
-/// Prefix for the scoped per-tenant guest-SQL URL Secret (`wamn-0h0g.22.6.4`).
+/// Prefix for the scoped per-project guest-SQL URL Secret (`wamn-0h0g.22.6.4`).
 ///
 /// It mirrors the family's Postgres generation prefix in the hyphenated K8s
 /// convention. The Secret is
-/// scoped to the project-environment, not to the tenant key: one management
+/// scoped to the project-environment, not to the project key: one management
 /// instance serves exactly one `(org, project, environment)` and that scope's
-/// single tenant. The tenant travels in the manifest's labels, never in the
-/// name — a tenant id may be 64 bytes and carry characters a DNS-1123 name
+/// single project. The project travels in the manifest's labels, never in the
+/// name — a project id may be 64 bytes and carry characters a DNS-1123 name
 /// cannot.
 pub const GUEST_SECRET_PREFIX: &str = "wamn-guest-";
 
@@ -182,7 +182,7 @@ pub fn project_env_secret_name(org: &str, project: &str, env: &str) -> String {
     project_env_database_stem(org, project, env)
 }
 
-/// The tenant of a project environment, owned by the registry beside
+/// The project of a project environment, owned by the registry beside
 /// [`wamn_control_registry::Triple`].
 pub use wamn_control_registry::project_env_key;
 
@@ -275,7 +275,7 @@ pub fn validate_instance_suffix(instance: &str) -> Result<(), ProvisionError> {
     })
 }
 
-/// The scoped per-tenant guest-SQL credential Secret name.
+/// The scoped per-project guest-SQL credential Secret name.
 pub fn project_env_guest_secret_name(org: &str, project: &str, env: &str) -> String {
     workload_secret_name(WorkloadRoleFamily::App, org, project, env)
 }

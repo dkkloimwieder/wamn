@@ -64,7 +64,7 @@ pub struct ConnectionFacts {
     changes: Publisher,
     reader: Arc<ConnectionCredentials>,
     postgres: Arc<WamnPostgres>,
-    env_key: String,
+    project_env_key: String,
     project: String,
     environment: String,
     generations: Cache<(uuid::Uuid, i64), Arc<ConnectionGeneration>>,
@@ -78,7 +78,7 @@ impl std::fmt::Debug for ConnectionFacts {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
             .debug_struct("ConnectionFacts")
-            .field("env_key", &self.env_key)
+            .field("project_env_key", &self.project_env_key)
             .finish_non_exhaustive()
     }
 }
@@ -89,7 +89,7 @@ impl ConnectionFacts {
         changes: Publisher,
         reader: Arc<ConnectionCredentials>,
         postgres: Arc<WamnPostgres>,
-        env_key: &str,
+        project_env_key: &str,
         project: &str,
         environment: &str,
     ) -> Self {
@@ -99,7 +99,7 @@ impl ConnectionFacts {
             changes,
             reader,
             postgres,
-            env_key: env_key.to_owned(),
+            project_env_key: project_env_key.to_owned(),
             project: project.to_owned(),
             environment: environment.to_owned(),
             generations: bounded(),
@@ -127,15 +127,15 @@ impl ConnectionFacts {
     }
 
     pub(crate) fn oauth_ticket(&self, id: &uuid::Uuid) -> crate::connection_memory::Ticket {
-        self.memory.connection_ticket(&self.env_key, id)
+        self.memory.connection_ticket(&self.project_env_key, id)
     }
 
     pub(crate) fn environment(&self) -> &str {
         &self.environment
     }
 
-    pub fn env_key(&self) -> &str {
-        &self.env_key
+    pub fn project_env_key(&self) -> &str {
+        &self.project_env_key
     }
 
     /// Hold the resource lease and the connection mutex for one exclusive call.
@@ -187,7 +187,7 @@ impl ConnectionFacts {
     /// The fact of connection `id`, or `None` when the environment has no
     /// such connection.
     pub async fn connection(&self, id: &uuid::Uuid) -> anyhow::Result<Option<ConnectionFact>> {
-        let fact = match self.memory.connection(&self.env_key, id) {
+        let fact = match self.memory.connection(&self.project_env_key, id) {
             Ok(fact) => Some(fact),
             Err(ticket) => {
                 let fact = self
@@ -196,7 +196,7 @@ impl ConnectionFacts {
                     .await?;
                 if let Some(fact) = &fact {
                     self.memory
-                        .keep_connection(&self.env_key, id, ticket, fact.clone())
+                        .keep_connection(&self.project_env_key, id, ticket, fact.clone())
                         .await;
                 }
                 fact
@@ -211,7 +211,7 @@ impl ConnectionFacts {
     /// once after the external system refuses the credential.
     pub async fn read_again(&self, id: &uuid::Uuid) -> anyhow::Result<Option<ConnectionFact>> {
         let mut drops = ConnectionDrops::default();
-        drops.connection(&self.env_key, *id);
+        drops.connection(&self.project_env_key, *id);
         self.changes.publish(drops).await;
         let old = self
             .seen
@@ -257,15 +257,15 @@ impl ConnectionFacts {
 
     /// The connection map of the release `manifest_digest`.
     pub async fn release(&self, manifest_digest: &str) -> anyhow::Result<ReleaseFact> {
-        match self.memory.release(&self.env_key, manifest_digest) {
+        match self.memory.release(&self.project_env_key, manifest_digest) {
             Ok(fact) => Ok(fact),
             Err(ticket) => {
                 let fact = self
                     .postgres
-                    .release_fact(&self.project, &self.env_key, manifest_digest)
+                    .release_fact(&self.project, &self.project_env_key, manifest_digest)
                     .await?;
                 self.memory
-                    .keep_release(&self.env_key, manifest_digest, ticket, fact.clone())
+                    .keep_release(&self.project_env_key, manifest_digest, ticket, fact.clone())
                     .await;
                 Ok(fact)
             }
@@ -274,7 +274,7 @@ impl ConnectionFacts {
 
     /// The map from integration name to connection id of the environment.
     pub async fn env_connections(&self) -> anyhow::Result<EnvConnections> {
-        match self.memory.connections(&self.env_key) {
+        match self.memory.connections(&self.project_env_key) {
             Ok(map) => Ok(map),
             Err(ticket) => {
                 let map = EnvConnections {
@@ -284,7 +284,7 @@ impl ConnectionFacts {
                         .await?,
                 };
                 self.memory
-                    .keep_connections(&self.env_key, ticket, map.clone())
+                    .keep_connections(&self.project_env_key, ticket, map.clone())
                     .await;
                 Ok(map)
             }

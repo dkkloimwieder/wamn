@@ -3,8 +3,8 @@
 //!
 //! A workflow is environment data: its graph is a [`WiringDocument`], and the
 //! row lives in `catalog.workflows` of the environment's project database.
-//! The graph is gated against the release the environment serves, not against
-//! one package, by [`wamn_catalog::gate_workflow_document`]: each node resolves
+//! The graph is subject to the conditions of the release the environment serves, not against
+//! one package, by [`wamn_catalog::condition_workflow_document`]: each node resolves
 //! to the component of that release whose descriptor carries the node's
 //! component, interface version and operation, and the graph is judged over
 //! those per-node facts.
@@ -15,12 +15,12 @@
 //!
 //! The application is one the environment declares in `environment.k`, as
 //! the serving Helm revision keeps it ([`crate::environment::show`]). An
-//! application it does not declare refuses before the graph is gated.
+//! application it does not declare refuses before the graph is conditioned.
 //!
 //! The trigger is part of the version: `manual`, or `schedule` with a
 //! five-field UTC cron, parsed as the schedule task parses it
 //! ([`wamn_catalog::parse_workflow_schedule`]). An invalid cron refuses
-//! before the graph is gated. An event trigger names a captured application
+//! before the graph is conditioned. An event trigger names a captured application
 //! model and uses the registration validator for its operations and condition.
 
 pub(super) mod plan;
@@ -31,15 +31,15 @@ use wamn_catalog::{DefinitionHash, ServingManifest, WiringDocument, parse_workfl
 
 use std::path::Path;
 
-const CLAIM_ENV_KEY_SQL: &str = "SELECT set_config('app.env_key', $1, true)";
+const CLAIM_PROJECT_ENV_KEY_SQL: &str = "SELECT set_config('app.project_env_key', $1, true)";
 
-/// Params: `$1` `env_key`, `$2` environment, `$3` application, `$4` workflow id,
+/// Params: `$1` `project_env_key`, `$2` environment, `$3` application, `$4` workflow id,
 /// `$5` version, `$6` graph, `$7` hash, `$8` trigger, `$9` execution type,
 /// `$10` execution role, `$11` authoring principal, `$12` schedule,
 /// `$13` source package, `$14` entity, `$15` ops, `$16` condition.
 const INSERT_WORKFLOW_SQL: &str = "\
 INSERT INTO catalog.workflows (\
-       env_key, environment, application, workflow_id, version, graph_json, wiring_hash, \
+       project_env_key, environment, application, workflow_id, version, graph_json, wiring_hash, \
        trigger, execution_type, execution_role, created_by, schedule, source_package, entity, ops, condition\
      ) VALUES ($1, $2, $3, $4, $5, $6::text::jsonb, $7, $8, $9, $10, $11::text::uuid, $12, $13, $14, $15, $16) \
 ON CONFLICT DO NOTHING";
@@ -49,7 +49,7 @@ ON CONFLICT DO NOTHING";
 const EXACT_WORKFLOW_SQL: &str = "\
 SELECT EXISTS (\
     SELECT 1 FROM catalog.workflows \
-     WHERE env_key = $1 AND environment = $2 AND application = $3 \
+     WHERE project_env_key = $1 AND environment = $2 AND application = $3 \
        AND workflow_id = $4 AND version = $5 AND graph_json = $6::text::jsonb \
        AND wiring_hash = $7 AND trigger = $8 AND execution_type = $9 \
        AND execution_role IS NOT DISTINCT FROM $10 \
@@ -60,7 +60,7 @@ SELECT EXISTS (\
 
 const SELECT_RELEASE_SQL: &str = "\
 SELECT canonical_bytes FROM catalog.releases \
- WHERE env_key = $1 AND manifest_digest = $2";
+ WHERE project_env_key = $1 AND manifest_digest = $2";
 
 /// Stable prefix every workflow-authorship refusal renders with.
 pub const WORKFLOW_AUTHORSHIP_REFUSAL: &str = "workflow-authorship-refused";
@@ -72,7 +72,7 @@ pub enum AuthorWorkflowErrorType {
     Document,
     /// The graph does not resolve against, or is not compatible with, the
     /// serving release.
-    Gate,
+    Condition,
     Conflict,
     /// The schedule is not a five-field UTC cron.
     Schedule,
@@ -86,7 +86,7 @@ impl AuthorWorkflowErrorType {
         match self {
             Self::Storage => "storage",
             Self::Document => "document",
-            Self::Gate => "gate",
+            Self::Condition => "condition",
             Self::Conflict => "conflict",
             Self::Schedule => "schedule",
             Self::Application => "application",
@@ -212,26 +212,26 @@ pub struct AuthorWorkflowRequest<'a> {
 
 impl AuthorWorkflowRequest<'_> {
     /// The composed environment key derived from the environment coordinate.
-    pub fn env_key(&self) -> String {
+    pub fn project_env_key(&self) -> String {
         wamn_control_registry::project_env_key(self.org, self.project, self.environment)
     }
 }
 
-/// Read the installed release `manifest_digest` and gate `document` against it.
-pub(crate) async fn gate_against_release(
+/// Read the installed release `manifest_digest` and condition `document` against it.
+pub(crate) async fn condition_against_release(
     transaction: &Transaction<'_>,
-    env_key: &str,
+    project_env_key: &str,
     application_packages: &std::collections::BTreeSet<String>,
     manifest_digest: &str,
     document: &WiringDocument,
 ) -> Result<DefinitionHash, AuthorWorkflowError> {
     let bytes: Vec<u8> = transaction
-        .query_opt(SELECT_RELEASE_SQL, &[&env_key, &manifest_digest])
+        .query_opt(SELECT_RELEASE_SQL, &[&project_env_key, &manifest_digest])
         .await
         .map_err(|error| storage("read the serving release", error))?
         .ok_or_else(|| {
             AuthorWorkflowError::new(
-                AuthorWorkflowErrorType::Gate,
+                AuthorWorkflowErrorType::Condition,
                 format!("release {manifest_digest} is not installed in this environment"),
             )
         })?
@@ -243,14 +243,19 @@ pub(crate) async fn gate_against_release(
             error,
         )
     })?;
-    wamn_catalog::gate_workflow_document(env_key, application_packages, &manifest, document)
-        .map_err(|error| {
-            AuthorWorkflowError::with_source(
-                AuthorWorkflowErrorType::Gate,
-                "the graph does not gate against the serving release",
-                error,
-            )
-        })
+    wamn_catalog::condition_workflow_document(
+        project_env_key,
+        application_packages,
+        &manifest,
+        document,
+    )
+    .map_err(|error| {
+        AuthorWorkflowError::with_source(
+            AuthorWorkflowErrorType::Condition,
+            "the graph fails its conditions against the serving release",
+            error,
+        )
+    })
 }
 
 /// Validate an event trigger against the installed capture maps and the application map.
@@ -327,9 +332,9 @@ pub async fn author_workflow(
     request: &AuthorWorkflowRequest<'_>,
 ) -> Result<DefinitionHash, AuthorWorkflowError> {
     transaction
-        .query_one(CLAIM_ENV_KEY_SQL, &[&request.env_key()])
+        .query_one(CLAIM_PROJECT_ENV_KEY_SQL, &[&request.project_env_key()])
         .await
-        .map_err(|error| storage("claim the authoring tenant", error))?;
+        .map_err(|error| storage("claim the authoring project", error))?;
     let Some(declared) = request.declared.get(request.application) else {
         return Err(AuthorWorkflowError::new(
             AuthorWorkflowErrorType::Application,
@@ -350,9 +355,9 @@ pub async fn author_workflow(
     }
     validate_event_trigger(transaction, request.declared, request.trigger).await?;
     let document = request.document;
-    let hash = gate_against_release(
+    let hash = condition_against_release(
         transaction,
-        &request.env_key(),
+        &request.project_env_key(),
         &declared.packages,
         request.manifest_digest,
         document,
@@ -390,7 +395,7 @@ pub async fn author_workflow(
         _ => (None, None, None, None),
     };
     let parameters: [&(dyn tokio_postgres::types::ToSql + Sync); 16] = [
-        &request.env_key(),
+        &request.project_env_key(),
         &request.environment,
         &request.application,
         &document.wiring_id,

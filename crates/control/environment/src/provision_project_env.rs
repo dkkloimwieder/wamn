@@ -48,10 +48,10 @@
 //! authenticates each PAT against the system database. Kubernetes artifacts are
 //! only emitted (no K8s client, no target-cluster connection).
 //!
-//! **RLS floor** at provision time: there are no tables yet, so wamn-q3n.7
+//! **RLS base grants** at provision time: there are no tables yet, so wamn-q3n.7
 //! establishes the RLS-**enforceable substrate** only — `wamn_app` is
 //! `NOSUPERUSER NOCREATEDB NOBYPASSRLS` (the role SQL) and `CONNECT` is confined
-//! (the privilege SQL). The per-table `FORCE ROW LEVEL SECURITY` floor is applied
+//! (the privilege SQL). The per-table `FORCE ROW LEVEL SECURITY` minimum is applied
 //! at catalog-publish (2.4/2.5), where the tables are created.
 
 pub(super) mod plan;
@@ -77,8 +77,8 @@ use url::Url;
 
 use postgres_protocol::escape::escape_identifier;
 use wamn_control_provision::SystemReader;
-use wamn_control_provision::session_target::{SessionTarget, validate_session_env_key};
-use wamn_control_provision::tenant_key::tenant_key;
+use wamn_control_provision::project_key::project_key;
+use wamn_control_provision::session_target::{SessionTarget, validate_session_project_env_key};
 use wamn_control_provision::{
     APP_ROLE, CredentialGeneration, INSTANCE_SUFFIX_LEN, PLATFORM_GROUP_ROLE, PlatformComponent,
     WorkloadRoleFamily, WorkloadRoleScope, WorkloadRoleScopeKind, WorkloadSecretBody,
@@ -153,7 +153,7 @@ pub struct ProvisionProjectEnvRequest {
     /// The environment policy a new environment row names. Absent names the
     /// policy whose name is the env. A recorded row keeps its policy: the
     /// environment document owns it
-    /// (docs/architecture/overview.md#environment-lifecycle). The tenant is
+    /// (docs/architecture/overview.md#environment-lifecycle). The project is
     /// derived from the coordinate (`project_env_key`).
     pub policy: Option<String>,
 

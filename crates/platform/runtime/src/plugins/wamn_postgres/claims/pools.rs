@@ -81,11 +81,11 @@ impl WamnPostgres {
         &self,
         class: AuthorityClass,
         project: &str,
-        env_key: Option<&str>,
+        project_env_key: Option<&str>,
     ) -> Result<Arc<ProjectPool>, PgError> {
         let lifecycle = PoolLifecycle::for_class(class);
         let pools = self.pools(lifecycle);
-        let cfg = match self.provider.resolve(project, class, env_key) {
+        let cfg = match self.provider.resolve(project, class, project_env_key) {
             Ok(Some(c)) => c,
             Ok(None) => {
                 tracing::warn!(
@@ -180,34 +180,35 @@ impl WamnPostgres {
     }
 
     /// Check out a raw connection from the default project and report its state
-    /// *before* any claim injection. Gate verification only.
-    pub async fn probe_checkout(&self, env_key: &str) -> anyhow::Result<CheckoutProbe> {
-        self.probe_checkout_of(DEFAULT_PROJECT, env_key).await
+    /// *before* any claim injection. Condition verification only.
+    pub async fn probe_checkout(&self, project_env_key: &str) -> anyhow::Result<CheckoutProbe> {
+        self.probe_checkout_of(DEFAULT_PROJECT, project_env_key)
+            .await
     }
 
     /// Check out a raw connection from a project's (lazily built) pool and
-    /// report its state *before* any claim injection. Gate verification only —
+    /// report its state *before* any claim injection. Condition verification only —
     /// not reachable from guests and not a platform work path. It deliberately
-    /// observes the guest lifecycle that the conformance gate is proving.
+    /// observes the guest lifecycle that the conformance acceptance test is proving.
     pub async fn probe_checkout_of(
         &self,
         project: &str,
-        env_key: &str,
+        project_env_key: &str,
     ) -> anyhow::Result<CheckoutProbe> {
         let pp = self
-            .ensure_pool(AuthorityClass::GuestSql, project, Some(env_key))
+            .ensure_pool(AuthorityClass::GuestSql, project, Some(project_env_key))
             .map_err(|_| anyhow::anyhow!("no pool for project {project:?}"))?;
         let conn = pp.pool.get().await?;
         let row = conn
             .query_one(
-                "SELECT pg_backend_pid(), current_setting('app.env_key', true), \
+                "SELECT pg_backend_pid(), current_setting('app.project_env_key', true), \
                  pg_current_xact_id_if_assigned()::text",
                 &[],
             )
             .await?;
         Ok(CheckoutProbe {
             backend_pid: row.try_get(0)?,
-            env_key_claim: row.try_get(1)?,
+            project_env_key_claim: row.try_get(1)?,
             xact_id: row.try_get(2)?,
         })
     }
@@ -220,10 +221,10 @@ impl WamnPostgres {
         &self,
         class: AuthorityClass,
         project: &str,
-        env_key: Option<&str>,
+        project_env_key: Option<&str>,
     ) -> Result<(Object, Arc<ProjectPool>), PgError> {
         async {
-            let pp = self.ensure_pool(class, project, env_key)?;
+            let pp = self.ensure_pool(class, project, project_env_key)?;
             let obj = pp.pool.get().await.map_err(|e| {
                 tracing::warn!(
                     project,
@@ -249,16 +250,16 @@ impl WamnPostgres {
     /// [`AuthorityClass::GuestSql`] and nothing else, so there is no call site
     /// at which a guest checkout could name a platform authority.
     ///
-    /// It DOES take the tenant, and that is the whole of `wamn-0h0g.22.6.7`:
-    /// after the `wamn-0h0g.22.6` sweep the guest's tenant comes from
-    /// `current_user`, so the credential IS the tenant authority and the
-    /// connection cannot be selected without knowing which tenant it is for.
+    /// It DOES take the project, and that is the whole of `wamn-0h0g.22.6.7`:
+    /// after the `wamn-0h0g.22.6` sweep the guest's project comes from
+    /// `current_user`, so the credential IS the project authority and the
+    /// connection cannot be selected without knowing which project it is for.
     pub(in super::super) async fn checkout_guest(
         &self,
         project: &str,
-        env_key: &str,
+        project_env_key: &str,
     ) -> Result<(Object, Arc<ProjectPool>), PgError> {
-        self.checkout_class(AuthorityClass::GuestSql, project, Some(env_key))
+        self.checkout_class(AuthorityClass::GuestSql, project, Some(project_env_key))
             .await
     }
 
@@ -269,11 +270,11 @@ impl WamnPostgres {
         &self,
         component_id: &str,
         project: &str,
-        env_key: &str,
+        project_env_key: &str,
     ) -> Result<(Object, Arc<ProjectPool>, AuthorityClass), PgError> {
         let class = self.workload_authority_for(component_id);
         let (connection, pool) = match class {
-            AuthorityClass::GuestSql => self.checkout_guest(project, env_key).await?,
+            AuthorityClass::GuestSql => self.checkout_guest(project, project_env_key).await?,
             AuthorityClass::EventMaterializer => self.checkout_platform(project, class).await?,
             AuthorityClass::ExecutorPlatform
             | AuthorityClass::CallableHttp
@@ -290,8 +291,8 @@ impl WamnPostgres {
     /// distinct authorities (`wamn-0h0g.22.14`). Making the caller name which
     /// one is what stops executor-platform work and callable-HTTP admission
     /// sharing a pooled session.
-    /// `env_key` is deliberately absent: platform credentials are scoped to the
-    /// project-environment, not to a tenant. The remaining relation with a
+    /// `project_env_key` is deliberately absent: platform credentials are scoped to the
+    /// project-environment, not to a project. The remaining relation with a
     /// settable claim is `wamn_run.run_queue`. The host injects that claim,
     /// and the guest cannot reach the relation.
     pub(in super::super) async fn checkout_platform(

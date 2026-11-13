@@ -8,7 +8,7 @@
 //! of release identity. Loading derives the manifest digest from the verified
 //! content. The process keeps the parsed document for its lifetime.
 //!
-//! The manifest names no tenant or environment (R1): one release serves every
+//! The manifest names no project or environment (R1): one release serves every
 //! environment it is published for. The host takes its [`ReleaseScope`] from
 //! its own configuration and the loaded release carries it beside the bytes.
 //!
@@ -62,7 +62,7 @@
 //!    component digests and wiring identity-version pairs.
 //! 2. flow-http routing — serves `RouteDefinition` from
 //!    [`ServingManifest::attachments`].
-//! 3. jetstream delivery — gates delivery on
+//! 3. jetstream delivery — conditions delivery on
 //!    [`ServingManifest::registrations`].
 //!
 //! Reader 1 runs in the executor process; readers 2 and 3 run in the wash host.
@@ -130,17 +130,17 @@ pub struct CarriedRelease {
     pub manifest_digest: ManifestDigest,
 }
 
-/// The tenant, environment and application a host serves, from the
+/// The project, environment and application a host serves, from the
 /// host configuration.
 ///
 /// The serving manifest carries none of them (R1). The host derives the
-/// tenant from its `(org, project, environment)` coordinate, takes the
+/// project from its `(org, project, environment)` coordinate, takes the
 /// targeted application that `environment.k` declares, and every reader takes it
 /// from here.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReleaseScope {
     /// The composed `org--project--env` key of the project environment.
-    pub env_key: String,
+    pub project_env_key: String,
     /// The short environment name, such as `dev`.
     pub environment: String,
     /// The single application name and its packages
@@ -149,10 +149,10 @@ pub struct ReleaseScope {
 }
 
 impl ReleaseScope {
-    /// A scope of one tenant and environment that declares no application.
-    pub fn new(env_key: impl Into<String>, environment: impl Into<String>) -> Self {
+    /// A scope of one project and environment that declares no application.
+    pub fn new(project_env_key: impl Into<String>, environment: impl Into<String>) -> Self {
         Self {
-            env_key: env_key.into(),
+            project_env_key: project_env_key.into(),
             environment: environment.into(),
             applications: wamn_catalog::EnvironmentApplications::new(),
         }
@@ -254,7 +254,7 @@ impl LoadedRelease {
     /// (docs/architecture/execution.md#host-run-routes). It is built with the
     /// platform and serves only the control host routes: it has no package,
     /// component, route, attachment or database. Its fixed scope names no real
-    /// tenant or environment, and a control host reads neither.
+    /// project or environment, and a control host reads neither.
     pub fn control_root() -> Self {
         let manifest = ServingManifest {
             composed_entry: None,
@@ -287,7 +287,7 @@ impl LoadedRelease {
         &self.manifest
     }
 
-    /// The tenant and environment this host serves, from its configuration.
+    /// The project and environment this host serves, from its configuration.
     pub fn scope(&self) -> &ReleaseScope {
         &self.scope
     }
@@ -309,7 +309,7 @@ pub fn validate_component_in_release(
         .find(|package| package.package_id() == component.scope.package_id)
         .map(wamn_catalog::PackageCoordinate::package_version);
     anyhow::ensure!(
-        component.scope.env_key == release.scope().env_key
+        component.scope.project_env_key == release.scope().project_env_key
             && package_version == Some(component.scope.package_version.as_str()),
         "release-component-scope-mismatch"
     );
@@ -606,7 +606,7 @@ mod tests {
     fn carried_fact() -> AdmittedComponent {
         AdmittedComponent {
             scope: wamn_catalog::ComponentPackageScope {
-                env_key: "t1".into(),
+                project_env_key: "t1".into(),
                 package_id: "cat".into(),
                 package_version: "1.0.0".into(),
             },
@@ -642,8 +642,8 @@ mod tests {
         validate_component_in_release(&release, &carried_fact()).expect("the carried fact passes");
 
         let mutations: [(&str, Mutation); 5] = [
-            ("another tenant", |fact| {
-                fact.scope.env_key = "t2".into();
+            ("another project", |fact| {
+                fact.scope.project_env_key = "t2".into();
             }),
             ("another package version", |fact| {
                 fact.scope.package_version = "2.0.0".into();

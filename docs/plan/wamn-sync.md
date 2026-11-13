@@ -902,7 +902,7 @@ The environment comes from the page route through [`packaging-writes.ts`](../../
 
 [`saved-user.ts`](../../web/runtime/src/saved-user.ts), `savedUser`, keeps the last signed-in id per application and environment in local storage.
 [`live.tsx`](../../web/sync-bench/src/live.tsx), `App`, opens that user's rows and outbox during an offline reopen.
-`SessionPackaging` gates upload on the matching signed-in user and shows “sign in to upload” while upload waits.
+`SessionPackaging` conditions upload on the matching signed-in user and shows “sign in to upload” while upload waits.
 Local recording needs no token.
 
 Replay uses the host's current authorization. The per-application active role and picker belong to [platform configuration C6](platform-config.md#roles).

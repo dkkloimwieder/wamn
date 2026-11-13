@@ -12,7 +12,7 @@ async fn policy_projection_stamps_the_provisioning_actor() {
     let _lock = wamn_test_postgres::lock();
     let system = wamn_control_provision::test_database::system();
     system.execute(&["BEGIN", &wamn_control_provision::bind_platform_principal_sql(PlatformComponent::Provisioning), "INSERT INTO registry.orgs(id,placement_type) VALUES ('history','dedicated'); INSERT INTO registry.env_policies(org,name,recovery_domain,promotion_rank,instances,storage,cpu,memory,image) VALUES ('history','dev','\"own\"',0,1,'1Gi','1','1Gi','fixture');", "COMMIT"]).unwrap();
-    let database = wamn_catalog::test_database::tenant();
+    let database = wamn_catalog::test_database::project();
     let (client, connection) = tokio_postgres::connect(database.url(), NoTls)
         .await
         .unwrap();
@@ -36,14 +36,14 @@ async fn policy_projection_stamps_the_provisioning_actor() {
     assert_stamp(
         &client,
         "wamn_run.environment_policies",
-        "env_key='history'",
+        "project_env_key='history'",
         &actor,
         &actor,
     )
     .await;
     let before: std::time::SystemTime = client
         .query_one(
-            "SELECT updated_at FROM wamn_run.environment_policies WHERE env_key='history'",
+            "SELECT updated_at FROM wamn_run.environment_policies WHERE project_env_key='history'",
             &[],
         )
         .await
@@ -62,7 +62,7 @@ async fn policy_projection_stamps_the_provisioning_actor() {
     assert!(!second.changed());
     let after: std::time::SystemTime = client
         .query_one(
-            "SELECT updated_at FROM wamn_run.environment_policies WHERE env_key='history'",
+            "SELECT updated_at FROM wamn_run.environment_policies WHERE project_env_key='history'",
             &[],
         )
         .await
@@ -79,7 +79,7 @@ async fn policy_projection_stamps_the_provisioning_actor() {
 }
 
 #[tokio::test]
-async fn env_key_projection_and_instance_claim_stamp_provisioning() {
+async fn project_env_key_projection_and_instance_claim_stamp_provisioning() {
     let _lock = wamn_test_postgres::lock();
     let database = wamn_control_provision::test_database::system();
     let (mut client, connection) = tokio_postgres::connect(database.url(), NoTls)
@@ -99,15 +99,15 @@ async fn env_key_projection_and_instance_claim_stamp_provisioning() {
     let actor = PlatformComponent::Provisioning.principal_id().to_string();
     assert_stamp(
         &client,
-        "catalog.tenant_environments",
-        "env_key='history'",
+        "catalog.project_environments",
+        "project_env_key='history'",
         &actor,
         &actor,
     )
     .await;
     let created: std::time::SystemTime = client
         .query_one(
-            "SELECT created_at FROM catalog.tenant_environments WHERE env_key='history'",
+            "SELECT created_at FROM catalog.project_environments WHERE project_env_key='history'",
             &[],
         )
         .await
@@ -122,13 +122,13 @@ async fn env_key_projection_and_instance_claim_stamp_provisioning() {
     .unwrap();
     assert_stamp(
         &client,
-        "catalog.tenant_environments",
-        "env_key='history'",
+        "catalog.project_environments",
+        "project_env_key='history'",
         &actor,
         &actor,
     )
     .await;
-    let row = client.query_one("SELECT created_at, environment_instance FROM catalog.tenant_environments WHERE env_key='history'", &[]).await.unwrap();
+    let row = client.query_one("SELECT created_at, environment_instance FROM catalog.project_environments WHERE project_env_key='history'", &[]).await.unwrap();
     assert_eq!(row.get::<_, std::time::SystemTime>(0), created);
     assert_eq!(row.get::<_, String>(1), "instance");
 }

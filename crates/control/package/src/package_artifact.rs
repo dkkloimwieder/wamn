@@ -111,9 +111,9 @@ pub const DESCRIPTOR_DIRECTORY: &str = "descriptors";
 /// `apps/`. Each `<area>/<crate>/declaration.json.in` names its component.
 pub const PLATFORM_DIRECTORY: &str = "../platform";
 
-/// The tenant that admission writes into a component scope. A package
-/// artifact is tenant-free, and a descriptor drops the scope.
-const ADMISSION_ENV_KEY: &str = "package-artifact";
+/// The project that admission writes into a component scope. A package
+/// artifact is project-free, and a descriptor drops the scope.
+const ADMISSION_PROJECT_ENV_KEY: &str = "package-artifact";
 
 /// The platform packages a package-owned component is admitted with.
 const OWNED_PLATFORM_PACKAGES: [&str; 2] = ["wamn:node", "wamn:postgres"];
@@ -197,7 +197,7 @@ pub(crate) async fn connection_components(
         use wamn_engine::artifact_source::ArtifactSource as _;
         use wamn_runtime::component_artifact_source::ComponentArtifactSource;
         let scope = ComponentPackageScope::new(
-            ADMISSION_ENV_KEY,
+            ADMISSION_PROJECT_ENV_KEY,
             &manifest.package.id,
             &manifest.package.version,
         )?;
@@ -225,7 +225,7 @@ pub(crate) async fn connection_components(
     let output = wamn_schema_generator::output_root(root);
     let build_record = wamn_schema_generator::build_record::read(&output)?;
     let scope = ComponentPackageScope::new(
-        ADMISSION_ENV_KEY,
+        ADMISSION_PROJECT_ENV_KEY,
         &manifest.package.id,
         &manifest.package.version,
     )?;
@@ -234,7 +234,7 @@ pub(crate) async fn connection_components(
         .map(|source| {
             let document = match source.template {
                 ComponentTemplate::Owned(path) => {
-                    render_declaration_document(&path, ADMISSION_ENV_KEY)?
+                    render_declaration_document(&path, ADMISSION_PROJECT_ENV_KEY)?
                 }
                 ComponentTemplate::Palette {
                     path, store_alias, ..
@@ -703,7 +703,7 @@ fn verify_package(root: &Path) -> anyhow::Result<VerifiedPackage> {
 
     let base_digests = authored_base_digests(root).context("read the authored base digests")?;
     let scope = ComponentPackageScope::new(
-        ADMISSION_ENV_KEY,
+        ADMISSION_PROJECT_ENV_KEY,
         manifest.package.id.clone(),
         manifest.package.version.clone(),
     )
@@ -714,7 +714,7 @@ fn verify_package(root: &Path) -> anyhow::Result<VerifiedPackage> {
     for source in source_components(root, &manifest, &build_record)? {
         let (document, platform_packages) = match &source.template {
             ComponentTemplate::Owned(template) => (
-                render_declaration_document(template, ADMISSION_ENV_KEY)?,
+                render_declaration_document(template, ADMISSION_PROJECT_ENV_KEY)?,
                 OWNED_PLATFORM_PACKAGES.map(str::to_owned).to_vec(),
             ),
             ComponentTemplate::Palette {

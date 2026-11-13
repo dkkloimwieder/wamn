@@ -14,13 +14,13 @@ use super::{
 /// The result names asserted files, never executed files.
 pub async fn adopt_package_schemas(
     database_url: &str,
-    env_key: &str,
+    project_env_key: &str,
     initialization_identity: &str,
     roots: &[&PackageRoot],
     local_environment: Option<&str>,
 ) -> anyhow::Result<BTreeMap<String, Vec<String>>> {
     let mut client = crate::database::connect(database_url).await?;
-    let tx = migration::begin(&mut client, env_key).await?;
+    let tx = migration::begin(&mut client, project_env_key).await?;
     tx.query_one(super::LOCK_SQL, &[]).await?;
     let actual: String = tx
         .query_one(
@@ -34,8 +34,12 @@ pub async fn adopt_package_schemas(
         "database initialization changed before adoption: recorded={initialization_identity}, actual={actual}"
     );
     if let Some(environment) = local_environment {
-        wamn_runtime::local_application::read_local_target_comment(&tx, env_key, environment)
-            .await?;
+        wamn_runtime::local_application::read_local_target_comment(
+            &tx,
+            project_env_key,
+            environment,
+        )
+        .await?;
     }
     let mut result = BTreeMap::new();
     let mut seen = BTreeSet::new();
@@ -48,10 +52,10 @@ pub async fn adopt_package_schemas(
         let complete = plan_package_migrations(&directory, None, &[])?;
         let id = complete.coordinate.package_id();
         ensure!(seen.insert(id.to_owned()), "adoption repeats package {id}");
-        tx.query_one(super::LOCK_PACKAGE_SQL, &[&env_key, &id])
+        tx.query_one(super::LOCK_PACKAGE_SQL, &[&project_env_key, &id])
             .await?;
-        let existing = load_applied_package(&tx, env_key, id).await?;
-        let records = read_package_migrations(&tx, env_key, id).await?;
+        let existing = load_applied_package(&tx, project_env_key, id).await?;
+        let records = read_package_migrations(&tx, project_env_key, id).await?;
         ensure!(
             !records
                 .iter()
@@ -77,12 +81,12 @@ pub async fn adopt_package_schemas(
             }
             tx.execute(
                 "INSERT INTO catalog.package_migrations \
-                 (env_key, package_id, package_version, ordinal, relative_path, sha256, outcome) \
+                 (project_env_key, package_id, package_version, ordinal, relative_path, sha256, outcome) \
                  VALUES ($1,$2,$3,$4,$5,$6,'adopted') \
-                 ON CONFLICT (env_key, package_id, ordinal) DO UPDATE \
+                 ON CONFLICT (project_env_key, package_id, ordinal) DO UPDATE \
                  SET package_version=EXCLUDED.package_version, relative_path=EXCLUDED.relative_path, \
                      sha256=EXCLUDED.sha256, outcome='adopted', applied_at=NULL",
-                &[&env_key, &id, &complete.coordinate.package_version(),
+                &[&project_env_key, &id, &complete.coordinate.package_version(),
                   &i32::try_from(file.ordinal)?, &file.relative_path, &file.sha256],
             ).await.with_context(|| format!("adopt {id}: {}", file.relative_path))?;
             asserted.push(file.relative_path.clone());
@@ -93,7 +97,7 @@ pub async fn adopt_package_schemas(
         {
             super::package_version::record_package_schema(
                 &tx,
-                env_key,
+                project_env_key,
                 &complete.coordinate,
                 directory.artifact_digest.as_deref(),
                 &fingerprint,

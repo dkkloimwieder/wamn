@@ -1,7 +1,7 @@
 //! Canonical control-plane registry model (wamn-q3n.1; generalized in
 //! wamn-8df.3, `docs/archive/platform/deployment-model.md`).
 //!
-//! MVP outcome: provisioning · publish · additive schema · tenant isolation (T1 minting).
+//! MVP outcome: provisioning · publish · additive schema · project isolation (T1 minting).
 //!
 //! The registry is the platform's system-of-record for **identity** and
 //! **placement** — the foundation of the four-tier Postgres topology

@@ -45,7 +45,7 @@ pub const WAMN_BLOBSTORE_ID: &str = "wamn-blobstore";
 pub struct WamnBlobstore {
     postgres: Arc<WamnPostgres>,
     facts: Arc<ConnectionFacts>,
-    pub(super) env_key: Box<str>,
+    pub(super) project_env_key: Box<str>,
     pub(super) project: Box<str>,
     /// The mounted, digest-verified serving manifest, when this host serves a
     /// release. A CANDIDATE closure carries its effective release and
@@ -65,8 +65,8 @@ pub struct WamnBlobstore {
 /// mounted serving manifest and its digest, after TWO CHECKS — because a
 /// mounted manifest is an input like any other:
 ///
-/// - it must belong to THIS tenant, or a manifest served for another one would
-///   hand a guest an effective release under which some other tenant's binding
+/// - it must belong to THIS project, or a manifest served for another one would
+///   hand a guest an effective release under which some other project's binding
 ///   authorizes;
 /// - it must actually CONTAIN the package the invocation claims, or a release
 ///   that never shipped this package would still supply coordinates for it.
@@ -76,7 +76,7 @@ pub struct WamnBlobstore {
 fn release_coordinates(
     invocation: &ConnectionInvocation,
     release: Option<(&ServingManifest, &str, &ReleaseScope)>,
-    env_key: &str,
+    project_env_key: &str,
 ) -> Result<(String, String), BindingError> {
     match (&invocation.closure, release) {
         (
@@ -88,7 +88,7 @@ fn release_coordinates(
             None,
         ) => Ok((manifest_digest.clone(), environment.clone())),
         (ConnectionExecutionClosure::Released, Some((manifest, manifest_digest, scope))) => {
-            if scope.env_key != env_key
+            if scope.project_env_key != project_env_key
                 || !manifest
                     .release
                     .packages
@@ -145,7 +145,7 @@ impl std::fmt::Debug for WamnBlobstore {
         // The vault is never rendered.
         formatter
             .debug_struct("WamnBlobstore")
-            .field("env_key", &self.env_key)
+            .field("project_env_key", &self.project_env_key)
             .field("project", &self.project)
             .finish_non_exhaustive()
     }
@@ -157,7 +157,7 @@ impl WamnBlobstore {
     pub fn new(
         postgres: Arc<WamnPostgres>,
         facts: Arc<ConnectionFacts>,
-        env_key: impl Into<Box<str>>,
+        project_env_key: impl Into<Box<str>>,
         project: impl Into<Box<str>>,
         release: Option<Arc<LoadedRelease>>,
     ) -> Self {
@@ -166,7 +166,7 @@ impl WamnBlobstore {
         Self {
             postgres,
             facts,
-            env_key: env_key.into(),
+            project_env_key: project_env_key.into(),
             project,
             release,
             invocations: RwLock::new(HashMap::new()),
@@ -231,7 +231,7 @@ impl WamnBlobstore {
         let release = self
             .release
             .as_ref()
-            .filter(|release| release.scope().env_key == self.env_key.as_ref())
+            .filter(|release| release.scope().project_env_key == self.project_env_key.as_ref())
             .ok_or_else(|| refused("file storage requires this environment's loaded release"))?;
         let connection_id = *self
             .facts
@@ -412,11 +412,11 @@ impl WamnBlobstore {
                     release.scope(),
                 )
             }),
-            &self.env_key,
+            &self.project_env_key,
         )
         .map_err(|_| {
             refused(
-                "release coordinates: tenant, package or closure kind disagree with the manifest",
+                "release coordinates: project, package or closure kind disagree with the manifest",
             )
         })?;
         let snapshot = self
@@ -424,7 +424,7 @@ impl WamnBlobstore {
             .connection_effect_snapshot(
                 component_id,
                 &self.project,
-                &self.env_key,
+                &self.project_env_key,
                 &ConnectionEffectLookup {
                     package_id: &invocation.package_id,
                     entry,
@@ -616,7 +616,7 @@ pub async fn health(
 /// instrumentation.
 ///
 /// The object KEY is deliberately absent: keys are guest-authored and can carry
-/// tenant data, and a span is a wider audience than the effect itself.
+/// project data, and a span is a wider audience than the effect itself.
 pub(super) fn blobstore_span(
     plugin: &WamnBlobstore,
     component_id: &str,
@@ -625,7 +625,7 @@ pub(super) fn blobstore_span(
     let span = effect_span!(
         "wamn.blobstore",
         EffectIdentity {
-            env_key: &plugin.env_key,
+            project_env_key: &plugin.project_env_key,
             project: &plugin.project,
             component: component_id,
         },
@@ -754,7 +754,7 @@ mod tests {
     const MOUNTED_RELEASE: &str =
         "sha256:4444444444444444444444444444444444444444444444444444444444444444";
 
-    fn manifest(env_key: &str, package: &str) -> (ServingManifest, ReleaseScope) {
+    fn manifest(project_env_key: &str, package: &str) -> (ServingManifest, ReleaseScope) {
         let manifest = ServingManifest {
             composed_entry: None,
             format_version: SERVING_MANIFEST_FORMAT_VERSION,
@@ -771,7 +771,7 @@ mod tests {
         };
         (
             manifest,
-            ReleaseScope::new(env_key, "warehouse-eu-3").with_applications(
+            ReleaseScope::new(project_env_key, "warehouse-eu-3").with_applications(
                 [(
                     "warehouse".to_owned(),
                     wamn_catalog::ApplicationDefinition {
@@ -788,14 +788,14 @@ mod tests {
     #[test]
     fn a_candidate_closure_carries_its_own_coordinates() {
         let coordinates =
-            release_coordinates(&candidate(), None, "tenant-a").expect("a candidate resolves");
+            release_coordinates(&candidate(), None, "org-a").expect("a candidate resolves");
         assert_eq!(
             coordinates,
             (CANDIDATE_RELEASE.to_string(), "staging".to_string())
         );
     }
 
-    /// EXIT GATE: a released closure resolves through the mounted manifest,
+    /// EXIT CONDITION: a released closure resolves through the mounted manifest,
     /// where before it refused outright and the capability was unusable in any
     /// released deployment.
     ///
@@ -805,11 +805,11 @@ mod tests {
     /// value was changed — the distinguishing-step law in miniature.
     #[test]
     fn a_released_closure_resolves_through_the_mounted_manifest() {
-        let (manifest, scope) = manifest("tenant-a", "package_a");
+        let (manifest, scope) = manifest("org-a", "package_a");
         let coordinates = release_coordinates(
             &released(),
             Some((&manifest, MOUNTED_RELEASE, &scope)),
-            "tenant-a",
+            "org-a",
         )
         .expect("a released closure resolves");
         assert_eq!(
@@ -818,17 +818,17 @@ mod tests {
         );
     }
 
-    /// A manifest for ANOTHER tenant must not supply coordinates: it would
-    /// hand this guest an effective release under which some other tenant's
-    /// binding authorizes — a cross-tenant reach wearing a mounted file.
+    /// A manifest for ANOTHER project must not supply coordinates: it would
+    /// hand this guest an effective release under which some other project's
+    /// binding authorizes — a cross-project reach wearing a mounted file.
     #[test]
-    fn a_manifest_for_another_env_key_refuses() {
-        let (manifest, scope) = manifest("tenant-b", "package_a");
+    fn a_manifest_for_another_project_env_key_refuses() {
+        let (manifest, scope) = manifest("org-b", "package_a");
         assert_eq!(
             release_coordinates(
                 &released(),
                 Some((&manifest, MOUNTED_RELEASE, &scope)),
-                "tenant-a"
+                "org-a"
             ),
             Err(BindingError::Unauthorized)
         );
@@ -838,12 +838,12 @@ mod tests {
     /// for it.
     #[test]
     fn a_manifest_without_the_invoked_package_refuses() {
-        let (manifest, scope) = manifest("tenant-a", "package_b");
+        let (manifest, scope) = manifest("org-a", "package_b");
         assert_eq!(
             release_coordinates(
                 &released(),
                 Some((&manifest, MOUNTED_RELEASE, &scope)),
-                "tenant-a"
+                "org-a"
             ),
             Err(BindingError::Unauthorized)
         );
@@ -855,7 +855,7 @@ mod tests {
     #[test]
     fn a_released_closure_without_a_manifest_refuses() {
         assert_eq!(
-            release_coordinates(&released(), None, "tenant-a"),
+            release_coordinates(&released(), None, "org-a"),
             Err(BindingError::Unauthorized)
         );
     }
@@ -865,12 +865,12 @@ mod tests {
     /// closer, because guessing here decides which binding authorizes.
     #[test]
     fn a_candidate_closure_handed_a_manifest_refuses() {
-        let (manifest, scope) = manifest("tenant-a", "package_a");
+        let (manifest, scope) = manifest("org-a", "package_a");
         assert_eq!(
             release_coordinates(
                 &candidate(),
                 Some((&manifest, MOUNTED_RELEASE, &scope)),
-                "tenant-a"
+                "org-a"
             ),
             Err(BindingError::Unauthorized)
         );
@@ -942,7 +942,7 @@ mod tests {
     /// the tests cover both admission and refusal in the released case.
     fn carrying_manifest(snapshot: &ConnectionEffectSnapshot) -> ServingManifest {
         let invocation = released();
-        let (mut manifest, _scope) = manifest("tenant-a", "package_a");
+        let (mut manifest, _scope) = manifest("org-a", "package_a");
         manifest.components = BTreeSet::from([ServingComponent {
             runtime_schema: None,
             statement_instances: std::collections::BTreeMap::new(),
@@ -1116,7 +1116,7 @@ mod tests {
     fn a_released_closure_the_manifest_does_not_carry_refuses() {
         let world = frozen_world();
         let snapshot = matching_snapshot(frozen_binding(&world));
-        let (manifest, _scope) = manifest("tenant-a", "package_a");
+        let (manifest, _scope) = manifest("org-a", "package_a");
 
         assert_eq!(
             authorize_closure(&released(), Some(&manifest), None, &snapshot),
@@ -1142,11 +1142,11 @@ mod tests {
             wamn_broker::Publisher::default(),
             Arc::new(crate::connection_credentials::ConnectionCredentials::empty()),
             Arc::clone(&postgres),
-            "tenant-a",
+            "org-a",
             "project-a",
             "dev",
         ));
-        WamnBlobstore::new(postgres, facts, "tenant-a", "project-a", None)
+        WamnBlobstore::new(postgres, facts, "org-a", "project-a", None)
     }
 
     /// The blobstore surface fills the SAME vocabulary the HTTP surface fills,
@@ -1167,7 +1167,7 @@ mod tests {
         assert_eq!(
             harness.attributes("wamn.blobstore"),
             expected_attributes(
-                ["tenant-a", "project-a", component_id],
+                ["org-a", "project-a", component_id],
                 [
                     "package_a",
                     "orders",

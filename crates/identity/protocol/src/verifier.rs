@@ -1,6 +1,6 @@
 //! Session verification binds signed claims to a configured issuer and scope.
 //!
-//! The host resolves tenant permissions from the verified roles, then checks
+//! The host resolves project permissions from the verified roles, then checks
 //! admission immediately before creating its caller. Key and token deadlines
 //! govern new admission only, never work that the host already admitted.
 
@@ -73,7 +73,7 @@ impl<K: KeySource> SessionVerifier<K> {
     /// Authenticate the fixed JWT profile without any identity database read.
     ///
     /// The untrusted key ID selects only within the configured issuer's keys.
-    /// The returned roles still require the host's fresh tenant permission read.
+    /// The returned roles still require the host's fresh project permission read.
     pub async fn verify(
         &self,
         token: &str,

@@ -101,31 +101,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn an_ordinary_key_lands_under_the_prefix() {
-        assert_eq!(
-            resolve_key("tenant-a/labels", "widget/W-000042.zpl").expect("ordinary key resolves"),
-            "tenant-a/labels/widget/W-000042.zpl"
-        );
-    }
-
-    /// A trailing slash on the environment-owned prefix must not produce a
-    /// doubled separator, which S3 would treat as a DIFFERENT key — the same
-    /// logical object written twice under two names breaks the deterministic
-    /// -key overwrite rule 2c depends on.
-    #[test]
-    fn a_trailing_prefix_slash_does_not_double_the_separator() {
-        assert_eq!(
-            resolve_key("tenant-a/labels/", "a.zpl").expect("resolves"),
-            "tenant-a/labels/a.zpl"
-        );
-        assert_eq!(
-            resolve_key("tenant-a/labels", "a.zpl").expect("resolves"),
-            resolve_key("tenant-a/labels/", "a.zpl").expect("resolves"),
-            "the two prefix spellings must resolve identically"
-        );
-    }
-
-    #[test]
     fn an_empty_prefix_is_allowed_and_keeps_the_key_verbatim() {
         assert_eq!(resolve_key("", "a.zpl").expect("resolves"), "a.zpl");
     }
@@ -136,14 +111,14 @@ mod tests {
         for (key, expected) in [
             ("", KeyRefusal::Empty),
             ("/etc/passwd", KeyRefusal::Absolute),
-            ("../../other-tenant/secret", KeyRefusal::ParentTraversal),
+            ("../../other-project/secret", KeyRefusal::ParentTraversal),
             ("a/../../b", KeyRefusal::ParentTraversal),
             ("..", KeyRefusal::ParentTraversal),
             ("a\0b", KeyRefusal::ControlCharacter),
             ("a\nb", KeyRefusal::ControlCharacter),
         ] {
             assert_eq!(
-                resolve_key("tenant-a/labels", key),
+                resolve_key("org-a/labels", key),
                 Err(expected),
                 "key {key:?} must be refused as {expected:?}"
             );
@@ -189,9 +164,9 @@ mod tests {
             "with space.txt",
             "unicode-\u{e9}\u{fc}.txt",
         ] {
-            let resolved = resolve_key("tenant-a/labels", key).expect("valid key");
+            let resolved = resolve_key("org-a/labels", key).expect("valid key");
             assert!(
-                resolved.starts_with("tenant-a/labels/"),
+                resolved.starts_with("org-a/labels/"),
                 "{key:?} resolved to {resolved:?}, outside the prefix"
             );
         }

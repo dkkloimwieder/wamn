@@ -58,7 +58,7 @@ async fn prepare_synchronous_release(
         .postgres
         .release_component_bindings_ready(
             &operations.project,
-            &operations.release.scope().env_key,
+            &operations.release.scope().project_env_key,
             operations.release.release().manifest_digest.as_str(),
             &operations.release.scope().environment,
             &digests,
@@ -213,7 +213,7 @@ pub struct RouterReadinessProbe {
 }
 
 impl RouterReadinessProbe {
-    /// Gate readiness on the release components, and on the synchronous
+    /// Condition readiness on the release components, and on the synchronous
     /// wirings of the wiring layer, if any.
     pub fn new(operations: Arc<OperationHost>) -> Self {
         Self {

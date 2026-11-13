@@ -12,7 +12,7 @@ use anyhow::Context as _;
 pub(super) fn projected_environment_policy_sql(run_schema: &BareSchemaName) -> String {
     format!(
         "SELECT expected_environment, source_policy_org, source_policy_hash \
-           FROM {}.environment_policies WHERE env_key = $1",
+           FROM {}.environment_policies WHERE project_env_key = $1",
         run_schema.quoted()
     )
 }
@@ -146,8 +146,8 @@ pub(super) fn environment_policy_absent(
     PublishManifestError::new(
         PublishManifestErrorType::EnvironmentPolicyAbsent,
         format!(
-            "tenant {:?} has no row in {}.environment_policies; run `wamn-ctl env apply`",
-            scope.env_key,
+            "project {:?} has no row in {}.environment_policies; run `wamn-ctl env apply`",
+            scope.project_env_key,
             run_schema.as_str()
         ),
     )
@@ -361,7 +361,7 @@ pub(super) fn pin_runtime_schemas(
 }
 
 /// The admitted components of the opened package artifacts, each from its
-/// descriptor layer, in the scope of `env_key`.
+/// descriptor layer, in the scope of `project_env_key`.
 pub(super) fn project_components(
     components: &ReleaseComponents,
 ) -> Result<BTreeSet<ServingComponent>, PublishManifestError> {

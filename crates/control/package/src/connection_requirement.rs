@@ -12,7 +12,7 @@ use wamn_catalog::manifest::PackageManifest;
 
 pub(crate) async fn install(
     tx: &Transaction<'_>,
-    env_key: &str,
+    project_env_key: &str,
     root: &Path,
     manifest: &PackageManifest,
     source: Option<&wamn_runtime::component_artifact_source::ComponentArtifactSourceConfig>,
@@ -26,7 +26,7 @@ pub(crate) async fn install(
     ))
     .await?
     {
-        written += write(tx, env_key, manifest, &digest, &connections, &bytes).await?;
+        written += write(tx, project_env_key, manifest, &digest, &connections, &bytes).await?;
     }
     Ok(written)
 }
@@ -34,7 +34,7 @@ pub(crate) async fn install(
 /// Prepare requirements only for components in the selected release, without installing SQL.
 pub async fn prepare_release(
     tx: &Transaction<'_>,
-    env_key: &str,
+    project_env_key: &str,
     release: &wamn_catalog::ServingManifest,
     packages: &[PackageManifest],
     source: Option<wamn_runtime::component_artifact_source::ComponentArtifactSourceConfig>,
@@ -60,7 +60,7 @@ pub async fn prepare_release(
             .as_ref()
             .context("set WAMN_COMPONENT_ARTIFACT_BASE for activation")?;
         let scope = wamn_catalog::ComponentPackageScope::new(
-            env_key,
+            project_env_key,
             &package.package.id,
             &package.package.version,
         )?;
@@ -68,7 +68,7 @@ pub async fn prepare_release(
         let bytes = source.pull_verified(&admitted.component).await?;
         write(
             tx,
-            env_key,
+            project_env_key,
             package,
             &component.descriptor.component_digest,
             &names,
@@ -82,7 +82,7 @@ pub async fn prepare_release(
 /// Insert or reuse exact requirements from digest-verified component bytes.
 pub async fn write(
     tx: &Transaction<'_>,
-    env_key: &str,
+    project_env_key: &str,
     manifest: &PackageManifest,
     digest: &str,
     connections: &[String],
@@ -131,7 +131,7 @@ pub async fn write(
             wamn_catalog::manifest::ConnectionMode::Write => "write",
         };
         let params: [&(dyn tokio_postgres::types::ToSql + Sync); 6] = [
-            &env_key,
+            &project_env_key,
             &digest,
             &manifest.package.id,
             &name,
@@ -139,11 +139,11 @@ pub async fn write(
             &mode,
         ];
         written += tx.execute(
-            "INSERT INTO catalog.connection_requirement (env_key,component_digest,package_id,name,interface,mode) \
+            "INSERT INTO catalog.connection_requirement (project_env_key,component_digest,package_id,name,interface,mode) \
              VALUES ($1,$2,$3,$4,$5,$6) ON CONFLICT DO NOTHING", &params,
         ).await?;
         let exact: bool = tx.query_one(
-            "SELECT EXISTS (SELECT FROM catalog.connection_requirement WHERE env_key=$1 AND component_digest=$2 \
+            "SELECT EXISTS (SELECT FROM catalog.connection_requirement WHERE project_env_key=$1 AND component_digest=$2 \
              AND package_id=$3 AND name=$4 AND interface=$5 AND mode=$6)", &params,
         ).await?.get(0);
         ensure!(

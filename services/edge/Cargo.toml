@@ -24,7 +24,7 @@ wamn-identity-protocol = { workspace = true }
 # The admitted component facts and the serving manifest of a release bundle.
 wamn-catalog = { workspace = true }
 # The `sha256:<hex>` spelling of bundle, file and schema digests.
-# The tenant of the box's environment coordinate (R1).
+# The project of the box's environment coordinate (R1).
 wamn-control-registry = { workspace = true }
 # The plain host, its ingress and the route guest's workload. No `oci`.
 wash-runtime = { workspace = true }
@@ -67,7 +67,7 @@ web = ["dep:object_store", "dep:wamn-kubernetes"]
 wamn-test-postgres = { workspace = true }
 wamn-schema-generator.workspace = true
 tokio = { workspace = true, features = ["io-util", "macros", "net", "rt"] }
-# The release tests build a manifest from parts, which wamn-catalog gates
+# The release tests build a manifest from parts, which wamn-catalog conditions
 # behind `test-util`. Never add this feature to the normal dependency.
 wamn-catalog = { workspace = true, features = ["test-util"] }
 # The tests write the edge_device bundle with the dev loop's bundle writer.

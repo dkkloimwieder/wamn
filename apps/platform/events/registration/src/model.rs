@@ -25,7 +25,7 @@ pub enum RegistrationInput {
 /// it wants and how they are filtered.
 ///
 /// The `(package_id, registration_id)` pair is the identity (unique within a
-/// tenant); the owning workflow row supplies this identity.
+/// project); the owning workflow row supplies this identity.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct EventRegistration {
@@ -87,7 +87,7 @@ impl EventRegistration {
     }
 
     /// Whether this registration subscribes to `delete` events. A delete's old
-    /// image carries the tenant-scoping (and any delete-payload condition), so a
+    /// image carries the project-scoping (and any delete-payload condition), so a
     /// delete subscription needs REPLICA IDENTITY FULL for the event to be
     /// scopable at all — a DELETE under DEFAULT is an alertable unscopable refusal.
     pub fn subscribes_to_delete(&self) -> bool {

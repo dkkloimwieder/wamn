@@ -556,7 +556,7 @@ mod tests {
         let bound = BoundContainer::new(
             Arc::clone(&backend) as Arc<dyn ObjectStore>,
             "bucket",
-            "tenant/app/",
+            "project/app/",
         )
         .with_read_only(read_only);
         (FileStore::new(bound, None, cdn, 7, "dev").unwrap(), backend)
@@ -573,8 +573,8 @@ mod tests {
             "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
         );
         assert_eq!(staged.blob_key, format!("dev/_wamn_files/live/{id}"));
-        let staging = Path::from(format!("tenant/app/dev/_wamn_files/staging/{id}"));
-        let live = Path::from(format!("tenant/app/{}", live_key("dev", id)));
+        let staging = Path::from(format!("project/app/dev/_wamn_files/staging/{id}"));
+        let live = Path::from(format!("project/app/{}", live_key("dev", id)));
         assert!(backend.head(&staging).await.is_ok());
         assert!(backend.head(&live).await.is_err());
         let reader = FileStore {
@@ -598,12 +598,12 @@ mod tests {
         assert_eq!(
             url,
             format!(
-                "https://cdn.example.com/tenant/app/{}",
+                "https://cdn.example.com/project/app/{}",
                 public_key(&live_key("dev", id))
             )
         );
         files.expose(&live_key("dev", id)).await.unwrap();
-        let public = Path::from(format!("tenant/app/{}", public_key(&live_key("dev", id))));
+        let public = Path::from(format!("project/app/{}", public_key(&live_key("dev", id))));
         assert_eq!(
             backend
                 .get(&public)
@@ -738,7 +738,7 @@ mod tests {
         assert!(
             backend
                 .head(&Path::from(format!(
-                    "tenant/app/{}",
+                    "project/app/{}",
                     staging_key(&live_key("dev", id))
                 )))
                 .await
@@ -746,7 +746,7 @@ mod tests {
         );
         assert!(
             backend
-                .head(&Path::from(format!("tenant/app/{}", live_key("dev", id))))
+                .head(&Path::from(format!("project/app/{}", live_key("dev", id))))
                 .await
                 .is_err()
         );
@@ -925,7 +925,7 @@ mod tests {
             let bound = BoundContainer::new(
                 Arc::<MetadataOnlyStore>::clone(&backend),
                 "bucket",
-                "tenant/app",
+                "project/app",
             );
             let files = FileStore::new(
                 bound,
@@ -994,7 +994,7 @@ mod tests {
         let bound = BoundContainer::new(
             Arc::<MetadataOnlyStore>::clone(&backend),
             "bucket",
-            "tenant/app",
+            "project/app",
         );
         let signer = Arc::new(RecordingSigner::default());
         let files = FileStore::new(
@@ -1054,7 +1054,7 @@ mod tests {
         assert_eq!(
             calls[0],
             (
-                Path::from(format!("tenant/app/{}", live_key("dev", id))),
+                Path::from(format!("project/app/{}", live_key("dev", id))),
                 Duration::from_secs(30)
             )
         );

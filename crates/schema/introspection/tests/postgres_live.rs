@@ -1,4 +1,4 @@
-//! Live PostgreSQL 18 exit gate for migration-derived catalog introspection.
+//! Live PostgreSQL 18 exit condition for migration-derived catalog introspection.
 //!
 //! Each test connects to a test database of the test PostgreSQL 18 server
 //! through a superuser connection. The admin identity is used only to create,
@@ -232,7 +232,7 @@ async fn assert_postgres_18(client: &Client) {
         .expect("server_version_num is numeric");
     assert!(
         (180_000..190_000).contains(&version),
-        "live gate requires PostgreSQL 18, found server_version_num={version}"
+        "live acceptance test requires PostgreSQL 18, found server_version_num={version}"
     );
 }
 
@@ -1325,7 +1325,7 @@ async fn assert_platform_grants_are_skipped(admin: &Client, reader: &Client, oth
     );
 }
 
-async fn run_gate(admin_config: Config, fixture: Fixture) {
+async fn run_acceptance_test(admin_config: Config, fixture: Fixture) {
     validate_migration_file(&fixture.migration_path, APPLICATION_SCHEMA)
         .expect("pre-apply policy admits the fixture migration");
     let migration_sql = std::fs::read_to_string(&fixture.migration_path)
@@ -1382,7 +1382,7 @@ async fn the_fixture_migration_round_trips_and_refuses_unsupported_server_object
 
     let database = fixture.database.clone();
     let role = fixture.role.clone();
-    let outcome = tokio::spawn(run_gate(admin_config, fixture)).await;
+    let outcome = tokio::spawn(run_acceptance_test(admin_config, fixture)).await;
     let teardown_fixture = Fixture {
         database,
         role,
@@ -1401,7 +1401,7 @@ async fn the_fixture_migration_round_trips_and_refuses_unsupported_server_object
         .expect("record clean fixture teardown");
     assert!(gone.get::<_, bool>(0), "fixture database was removed");
     assert!(gone.get::<_, bool>(1), "fixture role was removed");
-    outcome.expect("live gate scenario completed without panic");
+    outcome.expect("live acceptance test scenario completed without panic");
 }
 
 /// The dock-appointment non-overlap rule, written the way the protocol's H-3
@@ -1845,7 +1845,7 @@ async fn assert_unsupported_exclusion_shapes_refuse(admin: &Client, reader: &Cli
     );
 }
 
-async fn run_exclusion_gate(admin_config: Config, fixture: Fixture) {
+async fn run_exclusion_acceptance_test(admin_config: Config, fixture: Fixture) {
     let target_admin = connect(target_config(&admin_config, &fixture, false)).await;
     configure_admin(&target_admin).await;
     assert_postgres_18(&target_admin).await;
@@ -1887,7 +1887,7 @@ async fn an_exclusion_constraint_is_modelled_rather_than_refused() {
 
     let database = fixture.database.clone();
     let role = fixture.role.clone();
-    let outcome = tokio::spawn(run_exclusion_gate(admin_config, fixture)).await;
+    let outcome = tokio::spawn(run_exclusion_acceptance_test(admin_config, fixture)).await;
     let teardown_fixture = Fixture {
         database,
         role,
@@ -1906,5 +1906,5 @@ async fn an_exclusion_constraint_is_modelled_rather_than_refused() {
         .expect("record clean fixture teardown");
     assert!(gone.get::<_, bool>(0), "fixture database was removed");
     assert!(gone.get::<_, bool>(1), "fixture role was removed");
-    outcome.expect("exclusion gate scenario completed without panic");
+    outcome.expect("exclusion condition scenario completed without panic");
 }

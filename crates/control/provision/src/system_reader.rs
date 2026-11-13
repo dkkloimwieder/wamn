@@ -220,7 +220,7 @@ impl SystemReaderConnection {
 
 /// Refuse an absent or out-of-scope `WAMN_SYSTEM_URL`, purely.
 ///
-/// The fail-closed gate a reading consumer runs **before any network, database,
+/// The fail-closed condition a reading consumer runs **before any network, database,
 /// or filesystem I/O**, with the same strict URL checks:
 ///
 /// * the input exists, parses, names a host, and carries no query or fragment;

@@ -15,17 +15,17 @@ use wamn_runtime::plugins::wamn_postgres::{
 mod common;
 
 use common::{
-    COMPONENT, EMPTY_HASH, ENV_KEY, ENVIRONMENT, PACKAGE_ID, POD_MANIFEST_DIGEST, ROLLED_COMPONENT,
-    SCHEMA, WIRING_ID, WIRING_VERSION, assert_callerless_terminal, assert_prior_winner_terminal,
-    assert_terminal_status_dequeued, connect, expire_effect_run, install_fixture,
-    install_prior_caller_winner, make_callerless, queue_attempts, quote_literal, ready_run,
-    release_record, seed_exhausted_run, seed_run, teardown,
+    COMPONENT, EMPTY_HASH, ENVIRONMENT, PACKAGE_ID, POD_MANIFEST_DIGEST, PROJECT_ENV_KEY,
+    ROLLED_COMPONENT, SCHEMA, WIRING_ID, WIRING_VERSION, assert_callerless_terminal,
+    assert_prior_winner_terminal, assert_terminal_status_dequeued, connect, expire_effect_run,
+    install_fixture, install_prior_caller_winner, make_callerless, queue_attempts, quote_literal,
+    ready_run, release_record, seed_exhausted_run, seed_run, teardown,
 };
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn production_claim_live() -> anyhow::Result<()> {
     let _lock = wamn_test_postgres::lock();
-    let database = wamn_catalog::test_database::tenant();
+    let database = wamn_catalog::test_database::project();
     let url = database.url();
     let fixture = install_fixture(url).await?;
     let admin = &fixture.admin;
@@ -76,7 +76,10 @@ async fn production_claim_live() -> anyhow::Result<()> {
         ))
         .await?;
     first_claimer
-        .execute("SELECT set_config('app.env_key', $1, true)", &[&ENV_KEY])
+        .execute(
+            "SELECT set_config('app.project_env_key', $1, true)",
+            &[&PROJECT_ENV_KEY],
+        )
         .await?;
     let locked = first_claimer
         .query_one(
@@ -113,23 +116,23 @@ async fn production_claim_live() -> anyhow::Result<()> {
         .execute(
             &format!(
                 "INSERT INTO {SCHEMA}.runs \
-                   (env_key,run_id,wiring_hash,status,package_id,manifest_digest, \
+                   (project_env_key,run_id,wiring_hash,status,package_id,manifest_digest, \
                     environment,wiring_id,wiring_version,trigger_source) \
                  VALUES ($1,'janitor','sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd','running','cat_main','{POD_MANIFEST_DIGEST}', \
                          'test',$2,$3,'http')"
             ),
-            &[&ENV_KEY, &WIRING_ID, &WIRING_VERSION],
+            &[&PROJECT_ENV_KEY, &WIRING_ID, &WIRING_VERSION],
         )
         .await?;
     admin
         .execute(
             &format!(
                 "INSERT INTO {SCHEMA}.run_queue \
-                   (env_key,run_id,available_at,lease_owner,lease_expires_at, \
+                   (project_env_key,run_id,available_at,lease_owner,lease_expires_at, \
                     attempts,max_attempts) \
                  VALUES ($1,'janitor','2000-01-01','dead','2000-01-01',3,3)"
             ),
-            &[&ENV_KEY],
+            &[&PROJECT_ENV_KEY],
         )
         .await?;
     assert_eq!(
@@ -146,10 +149,10 @@ async fn production_claim_live() -> anyhow::Result<()> {
                 "SELECT status,caller_outcome_json::text,caller_http_status,caller_release_node_id, \
                         caller_outcome_hash,caller_released_at IS NOT NULL, \
                         EXISTS (SELECT 1 FROM {SCHEMA}.run_queue q \
-                                 WHERE q.env_key=r.env_key AND q.run_id=r.run_id) \
-                   FROM {SCHEMA}.runs r WHERE env_key=$1 AND run_id='janitor'"
+                                 WHERE q.project_env_key=r.project_env_key AND q.run_id=r.run_id) \
+                   FROM {SCHEMA}.runs r WHERE project_env_key=$1 AND run_id='janitor'"
             ),
-            &[&ENV_KEY],
+            &[&PROJECT_ENV_KEY],
         )
         .await?;
     let janitor_body = json!({"error": {
@@ -206,7 +209,7 @@ async fn production_claim_live() -> anyhow::Result<()> {
     // refusal of that statement rolled the increment back with it: the run
     // could never reach `max_attempts`, the janitor could never reap it, and
     // nothing locked it after rollback — one run head-of-line-blocked the
-    // tenant forever. The advance now runs before the grant's subtransaction,
+    // project forever. The advance now runs before the grant's subtransaction,
     // so a refusal still counts as crash evidence. A probe trigger stands in
     // for any database guard that can refuse the grant.
     seed_run(admin, "grant-refused", "cat_main").await?;
@@ -216,9 +219,9 @@ async fn production_claim_live() -> anyhow::Result<()> {
                 "UPDATE {SCHEMA}.run_queue \
                     SET lease_owner='dead', lease_expires_at='2000-01-01', \
                         attempts=2, max_attempts=3 \
-                  WHERE env_key=$1 AND run_id='grant-refused'"
+                  WHERE project_env_key=$1 AND run_id='grant-refused'"
             ),
-            &[&ENV_KEY],
+            &[&PROJECT_ENV_KEY],
         )
         .await?;
     admin
@@ -339,9 +342,9 @@ async fn production_claim_live() -> anyhow::Result<()> {
             .execute(
                 &format!(
                     "UPDATE {SCHEMA}.runs SET manifest_digest={assignment} \
-                      WHERE env_key=$1 AND run_id='release-record'"
+                      WHERE project_env_key=$1 AND run_id='release-record'"
                 ),
-                &[&ENV_KEY],
+                &[&PROJECT_ENV_KEY],
             )
             .await
             .expect_err("no path may rewrite an admitted release in place");
@@ -356,9 +359,9 @@ async fn production_claim_live() -> anyhow::Result<()> {
         .execute(
             &format!(
                 "DELETE FROM {SCHEMA}.run_queue \
-                  WHERE env_key=$1 AND run_id='release-record'"
+                  WHERE project_env_key=$1 AND run_id='release-record'"
             ),
-            &[&ENV_KEY],
+            &[&PROJECT_ENV_KEY],
         )
         .await?;
 
@@ -368,19 +371,19 @@ async fn production_claim_live() -> anyhow::Result<()> {
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn queue_writers_stamp_existing_executor_claims() -> anyhow::Result<()> {
     let _lock = wamn_test_postgres::lock();
-    let database = wamn_catalog::test_database::tenant();
+    let database = wamn_catalog::test_database::project();
     let fixture = install_fixture(database.url()).await?;
     let admin = &fixture.admin;
     let plugin = &fixture.plugin;
     // Admission already binds the executor in its existing transaction.
-    admin.execute("INSERT INTO wamn_run.environment_policies (env_key, expected_environment) VALUES ($1, $2)", &[&ENV_KEY, &ENVIRONMENT]).await?;
+    admin.execute("INSERT INTO wamn_run.environment_policies (project_env_key, expected_environment) VALUES ($1, $2)", &[&PROJECT_ENV_KEY, &ENVIRONMENT]).await?;
     let actor = wamn_identity_protocol::PlatformComponent::Executor
         .principal_id()
         .to_string();
     let admitted = plugin
         .admit_manual_run(
             "default",
-            ENV_KEY,
+            PROJECT_ENV_KEY,
             &wamn_runtime::plugins::wamn_postgres::ManualRunAdmission {
                 package_id: PACKAGE_ID,
                 manifest_digest: POD_MANIFEST_DIGEST,
@@ -436,7 +439,7 @@ async fn queue_writers_stamp_existing_executor_claims() -> anyhow::Result<()> {
 #[tokio::test(flavor = "multi_thread")]
 async fn mixed_retries_end_with_the_last_cause() -> anyhow::Result<()> {
     let _lock = wamn_test_postgres::lock();
-    let database = wamn_catalog::test_database::tenant();
+    let database = wamn_catalog::test_database::project();
     let fixture = install_fixture(database.url()).await?;
     let admin = &fixture.admin;
     let plugin = &fixture.plugin;
@@ -567,7 +570,7 @@ async fn mixed_retries_end_with_the_last_cause() -> anyhow::Result<()> {
 #[tokio::test(flavor = "multi_thread")]
 async fn claim_release_fences_and_bounds_backoff() -> anyhow::Result<()> {
     let _lock = wamn_test_postgres::lock();
-    let database = wamn_catalog::test_database::tenant();
+    let database = wamn_catalog::test_database::project();
     let fixture = install_fixture(database.url()).await?;
     let admin = &fixture.admin;
     let plugin = &fixture.plugin;

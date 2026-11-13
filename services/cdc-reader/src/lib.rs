@@ -47,7 +47,7 @@
 //!   every session it reads the server version, the publication, and the slot,
 //!   and compares them against the provisioning declaration in
 //!   `wamn_control_provision::sql::cdc`. A server below
-//!   [`POSTGRES_MAJOR_FLOOR`], a publication that publishes other operations or
+//!   [`POSTGRES_MAJOR_MINIMUM`], a publication that publishes other operations or
 //!   another scope, or a slot with another plugin, lifetime, two-phase setting,
 //!   or failover setting stops the reader. The declared publication excludes
 //!   TRUNCATE, so a received TRUNCATE is counted and alerted as an incident.
@@ -508,7 +508,7 @@ fn row_to_map(
 }
 
 /// Decode a logical-decoding `Message` frame into a causation stamp, or `None`
-/// when it isn't our contract (wamn-l5i9.12). Two gates: the frame must be
+/// when it isn't our contract (wamn-l5i9.12). Two conditions: the frame must be
 /// **transactional** (`flags & 1`) — the unforgeable property rides on the
 /// commit, so a rolled-back txn's message never reaches us and a
 /// non-transactional emit is deliberately ignored — and the prefix must be
@@ -705,11 +705,11 @@ async fn wait_out_gap(
 /// five arguments, which is the call `create_failover_slot_sql` emits. It also
 /// added the `invalidation_reason` column of `pg_replication_slots`, which
 /// [`preflight_slot`] reads to find the capture-gap incident. A PostgreSQL 17
-/// server therefore passes this floor and then finds both. See
+/// server therefore passes this minimum and then finds both. See
 /// <https://www.postgresql.org/docs/17/release-17.html>.
 ///
 /// Every deployment target in this repository runs PostgreSQL 18.
-const POSTGRES_MAJOR_FLOOR: i32 = 17;
+const POSTGRES_MAJOR_MINIMUM: i32 = 17;
 
 /// The output plugin `create_failover_slot_sql` declares.
 const DECLARED_SLOT_PLUGIN: &str = "pgoutput";
@@ -722,7 +722,7 @@ pub const CAPTURE_SHAPE_DRIFT_REFUSAL: &str = "CAPTURE SHAPE DRIFT";
 pub const TRUNCATE_INCIDENT_EVENT: &str = "CDC_TRUNCATE_RECEIVED";
 
 /// Verify the whole declared capture substrate over one ordinary SQL
-/// connection, before every session: the server version floor, the publication
+/// connection, before every session: the server version minimum, the publication
 /// shape, and the slot shape and health.
 ///
 /// An absent or invalidated slot is the v3 §11 capture-gap incident, returned
@@ -754,7 +754,7 @@ fn postgres_major(version_num: i32) -> i32 {
     version_num / 10_000
 }
 
-/// Refuse a server below [`POSTGRES_MAJOR_FLOOR`]. The reader states its
+/// Refuse a server below [`POSTGRES_MAJOR_MINIMUM`]. The reader states its
 /// requirement at startup instead of failing later inside the walsender.
 async fn preflight_server_version(client: &tokio_postgres::Client) -> anyhow::Result<()> {
     let row = client
@@ -763,11 +763,11 @@ async fn preflight_server_version(client: &tokio_postgres::Client) -> anyhow::Re
         .context("preflight: read server_version_num")?;
     let version_num: i32 = row.get(0);
     let major = postgres_major(version_num);
-    if major < POSTGRES_MAJOR_FLOOR {
+    if major < POSTGRES_MAJOR_MINIMUM {
         bail!(
-            "PostgreSQL {major} is below the reader's floor of {POSTGRES_MAJOR_FLOOR} \
+            "PostgreSQL {major} is below the reader's minimum of {POSTGRES_MAJOR_MINIMUM} \
              (server_version_num={version_num}) — the declared failover slot needs \
-             PostgreSQL {POSTGRES_MAJOR_FLOOR} or later"
+             PostgreSQL {POSTGRES_MAJOR_MINIMUM} or later"
         );
     }
     tracing::info!(major, version_num, "preflight: server version accepted");
@@ -1068,7 +1068,7 @@ pub async fn run(args: EventReaderArgs) -> anyhow::Result<()> {
     run_with_shutdown(args, shutdown).await
 }
 
-/// The service body, shutdown injected — the live gate drives this directly
+/// The service body, shutdown injected — the live acceptance test drives this directly
 /// (abort = the crash drill, shutdown = clean stop).
 pub async fn run_with_shutdown(
     args: EventReaderArgs,
@@ -1796,13 +1796,13 @@ fn stall_level(stall: Duration, threshold: Duration) -> StallLevel {
 
 /// Slot WAL-retention headroom, derived from `pg_replication_slots` (E2
 /// backstop). The ladder maps onto Postgres' own `wal_status` semantics plus a
-/// `safe_wal_size` early-warning floor so the alert fires BEFORE the status
+/// `safe_wal_size` early-warning minimum so the alert fires BEFORE the status
 /// leaves `reserved`.
 #[derive(Debug, PartialEq, Eq)]
 enum SlotHealth {
-    /// `reserved` with headroom above the warn floor.
+    /// `reserved` with headroom above the warn minimum.
     Healthy,
-    /// Still `reserved` but `safe_wal_size` fell below the warn floor — the
+    /// Still `reserved` but `safe_wal_size` fell below the warn minimum — the
     /// early warning before the status degrades.
     HeadroomLow,
     /// `extended`: past `max_wal_size`, retained only by `max_slot_wal_keep_size`.
@@ -1816,15 +1816,15 @@ enum SlotHealth {
 /// Map a slot's `wal_status` + `safe_wal_size` to a health level. A NULL/unknown
 /// status is treated conservatively as `HeadroomLow` (surfaced, never silently
 /// healthy). `safe_wal_size` is NULL once the status is not `reserved`, so the
-/// floor check only applies on the `reserved` branch.
+/// minimum check only applies on the `reserved` branch.
 fn classify_slot_health(
     wal_status: &str,
     safe_wal_size: Option<i64>,
-    warn_floor_bytes: i64,
+    warn_minimum_bytes: i64,
 ) -> SlotHealth {
     match wal_status {
         "reserved" => match safe_wal_size {
-            Some(n) if n < warn_floor_bytes => SlotHealth::HeadroomLow,
+            Some(n) if n < warn_minimum_bytes => SlotHealth::HeadroomLow,
             _ => SlotHealth::Healthy,
         },
         "extended" => SlotHealth::Extended,
@@ -1850,7 +1850,7 @@ async fn poll_slot_once(
     cdc_url: &str,
     sslmode: &str,
     slot: &str,
-    warn_floor: i64,
+    warn_minimum: i64,
     last_lsn_advance_ms: &AtomicI64,
 ) -> anyhow::Result<()> {
     let url = preflight_url(cdc_url, sslmode)?;
@@ -1884,7 +1884,7 @@ async fn poll_slot_once(
     let safe_wal_size: Option<i64> = row.get(1);
     let lag_bytes: Option<i64> = row.get(2);
     let status = wal_status.as_deref().unwrap_or("unknown");
-    match classify_slot_health(status, safe_wal_size, warn_floor) {
+    match classify_slot_health(status, safe_wal_size, warn_minimum) {
         SlotHealth::Healthy => tracing::info!(
             target: "wamn::event_reader", event = "cdc_slot_health", slot, wal_status = status,
             slot_safe_wal_bytes = ?safe_wal_size, slot_wal_lag_bytes = ?lag_bytes,
@@ -1932,12 +1932,18 @@ fn spawn_slot_monitor(
     }
     let cdc_url = args.cdc_url.clone();
     let sslmode = args.sslmode.clone();
-    let warn_floor = args.slot_safe_wal_warn_bytes;
+    let warn_minimum = args.slot_safe_wal_warn_bytes;
     let poll = Duration::from_secs(args.slot_poll_secs);
     tokio::spawn(async move {
         loop {
-            if let Err(e) =
-                poll_slot_once(&cdc_url, &sslmode, &slot, warn_floor, &last_lsn_advance_ms).await
+            if let Err(e) = poll_slot_once(
+                &cdc_url,
+                &sslmode,
+                &slot,
+                warn_minimum,
+                &last_lsn_advance_ms,
+            )
+            .await
             {
                 tracing::warn!(
                     target: "wamn::event_reader",
@@ -2149,7 +2155,7 @@ mod tests {
 
     /// The reader's expectations and the provisioning builders name ONE shape.
     /// A change to either side that the other does not follow fails here rather
-    /// than at a tenant's preflight (wamn-0h0g.19.19).
+    /// than at a project's preflight (wamn-0h0g.19.19).
     #[test]
     fn the_preflight_expectations_match_the_provisioning_declaration() {
         let publication = wamn_control_provision::sql::create_publication_sql(
@@ -2242,14 +2248,14 @@ mod tests {
         assert_eq!(slot_drift(&physical_and_temporary).len(), 3);
     }
 
-    /// The floor refuses PostgreSQL 16 and accepts the 17 the failover argument
+    /// The minimum refuses PostgreSQL 16 and accepts the 17 the failover argument
     /// needs and the 18 every deployment target runs.
     #[test]
-    fn the_postgres_floor_sits_at_the_failover_slot_argument() {
-        assert_eq!(POSTGRES_MAJOR_FLOOR, 17);
-        assert!(postgres_major(160_009) < POSTGRES_MAJOR_FLOOR);
-        assert!(postgres_major(170_000) >= POSTGRES_MAJOR_FLOOR);
-        assert!(postgres_major(180_001) >= POSTGRES_MAJOR_FLOOR);
+    fn the_postgres_minimum_sits_at_the_failover_slot_argument() {
+        assert_eq!(POSTGRES_MAJOR_MINIMUM, 17);
+        assert!(postgres_major(160_009) < POSTGRES_MAJOR_MINIMUM);
+        assert!(postgres_major(170_000) >= POSTGRES_MAJOR_MINIMUM);
+        assert!(postgres_major(180_001) >= POSTGRES_MAJOR_MINIMUM);
     }
 
     #[test]
@@ -2294,8 +2300,8 @@ mod tests {
         assert!(!format!("{error}").contains("pw@"));
     }
 
-    /// Its own scoped generation, conversely, passes the pure gate and only
-    /// then fails on the connection — which is what shows the gate is a
+    /// Its own scoped generation, conversely, passes the pure condition and only
+    /// then fails on the connection — which is what shows the condition is a
     /// PREDICATE on the credential and not a blanket refusal.
     #[tokio::test]
     async fn the_registration_read_accepts_its_own_generation_and_then_connects() {
@@ -2316,7 +2322,7 @@ mod tests {
             error
                 .downcast_ref::<wamn_control_provision::SystemReaderUrlError>()
                 .is_none(),
-            "the reader's own generation was refused by the scope gate: {error}"
+            "the reader's own generation was refused by the scope condition: {error}"
         );
     }
 
@@ -2623,36 +2629,39 @@ mod tests {
     }
 
     #[test]
-    fn slot_health_maps_wal_status_and_the_safe_wal_floor() {
-        let floor = 268_435_456; // 256 MiB
-        // reserved with ample headroom → healthy; below the floor → the early
+    fn slot_health_maps_wal_status_and_the_safe_wal_minimum() {
+        let minimum = 268_435_456; // 256 MiB
+        // reserved with ample headroom → healthy; below the minimum → the early
         // warning that fires BEFORE the status leaves 'reserved'.
         assert_eq!(
-            classify_slot_health("reserved", Some(floor * 4), floor),
+            classify_slot_health("reserved", Some(minimum * 4), minimum),
             SlotHealth::Healthy
         );
         assert_eq!(
-            classify_slot_health("reserved", Some(floor - 1), floor),
+            classify_slot_health("reserved", Some(minimum - 1), minimum),
             SlotHealth::HeadroomLow
         );
-        // At exactly the floor it is still healthy (strictly-below warns).
+        // At exactly the minimum it is still healthy (strictly-below warns).
         assert_eq!(
-            classify_slot_health("reserved", Some(floor), floor),
+            classify_slot_health("reserved", Some(minimum), minimum),
             SlotHealth::Healthy
         );
         // The Postgres wal_status ladder past 'reserved'.
         assert_eq!(
-            classify_slot_health("extended", None, floor),
+            classify_slot_health("extended", None, minimum),
             SlotHealth::Extended
         );
         assert_eq!(
-            classify_slot_health("unreserved", None, floor),
+            classify_slot_health("unreserved", None, minimum),
             SlotHealth::Unreserved
         );
-        assert_eq!(classify_slot_health("lost", None, floor), SlotHealth::Lost);
+        assert_eq!(
+            classify_slot_health("lost", None, minimum),
+            SlotHealth::Lost
+        );
         // NULL/unknown status is surfaced, never silently healthy.
         assert_eq!(
-            classify_slot_health("unknown", None, floor),
+            classify_slot_health("unknown", None, minimum),
             SlotHealth::HeadroomLow
         );
     }
@@ -2913,7 +2922,7 @@ mod tests {
         assert!(matches!(out, PublishOutcome::CancelledMidRetry));
     }
 
-    /// E1 LIVE gate (env-gated, LOCAL): drive the REAL `JsPublisher` pipeline
+    /// E1 LIVE condition (env-conditioned, LOCAL): drive the REAL `JsPublisher` pipeline
     /// against a throwaway JetStream (`docker run -d nats:2 -js`). Set
     /// `WAMN_E1_NATS_URL`; ignored by default. Shows the pipelined
     /// publish lands every message, IN ORDER (stream seq == publish order), and

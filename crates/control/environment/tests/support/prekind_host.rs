@@ -36,7 +36,7 @@ async fn credential_secrets(
     system_url: &str,
     scope: &Triple,
 ) -> anyhow::Result<Vec<Value>> {
-    let env_key = wamn_control_registry::project_env_key(ORG, PROJECT, "http");
+    let project_env_key = wamn_control_registry::project_env_key(ORG, PROJECT, "http");
     let mut secrets = render_check::credential_secrets(scope, NAMESPACE);
     for credential in wamn_control_provision::host_credentials::HOST_CREDENTIALS {
         let (client, url) = match credential.database {
@@ -65,8 +65,8 @@ async fn credential_secrets(
             CredentialDatabase::Project => workload_generation_role(
                 credential.family,
                 if credential.family == WorkloadRoleFamily::App {
-                    WorkloadRoleScope::EnvKey {
-                        env_key: &env_key,
+                    WorkloadRoleScope::ProjectEnvKey {
+                        project_env_key: &project_env_key,
                         database: &database,
                     }
                 } else {
@@ -96,12 +96,15 @@ async fn credential_secrets(
             tx.batch_execute("SET LOCAL ROLE wamn_system").await?;
             let mapped: String = tx
                 .query_one(
-                    sql::upsert_control_author_env_key_mapping_sql(),
-                    &[&role, &env_key, &ORG, &PROJECT, &"http"],
+                    sql::upsert_control_author_project_env_key_mapping_sql(),
+                    &[&role, &project_env_key, &ORG, &PROJECT, &"http"],
                 )
                 .await?
-                .get("env_key");
-            ensure!(mapped == env_key, "host reader maps to a different tenant");
+                .get("project_env_key");
+            ensure!(
+                mapped == project_env_key,
+                "host reader maps to a different project"
+            );
             tx.commit().await?;
         }
         let name =
@@ -365,7 +368,7 @@ async fn prekind_http_host_runs_and_rejects_respond_without_caller() -> anyhow::
     let work = ScratchRoot::create()?;
     let directory = work.path();
     let repository = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
-    let env_key = wamn_control_registry::project_env_key(ORG, PROJECT, "http");
+    let project_env_key = wamn_control_registry::project_env_key(ORG, PROJECT, "http");
     let scope = Triple::new(ORG, PROJECT, "http");
     let database = wamn_test_postgres::database();
     let control = wamn_control_provision::test_database::system();
@@ -379,8 +382,11 @@ async fn prekind_http_host_runs_and_rejects_respond_without_caller() -> anyhow::
     project
         .batch_execute(&sql::ensure_app_acl_role_sql())
         .await?;
-    wamn_dev_control::dev::environment::install_journey_platform_floor(&project, PLATFORM_DOMAIN)
-        .await?;
+    wamn_dev_control::dev::environment::install_journey_platform_base_grants(
+        &project,
+        PLATFORM_DOMAIN,
+    )
+    .await?;
     wamn_environment_control::reconcile_run_plane::reconcile(
         &project,
         &wamn_schema_control::BareSchemaName::new("wamn_run")?,
@@ -389,12 +395,15 @@ async fn prekind_http_host_runs_and_rejects_respond_without_caller() -> anyhow::
     .await?;
     project.execute("SELECT set_config('app.user_id',$1,false), set_config('app.operation','admin:prekind',false)", &[&wamn_control_provision::PlatformComponent::Provisioning.principal_id().to_string()]).await?;
     project
-        .execute("SELECT set_config('app.env_key',$1,false)", &[&env_key])
+        .execute(
+            "SELECT set_config('app.project_env_key',$1,false)",
+            &[&project_env_key],
+        )
         .await?;
     project
         .batch_execute("INSERT INTO platform.environment(status) VALUES ('active')")
         .await?;
-    project.execute("INSERT INTO wamn_run.environment_policies(env_key,expected_environment) VALUES ($1,'http')", &[&env_key]).await?;
+    project.execute("INSERT INTO wamn_run.environment_policies(project_env_key,expected_environment) VALUES ($1,'http')", &[&project_env_key]).await?;
     let instance: u32 = project
         .query_one(
             "SELECT oid FROM pg_database WHERE datname=current_database()",
@@ -402,7 +411,8 @@ async fn prekind_http_host_runs_and_rejects_respond_without_caller() -> anyhow::
         )
         .await?
         .get(0);
-    let marker = wamn_runtime::local_application::local_target_marker(&env_key, "http", instance);
+    let marker =
+        wamn_runtime::local_application::local_target_marker(&project_env_key, "http", instance);
     project
         .batch_execute(&format!(
             "COMMENT ON DATABASE \"{}\" IS '{marker}'",
@@ -599,9 +609,9 @@ async fn prekind_http_host_runs_and_rejects_respond_without_caller() -> anyhow::
         directory.join(wamn_catalog::RELEASE_MANIFEST_FILE_NAME),
         &published.canonical_bytes,
     )?;
-    project.execute("INSERT INTO catalog.releases(env_key,manifest_digest,canonical_bytes) VALUES ($1,$2,$3)", &[&env_key,&digest,&published.canonical_bytes]).await?;
+    project.execute("INSERT INTO catalog.releases(project_env_key,manifest_digest,canonical_bytes) VALUES ($1,$2,$3)", &[&project_env_key,&digest,&published.canonical_bytes]).await?;
     for package in &published.manifest.release.packages {
-        project.execute("INSERT INTO catalog.packages(physical_schema_fingerprint, env_key,package_id,package_version,artifact_digest) VALUES ('sha256:' || repeat('c', 64), $1,$2,$3,$4)", &[&env_key,&package.package_id(),&package.package_version(),&format!("sha256:{}","a".repeat(64))]).await?;
+        project.execute("INSERT INTO catalog.packages(physical_schema_fingerprint, project_env_key,package_id,package_version,artifact_digest) VALUES ('sha256:' || repeat('c', 64), $1,$2,$3,$4)", &[&project_env_key,&package.package_id(),&package.package_version(),&format!("sha256:{}","a".repeat(64))]).await?;
     }
     let mut document = fixture_document("http", "http.orders.example", digest);
     document
@@ -635,7 +645,7 @@ async fn prekind_http_host_runs_and_rejects_respond_without_caller() -> anyhow::
             "connections":{"upstream":{"interface":"wamn:connection/http@0.1.0","mode":"write"},"signed-upstream":{"interface":"wamn:connection/http@0.1.0","mode":"write"},"api-key-upstream":{"interface":"wamn:connection/http@0.1.0","mode":"write"},"aws-upstream":{"interface":"wamn:connection/http@0.1.0","mode":"write"}}
         }),
     )?)?;
-    // The system floor seeds the active cloud target used by this document.
+    // The system base grants seeds the active cloud target used by this document.
     let tx = wamn_environment_control::provision_project_env::provisioning_transaction(&mut seed)
         .await?;
     tx.batch_execute("SET LOCAL ROLE wamn_db_owner").await?;
@@ -660,7 +670,7 @@ async fn prekind_http_host_runs_and_rejects_respond_without_caller() -> anyhow::
                 &connection.store_alias,
                 ConnectionTypeDescriptor::http_v1(),
             );
-            project.execute("INSERT INTO catalog.connection_requirement(env_key,component_digest,package_id,name,interface,mode) VALUES($1,$2,$3,$4,'wamn:connection/http@0.1.0','write') ON CONFLICT DO NOTHING",&[&env_key,&component.descriptor.component_digest,&component.package_id,&connection.store_alias]).await?;
+            project.execute("INSERT INTO catalog.connection_requirement(project_env_key,component_digest,package_id,name,interface,mode) VALUES($1,$2,$3,$4,'wamn:connection/http@0.1.0','write') ON CONFLICT DO NOTHING",&[&project_env_key,&component.descriptor.component_digest,&component.package_id,&connection.store_alias]).await?;
             let selection = wamn_runtime::local_application::selection(
                 &requirement,
                 &upstream.connection_id,
@@ -682,7 +692,7 @@ async fn prekind_http_host_runs_and_rejects_respond_without_caller() -> anyhow::
     let tx = target.transaction().await?;
     wamn_environment_control::environment::bindings::write(
         &tx,
-        &env_key,
+        &project_env_key,
         digest,
         &document,
         &reserved,
@@ -744,7 +754,7 @@ async fn prekind_http_host_runs_and_rejects_respond_without_caller() -> anyhow::
         system_url: control.url(),
         project_url: database.url(),
         scope: &scope,
-        env_key: &env_key,
+        project_env_key: &project_env_key,
         digest,
         applications: &document.membership(),
         auth: &auth,

@@ -1,4 +1,4 @@
-//! Tests upstream release identity, gate execution, and isolated Git settings.
+//! Tests upstream release identity, acceptance test execution, and isolated Git settings.
 
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
@@ -107,7 +107,7 @@ fn command(fixture: &Fixture) -> Command {
 fn assert_success(output: &Output) {
     assert!(
         output.status.success(),
-        "release gate failed: {}",
+        "release acceptance test failed: {}",
         String::from_utf8_lossy(&output.stderr)
     );
 }
@@ -121,7 +121,7 @@ fn dry_run_does_not_run_cargo() {
         .env("CARGO", fixture.root.join("bin/cargo"))
         .env("WAMN_TEST_ROOT", &fixture.root)
         .output()
-        .expect("run release gate dry-run");
+        .expect("run release acceptance test dry-run");
     assert_success(&output);
     assert!(!fixture.root.join("cargo.log").exists());
 }
@@ -129,7 +129,9 @@ fn dry_run_does_not_run_cargo() {
 #[test]
 fn clean_upstream_runs_all_legs_without_a_fork_branch() {
     let fixture = fixture();
-    let output = command(&fixture).output().expect("run release gate");
+    let output = command(&fixture)
+        .output()
+        .expect("run release acceptance test");
     assert_success(&output);
     let log = fs::read_to_string(fixture.root.join("cargo.log")).expect("read Cargo calls");
     let commands = log.lines().collect::<Vec<_>>();
@@ -165,19 +167,19 @@ fn changed_release_identity_or_source_refuses_before_cargo() {
         let output = command(&fixture)
             .env(key, value)
             .output()
-            .expect("run negative release gate");
+            .expect("run negative release acceptance test");
         assert_eq!(output.status.code(), Some(65), "{key}: {output:?}");
         assert!(!fixture.root.join("cargo.log").exists(), "{key}");
     }
 }
 
 #[test]
-fn failed_gate_legs_keep_their_exit_codes_and_do_not_hide_later_legs() {
+fn failed_acceptance_test_legs_keep_their_exit_codes_and_do_not_hide_later_legs() {
     let fixture = fixture();
     let output = command(&fixture)
         .env("WAMN_TEST_CARGO_EXIT", "23")
         .output()
-        .expect("run failed gate fixtures");
+        .expect("run failed acceptance test fixtures");
     assert_eq!(output.status.code(), Some(23));
     let log = fs::read_to_string(fixture.root.join("cargo.log")).expect("read Cargo calls");
     assert!(log.contains("-p wash --features default --lib clone_template_"));
@@ -210,12 +212,12 @@ fn fixture_build_cannot_change_its_tracked_lockfile_and_continue() {
 }
 
 #[test]
-fn a_gate_leg_cannot_change_upstream_source_and_continue() {
+fn an_acceptance_test_leg_cannot_change_upstream_source_and_continue() {
     let fixture = fixture();
     let output = command(&fixture)
         .env("WAMN_TEST_MUTATE", "yes")
         .output()
-        .expect("run mutating gate fixture");
+        .expect("run mutating acceptance test fixture");
     assert_eq!(output.status.code(), Some(65));
     let log = fs::read_to_string(fixture.root.join("cargo.log")).expect("read Cargo calls");
     assert!(!log.contains("--package xtask -- build-fixtures"), "{log}");

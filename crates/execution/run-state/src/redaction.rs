@@ -10,7 +10,7 @@
 //! secret value prefixes, and [`OUTPUT_CAPTURE_CEILING_BYTES`]. A live view
 //! that needs more renegotiates it there rather than widening the policy here.
 //!
-//! This is a known-pattern redaction floor, not a secret-classification
+//! This is a known-pattern redaction minimum, not a secret-classification
 //! guarantee. The retired capture module derived a content hash over the
 //! PRE-scrub bytes; that hash did not survive, and it should not be revived as
 //! written: an identity published beside a redacted payload has to be computed

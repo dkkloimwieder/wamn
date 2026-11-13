@@ -71,7 +71,7 @@ fn surviving_authority_matrix_live() {
     let database = success(&url, "SELECT current_database();")
         .trim()
         .to_string();
-    let access_floor = format!(
+    let base_grants = format!(
         "REVOKE CONNECT, TEMPORARY ON DATABASE \"{database}\" FROM PUBLIC; \
          REVOKE CONNECT ON DATABASE \"{database}\" FROM wamn_app;"
     );
@@ -104,11 +104,11 @@ fn surviving_authority_matrix_live() {
               \
               \
              BEGIN; {catalog} {run_state} {run_queue} {app_schema} COMMIT; \
-             {access_floor} \
+             {base_grants} \
              {executor_provision}"
         ),
     );
-    // Publication still needs tenant-key execution for its catalog index.
+    // Publication still needs project-key execution for its catalog index.
     success(
         &url,
         &format!(
@@ -164,19 +164,19 @@ fn surviving_authority_matrix_live() {
              {executor_surface} \
               \
              INSERT INTO catalog.packages \
-               (physical_schema_fingerprint, env_key,package_id,package_version,artifact_digest) \
+               (physical_schema_fingerprint, project_env_key,package_id,package_version,artifact_digest) \
              VALUES ('sha256:' || repeat('c', 64), 't1','cat','1.0.0','sha256:{manifest_hash}'); \
-             INSERT INTO catalog.releases (env_key,manifest_digest,canonical_bytes) \
+             INSERT INTO catalog.releases (project_env_key,manifest_digest,canonical_bytes) \
              VALUES ('t1','sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a','{{}}'); \
              INSERT INTO wamn_run.environment_policies \
-               (env_key,expected_environment) \
+               (project_env_key,expected_environment) \
              VALUES ('t1','dev'); \
              INSERT INTO wamn_run.runs \
-               (env_key,run_id,wiring_hash,binding_world_json,package_id,manifest_digest,environment, \
+               (project_env_key,run_id,wiring_hash,binding_world_json,package_id,manifest_digest,environment, \
                 wiring_id,wiring_version,status,trigger_source,input_json,service_principal_id) \
              VALUES ('t1','run-1','sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd','[]'::jsonb,'cat','sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a','dev','legacy-wiring',1, \
                      'dispatched','automation','{{}}','00000000-0000-0000-0000-000000000001'); \
-             INSERT INTO wamn_run.run_queue (env_key,run_id) VALUES ('t1','run-1');",
+             INSERT INTO wamn_run.run_queue (project_env_key,run_id) VALUES ('t1','run-1');",
             manifest_hash = "a".repeat(64),
         ),
     );
@@ -247,7 +247,7 @@ result_json,state_json,status,terminal_reason,updated_at', \
               AND pg_catalog.has_column_privilege( \
                     'wamn_executor_platform', a.attrelid, a.attnum, 'INSERT'); \
            ASSERT actual = \
-             'env_key,environment,event_depth,event_root_run_id,event_source_run_id,execution_principal_id,execution_role,\
+             'project_env_key,environment,event_depth,event_root_run_id,event_source_run_id,execution_principal_id,execution_role,\
 idempotency_key,input_json,invoked_by,invoked_by_user_id,manifest_digest,node_digests_json,\
 package_id,registration_id,service_principal_id,status,trigger_source,wiring_hash,wiring_id,wiring_version', \
                   'runs INSERT columns (the event and manual run grains) drifted: ' || coalesce(actual, '<none>'); \
@@ -257,7 +257,7 @@ package_id,registration_id,service_principal_id,status,trigger_source,wiring_has
               AND NOT a.attisdropped \
               AND pg_catalog.has_column_privilege( \
                     'wamn_executor_platform', a.attrelid, a.attnum, 'INSERT'); \
-           ASSERT actual = 'env_key,run_id', \
+           ASSERT actual = 'project_env_key,run_id', \
                   'run_queue INSERT columns drifted: ' || coalesce(actual, '<none>'); \
            ASSERT pg_catalog.has_schema_privilege( \
                     'wamn_executor_platform', 'wamn_run', 'USAGE'); \
@@ -268,11 +268,11 @@ package_id,registration_id,service_principal_id,status,trigger_source,wiring_has
            ASSERT NOT pg_catalog.has_schema_privilege( \
                     'wamn_executor_platform', 'catalog', 'CREATE'); \
            ASSERT pg_catalog.has_function_privilege('wamn_executor_platform', \
-                    'wamn_authority.tenant_key(text)', 'EXECUTE'); \
+                    'wamn_authority.project_key(text)', 'EXECUTE'); \
            ASSERT NOT pg_catalog.has_schema_privilege( \
                     'wamn_executor_platform', 'wamn_authority', 'USAGE'); \
            ASSERT NOT pg_catalog.has_function_privilege('wamn_executor_platform', \
-                    'wamn_authority.current_tenant_key()', 'EXECUTE'); \
+                    'wamn_authority.current_project_key()', 'EXECUTE'); \
          END $$;",
     );
 
@@ -280,7 +280,7 @@ package_id,registration_id,service_principal_id,status,trigger_source,wiring_has
     let claimed = success(
         &url,
         &format!(
-            "BEGIN; SET LOCAL ROLE {EXECUTOR_LOGIN}; SET LOCAL app.env_key='t1'; \
+            "BEGIN; SET LOCAL ROLE {EXECUTOR_LOGIN}; SET LOCAL app.project_env_key='t1'; \
              SET LOCAL search_path=wamn_run,catalog,public; \
              SELECT current_user; PREPARE matrix_claim(text[],text,text) AS {claim}; \
              EXECUTE matrix_claim(ARRAY['cat'],'dev','sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a'); ROLLBACK;"
@@ -294,7 +294,7 @@ package_id,registration_id,service_principal_id,status,trigger_source,wiring_has
     assert_sqlstate(
         &url,
         "INSERT INTO wamn_run.runs \
-           (env_key,run_id,package_id,environment, \
+           (project_env_key,run_id,package_id,environment, \
             wiring_id,wiring_version,status,trigger_source,input_json) \
          VALUES ('t1','half-run','cat','dev','candidate',1, \
                  'dispatched','test-case','{}');",
@@ -304,7 +304,7 @@ package_id,registration_id,service_principal_id,status,trigger_source,wiring_has
     assert_sqlstate(
         &url,
         "UPDATE wamn_run.runs SET binding_world_json='[]' \
-          WHERE env_key='t1' AND run_id='run-1';",
+          WHERE project_env_key='t1' AND run_id='run-1';",
         "55000",
         "run-admission-pin-immutable",
     );
@@ -363,22 +363,22 @@ fn release_scoped_queue_claim_skips_another_releases_head_live() {
              END $$; \
              BEGIN; {catalog} {run_state} {run_queue} {app_schema} COMMIT; \
              INSERT INTO catalog.packages \
-               (physical_schema_fingerprint, env_key,package_id,package_version,artifact_digest) \
+               (physical_schema_fingerprint, project_env_key,package_id,package_version,artifact_digest) \
              VALUES ('sha256:' || repeat('c', 64), 't1','cat','1.0.0','sha256:{manifest_hash}'); \
-             INSERT INTO catalog.releases (env_key,manifest_digest,canonical_bytes) \
+             INSERT INTO catalog.releases (project_env_key,manifest_digest,canonical_bytes) \
              VALUES ('t1','sha256:21621f6bd9bc2769154aa2938726e891ecbc7929cd7be941b60ec776703ed394','{{\"release\":1}}'), \
                     ('t1','sha256:89437c2ddcb5d585633413604661041fe6b5ee9d49ae96153fe24812f1a8c5c0','{{\"release\":2}}'); \
              INSERT INTO wamn_run.environment_policies \
-               (env_key,expected_environment) \
+               (project_env_key,expected_environment) \
              VALUES ('t1','dev'); \
              INSERT INTO wamn_run.runs \
-               (env_key,run_id,wiring_hash,binding_world_json,package_id,manifest_digest,environment, \
+               (project_env_key,run_id,wiring_hash,binding_world_json,package_id,manifest_digest,environment, \
                 wiring_id,wiring_version,status,trigger_source,input_json,service_principal_id) \
              VALUES ('t1','run-b','sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd','[]'::jsonb,'cat',{release_2},'dev','legacy-wiring',1, \
                      'dispatched','automation','{{}}','00000000-0000-0000-0000-000000000001'), \
                     ('t1','run-a','sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd','[]'::jsonb,'cat',{release_1},'dev','legacy-wiring',1, \
                      'dispatched','automation','{{}}','00000000-0000-0000-0000-000000000001'); \
-             INSERT INTO wamn_run.run_queue (env_key,run_id,available_at) \
+             INSERT INTO wamn_run.run_queue (project_env_key,run_id,available_at) \
              VALUES ('t1','run-b',now() - interval '2 minutes'), \
                     ('t1','run-a',now() - interval '1 minute');",
             manifest_hash = "a".repeat(64),
@@ -391,7 +391,7 @@ fn release_scoped_queue_claim_skips_another_releases_head_live() {
         let selected = success(
             &url,
             &format!(
-                "BEGIN; SET LOCAL app.env_key='t1'; \
+                "BEGIN; SET LOCAL app.project_env_key='t1'; \
                  SET LOCAL search_path=wamn_run,catalog,public; \
                  PREPARE release_claim(text[],text,text) AS {claim}; \
                  EXECUTE release_claim(ARRAY['cat'],'dev',{release}); ROLLBACK;"
@@ -429,7 +429,7 @@ fn release_scoped_queue_claim_skips_another_releases_head_live() {
         &url,
         &format!(
             "INSERT INTO wamn_run.runs \
-               (env_key,run_id,wiring_hash,binding_world_json,package_id,manifest_digest,environment, \
+               (project_env_key,run_id,wiring_hash,binding_world_json,package_id,manifest_digest,environment, \
                 wiring_id,wiring_version,status,trigger_source,input_json, \
                 event_source_run_id,event_root_run_id,event_depth, \
                 execution_principal_id,execution_role,node_digests_json) \
@@ -437,9 +437,9 @@ fn release_scoped_queue_claim_skips_another_releases_head_live() {
                '{{\"value\":7,\"causation\":{{\"root\":\"forged\"}}}}', \
                'source','trusted-root',2,'00000000-0000-0000-0000-000000000002', \
                'workflow','{{\"node\":\"sha256:frozen\"}}'); \
-             INSERT INTO wamn_run.run_queue(env_key,run_id,available_at) \
+             INSERT INTO wamn_run.run_queue(project_env_key,run_id,available_at) \
              VALUES ('t1','projection','2000-01-01'); \
-             BEGIN; SET LOCAL app.env_key='t1'; SET LOCAL search_path=wamn_run; \
+             BEGIN; SET LOCAL app.project_env_key='t1'; SET LOCAL search_path=wamn_run; \
              DO $test$ DECLARE selected record; untouched jsonb; parked text; BEGIN \
                SELECT to_jsonb(q) INTO untouched FROM run_queue AS q WHERE run_id='projection'; \
                EXECUTE $claim${claim}$claim$ INTO STRICT selected USING ARRAY['cat'],'dev',{RELEASE_1}; \
@@ -480,7 +480,7 @@ fn release_scoped_queue_claim_skips_another_releases_head_live() {
     success(
         &url,
         &format!(
-            "BEGIN; SET LOCAL app.env_key='t1'; SET LOCAL search_path=wamn_run; \
+            "BEGIN; SET LOCAL app.project_env_key='t1'; SET LOCAL search_path=wamn_run; \
              UPDATE run_queue SET available_at='infinity'; \
              DO $test$ DECLARE source text; router bool; durable bool; \
                selected record; identity text; BEGIN \
@@ -488,13 +488,13 @@ fn release_scoped_queue_claim_skips_another_releases_head_live() {
                  ('http',true,true),('internal',true,true),('studio',true,true), \
                  ('scenario-draft',true,false),('test-case',true,false) LOOP \
                  identity := source; \
-                 INSERT INTO runs (env_key,run_id,package_id,manifest_digest, \
+                 INSERT INTO runs (project_env_key,run_id,package_id,manifest_digest, \
                    environment,wiring_id,wiring_version,wiring_hash,binding_world_json, \
                    status,trigger_source) \
                  VALUES ('t1',identity,'cat',{RELEASE_1},'dev','w',1, \
                    'sha256:' || repeat('d',64), \
                    '[]'::jsonb,'dispatched',source); \
-                 INSERT INTO run_queue(env_key,run_id) VALUES ('t1',identity); \
+                 INSERT INTO run_queue(project_env_key,run_id) VALUES ('t1',identity); \
                  EXECUTE $claim${claim}$claim$ INTO STRICT selected USING ARRAY['cat'],'dev',{RELEASE_1}; \
                  ASSERT selected.run_id=identity, 'one eligible row is selected'; \
                  ASSERT selected.router_caller_attached=router \

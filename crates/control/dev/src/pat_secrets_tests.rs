@@ -39,7 +39,7 @@ async fn auth_drops_mint_pat_records_the_committed_project_role_drop() {
         .unwrap();
     system
         .execute(&[
-            wamn_control_provision::sql::revoke_public_connect_floor_sql(),
+            wamn_control_provision::sql::revoke_public_connect_base_grants_sql(),
             "REVOKE TEMPORARY ON DATABASE wamn_system FROM PUBLIC",
         ])
         .unwrap();

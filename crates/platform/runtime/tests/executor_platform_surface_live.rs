@@ -1,4 +1,4 @@
-//! Live gate for the executor-platform credential's PLAN SUPPLY and
+//! Live acceptance test for the executor-platform credential's PLAN SUPPLY and
 //! its exact-credential probe (`wamn-0h0g.22.42`).
 //!
 //! Two things `wamn-0h0g.22.31` could not discharge live meet here because they
@@ -14,7 +14,7 @@
 //! cannot hide which database access check failed.
 //!
 //! CREDENTIAL EXACTNESS. `credential_exactness_probe`'s wrong-database,
-//! wrong-tenant-binding and wrong-membership arms were unit-covered against a
+//! wrong-project-binding and wrong-membership arms were unit-covered against a
 //! `FakeQueries` double; `PostgresQueryExecutor` — the half that actually asks
 //! PostgreSQL — had never run against a server at all. Each arm runs here on a
 //! real connection.
@@ -54,7 +54,7 @@ const GENERATION_PASSWORD: &str = "executor-surface-test-password";
 /// The second database the wrong-`current_database` arm connects to.
 const ELSEWHERE: &str = "w68_execplat_elsewhere";
 
-const ENV_KEY: &str = "t1";
+const PROJECT_ENV_KEY: &str = "t1";
 const PACKAGE_ID: &str = "cat";
 const PACKAGE_VERSION: &str = "1.0.0";
 const ENVIRONMENT: &str = "prod";
@@ -91,13 +91,13 @@ fn generation_url(admin: &str, database: Option<&str>) -> anyhow::Result<String>
 
 /// Open one transaction shaped like `begin_with_claims` does for this class.
 ///
-/// The three plan-supply statements take the tenant as `$1` and read no GUC, so
+/// The three plan-supply statements take the project as `$1` and read no GUC, so
 /// the claim is not what fences them; it is set because it IS what the host
 /// injects, and because the `run_queue` leg below depends on it.
 async fn begin_claimed(client: &Client) -> anyhow::Result<()> {
     client.batch_execute("BEGIN").await?;
     client
-        .execute("SELECT set_config('app.env_key', $1, true), set_config('app.user_id', $2, true), set_config('app.operation', $3, true)", &[&ENV_KEY, &wamn_control_provision::PlatformComponent::Executor.principal_id().to_string(), &wamn_control_provision::PlatformComponent::Executor.principal_name()])
+        .execute("SELECT set_config('app.project_env_key', $1, true), set_config('app.user_id', $2, true), set_config('app.operation', $3, true)", &[&PROJECT_ENV_KEY, &wamn_control_provision::PlatformComponent::Executor.principal_id().to_string(), &wamn_control_provision::PlatformComponent::Executor.principal_name()])
         .await?;
     Ok(())
 }
@@ -227,7 +227,7 @@ async fn executor_platform_surface_live() -> anyhow::Result<()> {
                     AND NOT membership.set_option), \
                  'the generation must INHERIT the stable role, not hold its grants'; \
                ASSERT pg_catalog.pg_has_role('{GENERATION}', 'wamn_platform', 'USAGE'), \
-                 'the generation must match the permissive platform floor arm'; \
+                 'the generation must match the permissive platform base grants arm'; \
                ASSERT NOT pg_catalog.pg_has_role('{GENERATION}', 'wamn_app', 'USAGE'), \
                  'the generation must not reach the guest role'; \
                ASSERT NOT pg_catalog.pg_has_role('{GENERATION}', 'wamn_http_admitter', 'USAGE'), \
@@ -249,31 +249,31 @@ async fn executor_platform_surface_live() -> anyhow::Result<()> {
     admin
         .batch_execute(&format!(
             "INSERT INTO catalog.packages \
-               (physical_schema_fingerprint, env_key,package_id,package_version,artifact_digest) \
-             VALUES ('sha256:' || repeat('c', 64), '{ENV_KEY}','{PACKAGE_ID}','{PACKAGE_VERSION}','{artifact_digest}'); \
+               (physical_schema_fingerprint, project_env_key,package_id,package_version,artifact_digest) \
+             VALUES ('sha256:' || repeat('c', 64), '{PROJECT_ENV_KEY}','{PACKAGE_ID}','{PACKAGE_VERSION}','{artifact_digest}'); \
              INSERT INTO catalog.releases \
-               (env_key,manifest_digest,canonical_bytes) \
-             SELECT '{ENV_KEY}', 'sha256:' || encode(sha256(bytes), 'hex'), bytes \
+               (project_env_key,manifest_digest,canonical_bytes) \
+             SELECT '{PROJECT_ENV_KEY}', 'sha256:' || encode(sha256(bytes), 'hex'), bytes \
                FROM (SELECT convert_to('{manifest_body}', 'UTF8') AS bytes) AS frozen; \
              INSERT INTO platform.integration (id,integration_type,name,status) \
              VALUES ('00000000-0000-4000-8000-000000000011','http','a-store','active'); \
              INSERT INTO platform.connection (id,integration_id,integration_type,status) \
              VALUES ('00000000-0000-4000-8000-000000000012','00000000-0000-4000-8000-000000000011','http','active'); \
-             INSERT INTO catalog.connection_requirement (env_key,component_digest,package_id,name,interface,mode) \
-             VALUES ('{ENV_KEY}','{component_digest}','{PACKAGE_ID}','a-store','wamn:connection/http@0.1.0','write'); \
-             INSERT INTO catalog.release_connection (env_key,manifest_digest,connection_id,version) \
-             SELECT '{ENV_KEY}',manifest_digest,'00000000-0000-4000-8000-000000000012',1 FROM catalog.releases; \
-             INSERT INTO catalog.connection_binding (env_key,manifest_digest,component_digest,package_id,name,connection_id) \
-             SELECT '{ENV_KEY}',manifest_digest,'{component_digest}','{PACKAGE_ID}','a-store','00000000-0000-4000-8000-000000000012' FROM catalog.releases; \
+             INSERT INTO catalog.connection_requirement (project_env_key,component_digest,package_id,name,interface,mode) \
+             VALUES ('{PROJECT_ENV_KEY}','{component_digest}','{PACKAGE_ID}','a-store','wamn:connection/http@0.1.0','write'); \
+             INSERT INTO catalog.release_connection (project_env_key,manifest_digest,connection_id,version) \
+             SELECT '{PROJECT_ENV_KEY}',manifest_digest,'00000000-0000-4000-8000-000000000012',1 FROM catalog.releases; \
+             INSERT INTO catalog.connection_binding (project_env_key,manifest_digest,component_digest,package_id,name,connection_id) \
+             SELECT '{PROJECT_ENV_KEY}',manifest_digest,'{component_digest}','{PACKAGE_ID}','a-store','00000000-0000-4000-8000-000000000012' FROM catalog.releases; \
              INSERT INTO wamn_run.environment_policies \
-               (env_key,expected_environment) \
-             VALUES ('{ENV_KEY}','{ENVIRONMENT}'); \
+               (project_env_key,expected_environment) \
+             VALUES ('{PROJECT_ENV_KEY}','{ENVIRONMENT}'); \
              INSERT INTO wamn_run.runs \
-               (env_key,run_id,wiring_hash,binding_world_json,package_id,manifest_digest,environment, \
+               (project_env_key,run_id,wiring_hash,binding_world_json,package_id,manifest_digest,environment, \
                 wiring_id,wiring_version,status,input_json,trigger_source) \
-             SELECT '{ENV_KEY}','run-1','sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd','[]'::jsonb,'{PACKAGE_ID}',manifest_digest,'{ENVIRONMENT}', \
+             SELECT '{PROJECT_ENV_KEY}','run-1','sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd','[]'::jsonb,'{PACKAGE_ID}',manifest_digest,'{ENVIRONMENT}', \
                     '{WIRING_ID}',{WIRING_VERSION},'dispatched','{{}}','test-case' FROM catalog.releases; \
-             INSERT INTO wamn_run.run_queue (env_key,run_id) VALUES ('{ENV_KEY}','run-1');",
+             INSERT INTO wamn_run.run_queue (project_env_key,run_id) VALUES ('{PROJECT_ENV_KEY}','run-1');",
         ))
         .await
         .context("seed the plan-supply fixture")?;
@@ -285,26 +285,29 @@ async fn executor_platform_surface_live() -> anyhow::Result<()> {
 
     let manifest_digest: String = admin
         .query_one(
-            "SELECT manifest_digest FROM catalog.releases WHERE env_key=$1",
-            &[&ENV_KEY],
+            "SELECT manifest_digest FROM catalog.releases WHERE project_env_key=$1",
+            &[&PROJECT_ENV_KEY],
         )
         .await?
         .get(0);
     let release = generation
-        .query_one(RELEASE_COMPONENTS_SQL, &[&ENV_KEY, &manifest_digest])
+        .query_one(
+            RELEASE_COMPONENTS_SQL,
+            &[&PROJECT_ENV_KEY, &manifest_digest],
+        )
         .await?;
     let components: Value = serde_json::from_str(&release.get::<_, String>(0))?;
     assert_eq!(components.as_array().map(Vec::len), Some(1));
     assert_eq!(components[0]["component-digest"], component_digest);
     assert!(
         generation
-            .query(RELEASE_COMPONENTS_SQL, &[&ENV_KEY, &digest("e")])
+            .query(RELEASE_COMPONENTS_SQL, &[&PROJECT_ENV_KEY, &digest("e")])
             .await?
             .is_empty()
     );
     // *** `has_table_privilege` IS BLIND TO RLS. *** The ACL says this
-    // principal may SELECT `wamn_run.run_queue`; `run_queue_env_key` carries no
-    // `TO` clause and keys on `app.env_key`, so the SAME connection reads one
+    // principal may SELECT `wamn_run.run_queue`; `run_queue_project_env_key` carries no
+    // `TO` clause and keys on `app.project_env_key`, so the SAME connection reads one
     // row with the claim injected and ZERO without it. This is why every arm in
     // this file asserts rows rather than privileges.
     let claimed_rows: i64 = generation
@@ -319,7 +322,7 @@ async fn executor_platform_surface_live() -> anyhow::Result<()> {
         .get(0);
     assert_eq!(
         unclaimed_rows, 0,
-        "an unclaimed session read the queue that the tenant claim is supposed to fence"
+        "an unclaimed session read the queue that the project claim is supposed to fence"
     );
     let acl_says_yes: bool = generation
         .query_one(
@@ -341,7 +344,14 @@ async fn executor_platform_surface_live() -> anyhow::Result<()> {
     // each ACL fact. Only the source arms refuse before a socket exists; the
     // rest are the server's own answers, and none of them had ever been asked.
     let expected_identity = |database: &str, memberships, acl| {
-        ExpectedCredentialIdentity::new(GENERATION, GENERATION, database, ENV_KEY, memberships, acl)
+        ExpectedCredentialIdentity::new(
+            GENERATION,
+            GENERATION,
+            database,
+            PROJECT_ENV_KEY,
+            memberships,
+            acl,
+        )
     };
     let member_of_own_role = || {
         vec![MembershipExpectation::new(
@@ -355,8 +365,12 @@ async fn executor_platform_surface_live() -> anyhow::Result<()> {
     // connection, so every refusal below is the named predicate and not a
     // probe that refuses whatever it is given.
     let exact = credential_exactness_probe(
-        explicit_credential_source(&platform_url, ENV_KEY, AmbientCredentialState::Absent)
-            .map_err(|error| anyhow::anyhow!("{error}"))?,
+        explicit_credential_source(
+            &platform_url,
+            PROJECT_ENV_KEY,
+            AmbientCredentialState::Absent,
+        )
+        .map_err(|error| anyhow::anyhow!("{error}"))?,
         expected_identity(
             &database,
             member_of_own_role(),
@@ -409,8 +423,12 @@ async fn executor_platform_surface_live() -> anyhow::Result<()> {
     // role this generation must never hold — the exact confusion that made the
     // platform pool dial the guest url before `wamn-0h0g.22.31`.
     let wrong_membership = credential_exactness_probe(
-        explicit_credential_source(&platform_url, ENV_KEY, AmbientCredentialState::Absent)
-            .map_err(|error| anyhow::anyhow!("{error}"))?,
+        explicit_credential_source(
+            &platform_url,
+            PROJECT_ENV_KEY,
+            AmbientCredentialState::Absent,
+        )
+        .map_err(|error| anyhow::anyhow!("{error}"))?,
         expected_identity(
             &database,
             vec![MembershipExpectation::new(
@@ -444,8 +462,12 @@ async fn executor_platform_surface_live() -> anyhow::Result<()> {
     // superuser, so this passes only because the principal asserted above is
     // not one.
     credential_exactness_probe(
-        explicit_credential_source(&platform_url, ENV_KEY, AmbientCredentialState::Absent)
-            .map_err(|error| anyhow::anyhow!("{error}"))?,
+        explicit_credential_source(
+            &platform_url,
+            PROJECT_ENV_KEY,
+            AmbientCredentialState::Absent,
+        )
+        .map_err(|error| anyhow::anyhow!("{error}"))?,
         expected_identity(
             &database,
             vec![MembershipExpectation::new(
@@ -467,8 +489,12 @@ async fn executor_platform_surface_live() -> anyhow::Result<()> {
     // family and INSERT for nothing, so an expectation that claims INSERT is
     // refused by the server's `has_table_privilege`, not by this test.
     let wrong_acl = credential_exactness_probe(
-        explicit_credential_source(&platform_url, ENV_KEY, AmbientCredentialState::Absent)
-            .map_err(|error| anyhow::anyhow!("{error}"))?,
+        explicit_credential_source(
+            &platform_url,
+            PROJECT_ENV_KEY,
+            AmbientCredentialState::Absent,
+        )
+        .map_err(|error| anyhow::anyhow!("{error}"))?,
         expected_identity(
             &database,
             member_of_own_role(),
@@ -493,15 +519,19 @@ async fn executor_platform_surface_live() -> anyhow::Result<()> {
         Some(CredentialConnectionKind::Pooled)
     );
 
-    // WRONG TENANT BINDING. This arm refuses BEFORE a socket exists, and that
+    // WRONG PROJECT BINDING. This arm refuses BEFORE a socket exists, and that
     // is the whole point: the binding is lifecycle metadata minted beside the
-    // credential, so a selector pairing this credential with another tenant's
+    // credential, so a selector pairing this credential with another project's
     // expectation never gets to open a connection at all. `connection_kind()`
     // is `None` — the evidence that no server was consulted — while the
     // control arm above, differing only in this value, connected and read rows.
     let wrong_binding = credential_exactness_probe(
-        explicit_credential_source(&platform_url, ENV_KEY, AmbientCredentialState::Absent)
-            .map_err(|error| anyhow::anyhow!("{error}"))?,
+        explicit_credential_source(
+            &platform_url,
+            PROJECT_ENV_KEY,
+            AmbientCredentialState::Absent,
+        )
+        .map_err(|error| anyhow::anyhow!("{error}"))?,
         ExpectedCredentialIdentity::new(
             GENERATION,
             GENERATION,
@@ -511,19 +541,19 @@ async fn executor_platform_surface_live() -> anyhow::Result<()> {
             Vec::new(),
         ),
     )
-    .expect_err("a credential paired with another tenant's expectation must be refused");
+    .expect_err("a credential paired with another project's expectation must be refused");
     assert_eq!(
         wrong_binding.error_type(),
         CredentialProbeErrorType::PredicateMismatch
     );
     assert_eq!(
         wrong_binding.predicate(),
-        CredentialProbePredicate::TenantBinding
+        CredentialProbePredicate::ProjectBinding
     );
     assert_eq!(
         wrong_binding.connection_kind(),
         None,
-        "the tenant binding must refuse before a connection is used"
+        "the project binding must refuse before a connection is used"
     );
 
     // Warm the real executor pool before revoking membership on its existing connection.
@@ -545,7 +575,7 @@ async fn executor_platform_surface_live() -> anyhow::Result<()> {
         COMPONENT,
         &wamn_control_provision::PlatformComponent::Executor.principal_name(),
     )?;
-    plugin.set_env_key(COMPONENT, ENV_KEY)?;
+    plugin.set_project_env_key(COMPONENT, PROJECT_ENV_KEY)?;
     plugin.set_schema(COMPONENT, "wamn_run")?;
     plugin.set_runner(COMPONENT, COMPONENT)?;
     // A production host carries its release digest and claims only the runs
@@ -559,9 +589,9 @@ async fn executor_platform_surface_live() -> anyhow::Result<()> {
         ProductionLeaseRenewal::FenceLost
     );
     let snapshot = "SELECT jsonb_build_array(to_jsonb(r), to_jsonb(q)) \
-                    FROM wamn_run.runs r JOIN wamn_run.run_queue q USING (env_key, run_id) \
-                    WHERE r.env_key = $1 AND r.run_id = 'run-1'";
-    let before: Value = admin.query_one(snapshot, &[&ENV_KEY]).await?.get(0);
+                    FROM wamn_run.runs r JOIN wamn_run.run_queue q USING (project_env_key, run_id) \
+                    WHERE r.project_env_key = $1 AND r.run_id = 'run-1'";
+    let before: Value = admin.query_one(snapshot, &[&PROJECT_ENV_KEY]).await?.get(0);
     admin
         .batch_execute(&format!(
             "REVOKE wamn_executor_platform FROM {GENERATION}; \
@@ -599,7 +629,7 @@ async fn executor_platform_surface_live() -> anyhow::Result<()> {
                 .contains("executor-platform-authority-required")
         );
     }
-    let after: Value = admin.query_one(snapshot, &[&ENV_KEY]).await?.get(0);
+    let after: Value = admin.query_one(snapshot, &[&PROJECT_ENV_KEY]).await?.get(0);
     assert_eq!(
         after, before,
         "every refused operation must leave the run and queue unchanged"

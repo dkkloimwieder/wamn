@@ -6,7 +6,7 @@
 //! passed, so its existence is the proof. This crate pulls an artifact by its
 //! full digest or by its tag `<package_id>-<version>`, checks the manifest and
 //! every layer against their digests, and reads the component descriptor
-//! layers. Publish, wiring authorship and the management gate read component
+//! layers. Publish, wiring authorship and the management condition read component
 //! facts through it, so they read them the same way.
 //!
 //! `wamn-package-control` packs and pushes package artifacts with [`Repository`]. A
@@ -491,7 +491,7 @@ pub async fn read_descriptors(
 }
 
 /// The admitted component facts of one package, for wiring authorship and the
-/// management gate (R2): the descriptors of its package artifact, in `scope`.
+/// management condition (R2): the descriptors of its package artifact, in `scope`.
 ///
 /// # Errors
 ///

@@ -14,15 +14,15 @@
 //! through its `ON DELETE CASCADE`, which needs no privilege of its own.
 //! Repeated calls are safe.
 //!
-//! The verb checks the tenant identity. `--tenant` used to be a free argument
-//! that reached the statement as an `app.env_key` GUC, which fails in two
+//! The verb checks the project identity. `--tenant` used to be a free argument
+//! that reached the statement as an `app.project_env_key` GUC, which fails in two
 //! directions at once: an unset claim makes the predicate NULL, so the delete
 //! removes nothing and the verb still prints a success line; and a claim naming
-//! somebody else's tenant is honoured, because `wamn_run.runs`' one permissive
-//! floor arm is `TO wamn_platform USING (true)` and every platform-grain family
-//! matches it without a tenant predicate. [`verify_retention_identity`] closes
-//! both by DERIVING the only tenant this credential may prune from the connected
-//! role name and refusing anything else before a statement runs. The tenant then
+//! somebody else's project is honoured, because `wamn_run.runs`' one permissive
+//! base policy arm is `TO wamn_platform USING (true)` and every platform-grain family
+//! matches it without a project predicate. [`verify_retention_identity`] closes
+//! both by DERIVING the only project this credential may prune from the connected
+//! role name and refusing anything else before a statement runs. The project then
 //! reaches the delete as a bound parameter.
 //!
 //! **v0 is age-based only:** every terminal run is independently eligible once
@@ -37,7 +37,7 @@ use wamn_control_provision::{
 /// Inputs of one terminal run history prune.
 #[derive(Debug)]
 pub struct PruneRunHistoryRequest {
-    /// Postgres URL for this tenant's `wamn_run_retention` credential generation
+    /// Postgres URL for this project's `wamn_run_retention` credential generation
     /// — the NOSUPERUSER/NOBYPASSRLS role whose whole authority is the terminal
     /// run delete. The verb refuses any other identity.
     pub database_url: String,
@@ -64,12 +64,12 @@ pub struct PruneRunHistoryRequest {
 
 impl PruneRunHistoryRequest {
     /// The composed environment key derived from the environment coordinate.
-    pub fn env_key(&self) -> String {
+    pub fn project_env_key(&self) -> String {
         wamn_control_registry::project_env_key(&self.org, &self.project, &self.environment)
     }
 }
 
-/// Prune one tenant's expired terminal run history and return the number of
+/// Prune one project's expired terminal run history and return the number of
 /// `runs` rows the delete removed. A dry run rolls back and returns the count
 /// the same delete would have removed.
 pub async fn prune_terminal_run_history(request: PruneRunHistoryRequest) -> anyhow::Result<u64> {
@@ -83,7 +83,7 @@ pub async fn prune_terminal_run_history(request: PruneRunHistoryRequest) -> anyh
         .iter()
         .any(|part| part.trim().is_empty())
     {
-        bail!("the tenant must be non-empty (it is the tenant the delete is bound to)");
+        bail!("the project must be non-empty (it is the project the delete is bound to)");
     }
 
     let (mut client, conn) = tokio_postgres::connect(&request.database_url, NoTls)
@@ -91,11 +91,11 @@ pub async fn prune_terminal_run_history(request: PruneRunHistoryRequest) -> anyh
         .context("retention credential connect")?;
     let conn_task = tokio::spawn(conn);
     let result = async {
-        verify_retention_identity(&client, &request.env_key()).await?;
+        verify_retention_identity(&client, &request.project_env_key()).await?;
         prune(
             &mut client,
             &request.schema,
-            &request.env_key(),
+            &request.project_env_key(),
             request.retention_days,
             !request.dry_run,
         )
@@ -108,7 +108,7 @@ pub async fn prune_terminal_run_history(request: PruneRunHistoryRequest) -> anyh
 }
 
 /// Refuse unless the connected role is one of the two credential generations
-/// this exact `(tenant, database)` pair mints (`wamn-0h0g.12.69`).
+/// this exact `(project, database)` pair mints (`wamn-0h0g.12.69`).
 ///
 /// # This is the negative-negative guard, and it has to be here
 ///
@@ -116,16 +116,16 @@ pub async fn prune_terminal_run_history(request: PruneRunHistoryRequest) -> anyh
 /// security whose only arm a platform-grain family matches is
 /// `TO wamn_platform USING (true)`, so a retention credential's rows are not
 /// narrowed by the server at all — measured on PostgreSQL 18.6, a generation
-/// minted for one tenant deletes another tenant's terminal runs, and their queue
+/// minted for one project deletes another project's terminal runs, and their queue
 /// rows cascade with them. PostgreSQL privileges are relation- and
 /// column-shaped, never row-shaped, so the grant set cannot express it either.
 ///
 /// What the server DOES supply is an unforgeable identity: the generation login
-/// name carries the 160-bit scope digest of `(tenant, database)` under the
+/// name carries the 160-bit scope digest of `(project, database)` under the
 /// retention family's own domain, and `current_user` cannot be rewritten by a
 /// session. Deriving the expected names from the environment coordinate and `current_database()`
 /// and comparing turns a free CLI argument into a claim the credential has to
-/// back. A missing, foreign or mismatched tenant therefore ERRORS here, instead
+/// back. A missing, foreign or mismatched project therefore ERRORS here, instead
 /// of reaching a predicate that matches nothing and reporting `pruned 0 terminal
 /// run(s)` with exit 0.
 ///
@@ -134,7 +134,7 @@ pub async fn prune_terminal_run_history(request: PruneRunHistoryRequest) -> anyh
 /// input that chose it establishes nothing.
 async fn verify_retention_identity(
     client: &tokio_postgres::Client,
-    env_key: &str,
+    project_env_key: &str,
 ) -> anyhow::Result<()> {
     let row = client
         .query_one(
@@ -146,8 +146,8 @@ async fn verify_retention_identity(
     let role: String = row.get("role");
     let database: String = row.get("database");
 
-    let scope = WorkloadRoleScope::EnvKey {
-        env_key,
+    let scope = WorkloadRoleScope::ProjectEnvKey {
+        project_env_key,
         database: &database,
     };
     let mut expected = Vec::new();
@@ -162,28 +162,28 @@ async fn verify_retention_identity(
     }
     bail!(
         "refusing to prune: connected as {role:?} in database {database:?}, which is not a \
-         run-retention credential generation for env_key {env_key:?} (expected one of {expected:?}). \
+         run-retention credential generation for project_env_key {project_env_key:?} (expected one of {expected:?}). \
          Pruning under any other identity either carries authority this verb does not need or \
          would delete nothing and report success."
     )
 }
 
 /// The reusable core: pin the session `search_path` to the project, then run the
-/// pure prune statement with the tenant BOUND. When `apply`, the delete commits;
+/// pure prune statement with the project BOUND. When `apply`, the delete commits;
 /// otherwise it runs inside a rolled-back transaction so `dry_run` reports the
 /// exact affected count without mutating. Returns the number of `runs` rows
 /// removed.
 ///
-/// No `app.env_key` claim is injected any more. That GUC keyed the RETIRED floor;
+/// No `app.project_env_key` claim is injected any more. That GUC keyed the RETIRED minimum;
 /// `wamn-0h0g.22.6` re-keyed `runs` onto `current_user`, and the one thing the
 /// claim still did here was supply a predicate that silently matched nothing
 /// when it was absent. The `run_queue` cascade does not need it: measured, a
 /// referential-integrity trigger consults neither the deleter's grants nor that
-/// relation's own `app.env_key` policy.
+/// relation's own `app.project_env_key` policy.
 pub async fn prune(
     client: &mut tokio_postgres::Client,
     schema: &str,
-    env_key: &str,
+    project_env_key: &str,
     retention_days: u32,
     apply: bool,
 ) -> anyhow::Result<u64> {
@@ -198,13 +198,13 @@ pub async fn prune(
     let sql = wamn_run_state::sql::prune_terminal_runs_sql();
     if apply {
         client
-            .execute(&sql, &[&env_key, &days])
+            .execute(&sql, &[&project_env_key, &days])
             .await
             .context("prune terminal runs")
     } else {
         let tx = client.transaction().await.context("begin dry-run tx")?;
         let n = tx
-            .execute(&sql, &[&env_key, &days])
+            .execute(&sql, &[&project_env_key, &days])
             .await
             .context("prune terminal runs (dry-run)")?;
         tx.rollback().await.context("roll back dry-run")?;
@@ -217,13 +217,13 @@ mod tests {
     use super::*;
 
     /// The two identities the verb accepts are the A/B generations of ONE
-    /// `(tenant, database)` scope, and another tenant's digest differs — which
+    /// `(project, database)` scope, and another project's digest differs — which
     /// is the whole basis of the refusal, since a login name cannot be made to
-    /// claim a tenant it was not minted for.
+    /// claim a project it was not minted for.
     #[test]
     fn the_expected_retention_identities_are_the_two_generations_of_one_scope() {
-        let scope = WorkloadRoleScope::EnvKey {
-            env_key: "acme-prod",
+        let scope = WorkloadRoleScope::ProjectEnvKey {
+            project_env_key: "acme-prod",
             database: "wamn-db-acme--billing--dev--ab12cd",
         };
         let a = workload_generation_role(
@@ -231,39 +231,39 @@ mod tests {
             scope,
             CredentialGeneration::A,
         )
-        .expect("retention is a tenant-scoped family");
+        .expect("retention is a project-scoped family");
         let b = workload_generation_role(
             WorkloadRoleFamily::Retention,
             scope,
             CredentialGeneration::B,
         )
-        .expect("retention is a tenant-scoped family");
+        .expect("retention is a project-scoped family");
         assert!(a.starts_with("wamn_run_retention_"), "{a}");
         assert!(a.ends_with("_a"), "{a}");
         assert!(b.ends_with("_b"), "{b}");
         assert_eq!(a[..a.len() - 1], b[..b.len() - 1]);
         let other = workload_generation_role(
             WorkloadRoleFamily::Retention,
-            WorkloadRoleScope::EnvKey {
-                env_key: "other-tenant",
+            WorkloadRoleScope::ProjectEnvKey {
+                project_env_key: "other-project",
                 database: "wamn-db-acme--billing--dev--ab12cd",
             },
             CredentialGeneration::A,
         )
-        .expect("retention is a tenant-scoped family");
+        .expect("retention is a project-scoped family");
         assert_ne!(a, other);
-        // The same tenant in a DIFFERENT database is a different credential too:
+        // The same project in a DIFFERENT database is a different credential too:
         // the digest frames both fields, so a retention Secret cannot be moved
         // between project-env databases.
         let elsewhere = workload_generation_role(
             WorkloadRoleFamily::Retention,
-            WorkloadRoleScope::EnvKey {
-                env_key: "acme-prod",
+            WorkloadRoleScope::ProjectEnvKey {
+                project_env_key: "acme-prod",
                 database: "wamn-db-acme--billing--prod--ef34ab",
             },
             CredentialGeneration::A,
         )
-        .expect("retention is a tenant-scoped family");
+        .expect("retention is a project-scoped family");
         assert_ne!(a, elsewhere);
     }
 }

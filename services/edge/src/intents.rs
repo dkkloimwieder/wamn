@@ -47,7 +47,7 @@ pub async fn run(args: &[String], db: &Path) -> anyhow::Result<String> {
                     intent.idempotency_key,
                     intent.package,
                     intent.release,
-                    intent.tenant
+                    intent.partition
                 )?;
             }
             Ok(output)

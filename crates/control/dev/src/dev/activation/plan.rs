@@ -74,7 +74,7 @@ pub(super) fn host_namespace(identity: &DevActivationIdentity) -> &str {
 /// here rather than in a cluster.
 pub fn flow_http_identity_claims(identity: &DevActivationIdentity) -> [(&'static str, String); 4] {
     [
-        ("wamn.env_key", identity.env_key()),
+        ("wamn.project_env_key", identity.project_env_key()),
         ("wamn.catalog", identity.catalog.clone()),
         ("wamn.environment", identity.environment.clone()),
         ("wamn.project", identity.project.clone()),

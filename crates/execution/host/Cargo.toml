@@ -50,7 +50,7 @@ wamn-package-artifact = { workspace = true }
 object_store = { workspace = true }
 reqwest = { workspace = true, features = ["json"] }
 serde_yaml = { workspace = true }
-# `wamn_catalog::fixture_graph` is gated behind `test-util`.
+# `wamn_catalog::fixture_graph` is conditioned behind `test-util`.
 wamn-catalog = { workspace = true, features = ["test-util"] }
 wamn-package-control = { workspace = true }
 wamn-release-control = { workspace = true }

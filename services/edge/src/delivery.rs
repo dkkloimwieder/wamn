@@ -33,8 +33,8 @@ pub struct EdgeDelivery {
     application: EdgeApplication,
     /// The intent log of every route write.
     intents: SqliteIntentStore,
-    /// The tenant of every intent: the organization the box serves.
-    tenant: String,
+    /// The organization the box serves.
+    org: String,
 }
 
 impl std::fmt::Debug for EdgeDelivery {
@@ -48,18 +48,18 @@ impl std::fmt::Debug for EdgeDelivery {
 
 impl EdgeDelivery {
     /// Deliver routes of `release` to `application`, and log the intents of
-    /// `tenant` in `intents`.
+    /// `org` in `intents`.
     pub fn new(
         release: Arc<EdgeRelease>,
         application: EdgeApplication,
         intents: SqliteIntentStore,
-        tenant: String,
+        org: String,
     ) -> Self {
         Self {
             release,
             application,
             intents,
-            tenant,
+            org,
         }
     }
 
@@ -151,7 +151,7 @@ impl EdgeDelivery {
             .route(&target.package_id, component, operation)
             .map(|route| IntentContext {
                 store: intents,
-                tenant: &self.tenant,
+                partition: &self.org,
                 release: &release,
                 package: &target.package_id,
                 kind: route.type_,

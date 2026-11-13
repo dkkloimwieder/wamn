@@ -167,7 +167,7 @@ pub async fn read_project_env_policy(system_url: &str, triple: &Triple) -> anyho
 /// The supplied credential holds the grants used by the registry builders.
 ///
 /// Returns the environment's STORED instance suffix, which is `minted` only on a
-/// first provision — see [`do_record_project_env`]. The tenant derives from
+/// first provision — see [`do_record_project_env`]. The project derives from
 /// the coordinate (`project_env_key`).
 #[expect(clippy::too_many_arguments)]
 pub(super) async fn record_project_env(
@@ -185,12 +185,12 @@ pub(super) async fn record_project_env(
         .await
         .context("system db connect")?;
     let conn_task = tokio::spawn(conn);
-    let env_key =
+    let project_env_key =
         wamn_control_registry::project_env_key(&triple.org, &triple.project, triple.env.as_str());
     let result = do_record_project_env(
         &mut client,
         triple,
-        Some(&env_key),
+        Some(&project_env_key),
         policy,
         target,
         secret_name,
@@ -209,7 +209,7 @@ pub(super) async fn record_project_env(
 pub(super) async fn do_record_project_env(
     client: &mut tokio_postgres::Client,
     triple: &Triple,
-    env_key: Option<&str>,
+    project_env_key: Option<&str>,
     policy: Option<&str>,
     target: &str,
     secret_name: &str,
@@ -289,16 +289,18 @@ pub(super) async fn do_record_project_env(
     let stored_disposable: bool = row.get(1);
     validate_instance_suffix(&stored)
         .map_err(|error| anyhow::anyhow!("registry instance suffix: {error}"))?;
-    project_env_key_environment(client, triple, env_key, &stored, stored_disposable).await?;
+    project_env_key_environment(client, triple, project_env_key, &stored, stored_disposable)
+        .await?;
     Ok(stored)
 }
 
 /// Probe for the control store's environment projection without assuming it.
 const CONTROL_PROJECTION_INSTALLED_SQL: &str =
-    "SELECT to_regclass('catalog.tenant_environments') IS NOT NULL";
+    "SELECT to_regclass('catalog.project_environments') IS NOT NULL";
 
-/// Claim the projected tenant for the transaction's RLS policy.
-const CLAIM_PROJECTED_ENV_KEY_SQL: &str = "SELECT set_config('app.env_key', $1, true)";
+/// Claim the projected project for the transaction's RLS policy.
+const CLAIM_PROJECTED_PROJECT_ENV_KEY_SQL: &str =
+    "SELECT set_config('app.project_env_key', $1, true)";
 
 /// Project the recorded project-env into the control store, beside the facts its
 /// `disposable` marker governs (wamn-10yt.38).
@@ -309,14 +311,14 @@ const CLAIM_PROJECTED_ENV_KEY_SQL: &str = "SELECT set_config('app.env_key', $1, 
 /// and a disagreement between the two planes refuses instead of passing.
 ///
 /// ABSENCE MEANS DURABLE, so a system database with no control store, or a
-/// provisioning that names no tenant, records nothing here and admits exactly as
+/// provisioning that names no project, records nothing here and admits exactly as
 /// it always did. Only a DISPOSABLE environment insists, because for it the
 /// missing projection would be the difference between an author's edit landing
 /// and an author's edit being refused.
 pub async fn project_env_key_environment(
     client: &mut tokio_postgres::Client,
     triple: &Triple,
-    env_key: Option<&str>,
+    project_env_key: Option<&str>,
     instance_suffix: &str,
     disposable: bool,
 ) -> anyhow::Result<()> {
@@ -328,16 +330,16 @@ pub async fn project_env_key_environment(
     if !installed {
         anyhow::ensure!(
             !disposable,
-            "a disposable project-env needs catalog.tenant_environments: apply \
+            "a disposable project-env needs catalog.project_environments: apply \
              wamn_control_provision::CONTROL_PORTABLE_STORE_SQL to the system database first"
         );
         return Ok(());
     }
-    let Some(env_key) = env_key else {
+    let Some(project_env_key) = project_env_key else {
         anyhow::ensure!(
             !disposable,
-            "a disposable project-env needs its derived env_key: the admit path resolves the \
-             marker by the env_key its component facts are keyed on"
+            "a disposable project-env needs its derived project_env_key: the admit path resolves the \
+             marker by the project_env_key its component facts are keyed on"
         );
         return Ok(());
     };
@@ -346,14 +348,14 @@ pub async fn project_env_key_environment(
         .await
         .context("begin the project-env control projection")?;
     transaction
-        .query_one(CLAIM_PROJECTED_ENV_KEY_SQL, &[&env_key])
+        .query_one(CLAIM_PROJECTED_PROJECT_ENV_KEY_SQL, &[&project_env_key])
         .await
-        .context("claim the projected tenant")?;
+        .context("claim the projected project")?;
     transaction
         .execute(
-            sql::insert_env_key_environment_sql(),
+            sql::insert_project_env_key_environment_sql(),
             &[
-                &env_key,
+                &project_env_key,
                 &triple.org,
                 &triple.project,
                 &env,
@@ -365,7 +367,10 @@ pub async fn project_env_key_environment(
         .context("project the project-env into the control store")?;
     // A losing insert waits, then this read locks the committed winner.
     let row = transaction
-        .query_one(sql::read_env_key_environment_sql(), &[&env_key])
+        .query_one(
+            sql::read_project_env_key_environment_sql(),
+            &[&project_env_key],
+        )
         .await
         .context("read the projected environment identity")?;
     let recorded = Triple::new(
@@ -373,11 +378,15 @@ pub async fn project_env_key_environment(
         row.try_get::<_, String>(1)?,
         row.try_get::<_, String>(2)?,
     );
-    wamn_control_provision::check_env_key_environment_identity(env_key, &recorded, triple)?;
+    wamn_control_provision::check_project_env_key_environment_identity(
+        project_env_key,
+        &recorded,
+        triple,
+    )?;
     transaction
         .execute(
-            sql::refresh_env_key_environment_sql(),
-            &[&env_key, &instance_suffix, &disposable],
+            sql::refresh_project_env_key_environment_sql(),
+            &[&project_env_key, &instance_suffix, &disposable],
         )
         .await
         .context("refresh the projected environment")?;
@@ -388,25 +397,25 @@ pub async fn project_env_key_environment(
         .context("commit the project-env control projection")
 }
 
-/// Stamp the creation the recreate just minted onto the tenant's projected
+/// Stamp the creation the recreate just minted onto the project's projected
 /// environment, so every control-plane fact this run writes keys to it
 /// (wamn-10yt.52).
 ///
-/// The routine refuses a tenant that provisioning never projected — absence
+/// The routine refuses a project that provisioning never projected — absence
 /// means durable, and a durable environment is never recreated.
 pub async fn claim_environment_instance(
     client: &mut tokio_postgres::Client,
-    env_key: &str,
+    project_env_key: &str,
     instance: &str,
 ) -> anyhow::Result<()> {
     let transaction = super::provisioning_transaction(client).await?;
     let affected_rows = transaction
         .execute(
             wamn_schema_control::claim_environment_instance_sql(),
-            &[&env_key, &instance],
+            &[&project_env_key, &instance],
         )
         .await?;
-    wamn_schema_control::check_environment_instance_claim(env_key, affected_rows)?;
+    wamn_schema_control::check_environment_instance_claim(project_env_key, affected_rows)?;
     transaction.commit().await?;
     Ok(())
 }

@@ -56,12 +56,12 @@ pub(in super::super) async fn finish_transaction(
 
 /// The fully-bound claim statement run inside the plugin-managed transaction
 /// (R2/R16). Every claim value travels as a bind parameter (`$1..$8`) — there is
-/// NO string-interpolation path, so an injection-shaped tenant / schema / runner
+/// NO string-interpolation path, so an injection-shaped project / schema / runner
 /// / role / user id is *unrepresentable* as SQL, not merely rejected by
 /// validation. `set_config` with `is_local => true` is the exact `SET LOCAL`
 /// equivalent (scoped to the current transaction). Parameter order:
 ///
-/// - `$1` `app.env_key` — the RLS claim (always present).
+/// - `$1` `app.project_env_key` — the RLS claim (always present).
 /// - `$2` `statement_timeout` — as TEXT (a bare-integer string = milliseconds).
 /// - `$3` `search_path` — `COALESCE($3, current_setting('search_path'))`, so a
 ///   NULL bind (absent schema) preserves the server's default search_path; the
@@ -73,13 +73,13 @@ pub(in super::super) async fn finish_transaction(
 ///   compiled policies key on (wamn-0h0g.23.1), and the executing principal
 ///   the record-history triggers stamp. Bound UNCONDITIONALLY, not
 ///   COALESCEd to the current value like `$3`/`$4`: an absent claim binds `''`,
-///   which is exactly the deny floor
+///   which is exactly the base denial policy
 ///   `COALESCE(current_setting('app.role', true), '')` and
 ///   `NULLIF(current_setting('app.user_id', true), '')::uuid` use in the static
 ///   application-schema RLS contract. Re-asserting whatever the
 ///   pooled connection currently carries would let a session-level value survive
 ///   into the next component's transaction, turning a shared connection into a
-///   role escalation; binding the floor cannot.
+///   role escalation; binding the minimum cannot.
 /// - `$7` `app.operation` is the executing operation token, or
 ///   `wamn:<component>` for a platform component outside a registered
 ///   operation. The record-history log records it as the source of a write.
@@ -96,7 +96,7 @@ pub(in super::super) async fn finish_transaction(
 /// separate prepared emit pipelined by [`begin_with_claims`]
 /// only for a run-owned transaction.
 pub(super) const CLAIM_SQL: &str = "SELECT \
-     set_config('app.env_key', $1, true), \
+     set_config('app.project_env_key', $1, true), \
      set_config('statement_timeout', $2, true), \
      set_config('search_path', COALESCE($3, current_setting('search_path')), true), \
      set_config('app.runner', COALESCE($4, current_setting('app.runner', true)), true), \
@@ -105,20 +105,20 @@ pub(super) const CLAIM_SQL: &str = "SELECT \
      set_config('app.operation', $7, true), \
      set_config('app.application', $8, true)";
 
-/// The GUEST claim statement: [`CLAIM_SQL`] WITHOUT `app.env_key`
+/// The GUEST claim statement: [`CLAIM_SQL`] WITHOUT `app.project_env_key`
 /// (`wamn-0h0g.22.6.7`).
 ///
-/// *** THE GUEST'S TENANT IS ITS LOGIN, NOT A CLAIM. *** Every relation the
+/// *** THE GUEST'S PROJECT IS ITS LOGIN, NOT A CLAIM. *** Every relation the
 /// guest can reach now keys on
-/// `wamn_authority.tenant_key(env_key) = wamn_authority.current_tenant_key()`,
-/// which reads `current_user` — so injecting `app.env_key` here would set a GUC
+/// `wamn_authority.project_key(project_env_key) = wamn_authority.current_project_key()`,
+/// which reads `current_user` — so injecting `app.project_env_key` here would set a GUC
 /// that nothing the guest can read consults. Leaving it would not be belt and
 /// braces; it would be a second, SETTABLE statement about an authority the
 /// session no longer derives that way, and the next person to add a policy
 /// would have two boundaries to choose between.
 ///
 /// `app.role` and `app.user_id` STAY. They key the RESTRICTIVE per-role and
-/// per-user policies, a different claim class layered INSIDE the tenant floor
+/// per-user policies, a different claim class layered INSIDE the project base grants
 /// and explicitly outside `wamn-0h0g.22.6`'s scope. `app.operation` stays with
 /// them: the record-history log records it. `app.application` stays too,
 /// for logging only.
@@ -270,11 +270,11 @@ impl BoundClaims {
 impl WamnPostgres {
     /// `BEGIN` + claim/limit injection. The claims are injected by ONE fully
     /// bound statement ([`CLAIM_SQL`]) whose every value travels as a bind
-    /// parameter — there is no interpolation path (R2/R16). `env_key` is always
+    /// parameter — there is no interpolation path (R2/R16). `project_env_key` is always
     /// present; `schema`/`runner` bind NULL when absent (COALESCE-to-current
     /// preserves the server default / prior value — the S2/pgbench path is
     /// byte-unchanged), and `role`/`user_id` bind `''` when absent, the deny
-    /// floor the compiled RLS predicates read. An absent `operation` or
+    /// minimum the compiled RLS predicates read. An absent `operation` or
     /// `application` also binds `''`. A run-owned transaction also
     /// appends the transactional `wamn.causation` emit (l5i9.12.2).
     ///
@@ -292,7 +292,7 @@ impl WamnPostgres {
         conn: &Object,
         class: AuthorityClass,
         read: bool,
-        env_key: &str,
+        project_env_key: &str,
         schema: Option<&str>,
         runner: Option<&str>,
         role: Option<&str>,
@@ -306,7 +306,7 @@ impl WamnPostgres {
             conn,
             class,
             read,
-            env_key,
+            project_env_key,
             schema,
             runner,
             role,
@@ -330,7 +330,7 @@ impl WamnPostgres {
         conn: &Object,
         class: AuthorityClass,
         read: bool,
-        env_key: &str,
+        project_env_key: &str,
         schema: Option<&str>,
         runner: Option<&str>,
         role: Option<&str>,
@@ -340,11 +340,11 @@ impl WamnPostgres {
         run: Option<&Causation>,
         statement_timeout_ms: u32,
     ) -> Result<BoundClaims, PgError> {
-        // The tenant is still VALIDATED on the guest path even though it is no
+        // The project is still VALIDATED on the guest path even though it is no
         // longer bound: it selected the credential this connection was checked
         // out with, so a malformed one is a bug worth failing on.
         validate_claims(
-            env_key,
+            project_env_key,
             schema,
             runner,
             role,
@@ -369,7 +369,7 @@ impl WamnPostgres {
             Some(application.unwrap_or_default().to_owned()),
         ];
         if !guest {
-            params.insert(0, Some(env_key.to_owned()));
+            params.insert(0, Some(project_env_key.to_owned()));
         }
         // The isolation level is stated, not inherited from a session default:
         // the write log's retry reads the claim that its insert waited on, and
@@ -428,7 +428,7 @@ impl WamnPostgres {
         params: &[SqlValue],
         want_rows: bool,
     ) -> Result<OneShotResult, PgError> {
-        let env_key = self.require_env_key(component_id)?;
+        let project_env_key = self.require_project_env_key(component_id)?;
         let schema = self.schema_for(component_id);
         let runner = self.runner_for(component_id);
         let role = self.role_for(component_id);
@@ -437,14 +437,14 @@ impl WamnPostgres {
         let application = self.application_for(component_id);
         let run = self.current_run_for(component_id);
         let (conn, pp, authority) = self
-            .checkout_workload(component_id, project, &env_key)
+            .checkout_workload(component_id, project, &project_env_key)
             .await?;
         if let Err(e) = self
             .begin_with_claims(
                 &conn,
                 authority,
                 false,
-                &env_key,
+                &project_env_key,
                 schema.as_deref(),
                 runner.as_deref(),
                 role.as_deref(),
@@ -500,8 +500,8 @@ impl WamnPostgres {
         want_wal: bool,
     ) -> Result<RowSet, StatementError> {
         let project = self.project_for(component_id);
-        let env_key = self
-            .require_env_key(component_id)
+        let project_env_key = self
+            .require_project_env_key(component_id)
             .map_err(StatementError::Postgres)?;
         let schema = self.schema_for(component_id);
         let runner = self.runner_for(component_id);
@@ -513,7 +513,7 @@ impl WamnPostgres {
         let application = self.application_for(component_id);
         let run = self.current_run_for(component_id);
         let (connection, policy, authority) = self
-            .checkout_workload(component_id, &project, &env_key)
+            .checkout_workload(component_id, &project, &project_env_key)
             .await
             .map_err(StatementError::Postgres)?;
         let connection = StatementConnectionGuard::new(connection, Arc::clone(&self.destroyed));
@@ -573,7 +573,7 @@ impl WamnPostgres {
                 connection.connection(),
                 authority,
                 false,
-                &env_key,
+                &project_env_key,
                 schema.as_deref(),
                 runner.as_deref(),
                 role.as_deref(),

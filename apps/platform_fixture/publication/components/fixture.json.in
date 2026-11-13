@@ -1,6 +1,6 @@
 {
   "scope": {
-    "env_key": "__ENV_KEY__",
+    "project_env_key": "__PROJECT_ENV_KEY__",
     "package-id": "platform_fixture"
   },
   "component": "fixture",

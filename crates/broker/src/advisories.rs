@@ -231,7 +231,7 @@ mod tests {
         let broker = event_broker::prepare(
             root.path(),
             &scope,
-            "tenant",
+            "project",
             &source,
             &advisory,
             &[consumer],
@@ -1353,7 +1353,7 @@ mod tests {
                 &authority,
                 &directory,
                 scope,
-                "route-tenant",
+                "route-project",
                 &source,
                 &advisory,
                 &consumers,

@@ -1,6 +1,6 @@
 //! wamn-host: the production host binary.
 //!
-//! MVP outcome: crash floor · M0 execution · flow composition.
+//! MVP outcome: crash minimum · M0 execution · flow composition.
 //!
 //! `host` combines HTTP and durable queue execution in one runtime.
 //! The runtime-operator controls ClusterHost over NATS. Identity and CDC

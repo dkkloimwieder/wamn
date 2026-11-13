@@ -11,7 +11,7 @@ use wamn_environment_control::environment::stage::{
 use wamn_runtime::plugins::route_authentication::queued_run_caller;
 use wamn_schema_control::BareSchemaName;
 
-const ENV_KEY: &str = "acme--erp--dev";
+const PROJECT_ENV_KEY: &str = "acme--erp--dev";
 const OPERATION: &str = "consumer:item/import@1.0.0";
 
 async fn connect(url: &str) -> anyhow::Result<Client> {
@@ -64,9 +64,9 @@ async fn apply_creates_one_integration_principal_and_grants_declared_dependencie
                 .to_string()],
         )
         .await?;
-    admin.execute("INSERT INTO wamn_run.environment_policies (env_key, expected_environment) VALUES ($1, 'dev')", &[&ENV_KEY]).await?;
+    admin.execute("INSERT INTO wamn_run.environment_policies (project_env_key, expected_environment) VALUES ($1, 'dev')", &[&PROJECT_ENV_KEY]).await?;
     for package in ["consumer", "integration"] {
-        admin.execute("INSERT INTO catalog.packages (physical_schema_fingerprint, env_key,package_id,package_version,artifact_digest) VALUES ('sha256:' || repeat('c', 64), $1,$2,'1.0.0',$3)", &[&ENV_KEY, &package, &format!("sha256:{}", "a".repeat(64))]).await?;
+        admin.execute("INSERT INTO catalog.packages (physical_schema_fingerprint, project_env_key,package_id,package_version,artifact_digest) VALUES ('sha256:' || repeat('c', 64), $1,$2,'1.0.0',$3)", &[&PROJECT_ENV_KEY, &package, &format!("sha256:{}", "a".repeat(64))]).await?;
     }
     let mut manifest: ServingManifest = serde_json::from_value(json!({
         "format-version": wamn_catalog::SERVING_MANIFEST_FORMAT_VERSION,
@@ -146,7 +146,7 @@ async fn apply_creates_one_integration_principal_and_grants_declared_dependencie
     materialize_application_principals(
         system.url(),
         project.url(),
-        ENV_KEY,
+        PROJECT_ENV_KEY,
         &manifest,
         &packages,
         &Publisher::default(),
@@ -156,7 +156,7 @@ async fn apply_creates_one_integration_principal_and_grants_declared_dependencie
     for _ in 0..2 {
         write_release(
             project.url(),
-            ENV_KEY,
+            PROJECT_ENV_KEY,
             digest.as_str(),
             &manifest,
             &wamn_control_provision::PlatformComponent::Provisioning
@@ -167,7 +167,7 @@ async fn apply_creates_one_integration_principal_and_grants_declared_dependencie
         materialize_application_principals(
             system.url(),
             project.url(),
-            ENV_KEY,
+            PROJECT_ENV_KEY,
             &manifest,
             &packages,
             &Publisher::default(),
@@ -217,7 +217,7 @@ async fn apply_creates_one_integration_principal_and_grants_declared_dependencie
     materialize_application_principals(
         system.url(),
         project.url(),
-        ENV_KEY,
+        PROJECT_ENV_KEY,
         &manifest,
         &packages,
         &Publisher::default(),

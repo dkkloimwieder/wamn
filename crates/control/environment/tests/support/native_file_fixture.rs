@@ -50,7 +50,7 @@ pub async fn build_fixture(
     std::fs::write(
         package.join("publication/components/fixture.json.in"),
         serde_json::to_vec(&json!({
-            "scope":{"env_key":"__ENV_KEY__", "package-id":"file_fixture"},
+            "scope":{"project_env_key":"__PROJECT_ENV_KEY__", "package-id":"file_fixture"},
             "component":"fixture", "interface-version":"0.1.0",
             "operations":{"file-fixture:fixture/run":{
                 "registered-operation":"file-fixture:fixture/run",
@@ -140,7 +140,7 @@ pub async fn build_fixture(
             (
                 wamn_package_control::component_declaration::render_declaration_document(
                     &package.join("publication/components/fixture.json.in"),
-                    &scope.env_key,
+                    &scope.project_env_key,
                 )?,
                 vec!["wamn:node".into(), "wamn:postgres".into()],
             )

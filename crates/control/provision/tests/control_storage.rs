@@ -1,7 +1,7 @@
 //! Storage-schema tests for the T1 control-plane registry (wamn-q3n.3;
 //! generalized in wamn-8df.3; org-scoped policies + templates in wamn-8df.4).
 //!
-//! A live-apply gate (invariants 2/3 + placement/env FK integrity + the template
+//! A live-apply acceptance test (invariants 2/3 + placement/env FK integrity + the template
 //! stamp insert-if-absent semantics + the real registry reads and saga builders),
 //! on a test database of the test PostgreSQL server (a superuser URL — the
 //! harness provisions the `wamn_system` owner role). Invariant 1 (no data-plane
@@ -13,7 +13,7 @@ use std::process::{Command as Proc, Stdio};
 
 use wamn_control_registry::{EnvPolicy, Org, OrgEnvPolicy, Project, Registry, Template};
 
-// --- live-apply gate: invariants 2/3 + placement/env FK + seed + saga --------
+// --- live-apply acceptance test: invariants 2/3 + placement/env FK + seed + saga --------
 
 /// Apply `deploy/sql/system-schema.sql` to a test database and assert the live,
 /// DB-enforced invariants. The test connects as the superuser (the harness
@@ -279,7 +279,7 @@ fn system_schema_applies_and_enforces_invariants_on_postgres() {
 }
 
 /// Render `EXECUTE stamp(...)` lines for every policy in a template, with the
-/// MODEL's values as literals — so the live gate stamps exactly what
+/// MODEL's values as literals — so the live acceptance test stamps exactly what
 /// `provision-org` would (the `Template` policies through the real
 /// `stamp_env_policy_sql` builder). None of the shipped values contain a single
 /// quote, so plain `'{}'` quoting is exact.
@@ -532,7 +532,7 @@ DO $$ BEGIN BEGIN
   ASSERT false, 'an unknown placement_type must be rejected';
 EXCEPTION WHEN check_violation THEN NULL; END; END $$;
 
--- Registry and provisioning store references, not tenant database credentials.
+-- Registry and provisioning store references, not project database credentials.
 -- Identity owns authentication hashes and tokens separately.
 DO $$ BEGIN
   ASSERT NOT EXISTS (
@@ -543,7 +543,7 @@ DO $$ BEGIN
       -- auth type names the fields of a credential.
       AND (table_name, column_name) NOT IN
         (('connection_generation', 'credential_id'), ('auth_type', 'credential_schema'))
-  ),'registry and provisioning must hold no tenant DB credential columns';
+  ),'registry and provisioning must hold no project DB credential columns';
 END $$;
 
 -- Invariant 2 (no credentials, R8b): project_envs carries the Secret REFERENCE
@@ -575,7 +575,7 @@ DO $$ DECLARE bad int; BEGIN
     'event_readers must carry the replication-Secret reference (name + optional namespace)';
 END $$;
 
--- Invariant 3 (no tenant data): the ONLY tables in the system DB are the
+-- Invariant 3 (no project data): the ONLY tables in the system DB are the
 -- control-plane registry, provisioning, and first-party identity set.
 DO $$ DECLARE tbls text; BEGIN
   SELECT string_agg(table_schema||'.'||table_name, ',' ORDER BY table_schema, table_name)

@@ -3,7 +3,7 @@
 # named in services/edge/src/config.rs.
 
 [scope]
-# The environment coordinate of the box. The env_key is <org>--<project>--<environment>.
+# The environment coordinate of the box. The project_env_key is <org>--<project>--<environment>.
 # The variables of org and project are WAMN_ORG and WAMN_PROJECT. The
 # environment has no variable.
 org = "org-a"
@@ -17,11 +17,11 @@ digest = "sha256:000000000000000000000000000000000000000000000000000000000000000
 
 [session]
 # The session key file that the release installs, and the scope that a
-# session must name. The organization is also the tenant of every intent.
+# session must name. The organization also partitions every intent.
 keys = "/var/lib/wamn-edge/release/session-keys.json"
 issuer = "https://identity.example.test"
 org = "org-a"
-audience = "tenant-a/edge"
+audience = "org-a/edge"
 
 [store]
 # The SQLite file of intents and samples. One edge process holds it.

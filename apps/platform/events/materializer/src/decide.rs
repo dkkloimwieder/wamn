@@ -7,7 +7,7 @@ use wamn_event_reg::EventRegistration;
 use wamn_event_wire::{Causation, DerivedEvent, Envelope};
 
 use crate::condition::{CompiledCondition, ConditionOutcome, compile_condition};
-use crate::context::{RowTenant, derived_event_context, event_context, row_tenant};
+use crate::context::{RowProject, derived_event_context, event_context, row_project};
 use crate::input::{derived_event_input, event_input};
 
 /// A source-event coordinate that matches the delivered NATS identity.
@@ -37,19 +37,22 @@ pub fn verified_source_event_id(
 /// Accept exactly one host-scoped `Nats-Msg-Id` matching a derived record.
 ///
 /// Scope equality is checked before identity derivation, so bytes claiming a
-/// foreign tenant/project/environment cannot borrow the local header identity.
+/// foreign project/project/environment cannot borrow the local header identity.
 pub fn verified_derived_source_event_id(
-    env_key: &str,
+    project_env_key: &str,
     project: &str,
     environment: &str,
     event: &DerivedEvent,
     message_ids: &[&str],
 ) -> Option<VerifiedSourceEventId> {
-    if event.env_key != env_key || event.project != project || event.environment != environment {
+    if event.project_env_key != project_env_key
+        || event.project != project
+        || event.environment != environment
+    {
         return None;
     }
     let expected = wamn_event_wire::derived_msg_id(
-        env_key,
+        project_env_key,
         project,
         environment,
         &event.package_id,
@@ -69,7 +72,7 @@ pub enum SkipReason {
     SourcePackageMismatch,
     EntityMismatch,
     OpMismatch,
-    ForeignTenant,
+    ForeignProject,
     ConditionFalse,
 }
 
@@ -78,7 +81,7 @@ pub enum SkipReason {
 pub enum RefuseReason {
     SourcePackageIdentityUnknown { source_package_id: String },
     DepthExceeded { parent: Causation },
-    TenantUnscopable,
+    ProjectUnscopable,
     OldImageAbsent,
     ConditionError(String),
 }
@@ -111,17 +114,17 @@ pub fn serviceable(
 
 /// Decide whether one envelope reaches the registration's wiring.
 ///
-/// `resident_env_key` comes from the scoped catalog credential after
+/// `resident_project_env_key` comes from the scoped catalog credential after
 /// the event's stream identity has verified. Package rows
-/// without a `tenant_id` use that trusted database-residency scope; a missing
+/// without a `project_id` use that trusted database-residency scope; a missing
 /// or disagreeing scope remains unserviceable.
 pub fn decide(
     registration: &EventRegistration,
     condition: Option<&CompiledCondition>,
     envelope: &Envelope,
     known_packages: &BTreeSet<String>,
-    env_key: &str,
-    resident_env_key: Option<&str>,
+    project_env_key: &str,
+    resident_project_env_key: Option<&str>,
     max_depth: u32,
 ) -> Verdict {
     match envelope.package_id.as_str() {
@@ -141,15 +144,15 @@ pub fn decide(
     if !registration.ops.contains(&envelope.op) {
         return Verdict::Skip(SkipReason::OpMismatch);
     }
-    if resident_env_key != Some(env_key) {
-        return Verdict::Refuse(RefuseReason::TenantUnscopable);
+    if resident_project_env_key != Some(project_env_key) {
+        return Verdict::Refuse(RefuseReason::ProjectUnscopable);
     }
-    match row_tenant(envelope) {
-        RowTenant::Tenant(event_tenant) if event_tenant != env_key => {
-            return Verdict::Skip(SkipReason::ForeignTenant);
+    match row_project(envelope) {
+        RowProject::Project(event_project) if event_project != project_env_key => {
+            return Verdict::Skip(SkipReason::ForeignProject);
         }
-        RowTenant::Absent | RowTenant::Tenant(_) => {}
-        RowTenant::Unscopable => return Verdict::Refuse(RefuseReason::TenantUnscopable),
+        RowProject::Absent | RowProject::Project(_) => {}
+        RowProject::Unscopable => return Verdict::Refuse(RefuseReason::ProjectUnscopable),
     }
     if registration.condition.is_some() {
         let Some(condition) = condition else {
@@ -182,7 +185,7 @@ pub fn decide_derived(
     condition: Option<&CompiledCondition>,
     event: &DerivedEvent,
     known_packages: &BTreeSet<String>,
-    env_key: &str,
+    project_env_key: &str,
     max_depth: u32,
 ) -> Verdict {
     match event.package_id.as_str() {
@@ -202,8 +205,8 @@ pub fn decide_derived(
     if !registration.ops.contains(&event.op) {
         return Verdict::Skip(SkipReason::OpMismatch);
     }
-    if event.env_key != env_key {
-        return Verdict::Skip(SkipReason::ForeignTenant);
+    if event.project_env_key != project_env_key {
+        return Verdict::Skip(SkipReason::ForeignProject);
     }
     if registration.condition.is_some() {
         let Some(condition) = condition else {
@@ -251,7 +254,7 @@ mod tests {
     fn envelope() -> Envelope {
         serde_json::from_value(json!({
             "op": "insert",
-            "new": {"tenant_id": "t1", "status": "ready"},
+            "new": {"project_id": "t1", "status": "ready"},
             "package_id": "cat",
             "entity": "receipts",
             "table": "receipts",
@@ -267,7 +270,7 @@ mod tests {
     }
 
     #[test]
-    fn matching_row_tenant_delivers_business_input_without_flow_or_run_identity() {
+    fn matching_row_project_delivers_business_input_without_flow_or_run_identity() {
         assert_eq!(
             decide(
                 &registration(None),
@@ -280,24 +283,24 @@ mod tests {
             ),
             Verdict::Deliver(json!({
                 "event": "insert",
-                "new": {"tenant_id": "t1", "status": "ready"}
+                "new": {"project_id": "t1", "status": "ready"}
             }))
         );
     }
 
     #[test]
-    fn tenantless_package_row_delivers_under_verified_database_residency() {
-        let mut tenantless = envelope();
-        tenantless
+    fn projectless_package_row_delivers_under_verified_database_residency() {
+        let mut projectless = envelope();
+        projectless
             .new
             .as_mut()
             .expect("insert carries a new image")
-            .remove("tenant_id");
+            .remove("project_id");
         assert!(matches!(
             decide(
                 &registration(None),
                 None,
-                &tenantless,
+                &projectless,
                 &known_packages(),
                 "t1",
                 Some("t1"),
@@ -308,13 +311,13 @@ mod tests {
     }
 
     #[test]
-    fn foreign_row_tenant_is_normal_filtration() {
+    fn foreign_row_project_is_normal_filtration() {
         let mut foreign = envelope();
         foreign
             .new
             .as_mut()
             .expect("insert carries a new image")
-            .insert("tenant_id".into(), Value::String("other".into()));
+            .insert("project_id".into(), Value::String("other".into()));
         assert_eq!(
             decide(
                 &registration(None),
@@ -325,43 +328,43 @@ mod tests {
                 Some("t1"),
                 16,
             ),
-            Verdict::Skip(SkipReason::ForeignTenant)
+            Verdict::Skip(SkipReason::ForeignProject)
         );
     }
 
     #[test]
     fn unresolved_or_disagreeing_database_residency_refuses() {
-        let mut tenantless = envelope();
-        tenantless
+        let mut projectless = envelope();
+        projectless
             .new
             .as_mut()
             .expect("insert carries a new image")
-            .remove("tenant_id");
-        for resident_env_key in [None, Some("other")] {
+            .remove("project_id");
+        for resident_project_env_key in [None, Some("other")] {
             assert_eq!(
                 decide(
                     &registration(None),
                     None,
-                    &tenantless,
+                    &projectless,
                     &known_packages(),
                     "t1",
-                    resident_env_key,
+                    resident_project_env_key,
                     16,
                 ),
-                Verdict::Refuse(RefuseReason::TenantUnscopable)
+                Verdict::Refuse(RefuseReason::ProjectUnscopable)
             );
         }
     }
 
     #[test]
-    fn present_non_string_row_tenant_refuses_instead_of_using_residency() {
+    fn present_non_string_row_project_refuses_instead_of_using_residency() {
         for value in [Value::Null, json!(7)] {
             let mut invalid = envelope();
             invalid
                 .new
                 .as_mut()
                 .expect("insert carries a new image")
-                .insert("tenant_id".into(), value);
+                .insert("project_id".into(), value);
             assert_eq!(
                 decide(
                     &registration(None),
@@ -372,13 +375,13 @@ mod tests {
                     Some("t1"),
                     16,
                 ),
-                Verdict::Refuse(RefuseReason::TenantUnscopable)
+                Verdict::Refuse(RefuseReason::ProjectUnscopable)
             );
         }
     }
 
     #[test]
-    fn condition_and_tenant_guards_still_filter_before_delivery() {
+    fn condition_and_project_guards_still_filter_before_delivery() {
         let registration = registration(Some("new.status == 'ready'"));
         let condition = serviceable(&registration).unwrap().unwrap();
         assert!(matches!(
@@ -391,7 +394,7 @@ mod tests {
                 Some("other"),
                 16,
             ),
-            Verdict::Skip(SkipReason::ForeignTenant)
+            Verdict::Skip(SkipReason::ForeignProject)
         ));
     }
 
@@ -464,7 +467,7 @@ mod tests {
     }
 
     #[test]
-    fn derived_event_keeps_registration_condition_and_depth_gates() {
+    fn derived_event_keeps_registration_condition_and_depth_conditions() {
         let registration = registration(Some("new[1].status == 'ready'"));
         let condition = serviceable(&registration).unwrap().unwrap();
         assert!(matches!(

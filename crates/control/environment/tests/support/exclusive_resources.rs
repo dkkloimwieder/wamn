@@ -35,7 +35,7 @@ impl Fixture {
         let scratch = wamn_test_infrastructure::scratch::ScratchRoot::create()?;
         fixture(scratch.path())?;
         let database = wamn_control_provision::test_database::system();
-        let project_database = wamn_platform_identity::test_database::tenant_platform();
+        let project_database = wamn_platform_identity::test_database::project_platform();
         let mut admin = connect(database.url()).await?;
         admin.batch_execute(&format!("SET ROLE wamn_system; BEGIN; {} {} UPDATE registry.meta SET platform_domain='example.invalid'; UPDATE registry.project_envs SET target_id=(SELECT id FROM registry.target WHERE name='cloud'); COMMIT",
             bind_platform_principal_sql(PlatformComponent::Provisioning),
@@ -117,7 +117,7 @@ impl Fixture {
         );
         let login = format!("exclusive_{}", database.name());
         database.execute(&[&sql::grant_connection_reader_surface_sql(), &format!(
-            "CREATE ROLE {login} LOGIN PASSWORD 'fixture'; GRANT wamn_conn_reader TO {login}; GRANT CONNECT ON DATABASE \"{}\" TO {login}; BEGIN; SET LOCAL ROLE wamn_system; {} INSERT INTO wamn_authority.author_login_tenants(login_identity,env_key,org_id,project_id,environment) VALUES ('{login}','acme--one--dev','acme','one','dev'); COMMIT;",
+            "CREATE ROLE {login} LOGIN PASSWORD 'fixture'; GRANT wamn_conn_reader TO {login}; GRANT CONNECT ON DATABASE \"{}\" TO {login}; BEGIN; SET LOCAL ROLE wamn_system; {} INSERT INTO wamn_authority.author_login_projects(login_identity,project_env_key,org_id,project_id,environment) VALUES ('{login}','acme--one--dev','acme','one','dev'); COMMIT;",
             database.name(), bind_platform_principal_sql(PlatformComponent::Provisioning)
         )])?;
         let mut reader_url = url::Url::parse(database.url())?;
@@ -301,8 +301,9 @@ async fn exclusive_calls_wait_serialize_and_transfer_to_replacement() -> anyhow:
         "requires: bin:/usr/lib/postgresql/18/bin/postgres, env:WAMN_NATIVE_C_NATS_BIN, bin:docker, bin:rustc",
     );
     let _lock = wamn_test_postgres::lock();
-    let gate = Arc::new(tokio::sync::Semaphore::new(1));
-    let (authority, requests, server) = simulator_with_gate(Some(Arc::clone(&gate))).await?;
+    let condition = Arc::new(tokio::sync::Semaphore::new(1));
+    let (authority, requests, server) =
+        simulator_with_condition(Some(Arc::clone(&condition))).await?;
     let mut fixture = Fixture::new(&authority).await?;
     let (_nats, nats) = nats().await;
     let changes = Publisher::new(nats.clone());
@@ -333,7 +334,7 @@ async fn exclusive_calls_wait_serialize_and_transfer_to_replacement() -> anyhow:
     let writing = tokio::spawn(async move { read(&writer, "wamn:modbus/write@1.0.0").await });
     tokio::time::sleep(Duration::from_millis(200)).await;
     assert_eq!(requests.load(Ordering::SeqCst), before + 1);
-    gate.add_permits(1);
+    condition.add_permits(1);
     reading.await??;
     until("the writer reaches the resource after the reader", || {
         requests.load(Ordering::SeqCst) == before + 2
@@ -365,7 +366,7 @@ async fn exclusive_calls_wait_serialize_and_transfer_to_replacement() -> anyhow:
     tokio::time::sleep(Duration::from_millis(200)).await;
     assert!(!calling.is_finished());
     assert_eq!(requests.load(Ordering::SeqCst), before + 2);
-    gate.add_permits(2);
+    condition.add_permits(2);
     writing.await??;
     assert_eq!(
         tokio::time::timeout(Duration::from_secs(60), calling)

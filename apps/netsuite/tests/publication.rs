@@ -65,7 +65,7 @@ fn fixture() -> Fixture {
         ),
     ];
     let scope = ComponentPackageScope {
-        env_key: "rest--publication--test".into(),
+        project_env_key: "rest--publication--test".into(),
         package_id: "netsuite".into(),
         package_version: "0.1.1".into(),
     };
@@ -119,7 +119,7 @@ async fn pull_checkpoint_commits_through_the_application_role() -> anyhow::Resul
         documents,
     } = fixture();
     let assembled = assemble_local_release(&args, &roots, &admissions)?;
-    gate_documents(&args, &assembled.published.manifest, &documents)?;
+    condition_documents(&args, &assembled.published.manifest, &documents)?;
     checkpoint_live::invoke(&roots, &assembled.published.manifest, &admissions).await
 }
 
@@ -132,7 +132,7 @@ fn invalid_ports_and_dependencies_refuse_workflow_authorship() {
         documents,
     } = fixture();
     let assembled = assemble_local_release(&args, &roots, &admissions).unwrap();
-    gate_documents(&args, &assembled.published.manifest, &documents).unwrap();
+    condition_documents(&args, &assembled.published.manifest, &documents).unwrap();
     assert_eq!(
         assembled
             .published
@@ -153,7 +153,7 @@ fn invalid_ports_and_dependencies_refuse_workflow_authorship() {
         .find(|edge| edge.from == "rows")
         .unwrap()
         .from_port = "main".into();
-    assert!(gate_documents(&args, &assembled.published.manifest, &wrong_port).is_err());
+    assert!(condition_documents(&args, &assembled.published.manifest, &wrong_port).is_err());
     // Environment workflows resolve the node operation against the release,
     // not the package-local operation-dependency alias.
     let mut wrong_dependency = documents;
@@ -163,10 +163,10 @@ fn invalid_ports_and_dependencies_refuse_workflow_authorship() {
         .get_mut("record")
         .unwrap()
         .operation = "rest-consumer-fixture:item/other@0.1.0".into();
-    assert!(gate_documents(&args, &assembled.published.manifest, &wrong_dependency).is_err());
+    assert!(condition_documents(&args, &assembled.published.manifest, &wrong_dependency).is_err());
 }
 
-fn gate_documents(
+fn condition_documents(
     args: &PublishReleaseRequest,
     manifest: &wamn_catalog::ServingManifest,
     documents: &[(ComponentPackageScope, WiringDocument)],
@@ -177,7 +177,12 @@ fn gate_documents(
         .map(|p| p.package_id().to_owned())
         .collect();
     for (_, document) in documents {
-        wamn_catalog::gate_workflow_document(&args.env_key(), &packages, manifest, document)?;
+        wamn_catalog::condition_workflow_document(
+            &args.project_env_key(),
+            &packages,
+            manifest,
+            document,
+        )?;
     }
     Ok(())
 }

@@ -34,7 +34,7 @@ pub const CURRENT_USER_ROLE_MEMBERSHIP_SQL: &str = "SELECT EXISTS ( \
 /// Which authority a trusted caller acts under when it selects a credential.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum AuthorityClass {
-    /// Tenant component `wamn:postgres` imports.
+    /// Project component `wamn:postgres` imports.
     GuestSql,
     /// Executor run-state and catalog work.
     ExecutorPlatform,

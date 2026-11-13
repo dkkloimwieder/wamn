@@ -204,8 +204,8 @@ const CONTROL_ONLY_PORTABLE_RELATIONS: [&str; 2] = [
     // The projected environment identity is a CONTROL fact: the project plane
     // has no `registry.project_envs` to project from, and its own catalog is
     // recreated per run (wamn-10yt.38).
-    "catalog.tenant_environments",
-    "wamn_authority.author_login_tenants",
+    "catalog.project_environments",
+    "wamn_authority.author_login_projects",
 ];
 
 async fn portable_fingerprints(
@@ -328,8 +328,8 @@ async fn assert_author_sql_boundaries(client: &Client) {
     for row in rows {
         let relation: String = row.get(0);
         let forced_row_security: bool = row.get(2);
-        // The write log has no tenant column and no row policy: the database is
-        // the tenant (docs/architecture/data-access.md#the-write-log). Its
+        // The write log has no project column and no row policy: the database is
+        // the project (docs/architecture/data-access.md#the-write-log). Its
         // grant is the claim insert and the result column alone.
         assert!(
             forced_row_security || relation == WRITE_LOG,

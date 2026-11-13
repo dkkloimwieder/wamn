@@ -19,24 +19,27 @@ fn fresh_control_history_stamps_production_writes() {
         "BEGIN",
         &bind_platform_principal_sql(PlatformComponent::Provisioning),
         r"
-        INSERT INTO catalog.tenant_environments (env_key,org,project,env,instance_suffix,disposable,environment_instance) VALUES ('history','org','project','dev','abcdefgh',false,'');
-        INSERT INTO wamn_authority.author_login_tenants (login_identity,env_key,org_id,project_id,environment) VALUES ('login','history','org','project','dev');
+        INSERT INTO catalog.project_environments (project_env_key,org,project,env,instance_suffix,disposable,environment_instance) VALUES ('history','org','project','dev','abcdefgh',false,'');
+        INSERT INTO wamn_authority.author_login_projects (login_identity,project_env_key,org_id,project_id,environment) VALUES ('login','history','org','project','dev');
     ",
         "COMMIT",
     ]).unwrap();
     let actor = PlatformComponent::Provisioning.principal_id();
     for relation in [
-        "catalog.tenant_environments",
-        "wamn_authority.author_login_tenants",
+        "catalog.project_environments",
+        "wamn_authority.author_login_projects",
     ] {
         database.execute(&[&format!("DO $$ BEGIN ASSERT (SELECT count(*)=1 AND bool_and(created_by='{actor}'::uuid AND updated_by='{actor}'::uuid AND created_at=updated_at AND isfinite(created_at)) FROM {relation}), '{relation}: stamps'; END $$;")]).unwrap();
     }
     // The production SQL writers stamp their rows with the transaction actor.
-    database.execute(&["BEGIN", &bind_platform_principal_sql(PlatformComponent::Provisioning), "SET LOCAL app.env_key='history';", &format!("PREPARE projection(text,text,text,text,text,boolean) AS {}; EXECUTE projection('production','org','project','dev','abcdefgh',false);", wamn_control_provision::sql::insert_env_key_environment_sql()), &format!("PREPARE mapping(text,text,text,text,text) AS {}; EXECUTE mapping('production-login','production','org','project','dev');", wamn_control_provision::sql::upsert_control_author_env_key_mapping_sql()), "COMMIT"]).unwrap();
+    database.execute(&["BEGIN", &bind_platform_principal_sql(PlatformComponent::Provisioning), "SET LOCAL app.project_env_key='history';", &format!("PREPARE projection(text,text,text,text,text,boolean) AS {}; EXECUTE projection('production','org','project','dev','abcdefgh',false);", wamn_control_provision::sql::insert_project_env_key_environment_sql()), &format!("PREPARE mapping(text,text,text,text,text) AS {}; EXECUTE mapping('production-login','production','org','project','dev');", wamn_control_provision::sql::upsert_control_author_project_env_key_mapping_sql()), "COMMIT"]).unwrap();
     for (relation, predicate) in [
-        ("catalog.tenant_environments", "env_key='production'"),
         (
-            "wamn_authority.author_login_tenants",
+            "catalog.project_environments",
+            "project_env_key='production'",
+        ),
+        (
+            "wamn_authority.author_login_projects",
             "login_identity='production-login'",
         ),
     ] {
@@ -60,10 +63,10 @@ fn fresh_run_history_stamps_rows() {
         "BEGIN",
         &bind_platform_principal_sql(PlatformComponent::Provisioning),
         r"
-        INSERT INTO wamn_run.environment_policies (env_key,expected_environment) VALUES ('history','dev');
-        INSERT INTO wamn_run.runs (env_key,run_id,wiring_id,wiring_version,wiring_hash,binding_world_json,package_id,environment) VALUES ('history','run','fixture',1,'sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd','[]'::jsonb,'package','dev');
+        INSERT INTO wamn_run.environment_policies (project_env_key,expected_environment) VALUES ('history','dev');
+        INSERT INTO wamn_run.runs (project_env_key,run_id,wiring_id,wiring_version,wiring_hash,binding_world_json,package_id,environment) VALUES ('history','run','fixture',1,'sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd','[]'::jsonb,'package','dev');
     ",
-        "INSERT INTO wamn_run.run_queue(env_key,run_id) VALUES ('history','run');",
+        "INSERT INTO wamn_run.run_queue(project_env_key,run_id) VALUES ('history','run');",
         "COMMIT",
     ]).unwrap();
     let actor = PlatformComponent::Provisioning.principal_id();

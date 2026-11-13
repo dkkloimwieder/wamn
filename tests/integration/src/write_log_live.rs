@@ -119,7 +119,7 @@ async fn start(
         scratch: scratch.path(),
         component_directory: &components,
         flow_http_wasm: &flow_http,
-        env_key: "write-log",
+        project_env_key: "write-log",
         org: "acme",
         project: "fixture",
         environment: "dev",

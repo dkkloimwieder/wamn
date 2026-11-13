@@ -1,6 +1,6 @@
 //! Install Receiving through the local package applier, without starting a host.
 use anyhow::Context as _;
-use wamn_dev_control::dev::environment::{ENV_KEY, ENVIRONMENT};
+use wamn_dev_control::dev::environment::{ENVIRONMENT, PROJECT_ENV_KEY};
 use wamn_package_control::apply_package::{ApplyPackageRequest, PackageRoot, apply_local_package};
 
 #[tokio::main]
@@ -10,7 +10,7 @@ async fn main() -> anyhow::Result<()> {
         std::path::PathBuf::from(std::env::args().nth(2).context("Receiving package root")?);
     let (client, connection) = tokio_postgres::connect(&url, tokio_postgres::NoTls).await?;
     tokio::spawn(connection);
-    // A shared server, such as the GCP floor, already has both roles.
+    // A shared server, such as the GCP minimum, already has both roles.
     client
         .batch_execute(
             "DO $roles$ BEGIN
@@ -37,8 +37,11 @@ async fn main() -> anyhow::Result<()> {
             &[],
         )
         .await?;
-    let marker =
-        wamn_runtime::local_application::local_target_marker(ENV_KEY, ENVIRONMENT, row.get(0));
+    let marker = wamn_runtime::local_application::local_target_marker(
+        PROJECT_ENV_KEY,
+        ENVIRONMENT,
+        row.get(0),
+    );
     client
         .batch_execute(&format!(
             "COMMENT ON DATABASE {} IS {}",
@@ -68,7 +71,7 @@ async fn main() -> anyhow::Result<()> {
     wamn_environment_control::reconcile_package_data_access::reconcile_local(
         &access,
         &url,
-        ENV_KEY,
+        PROJECT_ENV_KEY,
         ENVIRONMENT,
         true,
     )

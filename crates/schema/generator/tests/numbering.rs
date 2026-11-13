@@ -579,7 +579,7 @@ fn live_generated_inserts_and_updates_stamp_only_changed_rows() {
             std::slice::from_ref(&base),
         )
         .unwrap();
-        let database = wamn_catalog::test_database::tenant();
+        let database = wamn_catalog::test_database::project();
         database.execute(&["CREATE SCHEMA inventory; CREATE TABLE inventory.gadget (
             id uuid PRIMARY KEY DEFAULT gen_random_uuid(), part_code text UNIQUE NOT NULL,
             stock_id uuid NOT NULL, status text NOT NULL DEFAULT 'open',
@@ -664,7 +664,7 @@ fn live_generated_inserts_and_updates_stamp_only_changed_rows() {
 #[test]
 fn live_a_numbered_integer_field_inserts_the_rendered_number() {
     let _lock = wamn_test_postgres::lock();
-    let database = wamn_catalog::test_database::tenant();
+    let database = wamn_catalog::test_database::project();
     let mut manifest = numbered();
     manifest["sequences"]["gadget_number"]["pattern"] = json!("{seq:n}");
     manifest["models"]["gadget"]["fields"] = json!({"line_no": {"number": "gadget_number"}});

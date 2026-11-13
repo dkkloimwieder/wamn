@@ -194,13 +194,13 @@ pub enum ConnectionExecutionClosure {
     },
 }
 
-/// Names the tenant and project only: the rest carries credential and
+/// Names the project and project only: the rest carries credential and
 /// transport state that must not reach a log.
 impl std::fmt::Debug for ConnectionHttp {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
             .debug_struct("ConnectionHttp")
-            .field("env_key", &self.env_key)
+            .field("project_env_key", &self.project_env_key)
             .field("project", &self.project)
             .finish_non_exhaustive()
     }
@@ -212,7 +212,7 @@ pub struct ConnectionHttp {
     transport: Arc<HttpTransport>,
     facts: Arc<ConnectionFacts>,
     oauth2: Arc<crate::oauth_token::Cache>,
-    env_key: Box<str>,
+    project_env_key: Box<str>,
     project: Box<str>,
     allowed_hosts: Arc<[AllowedHost]>,
     /// Reader 2 of the four the loaded release enumerates (`wamn-0h0g.15.100`): the ONE
@@ -220,7 +220,7 @@ pub struct ConnectionHttp {
     /// loaded, parsed or digest-verified here. The bytes stay immutable for the
     /// process lifetime. This field has no TTL, refresh, or invalidation.
     ///
-    /// `None` in a process that was given no release (gates, benches, the pool's
+    /// `None` in a process that was given no release (conditions, benches, the pool's
     /// own fixtures). Such a process cannot attest a wiring/component closure,
     /// so it cannot authorize a connection.
     release: Option<Arc<LoadedRelease>>,
@@ -235,7 +235,7 @@ impl ConnectionHttp {
         postgres: Arc<WamnPostgres>,
         transport: Arc<HttpTransport>,
         facts: Arc<ConnectionFacts>,
-        env_key: impl Into<Box<str>>,
+        project_env_key: impl Into<Box<str>>,
         project: impl Into<Box<str>>,
         allowed_hosts: Arc<[AllowedHost]>,
         release: Option<Arc<LoadedRelease>>,
@@ -248,7 +248,7 @@ impl ConnectionHttp {
             transport,
             facts,
             oauth2,
-            env_key: env_key.into(),
+            project_env_key: project_env_key.into(),
             project,
             allowed_hosts,
             release,
@@ -460,7 +460,7 @@ impl ConnectionHttp {
         {
             (ConnectionExecutionClosure::Released, Some(release)) => {
                 let manifest = release.manifest();
-                if release.scope().env_key != self.env_key.as_ref()
+                if release.scope().project_env_key != self.project_env_key.as_ref()
                     || !manifest
                         .release
                         .packages
@@ -500,7 +500,7 @@ impl ConnectionHttp {
             .connection_effect_snapshot(
                 component_id,
                 &self.project,
-                &self.env_key,
+                &self.project_env_key,
                 &ConnectionEffectLookup {
                     package_id: &invocation.package_id,
                     entry,
@@ -603,7 +603,7 @@ impl ConnectionHttp {
         }
         let scope = ClientScope {
             connection: ConnectionScope {
-                env_key: self.env_key.clone(),
+                project_env_key: self.project_env_key.clone(),
                 project: self.project.clone(),
                 environment: environment.into(),
                 instance: connection.to_string().into(),
@@ -1317,8 +1317,8 @@ impl opentelemetry::propagation::Injector for TraceContextHeaders<'_> {
 /// layer and a propagator but NO global tracer provider, so the global tracer
 /// silently answers with a no-op span.
 ///
-/// Public because the `trace-test` gate drives THIS function rather than a
-/// copy of it (`wamn-k9ea`): the gate's whole claim is that what crosses the
+/// Public because the `trace-test` condition drives THIS function rather than a
+/// copy of it (`wamn-k9ea`): the condition's whole claim is that what crosses the
 /// process boundary is what production injects, so a reimplementation there
 /// does not test this one.
 pub fn inject_trace_context(headers: &mut reqwest::header::HeaderMap) {
@@ -1554,7 +1554,7 @@ fn http_span(plugin: &ConnectionHttp, component_id: &str) -> tracing::Span {
     let span = effect_span!(
         "wamn.connection_http",
         EffectIdentity {
-            env_key: &plugin.env_key,
+            project_env_key: &plugin.project_env_key,
             project: &plugin.project,
             component: component_id,
         },
@@ -2187,7 +2187,7 @@ mod tests {
             Publisher::default(),
             Arc::new(ConnectionCredentials::empty()),
             Arc::clone(&postgres),
-            "tenant-a",
+            "org-a",
             "project-a",
             "dev",
         ));
@@ -2195,7 +2195,7 @@ mod tests {
             postgres,
             Arc::new(HttpTransport::new().expect("HTTP transport")),
             facts,
-            "tenant-a",
+            "org-a",
             "project-a",
             Vec::<AllowedHost>::new().into(),
             None,
@@ -2221,7 +2221,7 @@ mod tests {
         assert_eq!(
             harness.attributes("wamn.connection_http"),
             expected_attributes(
-                ["tenant-a", "project-a", component_id],
+                ["org-a", "project-a", component_id],
                 [
                     "package_a",
                     "orders",
@@ -2260,7 +2260,7 @@ mod tests {
         let component_digest = digest('a');
         let shared = |package: &str, occurrence: &str| {
             expected_attributes(
-                ["tenant-a", "project-a", component_id],
+                ["org-a", "project-a", component_id],
                 [
                     package,
                     "orders",
@@ -2310,7 +2310,7 @@ mod tests {
         assert_eq!(
             harness.attributes("wamn.connection_http"),
             expected_attributes(
-                ["tenant-a", "project-a", component_id],
+                ["org-a", "project-a", component_id],
                 ["", "", "0", "", "0", "", "", ""],
                 &[("effect.operation", "send")],
             ),
@@ -2479,7 +2479,7 @@ mod tests {
         assert_eq!(
             harness.attributes("wamn.connection_http"),
             expected_attributes(
-                ["tenant-a", "project-a", component_id],
+                ["org-a", "project-a", component_id],
                 [
                     "package_a",
                     "orders",
@@ -2518,7 +2518,7 @@ mod tests {
         assert_eq!(
             attributes,
             expected_attributes(
-                ["tenant-a", "project-a", component_id],
+                ["org-a", "project-a", component_id],
                 [
                     "package_a",
                     "orders",
@@ -2573,7 +2573,7 @@ mod tests {
         let component_digest = digest('a');
         let shared = |operation: &str| {
             expected_attributes(
-                ["tenant-a", "project-a", component_id],
+                ["org-a", "project-a", component_id],
                 [
                     "package_a",
                     "orders",

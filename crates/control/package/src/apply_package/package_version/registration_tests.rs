@@ -3,7 +3,7 @@ use crate::apply_package::{ApplyPackageRequest, apply_package, apply_package_sch
 use std::path::Path;
 use tokio_postgres::{Client, NoTls};
 
-const ENV_KEY: &str = "schema-records--fixture--dev";
+const PROJECT_ENV_KEY: &str = "schema-records--fixture--dev";
 
 fn request(root: &Path, database_url: &str) -> ApplyPackageRequest {
     ApplyPackageRequest {
@@ -19,7 +19,7 @@ fn request(root: &Path, database_url: &str) -> ApplyPackageRequest {
 
 async fn state(client: &mut Client) -> wamn_schema_control::AppliedPackage {
     let tx = client.transaction().await.unwrap();
-    let state = load_applied_package(&tx, ENV_KEY, "wamn_inventory")
+    let state = load_applied_package(&tx, PROJECT_ENV_KEY, "wamn_inventory")
         .await
         .unwrap()
         .unwrap();
@@ -30,7 +30,7 @@ async fn state(client: &mut Client) -> wamn_schema_control::AppliedPackage {
 #[tokio::test]
 async fn explicit_sql_advances_across_versions_without_selecting_code() {
     let _lock = wamn_test_postgres::lock();
-    let database = wamn_platform_identity::test_database::tenant_platform();
+    let database = wamn_platform_identity::test_database::project_platform();
     database.execute(&[
         include_str!("../../../../../../deploy/sql/app-schema-baseline.sql"),
         wamn_control_provision::sql::ensure_db_owner_role_sql(),
@@ -54,7 +54,7 @@ async fn explicit_sql_advances_across_versions_without_selecting_code() {
         baseline.baseline_fingerprint,
         baseline.physical_schema_fingerprint
     );
-    let environment = installed_environment_fingerprint(&client, ENV_KEY)
+    let environment = installed_environment_fingerprint(&client, PROJECT_ENV_KEY)
         .await
         .unwrap();
     client
@@ -69,9 +69,9 @@ async fn explicit_sql_advances_across_versions_without_selecting_code() {
         .unwrap();
     cache_tx
         .execute(
-            "INSERT INTO catalog.releases (env_key, manifest_digest, canonical_bytes) \
+            "INSERT INTO catalog.releases (project_env_key, manifest_digest, canonical_bytes) \
          SELECT $1, 'sha256:' || encode(sha256('{}'::bytea), 'hex'), '{}'::bytea",
-            &[&ENV_KEY],
+            &[&PROJECT_ENV_KEY],
         )
         .await
         .unwrap();
@@ -130,7 +130,7 @@ async fn explicit_sql_advances_across_versions_without_selecting_code() {
         request(&next, database.url()).package.artifact_digest
     );
     assert_ne!(
-        installed_environment_fingerprint(&client, ENV_KEY)
+        installed_environment_fingerprint(&client, PROJECT_ENV_KEY)
             .await
             .unwrap(),
         environment
@@ -258,7 +258,7 @@ async fn explicit_sql_advances_across_versions_without_selecting_code() {
     std::fs::remove_file(next.join("migrations/0003_candidate.sql")).unwrap();
     manifest["package"]["version"] = "3.0.0".into();
     std::fs::write(&manifest_path, serde_json::to_vec(&manifest).unwrap()).unwrap();
-    let fresh = wamn_platform_identity::test_database::tenant_platform();
+    let fresh = wamn_platform_identity::test_database::project_platform();
     fresh.execute(&["DO $grant$ BEGIN EXECUTE format('GRANT CREATE ON DATABASE %I TO wamn_db_owner', current_database()); END $grant$;"]).unwrap();
     apply_package(request(&next, fresh.url())).await.unwrap();
     let (mut fresh_client, fresh_connection) =
@@ -284,7 +284,7 @@ async fn nontransactional_files_keep_committed_work_and_require_explicit_resolut
     use wamn_schema_control::MigrationOutcome;
 
     let _lock = wamn_test_postgres::lock();
-    let database = wamn_platform_identity::test_database::tenant_platform();
+    let database = wamn_platform_identity::test_database::project_platform();
     database.execute(&[
         include_str!("../../../../../../deploy/sql/app-schema-baseline.sql"),
         wamn_control_provision::sql::ensure_db_owner_role_sql(),
@@ -321,7 +321,7 @@ async fn nontransactional_files_keep_committed_work_and_require_explicit_resolut
             .await
             .is_err()
     );
-    let committed = read_package_migrations(&client, ENV_KEY, "wamn_inventory")
+    let committed = read_package_migrations(&client, PROJECT_ENV_KEY, "wamn_inventory")
         .await
         .unwrap();
     let directory = crate::apply_package::read_package_directory(&root).unwrap();
@@ -392,7 +392,7 @@ async fn nontransactional_files_keep_committed_work_and_require_explicit_resolut
     );
     client.batch_execute("DROP TRIGGER fail_migration_completion ON catalog.package_migrations; DROP FUNCTION public.fail_migration_completion()").await.unwrap();
     assert!(
-        installed_environment_fingerprint(&client, ENV_KEY)
+        installed_environment_fingerprint(&client, PROJECT_ENV_KEY)
             .await
             .unwrap()
             .is_none()
@@ -409,7 +409,7 @@ async fn nontransactional_files_keep_committed_work_and_require_explicit_resolut
     assert!(
         crate::apply_package::adopt_package_schemas(
             database.url(),
-            ENV_KEY,
+            PROJECT_ENV_KEY,
             &initialization,
             &[&source],
             None
@@ -522,7 +522,7 @@ async fn adoption_preserves_execution_records_and_never_executes_asserted_files(
     use crate::apply_package::adopt_package_schemas;
     use wamn_schema_control::MigrationOutcome;
     let _lock = wamn_test_postgres::lock();
-    let database = wamn_platform_identity::test_database::tenant_platform();
+    let database = wamn_platform_identity::test_database::project_platform();
     database.execute(&[
         include_str!("../../../../../../deploy/sql/app-schema-baseline.sql"),
         wamn_control_provision::sql::ensure_db_owner_role_sql(),
@@ -587,10 +587,15 @@ async fn adoption_preserves_execution_records_and_never_executes_asserted_files(
         request(&root, database.url()).package
     };
     let selected = source();
-    let matched =
-        adopt_package_schemas(database.url(), ENV_KEY, &initialization, &[&selected], None)
-            .await
-            .unwrap();
+    let matched = adopt_package_schemas(
+        database.url(),
+        PROJECT_ENV_KEY,
+        &initialization,
+        &[&selected],
+        None,
+    )
+    .await
+    .unwrap();
     assert!(matched.values().all(Vec::is_empty));
     assert_eq!(state(&mut client).await, baseline);
 
@@ -602,9 +607,15 @@ async fn adoption_preserves_execution_records_and_never_executes_asserted_files(
     )
     .unwrap();
     let selected = source();
-    adopt_package_schemas(database.url(), ENV_KEY, &initialization, &[&selected], None)
-        .await
-        .unwrap();
+    adopt_package_schemas(
+        database.url(),
+        PROJECT_ENV_KEY,
+        &initialization,
+        &[&selected],
+        None,
+    )
+    .await
+    .unwrap();
     let adopted = state(&mut client).await;
     assert_eq!(adopted.baseline_fingerprint, baseline.baseline_fingerprint);
     assert_eq!(
@@ -693,7 +704,7 @@ async fn adoption_preserves_execution_records_and_never_executes_asserted_files(
     assert!(
         adopt_package_schemas(
             database.url(),
-            ENV_KEY,
+            PROJECT_ENV_KEY,
             "old-initialization",
             &[&selected],
             None
@@ -702,18 +713,30 @@ async fn adoption_preserves_execution_records_and_never_executes_asserted_files(
         .is_err()
     );
     assert_eq!(state(&mut client).await, executed);
-    adopt_package_schemas(database.url(), ENV_KEY, &initialization, &[&selected], None)
-        .await
-        .unwrap();
+    adopt_package_schemas(
+        database.url(),
+        PROJECT_ENV_KEY,
+        &initialization,
+        &[&selected],
+        None,
+    )
+    .await
+    .unwrap();
     let repaired = state(&mut client).await;
     assert_eq!(repaired.migrations[0].outcome, MigrationOutcome::Adopted);
     assert_eq!(repaired.migrations[1..], executed.migrations[1..]);
     assert!(
-        adopt_package_schemas(database.url(), ENV_KEY, &initialization, &[&selected], None)
-            .await
-            .unwrap()
-            .values()
-            .all(Vec::is_empty)
+        adopt_package_schemas(
+            database.url(),
+            PROJECT_ENV_KEY,
+            &initialization,
+            &[&selected],
+            None
+        )
+        .await
+        .unwrap()
+        .values()
+        .all(Vec::is_empty)
     );
     assert_eq!(state(&mut client).await, repaired);
     assert!(
@@ -746,9 +769,15 @@ async fn adoption_preserves_execution_records_and_never_executes_asserted_files(
     );
     let selected = source();
     assert!(
-        adopt_package_schemas(database.url(), ENV_KEY, &initialization, &[&selected], None)
-            .await
-            .is_err()
+        adopt_package_schemas(
+            database.url(),
+            PROJECT_ENV_KEY,
+            &initialization,
+            &[&selected],
+            None
+        )
+        .await
+        .is_err()
     );
     assert_eq!(state(&mut client).await, uncertain);
 }
@@ -757,7 +786,7 @@ async fn adoption_preserves_execution_records_and_never_executes_asserted_files(
 async fn adoption_establishes_a_missing_baseline_without_running_ddl() {
     use crate::apply_package::adopt_package_schemas;
     let _lock = wamn_test_postgres::lock();
-    let database = wamn_platform_identity::test_database::tenant_platform();
+    let database = wamn_platform_identity::test_database::project_platform();
     database
         .execute(&[include_str!(
             "../../../../../../deploy/sql/app-schema-baseline.sql"
@@ -777,11 +806,17 @@ async fn adoption_establishes_a_missing_baseline_without_running_ddl() {
         .get(0);
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/component_package");
     let source = crate::package_artifact::fixture_package_root(&root).unwrap();
-    let result = adopt_package_schemas(database.url(), ENV_KEY, &initialization, &[&source], None)
-        .await
-        .unwrap();
+    let result = adopt_package_schemas(
+        database.url(),
+        PROJECT_ENV_KEY,
+        &initialization,
+        &[&source],
+        None,
+    )
+    .await
+    .unwrap();
     let tx = client.transaction().await.unwrap();
-    let adopted = load_applied_package(&tx, ENV_KEY, "source_fixture")
+    let adopted = load_applied_package(&tx, PROJECT_ENV_KEY, "source_fixture")
         .await
         .unwrap()
         .unwrap();
@@ -816,7 +851,7 @@ async fn resolution_selects_one_package_with_a_shared_migration_path() {
     use crate::apply_package::{read_package_migrations, resolution_package};
     use wamn_schema_control::MigrationOutcome;
     let _lock = wamn_test_postgres::lock();
-    let database = wamn_platform_identity::test_database::tenant_platform();
+    let database = wamn_platform_identity::test_database::project_platform();
     database.execute(&[
         include_str!("../../../../../../deploy/sql/app-schema-baseline.sql"),
         wamn_control_provision::sql::ensure_db_owner_role_sql(),
@@ -841,10 +876,10 @@ async fn resolution_selects_one_package_with_a_shared_migration_path() {
                 .is_err()
         );
     }
-    let alpha = read_package_migrations(&client, ENV_KEY, "wamn_alpha")
+    let alpha = read_package_migrations(&client, PROJECT_ENV_KEY, "wamn_alpha")
         .await
         .unwrap();
-    let beta = read_package_migrations(&client, ENV_KEY, "wamn_beta")
+    let beta = read_package_migrations(&client, PROJECT_ENV_KEY, "wamn_beta")
         .await
         .unwrap();
     assert_eq!(alpha.last().unwrap().outcome, MigrationOutcome::Started);
@@ -882,12 +917,12 @@ async fn resolution_selects_one_package_with_a_shared_migration_path() {
         1
     );
     assert_eq!(
-        read_package_migrations(&client, ENV_KEY, "wamn_alpha")
+        read_package_migrations(&client, PROJECT_ENV_KEY, "wamn_alpha")
             .await
             .unwrap(),
         alpha
     );
-    let after = read_package_migrations(&client, ENV_KEY, "wamn_beta")
+    let after = read_package_migrations(&client, PROJECT_ENV_KEY, "wamn_beta")
         .await
         .unwrap();
     assert_eq!(after.last().unwrap().outcome, MigrationOutcome::Applied);
@@ -901,7 +936,7 @@ async fn lost_commit_response_retries_without_repeating_sql() -> anyhow::Result<
     use tokio::time::{Duration, timeout};
 
     let _lock = wamn_test_postgres::lock();
-    let database = wamn_platform_identity::test_database::tenant_platform();
+    let database = wamn_platform_identity::test_database::project_platform();
     database.execute(&[
         wamn_control_provision::sql::ensure_db_owner_role_sql(),
         "DO $grant$ BEGIN EXECUTE format('GRANT CREATE ON DATABASE %I TO wamn_db_owner', current_database()); END $grant$;",
@@ -966,16 +1001,16 @@ async fn lost_commit_response_retries_without_repeating_sql() -> anyhow::Result<
     timeout(Duration::from_secs(2), proxy).await???;
     let before = client
         .query_one(
-            "SELECT sha256, xmin::text FROM catalog.package_migrations WHERE env_key=$1 AND relative_path=$2",
-            &[&ENV_KEY, &path],
+            "SELECT sha256, xmin::text FROM catalog.package_migrations WHERE project_env_key=$1 AND relative_path=$2",
+            &[&PROJECT_ENV_KEY, &path],
         )
         .await?;
     let result = apply_package_schema(request(&root, database.url()), None).await?;
     assert_eq!(result.migrations_applied, 0);
     let after = client
         .query_one(
-            "SELECT sha256, xmin::text FROM catalog.package_migrations WHERE env_key=$1 AND relative_path=$2",
-            &[&ENV_KEY, &path],
+            "SELECT sha256, xmin::text FROM catalog.package_migrations WHERE project_env_key=$1 AND relative_path=$2",
+            &[&PROJECT_ENV_KEY, &path],
         )
         .await?;
     assert_eq!(before.get::<_, String>(0), after.get::<_, String>(0));
@@ -1000,7 +1035,7 @@ async fn resolution_waits_for_a_running_nontransactional_statement() -> anyhow::
     use wamn_schema_control::MigrationOutcome;
 
     let _lock = wamn_test_postgres::lock();
-    let database = wamn_platform_identity::test_database::tenant_platform();
+    let database = wamn_platform_identity::test_database::project_platform();
     database.execute(&[
         wamn_control_provision::sql::ensure_db_owner_role_sql(),
         "DO $grant$ BEGIN EXECUTE format('GRANT CREATE ON DATABASE %I TO wamn_db_owner', current_database()); END $grant$;",
@@ -1043,7 +1078,7 @@ async fn resolution_waits_for_a_running_nontransactional_statement() -> anyhow::
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
     }).await??;
-    let started = read_package_migrations(&observer, ENV_KEY, "wamn_inventory").await?;
+    let started = read_package_migrations(&observer, PROJECT_ENV_KEY, "wamn_inventory").await?;
     assert_eq!(started.last().unwrap().outcome, MigrationOutcome::Started);
     worker_url
         .query_pairs_mut()
@@ -1072,7 +1107,7 @@ async fn resolution_waits_for_a_running_nontransactional_statement() -> anyhow::
         }
     }).await??;
     assert_eq!(
-        read_package_migrations(&observer, ENV_KEY, "wamn_inventory").await?,
+        read_package_migrations(&observer, PROJECT_ENV_KEY, "wamn_inventory").await?,
         started
     );
     blocker.commit().await?;
@@ -1088,7 +1123,7 @@ async fn resolution_waits_for_a_running_nontransactional_statement() -> anyhow::
             .migrations_applied,
         0
     );
-    let completed = read_package_migrations(&observer, ENV_KEY, "wamn_inventory").await?;
+    let completed = read_package_migrations(&observer, PROJECT_ENV_KEY, "wamn_inventory").await?;
     assert_eq!(
         completed.last().unwrap().sha256,
         started.last().unwrap().sha256

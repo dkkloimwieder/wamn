@@ -57,17 +57,17 @@ pub enum WorkloadSecretBody<'a> {
     /// The single `url` key every consumer mounts through
     /// `secretKeyRef … key: url`.
     Url(&'a str),
-    /// The same single `url`, plus the tenant key as a label and the environment key
+    /// The same single `url`, plus the project key as a label and the environment key
     /// as an annotation (`wamn-0h0g.22.6.4`).
     ///
-    /// The TENANT KEY is a label and the environment key an ANNOTATION deliberately:
+    /// The PROJECT KEY is a label and the environment key an ANNOTATION deliberately:
     /// a label value is capped at 63 characters and restricted to alphanumerics
-    /// plus `-_.`, while `valid_env_key` admits 64 bytes — so a label carrying
-    /// the tenant verbatim would be rejected by the API server for exactly the
-    /// tenants the digest exists to handle.
-    EnvKeyUrl {
-        env_key: &'a str,
-        tenant_key: &'a str,
+    /// plus `-_.`, while `valid_project_env_key` admits 64 bytes — so a label carrying
+    /// the project verbatim would be rejected by the API server for exactly the
+    /// projects the digest exists to handle.
+    ProjectEnvKeyUrl {
+        project_env_key: &'a str,
+        project_key: &'a str,
         url: &'a str,
     },
     /// The checked audience binding and reader credential in `target.json`.
@@ -78,7 +78,7 @@ impl WorkloadSecretBody<'_> {
     fn body_type(self) -> WorkloadSecretBodyKind {
         match self {
             Self::Url(_) => WorkloadSecretBodyKind::Url,
-            Self::EnvKeyUrl { .. } => WorkloadSecretBodyKind::EnvKeyUrl,
+            Self::ProjectEnvKeyUrl { .. } => WorkloadSecretBodyKind::ProjectEnvKeyUrl,
             Self::SessionTarget(_) => WorkloadSecretBodyKind::SessionTarget,
         }
     }
@@ -91,7 +91,7 @@ impl WorkloadSecretBody<'_> {
 /// and body shape are all DERIVED from the family, so admitting a family
 /// publishes its Secret without a renderer being written for it. The body is
 /// checked against the family's declared shape rather than trusted, so a caller
-/// cannot hand the guest family a plain url and lose the tenant key.
+/// cannot hand the guest family a plain url and lose the project key.
 pub fn render_workload_secret_manifest(
     family: WorkloadRoleFamily,
     triple: &Triple,
@@ -118,13 +118,13 @@ pub fn render_workload_secret_manifest(
     });
     let string_data = match body {
         WorkloadSecretBody::Url(url) => json!({ "url": url }),
-        WorkloadSecretBody::EnvKeyUrl {
-            env_key,
-            tenant_key,
+        WorkloadSecretBody::ProjectEnvKeyUrl {
+            project_env_key,
+            project_key,
             url,
         } => {
-            metadata["labels"]["wamn.tenant-key"] = json!(tenant_key);
-            metadata["annotations"] = json!({ "wamn.io/env_key": env_key });
+            metadata["labels"]["wamn.project-key"] = json!(project_key);
+            metadata["annotations"] = json!({ "wamn.io/project_env_key": project_env_key });
             json!({ "url": url })
         }
         WorkloadSecretBody::SessionTarget(target) => json!({
@@ -202,27 +202,27 @@ pub fn render_control_administration_patch(triple: &Triple, url: Option<&str>) -
     }
 }
 
-/// Render the scoped per-tenant guest-SQL credential `Secret`
+/// Render the scoped per-project guest-SQL credential `Secret`
 /// (`wamn-0h0g.22.6.4`).
 ///
-/// `stringData.url` names the tenant's own LOGIN generation, which is the whole
-/// point: after the `wamn-0h0g.22.6` sweep the guest's tenant comes from
-/// `current_user`, so the credential IS the tenant authority and no claim
+/// `stringData.url` names the project's own LOGIN generation, which is the whole
+/// point: after the `wamn-0h0g.22.6` sweep the guest's project comes from
+/// `current_user`, so the credential IS the project authority and no claim
 /// accompanies it.
 pub fn render_guest_secret_manifest(
     triple: &Triple,
     namespace: &str,
-    env_key: &str,
-    tenant_key: &str,
+    project_env_key: &str,
+    project_key: &str,
     url: &str,
 ) -> Value {
     render_workload_secret_manifest(
         WorkloadRoleFamily::App,
         triple,
         namespace,
-        WorkloadSecretBody::EnvKeyUrl {
-            env_key,
-            tenant_key,
+        WorkloadSecretBody::ProjectEnvKeyUrl {
+            project_env_key,
+            project_key,
             url,
         },
     )
@@ -329,7 +329,7 @@ mod tests {
             parsed.audience(),
             "urn:wamn:project-env:acme:widgets:dev:k3m9x2p7"
         );
-        assert_eq!(parsed.env_key(), "t1");
+        assert_eq!(parsed.project_env_key(), "t1");
         assert_eq!(parsed.connection().url(), url);
         assert!(
             !format!("{:?}", WorkloadSecretBody::SessionTarget(&target))

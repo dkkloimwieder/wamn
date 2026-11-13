@@ -924,7 +924,7 @@ fn names_the_member(error: &wamn_catalog::ManifestError, member: &str) -> bool {
     std::error::Error::source(error).is_some_and(|source| source.to_string().contains(member))
 }
 
-/// EXIT GATE for `wamn-c2y5.1`: authored text is optional everywhere, it is
+/// EXIT CONDITION for `wamn-c2y5.1`: authored text is optional everywhere, it is
 /// carried where the author wrote it, and a misspelled key is refused.
 ///
 /// The refusal matters more than the parse. A label that silently disappears
@@ -1057,7 +1057,7 @@ fn objects(value: &Value) -> Vec<&serde_json::Map<String, Value>> {
     }
 }
 
-/// EXIT GATE for `wamn-c2y5.2`: the contract carries the authored text to the
+/// EXIT CONDITION for `wamn-c2y5.2`: the contract carries the authored text to the
 /// only reader that matters, and it carries nothing when nobody authored any.
 ///
 /// The silence half is the load-bearing one. A member written as `null` or as
@@ -1177,7 +1177,7 @@ fn a_contract_carries_the_authored_text_and_nothing_else() {
     }
 }
 
-/// EXIT GATE for `wamn-rm14.1`: a package whose inputs name no record writes
+/// EXIT CONDITION for `wamn-rm14.1`: a package whose inputs name no record writes
 /// no reference anywhere, and every read that serves rows states what it
 /// lists whoever wrote it.
 ///
@@ -1333,7 +1333,7 @@ fn authored_query_display_fields_require_a_declared_result_field() {
     );
 }
 
-/// EXIT GATE for `wamn-zrrg`: a generated result field states the record its
+/// EXIT CONDITION for `wamn-zrrg`: a generated result field states the record its
 /// column's foreign key names, the same member an input states.
 ///
 /// A table reads it to show the record's text in place of its key. A column
@@ -1364,7 +1364,7 @@ fn a_generated_result_field_states_the_record_its_foreign_key_names() {
     }
 }
 
-/// EXIT GATE for `wamn-rm14.6`: the envelope bound carries no screen text.
+/// EXIT CONDITION for `wamn-rm14.6`: the envelope bound carries no screen text.
 ///
 /// The line bound owns the repeated group a form renders. The envelope is the
 /// submission itself, so text on it would be a member nothing reads, and

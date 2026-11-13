@@ -42,7 +42,7 @@ Effort: L
 Area: crates/platform/runtime/src/auth_cache.rs  
 Evidence: `deploy/gcp/auth-nats-clients.yaml:1`; `deploy/platform/host-environment-certs.example.yaml:28`; `crates/platform/runtime/src/auth_cache.rs:292`; `crates/platform/runtime/src/plugins/wamn_postgres/claims.rs:2359`  
 Problem: Hosts and identity writers share the `wasmcloud-runtime` NATS identity. The inspected bundled NATS configuration grants that identity no subject restrictions. Hosts accept grant values from the shared bucket, so a stolen runtime certificate can publish an `admin` grant for a principal in another environment.  
-Closed by [alignment](../plan/alignment.md) R4, R5 and R7 (owner addendum 2026-10-31): every client authenticates by a client certificate mapped to a NATS user, each environment has its own certificate and the key prefix `$KV.wamn-auth.<env_key>.>`, and R5's two-environment test proves that environment A's certificate is refused on environment B's subjects and keys. The audit proposal (drop the bucket, read grants from PostgreSQL) is rejected. The bucket stays per R7. The One NATS epic owns the change.
+Closed by [alignment](../plan/alignment.md) R4, R5 and R7 (owner addendum 2026-10-31): every client authenticates by a client certificate mapped to a NATS user, each environment has its own certificate and the key prefix `$KV.wamn-auth.<project_env_key>.>`, and R5's two-environment test proves that environment A's certificate is refused on environment B's subjects and keys. The audit proposal (drop the bucket, read grants from PostgreSQL) is rejected. The bucket stays per R7. The One NATS epic owns the change.
 
 ## Finding E1-3: A delayed grant can restore revoked administration
 
@@ -221,7 +221,7 @@ Evidence: `deploy/platform/postgres.yaml:35`, `deploy/platform/postgres.yaml:119
 Problem: The Postgres fixture ships a known superuser password, and MinIO ships known root credentials. Backup declarations reuse the same MinIO administrator credentials across cluster prefixes. A pod with service reachability can administer these fixtures and read or delete backups stored there. These manifests describe development infrastructure, so this evidence does not establish production exposure.  
 Proposal: Delete the standing Postgres fixture and create disposable databases for tests. Replace the shared backup root identity with credentials restricted to each cluster's backup prefix and an explicit encrypted endpoint.  
 Deletes: `deploy/platform/postgres.yaml`, committed MinIO credential values, and shared root credential wiring in backup declarations.  
-Risk: Existing gate and recovery procedures require replacement inputs. Prove backup restoration and deny one cluster's credentials access to another cluster's objects.
+Risk: Existing condition and recovery procedures require replacement inputs. Prove backup restoration and deny one cluster's credentials access to another cluster's objects.
 
 Owner addendum 2026-10-31, re-scoped: [integration-schema](../plan/integration-schema.md) drops `registry.credential_import`, `registry.import_connection_credentials` and `identity.credential.secret`, so credentials enter by UI or API only and plaintext secrets never sit in Postgres. `deploy/platform/postgres.yaml` goes with the prototype set (D1-10).
 
@@ -258,7 +258,7 @@ Owner review 2026-10-31: keep, medium, In passing. A `USER` line in the Dockerfi
 Severity: low  
 Effort: M  
 Area: Dockerfile; deploy/gcp; deploy/infra  
-Evidence: `Dockerfile:20`, `Dockerfile:158`, `deploy/gcp/nats-jetstream.yaml:96`, `deploy/gcp/cnpg-cluster.yaml:39`, `deploy/gates/m1-postgres.Dockerfile:1`; measurements.md section 11  
+Evidence: `Dockerfile:20`, `Dockerfile:158`, `deploy/gcp/nats-jetstream.yaml:96`, `deploy/gcp/cnpg-cluster.yaml:39`, `deploy/acceptance-tests/m1-postgres.Dockerfile:1`; measurements.md section 11
 Problem: Build bases and deployed database and event-broker images use mutable tags without digests. The same source revision can therefore resolve different executable inputs across builds or node pulls. The shared measurements contain no container vulnerability scan, so this finding establishes an input-provenance gap.  
 Proposal: Pin the two infrastructure images (NATS, CNPG postgres) by digest in the one NATS manifest and `cnpg-cluster.yaml` when alignment rewrites them.  
 Deletes: Tag-only references for the two infrastructure images.  
@@ -379,13 +379,13 @@ Risk: Every executable that constructs an engine must retain zero-grace cancella
 
 Owner review 2026-10-31: keep, small, Group 3 In passing. It rides the One NATS host build.
 
-## Finding E3-8: Dependency identity gates do not provide a refresh policy
+## Finding E3-8: Dependency identity conditions do not provide a refresh policy
 
 Severity: low  
 Effort: S  
 Area: `tools/repo-lint`, dependency locks, vendored dependencies  
 Evidence: measurements.md sections 4 and 5, `tools/repo-lint:304`, `tests/conformance/tests/wasmtime_source_identity.rs:167`, `vendor/pg-walstream/WAMN-PATCH.md:1`, `vendor/pg-walstream/Cargo.lock:1142`  
-Problem: The prior advisory database reported zero findings because it remained dated April 7. Repository lint runs no advisory refresh or scan. Shared measurements cover two lockfiles, while this checkout contains six first-party lockfiles plus the vendored lockfile. Source-identity gates preserve selected versions but provide no security refresh cadence.  
+Problem: The prior advisory database reported zero findings because it remained dated April 7. Repository lint runs no advisory refresh or scan. Shared measurements cover two lockfiles, while this checkout contains six first-party lockfiles plus the vendored lockfile. Source-identity conditions preserve selected versions but provide no security refresh cadence.
 Proposal: Remove the confirmed unused runtime declarations for `percent-encoding` and `rand_core` (`crates/platform/runtime/Cargo.toml:17`, `crates/platform/runtime/Cargo.toml:70`), with A1-6. `cargo audit` runs by hand whenever a bump is planned.  
 Deletes: The two unused dependency declarations.  
 Risk: None beyond a rebuild of the runtime crate.

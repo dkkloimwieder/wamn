@@ -11,7 +11,7 @@ pub fn instance_families() -> impl Iterator<Item = WorkloadRoleFamily> {
     WorkloadRoleFamily::ALL.into_iter().filter(|family| {
         matches!(
             family.scope_kind(),
-            WorkloadRoleScopeKind::EnvKey | WorkloadRoleScopeKind::ProjectEnvironment
+            WorkloadRoleScopeKind::ProjectEnvKey | WorkloadRoleScopeKind::ProjectEnvironment
         )
     })
 }
@@ -25,7 +25,7 @@ pub fn instance_families() -> impl Iterator<Item = WorkloadRoleFamily> {
 pub fn instance_roles(
     triple: &Triple,
     instance: &str,
-    env_key: &str,
+    project_env_key: &str,
 ) -> anyhow::Result<Vec<String>> {
     let (org, project, env) = (
         triple.org.as_str(),
@@ -36,8 +36,8 @@ pub fn instance_roles(
     let mut roles = vec![cdc_object_name(org, project, env, instance)];
     for family in instance_families() {
         let scope = match family.scope_kind() {
-            WorkloadRoleScopeKind::EnvKey => WorkloadRoleScope::EnvKey {
-                env_key,
+            WorkloadRoleScopeKind::ProjectEnvKey => WorkloadRoleScope::ProjectEnvKey {
+                project_env_key,
                 database: &database,
             },
             _ => WorkloadRoleScope::ProjectEnvironment {

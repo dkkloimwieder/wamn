@@ -78,7 +78,7 @@ A fresh install creates the platform schema, including the control database, fro
 Installation records a digest of the full schema SQL. Apply refuses a changed or missing digest and requires a database reset.
 Migrations are deferred until development is stable and return then with a smaller design.
 
-The provisioning owner locks and compares environment identity before refreshing its `env_key` projection.
+The provisioning owner locks and compares environment identity before refreshing its `project_env_key` projection.
 That refresh clears the instance claim even when the suffix stays unchanged.
 The developer coordinator claims an instance with one update and refuses a missing projection.
 
@@ -173,7 +173,7 @@ Provisioning writes the apply URL to the `platform/wamn-apply` Secret.
 4. Write: Recover any pending Helm operation. Always run `helm upgrade --install` with `--wait`, the readiness budget of the policy, and `--rollback-on-failure`.
 5. Readiness: Wait until each WorkloadDeployment of the release reports `Ready`.
 6. Drain: Wait until the live set is exactly the declared release. Name each stranded run and stop.
-7. Contract: Remove the bindings of releases outside the live set. Disable instances that the document no longer names. Apply a declared floor.
+7. Contract: Remove the bindings of releases outside the live set. Disable instances that the document no longer names. Apply a declared minimum.
 
 During analysis, apply reads each bound connection's type and the target type from the registry.
 For an exclusive connection on a cloud target, the body from `WAMN_RELEASE_HOST_GROUP` must name `replicas: 1`.
@@ -217,7 +217,7 @@ The platform UI reads status through a control operation with a read-only Servic
 
 - Every step is safe to run twice. A missing object is a finished step, not a refusal.
 
-- The registry rows go last. Until they go, a second run can still read the instance suffix and the tenant.
+- The registry rows go last. Until they go, a second run can still read the instance suffix and the project.
 
 - The database and its CDC objects go before any role. The control rows go before the registry rows.
 
@@ -238,7 +238,7 @@ The platform UI reads status through a control operation with a read-only Servic
 ### Resources kept after deletion
 
 - The org, the project, `identity.project_roles` and every user principal.
-- The control-family generation roles and their `author_login_tenants` rows. They belong to the triple, not the instance, and a new provision of the triple uses the same names.
+- The control-family generation roles and their `author_login_projects` rows. They belong to the triple, not the instance, and a new provision of the triple uses the same names.
 
 ## Organization membership and administration
 
@@ -298,9 +298,9 @@ The workflow crate owns durable queue claims and settlement through `RunStore`.
 The [capability owners](capabilities.md) supply database, HTTP, object storage, and event access without guest credentials.
 
 The developer host also loads unpublished components and admitted facts from local files.
-It requires the expected file digests and a database marker tied to the `env_key`, environment, and physical database creation.
+It requires the expected file digests and a database marker tied to the `project_env_key`, environment, and physical database creation.
 Local facts supply released wiring, connection requirements, and binding selections without changing the frozen catalog records.
-The normal runtime still owns tenant authority, run claims, credential generations, and effects.
+The normal runtime still owns project authority, run claims, credential generations, and effects.
 
 ## Cloud providers
 

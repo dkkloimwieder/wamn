@@ -94,7 +94,7 @@ fn generation_role(
     system_reader_generation_role(reader, ORG, PROJECT, ENV, database, generation)
 }
 
-/// Drop every role this gate mints, so a leftover HEALTHY role cannot satisfy
+/// Drop every role this acceptance test mints, so a leftover HEALTHY role cannot satisfy
 /// the builder's `IF NOT EXISTS` and mask a mutated one.
 ///
 /// Roles are CLUSTER-wide, so re-creating the schemas does not reach them.

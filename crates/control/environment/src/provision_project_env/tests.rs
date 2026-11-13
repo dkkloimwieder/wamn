@@ -51,7 +51,7 @@ fn a_reserved_or_bad_project_id_is_rejected_before_any_effect() {
 /// The target cluster is DERIVED (D18 `cluster_of`) from the org's placement +
 /// the env's policy: a dedicated org owns `<org>-<owner(env)>`, a pooled org
 /// collapses every env onto its pool. (The live routing through the DB is
-/// checked by the in-cluster gate; here we pin the pure derivation the
+/// checked by the in-cluster acceptance test; here we pin the pure derivation the
 /// subcommand calls.)
 #[test]
 fn cluster_is_derived_by_placement_and_policy() {
@@ -218,7 +218,7 @@ fn secret_writes_replace_links_without_following_or_sharing_them() {
 }
 
 /// wamn-0h0g.12.122. The emitted privilege batch is PINNED whole: a runtime
-/// gate that only asserts "the reader can connect" stays green when a
+/// condition that only asserts "the reader can connect" stays green when a
 /// builder is swapped for a wider one, and stays green when a `CONNECT`
 /// statement drifts back above the owner statement on a database that
 /// happens to be owned by `wamn_db_owner` already. The frozen literal is the
@@ -244,7 +244,7 @@ fn the_privilege_batch_revokes_every_stable_role_connect_and_sets_no_owner() {
 
 /// wamn-0h0g.12.179. The stable guest ACL role must never be handed
 /// `CONNECT` by the batch an operator applies. It is cluster-global and
-/// every per-tenant generation INHERITS it, so one grant here reaches every
+/// every per-project generation INHERITS it, so one grant here reaches every
 /// project-env database on the cluster — and `--prepare-guest-generation`
 /// refuses the result, which is how the defect surfaced.
 #[test]
@@ -310,14 +310,14 @@ fn every_family_derives_a_lifecycle_and_only_a_grant_set_stays_per_family() {
     };
     for family in WorkloadRoleFamily::ALL {
         let lifecycle =
-            workload_lifecycle(family, identity, "tenant", "wamn-db-demo--billing--dev");
+            workload_lifecycle(family, identity, "project", "wamn-db-demo--billing--dev");
         assert_eq!(lifecycle.family, family);
         assert_eq!(lifecycle.database(), "wamn-db-demo--billing--dev");
         // The scope grain is the family's own declaration, so a family can
         // never be paired with the wrong one here.
         assert_eq!(lifecycle.scope, {
             let probe =
-                workload_lifecycle(family, identity, "tenant", "wamn-db-demo--billing--dev");
+                workload_lifecycle(family, identity, "project", "wamn-db-demo--billing--dev");
             probe.scope
         });
         let a = lifecycle.role(CredentialGeneration::A);
@@ -325,9 +325,9 @@ fn every_family_derives_a_lifecycle_and_only_a_grant_set_stays_per_family() {
         assert_ne!(a, b, "{family:?}");
         assert!(is_workload_generation_role(family, &a), "{family:?}: {a}");
         assert!(a.len() <= 63, "{family:?}: {a}");
-        // Only a CONTROL-scoped family records a login-to-tenant mapping.
+        // Only a CONTROL-scoped family records a login-to-project mapping.
         assert_eq!(
-            lifecycle.control_env_key.is_some(),
+            lifecycle.control_project_env_key.is_some(),
             family.scope_kind() == WorkloadRoleScopeKind::Control,
             "{family:?}"
         );
@@ -698,7 +698,7 @@ fn session_reader_requires_exact_grants() {
         assert!(verify(&missing).is_err());
     }
     for extra in [
-        role_acl("column", "platform", "user_role.env_key", "SELECT"),
+        role_acl("column", "platform", "user_role.project_env_key", "SELECT"),
         role_acl("relation", "platform", "user", "SELECT"),
         role_acl("column", "platform", "user.email", "SELECT"),
         role_acl("column", "platform", "user.status", "UPDATE"),
@@ -859,11 +859,11 @@ fn every_workload_family_carries_a_distinct_frozen_label() {
     for (family, label) in expected {
         let lifecycle = WorkloadLifecycle {
             family,
-            scope: WorkloadRoleScope::EnvKey {
-                env_key: "t",
+            scope: WorkloadRoleScope::ProjectEnvKey {
+                project_env_key: "t",
                 database: "db",
             },
-            control_env_key: None,
+            control_project_env_key: None,
         };
         assert_eq!(lifecycle.label(), label, "{family:?}");
         assert_eq!(family.label(), label, "{family:?}");
@@ -917,7 +917,7 @@ fn stable_acl_role_members_are_only_scoped_generation_roles() {
 }
 
 #[tokio::test]
-async fn env_key_projection_and_instance_claim_hold_on_postgres() {
+async fn project_env_key_projection_and_instance_claim_hold_on_postgres() {
     let _lock = wamn_test_postgres::lock();
     let database = wamn_control_provision::test_database::system();
     let url = database.url();
@@ -936,33 +936,35 @@ async fn env_key_projection_and_instance_claim_hold_on_postgres() {
     let mut second = connect().await;
     second.batch_execute("SET ROLE wamn_system").await.unwrap();
     let (one, two) = tokio::join!(
-        project_env_key_environment(&mut first, &triple, Some("tenant-race"), "abcd1234", false),
-        project_env_key_environment(&mut second, &other, Some("tenant-race"), "efgh5678", true),
+        project_env_key_environment(&mut first, &triple, Some("project-race"), "abcd1234", false),
+        project_env_key_environment(&mut second, &other, Some("project-race"), "efgh5678", true),
     );
     assert_ne!(
         one.is_ok(),
         two.is_ok(),
-        "only one first tenant identity wins"
+        "only one first project identity wins"
     );
     let (winner, suffix, disposable, error) = match (one, two) {
         (Ok(()), Err(error)) => (&triple, "abcd1234", false, error),
         (Err(error), Ok(())) => (&other, "efgh5678", true, error),
-        results => panic!("unexpected tenant projection results: {results:?}"),
+        results => panic!("unexpected project projection results: {results:?}"),
     };
     assert!(matches!(
         error.downcast_ref::<wamn_control_provision::ProvisionError>(),
-        Some(wamn_control_provision::ProvisionError::EnvKeyEnvironmentIdentityConflict { .. })
+        Some(
+            wamn_control_provision::ProvisionError::ProjectEnvKeyEnvironmentIdentityConflict { .. }
+        )
     ));
     assert!(
         error
             .to_string()
-            .starts_with("tenant-environment-identity-projection-content-conflict:")
+            .starts_with("project-environment-identity-projection-content-conflict:")
     );
     first
-        .batch_execute("SET app.env_key='tenant-race'")
+        .batch_execute("SET app.project_env_key='project-race'")
         .await
         .unwrap();
-    let row = first.query_one("SELECT org,project,env,instance_suffix,disposable,environment_instance FROM catalog.tenant_environments WHERE env_key='tenant-race'", &[]).await.unwrap();
+    let row = first.query_one("SELECT org,project,env,instance_suffix,disposable,environment_instance FROM catalog.project_environments WHERE project_env_key='project-race'", &[]).await.unwrap();
     assert_eq!(row.get::<_, String>(0), winner.org);
     assert_eq!(row.get::<_, String>(1), winner.project);
     assert_eq!(row.get::<_, String>(2), winner.env.as_str());
@@ -974,8 +976,8 @@ async fn env_key_projection_and_instance_claim_hold_on_postgres() {
         .to_string();
     wamn_test_infrastructure::record_history::assert_stamp(
         &first,
-        "catalog.tenant_environments",
-        "env_key='tenant-race'",
+        "catalog.project_environments",
+        "project_env_key='project-race'",
         &actor,
         &actor,
     )
@@ -993,9 +995,9 @@ async fn env_key_projection_and_instance_claim_hold_on_postgres() {
             .unwrap();
         transaction
             .execute(
-                sql::insert_env_key_environment_sql(),
+                sql::insert_project_env_key_environment_sql(),
                 &[
-                    &"tenant-held",
+                    &"project-held",
                     &triple.org,
                     &triple.project,
                     &triple.env.as_str(),
@@ -1005,8 +1007,13 @@ async fn env_key_projection_and_instance_claim_hold_on_postgres() {
             )
             .await
             .unwrap();
-        let waiting =
-            project_env_key_environment(&mut second, &other, Some("tenant-held"), "efgh5678", true);
+        let waiting = project_env_key_environment(
+            &mut second,
+            &other,
+            Some("project-held"),
+            "efgh5678",
+            true,
+        );
         tokio::pin!(waiting);
         assert!(
             tokio::time::timeout(Duration::from_millis(150), &mut waiting)
@@ -1018,13 +1025,13 @@ async fn env_key_projection_and_instance_claim_hold_on_postgres() {
         assert!(
             error
                 .to_string()
-                .starts_with("tenant-environment-identity-projection-content-conflict:")
+                .starts_with("project-environment-identity-projection-content-conflict:")
         );
     }
     do_record_project_env(
         &mut first,
         &triple,
-        Some("tenant-a"),
+        Some("org-a"),
         None,
         "cloud",
         "db-first",
@@ -1046,16 +1053,16 @@ async fn env_key_projection_and_instance_claim_hold_on_postgres() {
         )
         .await;
     }
-    claim_environment_instance(&mut connect().await, "tenant-a", "16384")
+    claim_environment_instance(&mut connect().await, "org-a", "16384")
         .await
         .unwrap();
     first
-        .batch_execute("SET app.env_key='tenant-a'")
+        .batch_execute("SET app.project_env_key='org-a'")
         .await
         .unwrap();
     let before: chrono::DateTime<chrono::Utc> = first
         .query_one(
-            "SELECT projected_at FROM catalog.tenant_environments WHERE env_key='tenant-a'",
+            "SELECT projected_at FROM catalog.project_environments WHERE project_env_key='org-a'",
             &[],
         )
         .await
@@ -1064,7 +1071,7 @@ async fn env_key_projection_and_instance_claim_hold_on_postgres() {
     let stored = do_record_project_env(
         &mut first,
         &triple,
-        Some("tenant-a"),
+        Some("org-a"),
         None,
         "cloud",
         "db-second",
@@ -1076,7 +1083,7 @@ async fn env_key_projection_and_instance_claim_hold_on_postgres() {
     .await
     .unwrap();
     assert_eq!(stored, "abcd1234", "the registry keeps its original suffix");
-    let row = first.query_one("SELECT environment_instance,projected_at,instance_suffix,disposable FROM catalog.tenant_environments WHERE env_key='tenant-a'", &[]).await.unwrap();
+    let row = first.query_one("SELECT environment_instance,projected_at,instance_suffix,disposable FROM catalog.project_environments WHERE project_env_key='org-a'", &[]).await.unwrap();
     assert_eq!(
         row.get::<_, String>(0),
         "",
@@ -1089,7 +1096,7 @@ async fn env_key_projection_and_instance_claim_hold_on_postgres() {
     let error = do_record_project_env(
         &mut first,
         &other,
-        Some("tenant-a"),
+        Some("org-a"),
         None,
         "cloud",
         "db-other",
@@ -1103,12 +1110,12 @@ async fn env_key_projection_and_instance_claim_hold_on_postgres() {
     assert!(
         error
             .to_string()
-            .starts_with("tenant-environment-identity-projection-content-conflict:")
+            .starts_with("project-environment-identity-projection-content-conflict:")
     );
     let error = do_record_project_env(
         &mut first,
         &other,
-        Some("tenant-b"),
+        Some("org-b"),
         None,
         "nowhere",
         "db-other",
@@ -1125,7 +1132,7 @@ async fn env_key_projection_and_instance_claim_hold_on_postgres() {
     );
     let row = first
         .query_one(
-            "SELECT project,projected_at FROM catalog.tenant_environments WHERE env_key='tenant-a'",
+            "SELECT project,projected_at FROM catalog.project_environments WHERE project_env_key='org-a'",
             &[],
         )
         .await
@@ -1134,10 +1141,10 @@ async fn env_key_projection_and_instance_claim_hold_on_postgres() {
     assert_eq!(row.get::<_, chrono::DateTime<chrono::Utc>>(1), stable_at);
     assert_eq!(first.query_one("SELECT secret_name FROM registry.project_envs WHERE org='demo' AND project='shipping' AND env='dev'", &[]).await.unwrap().get::<_, String>(0), "db-other", "the earlier registry commit survives projection refusal");
 
-    claim_environment_instance(&mut connect().await, "tenant-a", "")
+    claim_environment_instance(&mut connect().await, "org-a", "")
         .await
         .unwrap();
-    let absent = claim_environment_instance(&mut connect().await, "tenant-unprojected", "16384")
+    let absent = claim_environment_instance(&mut connect().await, "project-unprojected", "16384")
         .await
         .unwrap_err();
     assert!(
@@ -1148,55 +1155,55 @@ async fn env_key_projection_and_instance_claim_hold_on_postgres() {
     assert!(
         absent
             .to_string()
-            .contains("name the tenant when provisioning the project-env")
+            .contains("name the project when provisioning the project-env")
     );
-    assert_eq!(first.query_one("SELECT count(*) FROM catalog.tenant_environments WHERE env_key='tenant-unprojected'", &[]).await.unwrap().get::<_, i64>(0), 0);
-    project_env_key_environment(&mut second, &other, Some("tenant-b"), "efgh5678", false)
+    assert_eq!(first.query_one("SELECT count(*) FROM catalog.project_environments WHERE project_env_key='project-unprojected'", &[]).await.unwrap().get::<_, i64>(0), 0);
+    project_env_key_environment(&mut second, &other, Some("org-b"), "efgh5678", false)
         .await
         .unwrap();
     assert_eq!(
         first
             .query_one(
-                "SELECT count(*) FROM catalog.tenant_environments WHERE env_key='tenant-b'",
+                "SELECT count(*) FROM catalog.project_environments WHERE project_env_key='org-b'",
                 &[]
             )
             .await
             .unwrap()
             .get::<_, i64>(0),
         0,
-        "the claimed tenant cannot read another tenant"
+        "the claimed project cannot read another project"
     );
     let foreign = first
         .execute(
             wamn_schema_control::claim_environment_instance_sql(),
-            &[&"tenant-b", &"foreign"],
+            &[&"org-b", &"foreign"],
         )
         .await
         .unwrap();
     assert_eq!(
         foreign, 0,
-        "the claimed tenant cannot change another tenant"
+        "the claimed project cannot change another project"
     );
 
     let lock = first.transaction().await.unwrap();
-    lock.query_one(sql::read_env_key_environment_sql(), &[&"tenant-a"])
+    lock.query_one(sql::read_project_env_key_environment_sql(), &[&"org-a"])
         .await
         .unwrap();
     let refresh =
-        project_env_key_environment(&mut second, &triple, Some("tenant-a"), "1234abcd", false);
+        project_env_key_environment(&mut second, &triple, Some("org-a"), "1234abcd", false);
     tokio::pin!(refresh);
     assert!(
         tokio::time::timeout(Duration::from_millis(150), &mut refresh)
             .await
             .is_err(),
-        "projection must wait for the tenant row lock"
+        "projection must wait for the project row lock"
     );
     lock.rollback().await.unwrap();
     refresh.await.unwrap();
     assert_eq!(
         first
             .query_one(
-                "SELECT instance_suffix FROM catalog.tenant_environments WHERE env_key='tenant-a'",
+                "SELECT instance_suffix FROM catalog.project_environments WHERE project_env_key='org-a'",
                 &[]
             )
             .await
@@ -1218,9 +1225,9 @@ fn workload_urls_use_the_database_service_namespace_unless_overridden() {
         ),
         (
             None,
-            "tenant-pg",
+            "project-pg",
             "databases",
-            "tenant-pg-rw.databases.svc.cluster.local",
+            "project-pg-rw.databases.svc.cluster.local",
         ),
         (
             Some("db.example.com"),
@@ -1275,7 +1282,7 @@ async fn a_record_without_a_marker_keeps_the_disposable_row() {
         do_record_project_env(
             &mut client,
             &triple,
-            Some("tenant-a"),
+            Some("org-a"),
             None,
             "cloud",
             "db-first",
@@ -1297,12 +1304,12 @@ async fn a_record_without_a_marker_keeps_the_disposable_row() {
         .get(0);
     assert!(registry, "a record without a marker keeps the registry row");
     client
-        .batch_execute("SET app.env_key='tenant-a'")
+        .batch_execute("SET app.project_env_key='org-a'")
         .await
         .unwrap();
     let projected: bool = client
         .query_one(
-            "SELECT disposable FROM catalog.tenant_environments WHERE env_key='tenant-a'",
+            "SELECT disposable FROM catalog.project_environments WHERE project_env_key='org-a'",
             &[],
         )
         .await

@@ -93,7 +93,7 @@ pub async fn create_user(args: CreateUserArgs) -> anyhow::Result<()> {
 /// Record history retention arguments.
 #[derive(Debug, Args)]
 pub struct PruneRecordHistoryArgs {
-    /// Postgres URL for this tenant's `wamn_audit_retention` credential
+    /// Postgres URL for this project's `wamn_audit_retention` credential
     /// generation. The verb refuses any other login. Env `WAMN_PG_URL`.
     #[arg(long, env = "WAMN_PG_URL", hide_env_values = true)]
     pub database_url: String,
@@ -115,7 +115,7 @@ pub struct PruneRecordHistoryArgs {
 /// Terminal run history retention arguments.
 #[derive(Debug, Args)]
 pub struct PruneRunHistoryArgs {
-    /// Postgres URL for this tenant's `wamn_run_retention` credential generation
+    /// Postgres URL for this project's `wamn_run_retention` credential generation
     /// — the NOSUPERUSER/NOBYPASSRLS role whose whole authority is the terminal
     /// run delete. The verb refuses any other identity. Env `WAMN_PG_URL`.
     #[arg(long, env = "WAMN_PG_URL", hide_env_values = true)]
@@ -153,7 +153,7 @@ pub struct PruneRunHistoryArgs {
     pub dry_run: bool,
 }
 
-/// Prune the expired record history of one tenant and print what each history
+/// Prune the expired record history of one project and print what each history
 /// table lost.
 pub async fn prune_record_history(args: PruneRecordHistoryArgs) -> anyhow::Result<()> {
     let pruned = prune_expired_record_history(PruneRecordHistoryRequest {
@@ -170,21 +170,21 @@ pub async fn prune_record_history(args: PruneRecordHistoryArgs) -> anyhow::Resul
     Ok(())
 }
 
-fn print_pruned_record_history(pruned: &[PrunedHistory], env_key: &str) {
+fn print_pruned_record_history(pruned: &[PrunedHistory], project_env_key: &str) {
     for history in pruned {
         println!(
-            "prune-record-history: removed {} entries from {}.{} (retention P{}D, tenant {})",
-            history.removed, history.schema, history.history, history.days, env_key
+            "prune-record-history: removed {} entries from {}.{} (retention P{}D, project {})",
+            history.removed, history.schema, history.history, history.days, project_env_key
         );
     }
     println!(
-        "prune-record-history: pruned {} history table(s) for env_key {}",
+        "prune-record-history: pruned {} history table(s) for project_env_key {}",
         pruned.len(),
-        env_key
+        project_env_key
     );
 }
 
-/// Prune one tenant's expired terminal run history and print the count.
+/// Prune one project's expired terminal run history and print the count.
 pub async fn prune_run_history(args: PruneRunHistoryArgs) -> anyhow::Result<()> {
     let pruned = prune_terminal_run_history(PruneRunHistoryRequest {
         database_url: args.database_url,
@@ -200,7 +200,7 @@ pub async fn prune_run_history(args: PruneRunHistoryArgs) -> anyhow::Result<()> 
     if args.dry_run {
         println!(
             "prune-run-history (dry-run): {pruned} terminal run(s) older than {} day(s) WOULD be \
-             pruned in schema {} (env_key {})",
+             pruned in schema {} (project_env_key {})",
             args.retention_days,
             args.schema,
             wamn_control_registry::project_env_key(&args.org, &args.project, &args.environment)
@@ -208,7 +208,7 @@ pub async fn prune_run_history(args: PruneRunHistoryArgs) -> anyhow::Result<()> 
     } else {
         println!(
             "prune-run-history: pruned {pruned} terminal run(s) older than {} day(s) in schema {} \
-             (env_key {})",
+             (project_env_key {})",
             args.retention_days,
             args.schema,
             wamn_control_registry::project_env_key(&args.org, &args.project, &args.environment)
