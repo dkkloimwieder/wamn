@@ -71,3 +71,5 @@ W12. Before S6-B deletes `wamn-schema-control`, its surviving functions move to 
 W13. S6 runs as two serial lanes after S4 merges: S6-A (migration execution) and S6-B (schema lifecycle and the deletion of `wamn-schema-control`). S7 runs beside them. In each shared file, S6 lands its migration removals first, and S7 then owns the whole file.
 
 W14. Palette descriptor ownership (S5-D question): S7 defines the platform ownership of palette guests and connects `palette.json` to release and dev resolution. The old delivery path stays deleted.
+
+W15. S7 runs as four serial lanes after S4 merges: S7-A (invocation authority), S7-B (typed HTTP invocation), S7-C (workflow and palette invocation) and S7-D (edge switch and the final deletion). C30 is corrected: `native_policy.rs::finish_result` creates signing authority after commit, so the invocation record of S7-A keeps that authority. Validation moves into the typed exports before the codecs go. S7-A changes `audit_retention.rs::WRITE_LOG_RETENTION_SQL` so that unfinished claims expire after 30 days (R-06 C).
