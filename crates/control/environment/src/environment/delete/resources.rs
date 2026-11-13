@@ -12,7 +12,7 @@ async fn get(
     kind: &str,
     name: &str,
 ) -> anyhow::Result<Option<Value>> {
-    crate::kubectl::get(
+    wamn_kubernetes::kubectl::get(
         &platform.target.kubeconfig,
         &platform.target.context,
         namespace,

@@ -71,7 +71,7 @@ async fn auth_drops_assign_project_role_records_the_changed_identity() {
         &mut client,
         "role-service",
         "Role service",
-        &AuthChanges::default(),
+        &Publisher::default(),
     )
     .await
     .unwrap();

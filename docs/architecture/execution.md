@@ -712,8 +712,8 @@ If the stream ends or the NATS client loses its connection, the watch breaks.
 The host checks the connection, because the client reconnects without ending the stream.
 A host without the bucket keeps no fact either, and reads every request from Postgres.
 
-Every function that writes one of these facts takes an [`AuthDrops`](../../crates/identity/platform/src/auth_changes.rs) and records the change in it.
-Its caller deletes the keys of the list after the commit.
+Every function that writes one of these facts takes an [`AuthDrops`](../../crates/broker/src/auth_changes.rs) and records the change in it.
+Its caller deletes the keys of the list after the commit. `wamn-broker::Publisher` publishes both authorization and connection changes through one client.
 [`auth_drops_live`](../../crates/identity/platform/tests/auth_drops_live.rs) runs each writer once and checks the drop it records.
 A change of a user row or a user role deletes the key of the principal.
 A change of a role, a permission or the environment status deletes every key of the tenant.
@@ -893,8 +893,8 @@ A secret change alone sets its expiry to negative infinity and preserves its enc
 Every new generation deletes pending authorizations for that connection.
 Connection deletion cascades to both OAuth tables.
 
-Every writer of these facts records the change in a [`ConnectionDrops`](../../crates/identity/platform/src/connection_changes.rs).
-Its caller deletes the keys of the list after the commit.
+Every writer of these facts records the change in a [`ConnectionDrops`](../../crates/broker/src/connection_changes.rs).
+Its caller deletes the keys of the list after the commit. `wamn-broker::Publisher` publishes both authorization and connection changes through one client.
 A failed delete is logged, the commit stands, and the 60 seconds bound it.
 A connection write, copy, credential change, disable, enable or delete deletes the key of that connection.
 A connection write, copy or delete also deletes the connection map of its environment, because it can create or remove a connection.

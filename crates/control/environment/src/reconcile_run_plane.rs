@@ -55,7 +55,7 @@ pub struct ReconcileRunPlaneRequest {
     pub dry_run: bool,
 
     /// Publishes the user rows the reconciliation wrote or removed.
-    pub changes: wamn_platform_identity::auth_changes::AuthChanges,
+    pub changes: wamn_broker::Publisher,
 }
 
 impl ReconcileRunPlaneRequest {
@@ -519,7 +519,7 @@ async fn converge_env_key_identity(
     env_key: &str,
     source: &EnvKeyIdentitySource,
     apply: bool,
-    changes: &wamn_platform_identity::auth_changes::AuthChanges,
+    changes: &wamn_broker::Publisher,
     system: &tokio_postgres::Transaction<'_>,
     scope: wamn_platform_identity::application::ApplicationScope<'_>,
 ) -> anyhow::Result<EnvKeyIdentityOutcome> {
@@ -661,7 +661,7 @@ async fn converge_env_key_identity(
         .transaction()
         .await
         .context("open the tenant identity transaction")?;
-    let mut drops = wamn_platform_identity::auth_changes::AuthDrops::default();
+    let mut drops = wamn_broker::auth_changes::AuthDrops::default();
     if !app_schema_present {
         let owner: String = transaction
             .query_one(

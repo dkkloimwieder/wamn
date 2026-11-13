@@ -3,6 +3,7 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::Arc;
 
+use wamn_broker::Publisher;
 use wamn_catalog::{
     AdmittedComponent, PackageCoordinate, SERVING_MANIFEST_FORMAT_VERSION, ServingComponent,
     ServingComposedEntry, ServingEntryMember, ServingManifest, ServingRelease,
@@ -12,7 +13,6 @@ use wamn_engine::artifact_source::{LocalComponentSource, local_component_path};
 use wamn_engine::operation::{OperationCall, OperationClosure, invoke_operation, node_types};
 use wamn_engine::release_manifest::{LoadedRelease, ReleaseScope};
 use wamn_identity_protocol::PlatformComponent;
-use wamn_platform_identity::connection_changes::ConnectionChanges;
 use wamn_runtime::connection_credentials::ConnectionCredentials;
 use wamn_runtime::connection_facts::ConnectionFacts;
 use wamn_runtime::connection_memory::ConnectionMemory;
@@ -194,7 +194,7 @@ fn release(with_entry: bool, postgres: Option<Arc<WamnPostgres>>) -> Release {
         Arc::new(HttpTransport::new().expect("HTTP transport")),
         Arc::new(ConnectionFacts::new(
             Arc::new(ConnectionMemory::default()),
-            ConnectionChanges::default(),
+            Publisher::default(),
             Arc::new(ConnectionCredentials::empty()),
             postgres,
             release.scope().env_key.as_str(),

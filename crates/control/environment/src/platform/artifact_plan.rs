@@ -462,7 +462,7 @@ mod tests {
 
     #[test]
     fn service_selection_records_its_chart_in_the_existing_owner() -> anyhow::Result<()> {
-        use super::super::{control, identity, resources};
+        use super::super::{control, identity};
 
         let chart = prepared_chart();
         let selected = select(&chart.0)?;
@@ -496,7 +496,7 @@ mod tests {
                 )?,
                 UpgradeTarget::Host { .. } => unreachable!(),
             };
-            let objects = resources::helm_template(&entry)?;
+            let objects = wamn_kubernetes::helm::template(&entry)?;
             let deployment = objects
                 .iter()
                 .find(|object| object["kind"] == "Deployment")
@@ -530,7 +530,6 @@ mod tests {
     #[test]
     fn host_selection_renders_only_the_named_group_without_reselecting_application_code()
     -> anyhow::Result<()> {
-        use super::super::resources;
         use crate::environment::{document::EnvironmentDocument, ensure, write};
 
         let chart = prepared_chart();
@@ -623,7 +622,7 @@ mod tests {
             let (name, namespace) = target.owner(&cluster);
             let entry = json!({"chart":original.directory(), "version":original.version,
                 "name":name, "namespace":namespace, "values":installed});
-            let before = resources::helm_template(&entry)?;
+            let before = wamn_kubernetes::helm::template(&entry)?;
             if index < environment.applications.len() {
                 assert!(
                     before
@@ -633,7 +632,7 @@ mod tests {
             }
             let mut entry = entry;
             entry["values"] = values.clone();
-            let mut after = resources::helm_template(&entry)?;
+            let mut after = wamn_kubernetes::helm::template(&entry)?;
             let deployment = |object: &&Value| {
                 object["kind"] == "Deployment"
                     && object["metadata"]["name"] == format!("hostgroup-{group}")

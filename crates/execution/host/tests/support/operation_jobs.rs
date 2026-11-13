@@ -4,7 +4,7 @@ use super::*;
 use anyhow::Context as _;
 use std::collections::BTreeMap;
 use wamn_catalog::HostHandler;
-use wamn_credential_store::kubernetes_api::KubernetesApi;
+use wamn_kubernetes::kubernetes_api::KubernetesApi;
 
 struct Api {
     client: KubernetesApi,
@@ -106,7 +106,21 @@ async fn api(writer: Arc<tokio::sync::Mutex<Client>>) -> anyhow::Result<Api> {
     });
     Ok(Api {
         client: KubernetesApi::with_client(
-            reqwest::Client::new(),
+            hyper_util::client::legacy::Client::builder(hyper_util::rt::TokioExecutor::new())
+                .build(
+                    hyper_rustls::HttpsConnectorBuilder::new()
+                        .with_tls_config(
+                            rustls::ClientConfig::builder_with_provider(Arc::new(
+                                rustls::crypto::aws_lc_rs::default_provider(),
+                            ))
+                            .with_safe_default_protocol_versions()?
+                            .with_root_certificates(rustls::RootCertStore::empty())
+                            .with_no_client_auth(),
+                        )
+                        .https_or_http()
+                        .enable_http1()
+                        .build(),
+                ),
             endpoint,
             "protected-token".into(),
             "hosts".into(),
@@ -160,7 +174,7 @@ async fn operations_authorize_before_jobs_and_bound_status_to_the_target() -> an
             writer,
             identity: None,
             org: ORG.into(),
-            changes: AuthChanges::new(nats),
+            changes: Publisher::new(nats),
         },
         None,
     )

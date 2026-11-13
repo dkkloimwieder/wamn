@@ -164,7 +164,7 @@ async fn apply(url: &str, package: &Path) -> anyhow::Result<ApplyOutcome> {
     apply_package::apply_package_schema(
         ApplyPackageRequest {
             component_source: apply_package::component_source_from_env(None)?,
-            changes: wamn_platform_identity::auth_changes::AuthChanges::default(),
+            changes: wamn_broker::Publisher::default(),
             package: wamn_package_control::apply_package::PackageRoot {
                 path: package.to_path_buf(),
                 artifact_digest: Some(

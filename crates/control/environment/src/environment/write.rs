@@ -258,7 +258,7 @@ mod tests {
         );
         let entry = json!({"chart":chart.0, "version":crate::platform::artifact_plan::select(&chart.0)?.version,
             "name":"alpha", "namespace":"hosts", "values":reapplied});
-        let objects = crate::platform::resources::helm_template(&entry)?;
+        let objects = wamn_kubernetes::helm::template(&entry)?;
         let host = objects
             .iter()
             .find(|object| object["kind"] == "Deployment")

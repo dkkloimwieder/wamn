@@ -65,7 +65,7 @@ pub async fn nats() -> (Server, async_nats::Client) {
         tokio::time::sleep(Duration::from_millis(50)).await;
     };
     // Identity makes the buckets in a deployment.
-    wamn_platform_identity::kv_memory::create_buckets(&client)
+    wamn_broker::kv_memory::create_buckets(&client)
         .await
         .unwrap();
     (server, client)
@@ -77,7 +77,7 @@ pub async fn watched<H: AsRef<AuthCache> + Send + Sync + 'static>(
     client: &async_nats::Client,
     env_key: Option<&str>,
     holder: Arc<H>,
-) -> AuthChanges {
+) -> Publisher {
     let writer = replicate(client, env_key, Arc::clone(&holder));
     until("the watch runs", || {
         (*holder).as_ref().memory.bucket().is_some()

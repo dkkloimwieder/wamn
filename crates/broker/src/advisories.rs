@@ -1,6 +1,6 @@
 //! Read retained broker advisories and report whether their source payloads exist.
 
-pub(super) mod plan;
+mod plan;
 use plan::broker_token;
 
 #[cfg(test)]
@@ -19,7 +19,7 @@ use wamn_event_wire::{DeliveryAdvisory, delivery_advisory_stream};
 #[derive(Debug)]
 pub struct EventAdvisoriesRequest {
     /// The NATS of the retained advisory stream, with the client certificate.
-    pub nats: wamn_platform_identity::nats::PlatformNats,
+    pub nats: crate::nats::PlatformNats,
 
     /// Exact source stream from the broker advisory.
     pub stream: String,
@@ -173,10 +173,10 @@ async fn retained_advisories(
 
 #[cfg(test)]
 mod tests {
+    use crate::events::{materializer_consumer_config, source_stream_config};
     use anyhow::ensure;
     use async_nats::jetstream::consumer::Consumer;
     use async_nats::jetstream::{AckKind, Message};
-    use wamn_control_provision::events::{materializer_consumer_config, source_stream_config};
     use wamn_control_registry::Triple;
     use wamn_event_wire::{DeliveryAdvisoryType, stream_name};
 
@@ -184,8 +184,8 @@ mod tests {
 
     #[test]
     fn changed_stream_and_consumer_declarations_refuse_without_a_broker() {
+        use crate::events::{consumer_config_matches, stream_config_matches};
         use async_nats::jetstream::consumer::IntoConsumerConfig as _;
-        use wamn_control_provision::events::{consumer_config_matches, stream_config_matches};
 
         let scope = Triple::new("example", "fixture", "dev");
         let source = source_stream_config(&scope, 1, Duration::from_secs(120));
@@ -215,7 +215,7 @@ mod tests {
 
     #[test]
     fn broker_permissions_confine_each_role_to_its_environment() -> anyhow::Result<()> {
-        use wamn_control_provision::events::advisory_stream_config;
+        use crate::events::advisory_stream_config;
         use wamn_test_infrastructure::{event_broker, scratch::ScratchRoot};
 
         let root = ScratchRoot::create()?;
@@ -394,14 +394,8 @@ mod tests {
         let advisory_name = delivery_advisory_stream(&source_name);
         let subject = format!("evt.{}.app.dev.item.update", scope.org);
         let consumer = materializer_consumer_config(name, &subject, Duration::from_millis(100), 2);
-        crate::event_streams::provision(
-            &jetstream,
-            &scope,
-            1,
-            Duration::from_secs(120),
-            &[consumer],
-        )
-        .await?;
+        crate::streams::provision(&jetstream, &scope, 1, Duration::from_secs(120), &[consumer])
+            .await?;
         let result: anyhow::Result<()> = async {
             let source = jetstream.get_stream(&source_name).await?;
             let consumer = source.get_consumer::<PullConfig>(name).await.map_err(anyhow::Error::from_boxed)?;
@@ -638,7 +632,7 @@ mod tests {
         source_name: &str,
         consumer: &PullConfig,
     ) -> anyhow::Result<()> {
-        use wamn_control_provision::events::MATERIALIZER_MAX_PULL_BYTES;
+        use crate::events::MATERIALIZER_MAX_PULL_BYTES;
 
         const PAYLOAD_BYTES: usize = 1024 * 1024 - 1024;
         const MESSAGE_COUNT: usize = 65;
@@ -1114,7 +1108,7 @@ mod tests {
                 "runtime accepted changed stream configuration"
             );
             ensure!(
-                crate::event_streams::provision(
+                crate::streams::provision(
                     manager,
                     &scopes[0],
                     1,
@@ -1144,7 +1138,7 @@ mod tests {
                 })
                 .await?;
             ensure!(
-                crate::event_streams::provision(
+                crate::streams::provision(
                     manager,
                     &scopes[0],
                     1,
@@ -1291,9 +1285,9 @@ mod tests {
     async fn scoped_broker_behavior(
         test: impl AsyncFnOnce(&ScopedBroker) -> anyhow::Result<()>,
     ) -> anyhow::Result<()> {
+        use crate::events::advisory_stream_config;
         use std::os::unix::fs::{DirBuilderExt as _, OpenOptionsExt as _};
         use std::process::Stdio;
-        use wamn_control_provision::events::advisory_stream_config;
         use wamn_test_infrastructure::{event_broker, scratch::ScratchRoot};
 
         wamn_test_postgres::require_prerequisites(&["WAMN_NATIVE_C_NATS_BIN"]);
@@ -1435,7 +1429,7 @@ mod tests {
                         event_broker::connect(&broker.provisioning, &server).await?,
                     );
                     let (_, _, _, consumers) = &declarations[managers.len()];
-                    crate::event_streams::provision(
+                    crate::streams::provision(
                         &manager,
                         scope,
                         1,
@@ -1443,7 +1437,7 @@ mod tests {
                         consumers,
                     )
                     .await?;
-                    crate::event_streams::provision(
+                    crate::streams::provision(
                         &manager,
                         scope,
                         1,

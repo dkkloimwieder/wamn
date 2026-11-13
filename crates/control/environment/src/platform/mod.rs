@@ -1,9 +1,7 @@
 //! Platform configuration, deployment resources, and service helpers.
 
-pub mod bootstrap;
-pub mod broker;
-pub use broker::{render_event_secrets, single_namespace_nats};
 pub mod artifact_plan;
+pub mod bootstrap;
 pub mod control;
 pub mod deploy;
 pub mod document;

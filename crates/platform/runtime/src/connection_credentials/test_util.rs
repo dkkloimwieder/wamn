@@ -1,14 +1,13 @@
-//! Credential references backed by private files for runtime tests.
+//! Credential references backed by an in-memory store for runtime tests.
 
 use super::ConnectionCredentials;
 use std::sync::Arc;
-use wamn_credential_store::{Store as _, file::FileStore};
+use wamn_kubernetes::{Store as _, test_util::MemoryStore};
 
 pub(crate) struct Fixture {
     pub database: wamn_test_postgres::Database,
     pub admin: tokio_postgres::Client,
-    pub store: Arc<FileStore>,
-    directory: std::path::PathBuf,
+    pub store: Arc<MemoryStore>,
 }
 
 impl Fixture {
@@ -39,15 +38,11 @@ impl Fixture {
                 .unwrap();
         }
         admin.batch_execute("INSERT INTO registry.integration_type_auth VALUES ('http','custom'); INSERT INTO registry.target(name,type,status) VALUES ('fixture','local','active'); UPDATE registry.project_envs SET target_id=(SELECT id FROM registry.target WHERE name='fixture'); RESET ROLE").await.unwrap();
-        let directory =
-            std::env::temp_dir().join(format!("wamn-credentials-{}", uuid::Uuid::new_v4()));
-        std::fs::create_dir(&directory).unwrap();
-        let store = Arc::new(FileStore::new(directory.clone()));
+        let store = Arc::new(MemoryStore::default());
         Self {
             database,
             admin,
             store,
-            directory,
         }
     }
 
@@ -110,7 +105,11 @@ impl Fixture {
             .unwrap();
             let stored = self
                 .store
-                .put(uuid::Uuid::new_v4(), value.as_bytes())
+                .put(
+                    &wamn_control_registry::Triple::new("acme", *project, "dev"),
+                    uuid::Uuid::new_v4(),
+                    value.as_bytes(),
+                )
                 .await
                 .unwrap();
             wamn_test_infrastructure::credentials::define(&tx,"acme",&serde_json::json!({"project":project,"env":"dev","name":name,"integration_type":integration_type,"auth_type":auth_type,"parameters":parameters,"credential":if auth_type == "custom" { "{}" } else { value }}),&wamn_test_infrastructure::credentials::ReferencedCredentials(&stored)).await.unwrap();
@@ -160,12 +159,6 @@ impl Fixture {
         ConnectionCredentials::from_database(Arc::new(client), "acme")
             .with_oauth_database_url(url.as_str())
             .unwrap()
-            .with_store(Arc::<FileStore>::clone(&self.store))
-    }
-}
-
-impl Drop for Fixture {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.directory);
+            .with_store(Arc::<MemoryStore>::clone(&self.store))
     }
 }

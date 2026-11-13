@@ -251,7 +251,7 @@ async fn cli_bootstrap_mints_first_service_pats_over_https() {
         .expect("read the route PAT issuance time")
         .get(0);
     let nats = start_platform_nats(&files.0.join("nats"));
-    wamn_platform_identity::kv_memory::create_buckets(
+    wamn_broker::kv_memory::create_buckets(
         &nats
             .client
             .connect(&nats.url)
@@ -324,6 +324,7 @@ async fn development_identity_survives_target_recreation_and_owned_teardown() {
     use wamn_platform_identity::{
         assign_project_role, create_or_reuse_user, grant_project_env_membership,
     };
+
     async fn assert_application_role(url: &str, user: &str) {
         let (project, task) = connect(url).await.ok().expect("application connection");
         let count: i64 = project
@@ -401,7 +402,7 @@ async fn development_identity_survives_target_recreation_and_owned_teardown() {
         ORG,
         PROJECT,
         "admin",
-        &mut wamn_platform_identity::auth_changes::AuthDrops::default(),
+        &mut wamn_broker::auth_changes::AuthDrops::default(),
     )
     .await
     .ok()
@@ -668,8 +669,7 @@ async fn reset_worker_restores_a_recreated_database() -> anyhow::Result<()> {
         ))
         .await?;
     let nats = start_platform_nats(&scratch.path().join("nats"));
-    wamn_platform_identity::kv_memory::create_buckets(&nats.client.connect(&nats.url).await?)
-        .await?;
+    wamn_broker::kv_memory::create_buckets(&nats.client.connect(&nats.url).await?).await?;
     let output = tokio::process::Command::new(env!("CARGO_BIN_EXE_wamn-ctl"))
         .args(["env", "reset"])
         .arg(&file)

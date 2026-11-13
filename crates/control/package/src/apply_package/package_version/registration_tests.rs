@@ -9,7 +9,7 @@ fn request(root: &Path, database_url: &str) -> ApplyPackageRequest {
     ApplyPackageRequest {
         component_source: None,
         package: crate::package_artifact::fixture_package_root(root).unwrap(),
-        changes: wamn_platform_identity::auth_changes::AuthChanges::default(),
+        changes: wamn_broker::Publisher::default(),
         database_url: database_url.into(),
         org: "schema-records".into(),
         project: "fixture".into(),

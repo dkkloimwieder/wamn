@@ -117,17 +117,13 @@ pub struct ProvisionedOrg {
 
 /// Stamp one org from its template, record it, and render the clusters it owns.
 pub async fn provision_org(request: ProvisionOrgRequest) -> anyhow::Result<ProvisionedOrg> {
-    provision_org_with_changes(
-        request,
-        &wamn_platform_identity::auth_changes::AuthChanges::default(),
-    )
-    .await
+    provision_org_with_changes(request, &wamn_broker::Publisher::default()).await
 }
 
 /// Provision an org and invalidate the administrator identity after commit.
 pub async fn provision_org_with_changes(
     request: ProvisionOrgRequest,
-    changes: &wamn_platform_identity::auth_changes::AuthChanges,
+    changes: &wamn_broker::Publisher,
 ) -> anyhow::Result<ProvisionedOrg> {
     // The template stamps the placement + the org's env-policy set in one step.
     let template = request.template;
@@ -208,7 +204,7 @@ async fn record_org(
     org: &Org,
     stamped: &[OrgEnvPolicy],
     admin: &str,
-    changes: &wamn_platform_identity::auth_changes::AuthChanges,
+    changes: &wamn_broker::Publisher,
 ) -> anyhow::Result<()> {
     client
         .batch_execute("SET ROLE wamn_system")
@@ -223,7 +219,7 @@ async fn record_org(
     match result {
         Ok(admin) => {
             client.batch_execute("COMMIT").await.context("COMMIT")?;
-            let mut drops = wamn_platform_identity::auth_changes::AuthDrops::default();
+            let mut drops = wamn_broker::auth_changes::AuthDrops::default();
             drops.identity(admin.to_string().as_str());
             changes.publish(drops).await;
         }

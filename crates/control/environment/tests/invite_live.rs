@@ -1,9 +1,9 @@
 //! Bootstrap invitation refusals against a private PostgreSQL database.
 
+use wamn_broker::Publisher;
 use wamn_control_provision::{PlatformComponent, bind_platform_principal_sql};
 use wamn_environment_control::invite::{InviteRequest, invite};
 use wamn_identity_client::PatIssuerConfig;
-use wamn_platform_identity::auth_changes::AuthChanges;
 use wamn_platform_identity::org::{MemberGrants, invite_member};
 
 #[tokio::test]
@@ -55,7 +55,7 @@ async fn invite_refuses_an_org_with_an_active_admin_before_contacting_identity()
         // Identity is deliberately unconfigured. The org guard must refuse first.
         identity: PatIssuerConfig::default(),
     };
-    let error = invite(&request, &AuthChanges::default()).await.unwrap_err();
+    let error = invite(&request, &Publisher::default()).await.unwrap_err();
     assert_eq!(
         error.to_string(),
         "org acme already has an active org admin; use user.invite"
@@ -75,7 +75,7 @@ async fn invite_refuses_an_org_with_an_active_admin_before_contacting_identity()
         email: " Admin@Example.test".into(),
         ..request
     };
-    let error = invite(&owner, &AuthChanges::default()).await.unwrap_err();
+    let error = invite(&owner, &Publisher::default()).await.unwrap_err();
     assert!(
         !error
             .to_string()

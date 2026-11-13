@@ -1,7 +1,6 @@
 use super::{
-    CredentialGeneration, ErrorCode, GetStreamErrorKind, Triple, WorkloadRoleFamily,
-    WorkloadRoleScope, WorkloadRoleScopeKind, cdc_object_name, project_env_database_name,
-    workload_generation_role,
+    CredentialGeneration, Triple, WorkloadRoleFamily, WorkloadRoleScope, WorkloadRoleScopeKind,
+    cdc_object_name, project_env_database_name, workload_generation_role,
 };
 use anyhow::Context as _;
 
@@ -56,21 +55,4 @@ pub fn instance_roles(
         }
     }
     Ok(roles)
-}
-
-/// The credential files to destroy before the commit, from the removed
-/// credentials' `ref, version, target_type`. A cloud target's credentials are
-/// in the Secret that the delete removes, whatever store a row names.
-pub(super) fn credential_files(
-    credentials: impl IntoIterator<Item = (String, String, String)>,
-) -> Vec<(String, String)> {
-    credentials
-        .into_iter()
-        .filter(|(_, _, target_type)| target_type == "local")
-        .map(|(reference, version, _)| (reference, version))
-        .collect()
-}
-
-pub(super) fn stream_not_found(kind: GetStreamErrorKind) -> bool {
-    matches!(kind, GetStreamErrorKind::JetStream(error) if error.error_code() == ErrorCode::STREAM_NOT_FOUND)
 }

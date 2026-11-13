@@ -349,7 +349,7 @@ impl Fixture {
         let facts = Arc::new(
             ConnectionFacts::new(
                 Arc::new(ConnectionMemory::default()),
-                ConnectionChanges::default(),
+                Publisher::default(),
                 Arc::new(self.credentials.reader("project-a").await),
                 Arc::clone(&postgres),
                 "acme--project-a--dev",
@@ -380,7 +380,7 @@ impl Fixture {
         let facts = Arc::new(
             ConnectionFacts::new(
                 Arc::new(ConnectionMemory::default()),
-                ConnectionChanges::default(),
+                Publisher::default(),
                 Arc::new(self.credentials.reader("project-a").await),
                 Arc::clone(&first.postgres),
                 "acme--project-a--dev",
@@ -459,7 +459,7 @@ impl Fixture {
         plugin.facts = Arc::new(
             ConnectionFacts::new(
                 Arc::new(ConnectionMemory::default()),
-                ConnectionChanges::default(),
+                Publisher::default(),
                 Arc::new(self.credentials.reader(project).await),
                 Arc::clone(&plugin.postgres),
                 &env_key,
@@ -533,7 +533,7 @@ impl Fixture {
         tx.batch_execute("SET LOCAL ROLE wamn_control")
             .await
             .unwrap();
-        let mut drops = wamn_platform_identity::connection_changes::ConnectionDrops::default();
+        let mut drops = wamn_broker::connection_changes::ConnectionDrops::default();
         wamn_platform_identity::connections::administration::execute_with_store(
             &tx, "acme", "connection.write",
             &serde_json::json!({
@@ -541,14 +541,12 @@ impl Fixture {
                 "parameters":{"primary-authority":self.base,"tls-verification":"disabled","auth":{}},
                 "credential":r#"{"username":"fixture","password":"new"}"#
             }).to_string(),
-            &mut wamn_platform_identity::auth_changes::AuthDrops::default(),
+            &mut wamn_broker::auth_changes::AuthDrops::default(),
             &mut drops, Some(self.credentials.store.as_ref()),
         ).await.unwrap();
         tx.commit().await.unwrap();
         assert!(!drops.is_empty());
-        wamn_platform_identity::connection_changes::ConnectionChanges::default()
-            .publish(drops)
-            .await;
+        wamn_broker::Publisher::default().publish(drops).await;
     }
 
     pub(super) fn pause_next_response(&self) -> ResponsePause {
@@ -1054,8 +1052,8 @@ async fn credential_rotation_waits_for_refresh_and_removes_the_old_token() {
             .unwrap();
         let result = wamn_platform_identity::connections::administration::execute_with_store(&tx,"acme","connection.set_credential",
             &serde_json::json!({"project":"project-a","env":"dev","name":"handle","credential":r#"{"client_secret":"rotated-secret"}"#}).to_string(),
-            &mut wamn_platform_identity::auth_changes::AuthDrops::default(),
-            &mut wamn_platform_identity::connection_changes::ConnectionDrops::default(),Some(store.as_ref())).await.unwrap();
+            &mut wamn_broker::auth_changes::AuthDrops::default(),
+            &mut wamn_broker::connection_changes::ConnectionDrops::default(),Some(store.as_ref())).await.unwrap();
         assert!(result.get("error").is_none(), "{result}");
         tx.commit().await.unwrap();
     });
@@ -1329,8 +1327,8 @@ impl Fixture {
             "acme",
             operation,
             &request.to_string(),
-            &mut wamn_platform_identity::auth_changes::AuthDrops::default(),
-            &mut wamn_platform_identity::connection_changes::ConnectionDrops::default(),
+            &mut wamn_broker::auth_changes::AuthDrops::default(),
+            &mut wamn_broker::connection_changes::ConnectionDrops::default(),
             Some(self.credentials.store.as_ref()),
         )
         .await
@@ -1372,7 +1370,7 @@ async fn authorization_code_pkce_callback_refresh_and_secret_rotation() {
         plugin.facts.oauth_encryption().unwrap(),
     )
     .unwrap()
-    .with_store(Arc::<wamn_credential_store::file::FileStore>::clone(
+    .with_store(Arc::<wamn_kubernetes::test_util::MemoryStore>::clone(
         &fixture.credentials.store,
     ));
     let url = fixture.authorize(&oauth).await;
@@ -1517,7 +1515,7 @@ async fn authorization_code_expired_provider_error_and_new_generation_refuse_wit
         plugin.facts.oauth_encryption().unwrap(),
     )
     .unwrap()
-    .with_store(Arc::<wamn_credential_store::file::FileStore>::clone(
+    .with_store(Arc::<wamn_kubernetes::test_util::MemoryStore>::clone(
         &fixture.credentials.store,
     ));
     let url = fixture.authorize(&oauth).await;
@@ -1808,7 +1806,7 @@ async fn token_authority_authorization_code_exchange_and_refresh_refuse_other_or
             plugin.facts.oauth_encryption().unwrap(),
         )
         .unwrap()
-        .with_store(Arc::<wamn_credential_store::file::FileStore>::clone(
+        .with_store(Arc::<wamn_kubernetes::test_util::MemoryStore>::clone(
             &fixture.credentials.store,
         ))
         .with_transport(Arc::clone(&endpoint.transport));

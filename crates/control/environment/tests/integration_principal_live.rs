@@ -2,12 +2,12 @@
 
 use serde_json::json;
 use tokio_postgres::{Client, NoTls};
+use wamn_broker::Publisher;
 use wamn_catalog::ServingManifest;
 use wamn_engine::router_delivery::authorize_registered_operation;
 use wamn_environment_control::environment::stage::{
     materialize_application_principals, write_release,
 };
-use wamn_platform_identity::auth_changes::AuthChanges;
 use wamn_runtime::plugins::route_authentication::queued_run_caller;
 use wamn_schema_control::BareSchemaName;
 
@@ -149,7 +149,7 @@ async fn apply_creates_one_integration_principal_and_grants_declared_dependencie
         ENV_KEY,
         &manifest,
         &packages,
-        &AuthChanges::default(),
+        &Publisher::default(),
     )
     .await?;
     let (_, digest) = ServingManifest::from_canonical_bytes(&manifest.canonical_bytes())?;
@@ -170,7 +170,7 @@ async fn apply_creates_one_integration_principal_and_grants_declared_dependencie
             ENV_KEY,
             &manifest,
             &packages,
-            &AuthChanges::default(),
+            &Publisher::default(),
         )
         .await?;
     }
@@ -220,7 +220,7 @@ async fn apply_creates_one_integration_principal_and_grants_declared_dependencie
         ENV_KEY,
         &manifest,
         &packages,
-        &AuthChanges::default(),
+        &Publisher::default(),
     )
     .await?;
     let after: Vec<String> = admin.query("SELECT xmin::text FROM platform.\"user\" UNION ALL SELECT xmin::text FROM platform.role UNION ALL SELECT xmin::text FROM platform.permission UNION ALL SELECT xmin::text FROM platform.user_role ORDER BY 1", &[]).await?.iter().map(|row| row.get(0)).collect();

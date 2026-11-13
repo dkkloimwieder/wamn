@@ -21,7 +21,7 @@ use async_nats::jetstream::context::{GetStreamError, GetStreamErrorKind};
 use futures_util::StreamExt as _;
 use tokio::sync::Mutex;
 use tracing::Instrument as _;
-use wamn_control_provision::events::{
+use wamn_broker::events::{
     advisory_stream_config, consumer_config_matches, materializer_consumer_config,
     source_stream_config, stream_config_matches,
 };
@@ -1534,7 +1534,7 @@ mod tests {
         wamn_test_postgres::require_ignored_prerequisites(
             "requires: env:WAMN_NATS_URL, env:WAMN_NATS_TLS_CA, env:WAMN_NATS_TLS_CERT, env:WAMN_NATS_TLS_KEY",
         );
-        let client = wamn_platform_identity::nats::PlatformNats::from_env()
+        let client = wamn_broker::nats::PlatformNats::from_env()
             .expect("set WAMN_NATS_URL and its certificate to this test's disposable broker")
             .connect()
             .await

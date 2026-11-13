@@ -999,7 +999,7 @@ The host replaces that file ID with a signed URL after the operation returns. Th
 The roles that hold the operation can read the private file through that result.
 The optional `lifetime_seconds` accepts 1 through 900 and defaults to 900. Signed URLs last at most 15 minutes.
 GCS uses IAM `signBlob` with the pod identity and stores no signing key.
-S3 reads its credential through the credential store trait, `wamn_credential_store::Store`.
+S3 reads its credential through `wamn_kubernetes::Store`. Kubernetes Secrets hold the values. Each write names the environment coordinate. The database accepts only `k8s` references.
 Reads and deletes use the bucket and prefix of the recorded generation.
 
 Public exposure requires the optional `cdn_host` store parameter, without a descriptor version change.
@@ -1062,7 +1062,7 @@ A drop tells hosts to discard a cached authorization fact.
 Service creation and project-role assignment record identity drops.
 Provisioning publishes each drop after its transaction commits, including the role assignment before PAT issuance.
 Package apply and local configuration reconciliation record a drop when they create the built-in `admin` role.
-Their transaction owners publish the drops after commit through `AuthChanges`.
+Their transaction owners publish the drops after commit through `wamn_broker::Publisher`.
 Publication keeps the existing behavior when NATS is absent or a deletion fails.
 `wamn-ctl invite` and `provision-org --admin` write org memberships and org roles in the same way.
 A control route of the control serving root binds the calling org admin, as the [execution page](execution.md#host-run-routes) states.

@@ -1,67 +1,8 @@
-//! The current application states in one environment's release namespace
-//! (docs/architecture/execution.md#host-run-routes).
-//!
-//! The one reader of host Deployments, WorkloadDeployments and application host
-//! pods: `wamn-ctl env status` reads them through
-//! `kubectl get --raw`, and the control host's `environment.status` through its
-//! read-only ServiceAccount. Both send the same three list requests and decode
-//! them with the same functions. No Secret, no Helm revision, no history.
-//!
-//! This module holds no Kubernetes client: the caller passes the function that
-//! sends one GET of an API path and answers its JSON.
-
-use std::collections::BTreeMap;
-
+//! Observe application Deployments, workloads and Pods.
 use serde::Serialize;
 use serde_json::Value;
-use sha2::{Digest as _, Sha256};
-
-use crate::ProvisionError;
-use crate::validate_project_env;
-
-/// The longest slug in a release name: the env name cut to this length.
-pub const SLUG_LEN: usize = 24;
-/// The hex characters of the coordinate hash in a release name (80 bits).
-pub const HASH_LEN: usize = 20;
-
-/// The pod-template and pod annotation that carries the release digest.
+use std::collections::BTreeMap;
 const RELEASE_DIGEST_ANNOTATION: &str = "wamn.release-digest";
-
-/// The name of shared environment resources: `e-<slug>-<hash>`.
-///
-/// The slug is the env name cut to 24 characters. The hash is the first 20 hex
-/// characters of SHA-256 over `org/project/env`. The name is at most 47
-/// characters, inside Helm's bound of 53.
-///
-/// # Errors
-///
-/// When the coordinate is not valid.
-pub fn environment_resource_name(
-    org: &str,
-    project: &str,
-    env: &str,
-) -> Result<String, ProvisionError> {
-    validate_project_env(org, project, env)?;
-    let hash = hex::encode(Sha256::digest(format!("{org}/{project}/{env}")));
-    let slug: String = env.chars().take(SLUG_LEN).collect();
-    Ok(format!("e-{slug}-{}", &hash[..HASH_LEN]))
-}
-
-/// The Helm release and host group of one application.
-pub fn application_release_name(
-    org: &str,
-    project: &str,
-    env: &str,
-    application: &str,
-) -> Result<String, ProvisionError> {
-    validate_project_env(org, project, env)?;
-    let hash = hex::encode(Sha256::digest(format!(
-        "{org}/{project}/{env}/{application}"
-    )));
-    let slug: String = env.chars().take(SLUG_LEN).collect();
-    Ok(format!("r-{slug}-{}", &hash[..HASH_LEN]))
-}
-
 /// Observe every application host in an environment through the same resource lists.
 pub async fn observe_environment<F, Fut, E>(
     namespace: &str,
@@ -303,32 +244,6 @@ mod tests {
     use serde_json::json;
 
     #[test]
-    fn the_three_lists_are_named_by_the_release() {
-        let mut paths = Vec::new();
-        let observed = block_on(observe("hosts", "r-prod-x", |path| {
-            paths.push(path);
-            std::future::ready(Ok::<_, ()>(json!({"items": []})))
-        }))
-        .expect("the reads answer");
-        assert_eq!(
-            paths,
-            [
-                "/apis/apps/v1/namespaces/hosts/deployments?fieldSelector=metadata.name%3Dhostgroup-r-prod-x",
-                "/apis/runtime.wasmcloud.dev/v1alpha1/namespaces/hosts/workloaddeployments",
-                "/api/v1/namespaces/hosts/pods?labelSelector=wasmcloud.com%2Fhostgroup%3Dr-prod-x",
-            ]
-        );
-        assert_eq!(
-            environment_state(&observed, "r-prod-x"),
-            EnvironmentState {
-                deployment: None,
-                workloads: BTreeMap::new(),
-                live: BTreeMap::new(),
-            }
-        );
-    }
-
-    #[test]
     fn the_state_has_the_digest_the_rollout_the_conditions_and_the_live_set() {
         let observed = Observed {
             deployments: json!({"items": [{
@@ -385,28 +300,5 @@ mod tests {
                 ("unlabelled".to_owned(), 1),
             ])
         );
-    }
-
-    #[test]
-    fn application_names_are_bounded_and_refuse_invalid_coordinates() {
-        let env = "a".repeat(30);
-        let name = application_release_name("a", "wms", &env, "orders").unwrap();
-        assert!(name.len() <= 47);
-        assert_ne!(
-            name,
-            application_release_name("a", "wms", &env, "receiving").unwrap()
-        );
-        assert!(application_release_name("acme", "wms", "Bad Env", "orders").is_err());
-        assert!(environment_resource_name("acme", "wms", "Bad Env").is_err());
-    }
-
-    /// Poll a future whose reads are ready, with no runtime.
-    fn block_on<T>(future: impl Future<Output = T>) -> T {
-        let mut future = std::pin::pin!(future);
-        let mut context = std::task::Context::from_waker(std::task::Waker::noop());
-        match future.as_mut().poll(&mut context) {
-            std::task::Poll::Ready(value) => value,
-            std::task::Poll::Pending => panic!("a ready read is pending"),
-        }
     }
 }

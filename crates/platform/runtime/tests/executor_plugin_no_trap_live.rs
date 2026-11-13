@@ -53,8 +53,8 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
+use wamn_broker::Publisher;
 use wamn_engine::engine::build_engine;
-use wamn_platform_identity::connection_changes::ConnectionChanges;
 use wamn_runtime::connection_credentials::ConnectionCredentials;
 use wamn_runtime::connection_facts::ConnectionFacts;
 use wamn_runtime::connection_memory::ConnectionMemory;
@@ -612,7 +612,7 @@ async fn connection_http_maps_an_invalid_context_to_a_wit_error_not_a_trap() {
         ),
         Arc::new(ConnectionFacts::new(
             Arc::new(ConnectionMemory::default()),
-            ConnectionChanges::default(),
+            Publisher::default(),
             Arc::new(ConnectionCredentials::empty()),
             postgres,
             "tenant-a",

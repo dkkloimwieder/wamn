@@ -6,6 +6,7 @@ use std::sync::Arc;
 
 use serde_json::json;
 use tokio_postgres::{Client, NoTls};
+use wamn_broker::connection_changes::ConnectionDrops;
 use wamn_catalog::ComponentConnectionRequirement;
 use wamn_catalog::{
     AdmittedComponent, AdmittedComponentOperation, ComponentPackageScope, ConnectionTypeDescriptor,
@@ -13,7 +14,6 @@ use wamn_catalog::{
 };
 use wamn_environment_control::environment::{bindings, document::EnvironmentDocument};
 use wamn_package_control::apply_package::{self, ApplyPackageRequest};
-use wamn_platform_identity::connection_changes::ConnectionDrops;
 use wamn_runtime::connection_credentials::ConnectionCredentials;
 use wamn_runtime::connection_facts::ConnectionFacts;
 use wamn_runtime::connection_memory::ConnectionMemory;
@@ -209,7 +209,7 @@ async fn provision_project(project: &Client, project_url: &str) -> Vec<AdmittedC
     apply_package::apply_package(ApplyPackageRequest {
         component_source: wamn_package_control::apply_package::component_source_from_env(None)
             .unwrap(),
-        changes: wamn_platform_identity::auth_changes::AuthChanges::default(),
+        changes: wamn_broker::Publisher::default(),
         package: wamn_package_control::apply_package::PackageRoot {
             path: package.clone(),
             artifact_digest: Some(
@@ -298,7 +298,7 @@ async fn provision_project(project: &Client, project_url: &str) -> Vec<AdmittedC
 struct Authority {
     database: wamn_test_postgres::Database,
     system: Client,
-    _store: Arc<wamn_test_infrastructure::credentials::LocalCredentials>,
+    _store: Arc<wamn_test_infrastructure::credentials::MemoryStore>,
 }
 impl Authority {
     async fn new(http_origin: &str) -> Self {
@@ -316,8 +316,7 @@ impl Authority {
             .await
             .unwrap();
         system.batch_execute(&format!("BEGIN; {} INSERT INTO registry.target(name,type,status) VALUES('cloud','cloud','active') ON CONFLICT DO NOTHING; UPDATE registry.meta SET platform_domain='example.invalid'; UPDATE registry.project_envs SET target_id=(SELECT id FROM registry.target WHERE name='cloud'); COMMIT;",wamn_control_provision::bind_platform_principal_sql(wamn_control_provision::PlatformComponent::Provisioning))).await.unwrap();
-        let store =
-            Arc::new(wamn_test_infrastructure::credentials::LocalCredentials::create().unwrap());
+        let store = Arc::new(wamn_test_infrastructure::credentials::MemoryStore::default());
         let tx = system.transaction().await.unwrap();
         tx.batch_execute(&wamn_control_provision::bind_platform_principal_sql(
             wamn_control_provision::PlatformComponent::Provisioning,
@@ -618,7 +617,7 @@ async fn release_bindings_round_trip_through_the_plugins_own_resolution() {
         .expect("register the component's tenant");
     let facts = Arc::new(ConnectionFacts::new(
         Arc::new(ConnectionMemory::default()),
-        wamn_platform_identity::connection_changes::ConnectionChanges::default(),
+        wamn_broker::Publisher::default(),
         Arc::new(authority.reader().await),
         Arc::clone(&postgres),
         ENV_KEY,
@@ -956,7 +955,7 @@ async fn read_binding_refuses_post_and_forged_candidate_mode_before_dispatch() {
     postgres.set_env_key(COMPONENT_ID, ENV_KEY).unwrap();
     let facts = Arc::new(ConnectionFacts::new(
         Arc::new(ConnectionMemory::default()),
-        wamn_platform_identity::connection_changes::ConnectionChanges::default(),
+        wamn_broker::Publisher::default(),
         Arc::new(authority.reader().await),
         Arc::clone(&postgres),
         ENV_KEY,

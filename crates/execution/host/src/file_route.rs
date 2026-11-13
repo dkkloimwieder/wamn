@@ -1112,6 +1112,7 @@ mod tests {
     use super::*;
     use std::collections::{BTreeSet, HashSet};
     use tokio::io::AsyncReadExt as _;
+    use wamn_broker::Publisher;
     use wamn_catalog::{
         ApplicationDefinition, ComponentConnection, ComponentDescriptor, HostRouteSet,
         PackageCoordinate, ServingComponent, ServingManifest, ServingRelease,
@@ -1120,7 +1121,6 @@ mod tests {
         AuthRejection, AuthenticationRequest, RouteAuthenticator, RouteInFlightLimit, unauthorized,
     };
     use wamn_engine::release_manifest::ReleaseScope;
-    use wamn_platform_identity::connection_changes::ConnectionChanges;
     use wamn_runtime::connection_credentials::ConnectionCredentials;
     use wamn_runtime::connection_facts::ConnectionFacts;
     use wamn_runtime::connection_memory::ConnectionMemory;
@@ -1234,7 +1234,7 @@ mod tests {
             Arc::clone(&postgres),
             Arc::new(ConnectionFacts::new(
                 Arc::new(ConnectionMemory::default()),
-                ConnectionChanges::default(),
+                Publisher::default(),
                 Arc::new(ConnectionCredentials::empty()),
                 Arc::clone(&postgres),
                 "acme",

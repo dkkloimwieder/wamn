@@ -953,34 +953,22 @@ async fn connect_data_nats(
     if let Some(user) = user {
         opts = opts.custom_inbox_prefix(format!("_INBOX_{user}"));
     }
-    if let Some(ca_path) = &args.data_nats_tls_ca {
-        opts = opts.add_root_certificates(ca_path.clone());
-    }
+    opts = wamn_broker::nats::tls_options(
+        opts,
+        args.data_nats_tls_ca.as_deref(),
+        args.data_nats_tls_cert.as_deref(),
+        args.data_nats_tls_key.as_deref(),
+        None,
+    )?;
     if args.data_nats_tls_first {
         opts = opts.tls_first();
     }
-    if let (Some(cert_path), Some(key_path)) = (&args.data_nats_tls_cert, &args.data_nats_tls_key) {
-        opts = opts.add_client_certificate(cert_path.clone(), key_path.clone());
-    }
-    let url = args.data_nats_url.as_str();
-    match opts.clone().connect(url).await {
-        Ok(client) => Ok(client),
-        Err(err)
-            if matches!(
-                err.kind(),
-                async_nats::ConnectErrorKind::Io
-                    | async_nats::ConnectErrorKind::TimedOut
-                    | async_nats::ConnectErrorKind::Dns
-            ) =>
-        {
-            tracing::warn!(client = name, %err, "data NATS is not reachable yet; the client keeps retrying");
-            opts.retry_on_initial_connect()
-                .connect(url)
-                .await
-                .context("configure the data NATS client")
-        }
-        Err(err) => Err(err).context("connect to the data NATS"),
-    }
+    wamn_broker::nats::connect(
+        opts,
+        &args.data_nats_url,
+        wamn_broker::nats::InitialConnect::RetryTransport,
+    )
+    .await
 }
 
 async fn connect_scheduler_nats(args: &HostArgs, name: &str) -> anyhow::Result<async_nats::Client> {
@@ -988,16 +976,15 @@ async fn connect_scheduler_nats(args: &HostArgs, name: &str) -> anyhow::Result<a
         .name(name)
         .max_reconnects(None)
         .client_capacity(SCHEDULER_NATS_BUFFER);
-    if let Some(ca_path) = &args.scheduler_nats_tls_ca {
-        opts = opts.add_root_certificates(ca_path.clone());
-    }
+    opts = wamn_broker::nats::tls_options(
+        opts,
+        args.scheduler_nats_tls_ca.as_deref(),
+        args.scheduler_nats_tls_cert.as_deref(),
+        args.scheduler_nats_tls_key.as_deref(),
+        None,
+    )?;
     if args.scheduler_nats_tls_first {
         opts = opts.tls_first();
-    }
-    if let (Some(cert_path), Some(key_path)) =
-        (&args.scheduler_nats_tls_cert, &args.scheduler_nats_tls_key)
-    {
-        opts = opts.add_client_certificate(cert_path.clone(), key_path.clone());
     }
     let client = name.to_owned();
     let state = Arc::new(std::sync::Mutex::new((None::<Instant>, 0_u64)));
@@ -1053,25 +1040,12 @@ async fn connect_scheduler_nats(args: &HostArgs, name: &str) -> anyhow::Result<a
         }
     });
 
-    let url = args.scheduler_nats_url.as_str();
-    match opts.clone().connect(url).await {
-        Ok(client) => Ok(client),
-        Err(err)
-            if matches!(
-                err.kind(),
-                async_nats::ConnectErrorKind::Io
-                    | async_nats::ConnectErrorKind::TimedOut
-                    | async_nats::ConnectErrorKind::Dns
-            ) =>
-        {
-            tracing::warn!(target: SCHEDULER_NATS_TARGET, client = name, %err, "scheduler NATS is not reachable yet; the client keeps retrying");
-            opts.retry_on_initial_connect()
-                .connect(url)
-                .await
-                .context("configure the scheduler NATS client")
-        }
-        Err(err) => Err(anyhow::Error::new(err)).context("failed to connect to scheduler NATS"),
-    }
+    wamn_broker::nats::connect(
+        opts,
+        &args.scheduler_nats_url,
+        wamn_broker::nats::InitialConnect::RetryTransport,
+    )
+    .await
 }
 
 pub async fn run(args: HostArgs) -> anyhow::Result<()> {

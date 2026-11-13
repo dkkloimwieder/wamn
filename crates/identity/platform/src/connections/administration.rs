@@ -2,13 +2,13 @@
 
 use serde_json::{Value, json};
 use tokio_postgres::Transaction;
-use wamn_credential_store::{Store, StoreVersion};
+use wamn_kubernetes::{Store, StoreVersion};
 
 use super::{ConnectionError, refuse};
-use crate::auth_changes::AuthDrops;
-use crate::connection_changes::ConnectionDrops;
+use wamn_broker::auth_changes::AuthDrops;
+use wamn_broker::connection_changes::ConnectionDrops;
 
-fn store_error(source: wamn_credential_store::Error) -> ConnectionError {
+fn store_error(source: wamn_kubernetes::Error) -> ConnectionError {
     ConnectionError {
         code: "store_error",
         field: "credential",
@@ -364,15 +364,22 @@ async fn generation(
         let store = if let Some(store) = store {
             store
         } else {
-            owned_store = open_environment_store(
-                context["store"].as_str().expect("database store"),
-                org,
-                request["project"].as_str().unwrap(),
-                request["env"].as_str().unwrap(),
-            )?;
-            owned_store.as_ref()
+            owned_store =
+                wamn_kubernetes::kubernetes::KubernetesStore::in_cluster().map_err(store_error)?;
+            &owned_store
         };
-        Some(store_credential(store, value).await?)
+        Some(
+            store_credential(
+                store,
+                &wamn_control_registry::Triple::new(
+                    org,
+                    request["project"].as_str().unwrap(),
+                    request["env"].as_str().unwrap(),
+                ),
+                value,
+            )
+            .await?,
+        )
     } else {
         if auth != "none" && context["credential_id"].is_null() {
             return Err(refuse("invalid_input", "credential"));
@@ -396,12 +403,7 @@ async fn generation(
                 .await;
             return result;
         }
-        let backend = open_environment_store(
-            stored["store"].as_str().unwrap(),
-            org,
-            request["project"].as_str().unwrap(),
-            request["env"].as_str().unwrap(),
-        );
+        let backend = wamn_kubernetes::kubernetes::KubernetesStore::in_cluster();
         if let Ok(backend) = backend {
             let _ = backend
                 .destroy(
@@ -420,30 +422,20 @@ async fn generation(
     Ok(result)
 }
 
-/// Open Kubernetes writes with the complete target environment identity.
-pub fn open_environment_store(
-    backend: &str,
-    org: &str,
-    project: &str,
-    env: &str,
-) -> Result<Box<dyn Store>, ConnectionError> {
-    if backend == "k8s" {
-        Ok(Box::new(
-            wamn_credential_store::kubernetes::KubernetesStore::in_cluster(org, project, env)
-                .map_err(store_error)?,
-        ))
-    } else {
-        wamn_credential_store::open(backend).map_err(store_error)
-    }
-}
-
-async fn store_credential(store: &dyn Store, value: &str) -> Result<Value, ConnectionError> {
+async fn store_credential(
+    store: &dyn Store,
+    scope: &wamn_control_registry::Triple,
+    value: &str,
+) -> Result<Value, ConnectionError> {
     let id = uuid::Uuid::new_v4();
     let StoreVersion {
         store,
         reference,
         version,
-    } = store.put(id, value.as_bytes()).await.map_err(store_error)?;
+    } = store
+        .put(scope, id, value.as_bytes())
+        .await
+        .map_err(store_error)?;
     let hint: String = value
         .chars()
         .rev()
@@ -641,20 +633,21 @@ mod tests {
     impl Store for RecordingStore {
         async fn put(
             &self,
+            _scope: &wamn_control_registry::Triple,
             id: uuid::Uuid,
             value: &[u8],
-        ) -> Result<StoreVersion, wamn_credential_store::Error> {
+        ) -> Result<StoreVersion, wamn_kubernetes::Error> {
             self.0.lock().unwrap().push(value.to_vec());
             Ok(StoreVersion {
-                store: "file",
+                store: "k8s",
                 reference: format!("reference-{id}"),
                 version: "1".into(),
             })
         }
-        async fn get(&self, _: &str, _: &str) -> Result<Vec<u8>, wamn_credential_store::Error> {
+        async fn get(&self, _: &str, _: &str) -> Result<Vec<u8>, wamn_kubernetes::Error> {
             Ok(Vec::new())
         }
-        async fn destroy(&self, _: &str, _: &str) -> Result<(), wamn_credential_store::Error> {
+        async fn destroy(&self, _: &str, _: &str) -> Result<(), wamn_kubernetes::Error> {
             Ok(())
         }
     }
@@ -663,7 +656,13 @@ mod tests {
     async fn credential_value_reaches_only_the_store_and_metadata_carries_the_hint() {
         let store = RecordingStore::default();
         let value = r#"{"key":"private-1234"}"#;
-        let metadata = store_credential(&store, value).await.unwrap();
+        let metadata = store_credential(
+            &store,
+            &wamn_control_registry::Triple::new("acme", "app", "dev"),
+            value,
+        )
+        .await
+        .unwrap();
         assert_eq!(*store.0.lock().unwrap(), vec![value.as_bytes()]);
         assert_eq!(metadata["hint"], "34\"}");
         assert!(metadata.get("credential").is_none());

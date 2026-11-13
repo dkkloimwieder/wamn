@@ -298,7 +298,7 @@ async fn install_fresh(
         apply_package::apply_package(ApplyPackageRequest {
             component_source: wamn_package_control::apply_package::component_source_from_env(None)
                 .unwrap(),
-            changes: wamn_platform_identity::auth_changes::AuthChanges::default(),
+            changes: wamn_broker::Publisher::default(),
             package: package.clone(),
             database_url: url.clone(),
             org: identity().org.clone(),

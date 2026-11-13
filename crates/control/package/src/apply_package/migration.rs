@@ -25,7 +25,7 @@ pub(super) struct PackageMigrationHooks<'a> {
     pub artifact_digest: Option<&'a str>,
     pub local_comment: Option<wamn_runtime::local_application::LocalTargetComment>,
     pub changed: bool,
-    pub drops: wamn_platform_identity::auth_changes::AuthDrops,
+    pub drops: wamn_broker::auth_changes::AuthDrops,
 }
 
 impl crate::migrations::MigrationHooks for PackageMigrationHooks<'_> {

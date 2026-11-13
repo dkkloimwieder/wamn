@@ -155,15 +155,13 @@ pub(super) async fn prepare_at(
         &[&env_key],
     )
     .await?;
-    let mut auth = wamn_platform_identity::auth_changes::AuthDrops::default();
+    let mut auth = wamn_broker::auth_changes::AuthDrops::default();
     super::stage::write_runtime_grants(&system, &tx, &env_key, manifest, packages, &mut auth)
         .await?;
-    let mut drops = wamn_platform_identity::connection_changes::ConnectionDrops::default();
+    let mut drops = wamn_broker::connection_changes::ConnectionDrops::default();
     super::bindings::write(&tx, &env_key, digest, document, &bindings, &mut drops).await?;
     tx.commit().await?;
     changes.publish(auth).await;
-    wamn_platform_identity::connection_changes::ConnectionChanges::from(&changes)
-        .publish(drops)
-        .await;
+    changes.publish(drops).await;
     Ok(())
 }

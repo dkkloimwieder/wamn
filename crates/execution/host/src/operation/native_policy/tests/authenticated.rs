@@ -1304,7 +1304,7 @@ async fn pat_caller(
         &system,
         "warm-test",
         "Warm test caller",
-        &mut wamn_platform_identity::auth_changes::AuthDrops::default(),
+        &mut wamn_broker::auth_changes::AuthDrops::default(),
     )
     .await?;
     system.execute("INSERT INTO registry.env_policies (org, name, recovery_domain, promotion_rank, instances, storage, cpu, memory, image) VALUES ($1, $2, '\"own\"'::jsonb, 1, 1, '1Gi', '1', '1Gi', 'postgres:18')", &[&ORG, &ENVIRONMENT]).await?;
@@ -1315,7 +1315,7 @@ async fn pat_caller(
         ORG,
         PROJECT,
         "admin",
-        &mut wamn_platform_identity::auth_changes::AuthDrops::default(),
+        &mut wamn_broker::auth_changes::AuthDrops::default(),
     )
     .await?;
     let token = issue_pat(

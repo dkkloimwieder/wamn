@@ -438,7 +438,7 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
         ))
         .await?;
 
-    let store = wamn_test_infrastructure::credentials::LocalCredentials::create()?;
+    let store = wamn_test_infrastructure::credentials::MemoryStore::default();
     let tx = admin.transaction().await?;
     tx.batch_execute("SET LOCAL ROLE wamn_control").await?;
     tx.batch_execute(&wamn_control_provision::bind_platform_principal_sql(
@@ -779,7 +779,7 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
             role: "application-a",
             grant: true,
         },
-        &mut wamn_platform_identity::auth_changes::AuthDrops::default(),
+        &mut wamn_broker::auth_changes::AuthDrops::default(),
     )
     .await?;
     tx.commit().await?;
@@ -901,7 +901,7 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
             &document.membership(),
             &[b.digest().as_str()],
             &[],
-            &mut wamn_platform_identity::connection_changes::ConnectionDrops::default()
+            &mut wamn_broker::connection_changes::ConnectionDrops::default()
         )
         .await
         .is_err()
@@ -913,7 +913,7 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
         &document.membership(),
         &[old_a.digest().as_str()],
         &[new_a.digest().as_str()],
-        &mut wamn_platform_identity::connection_changes::ConnectionDrops::default(),
+        &mut wamn_broker::connection_changes::ConnectionDrops::default(),
     )
     .await?;
     assert!(
@@ -923,7 +923,7 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
             ENV_KEY,
             &releases,
             &retired,
-            &mut wamn_platform_identity::auth_changes::AuthDrops::default()
+            &mut wamn_broker::auth_changes::AuthDrops::default()
         )
         .await
         .is_err()
@@ -959,7 +959,7 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
             wamn_control_provision::PlatformComponent::Provisioning,
         ))
         .await?;
-        let mut auth = wamn_platform_identity::auth_changes::AuthDrops::default();
+        let mut auth = wamn_broker::auth_changes::AuthDrops::default();
         // The failed replacement left a shared role. Restore its exclusive owner before retirement.
         if live {
             wamn_platform_identity::application::mutate_grant(
@@ -989,7 +989,7 @@ async fn activation_preserves_sql_other_applications_and_running_release() -> an
             &document.membership(),
             &[old_digest.as_str()],
             &live_digests,
-            &mut wamn_platform_identity::connection_changes::ConnectionDrops::default(),
+            &mut wamn_broker::connection_changes::ConnectionDrops::default(),
         )
         .await?;
         wamn_environment_control::environment::stage::retire_runtime_grants(

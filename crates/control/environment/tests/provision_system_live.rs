@@ -250,9 +250,7 @@ async fn provision_system_repeats_without_changing_the_platform_domain() {
     )
     .await
     .expect("the apply login refreshes the projection as the project owner");
-    wamn_platform_identity::auth_changes::AuthChanges::default()
-        .publish(drops)
-        .await;
+    wamn_broker::Publisher::default().publish(drops).await;
     let package = wamn_fixture_package::package_root();
     client
         .batch_execute(&wamn_control_provision::sql::ensure_package_owner_role_sql(
@@ -279,7 +277,7 @@ async fn provision_system_repeats_without_changing_the_platform_domain() {
                 ),
                 path: package,
             },
-            changes: wamn_platform_identity::auth_changes::AuthChanges::default(),
+            changes: wamn_broker::Publisher::default(),
             database_url: project_apply.to_string(),
             org: "applyprobe".into(),
             project: "created".into(),
@@ -1336,7 +1334,7 @@ async fn project_schema_preserves_applications_and_other_environments_and_holds_
         env: "dev".into(),
         schema: "wamn_run".into(),
         dry_run: false,
-        changes: wamn_platform_identity::auth_changes::AuthChanges::default(),
+        changes: wamn_broker::Publisher::default(),
     };
     let mut sources = platform_migrations::embedded_sources(MigrationScope::Project);
     sources.push(MigrationSource {
@@ -1621,7 +1619,7 @@ async fn project_schema_preserves_applications_and_other_environments_and_holds_
         env: "interrupted".into(),
         schema: "wamn_run".into(),
         dry_run: false,
-        changes: wamn_platform_identity::auth_changes::AuthChanges::default(),
+        changes: wamn_broker::Publisher::default(),
     };
     let error = reconcile_run_plane_with_migrations(interrupted_request(), &failing)
         .await

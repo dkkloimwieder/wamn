@@ -14,8 +14,9 @@ use wamn_identity_protocol::PrincipalId;
 
 use anyhow::Context as _;
 use tokio_postgres::NoTls;
+use wamn_broker::Publisher;
+use wamn_broker::auth_changes::AuthDrops;
 use wamn_control_provision::validate_project_env;
-use wamn_platform_identity::auth_changes::{AuthChanges, AuthDrops};
 use wamn_platform_identity::org::{MemberGrants, invite_member};
 
 use crate::provision_project_env::provisioning_transaction;
@@ -49,10 +50,7 @@ pub struct InviteOutcome {
 }
 
 /// Provision the first org admin. Later invitations must use user.invite.
-pub async fn invite(
-    request: &InviteRequest,
-    changes: &AuthChanges,
-) -> anyhow::Result<InviteOutcome> {
+pub async fn invite(request: &InviteRequest, changes: &Publisher) -> anyhow::Result<InviteOutcome> {
     anyhow::ensure!(
         request.grants.org_admin,
         "invite provisions the first org admin; use user.invite for other invitations"

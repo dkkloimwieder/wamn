@@ -9,16 +9,14 @@ license.workspace = true
 test-util = ["dep:wamn-test-postgres", "wamn-catalog/test-util"]
 
 [dependencies]
+wamn-control-registry = { workspace = true }
+wamn-broker = { workspace = true }
+wamn-kubernetes = { workspace = true }
 wamn-test-postgres = { workspace = true, optional = true }
 jsonwebtoken = { workspace = true }
 wamn-digest.workspace = true
-wamn-credential-store = { workspace = true }
 uuid = { workspace = true }
 anyhow = { workspace = true }
-# The publication of auth changes on the scheduler NATS (src/auth_changes.rs).
-async-nats = { workspace = true, features = ["jetstream", "kv"] }
-futures-util = { workspace = true }
-rustls = { workspace = true, features = ["aws_lc_rs", "std", "tls12"] }
 tracing = { workspace = true }
 argon2 = { workspace = true }
 zeroize = { workspace = true }

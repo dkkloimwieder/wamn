@@ -2,9 +2,10 @@
 
 use serde_json::Value;
 use tokio_postgres::Transaction;
+use wamn_kubernetes::Store as _;
 
 use super::{ConnectionError, refuse};
-use crate::auth_changes::AuthDrops;
+use wamn_broker::auth_changes::AuthDrops;
 
 fn projection_relation(group: &str) -> Result<&'static str, ConnectionError> {
     match group {
@@ -104,12 +105,13 @@ pub async fn project_administration(
 pub async fn destroy_credentials(credentials: &Value) -> Result<(), ConnectionError> {
     for credential in credentials.as_array().into_iter().flatten() {
         let store =
-            wamn_credential_store::open(credential["store"].as_str().expect("database store"))
-                .map_err(|source| ConnectionError {
+            wamn_kubernetes::kubernetes::KubernetesStore::in_cluster().map_err(|source| {
+                ConnectionError {
                     code: "store_error",
                     field: "credential",
                     source: Some(Box::new(source)),
-                })?;
+                }
+            })?;
         store
             .destroy(
                 credential["ref"].as_str().expect("database reference"),

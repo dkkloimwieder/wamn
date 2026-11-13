@@ -5,13 +5,14 @@
 
 use std::collections::BTreeSet;
 use std::sync::Mutex;
+use wamn_broker::Publisher;
 
 use serde_json::{Value, json};
-use wamn_credential_store::{Store, StoreVersion};
-use wamn_platform_identity::auth_changes::AuthDrops;
-use wamn_platform_identity::connection_changes::{
-    BUCKET, ConnectionChanges, ConnectionDrops, connection_key, connections_key, release_key,
+use wamn_broker::auth_changes::AuthDrops;
+use wamn_broker::connection_changes::{
+    BUCKET, ConnectionDrops, connection_key, connections_key, release_key,
 };
+use wamn_kubernetes::{Store, StoreVersion};
 use wamn_platform_identity::connections::administration;
 
 #[derive(Debug, Default)]
@@ -21,20 +22,21 @@ struct RecordingStore(Mutex<Vec<Vec<u8>>>);
 impl Store for RecordingStore {
     async fn put(
         &self,
+        _scope: &wamn_control_registry::Triple,
         id: uuid::Uuid,
         value: &[u8],
-    ) -> Result<StoreVersion, wamn_credential_store::Error> {
+    ) -> Result<StoreVersion, wamn_kubernetes::Error> {
         self.0.lock().unwrap().push(value.to_vec());
         Ok(StoreVersion {
-            store: "file",
+            store: "k8s",
             reference: format!("private-{id}"),
             version: "1".into(),
         })
     }
-    async fn get(&self, _: &str, _: &str) -> Result<Vec<u8>, wamn_credential_store::Error> {
+    async fn get(&self, _: &str, _: &str) -> Result<Vec<u8>, wamn_kubernetes::Error> {
         Ok(Vec::new())
     }
-    async fn destroy(&self, _: &str, _: &str) -> Result<(), wamn_credential_store::Error> {
+    async fn destroy(&self, _: &str, _: &str) -> Result<(), wamn_kubernetes::Error> {
         Ok(())
     }
 }
@@ -80,18 +82,18 @@ async fn every_connection_writer_deletes_exactly_its_connection_keys() {
         "requires: env:WAMN_NATS_URL, env:WAMN_NATS_TLS_CA, env:WAMN_NATS_TLS_CERT, env:WAMN_NATS_TLS_KEY",
     );
     let _lock = wamn_test_postgres::lock();
-    let broker = wamn_platform_identity::nats::PlatformNats::from_env()
+    let broker = wamn_broker::nats::PlatformNats::from_env()
         .unwrap()
         .connect()
         .await
         .unwrap();
-    wamn_platform_identity::kv_memory::create_buckets(&broker)
+    wamn_broker::kv_memory::create_buckets(&broker)
         .await
         .unwrap();
-    let bucket = wamn_platform_identity::kv_memory::open_bucket(&broker, BUCKET)
+    let bucket = wamn_broker::kv_memory::open_bucket(&broker, BUCKET)
         .await
         .unwrap();
-    let publisher = ConnectionChanges::new(broker);
+    let publisher = Publisher::new(broker);
 
     let database = wamn_control_provision::test_database::system();
     let (mut client, driver) = tokio_postgres::connect(database.url(), tokio_postgres::NoTls)

@@ -3,10 +3,10 @@ use super::*;
 use crate::plugins::wamn_postgres::{
     AuthorityClass, StaticCredentialProvider, WamnPostgres, WamnPostgresConfig,
 };
+use wamn_broker::auth_changes::AuthDrops;
 use wamn_control_provision::{
     CredentialGeneration, WorkloadRoleFamily, WorkloadRoleScope, sql, workload_generation_role,
 };
-use wamn_platform_identity::auth_changes::AuthDrops;
 
 async fn connect(url: &str) -> tokio_postgres::Client {
     let (client, driver) = tokio_postgres::connect(url, tokio_postgres::NoTls)
@@ -83,7 +83,7 @@ async fn external_signature_uses_the_service_principal_and_only_admin_granted_ro
     )));
     let facts = Arc::new(crate::connection_facts::ConnectionFacts::new(
         Arc::new(crate::connection_memory::ConnectionMemory::default()),
-        wamn_platform_identity::connection_changes::ConnectionChanges::default(),
+        wamn_broker::Publisher::default(),
         Arc::new(fixture.reader("host-project").await),
         Arc::clone(&postgres),
         "acme--host-project--dev",

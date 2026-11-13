@@ -9,9 +9,10 @@ license.workspace = true
 test-util = []
 
 [dependencies]
+wamn-broker = { workspace = true }
+wamn-kubernetes = { workspace = true }
 wamn-scalar.workspace = true
 wamn-digest.workspace = true
-wamn-credential-store = { workspace = true }
 wamn-catalog = { workspace = true }
 wamn-control-registry = { workspace = true }
 wamn-control-provision = { workspace = true }
@@ -43,6 +44,7 @@ url = { workspace = true }
 uuid = { workspace = true, features = ["v4", "serde"] }
 
 [dev-dependencies]
+hyper-rustls = { workspace = true, features = ["http1"] }
 wamn-schema-generator = { workspace = true }
 wamn-package-artifact = { workspace = true }
 object_store = { workspace = true }

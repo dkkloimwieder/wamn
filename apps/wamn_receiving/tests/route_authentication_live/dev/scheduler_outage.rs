@@ -164,7 +164,7 @@ async fn routes_answer_during_a_scheduler_outage_and_recover() -> anyhow::Result
     )
     .await?;
     let provisioning = inputs.environment.nats.connect().await?;
-    wamn_environment_control::event_streams::provision(
+    wamn_broker::streams::provision(
         &async_nats::jetstream::new(provisioning.clone()),
         &wamn_control_registry::Triple::new(
             &environment.identity.org,

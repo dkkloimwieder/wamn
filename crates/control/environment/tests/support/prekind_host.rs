@@ -477,7 +477,7 @@ async fn prekind_http_host_runs_and_rejects_respond_without_caller() -> anyhow::
         wamn_control_provision::PlatformComponent::Provisioning,
     ))
     .await?;
-    let credential_store = wamn_test_infrastructure::credentials::LocalCredentials::create()?;
+    let credential_store = wamn_test_infrastructure::credentials::MemoryStore::default();
     wamn_test_infrastructure::credentials::define(&tx,ORG,&json!({"project":PROJECT,"env":"http","name":"upstream","integration_type":"http","auth_type":"http_basic","parameters":{"primary-authority":origin,"tls-verification":"disabled"},"credential":json!({"username":"fixture","password":"fixture-password"}).to_string()}),&credential_store).await?;
     tx.commit().await?;
 
@@ -517,8 +517,8 @@ async fn prekind_http_host_runs_and_rejects_respond_without_caller() -> anyhow::
     .context("local NATS did not accept a connection")??;
     let broker = async_nats::jetstream::new(client.clone());
     for stream in [
-        wamn_control_provision::events::source_stream_config(&scope, 1, Duration::from_secs(120)),
-        wamn_control_provision::events::advisory_stream_config(&scope, 1),
+        wamn_broker::events::source_stream_config(&scope, 1, Duration::from_secs(120)),
+        wamn_broker::events::advisory_stream_config(&scope, 1),
     ] {
         broker.create_stream(stream).await?;
     }
@@ -686,7 +686,7 @@ async fn prekind_http_host_runs_and_rejects_respond_without_caller() -> anyhow::
         digest,
         &document,
         &reserved,
-        &mut wamn_platform_identity::connection_changes::ConnectionDrops::default(),
+        &mut wamn_broker::connection_changes::ConnectionDrops::default(),
     )
     .await?;
     tx.commit().await?;
@@ -739,7 +739,7 @@ async fn prekind_http_host_runs_and_rejects_respond_without_caller() -> anyhow::
         .filter(|document| document["kind"] == "WorkloadDeployment")
         .map(|document| workload(document, directory))
         .collect::<anyhow::Result<Vec<_>>>()?;
-    let auth = wamn_platform_identity::auth_changes::AuthChanges::default();
+    let auth = wamn_broker::Publisher::default();
     let environment = integration::WorkflowEnvironment {
         system_url: control.url(),
         project_url: database.url(),
@@ -779,7 +779,6 @@ async fn prekind_http_host_runs_and_rejects_respond_without_caller() -> anyhow::
     let mut host = host_command(
         &documents, &secrets, directory, &scheduler, &http, &probe, &files,
     )?
-    .env("WAMN_CREDENTIAL_DIR", credential_store.directory())
     .spawn()?;
     let result = async {
         tokio::time::timeout(Duration::from_secs(120), async {

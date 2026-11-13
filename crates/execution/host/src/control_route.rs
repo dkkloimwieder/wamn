@@ -42,6 +42,7 @@
 //! environment holds (`admin` holds every operation of the release), from its
 //! `platform.role` and `platform.permission`. It writes nothing.
 
+use wamn_broker::Publisher;
 mod connection_test;
 mod integration;
 mod operation_job;
@@ -55,6 +56,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use tokio::sync::Mutex;
 use tokio_postgres::{Client, NoTls, Transaction};
+use wamn_broker::auth_changes::AuthDrops;
 use wamn_catalog::{HostAttachment, HostHandler, HostRouteAuthority};
 use wamn_control_provision::control_administration_key;
 use wamn_control_registry::identifiers::valid_project;
@@ -67,7 +69,6 @@ use wamn_platform_identity::application::{
     ApplicationScope, permission_rows, project_authority, require_platform_rows, role_names,
     write_environment_status,
 };
-use wamn_platform_identity::auth_changes::{AuthChanges, AuthDrops};
 use wamn_platform_identity::control::{
     control_projects_page, is_org_admin, is_project_admin, org_projects_page,
 };
@@ -146,10 +147,10 @@ pub(crate) struct ControlRoutes<'a> {
     /// The runtime reader selected by the host mode.
     pub(crate) status: &'a dyn crate::environment_status::StatusSource,
     pub(crate) registry_token_metadata: bool,
-    pub(crate) operation_jobs: Option<&'a wamn_credential_store::kubernetes_api::KubernetesApi>,
+    pub(crate) operation_jobs: Option<&'a wamn_kubernetes::kubernetes_api::KubernetesApi>,
     pub(crate) org: &'a str,
     /// Publishes each user row and status change of an environment.
-    pub(crate) changes: &'a AuthChanges,
+    pub(crate) changes: &'a Publisher,
     #[cfg(feature = "test-util")]
     pub(crate) projection_pause: Option<&'a ProjectionPause>,
     pub(crate) oauth: Option<&'a wamn_runtime::oauth_authorization::Authorization>,

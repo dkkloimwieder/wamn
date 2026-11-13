@@ -14,7 +14,7 @@ use chrono::{DateTime, Utc};
 use tokio_postgres::{Client, NoTls};
 
 use wamn_control_provision::{
-    cdc_object_name, event_stream_name, project_env_database_name, sql, validate_project_env_cdc,
+    cdc_object_name, project_env_database_name, sql, validate_project_env_cdc,
 };
 use wamn_control_registry::sql::{
     stamp_env_policy_sql, upsert_event_reader_sql, upsert_org_sql, upsert_project_env_sql,
@@ -70,13 +70,13 @@ async fn recover_and_close_record_each_capture_gap() {
     wamn_test_postgres::require_ignored_prerequisites(
         "requires: env:WAMN_NATS_URL, env:WAMN_NATS_TLS_CA, env:WAMN_NATS_TLS_CERT, env:WAMN_NATS_TLS_KEY",
     );
-    let nats = wamn_platform_identity::nats::PlatformNats::from_env().unwrap();
+    let nats = wamn_broker::nats::PlatformNats::from_env().unwrap();
     validate_project_env_cdc(ORG, PROJECT, ENV).expect("valid names");
     let postgres = wamn_test_postgres::start(&[("wal_level", "logical")])
         .expect("start a PostgreSQL 18 server with wal_level=logical");
     let database = project_env_database_name(ORG, PROJECT, ENV, INSTANCE);
     let slot = cdc_object_name(ORG, PROJECT, ENV, INSTANCE);
-    let stream = event_stream_name(ORG, PROJECT, ENV);
+    let stream = wamn_event_wire::stream_name(ORG, PROJECT, ENV);
     let super_url = postgres.database("postgres").unwrap().url().to_owned();
     let system_url = postgres.database(SYSTEM_DB).unwrap().url().to_owned();
     let admin_url = postgres.database(&database).unwrap().url().to_owned();

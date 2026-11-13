@@ -276,7 +276,7 @@ Only the provisioning client creates, updates or deletes streams and consumers.
 NATS replication remains separate from Kubernetes workload replicas.
 The host carries the declared stream replica count and duplicate window into activation.
 No runtime default substitutes for a missing declaration.
-The [native declaration owner](../../crates/control/provision/src/events.rs) supplies the configurations used by provisioning and activation.
+The [native declaration owner](../../crates/broker/src/events.rs) supplies the configurations used by provisioning and activation.
 
 A materializer awaits bounded fetches, router delivery, and explicit acknowledgements.
 Registration preparation and idle clock waits also yield through native async imports.

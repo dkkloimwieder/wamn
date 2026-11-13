@@ -1419,7 +1419,7 @@ async fn effect_snapshot_refuses_a_env_key_that_disagrees_with_the_bound_claim()
 
     let facts = crate::connection_facts::ConnectionFacts::new(
         Arc::new(crate::connection_memory::ConnectionMemory::default()),
-        wamn_platform_identity::connection_changes::ConnectionChanges::default(),
+        wamn_broker::Publisher::default(),
         Arc::new(crate::connection_credentials::ConnectionCredentials::empty()),
         Arc::clone(&pg),
         "tenant-a",
@@ -1511,7 +1511,7 @@ async fn effect_snapshot_refuses_a_component_with_no_bound_env_key() {
 
     let facts = crate::connection_facts::ConnectionFacts::new(
         Arc::new(crate::connection_memory::ConnectionMemory::default()),
-        wamn_platform_identity::connection_changes::ConnectionChanges::default(),
+        wamn_broker::Publisher::default(),
         Arc::new(crate::connection_credentials::ConnectionCredentials::empty()),
         Arc::clone(&pg),
         "tenant-a",
@@ -1650,7 +1650,7 @@ async fn effect_snapshot_checks_out_under_the_callable_http_authority() {
 
     let facts = crate::connection_facts::ConnectionFacts::new(
         Arc::new(crate::connection_memory::ConnectionMemory::default()),
-        wamn_platform_identity::connection_changes::ConnectionChanges::default(),
+        wamn_broker::Publisher::default(),
         Arc::new(crate::connection_credentials::ConnectionCredentials::empty()),
         Arc::clone(&pg),
         "tenant-a",
@@ -2683,7 +2683,7 @@ async fn live_a_drop_refuses_a_removed_user_row_on_the_next_bind() {
         )
         .await
         .expect("remove the user row after issuance");
-    let mut drops = wamn_platform_identity::auth_changes::AuthDrops::default();
+    let mut drops = wamn_broker::auth_changes::AuthDrops::default();
     drops.principal(ENV_KEY, LIVE_PRINCIPAL);
     writer.publish(drops).await;
     crate::auth_cache::tests::until("the drop reaches the memory", || {
@@ -3724,6 +3724,7 @@ async fn live_an_unchecked_declared_statement_is_refused_when_it_runs() {
 async fn live_a_drop_refuses_a_revoked_pat_on_the_next_request() {
     use crate::plugins::route_authentication::{PlatformRouteAuthenticator, RouteAuthentication};
     use wamn_platform_identity::{assign_project_role, create_service, issue_pat, revoke_pat};
+
     wamn_test_postgres::require_ignored_prerequisites("requires: env:WAMN_NATIVE_C_NATS_BIN");
 
     let _lock = wamn_test_postgres::lock();
@@ -3740,7 +3741,7 @@ async fn live_a_drop_refuses_a_revoked_pat_on_the_next_request() {
         &admin,
         "pat-drop-test",
         "PAT drop test",
-        &mut wamn_platform_identity::auth_changes::AuthDrops::default(),
+        &mut wamn_broker::auth_changes::AuthDrops::default(),
     )
     .await
     .unwrap();
@@ -3750,7 +3751,7 @@ async fn live_a_drop_refuses_a_revoked_pat_on_the_next_request() {
         "org",
         "project",
         "admin",
-        &mut wamn_platform_identity::auth_changes::AuthDrops::default(),
+        &mut wamn_broker::auth_changes::AuthDrops::default(),
     )
     .await
     .unwrap();
@@ -3864,7 +3865,7 @@ async fn live_a_drop_refuses_a_revoked_pat_on_the_next_request() {
     let caller = request().await.unwrap().unwrap();
     assert_eq!(caller.principal_id(), principal.id().to_string().as_str());
     assert!(pg.auth_cache().pat(issued.token()).is_some());
-    let mut drops = wamn_platform_identity::auth_changes::AuthDrops::default();
+    let mut drops = wamn_broker::auth_changes::AuthDrops::default();
     revoke_pat(&admin, issued.record().prefix(), &mut drops)
         .await
         .unwrap();

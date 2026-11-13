@@ -222,8 +222,7 @@ pub async fn schema_operation(
         ensure!(resolution.is_none(), "resolution requires schema apply");
         return Ok(diffs);
     }
-    let changes =
-        wamn_platform_identity::auth_changes::AuthChanges::new(config.nats().connect().await?);
+    let changes = wamn_broker::Publisher::new(config.nats().connect().await?);
     let lease = acquire(&config).await?;
     lease.instance(&config).await?;
     let initial_state = wamn_environment_control::environment::sql::schema::database_state(
@@ -1206,7 +1205,7 @@ mod tests {
         apply_package::apply_local_package_schema(
             ApplyPackageRequest {
                 component_source: None,
-                changes: wamn_platform_identity::auth_changes::AuthChanges::default(),
+                changes: wamn_broker::Publisher::default(),
                 package: PackageRoot {
                     path: root.clone(),
                     artifact_digest: None,

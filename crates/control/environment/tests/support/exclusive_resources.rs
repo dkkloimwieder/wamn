@@ -1,7 +1,8 @@
 //! Exclusive calls through the existing registry, Modbus and application fixtures.
 
 use super::*;
-use wamn_platform_identity::connection_changes::{ConnectionChanges, ConnectionDrops};
+use wamn_broker::Publisher;
+use wamn_broker::connection_changes::ConnectionDrops;
 use wamn_runtime::auth_cache::test_util::{nats, until};
 use wamn_runtime::resource_lease::ResourceLeases;
 
@@ -26,7 +27,7 @@ struct Fixture {
     registry_credentials: RegistryCredentialSource,
     _registry: local_registry::LocalRegistry,
     _scratch: wamn_test_infrastructure::scratch::ScratchRoot,
-    _store: wamn_test_infrastructure::credentials::LocalCredentials,
+    _store: wamn_test_infrastructure::credentials::MemoryStore,
 }
 
 impl Fixture {
@@ -60,7 +61,7 @@ impl Fixture {
             operations: "wamn:modbus/client@1.0.0".into(),
             write_interfaces: vec!["wamn:modbus/write@1.0.0".into()],
         }).await?;
-        let store = wamn_test_infrastructure::credentials::LocalCredentials::create()?;
+        let store = wamn_test_infrastructure::credentials::MemoryStore::default();
         // Prepare Y as disabled before the scenario starts, without violating uniqueness.
         for name in ["meter", "replacement"] {
             let tx = admin.transaction().await?;
@@ -74,7 +75,7 @@ impl Fixture {
                 "acme",
                 "connection.disable",
                 &json!({"project":"one","env":"dev","name":name}).to_string(),
-                &mut wamn_platform_identity::auth_changes::AuthDrops::default(),
+                &mut wamn_broker::auth_changes::AuthDrops::default(),
                 &mut ConnectionDrops::default(),
                 None,
             )
@@ -156,9 +157,9 @@ impl Fixture {
             _store: store,
         };
         fixture
-            .change("meter", "connection.enable", &ConnectionChanges::default())
+            .change("meter", "connection.enable", &Publisher::default())
             .await?;
-        fixture.bind("meter", &ConnectionChanges::default()).await?;
+        fixture.bind("meter", &Publisher::default()).await?;
         Ok(fixture)
     }
 
@@ -166,7 +167,7 @@ impl Fixture {
         &mut self,
         name: &str,
         operation: &str,
-        changes: &ConnectionChanges,
+        changes: &Publisher,
     ) -> anyhow::Result<()> {
         let tx = self.admin.transaction().await?;
         tx.batch_execute(&bind_platform_principal_sql(
@@ -179,7 +180,7 @@ impl Fixture {
             "acme",
             operation,
             &json!({"project":"one","env":"dev","name":name}).to_string(),
-            &mut wamn_platform_identity::auth_changes::AuthDrops::default(),
+            &mut wamn_broker::auth_changes::AuthDrops::default(),
             &mut drops,
             None,
         )
@@ -189,7 +190,7 @@ impl Fixture {
         Ok(())
     }
 
-    async fn bind(&mut self, name: &str, changes: &ConnectionChanges) -> anyhow::Result<()> {
+    async fn bind(&mut self, name: &str, changes: &Publisher) -> anyhow::Result<()> {
         self.document.integrations.clear();
         self.document.integrations.insert(
             name.to_owned(),
@@ -304,7 +305,7 @@ async fn exclusive_calls_wait_serialize_and_transfer_to_replacement() -> anyhow:
     let (authority, requests, server) = simulator_with_gate(Some(Arc::clone(&gate))).await?;
     let mut fixture = Fixture::new(&authority).await?;
     let (_nats, nats) = nats().await;
-    let changes = ConnectionChanges::new(nats.clone());
+    let changes = Publisher::new(nats.clone());
     let a = fixture.host(&nats).await?;
     let mut app = Application::load(Arc::clone(&a.imports)).await?;
     assert_eq!(app.read().await?.unwrap().payload, "4660");

@@ -20,7 +20,7 @@ pub fn source_stream_config(
     duplicate_window: Duration,
 ) -> stream::Config {
     stream::Config {
-        name: crate::event_stream_name(&scope.org, &scope.project, scope.env.as_str()),
+        name: wamn_event_wire::stream_name(&scope.org, &scope.project, scope.env.as_str()),
         subjects: vec![stream_subjects(
             &scope.org,
             &scope.project,
@@ -248,52 +248,6 @@ mod tests {
     use async_nats::jetstream::stream::{
         DiscardPolicy, PersistenceMode, Placement, Republish, Source, SubjectTransform,
     };
-
-    #[test]
-    fn captured_entities_get_consumers_without_registrations() {
-        let entities = [("a_b", "c"), ("a", "b_c"), ("a", "b_c")];
-        let scope = Triple::new("acme", "orders", "dev");
-        let consumers = entity_consumers(&scope, entities);
-        assert_eq!(consumers.len(), 2);
-        assert_ne!(consumers[0].durable_name, consumers[1].durable_name);
-        assert_eq!(consumers[0].filter_subject, "evt.acme.orders.dev.b_c.>");
-        assert_eq!(consumers[1].filter_subject, "evt.acme.orders.dev.c.>");
-    }
-
-    #[test]
-    fn event_names_and_subjects_use_the_same_declared_triple() {
-        let scope = Triple::new("acme", "widgets", "dev");
-        let source = source_stream_config(&scope, 3, Duration::from_secs(120));
-        assert_eq!(
-            source.name,
-            wamn_event_wire::stream_name("acme", "widgets", "dev")
-        );
-        assert_eq!(source.subjects, ["evt.acme.widgets.dev.>"]);
-        let advisory = advisory_stream_config(&scope, 3);
-        assert_eq!(advisory.name, delivery_advisory_stream(&source.name));
-        assert_eq!(advisory.subjects, delivery_advisory_subjects(&source.name));
-        assert_eq!(
-            advisory.max_age,
-            Duration::from_secs(DELIVERY_ADVISORY_MAX_AGE_SECONDS)
-        );
-        assert_eq!(
-            advisory.max_messages_per_subject,
-            DELIVERY_ADVISORY_MAX_MESSAGES_PER_SUBJECT
-        );
-        for other in [
-            Triple::new("acme", "billing", "dev"),
-            Triple::new("acme", "widgets", "prod"),
-        ] {
-            assert!(!stream_config_matches(
-                &source,
-                &source_stream_config(&other, 3, Duration::from_secs(120))
-            ));
-            assert!(!stream_config_matches(
-                &advisory,
-                &advisory_stream_config(&other, 3)
-            ));
-        }
-    }
 
     #[test]
     fn source_comparison_refuses_foreign_inputs_and_changed_delivery_policy() {

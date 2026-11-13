@@ -181,7 +181,7 @@ pub struct Registry {
     pub unenabled: Client,
     pub org: String,
     project: String,
-    pub credentials: std::sync::Arc<wamn_test_infrastructure::credentials::LocalCredentials>,
+    pub credentials: std::sync::Arc<wamn_test_infrastructure::credentials::MemoryStore>,
     pub connection_id: String,
     pub generation: i64,
     pub definition: serde_json::Value,
@@ -203,8 +203,8 @@ impl Registry {
             &self.org,
             operation,
             &payload.to_string(),
-            &mut wamn_platform_identity::auth_changes::AuthDrops::default(),
-            &mut wamn_platform_identity::connection_changes::ConnectionDrops::default(),
+            &mut wamn_broker::auth_changes::AuthDrops::default(),
+            &mut wamn_broker::connection_changes::ConnectionDrops::default(),
             Some(self.credentials.as_ref()),
         )
         .await?;
@@ -362,7 +362,7 @@ pub async fn registry(
         unenabled,
         org: org.into(),
         project: project.into(),
-        credentials: Arc::new(wamn_test_infrastructure::credentials::LocalCredentials::create()?),
+        credentials: Arc::new(wamn_test_infrastructure::credentials::MemoryStore::default()),
         connection_id: String::new(),
         generation: 0,
         definition: definition.clone(),

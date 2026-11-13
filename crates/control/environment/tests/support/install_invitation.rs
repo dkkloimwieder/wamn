@@ -9,13 +9,14 @@ use rustls::pki_types::{CertificateDer, PrivateKeyDer, pem::PemObject as _};
 use serde_json::{Value, json};
 use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
 use tokio_rustls::{TlsAcceptor, rustls};
+use wamn_broker::Publisher;
 use wamn_environment_control::invite::{InviteRequest, invite};
 use wamn_environment_control::provision_org::{ProvisionOrgRequest, provision_org};
 use wamn_environment_control::provision_project_env::{
     OrgWorkloadActionRequest, WorkloadActionVerb, WorkloadGenerationAction, run_org_workload_action,
 };
 use wamn_identity_client::PatIssuerConfig;
-use wamn_platform_identity::{auth_changes::AuthChanges, org::MemberGrants};
+use wamn_platform_identity::org::MemberGrants;
 use wamn_test_infrastructure::nats_tls::Authority;
 
 pub async fn step_4_19_1_owner_invite(
@@ -157,7 +158,7 @@ pub async fn step_4_19_1_owner_invite(
         system_database_url: system_url.into(),
         identity,
     };
-    let invited = invite(&request, &AuthChanges::default())
+    let invited = invite(&request, &Publisher::default())
         .await
         .context("4.19.1 owner_invite_passes_after_provision_org_admin")?;
     ensure!(
@@ -170,7 +171,7 @@ pub async fn step_4_19_1_owner_invite(
         email: "other@example.test".into(),
         ..request
     };
-    let refusal = invite(&other, &AuthChanges::default()).await.unwrap_err();
+    let refusal = invite(&other, &Publisher::default()).await.unwrap_err();
     ensure!(
         refusal.to_string()
             == format!(

@@ -1053,7 +1053,7 @@ CREATE UNIQUE INDEX connection_resource_per_target
 CREATE TABLE identity.credential (
     id            uuid PRIMARY KEY DEFAULT gen_random_uuid(),
     connection_id uuid NOT NULL REFERENCES registry.connection (id) ON DELETE CASCADE,
-    store         text NOT NULL CHECK (store IN ('k8s', 'file')),
+    store         text NOT NULL CHECK (store = 'k8s'),
     ref           text NOT NULL,
     version       text NOT NULL,
     hint          text,
@@ -1394,7 +1394,7 @@ BEGIN
             'parameters',parameters,'credential_id',credential,
             'credential_schema',(SELECT credential_schema FROM registry.auth_type WHERE code=selected.auth_type),
             'auth_schema',(SELECT parameter_schema FROM registry.auth_type WHERE code=selected.auth_type),
-            'store',(SELECT CASE WHEN type='local' THEN 'file' ELSE 'k8s' END FROM registry.target WHERE id=existing.target_id),
+            'store','k8s',
             'versions',(SELECT jsonb_object_agg(version,parameter_schema)
                        FROM registry.integration_type_version WHERE integration_type=selected.integration_type),
             'schemas',(SELECT jsonb_agg(parameter_schema ORDER BY version)

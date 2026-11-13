@@ -56,7 +56,7 @@ pub struct ApplyPackageRequest {
     pub package: PackageRoot,
 
     /// Publisher for auth facts after the package transaction commits.
-    pub changes: wamn_platform_identity::auth_changes::AuthChanges,
+    pub changes: wamn_broker::Publisher,
 
     /// Owner connection to the target project-environment database.
     pub database_url: String,
@@ -128,7 +128,7 @@ pub struct ApplyOutcome {
     /// Whether this application changed the database.
     pub changed: bool,
 
-    pub drops: wamn_platform_identity::auth_changes::AuthDrops,
+    pub drops: wamn_broker::auth_changes::AuthDrops,
 }
 
 /// Package bytes and migration policy prepared before database mutation.
@@ -341,7 +341,7 @@ async fn apply(
             package_version,
             migrations_applied: 0,
             changed: false,
-            drops: wamn_platform_identity::auth_changes::AuthDrops::default(),
+            drops: wamn_broker::auth_changes::AuthDrops::default(),
         });
     }
     let recorded = read_package_migrations(&tx, env_key, &package_id).await?;
@@ -401,7 +401,7 @@ async fn apply(
         artifact_digest,
         local_comment,
         changed: migration_changed,
-        drops: wamn_platform_identity::auth_changes::AuthDrops::default(),
+        drops: wamn_broker::auth_changes::AuthDrops::default(),
     };
     let executed = crate::migrations::execute_migrations(
         client,

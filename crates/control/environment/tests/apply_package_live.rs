@@ -631,7 +631,7 @@ async fn apply_as(
         ApplyPackageRequest {
             component_source: wamn_package_control::apply_package::component_source_from_env(None)
                 .unwrap(),
-            changes: wamn_platform_identity::auth_changes::AuthChanges::default(),
+            changes: wamn_broker::Publisher::default(),
             package: apply_package::PackageRoot {
                 path: package.to_path_buf(),
                 artifact_digest: Some(digest.to_owned()),
@@ -657,7 +657,7 @@ async fn apply_for_env_key(
         ApplyPackageRequest {
             component_source: wamn_package_control::apply_package::component_source_from_env(None)
                 .unwrap(),
-            changes: wamn_platform_identity::auth_changes::AuthChanges::default(),
+            changes: wamn_broker::Publisher::default(),
             package: wamn_package_control::apply_package::PackageRoot {
                 path: package.to_path_buf(),
                 artifact_digest: Some(
@@ -1528,7 +1528,7 @@ async fn apply_history_configuration(url: &str, package: &Path) -> anyhow::Resul
     apply_package::apply_local_package_schema(
         ApplyPackageRequest {
             component_source: apply_package::component_source_from_env(None)?,
-            changes: wamn_platform_identity::auth_changes::AuthChanges::default(),
+            changes: wamn_broker::Publisher::default(),
             package: apply_package::PackageRoot {
                 path: package.to_owned(),
                 artifact_digest: None,
@@ -2092,7 +2092,7 @@ async fn explicit_local_schema_applies_pending_sql_and_records_its_source() {
     set_database_comment(&client, Some(&marker)).await;
     let local_request = || ApplyPackageRequest {
         component_source: apply_package::component_source_from_env(None).unwrap(),
-        changes: wamn_platform_identity::auth_changes::AuthChanges::default(),
+        changes: wamn_broker::Publisher::default(),
         package: apply_package::PackageRoot {
             path: package.clone(),
             artifact_digest: None,

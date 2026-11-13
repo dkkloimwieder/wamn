@@ -215,7 +215,7 @@ async fn installed_package_set_unions_a_real_app_generation_and_replays_noop() {
     apply_package::apply_package(ApplyPackageRequest {
         component_source: wamn_package_control::apply_package::component_source_from_env(None)
             .unwrap(),
-        changes: wamn_platform_identity::auth_changes::AuthChanges::default(),
+        changes: wamn_broker::Publisher::default(),
         package: wamn_package_control::apply_package::PackageRoot {
             path: fixture_package_root(),
             artifact_digest: Some(
@@ -235,7 +235,7 @@ async fn installed_package_set_unions_a_real_app_generation_and_replays_noop() {
     apply_package::apply_package(ApplyPackageRequest {
         component_source: wamn_package_control::apply_package::component_source_from_env(None)
             .unwrap(),
-        changes: wamn_platform_identity::auth_changes::AuthChanges::default(),
+        changes: wamn_broker::Publisher::default(),
         package: wamn_package_control::apply_package::PackageRoot {
             path: overlay_package_root(),
             artifact_digest: Some(
@@ -523,7 +523,7 @@ async fn apply(url: &str, package: PathBuf) {
     apply_package::apply_package(ApplyPackageRequest {
         component_source: wamn_package_control::apply_package::component_source_from_env(None)
             .unwrap(),
-        changes: wamn_platform_identity::auth_changes::AuthChanges::default(),
+        changes: wamn_broker::Publisher::default(),
         package: wamn_package_control::apply_package::PackageRoot {
             path: package.clone(),
             artifact_digest: Some(

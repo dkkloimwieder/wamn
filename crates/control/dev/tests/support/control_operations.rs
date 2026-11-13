@@ -195,7 +195,7 @@ pub(super) async fn exercise(
         password,
         session: tokio::sync::Mutex::new(session),
     };
-    let coordinate = wamn_control_provision::environment_state::environment_resource_name(
+    let coordinate = wamn_control_provision::environment_names::environment_resource_name(
         &journey.run.document.org,
         journey.project,
         journey.environment,
@@ -260,7 +260,7 @@ async fn document(journey: &Journey<'_>, coordinate: &str) -> anyhow::Result<Val
 }
 
 async fn application_release(journey: &Journey<'_>, application: &str) -> anyhow::Result<Value> {
-    let name = wamn_control_provision::environment_state::application_release_name(
+    let name = wamn_control_provision::environment_names::application_release_name(
         &journey.run.document.org,
         journey.project,
         journey.environment,

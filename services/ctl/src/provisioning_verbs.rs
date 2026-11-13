@@ -681,10 +681,8 @@ pub async fn provision(args: ProvisionProjectEnvArgs) -> anyhow::Result<()> {
             .system_database_url
             .as_deref()
             .context("--revoke-pat-prefix requires --system-database-url")?;
-        let changes = wamn_platform_identity::auth_changes::AuthChanges::connect(
-            &wamn_platform_identity::nats::PlatformNats::from_env()?,
-        )
-        .await?;
+        let changes =
+            wamn_broker::Publisher::connect(&wamn_broker::nats::PlatformNats::from_env()?).await?;
         provision_project_env::revoke_provisioning_pat(system_url, prefix, &changes).await?;
         println!("revoked PAT prefix {prefix}");
         return Ok(());
@@ -718,10 +716,8 @@ pub async fn provision(args: ProvisionProjectEnvArgs) -> anyhow::Result<()> {
     {
         // Preserve transport validation before opening any external connection.
         wamn_identity_client::PatClient::new(&request.pat_issuer)?;
-        request.changes = wamn_platform_identity::auth_changes::AuthChanges::connect(
-            &wamn_platform_identity::nats::PlatformNats::from_env()?,
-        )
-        .await?;
+        request.changes =
+            wamn_broker::Publisher::connect(&wamn_broker::nats::PlatformNats::from_env()?).await?;
     }
     let outcome = provision_project_env::provision_project_env(&request).await?;
     print_provisioned(&request, &outcome)
@@ -772,7 +768,7 @@ fn workload_action_request(
 
 fn provisioning_request(args: ProvisionProjectEnvArgs) -> ProvisionProjectEnvRequest {
     ProvisionProjectEnvRequest {
-        changes: wamn_platform_identity::auth_changes::AuthChanges::default(),
+        changes: wamn_broker::Publisher::default(),
         org: args.org.expect(
             "clap parser invariant: --org is required unless --revoke-pat-prefix is present",
         ),
@@ -930,7 +926,7 @@ pub async fn recover_capture_gap(args: RecoverCaptureGapArgs) -> anyhow::Result<
         env: args.env,
         system_database_url: args.system_database_url,
         admin_database_url: args.admin_database_url,
-        nats: wamn_platform_identity::nats::PlatformNats::from_env()?,
+        nats: wamn_broker::nats::PlatformNats::from_env()?,
     })
     .await?;
     println!(
@@ -977,7 +973,7 @@ pub async fn enable_cdc(args: EnableCdcProjectEnvArgs) -> anyhow::Result<()> {
         cluster_namespace: args.cluster_namespace,
         secret_namespace: args.secret_namespace,
         stream: args.stream,
-        nats: wamn_platform_identity::nats::PlatformNats::from_env()?,
+        nats: wamn_broker::nats::PlatformNats::from_env()?,
         stream_replicas: args.stream_replicas,
         dup_window_secs: args.dup_window_secs,
         consumer_config: args.consumer_config,
@@ -1178,17 +1174,14 @@ pub async fn provision_org(args: ProvisionOrgArgs) -> anyhow::Result<()> {
     // The platform install provisions the org before auth NATS and any host
     // exist, so it sets no WAMN_NATS_URL and there is no cache to drop.
     let changes = if record.is_some() && std::env::var_os("WAMN_NATS_URL").is_some() {
-        wamn_platform_identity::auth_changes::AuthChanges::connect(
-            &wamn_platform_identity::nats::PlatformNats::from_env()?,
-        )
-        .await?
+        wamn_broker::Publisher::connect(&wamn_broker::nats::PlatformNats::from_env()?).await?
     } else {
         if record.is_some() {
             eprintln!(
                 "WAMN_NATS_URL is unset: a host keeps a revoked login for its auth memory TTL"
             );
         }
-        wamn_platform_identity::auth_changes::AuthChanges::default()
+        wamn_broker::Publisher::default()
     };
     let provisioned = provision_org::provision_org_with_changes(
         ProvisionOrgRequest {

@@ -13,7 +13,7 @@ path = "lib.rs"
 [dev-dependencies]
 wamn-digest.workspace = true
 wamn-identity-client = { workspace = true }
-wamn-credential-store = { workspace = true }
+wamn-kubernetes = { workspace = true }
 wamn-schema-generator = { workspace = true }
 # The subject token of a registration entity, as the materializer consumer filters it.
 wamn-event-wire = { workspace = true }
@@ -31,7 +31,7 @@ wamn-package-control = { workspace = true, features = ["test-util"] }
 wamn-release-control = { workspace = true }
 wamn-environment-control = { workspace = true, features = ["test-util"] }
 wamn-dev-control = { workspace = true, features = ["test-util"] }
-# The publisher a run-plane reconciliation takes (AuthChanges).
+# The publisher a run-plane reconciliation takes (Publisher).
 wamn-platform-identity = { workspace = true }
 wamn-identity-protocol = { workspace = true }
 wamn-runtime = { workspace = true }

@@ -4,10 +4,8 @@
 //! printed lines.
 
 use clap::Args;
+use wamn_broker::advisories::{EventAdvisoriesRequest, read_retained_advisories};
 use wamn_environment_control::create_user::{CreateUserRequest, create_user_principal};
-use wamn_environment_control::event_advisories::{
-    EventAdvisoriesRequest, read_retained_advisories,
-};
 use wamn_environment_control::prune_record_history::{
     PruneRecordHistoryRequest, PrunedHistory, prune_expired_record_history,
 };
@@ -35,7 +33,7 @@ pub struct EventAdvisoriesArgs {
 /// record per line. The NATS connection comes from `WAMN_NATS_*`.
 pub async fn event_advisories(args: EventAdvisoriesArgs) -> anyhow::Result<()> {
     let records = read_retained_advisories(EventAdvisoriesRequest {
-        nats: wamn_platform_identity::nats::PlatformNats::from_env()?,
+        nats: wamn_broker::nats::PlatformNats::from_env()?,
         stream: args.stream,
         consumer: args.consumer,
         limit: args.limit,
@@ -81,10 +79,7 @@ pub async fn create_user(args: CreateUserArgs) -> anyhow::Result<()> {
             display_name: args.display_name,
             system_database_url: args.system_database_url,
         },
-        &wamn_platform_identity::auth_changes::AuthChanges::connect(
-            &wamn_platform_identity::nats::PlatformNats::from_env()?,
-        )
-        .await?,
+        &wamn_broker::Publisher::connect(&wamn_broker::nats::PlatformNats::from_env()?).await?,
     )
     .await?;
     println!(

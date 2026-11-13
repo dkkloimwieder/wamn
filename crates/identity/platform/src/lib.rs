@@ -24,14 +24,10 @@ use wamn_identity_protocol::{PrincipalId, RoleName};
 pub mod test_database;
 
 pub mod application;
-pub mod auth_changes;
 pub mod configuration;
-pub mod connection_changes;
 pub mod connection_projection;
 pub mod connections;
 pub mod control;
-pub mod kv_memory;
-pub mod nats;
 pub mod org;
 pub mod paging;
 pub mod password;
@@ -39,7 +35,7 @@ pub mod password_login;
 pub mod session_keys;
 pub mod session_token;
 
-use auth_changes::AuthDrops;
+use wamn_broker::auth_changes::AuthDrops;
 
 const INSERT_USER_SQL: &str = "INSERT INTO identity.principals \
     (type, subject, email, display_name) VALUES ('user', $1, $2, $3) \

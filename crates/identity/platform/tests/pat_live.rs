@@ -1,7 +1,7 @@
 //! Real-PostgreSQL test for the personal-access-token presenter.
 
 use std::time::Duration;
-use wamn_platform_identity::auth_changes::AuthDrops;
+use wamn_broker::auth_changes::AuthDrops;
 
 use tokio_postgres::error::SqlState;
 use tokio_postgres::{Client, Transaction};
@@ -53,7 +53,7 @@ async fn platform_pat_round_trip_on_postgres() {
         &transaction,
         "author",
         "Widget Author",
-        &mut wamn_platform_identity::auth_changes::AuthDrops::default(),
+        &mut wamn_broker::auth_changes::AuthDrops::default(),
     )
     .await
     .expect("create service principal");
@@ -263,7 +263,7 @@ async fn platform_pat_round_trip_on_postgres() {
         &client,
         "agent-ci",
         "CI Agent",
-        &mut wamn_platform_identity::auth_changes::AuthDrops::default(),
+        &mut wamn_broker::auth_changes::AuthDrops::default(),
     )
     .await
     .expect("create service principal");

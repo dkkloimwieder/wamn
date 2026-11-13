@@ -17,7 +17,7 @@ struct Fixture {
     credentials: crate::connection_credentials::test_util::Fixture,
     database: wamn_test_postgres::Database,
     memory: Arc<crate::connection_memory::ConnectionMemory>,
-    changes: wamn_platform_identity::connection_changes::ConnectionChanges,
+    changes: wamn_broker::Publisher,
 }
 
 impl Fixture {
@@ -35,7 +35,7 @@ impl Fixture {
             credentials,
             database,
             memory: Arc::new(crate::connection_memory::ConnectionMemory::default()),
-            changes: wamn_platform_identity::connection_changes::ConnectionChanges::default(),
+            changes: wamn_broker::Publisher::default(),
         }
     }
 
@@ -336,8 +336,8 @@ async fn missing_credentials_wrong_project_and_bad_secret_shapes_refuse() {
 async fn rotation_refuses_the_old_signature_on_the_first_call_after_the_delete() {
     use crate::auth_cache::test_util::{nats, until};
     use crate::connection_memory::replicate;
-    use wamn_platform_identity::auth_changes::AuthDrops;
-    use wamn_platform_identity::connection_changes::ConnectionDrops;
+    use wamn_broker::auth_changes::AuthDrops;
+    use wamn_broker::connection_changes::ConnectionDrops;
     use wamn_platform_identity::connections::administration;
 
     const ENV_KEY: &str = "acme--host-project--dev";

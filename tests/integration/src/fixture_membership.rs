@@ -5,10 +5,11 @@
 
 use anyhow::Context as _;
 use tokio_postgres::NoTls;
+use wamn_broker::Publisher;
+use wamn_broker::auth_changes::AuthDrops;
 use wamn_control_provision::validate_project_env;
 use wamn_environment_control::provision_project_env::provisioning_transaction;
 use wamn_identity_protocol::PrincipalId;
-use wamn_platform_identity::auth_changes::{AuthChanges, AuthDrops};
 use wamn_platform_identity::{grant_project_env_membership, revoke_project_env_membership};
 
 /// Inputs that name one existing user and one existing project environment.
@@ -40,13 +41,13 @@ enum Action {
 /// A grant writes no fact that a host keeps, because a host keeps only the
 /// positive answer of a credential.
 pub(crate) async fn grant(args: MembershipRequest) -> anyhow::Result<PrincipalId> {
-    run(args, Action::Grant, &AuthChanges::default()).await
+    run(args, Action::Grant, &Publisher::default()).await
 }
 
 /// Revoke membership without failing if the grant is absent.
 pub(crate) async fn revoke(
     args: MembershipRequest,
-    changes: &AuthChanges,
+    changes: &Publisher,
 ) -> anyhow::Result<PrincipalId> {
     run(args, Action::Revoke, changes).await
 }
@@ -60,7 +61,7 @@ fn validate_args(args: &MembershipRequest) -> anyhow::Result<PrincipalId> {
 async fn run(
     args: MembershipRequest,
     action: Action,
-    changes: &AuthChanges,
+    changes: &Publisher,
 ) -> anyhow::Result<PrincipalId> {
     let principal_id = validate_args(&args)?;
     let (mut client, connection) = tokio_postgres::connect(&args.system_database_url, NoTls)

@@ -9,7 +9,7 @@
 //! event certificate, Publication CR, replication slot, and Database CR.
 //! Remove control logins and, with `--data`, the instance roles.
 //! Remove the credential store Secret and its account before the final transaction.
-//! That transaction retains connection references until credential files are gone.
+//! That transaction removes connection references after external resources are gone.
 //! Remove the canonical environment ConfigMap, then delete the environment row
 //! last and commit. A retained database keeps its rows.
 //!
@@ -22,20 +22,18 @@ pub(super) mod plan;
 mod resources;
 mod roles;
 mod rows;
-use plan::stream_not_found;
 pub use plan::{instance_families, instance_roles};
 pub use rows::delete_registry_rows;
 
 use anyhow::{Context as _, bail};
-use async_nats::jetstream::context::GetStreamErrorKind;
-use async_nats::jetstream::{self, ErrorCode};
+use async_nats::jetstream;
 use postgres_protocol::escape::escape_identifier;
 use wamn_control_provision::sql::drop_replication_slot_sql;
 use wamn_control_provision::workload_role::{
     WorkloadRoleFamily, WorkloadRoleScope, WorkloadRoleScopeKind, workload_generation_role,
 };
 use wamn_control_provision::{
-    CredentialGeneration, cdc_object_name, control_administration_secret_name, event_stream_name,
+    CredentialGeneration, cdc_object_name, control_administration_secret_name,
     project_env_database_name, render_control_administration_patch,
 };
 use wamn_control_registry::Triple;
@@ -116,7 +114,7 @@ async fn delete_locked(
 
     resources::check_ownership(platform, triple, &database).await?;
     let applications = application_releases(platform, triple).await?;
-    let observed = wamn_control_provision::environment_state::observe_environment(
+    let observed = wamn_kubernetes::environment_state::observe_environment(
         &platform.target.namespace,
         &triple.to_string(),
         |path| async move {
@@ -148,7 +146,7 @@ async fn delete_locked(
     .is_empty();
     if cr_present && !data {
         let url = project_url(platform, triple).await?;
-        let live = wamn_control_provision::environment_state::live_set(&observed.pods);
+        let live = wamn_kubernetes::environment_state::live_set(&observed.pods);
         let stranded = super::drain::stranded(&url, &env_key, env, None, &live).await?;
         anyhow::ensure!(
             stranded.is_empty(),
@@ -163,9 +161,7 @@ async fn delete_locked(
     }
     // Pods can outlive their Helm record after an interrupted uninstall.
     let mut groups: std::collections::BTreeSet<_> = applications.values().cloned().collect();
-    groups.extend(
-        wamn_control_provision::environment_state::application_states(&observed).into_keys(),
-    );
+    groups.extend(wamn_kubernetes::environment_state::application_states(&observed).into_keys());
     for name in groups {
         let live = super::drain::wait(platform, &name, None).await?;
         if !live.is_empty() {
@@ -332,9 +328,9 @@ async fn delete_locked(
             .await
             .context("connect the event provisioning credential")?,
     );
-    let source = event_stream_name(org, project, env);
+    let source = wamn_event_wire::stream_name(org, project, env);
     for stream in [delivery_advisory_stream(&source), source] {
-        if delete_stream(&broker, &stream).await? {
+        if wamn_broker::streams::delete(&broker, &stream).await? {
             lines.push(format!("deleted stream {stream}"));
         }
     }
@@ -437,8 +433,8 @@ async fn delete_locked(
     transaction.commit().await?;
 
     // Keep the registry inputs until the credential store and its account are gone.
-    let account = wamn_credential_store::kubernetes::service_account_name(org, project, env);
-    let secret = wamn_credential_store::kubernetes::secret_name(org, project, env);
+    let account = wamn_control_registry::service_account_name(org, project, env);
+    let secret = wamn_control_registry::credential_secret_name(org, project, env);
     for (resource, object) in [
         ("secret", &secret),
         ("rolebinding", &account),
@@ -469,53 +465,23 @@ async fn delete_locked(
     if !deleted.is_empty() {
         lines.push(deleted);
     }
-    lines.extend(delete_registry_rows(&mut system, triple, &instance, None).await?);
-    let mut drops = wamn_platform_identity::connection_changes::ConnectionDrops::default();
+    lines.extend(delete_registry_rows(&mut system, triple, &instance).await?);
+    let mut drops = wamn_broker::connection_changes::ConnectionDrops::default();
     drops.env_key(&env_key);
-    wamn_platform_identity::connection_changes::ConnectionChanges::from(&changes)
-        .publish(drops)
-        .await;
+    changes.publish(drops).await;
     Ok(lines)
 }
 
 /// Delete one stream; a stream delete removes its consumers. Returns whether
 /// it was present.
-async fn delete_stream(broker: &jetstream::Context, name: &str) -> anyhow::Result<bool> {
-    match broker.delete_stream(name).await {
-        Ok(_) => Ok(true),
-        Err(error) if stream_not_found(error.kind()) => Ok(false),
-        Err(error) => Err(error).with_context(|| format!("delete stream {name}")),
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    use super::plan::credential_files;
     use super::*;
 
     #[test]
-    fn only_local_targets_destroy_credential_files() {
-        let row = |reference: &str, target_type: &str| {
-            (
-                reference.to_owned(),
-                reference.to_owned(),
-                target_type.to_owned(),
-            )
-        };
-        assert_eq!(
-            credential_files([row("on-local", "local"), row("on-cloud", "cloud")]),
-            [("on-local".to_owned(), "on-local".to_owned())]
-        );
-        assert!(credential_files([row("on-cloud", "cloud")]).is_empty());
-    }
-
-    fn triple() -> Triple {
-        Triple::new("dkk", "receiving", "dev")
-    }
-
-    #[test]
     fn the_instance_roles_are_the_cdc_role_then_a_and_b_of_each_family() {
-        let roles = instance_roles(&triple(), "zf7o454t", "dev").unwrap();
+        let roles =
+            instance_roles(&Triple::new("dkk", "receiving", "dev"), "zf7o454t", "dev").unwrap();
         assert_eq!(roles.len(), 1 + instance_families().count() * 2);
         assert!(roles.iter().all(|role| role.len() <= 63));
     }

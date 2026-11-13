@@ -157,7 +157,7 @@ async fn candidate_http_and_modbus_health_commit_nothing() -> anyhow::Result<()>
             writer: Arc::new(tokio::sync::Mutex::new(connect(&control_url).await?)),
             identity: None,
             org: ORG.into(),
-            changes: AuthChanges::new(nats),
+            changes: Publisher::new(nats),
         },
         None,
     )

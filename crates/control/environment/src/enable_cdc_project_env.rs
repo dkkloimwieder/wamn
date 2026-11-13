@@ -47,9 +47,8 @@ use serde_json::Value;
 use tokio_postgres::NoTls;
 
 use wamn_control_provision::{
-    cdc_object_name, compose_url, event_stream_name, project_env_cdc_secret_name,
-    project_env_database_name, render_project_env_cdc_secret_manifest, sql,
-    validate_project_env_cdc,
+    cdc_object_name, compose_url, project_env_cdc_secret_name, project_env_database_name,
+    render_project_env_cdc_secret_manifest, sql, validate_project_env_cdc,
 };
 use wamn_control_registry::Triple;
 
@@ -107,7 +106,7 @@ pub struct EnableCdcProjectEnvRequest {
     pub stream: Option<String>,
 
     /// The NATS of the event streams, with the provisioning certificate.
-    pub nats: wamn_platform_identity::nats::PlatformNats,
+    pub nats: wamn_broker::nats::PlatformNats,
 
     /// NATS stream copies, separate from workload instances.
     pub stream_replicas: usize,
@@ -154,7 +153,7 @@ pub async fn enable_cdc_project_env(
     args: &EnableCdcProjectEnvRequest,
 ) -> anyhow::Result<EnableCdcProjectEnvOutcome> {
     let triple = Triple::new(&args.org, &args.project, args.env.as_str());
-    let stream = event_stream_name(&args.org, &args.project, &args.env);
+    let stream = wamn_event_wire::stream_name(&args.org, &args.project, &args.env);
     if args
         .stream
         .as_ref()
@@ -187,7 +186,7 @@ pub async fn enable_cdc_project_env(
         })
         .collect::<anyhow::Result<Vec<_>>>()?;
     let duplicate_window = Duration::from_secs(args.dup_window_secs);
-    crate::event_streams::validate_inputs(
+    wamn_broker::streams::validate_inputs(
         &triple,
         args.stream_replicas,
         duplicate_window,
@@ -232,7 +231,7 @@ pub async fn enable_cdc_project_env(
             .await
             .context("connect the event provisioning credential")?,
     );
-    crate::event_streams::provision(
+    wamn_broker::streams::provision(
         &broker,
         &triple,
         args.stream_replicas,
@@ -326,7 +325,7 @@ pub async fn record_event_reader(
         .cloned()
         .collect::<Vec<_>>();
     let env = triple.env.as_str();
-    let stream = event_stream_name(&triple.org, &triple.project, env);
+    let stream = wamn_event_wire::stream_name(&triple.org, &triple.project, env);
     let secret_name = project_env_cdc_secret_name(&triple.org, &triple.project, env);
     let (client, conn) = tokio_postgres::connect(system_url, NoTls)
         .await
@@ -421,7 +420,7 @@ pub(crate) async fn stop_reader(
 ) -> anyhow::Result<()> {
     use crate::environment::ensure::kubectl;
     let name = project_env_cdc_secret_name(&triple.org, &triple.project, &triple.env);
-    let deployment: Option<serde_json::Value> = crate::kubectl::get(
+    let deployment: Option<serde_json::Value> = wamn_kubernetes::kubectl::get(
         &platform.target.kubeconfig,
         &platform.target.context,
         &platform.target.namespace,

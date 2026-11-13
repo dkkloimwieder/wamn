@@ -293,7 +293,7 @@ async fn status_pulls_candidates_with_installed_registry_transport() -> anyhow::
         bin.join("environment-configmap.json"),
         serde_json::to_vec(&json!({
             "apiVersion":"v1", "kind":"ConfigMap",
-            "metadata":{"name":wamn_control_provision::environment_state::environment_resource_name(
+            "metadata":{"name":wamn_control_provision::environment_names::environment_resource_name(
                 &document.org, &document.project, &document.env,
             )?, "namespace":"hosts"},
             "data":{"environment.json":serde_json::to_string(&document)?}

@@ -32,9 +32,10 @@ name = "rest_connector_publication"
 path = "../../../apps/rest_connector/tests/publication.rs"
 
 [dependencies]
+wamn-broker = { workspace = true }
 wamn-digest.workspace = true
 wit-parser = { workspace = true }
-wamn-credential-store = { workspace = true }
+wamn-kubernetes = { workspace = true }
 futures-util = { workspace = true }
 wash-runtime = { workspace = true, features = ["washlet"] }
 anyhow = { workspace = true }

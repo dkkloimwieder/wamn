@@ -178,11 +178,14 @@ fn integration_runtime_type_values_are_closed() {
 }
 
 #[test]
-fn credential_columns_hold_only_references_and_audit_metadata() {
+fn credentials_refuse_the_removed_store() {
     run("DO $$ BEGIN
-      ASSERT (SELECT array_agg(attname::text ORDER BY attnum) FROM pg_attribute
-              WHERE attrelid='identity.credential'::regclass AND attnum>0 AND NOT attisdropped)
-          = ARRAY['id','connection_id','store','ref','version','hint','created_at','created_by'];
+      BEGIN
+        INSERT INTO identity.credential(id,connection_id,store,ref,version,created_at,created_by)
+        VALUES ('00000000-0000-0000-0000-000000000043','00000000-0000-0000-0000-000000000031',
+                'file','new','new',now(),'00000000-0000-0000-0000-000000000001');
+        ASSERT false, 'the removed credential store must refuse';
+      EXCEPTION WHEN check_violation THEN NULL; END;
     END $$;");
 }
 
@@ -191,7 +194,7 @@ fn retired_material_ages_from_the_first_replacement() {
     run("BEGIN;
       INSERT INTO identity.credential(id,connection_id,store,ref,version,created_at,created_by)
       VALUES ('00000000-0000-0000-0000-000000000043','00000000-0000-0000-0000-000000000031',
-              'file','new','new',now(),'00000000-0000-0000-0000-000000000001');
+              'k8s','new','new',now(),'00000000-0000-0000-0000-000000000001');
       -- The owner seeds historical generations before the insert stamp resumes.
       ALTER TABLE registry.connection_generation DISABLE TRIGGER wamn_record_history_stamp;
       INSERT INTO registry.connection_generation(connection_id,generation,credential_id,created_at,created_by)
@@ -214,7 +217,7 @@ fn retired_material_stays_during_the_five_minute_grace() {
     run("BEGIN;
       INSERT INTO identity.credential(id,connection_id,store,ref,version,created_at,created_by)
       VALUES ('00000000-0000-0000-0000-000000000043','00000000-0000-0000-0000-000000000031',
-              'file','new','new',now(),'00000000-0000-0000-0000-000000000001');
+              'k8s','new','new',now(),'00000000-0000-0000-0000-000000000001');
       -- The owner seeds historical generations before the insert stamp resumes.
       ALTER TABLE registry.connection_generation DISABLE TRIGGER wamn_record_history_stamp;
       INSERT INTO registry.connection_generation(connection_id,generation,credential_id,created_at,created_by)
@@ -351,11 +354,12 @@ fn apply_cannot_write_system_connection_authority() {
 #[test]
 fn environment_delete_removes_its_connections_and_disables_their_principals() {
     run(&format!(
-        "DO $test$ DECLARE removed text[] := '{{}}'; item record; BEGIN
-           FOR item IN EXECUTE $sql${}$sql$ USING 'acme','app','dev' LOOP
-             removed := removed || (item.store||':'||item.ref||':'||item.version||':'||item.type);
-           END LOOP;
-           ASSERT (SELECT array_agg(r ORDER BY r) FROM unnest(removed) r)=ARRAY['file:first:1:local','k8s:second:1:local'],removed::text;
+        "DO $test$ DECLARE removed bigint; expected bigint; BEGIN
+           SELECT count(*) INTO expected FROM identity.credential k
+             JOIN registry.connection c ON c.id=k.connection_id
+             WHERE c.org='acme' AND c.project='app' AND c.env='dev';
+           EXECUTE $sql${}$sql$ INTO removed USING 'acme','app','dev';
+           ASSERT removed=expected;
            DELETE FROM registry.project_envs WHERE org='acme' AND project='app' AND env='dev';
            ASSERT NOT EXISTS(SELECT FROM registry.connection);
            ASSERT NOT EXISTS(SELECT FROM registry.connection_generation);
@@ -400,7 +404,7 @@ fn oauth_rotation(
         r#"{"tls-verification":"disabled"}"#
     };
     let stored = if secret_changed {
-        r#", "stored_credential":{"id":"00000000-0000-0000-0000-000000000043","store":"file","ref":"next","version":"1"}"#
+        r#", "stored_credential":{"id":"00000000-0000-0000-0000-000000000043","store":"k8s","ref":"next","version":"1"}"#
     } else {
         ""
     };

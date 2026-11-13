@@ -9,23 +9,22 @@
 //! `<env_key>.release.<manifest digest hex>` holds the connection map of a
 //! release. The key `<env_key>.connections` holds the map from integration
 //! name to connection id of the environment. Every writer of a fact deletes its key after the commit
-//! ([`wamn_platform_identity::connection_changes`]).
+//! ([`wamn_broker::connection_changes`]).
 //!
 //! Immutable rows, such as the parameters of a generation or the secret of a
 //! credential, stay in the host under their own ids and never enter the
 //! bucket.
 //!
-//! [`BUCKET`]: wamn_platform_identity::connection_changes::BUCKET
+//! [`BUCKET`]: wamn_broker::connection_changes::BUCKET
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::Duration;
+use wamn_broker::Publisher;
 
 use async_nats::jetstream::kv::Store;
-use wamn_platform_identity::connection_changes::{
-    BUCKET, ConnectionChanges, connection_key, connections_key, release_key,
-};
-use wamn_platform_identity::kv_memory::MEMORY_TTL;
+use wamn_broker::connection_changes::{BUCKET, connection_key, connections_key, release_key};
+use wamn_broker::kv_memory::MEMORY_TTL;
 
 pub use crate::kv_memory::Ticket;
 use crate::kv_memory::{KvMemory, Watched};
@@ -286,7 +285,7 @@ pub fn replicate<H: AsRef<ConnectionMemory> + Send + Sync + 'static>(
     client: &async_nats::Client,
     env_key: Option<&str>,
     holder: Arc<H>,
-) -> ConnectionChanges {
+) -> Publisher {
     let filters = match env_key {
         Some(env_key) => vec![format!("{env_key}.>")],
         None => vec![">".to_owned()],
@@ -294,14 +293,14 @@ pub fn replicate<H: AsRef<ConnectionMemory> + Send + Sync + 'static>(
     crate::kv_memory::spawn_watch(client, BUCKET, filters, holder, |holder| {
         (*holder).as_ref() as &dyn Watched
     });
-    ConnectionChanges::new(client.clone())
+    Publisher::new(client.clone())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::auth_cache::test_util::{nats, until};
-    use wamn_platform_identity::connection_changes::ConnectionDrops;
+    use wamn_broker::connection_changes::ConnectionDrops;
 
     fn fact(generation: i64) -> ConnectionFact {
         ConnectionFact {
@@ -319,7 +318,7 @@ mod tests {
     async fn watched(
         client: &async_nats::Client,
         env_key: Option<&str>,
-    ) -> (Arc<ConnectionMemory>, ConnectionChanges) {
+    ) -> (Arc<ConnectionMemory>, Publisher) {
         let memory = Arc::new(ConnectionMemory::default());
         let writer = replicate(client, env_key, Arc::clone(&memory));
         until("the watch runs", || memory.watched()).await;

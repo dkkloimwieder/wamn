@@ -463,7 +463,7 @@ async fn apply(
             digest,
             &selected,
             &bindings,
-            &mut wamn_platform_identity::connection_changes::ConnectionDrops::default(),
+            &mut wamn_broker::connection_changes::ConnectionDrops::default(),
         )
         .await?;
         tx.commit().await?;
@@ -527,7 +527,7 @@ async fn application_releases_keep_independent_integration_versions() -> anyhow:
         PlatformComponent::Provisioning,
     ))
     .await?;
-    let store = wamn_test_infrastructure::credentials::LocalCredentials::create()?;
+    let store = wamn_test_infrastructure::credentials::MemoryStore::default();
     for (name, endpoint) in [
         ("meter", &authority),
         ("observer-meter", &observer_authority),
@@ -621,7 +621,7 @@ async fn application_releases_keep_independent_integration_versions() -> anyhow:
     ))?);
     let facts = Arc::new(ConnectionFacts::new(
         Arc::new(ConnectionMemory::default().with_resource_leases(Arc::clone(&leases))),
-        wamn_platform_identity::connection_changes::ConnectionChanges::default(),
+        wamn_broker::Publisher::default(),
         Arc::clone(&credentials),
         Arc::clone(&postgres),
         "acme--one--dev",
@@ -738,23 +738,21 @@ async fn application_releases_keep_independent_integration_versions() -> anyhow:
         PlatformComponent::Provisioning,
     ))
     .await?;
-    let mut drops = wamn_platform_identity::connection_changes::ConnectionDrops::default();
+    let mut drops = wamn_broker::connection_changes::ConnectionDrops::default();
     wamn_platform_identity::connections::administration::execute_with_store(
         &tx,
         "acme",
         "connection.write",
         &json!({"project":"one","env":"dev","name":"meter","parameters":{"authority":authority}})
             .to_string(),
-        &mut wamn_platform_identity::auth_changes::AuthDrops::default(),
+        &mut wamn_broker::auth_changes::AuthDrops::default(),
         &mut drops,
         Some(&store),
     )
     .await?;
     tx.commit().await?;
     assert!(!drops.is_empty());
-    wamn_platform_identity::connection_changes::ConnectionChanges::default()
-        .publish(drops)
-        .await;
+    wamn_broker::Publisher::default().publish(drops).await;
     assert_eq!(application.read().await?.unwrap().payload, "4660");
     assert_eq!(
         facts.connection(&id).await?.unwrap().active_generation,

@@ -1,11 +1,12 @@
 use tokio_postgres::{Client, NoTls};
+use wamn_broker::Publisher;
+use wamn_broker::auth_changes::AuthDrops;
 use wamn_control_registry::Triple;
 use wamn_environment_control::provision_project_env::pat_secrets::{
     MANAGEMENT_AUTHOR, assign_pat_role, mint_pat, resolve_or_create_service,
 };
 use wamn_environment_control::provision_project_env::provisioning_transaction;
 use wamn_identity_client::PatClient;
-use wamn_platform_identity::auth_changes::{AuthChanges, AuthDrops};
 use wamn_platform_identity::authenticate_pat;
 
 const PRINCIPAL: &str = "a792950e-150c-4c6e-8000-000000000004";
@@ -50,7 +51,7 @@ async fn auth_drops_mint_pat_records_the_committed_project_role_drop() {
         &mut client,
         &MANAGEMENT_AUTHOR.subject(&triple).unwrap(),
         "Author",
-        &AuthChanges::default(),
+        &Publisher::default(),
     )
     .await
     .unwrap();
@@ -89,7 +90,7 @@ async fn auth_drops_mint_pat_records_the_committed_project_role_drop() {
         &pat_client,
         &triple,
         MANAGEMENT_AUTHOR,
-        &AuthChanges::default(),
+        &Publisher::default(),
     )
     .await
     .unwrap();

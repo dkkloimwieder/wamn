@@ -194,21 +194,21 @@ pub async fn run(cli: Cli) -> Result<(), IdentityServiceError> {
         // deployment with hosts sets WAMN_NATS_URL.
         let changes = if std::env::var_os("WAMN_NATS_URL").is_some() {
             let connected = async {
-                let connection = wamn_platform_identity::nats::PlatformNats::from_env()?;
-                wamn_platform_identity::auth_changes::AuthChanges::connect(&connection).await
+                let connection = wamn_broker::nats::PlatformNats::from_env()?;
+                wamn_broker::Publisher::connect(&connection).await
             };
             connected.await.map_err(|error| {
                 tracing::error!(%error, "the NATS refused the identity service");
                 IdentityServiceError::new("connect to the NATS failed")
             })?
         } else {
-            wamn_platform_identity::auth_changes::AuthChanges::default()
+            wamn_broker::Publisher::default()
         };
         // Identity owns the memory buckets (docs/plan/alignment.md R7).
         let _buckets = changes
             .client()
             .cloned()
-            .map(wamn_platform_identity::kv_memory::keep_buckets);
+            .map(wamn_broker::kv_memory::keep_buckets);
         let service = IdentityService::connect(config.with_auth_changes(changes)).await?;
         let listener = TcpListener::bind(bind)
             .await

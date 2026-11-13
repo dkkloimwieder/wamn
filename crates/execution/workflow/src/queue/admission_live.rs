@@ -299,7 +299,7 @@ async fn run_current(mode: Mode) -> anyhow::Result<()> {
         Arc::new(HttpTransport::new()?),
         Arc::new(wamn_runtime::connection_facts::ConnectionFacts::new(
             Arc::new(wamn_runtime::connection_memory::ConnectionMemory::default()),
-            wamn_platform_identity::connection_changes::ConnectionChanges::default(),
+            wamn_broker::Publisher::default(),
             Arc::new(ConnectionCredentials::empty()),
             Arc::clone(&postgres),
             ENV_KEY,
@@ -335,7 +335,7 @@ async fn run_current(mode: Mode) -> anyhow::Result<()> {
                 postgres: Arc::clone(&postgres),
                 project: "default".into(),
                 identity: None,
-                changes: wamn_platform_identity::auth_changes::AuthChanges::default(),
+                changes: wamn_broker::Publisher::default(),
             },
             None,
         ),

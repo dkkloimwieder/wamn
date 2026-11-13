@@ -1139,7 +1139,7 @@ mod tests {
         let postgres = Arc::new(postgres);
         let facts = Arc::new(ConnectionFacts::new(
             Arc::new(crate::connection_memory::ConnectionMemory::default()),
-            wamn_platform_identity::connection_changes::ConnectionChanges::default(),
+            wamn_broker::Publisher::default(),
             Arc::new(crate::connection_credentials::ConnectionCredentials::empty()),
             Arc::clone(&postgres),
             "tenant-a",

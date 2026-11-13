@@ -1,0 +1,29 @@
+[package]
+name = "wamn-broker"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+anyhow = { workspace = true }
+async-nats = { workspace = true, features = ["jetstream", "kv", "server_2_10", "server_2_11", "server_2_12"] }
+base64 = { workspace = true }
+futures-util = { workspace = true }
+rustls = { workspace = true, features = ["aws_lc_rs"] }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+tokio = { workspace = true, features = ["rt", "time"] }
+tracing = { workspace = true }
+uuid = { workspace = true }
+wamn-control-registry = { workspace = true }
+wamn-event-wire = { workspace = true }
+wamn-kubernetes = { workspace = true }
+
+[dev-dependencies]
+wamn-test-infrastructure = { workspace = true }
+wamn-runtime = { workspace = true, features = ["test-util"] }
+wamn-test-postgres = { workspace = true }
+tokio = { workspace = true, features = ["macros", "process"] }
+
+[lints]
+workspace = true

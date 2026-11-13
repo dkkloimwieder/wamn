@@ -38,7 +38,7 @@ pub(super) async fn prepare(
     let object = json!({"apiVersion":"v1","kind":"ConfigMap","immutable":true,
         "metadata":{"name":inputs,"namespace":"platform"},"data":data});
     if document.provider == Provider::Kind {
-        let secret: super::bootstrap::SecretData = crate::kubectl::get(
+        let secret: super::bootstrap::SecretData = wamn_kubernetes::kubectl::get(
             &target.kubeconfig,
             &target.context,
             "hosts",
@@ -84,7 +84,7 @@ pub fn target_objects(
     cluster: &str,
     database: &str,
 ) -> anyhow::Result<Vec<Value>> {
-    let coordinate = wamn_control_provision::environment_state::environment_resource_name(
+    let coordinate = wamn_control_provision::environment_names::environment_resource_name(
         &document.org,
         &document.project,
         &document.env,

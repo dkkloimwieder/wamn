@@ -11,7 +11,7 @@ use super::{
     document::{ClusterDocument, Provider},
     manifests, resources,
 };
-use crate::kubectl;
+use wamn_kubernetes::kubectl;
 
 /// Render the platform's existing edge certificate in the hosts namespace.
 pub fn certificates(payload: &Path, document: &ClusterDocument) -> anyhow::Result<Vec<Value>> {

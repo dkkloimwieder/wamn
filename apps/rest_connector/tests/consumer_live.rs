@@ -338,7 +338,7 @@ pub async fn install(
         apply_package(ApplyPackageRequest {
             component_source: wamn_package_control::apply_package::component_source_from_env(None)
                 .unwrap(),
-            changes: wamn_platform_identity::auth_changes::AuthChanges::default(),
+            changes: wamn_broker::Publisher::default(),
             package: package.clone(),
             database_url: database.url().into(),
             org: "rest".into(),
@@ -400,7 +400,7 @@ pub async fn install(
         ENV_KEY,
         manifest,
         &manifests,
-        &wamn_platform_identity::auth_changes::AuthChanges::default(),
+        &wamn_broker::Publisher::default(),
     )
     .await?;
     let privileges = admin
@@ -496,7 +496,7 @@ pub async fn invoke(
         Arc::new(HttpTransport::new()?),
         Arc::new(wamn_runtime::connection_facts::ConnectionFacts::new(
             Arc::new(wamn_runtime::connection_memory::ConnectionMemory::default()),
-            wamn_platform_identity::connection_changes::ConnectionChanges::default(),
+            wamn_broker::Publisher::default(),
             Arc::new(ConnectionCredentials::empty()),
             postgres,
             ENV_KEY,

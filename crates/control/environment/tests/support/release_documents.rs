@@ -492,7 +492,7 @@ pub mod http {
         values: &Value,
         references: &mut serde_json::Map<String, Value>,
     ) -> anyhow::Result<Value> {
-        let name = wamn_credential_store::kubernetes::secret_name(ORG, PROJECT, environment);
+        let name = wamn_control_registry::credential_secret_name(ORG, PROJECT, environment);
         let mut data = serde_json::Map::new();
         for reference in references.values_mut() {
             let version = reference["version"].as_str().context("fixture version")?;
@@ -546,6 +546,7 @@ pub mod workflow {
     use wamn_environment_control::environment::document::{DeclaredRelease, EnvironmentDocument};
     const ENVIRONMENT: &str = "integration";
     const CONSUMER: &str = "rest_consumer_fixture";
+    use wamn_broker::Publisher;
     use wamn_catalog::WiringDocument;
     use wamn_environment_control::author_workflow::{
         AuthorWorkflowRequest, WorkflowExecution, WorkflowTrigger, author_workflow_in_databases,
@@ -554,7 +555,6 @@ pub mod workflow {
     use wamn_environment_control::workflow_lifecycle::{
         WorkflowVersion, disable_workflow, enable_workflow,
     };
-    use wamn_platform_identity::auth_changes::AuthChanges;
 
     /// The user who authors and enables schedule workflows, as an environment
     /// admin does. It holds each execution role it assigns.
@@ -572,7 +572,7 @@ pub mod workflow {
         /// The applications the environment declares, as the serving Helm
         /// revision keeps them.
         pub applications: &'a wamn_catalog::EnvironmentApplications,
-        pub auth: &'a AuthChanges,
+        pub auth: &'a Publisher,
     }
 
     impl WorkflowEnvironment<'_> {
@@ -719,7 +719,7 @@ pub mod workflow {
                 postgres,
                 project: "default".to_owned(),
                 identity: None,
-                changes: wamn_platform_identity::auth_changes::AuthChanges::default(),
+                changes: wamn_broker::Publisher::default(),
             },
             None,
         );
@@ -893,7 +893,7 @@ pub mod workflow {
         role: &str,
         operations: &[&str],
         trigger: WorkflowTrigger<'_>,
-        events: Option<&environment::EventBroker>,
+        events: Option<&wamn_broker::EventBroker>,
     ) -> anyhow::Result<()> {
         let env_key = environment.env_key;
         let (mut project, project_task) = connect_owned(environment.project_url).await?;
@@ -938,7 +938,7 @@ pub mod workflow {
                     )
                     .await?
                     .get(0);
-                let mut drops = wamn_platform_identity::auth_changes::AuthDrops::default();
+                let mut drops = wamn_broker::auth_changes::AuthDrops::default();
                 let outcome = wamn_platform_identity::application::mutate_grant(
                     &tx,
                     env_key,

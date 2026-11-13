@@ -12,10 +12,10 @@ use tokio_postgres::{Row, Transaction};
 use wamn_identity_protocol::secret::{SecretToken, SecretType};
 use zeroize::Zeroizing;
 
-use crate::auth_changes::AuthDrops;
 use crate::{
     AuthenticatedPrincipal, IdentityError, IdentityErrorType, PrincipalId, resolve_principal,
 };
+use wamn_broker::auth_changes::AuthDrops;
 
 /// Maximum login duration from password authentication, in seconds.
 pub const ABSOLUTE_LIFETIME: i64 = 8 * 60 * 60;

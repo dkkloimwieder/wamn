@@ -1,6 +1,7 @@
 //! Authorization code exchange and encrypted, single-use PKCE state.
 
 use std::{fmt, sync::Arc, time::Duration};
+use wamn_kubernetes::Store as _;
 
 use anyhow::Context as _;
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
@@ -56,7 +57,7 @@ pub struct Authorization {
     envelope: Arc<Envelope>,
     transport: Arc<crate::plugins::connection_http::transport::HttpTransport>,
     #[cfg(any(test, feature = "test-util"))]
-    store: Option<Arc<dyn wamn_credential_store::Store>>,
+    store: Option<Arc<dyn wamn_kubernetes::Store>>,
 }
 
 impl Authorization {
@@ -84,7 +85,7 @@ impl Authorization {
 
     /// Inject a private fixture store without changing process environment.
     #[cfg(any(test, feature = "test-util"))]
-    pub fn with_store(mut self, store: Arc<dyn wamn_credential_store::Store>) -> Self {
+    pub fn with_store(mut self, store: Arc<dyn wamn_kubernetes::Store>) -> Self {
         self.store = Some(store);
         self
     }
@@ -231,7 +232,7 @@ impl Authorization {
         let auth: Parameters = serde_json::from_value(context["parameters"]["auth"].clone())
             .map_err(|error| failed("invalid authorization parameters", error))?;
         let material = self
-            .credential(&context, org)
+            .credential(&context)
             .await
             .map_err(|error| failed("client credential unavailable", error))?;
         let secret: Credential = serde_json::from_str(&material)
@@ -326,7 +327,7 @@ impl Authorization {
         Ok(())
     }
 
-    async fn credential(&self, context: &Value, org: &str) -> anyhow::Result<Zeroizing<String>> {
+    async fn credential(&self, context: &Value) -> anyhow::Result<Zeroizing<String>> {
         let reference = &context["credential"];
         let text = |field: &str| {
             reference[field]
@@ -339,16 +340,7 @@ impl Authorization {
                 store.get(text("ref")?, text("version")?).await?,
             )?));
         }
-        let store = wamn_platform_identity::connections::administration::open_environment_store(
-            text("store")?,
-            org,
-            context["project"]
-                .as_str()
-                .context("connection project missing")?,
-            context["env"]
-                .as_str()
-                .context("connection environment missing")?,
-        )?;
+        let store = wamn_kubernetes::kubernetes::KubernetesStore::in_cluster()?;
         let bytes = store.get(text("ref")?, text("version")?).await?;
         Ok(Zeroizing::new(String::from_utf8(bytes)?))
     }

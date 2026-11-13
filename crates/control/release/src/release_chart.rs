@@ -16,13 +16,11 @@ pub use plan::{events_plugin, release_name, roles, values, workload_name};
 use plan::{recovery, split_host_image};
 
 use std::path::{Path, PathBuf};
-use std::process::Stdio;
 use std::time::Duration;
 
 use anyhow::{Context as _, ensure};
 use serde::Deserialize;
 use serde_yaml::{Mapping, Value};
-use tokio::process::Command;
 use wamn_catalog::{AttachmentType, ServingManifest};
 use wamn_engine::release_manifest::release_label;
 
@@ -140,13 +138,7 @@ pub use plan::ValuesInput;
 pub use plan::SOCKET_EGRESS;
 
 /// Where Helm writes: an explicit kubeconfig, context and namespace.
-#[derive(Debug, Clone)]
-pub struct Target {
-    pub kubeconfig: PathBuf,
-    pub context: String,
-    /// The release namespace (R6).
-    pub namespace: String,
-}
+pub use wamn_kubernetes::Target;
 
 /// Install or upgrade one application's release at the version of `chart` and
 /// wait for its host Deployment. `description` is kept with the revision.
@@ -265,25 +257,7 @@ pub async fn uninstall(target: &Target, name: &str) -> anyhow::Result<()> {
 }
 
 async fn helm(arguments: &[&std::ffi::OsStr]) -> anyhow::Result<String> {
-    let output = Command::new("helm")
-        .args(arguments)
-        .stdin(Stdio::null())
-        .kill_on_drop(true)
-        .output()
-        .await
-        .context("start helm")?;
-    ensure!(
-        output.status.success(),
-        "helm {} exited {}: {}",
-        arguments
-            .iter()
-            .map(|argument| argument.to_string_lossy())
-            .collect::<Vec<_>>()
-            .join(" "),
-        output.status,
-        String::from_utf8_lossy(&output.stderr)
-    );
-    String::from_utf8(output.stdout).context("helm wrote text")
+    String::from_utf8(wamn_kubernetes::helm::run(arguments).await?).context("helm wrote text")
 }
 
 fn copy_dir(from: &Path, to: &Path) -> anyhow::Result<()> {

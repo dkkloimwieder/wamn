@@ -12,8 +12,8 @@ use crate::environment::lock::LifecycleLock;
 
 use super::artifact_plan::{self, SelectedChart};
 use super::document::{ClusterDocument, Provider, UpgradeTarget};
-use super::{bootstrap, broker, control, edge, identity, manifests, provider, resources};
-use crate::kubectl;
+use super::{bootstrap, control, edge, identity, manifests, provider, resources};
+use wamn_kubernetes::kubectl;
 
 /// Apply platform resources and initialize an installation without a control release.
 ///
@@ -156,7 +156,8 @@ pub async fn update(
         .await?
         .context("host update requires Secret platform/wamn-pg-superuser")?;
         let forward =
-            resources::port_forward(target, "platform", "service/wamn-pg-rw", 5432).await?;
+            wamn_kubernetes::forward::port_forward(target, "platform", "service/wamn-pg-rw", 5432)
+                .await?;
         let mut url = url::Url::parse("postgresql://postgres@127.0.0.1/wamn_system")?;
         url.set_port(Some(forward.port))
             .map_err(|()| anyhow::anyhow!("set database port"))?;
@@ -316,15 +317,8 @@ async fn infrastructure(
         apply(target, &objects).await?;
         certificates_ready(target, &objects).await?;
     }
-    let live: Option<Value> = kubectl::get(
-        &target.kubeconfig,
-        &target.context,
-        "platform",
-        "secret",
-        broker::AUTHORIZATION,
-    )
-    .await?;
-    let users = broker::platform_objects(live.as_ref(), &document.org)?;
+    let users =
+        wamn_broker::authorization::update_authorization(target, &document.org, None).await?;
     apply(target, &users).await?;
     certificates_ready(target, &users).await?;
     apply(
@@ -514,7 +508,7 @@ mod tests {
                 incoming.directory().to_str().unwrap()
             );
             assert!(entry["values"]["platform"].get("stale").is_none());
-            let objects = resources::helm_template(entry)?;
+            let objects = wamn_kubernetes::helm::template(entry)?;
             let deployment = objects
                 .iter()
                 .find(|object| object["kind"] == "Deployment")

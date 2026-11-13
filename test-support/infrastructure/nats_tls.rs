@@ -52,8 +52,8 @@ pub struct ClientCertificate {
 
 impl ClientCertificate {
     /// The connection of a platform process with this certificate.
-    pub fn platform_nats(&self, url: &str) -> wamn_platform_identity::nats::PlatformNats {
-        wamn_platform_identity::nats::PlatformNats {
+    pub fn platform_nats(&self, url: &str) -> wamn_broker::nats::PlatformNats {
+        wamn_broker::nats::PlatformNats {
             nats_url: url.to_owned(),
             nats_tls_ca: self.ca.clone(),
             nats_tls_cert: self.cert.clone(),

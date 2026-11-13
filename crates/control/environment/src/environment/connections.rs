@@ -12,8 +12,8 @@ use std::path::Path;
 use anyhow::Context as _;
 use serde_json::{Value, json};
 use tokio_postgres::Transaction;
-use wamn_platform_identity::auth_changes::AuthDrops;
-use wamn_platform_identity::connection_changes::{ConnectionChanges, ConnectionDrops};
+use wamn_broker::auth_changes::AuthDrops;
+use wamn_broker::connection_changes::ConnectionDrops;
 use wamn_platform_identity::connections::{ConnectionError, administration};
 
 use super::Platform;
@@ -95,7 +95,7 @@ pub async fn write(
     tx.commit().await.context("commit the connection writes")?;
     let changes = platform.auth_changes().await?;
     changes.publish(auth).await;
-    ConnectionChanges::from(&changes).publish(drops).await;
+    changes.publish(drops).await;
     let project_url = super::ensure::project_url(platform, &document.triple()).await?;
     changes
         .publish(

@@ -5,10 +5,10 @@ use std::time::Duration;
 use anyhow::Context as _;
 use serde_json::{Value, json};
 use tokio_postgres::{Client, NoTls, Transaction};
+use wamn_broker::auth_changes::AuthDrops;
+use wamn_broker::connection_changes::ConnectionDrops;
 use wamn_catalog::HostAttachment;
 use wamn_identity_protocol::PrincipalId;
-use wamn_platform_identity::auth_changes::AuthDrops;
-use wamn_platform_identity::connection_changes::{ConnectionChanges, ConnectionDrops};
 
 use super::{ControlRoutes, ProjectScope, Refusal, incomplete, parse};
 use wamn_platform_identity::connections::{ConnectionError, administration, references};
@@ -231,9 +231,7 @@ impl ControlRoutes<'_> {
             .and_then(|result| result.remove("credentials"));
         transaction.commit().await?;
         self.changes.publish(drops).await;
-        ConnectionChanges::from(self.changes)
-            .publish(connection_drops)
-            .await;
+        self.changes.publish(connection_drops).await;
         let source = self
             .begin_in(writer, attachment, caller, Some(&project))
             .await?;

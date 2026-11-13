@@ -13,8 +13,8 @@ use tokio_postgres::GenericClient;
 
 use wamn_identity_protocol::ADMIN_ROLE;
 
-use crate::auth_changes::AuthDrops;
 use crate::{IdentityError, IdentityErrorType, PrincipalId, database_error};
+use wamn_broker::auth_changes::AuthDrops;
 
 /// Whether the project database has its platform rows, which `env apply`
 /// writes first.

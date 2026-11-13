@@ -3,15 +3,13 @@
 //!
 //! Every writer of a fact a host keeps records it in a [`ConnectionDrops`]
 //! in its transaction. Its caller deletes the keys with
-//! [`ConnectionChanges::publish`] after the commit. The facts are the active
+//! [`crate::Publisher::publish`] after the commit. The facts are the active
 //! generation, effective status and credential of a connection, the
 //! connection map of a release, and the connection map of an environment.
 
 use std::collections::BTreeSet;
 
-use crate::auth_changes::AuthChanges;
 use crate::kv_memory::Deletion;
-use crate::nats::PlatformNats;
 
 /// The NATS KV bucket of the connection memory, on the NATS of the auth
 /// memory.
@@ -55,7 +53,7 @@ pub enum ConnectionChange {
 }
 
 /// The changes of one transaction, deleted after its commit.
-#[must_use = "delete the drops with ConnectionChanges::publish after the commit"]
+#[must_use = "delete the drops with Publisher::publish after the commit"]
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ConnectionDrops(BTreeSet<ConnectionChange>);
 
@@ -98,73 +96,26 @@ impl ConnectionDrops {
     }
 }
 
-/// Deletes the keys of the changes of a commit from the bucket. A writer
-/// without a NATS client deletes nothing, and the TTL of the memory applies.
-#[derive(Debug, Clone, Default)]
-pub struct ConnectionChanges(Option<async_nats::Client>);
-
-impl ConnectionChanges {
-    pub fn new(client: async_nats::Client) -> Self {
-        Self(Some(client))
-    }
-
-    /// Connect to the NATS that `connection` names.
-    pub async fn connect(connection: &PlatformNats) -> anyhow::Result<Self> {
-        Ok(Self(
-            AuthChanges::connect(connection).await?.client().cloned(),
-        ))
-    }
-
-    /// Delete the keys of `drops` after the commit that made them. A failed
-    /// delete is logged, because the commit stands and the TTL bounds it.
-    pub async fn publish(&self, drops: ConnectionDrops) {
-        let Some(client) = &self.0 else {
-            return;
-        };
-        let deletions = drops
-            .0
-            .into_iter()
-            .map(|change| match change {
-                ConnectionChange::Connection { env_key, id } => {
-                    Deletion::Key(connection_key(&env_key, &id))
-                }
-                ConnectionChange::Release {
-                    env_key,
-                    manifest_digest,
-                } => Deletion::Key(release_key(&env_key, &manifest_digest)),
-                ConnectionChange::Connections(env_key) => Deletion::Key(connections_key(&env_key)),
-                ConnectionChange::EnvKey(env_key) => Deletion::Under(env_key),
-            })
-            .collect();
-        crate::kv_memory::delete(client, BUCKET, deletions).await;
-    }
-}
-
-impl From<&AuthChanges> for ConnectionChanges {
-    /// The writer of the connection memory on the client of the auth memory.
-    fn from(auth: &AuthChanges) -> Self {
-        Self(auth.client().cloned())
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn keys_carry_the_env_key_the_fact_type_and_its_id() {
-        let id = uuid::Uuid::nil();
-        assert_eq!(
-            connection_key("acme--shop--dev", &id),
-            "acme--shop--dev.connection.00000000-0000-0000-0000-000000000000"
-        );
-        assert_eq!(
-            release_key("acme--shop--dev", &format!("sha256:{}", "ab".repeat(32))),
-            format!("acme--shop--dev.release.{}", "ab".repeat(32))
-        );
-        assert_eq!(
-            connections_key("acme--shop--dev"),
-            "acme--shop--dev.connections"
-        );
+impl crate::Changes for ConnectionDrops {
+    fn into_deletions(self) -> (&'static str, Vec<Deletion>) {
+        (
+            BUCKET,
+            self.0
+                .into_iter()
+                .map(|change| match change {
+                    ConnectionChange::Connection { env_key, id } => {
+                        Deletion::Key(connection_key(&env_key, &id))
+                    }
+                    ConnectionChange::Release {
+                        env_key,
+                        manifest_digest,
+                    } => Deletion::Key(release_key(&env_key, &manifest_digest)),
+                    ConnectionChange::Connections(env_key) => {
+                        Deletion::Key(connections_key(&env_key))
+                    }
+                    ConnectionChange::EnvKey(env_key) => Deletion::Under(env_key),
+                })
+                .collect(),
+        )
     }
 }

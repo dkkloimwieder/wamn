@@ -14,7 +14,7 @@ use base64::Engine as _;
 use serde_json::{Value, json};
 use tokio::process::Command;
 use wamn_environment_control::environment::document::{EnvironmentDocument, SchemaMode};
-use wamn_environment_control::platform::{document::Provider, resources};
+use wamn_environment_control::platform::document::Provider;
 
 use super::{POLL_LIMIT, ProcessGroup, Run, execute, get, kubectl, success};
 
@@ -267,13 +267,17 @@ async fn exercise_inner(run: &Run, cases: &[Case], password: &str) -> anyhow::Re
     let isolated_host = format!("isolated-{}.{domain}", &id[..12]);
     let sources = sources(&run.repository, &run.checkout, &id, cases).await?;
     let postgres =
-        resources::port_forward(&run.target, "platform", "service/wamn-pg-rw", 5432).await?;
-    let nats = resources::port_forward(&run.target, "platform", "service/wamn-nats", 4222).await?;
+        wamn_kubernetes::forward::port_forward(&run.target, "platform", "service/wamn-pg-rw", 5432)
+            .await?;
+    let nats =
+        wamn_kubernetes::forward::port_forward(&run.target, "platform", "service/wamn-nats", 4222)
+            .await?;
     let identity =
-        resources::port_forward(&run.target, "identity", "service/identity", 443).await?;
+        wamn_kubernetes::forward::port_forward(&run.target, "identity", "service/identity", 443)
+            .await?;
     let control = match run.document.provider {
         Provider::Kind => Some(
-            resources::port_forward(
+            wamn_kubernetes::forward::port_forward(
                 &run.target,
                 "hosts",
                 &format!("service/c-{}-http", run.document.org),
@@ -283,7 +287,9 @@ async fn exercise_inner(run: &Run, cases: &[Case], password: &str) -> anyhow::Re
         ),
         Provider::Gcp => None,
     };
-    let edge = resources::port_forward(&run.target, "hosts", "service/wamn-edge", 443).await?;
+    let edge =
+        wamn_kubernetes::forward::port_forward(&run.target, "hosts", "service/wamn-edge", 443)
+            .await?;
     let identity_tls = get(run, "identity", "secret", "identity-tls").await?;
     let operator = get(
         run,
@@ -794,13 +800,13 @@ async fn first_install(
             .is_none(),
         "interrupted first install requires an absent environment"
     );
-    let name = wamn_control_provision::environment_state::application_release_name(
+    let name = wamn_control_provision::environment_names::application_release_name(
         org,
         journey.project,
         journey.environment,
         "beta",
     )?;
-    let shared = wamn_control_provision::environment_state::environment_resource_name(
+    let shared = wamn_control_provision::environment_names::environment_resource_name(
         org,
         journey.project,
         journey.environment,

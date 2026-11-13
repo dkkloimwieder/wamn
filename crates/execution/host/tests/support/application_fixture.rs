@@ -7,7 +7,7 @@
 //! it beside the shared session fixture, as `session_fixture`.
 
 use std::sync::Arc;
-use wamn_platform_identity::auth_changes::AuthChanges;
+use wamn_broker::Publisher;
 
 use serde_json::json;
 use tokio_postgres::{Client, NoTls};
@@ -332,7 +332,7 @@ pub(super) async fn application_host_with_release(
             postgres: Arc::clone(&postgres_credentials),
             project: PROJECT.to_owned(),
             identity: Some((reader().await?, ORG.to_owned())),
-            changes: AuthChanges::default(),
+            changes: Publisher::default(),
         },
         None,
     );
