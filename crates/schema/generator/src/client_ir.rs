@@ -18,12 +18,12 @@
 //! Every collection is ordered deterministically and the whole IR serializes
 //! through the platform's shared canonicalization, so regenerating from an
 //! unchanged release yields identical bytes. That is the property the exit
-//! gate asserts, and it is why nothing here iterates a `HashMap`.
+//! condition asserts, and it is why nothing here iterates a `HashMap`.
 //!
 //! Canonical means order-independent **only for sets**. Some contract members
 //! are ordered on purpose — `cursor.member_order` IS an ordering — and an IR
 //! that reported identical bytes after reversing one of those would be wrong,
-//! not canonical. The reorder-and-compare gate therefore has to know which
+//! not canonical. The reorder-and-compare condition therefore has to know which
 //! lists are sets; a version of it that reversed every array failed against a
 //! correct IR before that distinction was drawn.
 
@@ -77,9 +77,9 @@ impl ClientIrError {
         self.type_
     }
 
-    pub(super) fn new(kind: ClientIrErrorType, detail: impl Into<String>) -> Self {
+    pub(super) fn new(type_: ClientIrErrorType, detail: impl Into<String>) -> Self {
         Self {
-            type_: kind,
+            type_,
             detail: detail.into(),
         }
     }
@@ -172,7 +172,7 @@ pub struct ModelIr {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct RouteIr {
-    /// HTTP method, from the kind of the operation the route calls: `GET` for
+    /// HTTP method, from the type of the operation the route calls: `GET` for
     /// a read, `POST` otherwise. No author writes it.
     pub method: String,
     /// Authored path template, parameter names intact, e.g.
@@ -506,7 +506,7 @@ pub struct PagingIr {
     /// Limit bounds and default.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub limit: Option<LimitIr>,
-    /// Pagination kind, cursor encoding, default sort and tie breaker. Left as
+    /// Pagination type, cursor encoding, default sort and tie breaker. Left as
     /// contract JSON deliberately: its members carry semantic order.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub pagination: Option<Value>,
@@ -584,7 +584,7 @@ pub struct ErrorCaseIr {
 }
 
 impl ClientContractIr {
-    /// Canonical bytes — the comparable form the byte-stability gate compares.
+    /// Canonical bytes — the comparable form the byte-stability condition compares.
     ///
     /// Goes through the platform's shared canonicalization rather than
     /// `serde_json::to_vec`, so an IR digest is comparable with every other
@@ -865,7 +865,7 @@ fn unreadable_projection(
 /// is a sibling reader of those bytes, not a consumer of the normalized
 /// output, so an authored `/widget/` would reach a generated client as
 /// `/widget/` and call a path the deployment does not serve. Neither side
-/// reads an authored method: both derive it from the operation kind.
+/// reads an authored method: both derive it from the operation type.
 ///
 /// It cannot simply normalize: `normalize_http_route` lives in
 /// `wamn-schema-control`, which DEPENDS on this crate, so reaching for it
@@ -934,14 +934,14 @@ fn route_index(
             return Err(ClientIrError::new(
                 ClientIrErrorType::UnnormalizedRoute,
                 format!(
-                    "attachment {id:?} authors route.method; remove it, because the method follows from the operation kind"
+                    "attachment {id:?} authors route.method; remove it, because the method follows from the operation type"
                 ),
             ));
         }
         let evidence =
             crate::client_route::evidence(attachments, &attachment, operations.as_ref())?;
         let route = RouteIr {
-            // The join with the operation contract writes the method from its kind.
+            // The join with the operation contract writes the method from its type.
             method: String::new(),
             template: member("template").or_else(|_| member("path"))?,
             input_schema: evidence.input_schema,
@@ -962,7 +962,7 @@ fn route_index(
                     .output_schema
                     .as_ref()
                     .and_then(|schema| schema.pointer("/items/properties/value/type"))
-                    .filter(|kind| *kind == "object")
+                    .filter(|type_| *type_ == "object")
                     .map(|_| "one".to_owned()),
                 schema: evidence.output_schema,
                 partial_schema: evidence.partial_schema,
@@ -1001,14 +1001,14 @@ fn route_index(
     Ok(index)
 }
 
-/// The HTTP method of a route to an operation of this contract kind.
-fn route_method(kind: &str, module: &str, name: &str) -> Result<&'static str, ClientIrError> {
-    serde_json::from_value::<wamn_catalog::OperationType>(Value::String(kind.to_owned()))
+/// The HTTP method of a route to an operation of this contract type.
+fn route_method(type_: &str, module: &str, name: &str) -> Result<&'static str, ClientIrError> {
+    serde_json::from_value::<wamn_catalog::OperationType>(Value::String(type_.to_owned()))
         .map(wamn_catalog::OperationType::http_method)
         .map_err(|error| {
             ClientIrError::new(
                 ClientIrErrorType::MalformedContract,
-                format!("{module}/{name} kind {kind:?}: {error}"),
+                format!("{module}/{name} type {type_:?}: {error}"),
             )
         })
 }
@@ -1073,8 +1073,8 @@ fn split_contract_name(file_name: &str) -> Option<(&str, &str)> {
 }
 
 /// Read one authored publication file with its operation references resolved.
-pub(crate) fn read_authored(path: &Path, kind: AuthoredDocument) -> Result<Value, ClientIrError> {
-    crate::operation_reference::read_authored_document(path, kind).map_err(|error| {
+pub(crate) fn read_authored(path: &Path, type_: AuthoredDocument) -> Result<Value, ClientIrError> {
+    crate::operation_reference::read_authored_document(path, type_).map_err(|error| {
         ClientIrError::new(ClientIrErrorType::MalformedContract, error.to_string())
     })
 }
@@ -1208,7 +1208,7 @@ fn build_operation(
         .unwrap_or_else(|| Value::Object(serde_json::Map::new()));
 
     let identity = member("operation")?;
-    let kind = member("type")?;
+    let type_ = member("type")?;
     let record: Option<RecordIr> = operation
         .get("record")
         .cloned()
@@ -1229,8 +1229,8 @@ fn build_operation(
             |schema| schema_fields(schema, &declared_fields),
         );
     let idempotent_by = operation.get("idempotent_by").cloned();
-    let (reads, writes) = relations_of(&kind, operation.get("relations"));
-    let requires_composition = matches!(kind.as_str(), "update" | "delete")
+    let (reads, writes) = relations_of(&type_, operation.get("relations"));
+    let requires_composition = matches!(type_.as_str(), "update" | "delete")
         || idempotent_by
             .as_ref()
             .is_some_and(|value| value.get("state").is_some())
@@ -1239,14 +1239,14 @@ fn build_operation(
             .any(|field| field.revision.is_revision());
     let route = match routes.get(&identity) {
         Some(route) => Some(RouteIr {
-            method: route_method(&kind, module, name)?.to_owned(),
+            method: route_method(&type_, module, name)?.to_owned(),
             ..route.clone()
         }),
         None => None,
     };
     Ok(Some(OperationIr {
         name: name.to_owned(),
-        type_: kind,
+        type_,
         route,
         record,
         revision_binding: None,
@@ -1528,8 +1528,8 @@ fn errors_of(errors: Option<&Value>) -> Vec<ErrorCaseIr> {
 /// lists, and a history table is named as its model table, which changes in
 /// the same transaction. A write changes each relation it inserts into,
 /// updates or deletes from. A relation it only locks is not written.
-fn relations_of(kind: &str, relations: Option<&Value>) -> (Vec<String>, Option<Vec<String>>) {
-    let read = matches!(kind, "get" | "query" | "projection");
+fn relations_of(type_: &str, relations: Option<&Value>) -> (Vec<String>, Option<Vec<String>>) {
+    let read = matches!(type_, "get" | "query" | "projection");
     let Some(relations) = relations.and_then(Value::as_array) else {
         return (Vec::new(), None);
     };

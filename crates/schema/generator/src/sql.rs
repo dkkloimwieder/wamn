@@ -46,7 +46,7 @@ pub(crate) fn get(table: &Table, tombstoned: bool) -> String {
 /// Insert the row and return it, including any database-generated key.
 ///
 /// A numbered field binds last, as the text `next-number` returned, and the
-/// SQL casts it to the column. An actor field reads the `app.user_id` claim,
+/// SQL casts it to the column. An actor field reads the `app.user_id` identity,
 /// never a parameter.
 pub(crate) fn create(
     table: &Table,
@@ -99,7 +99,7 @@ pub(crate) fn create(
 /// Update the present fields when the revision matches.
 ///
 /// A change also fills the model's `updated_by` actor field from the
-/// `app.user_id` claim; a true no-op leaves it, as it leaves the revision.
+/// `app.user_id` identity; a true no-op leaves it, as it leaves the revision.
 pub(crate) fn update(
     table: &Table,
     model: &ModelDeclaration,
@@ -218,7 +218,7 @@ pub(crate) fn query(
     feed: bool,
 ) -> String {
     let key_cast = key_cast(table);
-    let (mut predicates, next_bind) = scope_predicates(table, operation, tombstoned);
+    let (mut predicates, next_bind) = filter_predicates(table, operation, tombstoned);
     let cursor_value_bind = next_bind;
     let cursor_id_bind = cursor_value_bind + 1;
     let limit_bind = cursor_id_bind + 1;
@@ -259,7 +259,7 @@ const SNAPSHOT_XMIN: &str = "pg_snapshot_xmin(pg_current_snapshot())::text::int8
 /// cursor transaction, including visible transactions at or above xmin and
 /// below xmax, from one snapshot. It collapses entries to one row per id in
 /// transaction and id order. Each row carries the live row when it is still
-/// in the scope of the list's filters. Otherwise it is a deletion, and it
+/// in the target of the list's filters. Otherwise it is a deletion, and it
 /// carries no data. The outer row carries the snapshot xmin and whether
 /// pruning removed a transaction at or above the
 /// cursor xmin, even when no entry remains.
@@ -268,7 +268,7 @@ const SNAPSHOT_XMIN: &str = "pg_snapshot_xmin(pg_current_snapshot())::text::int8
 /// the cursor id and the limit.
 pub(crate) fn changes(table: &Table, operation: &OperationDeclaration, tombstoned: bool) -> String {
     let key_cast = key_cast(table);
-    let (mut predicates, next_bind) = scope_predicates(table, operation, tombstoned);
+    let (mut predicates, next_bind) = filter_predicates(table, operation, tombstoned);
     let transaction = next_bind;
     let after = transaction + 1;
     let limit = after + 1;
@@ -560,7 +560,7 @@ fn query_select(table: &Table, predicates: &[String]) -> String {
 
 /// The predicates of a list read's filters and search, in bind order from
 /// `$1`, and the next free bind.
-fn scope_predicates(
+fn filter_predicates(
     table: &Table,
     operation: &OperationDeclaration,
     tombstoned: bool,

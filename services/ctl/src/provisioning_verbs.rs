@@ -308,7 +308,7 @@ impl WorkloadFamilySet for ProjectEnvFamilies {
     }
 }
 
-/// The org-scoped families `provision-org` mints (`wamn-a40n.2`).
+/// The org-targeted families `provision-org` mints (`wamn-a40n.2`).
 #[derive(Debug, Default, Clone)]
 pub struct OrgFamilies;
 
@@ -495,7 +495,7 @@ pub struct EnableCdcProjectEnvArgs {
     /// `LOGIN REPLICATION` role
     /// with a publicly known password, and `REPLICATION` authority is
     /// cluster-wide: it can open a replication session against any database on
-    /// the cluster and decode co-tenant WAL. Provisioning refuses instead
+    /// the cluster and decode co-project WAL. Provisioning refuses instead
     /// (wamn-0h0g.12.134).
     #[arg(
         long,
@@ -1052,7 +1052,7 @@ fn emit_text(path: Option<&Path>, label: &str, text: &str) {
 #[derive(Debug, Clone, Copy, ValueEnum)]
 pub enum TemplateArg {
     /// Pre-contract: placed on the shared `--pool` cluster (owns no clusters;
-    /// the RLS floor is load-bearing there); stamps `dev` + `prod`.
+    /// the RLS base grants are load-bearing there); stamps `dev` + `prod`.
     Trials,
     /// Standard paying tier: owns per-recovery-domain clusters; stamps `dev` /
     /// `prod` (own) + `canary` sharing prod's recovery domain (T2).
@@ -1128,7 +1128,7 @@ pub struct ProvisionOrgArgs {
     pub emit_scheduled_backup: Option<PathBuf>,
 
     /// The generation actions of the org's own credentials and their Secrets,
-    /// derived from the org-scoped families: today `control`, the login of the
+    /// derived from the org-targeted families: today `control`, the login of the
     /// org's control host (`wamn-a40n.2`). An action needs
     /// `--system-database-url`.
     #[command(flatten)]

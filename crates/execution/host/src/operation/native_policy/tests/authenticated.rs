@@ -1,4 +1,4 @@
-//! Real signed sessions and scoped PostgreSQL permissions drive native nested dispatch.
+//! Real signed sessions and authorized PostgreSQL permissions drive native nested dispatch.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::process::Command;
@@ -9,9 +9,11 @@ use serde_json::json;
 use tokio::time::{Instant, timeout};
 use tokio_postgres::{Client, NoTls};
 use tracing::{Instrument as _, instrument::WithSubscriber as _};
-use wamn_catalog::{ComponentDeclaration, ComponentOperationDeclaration, ComponentPackageScope};
+use wamn_catalog::{
+    ComponentDeclaration, ComponentOperationDeclaration, ComponentPackageCoordinate,
+};
 use wamn_control_provision::{
-    CredentialGeneration, WorkloadRoleFamily, WorkloadRoleScope, sql, workload_generation_role,
+    CredentialGeneration, WorkloadRoleFamily, WorkloadRoleIdentity, sql, workload_generation_role,
 };
 use wamn_engine::component_admission::{
     ComponentAdmissionErrorType, ComponentAdmissionRequest, validate_component_admission,
@@ -42,7 +44,7 @@ mod session_fixture;
 use session_fixture::{ORG, Server, claims, header, signed};
 
 const PROJECT: &str = "test";
-const ENV_KEY: &str = "tenant-a";
+const PROJECT_ENV_KEY: &str = "org-a";
 const ENVIRONMENT: &str = "test";
 const AUDIENCE: &str = "urn:wamn:project-env:org-a:test:test:native-b";
 const ATTACHMENT: &str = "native-test-http";
@@ -60,7 +62,7 @@ async fn connect(url: &str) -> anyhow::Result<Client> {
     Ok(client)
 }
 
-async fn env_key_postgres(admin_url: &str) -> anyhow::Result<Arc<WamnPostgres>> {
+async fn project_env_key_postgres(admin_url: &str) -> anyhow::Result<Arc<WamnPostgres>> {
     let admin = connect(admin_url).await?;
     let version: i32 = admin
         .query_one("SHOW server_version_num", &[])
@@ -86,7 +88,7 @@ async fn env_key_postgres(admin_url: &str) -> anyhow::Result<Arc<WamnPostgres>> 
         .get(0);
     let generation = workload_generation_role(
         WorkloadRoleFamily::HttpAdmitter,
-        WorkloadRoleScope::ProjectEnvironment {
+        WorkloadRoleIdentity::ProjectEnvironment {
             org: ORG,
             project: PROJECT,
             environment: ENVIRONMENT,
@@ -153,15 +155,15 @@ async fn env_key_postgres(admin_url: &str) -> anyhow::Result<Arc<WamnPostgres>> 
             &[&CHILD],
         )
         .await?;
-    let mut scoped_url = url::Url::parse(admin_url)?;
-    scoped_url
+    let mut authorized_url = url::Url::parse(admin_url)?;
+    authorized_url
         .set_username(&generation)
         .map_err(|()| anyhow::anyhow!("set fixture login"))?;
-    scoped_url
+    authorized_url
         .set_password(Some(PASSWORD))
         .map_err(|()| anyhow::anyhow!("set fixture password"))?;
-    let scoped = connect(scoped_url.as_str()).await?;
-    let identity = scoped
+    let authorized = connect(authorized_url.as_str()).await?;
+    let identity = authorized
         .query_one(
             "SELECT session_user::text, rolsuper, rolbypassrls, \
          pg_has_role(current_user, 'wamn_http_admitter', 'USAGE'), \
@@ -177,7 +179,7 @@ async fn env_key_postgres(admin_url: &str) -> anyhow::Result<Arc<WamnPostgres>> 
         !identity.get::<_, bool>(4),
         "permission reader cannot change grants"
     );
-    drop(scoped);
+    drop(authorized);
     let base = WamnPostgresConfig {
         credentials: None,
         guest_pool_max_size: 1,
@@ -187,7 +189,7 @@ async fn env_key_postgres(admin_url: &str) -> anyhow::Result<Arc<WamnPostgres>> 
         row_limit: 100,
     };
     let configuration = json!({PROJECT: {"credentials": {
-        (AuthorityClass::CallableHttp.as_str()): scoped_url.as_str()
+        (AuthorityClass::CallableHttp.as_str()): authorized_url.as_str()
     }}});
     let projects = StaticCredentialProvider::projects_from_json(&configuration.to_string(), &base)?;
     let postgres = Arc::new(WamnPostgres::with_provider(Arc::new(
@@ -197,7 +199,7 @@ async fn env_key_postgres(admin_url: &str) -> anyhow::Result<Arc<WamnPostgres>> 
 }
 
 pub(super) async fn platform_postgres(admin_url: &str) -> anyhow::Result<Arc<WamnPostgres>> {
-    env_key_postgres(admin_url).await?;
+    project_env_key_postgres(admin_url).await?;
     let admin = connect(admin_url).await?;
     let principals = wamn_control_provision::platform_principals_sql("platform.example.invalid")?;
     admin
@@ -208,7 +210,7 @@ pub(super) async fn platform_postgres(admin_url: &str) -> anyhow::Result<Arc<Wam
 }
 
 async fn authentication_fixture(admin_url: &str) -> anyhow::Result<(Server, FlowHttpRouting)> {
-    let postgres = env_key_postgres(admin_url).await?;
+    let postgres = project_env_key_postgres(admin_url).await?;
     let server = Server::start().await;
     let (keys, _) = server.cache();
     let verifier = SessionVerifier::new(keys, ORG, AUDIENCE)?;
@@ -248,7 +250,7 @@ async fn authentication_fixture(admin_url: &str) -> anyhow::Result<(Server, Flow
         postgres,
         PROJECT,
     ));
-    let definition = json!({"id": ATTACHMENT, "kind": "http", "route": {
+    let definition = json!({"id": ATTACHMENT, "type": "http", "route": {
         "host": "native.example.test", "path": "/native", "method": "POST"
     }});
     let manifest = json!({
@@ -268,9 +270,10 @@ async fn authentication_fixture(admin_url: &str) -> anyhow::Result<(Server, Flow
     let release = Arc::new(LoadedRelease::load_canonical_bytes(
         &wamn_digest::canonical_json_bytes(&manifest),
         "native session route test",
-        wamn_engine::release_manifest::ReleaseScope::new(ENV_KEY, ENVIRONMENT).with_applications(
-            serde_json::from_value(json!({"receiving": {"packages": ["root", "child"]}}))?,
-        ),
+        wamn_engine::release_manifest::ReleaseTarget::new(PROJECT_ENV_KEY, ENVIRONMENT)
+            .with_applications(serde_json::from_value(
+                json!({"receiving": {"packages": ["root", "child"]}}),
+            )?),
     )?);
     let route = FlowHttpRouting::new(Some(release), RouteInFlightLimit::default())
         .with_authenticator(Arc::new(
@@ -379,25 +382,25 @@ async fn assert_case(caller: &AuthenticatedCaller, postgres: Arc<WamnPostgres>) 
     for event in observations {
         if event.phase == 0 {
             assert!(event.native_identity && native_ids.contains(&event.scope));
-            assert!(event.claims.is_none() && event.invocation.is_none());
+            assert!(event.identity.is_none() && event.invocation.is_none());
             continue;
         }
         assert!(!event.native_identity && !native_ids.contains(&event.scope));
-        let claims = event.claims.expect("host claims");
-        assert_eq!(claims.env_key, ENV_KEY);
+        let identity = event.identity.expect("host identity");
+        assert_eq!(identity.project_env_key, PROJECT_ENV_KEY);
         assert_eq!(
-            claims.user_id.as_deref(),
+            identity.user_id.as_deref(),
             Some(caller.principal_id()),
             "the entry binds the caller principal"
         );
-        assert_eq!(claims.project.as_deref(), Some(PROJECT));
+        assert_eq!(identity.project.as_deref(), Some(PROJECT));
         assert_eq!(
-            claims.release,
-            fixture.request(deadline).facts.acquisition.claims.release
+            identity.release,
+            fixture.request(deadline).facts.acquisition.identity.release
         );
         let invocation = event.invocation.expect("host invocation");
         assert_eq!(invocation.operation, ROOT);
-        assert_eq!(claims.operation.as_deref(), Some(ROOT));
+        assert_eq!(identity.operation.as_deref(), Some(ROOT));
         assert_eq!(
             invocation.origin,
             fixture
@@ -411,7 +414,7 @@ async fn assert_case(caller: &AuthenticatedCaller, postgres: Arc<WamnPostgres>) 
         assert_eq!(position.wiring_id, "trusted-wiring");
         assert_eq!(position.wiring_version, 1);
         assert_eq!(position.node_id, "trusted-node");
-        assert_eq!(invocation.package_id, fixture.root.scope.package_id);
+        assert_eq!(invocation.package_id, fixture.root.target.package_id);
         assert_eq!(invocation.component, fixture.root.component);
         assert_eq!(invocation.component_digest, fixture.root.component_digest);
         assert!(
@@ -524,8 +527,8 @@ fn native_authenticated_call_graph_grant() {
 fn member_admission_request(child_digest: &str) -> ComponentAdmissionRequest {
     ComponentAdmissionRequest {
         declaration: ComponentDeclaration {
-            scope: ComponentPackageScope {
-                env_key: ENV_KEY.into(),
+            target: ComponentPackageCoordinate {
+                project_env_key: PROJECT_ENV_KEY.into(),
                 package_id: "root".into(),
                 package_version: "1.0.0".into(),
             },
@@ -873,7 +876,7 @@ fn native_warm_alternating_callers_and_credentials() {
             let database = wamn_test_postgres::database();
             let (mut server, route) = authentication_fixture(database.url())
                 .await
-                .expect("scoped authentication fixture");
+                .expect("authorized authentication fixture");
             let alice = authenticated(&route, true).await;
             let bob =
                 authenticated_as(&route, true, Some("00000000-0000-4000-8000-0000000000b2")).await;
@@ -927,7 +930,7 @@ fn native_warm_alternating_callers_and_credentials() {
                             .policy
                             .resources
                             .postgres
-                            .session_claims(&event.scope)
+                            .session_identity(&event.scope)
                             .is_none()
                     );
                     assert!(
@@ -951,9 +954,9 @@ fn native_warm_alternating_callers_and_credentials() {
                 .filter(|event| event.phase == 1)
                 .map(|event| {
                     event
-                        .claims
+                        .identity
                         .as_ref()
-                        .and_then(|claims| claims.user_id.clone())
+                        .and_then(|identity| identity.user_id.clone())
                         .expect("bound caller principal")
                 })
                 .collect();
@@ -1069,12 +1072,12 @@ impl wamn_runtime::plugins::wamn_postgres::CredentialProvider for WarmCredential
         &self,
         project: &str,
         class: AuthorityClass,
-        env_key: Option<&str>,
+        project_env_key: Option<&str>,
     ) -> anyhow::Result<Option<wamn_runtime::plugins::wamn_postgres::ResolvedCredential>> {
         if !self.enabled.load(std::sync::atomic::Ordering::SeqCst) {
             return Ok(None);
         }
-        self.provider.resolve(project, class, env_key)
+        self.provider.resolve(project, class, project_env_key)
     }
 }
 
@@ -1097,8 +1100,8 @@ async fn warm_postgres_with_pool(
         .get(0);
     let role = workload_generation_role(
         WorkloadRoleFamily::App,
-        WorkloadRoleScope::EnvKey {
-            env_key: ENV_KEY,
+        WorkloadRoleIdentity::ProjectEnvKey {
+            project_env_key: PROJECT_ENV_KEY,
             database: &database,
         },
         CredentialGeneration::A,
@@ -1123,7 +1126,7 @@ async fn warm_postgres_with_pool(
         .map_err(|()| anyhow::anyhow!("guest password"))?;
     let http_role = workload_generation_role(
         WorkloadRoleFamily::HttpAdmitter,
-        WorkloadRoleScope::ProjectEnvironment {
+        WorkloadRoleIdentity::ProjectEnvironment {
             org: ORG,
             project: PROJECT,
             environment: ENVIRONMENT,
@@ -1168,7 +1171,7 @@ fn native_warm_retirement_aborts_retained_postgres_transaction() {
         "authenticated::native_warm_retirement_aborts_retained_postgres_transaction",
         async {
             use wamn_runtime::plugins::wamn_postgres::{
-                PgTransaction, SessionClaims, retained_transaction_for_test,
+                PgTransaction, SessionIdentity, retained_transaction_for_test,
             };
             use wash_runtime::engine::ctx::SharedCtx;
             use wash_runtime::engine::dispatch::{GuestCall, GuestCallFuture};
@@ -1199,14 +1202,14 @@ fn native_warm_retirement_aborts_retained_postgres_transaction() {
             let caller = authenticated(&route, true).await;
             let (postgres, _) = warm_postgres(database.url(), &[])
                 .await
-                .expect("tenant guest generation");
+                .expect("project guest generation");
             let admin = connect(database.url()).await.expect("admin");
             admin.batch_execute("CREATE TABLE public.warm_retirement (value text); GRANT INSERT ON public.warm_retirement TO wamn_app").await.expect("owned rollback marker");
             postgres
-                .bind_session_claims(
+                .bind_session_identity(
                     "retained-transaction",
-                    &SessionClaims {
-                        env_key: ENV_KEY.into(),
+                    &SessionIdentity {
+                        project_env_key: PROJECT_ENV_KEY.into(),
                         project: Some(PROJECT.into()),
                         user_id: Some(caller.principal_id().into()),
                         operation: Some(ROOT.into()),
@@ -1223,7 +1226,7 @@ fn native_warm_retirement_aborts_retained_postgres_transaction() {
             )
             .await
             .expect("actual guest transaction");
-            postgres.revoke_session_claims("retained-transaction");
+            postgres.revoke_session_identity("retained-transaction");
             let fixture = super::warm::fixture(Case::Success).await;
             let target = fixture.target().await;
             target
@@ -1331,7 +1334,7 @@ async fn pat_caller(
     admin.execute("INSERT INTO platform.user_role (user_id,role_name) VALUES ($1::text::uuid,'native-child')", &[&principal.id().to_string().as_str()]).await?;
     let reader_role = workload_generation_role(
         WorkloadRoleFamily::IdentityReader,
-        WorkloadRoleScope::Control {
+        WorkloadRoleIdentity::Control {
             org: ORG,
             project: PROJECT,
             environment: ENVIRONMENT,
@@ -1356,7 +1359,7 @@ async fn pat_caller(
         .set_password(Some(PASSWORD))
         .map_err(|()| anyhow::anyhow!("identity reader password"))?;
     let reader = connect(reader_url.as_str()).await?;
-    let definition = json!({"id": ATTACHMENT, "kind": "http", "route": {"host": "native.example.test", "path": "/native", "method": "POST"}});
+    let definition = json!({"id": ATTACHMENT, "type": "http", "route": {"host": "native.example.test", "path": "/native", "method": "POST"}});
     let mut manifest = serde_json::to_value(release.manifest())?;
     manifest["routes"] =
         json!([{"package-id":"root","component":"node","operation":ROOT,"type":"command"}]);
@@ -1365,9 +1368,10 @@ async fn pat_caller(
     let release = Arc::new(LoadedRelease::load_canonical_bytes(
         &wamn_digest::canonical_json_bytes(&manifest),
         "warm PAT test",
-        wamn_engine::release_manifest::ReleaseScope::new(ENV_KEY, ENVIRONMENT).with_applications(
-            serde_json::from_value(json!({"receiving": {"packages": ["root", "child"]}}))?,
-        ),
+        wamn_engine::release_manifest::ReleaseTarget::new(PROJECT_ENV_KEY, ENVIRONMENT)
+            .with_applications(serde_json::from_value(
+                json!({"receiving": {"packages": ["root", "child"]}}),
+            )?),
     )?);
     let routing = FlowHttpRouting::new(Some(release), RouteInFlightLimit::default())
         .with_authenticator(Arc::new(

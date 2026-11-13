@@ -71,7 +71,7 @@ impl EdgePolicy {
                 .components
                 .iter()
                 .find(|served| {
-                    served.package_id == fact.scope.package_id
+                    served.package_id == fact.target.package_id
                         && served.descriptor.component == fact.component
                         && served.descriptor.component_digest.as_str() == fact.component_digest
                         && served.descriptor.operations == fact.operations
@@ -154,7 +154,7 @@ impl InvocationPolicy for EdgePolicy {
             .clear();
     }
 
-    fn revoke(&self, _scope: &str) {}
+    fn revoke(&self, _target: &str) {}
 }
 
 #[async_trait::async_trait]

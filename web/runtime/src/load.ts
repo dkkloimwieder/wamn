@@ -77,8 +77,8 @@ export function emptyLoad<Row>(cap: number): LoadState<Row> {
 /**
  * Start a new load, with a new generation.
  *
- * A cap change, a scope change and a refresh each start one. The caller holds
- * the scope. The rows of the last load stay on screen until this one ends.
+ * A cap change, a filter change and a refresh each start one. The caller holds
+ * the filter. The rows of the last load stay on screen until this one ends.
  */
 export function startLoad<Row>(state: LoadState<Row>, cap: number = state.cap, now: Date = new Date()): LoadState<Row> {
   return {
@@ -173,7 +173,7 @@ function duplicateRow<Row>(rows: readonly Row[], rowId: RowKey<Row>): string | n
 
 /**
  * Put one row in place of the row with the same id, and keep the rest of the
- * load as it was. An inline edit that cannot move the row out of the scope or
+ * load as it was. An inline edit that cannot move the row out of the filter or
  * the order uses it in place of a new load. A row the load does not hold
  * changes nothing.
  */

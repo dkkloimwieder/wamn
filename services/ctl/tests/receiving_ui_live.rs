@@ -10,7 +10,7 @@ use tokio::io::{AsyncBufReadExt as _, AsyncWriteExt as _, BufReader};
 use tokio::process::Command;
 use wamn_control_provision::PlatformComponent;
 use wamn_dev_control::dev::environment::{
-    DEVELOPER_EMAIL, ENVIRONMENT, JourneyScope, ORG, PROJECT, reconcile_journey_run_plane,
+    DEVELOPER_EMAIL, ENVIRONMENT, JourneyTarget, ORG, PROJECT, reconcile_journey_run_plane,
 };
 use wamn_platform_identity::{create_or_reuse_user, grant_project_env_membership};
 
@@ -166,17 +166,17 @@ async fn drive(browser_run: Browser) -> anyhow::Result<()> {
             .and_then(|entry| entry["url"].as_str()).context("Receiving URL")?;
         let config: Value = serde_json::from_slice(&std::fs::read(root.join("dev.json"))?)?;
         let target = config["target_database_url"].as_str().context("target database URL")?;
-        let env_key = wamn_control_registry::project_env_key(ORG, PROJECT, ENVIRONMENT);
-        reconcile_journey_run_plane(&JourneyScope { org: ORG.to_owned(), project: PROJECT.to_owned(), environment: ENVIRONMENT.to_owned() }, system.url(), target).await?;
+        let project_env_key = wamn_control_registry::project_env_key(ORG, PROJECT, ENVIRONMENT);
+        reconcile_journey_run_plane(&JourneyTarget { org: ORG.to_owned(), project: PROJECT.to_owned(), environment: ENVIRONMENT.to_owned() }, system.url(), target).await?;
         let (business, business_driver) = tokio_postgres::connect(target, tokio_postgres::NoTls).await?;
         let business_driver = tokio::spawn(business_driver);
         let tx = admin.transaction().await?;
         wamn_platform_identity::org::grant_project_admin(&tx, &user, ORG, PROJECT).await?;
         tx.commit().await?;
-        reconcile_journey_run_plane(&JourneyScope { org: ORG.to_owned(), project: PROJECT.to_owned(), environment: ENVIRONMENT.to_owned() }, system.url(), target).await?;
+        reconcile_journey_run_plane(&JourneyTarget { org: ORG.to_owned(), project: PROJECT.to_owned(), environment: ENVIRONMENT.to_owned() }, system.url(), target).await?;
         business.execute(
-            "SELECT set_config('app.user_id', $1, false), set_config('app.env_key', $2, false), set_config('app.operation', 'admin:receiving-browser-fixture', false)",
-            &[&actor.to_string().as_str(), &env_key],
+            "SELECT set_config('app.user_id', $1, false), set_config('app.project_env_key', $2, false), set_config('app.operation', 'admin:receiving-browser-fixture', false)",
+            &[&actor.to_string().as_str(), &project_env_key],
         ).await?;
         business.batch_execute(include_str!("fixtures/receiving_ui.sql")).await?;
         drop(business);

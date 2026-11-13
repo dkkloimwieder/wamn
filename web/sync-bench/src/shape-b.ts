@@ -1,6 +1,6 @@
 import { createMemo, createSignal, createStore, type Accessor } from "solid-js";
 import type { Change, Feed } from "@wfe/sync";
-import type { PackagingRow, PackagingScope } from "./generated/wamn_wms/packaging.js";
+import type { PackagingRow, PackagingFilter } from "./generated/wamn_wms/packaging.js";
 import { orderedIds, type StatusFilter } from "./order.js";
 import { exactSum } from "./totals.js";
 import type { GroupRow, ViewSource } from "./view.js";
@@ -12,9 +12,9 @@ import type { GroupRow, ViewSource } from "./view.js";
  * delete rules of `applyChanges`.
  */
 export function shapeB(
-  feed: Feed<PackagingRow, PackagingScope>,
-  scope: PackagingScope,
-  filter: Accessor<StatusFilter>,
+  feed: Feed<PackagingRow, PackagingFilter>,
+  feedFilter: PackagingFilter,
+  statusFilter: Accessor<StatusFilter>,
 ): ViewSource & {
   status: Accessor<"loading" | "ready" | "error">;
   apply: (changes: readonly Change<PackagingRow>[]) => void;
@@ -31,7 +31,7 @@ export function shapeB(
           draft[change.id] = change.data;
       }
     });
-  feed.list(scope).then(
+  feed.list(feedFilter).then(
     (page) => {
       set((draft) => {
         const incoming = new Set<string>();
@@ -46,7 +46,7 @@ export function shapeB(
     },
     () => setStatus("error"),
   );
-  const ids = createMemo(() => orderedIds(rows, filter()));
+  const ids = createMemo(() => orderedIds(rows, statusFilter()));
   const groups = createMemo(() => {
     const found = new Map<string, { status: string; type: string; versions: string[] }>();
     for (const row of Object.values(rows)) {

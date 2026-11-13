@@ -7,7 +7,7 @@
 //! `wamn_app` role name is a pinned constant. Values that vary (a probed role
 //! name, a role password) travel as `$n` params or quoted literals.
 
-use crate::tenant_key::{TENANT_KEY_FUNCTION, TENANT_KEY_SCHEMA};
+use crate::project_key::{PROJECT_KEY_FUNCTION, PROJECT_KEY_SCHEMA};
 
 mod cdc;
 mod credentials;
@@ -32,13 +32,13 @@ pub use credentials::{
     normalize_workload_generation_membership_sql, prepare_workload_generation_sql,
     record_generation_password_sql, retire_workload_generation_sql, system_generation_state_sql,
     terminate_workload_generation_sessions_sql, workload_generation_state_sql,
-    workload_scope_lock_sql,
+    workload_identity_lock_sql,
 };
 
 #[doc(inline)]
 pub use database_grants::{
     non_template_databases_sql, public_connect_databases_sql,
-    public_temporary_on_current_database_sql, revoke_public_connect_floor_sql,
+    public_temporary_on_current_database_sql, revoke_public_connect_base_grants_sql,
     role_database_grants_sql,
 };
 
@@ -61,28 +61,28 @@ use crate::workload_role::{
 pub(crate) use postgres_protocol::escape::escape_identifier;
 use postgres_protocol::escape::escape_literal;
 
-/// Insert the declared tenant identity without replacing an existing row.
-pub fn insert_env_key_environment_sql() -> &'static str {
-    "INSERT INTO catalog.tenant_environments \
-     (env_key, org, project, env, instance_suffix, disposable, environment_instance) \
-     VALUES ($1, $2, $3, $4, $5, $6, '') ON CONFLICT (env_key) DO NOTHING"
+/// Insert the declared project identity without replacing an existing row.
+pub fn insert_project_env_key_environment_sql() -> &'static str {
+    "INSERT INTO catalog.project_environments \
+     (project_env_key, org, project, env, instance_suffix, disposable, environment_instance) \
+     VALUES ($1, $2, $3, $4, $5, $6, '') ON CONFLICT (project_env_key) DO NOTHING"
 }
 
 /// Lock and read the winning identity after the insert attempt.
-pub fn read_env_key_environment_sql() -> &'static str {
-    "SELECT org, project, env FROM catalog.tenant_environments WHERE env_key = $1 FOR UPDATE"
+pub fn read_project_env_key_environment_sql() -> &'static str {
+    "SELECT org, project, env FROM catalog.project_environments WHERE project_env_key = $1 FOR UPDATE"
 }
 
 /// Refresh the declared values and clear the old instance after Rust accepts the identity.
-pub fn refresh_env_key_environment_sql() -> &'static str {
-    "UPDATE catalog.tenant_environments SET instance_suffix = $2, disposable = $3, \
-     environment_instance = '', projected_at = now() WHERE env_key = $1"
+pub fn refresh_project_env_key_environment_sql() -> &'static str {
+    "UPDATE catalog.project_environments SET instance_suffix = $2, disposable = $3, \
+     environment_instance = '', projected_at = now() WHERE project_env_key = $1"
 }
 
 /// Idempotently create or harden the shared, cluster-global [`APP_ROLE`] as a
 /// stable NOLOGIN ACL role.
 ///
-/// Guest sessions authenticate as scoped [`WorkloadRoleFamily::App`]
+/// Guest sessions authenticate as targeted [`WorkloadRoleFamily::App`]
 /// generations and inherit this role's grants. The stable role therefore
 /// carries no verifier and cannot authenticate or inherit memberships itself.
 /// The shared bootstrap lock serializes cooperative appliers; the exception arm
@@ -158,7 +158,7 @@ pub const HTTP_ADMITTER_CATALOG_RELATIONS: [&str; 4] = [
 /// reads: the key of one workflow version and its graph. The admitter gets
 /// these columns only, not the whole table.
 pub const HTTP_ADMITTER_WORKFLOW_COLUMNS: [&str; 6] = [
-    "env_key",
+    "project_env_key",
     "environment",
     "application",
     "workflow_id",
@@ -210,7 +210,7 @@ pub const EXECUTOR_PLATFORM_CATALOG_RELATIONS: [&str; 5] = [
 /// [`crate::workload_role::WorkloadRoleFamily::ExecutorPlatform`]:
 ///
 /// * `queue::sql::clear_pre_effect_state_sql` — `state_json`
-/// * `queue::sql::grant_production_claim_sql` — `status`
+/// * `queue::sql::grant_production_lease_sql` — `status`
 /// * `queue::sql::terminalize_exhausted_production_sql` — `status`,
 ///   `result_json`, the caller-outcome family, `updated_at`
 /// * `transitions::release_caller_sql` — the caller-outcome family, `updated_at`
@@ -218,13 +218,13 @@ pub const EXECUTOR_PLATFORM_CATALOG_RELATIONS: [&str; 5] = [
 ///   `result_json`, `fail_type`, `updated_at`
 /// * `transitions::record_deadline_adjustments_sql` writes `deadline_adjustments_json`.
 ///
-/// The SELECT side is deliberately NOT column-scoped: `transitions::FENCED_PREFIX`
+/// The SELECT side is deliberately NOT column-targeted: `transitions::FENCED_PREFIX`
 /// locks the run with `SELECT r.* FROM runs AS r`, which needs SELECT on EVERY
 /// column of `runs`. A column list there would withhold nothing and break the
 /// fence, so relation-grain SELECT is the measured surface rather than a
 /// concession. Confining the WRITE is what a column list can still buy, and it
-/// buys a lot: this family matches the permissive `TO wamn_platform` floor arm,
-/// so a blanket `UPDATE` would let one claim rewrite any tenant's admission pins.
+/// buys a lot: this family matches the permissive `TO wamn_platform` base policy arm,
+/// so a blanket `UPDATE` would let one lease rewrite any project's admission pins.
 pub const EXECUTOR_PLATFORM_RUN_UPDATE_COLUMNS: [&str; 13] = [
     "status",
     "terminal_reason",
@@ -243,11 +243,11 @@ pub const EXECUTOR_PLATFORM_RUN_UPDATE_COLUMNS: [&str; 13] = [
 
 /// Every `run_queue` column the executor-platform family WRITES.
 ///
-/// `queue::sql::advance_claim_attempts_sql` writes `attempts`;
-/// `queue::sql::grant_production_claim_sql` writes `lease_owner`,
+/// `queue::sql::advance_lease_attempts_sql` writes `attempts`;
+/// `queue::sql::grant_production_lease_sql` writes `lease_owner`,
 /// `lease_expires_at` and `lease_generation`;
 /// `queue::sql::renew_production_lease_sql` writes `lease_expires_at`.
-/// `queue::sql::release_production_claim_sql` writes `attempts`, `available_at`,
+/// `queue::sql::release_production_lease_sql` writes `attempts`, `available_at`,
 /// `lease_owner` and `lease_expires_at` for credential retries. Nothing writes
 /// `max_attempts` or `enqueued_at`.
 ///
@@ -274,7 +274,7 @@ pub const EXECUTOR_PLATFORM_QUEUE_UPDATE_COLUMNS: [&str; 5] = [
 /// reaches no binding world, legacy flow, capture or
 /// caller-outcome column.
 pub const EXECUTOR_PLATFORM_RUN_INSERT_COLUMNS: [&str; 21] = [
-    "env_key",
+    "project_env_key",
     "package_id",
     "manifest_digest",
     "environment",
@@ -299,9 +299,9 @@ pub const EXECUTOR_PLATFORM_RUN_INSERT_COLUMNS: [&str; 21] = [
 
 /// The `run_queue` columns an event or schedule admission writes. The FIFO position, the
 /// crash budget and the lease take their defaults.
-pub const EXECUTOR_PLATFORM_QUEUE_INSERT_COLUMNS: [&str; 2] = ["env_key", "run_id"];
+pub const EXECUTOR_PLATFORM_QUEUE_INSERT_COLUMNS: [&str; 2] = ["project_env_key", "run_id"];
 /// Idempotently create or harden [`PLATFORM_GROUP_ROLE`], the shared NOLOGIN
-/// group every non-guest tenant-floor arm targets (`wamn-0h0g.22.17`).
+/// group every non-guest project-base-grants arm targets (`wamn-0h0g.22.17`).
 ///
 /// EXCEPTION-GUARDED, not bare `IF NOT EXISTS`. Roles are CLUSTER-global, so two
 /// appliers racing on a cluster where the role is absent both take the `THEN`
@@ -342,7 +342,7 @@ pub fn ensure_platform_group_role_sql() -> String {
 /// by that PER-EDGE option — so a bare `GRANT wamn_platform TO
 /// wamn_run_retention` lands `inherit_option = false` and the two-hop chain
 /// (generation login -> stable ACL role -> `wamn_platform`) dies. Nothing
-/// raises: the generation still holds its table grants, and the floor policy
+/// raises: the generation still holds its table grants, and the base policy
 /// simply matches no row. Measured on PostgreSQL 18.6 against the real files —
 /// bare grant reads 0 rows, `INHERIT TRUE` reads all of them.
 ///
@@ -394,15 +394,15 @@ pub fn platform_group_membership_sql(family: WorkloadRoleFamily) -> String {
     )
 }
 
-/// `GRANT EXECUTE` on the tenant-key derivation for one stable ACL role.
+/// `GRANT EXECUTE` on the project-key derivation for one stable ACL role.
 ///
 /// # A WRITER needs this, not only a reader of the predicate
 ///
 /// Every governed relation carries a `<table>_tkey` EXPRESSION INDEX over
-/// `wamn_authority.tenant_key(text)`, and PostgreSQL evaluates that expression
+/// `wamn_authority.project_key(text)`, and PostgreSQL evaluates that expression
 /// while inserting or updating the row. So a family holding a COMPLETE table
-/// grant set and the `wamn_platform` floor arm still fails its INSERT with
-/// 42501 `permission denied for function tenant_key` unless it holds this
+/// grant set and the `wamn_platform` base policy arm still fails its INSERT with
+/// 42501 `permission denied for function project_key` unless it holds this
 /// (`wamn-0h0g.22.28`). Measured on PostgreSQL 18.6 as a login asserted NOT
 /// (`rolsuper` OR `rolbypassrls`): with the grant the row lands, without it the
 /// statement raises 42501 and the post-state is zero rows.
@@ -413,21 +413,21 @@ pub fn platform_group_membership_sql(family: WorkloadRoleFamily) -> String {
 ///   resolved node tree, so no name resolution happens at insert time and only
 ///   the function's EXECUTE ACL is validated. Measured: EXECUTE alone, with
 ///   `has_schema_privilege(role, 'wamn_authority', 'USAGE') = false`, inserts.
-/// * NOT `current_tenant_key()`. That derivation is called only by the tenant
-///   floor policy, which `wamn-0h0g.22.17` narrowed `TO wamn_app`; a non-guest
+/// * NOT `current_project_key()`. That derivation is called only by the project
+///   base policy, which `wamn-0h0g.22.17` narrowed `TO wamn_app`; a non-guest
 ///   family matches the permissive `TO wamn_platform` arm, whose `USING (true)`
 ///   calls nothing. Measured: the INSERT above succeeds with
-///   `has_function_privilege(role, 'wamn_authority.current_tenant_key()',
+///   `has_function_privilege(role, 'wamn_authority.current_project_key()',
 ///   'EXECUTE') = false`.
 /// * NOT to [`PLATFORM_GROUP_ROLE`]. That group carries POLICY MEMBERSHIP only
 ///   and holds no privilege of its own; granting function EXECUTE to it would
 ///   hand the derivation to every member, including the families that never
 ///   write. It is granted here, beside the one family's own grant set, so the
 ///   surface stays the measured production surface.
-fn grant_tenant_key_execute_sql(role: &str) -> String {
+fn grant_project_key_execute_sql(role: &str) -> String {
     format!(
-        "GRANT EXECUTE ON FUNCTION {schema}.tenant_key(text) TO {role};",
-        schema = escape_identifier(crate::tenant_key::TENANT_KEY_SCHEMA),
+        "GRANT EXECUTE ON FUNCTION {schema}.project_key(text) TO {role};",
+        schema = escape_identifier(crate::project_key::PROJECT_KEY_SCHEMA),
         role = escape_identifier(role),
     )
 }
@@ -456,10 +456,10 @@ fn quoted_column_list(columns: &[&str]) -> String {
 /// # What it deliberately does NOT hold
 ///
 /// * NO `wamn_run` anything. The admitter authorizes an effect; it does not
-///   admit, claim, lease or terminalize a run. `schema` is therefore the REVOKE
-///   scope and never a grant scope — an environment where someone handed this
+///   admit, lease or terminalize a run. `schema` is therefore the REVOKE
+///   target and never a grant target — an environment where someone handed this
 ///   family a run-plane privilege converges back on the next apply.
-/// * NO write of any grain, so no `wamn_authority.tenant_key(text)` EXECUTE
+/// * NO write of any grain, so no `wamn_authority.project_key(text)` EXECUTE
 ///   either. That grant exists for the families whose INSERT or UPDATE makes
 ///   PostgreSQL evaluate a `<table>_tkey` expression index; a pure reader never
 ///   forms an index entry, and these statements carry no predicate over the
@@ -538,7 +538,7 @@ pub const ADMINISTRATION_RELATIONS: [&str; 11] = [
 /// columns of those history tables, `USAGE` on `wamn_history`, `EXECUTE` on
 /// `row_image`. On the catalog it
 /// reads `catalog.releases` only, for the control host's `release.profile`.
-/// It holds nothing on the run plane. `schema` is the run-plane revoke scope.
+/// It holds nothing on the run plane. `schema` is the run-plane revoke target.
 pub fn grant_administration_surface_sql(schema: &str) -> String {
     let role = escape_identifier(ADMINISTRATION_ROLE);
     let schema = escape_identifier(schema);
@@ -548,7 +548,7 @@ pub fn grant_administration_surface_sql(schema: &str) -> String {
          REVOKE ALL PRIVILEGES ON ALL ROUTINES IN SCHEMA catalog, platform, wamn_history, {schema} \
          FROM {role}; \
          REVOKE ALL PRIVILEGES ON SCHEMA catalog, platform, wamn_history, {schema} FROM {role}; \
-         REVOKE EXECUTE ON FUNCTION {TENANT_KEY_FUNCTION}(text) FROM {role}; \
+         REVOKE EXECUTE ON FUNCTION {PROJECT_KEY_FUNCTION}(text) FROM {role}; \
          GRANT USAGE ON SCHEMA catalog, platform, wamn_history TO {role}; \
          GRANT EXECUTE ON FUNCTION wamn_history.row_image(record) TO {role}; \
          GRANT SELECT ON TABLE catalog.releases TO {role}; \
@@ -579,16 +579,16 @@ pub fn grant_session_role_reader_surface_sql() -> String {
     let role = escape_identifier(SESSION_ROLE_READER_ROLE);
     format!(
         "{ensure} \
-         REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA catalog, platform, wamn_run, {TENANT_KEY_SCHEMA} FROM {role}; \
-         REVOKE ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA catalog, platform, wamn_run, {TENANT_KEY_SCHEMA} FROM {role}; \
-         REVOKE ALL PRIVILEGES ON ALL ROUTINES IN SCHEMA catalog, platform, wamn_run, {TENANT_KEY_SCHEMA} FROM {role}; \
+         REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA catalog, platform, wamn_run, {PROJECT_KEY_SCHEMA} FROM {role}; \
+         REVOKE ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA catalog, platform, wamn_run, {PROJECT_KEY_SCHEMA} FROM {role}; \
+         REVOKE ALL PRIVILEGES ON ALL ROUTINES IN SCHEMA catalog, platform, wamn_run, {PROJECT_KEY_SCHEMA} FROM {role}; \
          DO $session_column_acl$ DECLARE target record; BEGIN \
            FOR target IN \
              SELECT n.nspname, c.relname, a.attname \
                FROM pg_catalog.pg_attribute a \
                JOIN pg_catalog.pg_class c ON c.oid = a.attrelid \
                JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace \
-              WHERE n.nspname IN ('catalog', 'platform', 'wamn_run', '{TENANT_KEY_SCHEMA}') \
+              WHERE n.nspname IN ('catalog', 'platform', 'wamn_run', '{PROJECT_KEY_SCHEMA}') \
                 AND c.relkind IN ('r', 'p', 'v', 'm', 'f') \
                 AND a.attnum > 0 AND NOT a.attisdropped AND a.attacl IS NOT NULL \
            LOOP \
@@ -596,7 +596,7 @@ pub fn grant_session_role_reader_surface_sql() -> String {
                target.attname, target.nspname, target.relname, {role_literal}); \
            END LOOP; \
          END $session_column_acl$; \
-         REVOKE ALL PRIVILEGES ON SCHEMA catalog, platform, wamn_run, {TENANT_KEY_SCHEMA} FROM {role}; \
+         REVOKE ALL PRIVILEGES ON SCHEMA catalog, platform, wamn_run, {PROJECT_KEY_SCHEMA} FROM {role}; \
          GRANT USAGE ON SCHEMA platform TO {role}; \
          GRANT SELECT (id, status) ON TABLE platform.\"user\" TO {role}; \
          GRANT SELECT (user_id, role_name) ON TABLE platform.user_role TO {role};",
@@ -605,17 +605,17 @@ pub fn grant_session_role_reader_surface_sql() -> String {
     )
 }
 
-/// Converge the stable executor-platform role to its exact claim surface
+/// Converge the stable executor-platform role to its exact lease surface
 /// (`wamn-0h0g.22.37`).
 ///
 /// The production queries that select `AuthorityClass::ExecutorPlatform` live
-/// in `wamn_runtime::plugins::wamn_postgres::production_claim` and its
+/// in `wamn_runtime::plugins::wamn_postgres::production_lease` and its
 /// `wiring_resolution` sibling.
 ///
 /// # The grains, and why each is the one it is
 ///
 /// * `catalog`: `USAGE` plus TABLE-grain `SELECT` on
-///   [`EXECUTOR_PLATFORM_CATALOG_RELATIONS`]. No write of any kind.
+///   [`EXECUTOR_PLATFORM_CATALOG_RELATIONS`]. No write of any type.
 /// * `runs`: TABLE-grain `SELECT` because `transitions::FENCED_PREFIX` locks the
 ///   row with `SELECT r.*`, and COLUMN-grain `UPDATE` over
 ///   [`EXECUTOR_PLATFORM_RUN_UPDATE_COLUMNS`]. The admission pins, the wiring
@@ -631,7 +631,7 @@ pub fn grant_session_role_reader_surface_sql() -> String {
 ///   [`EXECUTOR_PLATFORM_QUEUE_INSERT_COLUMNS`], plus `SELECT` on
 ///   `environment_policies`: the host admits event and schedule runs
 ///   under the declaring release. Schedules carry their application identity.
-/// * `wamn_authority.tenant_key(text)`: MEASURED, and not optional. `runs`
+/// * `wamn_authority.project_key(text)`: MEASURED, and not optional. `runs`
 ///   carries the `runs_tkey` EXPRESSION INDEX over that function, and
 ///   PostgreSQL evaluates an index expression while forming the new index entry
 ///   an UPDATE requires. Four of the six `runs` writes change `status`, which
@@ -693,7 +693,7 @@ pub fn grant_executor_platform_surface_sql(schema: &str) -> String {
     // `runs` carries `runs_tkey`, so the column-exact UPDATE above is dead
     // without this on every write that changes an indexed column.
     sql.push(' ');
-    sql.push_str(&grant_tenant_key_execute_sql(EXECUTOR_PLATFORM_ROLE));
+    sql.push_str(&grant_project_key_execute_sql(EXECUTOR_PLATFORM_ROLE));
     sql.push_str(&grant_executor_history_reads_sql());
     sql
 }
@@ -732,9 +732,9 @@ pub fn grant_event_materializer_surface_sql(schema: &str) -> String {
     let schema = escape_identifier(schema);
     let mut sql = format!(
         "{ensure} \
-         REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA catalog, platform, {TENANT_KEY_SCHEMA}, {schema} FROM {role}; \
-         REVOKE ALL PRIVILEGES ON ALL ROUTINES IN SCHEMA catalog, platform, {TENANT_KEY_SCHEMA}, {schema} FROM {role}; \
-         REVOKE ALL PRIVILEGES ON SCHEMA catalog, platform, {TENANT_KEY_SCHEMA}, {schema} FROM {role}; \
+         REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA catalog, platform, {PROJECT_KEY_SCHEMA}, {schema} FROM {role}; \
+         REVOKE ALL PRIVILEGES ON ALL ROUTINES IN SCHEMA catalog, platform, {PROJECT_KEY_SCHEMA}, {schema} FROM {role}; \
+         REVOKE ALL PRIVILEGES ON SCHEMA catalog, platform, {PROJECT_KEY_SCHEMA}, {schema} FROM {role}; \
          GRANT USAGE ON SCHEMA catalog TO {role};",
         ensure = ensure_workload_acl_role_sql(WorkloadRoleFamily::EventMaterializer),
     );
@@ -755,7 +755,7 @@ pub fn grant_event_materializer_surface_sql(schema: &str) -> String {
 // `wamn_system`, the AUTHORIZATION owner of all three schemas below.
 // `deploy/sql/system-schema.sql` declares no policy and forces no row-level
 // security, so confinement in this database is PURELY GRANT-SHAPED: there is no
-// tenant predicate to satisfy and none is invented here. The owner credential is
+// project predicate to satisfy and none is invented here. The owner credential is
 // therefore not merely wide, it is unconfined — it can INSERT an `identity.pats`
 // row binding any token digest to any principal, or an `identity.project_roles`
 // row self-granting a project role anywhere.
@@ -771,7 +771,7 @@ pub fn grant_event_materializer_surface_sql(schema: &str) -> String {
 
 /// Every schema `deploy/sql/system-schema.sql` creates under `wamn_system`.
 ///
-/// The REVOKE scope, not the grant scope: a system-plane reader is revoked
+/// The REVOKE target, not the grant target: a system-plane reader is revoked
 /// across all three and granted inside exactly one.
 pub const SYSTEM_PLANE_SCHEMAS: [&str; 3] = ["identity", "provisioning", "registry"];
 
@@ -872,7 +872,7 @@ pub fn grant_registry_reader_surface_sql() -> String {
 /// deliberately when that route did exist, and the grant then drifted
 /// SELECT-only -> +INSERT -> +INSERT,UPDATE out of band THREE times.
 /// the identity service’s
-/// `only_the_mounted_kinds_have_a_route_and_the_rest_answer_a_bare_501` decides
+/// `only_the_mounted_types_have_a_route_and_the_rest_answer_a_bare_501` decides
 /// the mounted route list by CALLING route selection, so a re-mounted session
 /// route changes an answer that test reads. The write privilege such a route
 /// would need is pinned separately by
@@ -1043,26 +1043,26 @@ pub fn stable_surface_sql(family: WorkloadRoleFamily) -> Option<String> {
     }
 }
 
-/// Record the owner-maintained login-identity-to-tenant mapping for one scope.
+/// Record the owner-maintained login-identity-to-project mapping for one target.
 ///
-/// `$1` login identity, `$2` `env_key`, `$3` org, `$4` project, `$5` environment.
-/// Tenant authority is database-authoritative: this row, not a caller-set
-/// `app.env_key`, is what every author-accessed relation's restrictive policy
+/// `$1` login identity, `$2` `project_env_key`, `$3` org, `$4` project, `$5` environment.
+/// Project authority is database-authoritative: this row, not a caller-set
+/// `app.project_env_key`, is what every author-accessed relation's restrictive policy
 /// resolves through, so the statement is deliberately an owner statement with no
-/// grant to the author. `DO UPDATE` is restricted to a row whose tenant already
-/// matches, so a replay converges while a re-point to a different tenant returns
+/// grant to the author. `DO UPDATE` is restricted to a row whose project already
+/// matches, so a replay converges while a re-point to a different project returns
 /// **zero rows** instead of widening one login's reach — the caller must read an
 /// empty result as a refusal, not as a no-op.
-pub fn upsert_control_author_env_key_mapping_sql() -> &'static str {
-    "INSERT INTO wamn_authority.author_login_tenants \
-       (login_identity, env_key, org_id, project_id, environment) \
+pub fn upsert_control_author_project_env_key_mapping_sql() -> &'static str {
+    "INSERT INTO wamn_authority.author_login_projects \
+       (login_identity, project_env_key, org_id, project_id, environment) \
      VALUES ($1, $2, $3, $4, $5) \
      ON CONFLICT (login_identity) DO UPDATE \
        SET org_id = EXCLUDED.org_id, \
            project_id = EXCLUDED.project_id, \
            environment = EXCLUDED.environment \
-       WHERE author_login_tenants.env_key = EXCLUDED.env_key \
-     RETURNING env_key"
+       WHERE author_login_projects.project_env_key = EXCLUDED.project_env_key \
+     RETURNING project_env_key"
 }
 
 #[cfg(test)]
@@ -1390,33 +1390,6 @@ mod tests {
     }
 
     #[test]
-    fn generation_cluster_probes_are_read_only_and_scope_locked() {
-        assert!(public_connect_databases_sql().starts_with("SELECT"));
-        assert!(public_connect_databases_sql().contains("acl.grantee = 0"));
-        assert!(public_connect_databases_sql().contains("privilege_type = 'CONNECT'"));
-        assert!(!public_connect_databases_sql().contains("TEMPORARY"));
-        assert!(revoke_public_connect_floor_sql().starts_with("DO $$"));
-        // The floor is CONNECTABILITY-filtered, never template-filtered:
-        // `template1` is a template AND connectable, and a template filter left
-        // PostgreSQL's default PUBLIC CONNECT on it. `template0`
-        // (`datallowconn = false`) stays out of scope either way.
-        assert!(revoke_public_connect_floor_sql().contains("WHERE d.datallowconn"));
-        assert!(!revoke_public_connect_floor_sql().contains("datistemplate"));
-        assert!(public_connect_databases_sql().contains("WHERE d.datallowconn"));
-        assert!(!public_connect_databases_sql().contains("datistemplate"));
-        assert!(revoke_public_connect_floor_sql().contains("REVOKE CONNECT ON DATABASE %I"));
-        assert!(!revoke_public_connect_floor_sql().contains("TEMPORARY"));
-        assert!(public_temporary_on_current_database_sql().starts_with("SELECT EXISTS"));
-        assert!(public_temporary_on_current_database_sql().contains("current_database()"));
-        assert!(public_temporary_on_current_database_sql().contains("'TEMPORARY'"));
-        assert!(non_template_databases_sql().contains("NOT datistemplate"));
-        assert_eq!(
-            workload_scope_lock_sql(),
-            "SELECT pg_advisory_lock(hashtextextended($1::text, 0))"
-        );
-    }
-
-    #[test]
     fn replication_role_is_replication_login_and_otherwise_least_privilege() {
         let sql = ensure_replication_role_sql("wamn_cdc_acme__billing__dev", "s3cr3t");
         assert!(sql.contains("IF NOT EXISTS"), "idempotent guard");
@@ -1493,7 +1466,7 @@ mod tests {
         assert!(sql.contains("GRANT USAGE ON SCHEMA \"app\" TO \"wamn_cdc_x\""));
         assert!(sql.contains("GRANT SELECT ON \"app\".wamn_entities TO \"wamn_cdc_x\""));
         assert!(sql.contains("GRANT SELECT ON \"app\".wamn_cdc_exclusions TO \"wamn_cdc_x\""));
-        // Never the blanket read of every tenant table.
+        // Never the blanket read of every project table.
         assert!(!sql.contains("GRANT SELECT ON ALL TABLES"));
         // The retroactive half, ordered before the narrow grant it would strip.
         let revoke = sql

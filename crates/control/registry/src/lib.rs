@@ -1,7 +1,7 @@
 //! Canonical control-plane registry model (wamn-q3n.1; generalized in
 //! wamn-8df.3, `docs/archive/platform/deployment-model.md`).
 //!
-//! MVP outcome: provisioning · publish · additive schema · tenant isolation (T1 minting).
+//! MVP outcome: provisioning · publish · additive schema · project isolation (T1 minting).
 //!
 //! The registry is the platform's system-of-record for **identity** and
 //! **placement** — the foundation of the four-tier Postgres topology
@@ -19,7 +19,7 @@
 //! The generic deployment model (D18) replaces the closed `Env` / `Tier` enums:
 //! `env` is a validated [`Env`] slug resolving a named [`EnvPolicy`], and an org
 //! carries a minimal [`Placement`] (`pooled` | `dedicated`) from which clusters
-//! derive. Policies are **org-scoped** ([`OrgEnvPolicy`], wamn-8df.4): a
+//! derive. Policies are **org-targeted** ([`OrgEnvPolicy`], wamn-8df.4): a
 //! [`Template`] preset (`trials` / `standard` / `dedicated` — the `Tier`
 //! successor) stamps an org's placement + initial policy set in one step, and
 //! the org customizes its own rows per-env.

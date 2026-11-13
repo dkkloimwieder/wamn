@@ -356,8 +356,8 @@ fn statement_import(
     // resource owners. Restore their implements labels after encoding.
     let mut interface = graph.types()[interface].clone();
     interface.id = None;
-    let kind = ItemKind::Instance(graph.types_mut().add_interface(interface));
-    let import = graph.import(name, kind)?;
+    let type_ = ItemKind::Instance(graph.types_mut().add_interface(interface));
+    let import = graph.import(name, type_)?;
     graph.set_instantiation_argument(member.instance, argument, import)?;
     Ok(())
 }

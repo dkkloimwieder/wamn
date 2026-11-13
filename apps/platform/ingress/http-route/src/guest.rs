@@ -10,7 +10,7 @@ use wit_bindgen::rt::async_support::{
 
 use super::{
     AdapterLimits, AuthRejection, Backend, BodyReadError, BodyReader, Cardinality,
-    DeadlineAdjustment, DeliveryError, DeliveryFailure, DeliveryFailureKind, DeliveryOutcome,
+    DeadlineAdjustment, DeliveryError, DeliveryFailure, DeliveryFailureType, DeliveryOutcome,
     DeliveryReport, DeliveryRequest, Emission, FailedOutcome, Header, HttpResponse, Mapping,
     MappingSource, PartialCompletion, ProviderError, RequestHead, RouteDefinition, SchemaInvalid,
     handle_request,
@@ -231,17 +231,17 @@ fn convert_delivery_failure(
 ) -> DeliveryFailure {
     use bindings::wamn::router_delivery::delivery;
     DeliveryFailure {
-        kind: match failure.failure_type {
-            delivery::FailureType::Terminal => DeliveryFailureKind::Terminal,
-            delivery::FailureType::RetryExhausted => DeliveryFailureKind::RetryExhausted,
-            delivery::FailureType::InvalidInput => DeliveryFailureKind::InvalidInput,
-            delivery::FailureType::HopLimit => DeliveryFailureKind::HopLimit,
-            delivery::FailureType::UnreleasedCaller => DeliveryFailureKind::UnreleasedCaller,
-            delivery::FailureType::MissingDedupId => DeliveryFailureKind::MissingDedupId,
+        type_: match failure.failure_type {
+            delivery::FailureType::Terminal => DeliveryFailureType::Terminal,
+            delivery::FailureType::RetryExhausted => DeliveryFailureType::RetryExhausted,
+            delivery::FailureType::InvalidInput => DeliveryFailureType::InvalidInput,
+            delivery::FailureType::HopLimit => DeliveryFailureType::HopLimit,
+            delivery::FailureType::UnreleasedCaller => DeliveryFailureType::UnreleasedCaller,
+            delivery::FailureType::MissingDedupId => DeliveryFailureType::MissingDedupId,
             delivery::FailureType::RespondWithoutCaller => {
-                DeliveryFailureKind::RespondWithoutCaller
+                DeliveryFailureType::RespondWithoutCaller
             }
-            delivery::FailureType::SecondVerdict => DeliveryFailureKind::SecondVerdict,
+            delivery::FailureType::SecondVerdict => DeliveryFailureType::SecondVerdict,
         },
         code: failure.code,
         message: failure.message,

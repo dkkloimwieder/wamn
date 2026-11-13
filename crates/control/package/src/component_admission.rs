@@ -84,9 +84,9 @@ pub struct ComponentProjectionError {
 }
 
 impl ComponentProjectionError {
-    fn new(kind: ComponentProjectionErrorType, detail: impl Into<String>) -> Self {
+    fn new(type_: ComponentProjectionErrorType, detail: impl Into<String>) -> Self {
         Self {
-            type_: kind,
+            type_,
             detail: detail.into(),
         }
     }
@@ -181,8 +181,8 @@ impl fmt::Debug for ComponentAdmission {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
             .debug_struct("ComponentAdmission")
-            .field("package_id", &self.component.scope.package_id)
-            .field("package_version", &self.component.scope.package_version)
+            .field("package_id", &self.component.target.package_id)
+            .field("package_version", &self.component.target.package_version)
             .field("component", &self.component.component)
             .field("component_digest", &self.component.component_digest)
             .field("component_bytes_len", &self.component_bytes.len())
@@ -212,7 +212,7 @@ impl ComponentAdmission {
     }
 
     /// The admitted descriptor (docs/operations/building.md#reading-a-pushed-package
-    /// ): the facts without their scope, and the declared connections sorted
+    /// ): the facts without their target, and the declared connections sorted
     /// by store alias, as `push-package` writes it.
     pub fn descriptor(&self) -> ComponentDescriptor {
         ComponentDescriptor::new(self.component.clone(), self.connections.to_vec())
@@ -221,12 +221,12 @@ impl ComponentAdmission {
 
     /// Exact package identity carried by the admitted component facts.
     pub fn package_id(&self) -> &str {
-        &self.component.scope.package_id
+        &self.component.target.package_id
     }
 
     /// Exact package version carried by the admitted component facts.
     pub fn package_version(&self) -> &str {
-        &self.component.scope.package_version
+        &self.component.target.package_version
     }
 
     /// Package-local component name bound to the admitted bytes.
@@ -704,7 +704,7 @@ pub(crate) fn artifact_layout(
 #[cfg(test)]
 mod tests {
     use wamn_catalog::{
-        AdmittedComponentOperation, ComponentOperationDeclaration, ComponentPackageScope,
+        AdmittedComponentOperation, ComponentOperationDeclaration, ComponentPackageCoordinate,
         component_artifact_reference,
     };
     use wamn_engine::component_artifact::component_artifact_config_bytes;
@@ -715,8 +715,8 @@ mod tests {
 
     fn projection_component() -> AdmittedComponent {
         AdmittedComponent {
-            scope: ComponentPackageScope {
-                env_key: "tenant-a".to_owned(),
+            target: ComponentPackageCoordinate {
+                project_env_key: "org-a".to_owned(),
                 package_id: "source_fixture".to_owned(),
                 package_version: "1.0.0".to_owned(),
             },
@@ -746,11 +746,11 @@ mod tests {
             "../tests/fixtures/component_package/component.json"
         ))
         .expect("fixture component declaration is JSON");
-        document["scope"]["env_key"] = serde_json::json!("tenant-a");
+        document["target"]["project_env_key"] = serde_json::json!("org-a");
         let declaration: ComponentDeclaration =
             serde_json::from_value(document).expect("fixture component declaration parses");
         AdmittedComponent {
-            scope: declaration.scope,
+            target: declaration.target,
             component: declaration.component,
             interface_version: declaration.interface_version,
             operations: declaration
@@ -991,8 +991,8 @@ mod tests {
             .expect("the explicit component partition is valid");
         let operation = "observer-fixture:audit/observe@3.0.0".to_owned();
         let component = AdmittedComponent {
-            scope: wamn_catalog::ComponentPackageScope {
-                env_key: "tenant-a".to_owned(),
+            target: wamn_catalog::ComponentPackageCoordinate {
+                project_env_key: "org-a".to_owned(),
                 package_id: manifest.package.id.clone(),
                 package_version: manifest.package.version.clone(),
             },
@@ -1100,8 +1100,8 @@ mod tests {
         registered: Option<&str>,
     ) -> AdmittedComponent {
         AdmittedComponent {
-            scope: wamn_catalog::ComponentPackageScope {
-                env_key: "tenant-a".to_owned(),
+            target: wamn_catalog::ComponentPackageCoordinate {
+                project_env_key: "org-a".to_owned(),
                 package_id: manifest.package.id.clone(),
                 package_version: manifest.package.version.clone(),
             },
@@ -1148,7 +1148,7 @@ mod tests {
     }
 
     /// The other half of the ruling: membership is still the fence for anyone
-    /// claiming to SERVE the package's operations.
+    /// declaring that it SERVES the package's operations.
     #[test]
     fn stranger_registering_a_manifest_operation_is_refused_on_membership() {
         let manifest = overlay_manifest();
@@ -1300,8 +1300,8 @@ mod tests {
             &component_bytes,
             wamn_engine::component_admission::ComponentAdmissionRequest {
                 declaration: ComponentDeclaration {
-                    scope: ComponentPackageScope {
-                        env_key: "tenant-a".to_owned(),
+                    target: ComponentPackageCoordinate {
+                        project_env_key: "org-a".to_owned(),
                         package_id: "orders".to_owned(),
                         package_version: "1.0.0".to_owned(),
                     },

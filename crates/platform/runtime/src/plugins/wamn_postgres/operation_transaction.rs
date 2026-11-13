@@ -2,7 +2,7 @@
 //! (`docs/history/host-transaction.md` 4.1).
 //!
 //! The host begins it before the guest call or through `operation.begin-operation`,
-//! under the call's claims, in a pipeline with its write-log claim. The guest works in
+//! under the call's identity, in a pipeline with its write-log claim. The guest works in
 //! it through `statements.operation-transaction`, and its `begin`, `run` and
 //! `run-stream` refuse while it is bound, because each would run on a
 //! connection of its own that the host's rollback does not reach. After the
@@ -32,13 +32,13 @@ pub(super) const FINISH_REFUSED: &str = "2D000";
 #[derive(Debug, Clone)]
 pub struct OperationTransaction {
     transaction: Arc<PgTransaction>,
-    pub(super) claims: Arc<Mutex<Option<super::claims::transactions::BoundClaims>>>,
+    pub(super) identity: Arc<Mutex<Option<super::session_identity::transactions::BoundIdentity>>>,
     pub(super) finish: Arc<Mutex<Option<[String; 3]>>>,
     pub(super) known_result: Option<String>,
     causation: Option<wamn_event_wire::Causation>,
     /// The declared application that the transaction binds as
     /// `app.application`, read from host state at begin. Numbering resolves
-    /// its sequences by it, never by the claim.
+    /// its sequences by it, never by the identity.
     pub(super) application: Option<String>,
 }
 
@@ -98,24 +98,24 @@ impl OperationTransaction {
     }
 
     async fn start(&self) -> Result<(), PgError> {
-        let claims = self
-            .claims
+        let identity = self
+            .identity
             .lock()
-            .expect("request element claims lock poisoned")
+            .expect("request element identity lock poisoned")
             .take();
-        if let Some(claims) = claims {
+        if let Some(identity) = identity {
             let connection = StatementConnectionGuard::new(
                 take_conn(&self.transaction.state)?,
                 Arc::clone(&self.transaction.destroyed),
             );
-            claims.bind(connection.connection()).await?;
+            identity.bind(connection.connection()).await?;
             connection.restore(&self.transaction.state);
         }
         Ok(())
     }
 
     /// Run host statements of the plugin with this transaction's connection,
-    /// under its claims, as `resources::with_txn_conn` runs them.
+    /// under its identity, as `resources::with_txn_conn` runs them.
     pub(super) async fn with_host_connection<T, F, Fut>(&self, op: F) -> Result<T, PgError>
     where
         F: FnOnce(StatementConnectionGuard) -> Fut,
@@ -161,11 +161,12 @@ impl OperationTransaction {
             .map_err(|error| PgCommitFailure::RolledBack(super::types::map_pg_error(&error)))?;
         let causation = match &self.causation {
             Some(run) => Some(
-                super::claims::transactions::prepare_causation(connection.connection(), run)
-                    .await
-                    .map_err(|error| {
-                        PgCommitFailure::RolledBack(super::types::map_pg_error(&error))
-                    })?,
+                super::session_identity::transactions::prepare_causation(
+                    connection.connection(),
+                    run,
+                )
+                .await
+                .map_err(|error| PgCommitFailure::RolledBack(super::types::map_pg_error(&error)))?,
             ),
             None => None,
         };
@@ -300,21 +301,21 @@ impl wamn_engine::operation::Transaction for OperationTransaction {
 pub(super) type OperationTransactions = HashMap<String, OperationTransaction>;
 
 impl WamnPostgres {
-    /// Begin the host transaction of one operation request element under the claims that
+    /// Begin the host transaction of one operation request element under the identity that
     /// `scope` binds.
     ///
     /// # Errors
     ///
-    /// Returns the error of checkout or claim preparation. BEGIN waits for the claim.
+    /// Returns the error of checkout or identity preparation. BEGIN waits for the claim.
     pub async fn begin_operation_transaction(
         &self,
         scope: &str,
     ) -> Result<OperationTransaction, PgError> {
         let project = self.project_for(scope);
-        let (transaction, claims) = prepare_statement_transaction(self, scope, &project).await?;
+        let (transaction, identity) = prepare_statement_transaction(self, scope, &project).await?;
         Ok(OperationTransaction {
             transaction: Arc::new(transaction),
-            claims: Arc::new(Mutex::new(Some(claims))),
+            identity: Arc::new(Mutex::new(Some(identity))),
             finish: Arc::new(Mutex::new(None)),
             known_result: None,
             causation: if self.active_read(scope) {

@@ -27,7 +27,7 @@ pub enum RegistryError {
     /// No provisioned database for this exact `(org, project, env)`.
     UnknownProjectEnv(Triple),
     /// The project-env's `env` slug names no [`EnvPolicy`](crate::EnvPolicy) in
-    /// its org's set (policies are org-scoped, wamn-8df.4) — the cluster cannot
+    /// its org's set (policies are org-targeted, wamn-8df.4) — the cluster cannot
     /// be derived. A malformed registry (`validate` flags it as `unknown-env`).
     UnknownEnvPolicy(String),
 }

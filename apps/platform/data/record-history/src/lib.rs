@@ -45,7 +45,7 @@ pub const ENTRY_ID_COLUMN: &str = "id";
 
 /// The history table columns in creation order, each with its schema column type.
 ///
-/// The history table of a package relation has no `tenant_id` column. Every
+/// The history table of a package relation has no `project_id` column. Every
 /// column is `NOT NULL`. The log trigger writes every column except
 /// [`POSITION_COLUMN`] and [`ENTRY_ID_COLUMN`], which PostgreSQL generates.
 pub const HISTORY_COLUMNS: [(&str, &str); 10] = [
@@ -159,8 +159,8 @@ pub enum FoldErrorType {
     PositionOrder,
     /// The newest row is not at the head position, so pages are missing.
     IncompleteRead,
-    /// A row carries a kind other than `insert`, `update`, or `delete`.
-    UnknownKind,
+    /// A row carries a type other than `insert`, `update`, or `delete`.
+    UnknownType,
     /// An image is not a JSON object.
     MalformedImage,
     /// An entry does not follow from the state after it.
@@ -175,11 +175,8 @@ pub struct FoldError {
 }
 
 impl FoldError {
-    const fn new(kind: FoldErrorType, position: i64) -> Self {
-        Self {
-            type_: kind,
-            position,
-        }
+    const fn new(type_: FoldErrorType, position: i64) -> Self {
+        Self { type_, position }
     }
 
     /// The reason for the refusal.
@@ -206,7 +203,7 @@ impl fmt::Display for FoldError {
 impl Error for FoldError {}
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-enum Kind {
+enum Type {
     Insert,
     Update,
     Delete,
@@ -221,7 +218,7 @@ pub fn state_at(rows: &[HistoryRow<'_>], position: i64) -> Result<RowState, Fold
     let (Some(oldest), Some(newest)) = (rows.first(), rows.last()) else {
         return Ok(RowState::Unavailable);
     };
-    let mut kinds = Vec::with_capacity(rows.len());
+    let mut types = Vec::with_capacity(rows.len());
     for (index, row) in rows.iter().enumerate() {
         if row.head_position != newest.head_position {
             return Err(FoldError::new(FoldErrorType::HeadMismatch, row.position));
@@ -229,7 +226,7 @@ pub fn state_at(rows: &[HistoryRow<'_>], position: i64) -> Result<RowState, Fold
         if index > 0 && rows[index - 1].position >= row.position {
             return Err(FoldError::new(FoldErrorType::PositionOrder, row.position));
         }
-        kinds.push(row_type(row)?);
+        types.push(row_type(row)?);
     }
     if newest.position != newest.head_position {
         return Err(FoldError::new(
@@ -241,18 +238,18 @@ pub fn state_at(rows: &[HistoryRow<'_>], position: i64) -> Result<RowState, Fold
         return Ok(RowState::Unavailable);
     }
 
-    let mut state = match kinds.last() {
-        Some(Kind::Delete) => None,
+    let mut state = match types.last() {
+        Some(Type::Delete) => None,
         _ => Some(image(newest.current, newest.position)?),
     };
-    for (row, kind) in rows.iter().zip(kinds).rev() {
+    for (row, type_) in rows.iter().zip(types).rev() {
         if row.position <= position {
             break;
         }
-        state = match (kind, state) {
-            (Kind::Insert, Some(_)) => None,
-            (Kind::Delete, None) => Some(image(row.before, row.position)?),
-            (Kind::Update, Some(mut after)) => {
+        state = match (type_, state) {
+            (Type::Insert, Some(_)) => None,
+            (Type::Delete, None) => Some(image(row.before, row.position)?),
+            (Type::Update, Some(mut after)) => {
                 after
                     .columns
                     .extend(image(row.before, row.position)?.columns);
@@ -264,12 +261,12 @@ pub fn state_at(rows: &[HistoryRow<'_>], position: i64) -> Result<RowState, Fold
     Ok(state.map_or(RowState::Absent, RowState::Present))
 }
 
-fn row_type(row: &HistoryRow<'_>) -> Result<Kind, FoldError> {
+fn row_type(row: &HistoryRow<'_>) -> Result<Type, FoldError> {
     match row.type_ {
-        "insert" => Ok(Kind::Insert),
-        "update" => Ok(Kind::Update),
-        "delete" => Ok(Kind::Delete),
-        _ => Err(FoldError::new(FoldErrorType::UnknownKind, row.position)),
+        "insert" => Ok(Type::Insert),
+        "update" => Ok(Type::Update),
+        "delete" => Ok(Type::Delete),
+        _ => Err(FoldError::new(FoldErrorType::UnknownType, row.position)),
     }
 }
 

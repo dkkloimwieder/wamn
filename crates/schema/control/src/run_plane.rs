@@ -54,7 +54,7 @@ const RUN_PLANE_FILES: [&str; 2] = [RUN_STATE_SQL, RUN_QUEUE_SQL];
 
 /// What one plan action does (for reporting; the SQL is on the action).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RunPlaneActionKind {
+pub enum RunPlaneActionType {
     /// `CREATE SCHEMA IF NOT EXISTS` + role usage grant (the run-state.sql
     /// header, rewritten) — emitted once when any run-plane table is missing.
     EnsureSchema,
@@ -96,7 +96,7 @@ pub enum RunPlaneActionKind {
 /// One reconcile action: the SQL to run and what it targets (for reporting).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RunPlaneAction {
-    pub kind: RunPlaneActionKind,
+    pub type_: RunPlaneActionType,
     /// The table / index / object the action targets (reporting label).
     pub target: String,
     pub sql: String,
@@ -126,7 +126,7 @@ impl RunPlanePlan {
 // ---------------------------------------------------------------------------
 // Observation SQL (the shell binds these; pinned by tests like the RI module's
 // `select_replica_identity_sql`). SR12: the pure decision has no pg_catalog —
-// the throwaway-PG gate covers that these really observe the live state.
+// the throwaway-PG condition covers that these really observe the live state.
 // ---------------------------------------------------------------------------
 
 /// Current helper definitions in `$1`.

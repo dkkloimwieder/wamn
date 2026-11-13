@@ -5,7 +5,7 @@ use std::fmt;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use crate::wiring_lowering::{WiringScope, lower_resolved_wiring};
+use crate::wiring_lowering::{WiringTarget, lower_resolved_wiring};
 use anyhow::Context as _;
 use tracing::Instrument as _;
 use wamn_catalog::AdmittedComponent;
@@ -34,7 +34,7 @@ use wamn_runtime::plugins::wamn_postgres::{ResolvedActiveWiring, WorkflowRunKey}
 /// Trusted coordinates handed from an ingress admission owner to the driver.
 #[derive(Debug, Clone)]
 pub struct RouterDriverRequest {
-    pub env_key: String,
+    pub project_env_key: String,
     pub package_id: String,
     pub environment: String,
     pub wiring_id: String,
@@ -52,8 +52,8 @@ pub struct RouterDriverRequest {
 /// run row froze at admission.
 ///
 /// `run` carries the application as its package, the workflow id and version
-/// as its wiring coordinate, and the claim-time caller. The run executes on a
-/// host of the release it pins: the claim leases it only there.
+/// as its wiring coordinate, and the lease-time caller. The run executes on a
+/// host of the release it pins: the lease grants it only there.
 #[derive(Debug, Clone)]
 pub struct WorkflowRunRequest {
     pub run: RouterDriverRequest,
@@ -122,7 +122,7 @@ fn component_invocation_span(
 ) -> tracing::Span {
     invocation_span(
         &InvocationSite {
-            env_key: &request.env_key,
+            project_env_key: &request.project_env_key,
             project,
             environment: &request.environment,
             wiring_id: &request.wiring_id,
@@ -212,7 +212,7 @@ impl RouterDriver {
     }
 
     /// Execute one queued environment workflow, resolving its pinned row on
-    /// every claim. Each node uses the current grants of its execution role.
+    /// every lease. Each node uses the current grants of its execution role.
     pub async fn execute_workflow(
         &self,
         request: WorkflowRunRequest,
@@ -226,13 +226,13 @@ impl RouterDriver {
         } = request;
         // A workflow run's package id is its application, a name the
         // environment declares with its packages, never a package.
-        let scope = self.release.scope();
+        let target = self.release.target();
         anyhow::ensure!(run.wiring_version > 0, "wiring-version-zero");
         anyhow::ensure!(
-            scope.env_key == run.env_key && scope.environment == run.environment,
-            "router-request-release-scope-mismatch"
+            target.project_env_key == run.project_env_key && target.environment == run.environment,
+            "router-request-release-target-mismatch"
         );
-        let application_packages = &scope
+        let application_packages = &target
             .applications
             .get(&run.package_id)
             .with_context(|| {
@@ -249,7 +249,7 @@ impl RouterDriver {
             .resolve_workflow(
                 &self.operations.project,
                 &WorkflowRunKey {
-                    env_key: &run.env_key,
+                    project_env_key: &run.project_env_key,
                     environment: &run.environment,
                     application: &run.package_id,
                     application_packages,
@@ -262,12 +262,12 @@ impl RouterDriver {
             )
             .instrument(tracing::info_span!("wamn.router.resolve"))
             .await?;
-        let scope = WiringScope {
-            env_key: &run.env_key,
+        let target = WiringTarget {
+            project_env_key: &run.project_env_key,
             package_id: &run.package_id,
             environment: &run.environment,
         };
-        let wiring = lower_resolved_wiring(scope, &resolved).context("lower workflow graph")?;
+        let wiring = lower_resolved_wiring(target, &resolved).context("lower workflow graph")?;
         let active = ActiveWiring {
             version: resolved.version,
             graph_hash: Arc::clone(&resolved.graph_hash),
@@ -286,7 +286,7 @@ impl RouterDriver {
 
     /// `workflow` is the identity of a workflow run: each node is then
     /// authorized with the grants the principal holds for its role now. A
-    /// released or candidate delivery keeps its claim-time caller.
+    /// released or candidate delivery keeps its lease-time caller.
     async fn execute_resolved(
         &self,
         request: RouterDriverRequest,
@@ -440,7 +440,7 @@ impl RouterDriver {
             .postgres
             .workflow_node_caller(
                 &self.operations.project,
-                &request.env_key,
+                &request.project_env_key,
                 &identity.principal_id,
                 &identity.role,
             )
@@ -501,7 +501,7 @@ impl RouterDriver {
             deadline_ms,
             facts: NativeFacts::entry(
                 NodeAcquisition {
-                    claims: self.operations.claims(&request.env_key, release),
+                    identity: self.operations.identity(&request.project_env_key, release),
                     invocation: component_invocation(
                         component,
                         &call.operation,
@@ -624,7 +624,7 @@ mod tests {
 
     fn driver_request(traceparent: Option<&str>) -> RouterDriverRequest {
         RouterDriverRequest {
-            env_key: "tenant-a".to_owned(),
+            project_env_key: "org-a".to_owned(),
             package_id: "orders".to_owned(),
             environment: "prod".to_owned(),
             wiring_id: "route-order".to_owned(),
@@ -689,8 +689,8 @@ mod tests {
         assert_eq!(component.span_context.trace_id().to_string(), TRACE_ID);
         assert_eq!(component.parent_span_id.to_string(), PARENT_SPAN_ID);
         assert_eq!(
-            attribute(component, "wamn.env_key").as_deref(),
-            Some("tenant-a")
+            attribute(component, "wamn.project_env_key").as_deref(),
+            Some("org-a")
         );
         assert_eq!(
             attribute(component, "wamn.project").as_deref(),
@@ -802,10 +802,10 @@ mod tests {
     }
 
     /// Queued delivery carries no ingress header at all — the ratified
-    /// host-scoped re-root — so injection is the ONLY thing that gives its guest
+    /// host-targeted re-root — so injection is the ONLY thing that gives its guest
     /// a traceparent.
     #[test]
-    fn queue_node_context_derives_a_traceparent_from_the_host_scoped_root() {
+    fn queue_node_context_derives_a_traceparent_from_the_host_targeted_root() {
         let harness = TraceHarness::install();
         let request = driver_request(None);
         assert!(request.traceparent.is_none());

@@ -1,7 +1,7 @@
 //! Live make sure that the standard guest virtualization stage removes ambient
 //! environment access without hiding guest traps from the serving boundary.
 //!
-//! Gate recipe: `[STD-GUEST-VIRTUALIZATION]` in `docs/operations/running-tests.md#live-prerequisites-and-troubleshooting`.
+//! Condition recipe: `[STD-GUEST-VIRTUALIZATION]` in `docs/operations/running-tests.md#live-prerequisites-and-troubleshooting`.
 
 #[cfg(test)]
 mod tests {
@@ -34,8 +34,8 @@ mod tests {
     use wasmtime_wasi_http::p3::bindings::http::types::ErrorCode;
 
     use crate::trusted_http_route::{
-        self, ENV_KEY, ENVIRONMENT, PACKAGE, PROJECT, ROUTE_AUTHORITY, ROUTE_PATH, RouteOptions,
-        WIRING_ID, WIRING_VERSION,
+        self, ENVIRONMENT, PACKAGE, PROJECT, PROJECT_ENV_KEY, ROUTE_AUTHORITY, ROUTE_PATH,
+        RouteOptions, WIRING_ID, WIRING_VERSION,
     };
 
     const SENTINEL_KEY: &str = "WAMN_STD_VIRTUALIZATION_SENTINEL";
@@ -644,7 +644,7 @@ mod tests {
 
         let delivery = route
             .execute(RouterDriverRequest {
-                env_key: ENV_KEY.to_owned(),
+                project_env_key: PROJECT_ENV_KEY.to_owned(),
                 package_id: PACKAGE.to_owned(),
                 environment: ENVIRONMENT.to_owned(),
                 wiring_id: WIRING_ID.to_owned(),
@@ -669,7 +669,7 @@ mod tests {
 
         let connection = route
             .execute(RouterDriverRequest {
-                env_key: ENV_KEY.to_owned(),
+                project_env_key: PROJECT_ENV_KEY.to_owned(),
                 package_id: PACKAGE.to_owned(),
                 environment: ENVIRONMENT.to_owned(),
                 wiring_id: WIRING_ID.to_owned(),

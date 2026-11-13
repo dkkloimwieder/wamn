@@ -10,11 +10,11 @@ use wamn_run_state::intent_cases::{self, CaseStores, IntentStoreFixture};
 use wamn_run_state::intent_store::{Begun, Intent, StoredOutcome};
 
 use super::WriteLogStore;
-use crate::plugins::wamn_postgres::claims::tests::{
+use crate::plugins::wamn_postgres::session_identity::tests::{
     LIVE_PRINCIPAL, ensure_live_user_rows, live_guest_url,
 };
 use crate::plugins::wamn_postgres::{
-    ClassCredentials, SessionClaims, WamnPostgres, WamnPostgresConfig,
+    ClassCredentials, SessionIdentity, WamnPostgres, WamnPostgresConfig,
 };
 
 /// Bounds a wait for an observed backend state. It only stops a test that a
@@ -38,10 +38,12 @@ fn write_log_sql() -> &'static str {
     &schema[start..end]
 }
 
-/// A plugin over a fresh database of `env_key`, with the write log installed.
-async fn env_key_database(env_key: &str) -> (wamn_test_postgres::Database, Arc<WamnPostgres>) {
+/// A plugin over a fresh database of `project_env_key`, with the write log installed.
+async fn project_env_key_database(
+    project_env_key: &str,
+) -> (wamn_test_postgres::Database, Arc<WamnPostgres>) {
     let database = wamn_test_postgres::database();
-    let guest_url = live_guest_url(database.url(), env_key).await;
+    let guest_url = live_guest_url(database.url(), project_env_key).await;
     ensure_live_user_rows(database.url(), &[LIVE_PRINCIPAL]).await;
     database
         .execute(&[write_log_sql()])
@@ -60,15 +62,15 @@ async fn env_key_database(env_key: &str) -> (wamn_test_postgres::Database, Arc<W
     (database, postgres)
 }
 
-/// Each case gets two fresh databases: the database is the tenant.
+/// Each case gets two fresh databases: the database is the project.
 #[derive(Default)]
 struct Databases(Mutex<Vec<wamn_test_postgres::Database>>);
 
 #[async_trait]
 impl IntentStoreFixture for Databases {
     async fn stores(&self, _case: &'static str) -> CaseStores {
-        let (database, postgres) = env_key_database("writeloga").await;
-        let (other_database, other_postgres) = env_key_database("writelogb").await;
+        let (database, postgres) = project_env_key_database("writeloga").await;
+        let (other_database, other_postgres) = project_env_key_database("writelogb").await;
         self.0
             .lock()
             .expect("databases lock poisoned")
@@ -79,13 +81,13 @@ impl IntentStoreFixture for Databases {
                 PROJECT.into(),
                 "writeloga".into(),
             )),
-            tenant: "writeloga".into(),
+            partition: "writeloga".into(),
             other: Arc::new(WriteLogStore::new(
                 other_postgres,
                 PROJECT.into(),
                 "writelogb".into(),
             )),
-            other_tenant: "writelogb".into(),
+            other_partition: "writelogb".into(),
         }
     }
 }
@@ -107,7 +109,7 @@ async fn the_two_step_write_log_keeps_the_intent_rules() {
 
 fn intent<'a>(key: &'a str, input_hash: &'a str) -> Intent<'a> {
     Intent {
-        tenant: "writelogtx",
+        partition: "writelogtx",
         release: "release-1",
         package: "base",
         operation: "base:widget/create@1.0.0",
@@ -121,7 +123,7 @@ fn intent<'a>(key: &'a str, input_hash: &'a str) -> Intent<'a> {
 #[tokio::test]
 async fn a_known_result_commits_in_the_claim_without_a_finish_update() {
     let _lock = wamn_test_postgres::lock();
-    let (database, postgres) = env_key_database("writelogtx").await;
+    let (database, postgres) = project_env_key_database("writelogtx").await;
     database
         .execute(&[
             "ALTER TABLE platform.write_log ADD CHECK (result IS NOT NULL); \
@@ -132,13 +134,13 @@ async fn a_known_result_commits_in_the_claim_without_a_finish_update() {
         ])
         .unwrap();
     postgres
-        .bind_session_claims(
+        .bind_session_identity(
             SCOPE,
-            &SessionClaims {
-                env_key: "writelogtx".into(),
+            &SessionIdentity {
+                project_env_key: "writelogtx".into(),
                 user_id: Some(LIVE_PRINCIPAL.into()),
                 operation: Some("base:widget/delete@1.0.0".into()),
-                ..SessionClaims::default()
+                ..SessionIdentity::default()
             },
         )
         .await
@@ -207,15 +209,15 @@ async fn a_known_result_commits_in_the_claim_without_a_finish_update() {
 #[tokio::test]
 async fn the_claim_of_a_request_element_commits_with_its_transaction() {
     let _lock = wamn_test_postgres::lock();
-    let (database, postgres) = env_key_database("writelogtx").await;
+    let (database, postgres) = project_env_key_database("writelogtx").await;
     postgres
-        .bind_session_claims(
+        .bind_session_identity(
             SCOPE,
-            &SessionClaims {
-                env_key: "writelogtx".into(),
+            &SessionIdentity {
+                project_env_key: "writelogtx".into(),
                 user_id: Some(LIVE_PRINCIPAL.into()),
                 operation: Some("base:widget/create@1.0.0".into()),
-                ..SessionClaims::default()
+                ..SessionIdentity::default()
             },
         )
         .await
@@ -332,15 +334,15 @@ async fn the_claim_of_a_request_element_commits_with_its_transaction() {
 #[tokio::test]
 async fn a_missing_finish_rolls_back_the_pipelined_commit() {
     let _lock = wamn_test_postgres::lock();
-    let (database, postgres) = env_key_database("writelogtx").await;
+    let (database, postgres) = project_env_key_database("writelogtx").await;
     postgres
-        .bind_session_claims(
+        .bind_session_identity(
             SCOPE,
-            &SessionClaims {
-                env_key: "writelogtx".into(),
+            &SessionIdentity {
+                project_env_key: "writelogtx".into(),
                 user_id: Some(LIVE_PRINCIPAL.into()),
                 operation: Some("base:widget/create@1.0.0".into()),
-                ..SessionClaims::default()
+                ..SessionIdentity::default()
             },
         )
         .await
@@ -375,7 +377,7 @@ async fn model_versions_follow_wal_without_a_counter() {
     let family = wamn_control_provision::WorkloadRoleFamily::HttpAdmitter;
     let role = wamn_control_provision::workload_generation_role(
         family,
-        wamn_control_provision::WorkloadRoleScope::ProjectEnvironment {
+        wamn_control_provision::WorkloadRoleIdentity::ProjectEnvironment {
             org: "wal-test",
             project: PROJECT,
             environment: "test",

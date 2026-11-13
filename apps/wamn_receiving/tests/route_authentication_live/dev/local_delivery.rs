@@ -90,14 +90,14 @@ async fn local_watch_preserves_data_refuses_bad_sql_and_recreates_schema() -> an
     .await?;
     let system_acl = current_database_acl(admin.as_ref()).await?;
     let provisioning = inputs.environment.nats.connect().await?;
-    let scope = wamn_control_registry::Triple::new(
+    let target = wamn_control_registry::Triple::new(
         &environment.identity.org,
         &environment.identity.project,
         environment.identity.environment.as_str(),
     );
     wamn_broker::streams::provision(
         &async_nats::jetstream::new(provisioning.clone()),
-        &scope,
+        &target,
         inputs.environment.stream_replicas,
         Duration::from_secs(inputs.environment.dup_window_secs),
         &[],
@@ -264,8 +264,8 @@ async fn require_local_facts(root: &Path, target_url: &str) -> anyhow::Result<()
     let (target, task) = connect(target_url).await?;
     let wirings: i64 = target
         .query_one(
-            "SELECT count(*) FROM catalog.workflows WHERE env_key=$1",
-            &[&identity().env_key().as_str()],
+            "SELECT count(*) FROM catalog.workflows WHERE project_env_key=$1",
+            &[&identity().project_env_key().as_str()],
         )
         .await?
         .get(0);
@@ -273,8 +273,8 @@ async fn require_local_facts(root: &Path, target_url: &str) -> anyhow::Result<()
     // else: dev authors no workflow on its own.
     let releases = target
         .query(
-            "SELECT manifest_digest, canonical_bytes FROM catalog.releases WHERE env_key=$1",
-            &[&identity().env_key().as_str()],
+            "SELECT manifest_digest, canonical_bytes FROM catalog.releases WHERE project_env_key=$1",
+            &[&identity().project_env_key().as_str()],
         )
         .await?
         .into_iter()

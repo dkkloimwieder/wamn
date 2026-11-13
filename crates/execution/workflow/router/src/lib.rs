@@ -39,7 +39,7 @@
 //!             // `wiring.fail_on_node_data(&mut walk, &call.node, refused)?`.
 //!             wiring.apply(&mut walk, &call, o, now_ms())?;
 //!         }
-//!         Step::Wait { until_ms, throttle, .. } => { /* gate `throttle`, wait to until_ms */ }
+//!         Step::Wait { until_ms, throttle, .. } => { /* condition `throttle`, wait to until_ms */ }
 //!         Step::Done(status) => break status,
 //!     }
 //! }
@@ -67,7 +67,7 @@ pub use retry::{RetryPolicy, ThrottleKey};
 pub use terminal::{DEDUP_ID_FIELD, Terminal, Verdict};
 #[doc(inline)]
 pub use walk::{
-    ApplyError, ApplyErrorType, Delivery, Failure, FailureKind, NodeCall, Step, Walk, WalkStatus,
+    ApplyError, ApplyErrorType, Delivery, Failure, FailureType, NodeCall, Step, Walk, WalkStatus,
 };
 #[doc(inline)]
 pub use wiring::{DEFAULT_HOP_LIMIT, Wiring, WiringEdge, WiringError, WiringErrorType, WiringNode};
@@ -83,7 +83,7 @@ pub trait NodeInvoker {
     fn now_ms(&mut self) -> u64;
 
     /// Wait until `until_ms` before the next invocation, coordinating on
-    /// `throttle` if the host runs a shared rate-limit gate.
+    /// `throttle` if the host runs a shared rate-limit condition.
     fn wait_until(&mut self, until_ms: u64, throttle: Option<&ThrottleKey>);
 }
 

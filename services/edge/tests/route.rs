@@ -129,7 +129,7 @@ fn outcome(request_id: &str, frame: &str) -> Value {
 async fn begin(store: &SqliteIntentStore, release: &str, request_element: &Value) -> IntentId {
     let begun = store
         .begin(&Intent {
-            tenant: ORG,
+            partition: ORG,
             release,
             package: PACKAGE,
             operation: OPERATION,

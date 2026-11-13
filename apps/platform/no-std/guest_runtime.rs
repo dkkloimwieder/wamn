@@ -1,4 +1,4 @@
-//! Shared allocation and panic floor for reusable `no_std` palette components.
+//! Shared allocation and panic minimum for reusable `no_std` palette components.
 
 #[global_allocator]
 static ALLOCATOR: dlmalloc::GlobalDlmalloc = dlmalloc::GlobalDlmalloc;

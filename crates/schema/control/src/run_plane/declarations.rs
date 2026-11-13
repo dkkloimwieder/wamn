@@ -2,7 +2,7 @@
 
 use std::borrow::Cow;
 
-const RUNS_ADMISSION_SCOPE_CHECK_DEF: &str =
+const RUNS_ADMISSION_TARGET_CHECK_DEF: &str =
     "CHECK (package_id <> ''::text AND environment <> ''::text)";
 const RUNS_WIRING_IDENTITY_CHECK_DEF: &str = "CHECK (wiring_id IS NULL AND wiring_version IS NULL OR wiring_id IS NOT NULL AND wiring_version IS NOT NULL AND wiring_id <> ''::text AND wiring_version > 0)";
 /// The execution identities of a run: a candidate case, an
@@ -17,11 +17,11 @@ const RUNS_EXECUTION_IDENTITY_CHECK_DEF: &str = "CHECK (NOT trigger_source IS DI
 pub(super) const RUNS_ADMISSION_PINS_TRIGGER_DEF: &str = "CREATE TRIGGER runs_admission_pins_immutable BEFORE UPDATE OF package_id, environment, capture_mode, wiring_id, wiring_version, wiring_hash, binding_world_json, manifest_digest, service_principal_id, execution_principal_id, execution_role, invoked_by, invoked_by_user_id, node_digests_json ON wamn_run.runs FOR EACH ROW EXECUTE FUNCTION wamn_run.guard_run_admission_pins_immutable()";
 
 /// The qual `wamn_run.environment_policies` must carry, as `pg_policy` renders
-/// it. Re-keyed onto `current_user` with the rest of the guest-reachable floor
+/// it. Re-keyed onto `current_user` with the rest of the guest-reachable minimum
 /// (`wamn-0h0g.22.6.3`); if this drifts from `deploy/sql/run-state.sql` the
 /// reconciler REVERTS the sweep on every existing run-plane database.
-pub(super) const ENVIRONMENT_POLICY_ENV_KEY_QUAL: &str =
-    "wamn_authority.tenant_key(env_key) = wamn_authority.current_tenant_key()";
+pub(super) const ENVIRONMENT_POLICY_PROJECT_ENV_KEY_QUAL: &str =
+    "wamn_authority.project_key(project_env_key) = wamn_authority.current_project_key()";
 
 #[derive(Clone, Copy)]
 pub(super) enum CheckOrigin {
@@ -39,14 +39,14 @@ pub(super) struct CheckSpec {
 
 /// PostgreSQL 18's canonical CHECK constraint list for the four run-plane record
 /// files. The live shell reads the same `pg_get_constraintdef(..., true)` form.
-/// The throwaway-PG gate applies the deploy SQL and pins that this catalog is a
+/// The throwaway-PG condition applies the deploy SQL and pins that this catalog is a
 /// byte-for-byte projection of the schema of record.
 pub(super) const CHECK_SPECS: &[CheckSpec] = &[
     CheckSpec {
         table: "environment_policies",
-        name: "environment_policies_env_key_check",
-        definition: "CHECK (env_key <> ''::text)",
-        origin: CheckOrigin::Inline("env_key"),
+        name: "environment_policies_project_env_key_check",
+        definition: "CHECK (project_env_key <> ''::text)",
+        origin: CheckOrigin::Inline("project_env_key"),
     },
     CheckSpec {
         table: "environment_policies",
@@ -56,9 +56,9 @@ pub(super) const CHECK_SPECS: &[CheckSpec] = &[
     },
     CheckSpec {
         table: "runs",
-        name: "runs_env_key_check",
-        definition: "CHECK (env_key <> ''::text)",
-        origin: CheckOrigin::Inline("env_key"),
+        name: "runs_project_env_key_check",
+        definition: "CHECK (project_env_key <> ''::text)",
+        origin: CheckOrigin::Inline("project_env_key"),
     },
     CheckSpec {
         table: "runs",
@@ -105,7 +105,7 @@ pub(super) const CHECK_SPECS: &[CheckSpec] = &[
     CheckSpec {
         table: "runs",
         name: "runs_check",
-        definition: RUNS_ADMISSION_SCOPE_CHECK_DEF,
+        definition: RUNS_ADMISSION_TARGET_CHECK_DEF,
         origin: CheckOrigin::Table,
     },
     CheckSpec {
@@ -170,7 +170,7 @@ pub(super) const CHECK_SPECS: &[CheckSpec] = &[
     CheckSpec {
         table: "runs",
         name: "runs_release_record_check",
-        // The claim-time manifest record: absent, or well formed. The effective
+        // The lease-time manifest record: absent, or well formed. The effective
         // release id is already an immutable admission pin. Table-origin and
         // explicitly named so it can never collide with the retired child-run
         // `runs_check3` numbering.
@@ -203,9 +203,9 @@ pub(super) const CHECK_SPECS: &[CheckSpec] = &[
     },
     CheckSpec {
         table: "run_queue",
-        name: "run_queue_env_key_check",
-        definition: "CHECK (env_key <> ''::text)",
-        origin: CheckOrigin::Inline("env_key"),
+        name: "run_queue_project_env_key_check",
+        definition: "CHECK (project_env_key <> ''::text)",
+        origin: CheckOrigin::Inline("project_env_key"),
     },
     CheckSpec {
         table: "run_queue",

@@ -14,7 +14,7 @@ def write_result(output, concurrency, measurements):
         # local.sh samples the host process over the timed interval.
         if "host_cpu_ms_per_request" in run:
             result[call]["host_cpu_ms_per_request"] = run["host_cpu_ms_per_request"]
-        # The record_receipt floor replay adds its per-row times (perf-arch.md M7).
+        # The record_receipt minimum replay adds its per-row times (perf-arch.md M7).
         result[call].update({key: run[key] for key in (
             "lines", "statement_ms_per_row", "trigger_ms_per_row", "trigger_share",
         ) if key in run})

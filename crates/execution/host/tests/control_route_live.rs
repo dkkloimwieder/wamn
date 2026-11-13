@@ -1396,7 +1396,7 @@ impl wamn_execution_host::environment_status::StatusSource for FixedStatus {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn environment_status_counts_are_scoped_and_optional() -> anyhow::Result<()> {
+async fn environment_status_counts_are_targeted_and_optional() -> anyhow::Result<()> {
     let mut postgres = wamn_test_postgres::start(&[])?;
     let database = postgres.create_database("control_status_counts")?;
     let admin = connect(database.url()).await?;
@@ -1844,8 +1844,8 @@ async fn connection_routes_refuse_mismatches_and_project_only_enabled_rows() -> 
         .await?;
     // The sha256 of the canonical bytes `{}`, which catalog.releases tests.
     let digest = "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a";
-    billing.execute("INSERT INTO catalog.releases(env_key,manifest_digest,canonical_bytes) VALUES($1,$2,$3)",&[&wamn_control_registry::project_env_key(ORG,"billing","dev"),&digest,&b"{}".as_slice()]).await?;
-    billing.execute("INSERT INTO catalog.release_connection(env_key,manifest_digest,connection_id,version) VALUES($1,$2,$3::text::uuid,1)",&[&wamn_control_registry::project_env_key(ORG,"billing","dev"),&digest,&identity]).await?;
+    billing.execute("INSERT INTO catalog.releases(project_env_key,manifest_digest,canonical_bytes) VALUES($1,$2,$3)",&[&wamn_control_registry::project_env_key(ORG,"billing","dev"),&digest,&b"{}".as_slice()]).await?;
+    billing.execute("INSERT INTO catalog.release_connection(project_env_key,manifest_digest,connection_id,version) VALUES($1,$2,$3::text::uuid,1)",&[&wamn_control_registry::project_env_key(ORG,"billing","dev"),&digest,&identity]).await?;
     billing.batch_execute("COMMIT").await?;
     assert!(
         call(
@@ -2013,10 +2013,10 @@ async fn delayed_grant_cannot_restore_revoked_admin() -> anyhow::Result<()> {
             .await
         });
         tokio::time::timeout(std::time::Duration::from_secs(10), pause.entered()).await?;
-        let env_key = wamn_control_registry::project_env_key(ORG, "billing", "dev");
+        let project_env_key = wamn_control_registry::project_env_key(ORG, "billing", "dev");
         bucket
             .put(
-                wamn_broker::auth_changes::principal_key(&env_key, user.as_str()),
+                wamn_broker::auth_changes::principal_key(&project_env_key, user.as_str()),
                 "stale".into(),
             )
             .await?;
@@ -2055,11 +2055,11 @@ async fn delayed_grant_cannot_restore_revoked_admin() -> anyhow::Result<()> {
         assert!(rows.iter().all(|row| !row.contains("admin")), "{rows:?}");
         let count: i64 = admin.query_one("SELECT count(*) FROM identity.project_roles WHERE principal_id=$1::text::uuid AND role='project-admin'", &[&user.as_str()]).await?.get(0);
         assert_eq!(count, 0);
-        let env_key = wamn_control_registry::project_env_key(ORG, "billing", "dev");
+        let project_env_key = wamn_control_registry::project_env_key(ORG, "billing", "dev");
         assert!(
             bucket
                 .get(wamn_broker::auth_changes::principal_key(
-                    &env_key,
+                    &project_env_key,
                     user.as_str()
                 ))
                 .await?

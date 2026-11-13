@@ -21,7 +21,7 @@ pub struct RowSecurityObservation {
     pub policies: BTreeMap<String, RowPolicyObservation>,
 }
 
-/// What the driver observed live, scoped to ONE project-env schema (plus the
+/// What the driver observed live, targeted to ONE project-env schema (plus the
 /// per-database `catalog` metadata schema). Everything here is a read — the
 /// pure planner turns it into the action list.
 #[derive(Debug, Clone, Default)]
@@ -49,7 +49,7 @@ pub struct RunPlaneObservation {
     /// outside both the guest-visible and host-only author roles.
     pub authoring_table_owners: BTreeMap<(String, String), String>,
     /// EVERY ordinary table in the target schema → its live column names.
-    /// Includes entity/floor tables, which the planner ignores.
+    /// Includes entity/minimum tables, which the planner ignores.
     pub tables: BTreeMap<String, BTreeSet<String>>,
     /// ENABLE/FORCE flags and every policy on the projected env-policy table.
     /// `None` means the relation itself is absent.

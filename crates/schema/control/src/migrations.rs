@@ -1,4 +1,4 @@
-//! Ordered, immutable migration prefix planning shared by every SQL scope.
+//! Ordered, immutable migration prefix planning shared by every SQL target.
 
 use crate::package_migrations::{PackageMigrationError, PackageMigrationErrorType};
 use crate::{

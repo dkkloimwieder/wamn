@@ -502,7 +502,7 @@ async fn assert_missing_first_beat(
     fs::write(
         evidence.join("native-missing-first-beat-result.txt"),
         format!(
-            "scope=native ClusterHost and WAMN lifecycle helpers in test process\nclosed_client_subscription_failed=true\nheartbeat_interval_ms=100\nsilence_budget_ms={}\nobservation_ms={}\nnever_beat=true\ncleanup_polled_after_observer=true\nnative_subscription_error_retrieved=true\ncleanup_ms={}\ncleanup_budget_ms={}\nfull_process_unexpected_failure_proved=false\n",
+            "target=native ClusterHost and WAMN lifecycle helpers in test process\nclosed_client_subscription_failed=true\nheartbeat_interval_ms=100\nsilence_budget_ms={}\nobservation_ms={}\nnever_beat=true\ncleanup_polled_after_observer=true\nnative_subscription_error_retrieved=true\ncleanup_ms={}\ncleanup_budget_ms={}\nfull_process_unexpected_failure_proved=false\n",
             silence_budget.as_millis(),
             observation_time.as_millis(),
             cleanup_time.as_millis(),

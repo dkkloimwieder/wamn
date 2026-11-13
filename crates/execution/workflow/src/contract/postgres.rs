@@ -19,14 +19,14 @@ struct QueueState {
     leased: bool,
 }
 
-/// The workflow contract over one tenant and environment.
+/// The workflow contract over one project and environment.
 ///
 /// Automation uses project-admin authority.
 pub struct PostgresWorkflows {
     client: Mutex<Client>,
     /// The run plane schema, for example `wamn_run`.
     schema: String,
-    env_key: String,
+    project_env_key: String,
     environment: String,
 }
 
@@ -34,52 +34,52 @@ impl std::fmt::Debug for PostgresWorkflows {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("PostgresWorkflows")
             .field("schema", &self.schema)
-            .field("env_key", &self.env_key)
+            .field("project_env_key", &self.project_env_key)
             .field("environment", &self.environment)
             .finish_non_exhaustive()
     }
 }
 
 impl PostgresWorkflows {
-    /// Serve the runs of `env_key` and `environment` in `schema`.
+    /// Serve the runs of `project_env_key` and `environment` in `schema`.
     pub fn new(
         client: Client,
         schema: impl Into<String>,
-        env_key: impl Into<String>,
+        project_env_key: impl Into<String>,
         environment: impl Into<String>,
     ) -> Self {
         Self {
             client: Mutex::new(client),
             schema: schema.into(),
-            env_key: env_key.into(),
+            project_env_key: project_env_key.into(),
             environment: environment.into(),
         }
     }
 
-    fn env_key(&self) -> &str {
-        &self.env_key
+    fn project_env_key(&self) -> &str {
+        &self.project_env_key
     }
 
     fn environment(&self) -> &str {
         &self.environment
     }
 
-    /// Bind the transaction to the run plane and the release tenant.
-    async fn scope(&self, transaction: &Transaction<'_>) -> Result<(), WorkflowError> {
+    /// Bind the transaction to the run plane and the release project.
+    async fn target(&self, transaction: &Transaction<'_>) -> Result<(), WorkflowError> {
         let executor = PlatformComponent::Executor;
         transaction
             .query_one(
-                "SELECT set_config('search_path', $1, true), set_config('app.env_key', $2, true), \
+                "SELECT set_config('search_path', $1, true), set_config('app.project_env_key', $2, true), \
                  set_config('app.user_id', $3, true), set_config('app.operation', $4, true)",
                 &[
                     &self.schema,
-                    &self.env_key(),
+                    &self.project_env_key(),
                     &executor.principal_id().to_string(),
                     &executor.principal_name(),
                 ],
             )
             .await
-            .map_err(|error| WorkflowError::storage("scope the transaction", error))?;
+            .map_err(|error| WorkflowError::storage("target the transaction", error))?;
         Ok(())
     }
 
@@ -119,7 +119,7 @@ impl Workflows for PostgresWorkflows {
             .transaction()
             .await
             .map_err(|error| WorkflowError::storage("begin the park", error))?;
-        self.scope(&transaction).await?;
+        self.target(&transaction).await?;
         let parked = transaction
             .query_opt(&park_queued_run_sql(), &[&run_id, &self.environment()])
             .await
@@ -171,7 +171,7 @@ impl Workflows for PostgresWorkflows {
             .transaction()
             .await
             .map_err(|error| WorkflowError::storage("begin the release", error))?;
-        self.scope(&transaction).await?;
+        self.target(&transaction).await?;
         let released = transaction
             .query_opt(&release_parked_run_sql(), &[&run_id, &self.environment()])
             .await
@@ -201,7 +201,7 @@ impl Workflows for PostgresWorkflows {
             .transaction()
             .await
             .map_err(|error| WorkflowError::storage("begin the list", error))?;
-        self.scope(&transaction).await?;
+        self.target(&transaction).await?;
         let rows = transaction
             .query(&list_workflow_runs_sql(), &[&self.environment(), &limit])
             .await

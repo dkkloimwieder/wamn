@@ -199,12 +199,12 @@ pub fn object_store_overlay(overlay: &str, secret_name: &str) -> anyhow::Result<
     serde_yaml::to_string(&overlay).context("render object-store host overlay")
 }
 
-/// All identity claims consumed by the HTTP component.
+/// All identity fields consumed by the HTTP component.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct HttpClaims {
-    #[serde(rename = "wamn.env_key")]
-    pub env_key: String,
+pub struct HttpIdentity {
+    #[serde(rename = "wamn.project_env_key")]
+    pub project_env_key: String,
     #[serde(rename = "wamn.catalog")]
     pub catalog: String,
     #[serde(rename = "wamn.environment")]
@@ -219,7 +219,7 @@ pub struct HttpWorkloadInput {
     pub namespace: String,
     pub image: String,
     pub route_host: String,
-    pub claims: HttpClaims,
+    pub identity: HttpIdentity,
 }
 
 /// Render host values without reading process state or opening files.
@@ -239,7 +239,7 @@ pub fn render_host_values(
         .clone_from(&input.host_tag);
     // The host's data connection is the environment's NATS user
     // (docs/plan/alignment.md R5).
-    let env_key = wamn_control_registry::project_env_key(
+    let project_env_key = wamn_control_registry::project_env_key(
         &input.event.org,
         &input.event.project,
         &input.event.environment,
@@ -251,7 +251,7 @@ pub fn render_host_values(
         .context("host base global.certificates is missing")?
         .insert(
             "dataCertSecretName".into(),
-            format!("wamn-nats-{env_key}").into(),
+            format!("wamn-nats-{project_env_key}").into(),
         );
     let group = one_mut(&mut overlay.runtime.host_groups, "host overlay hostGroups")?;
     group.namespace.clone_from(&input.namespace);
@@ -275,7 +275,7 @@ pub fn render_host_values(
          inbox-prefix: \"_INBOX_{}\", stream-allow: \"{}\", subject-allow: \"{}\", \
          subscription-capacity-bytes: \"4194304\", subscription-capacity: \"64\", \
          max-in-flight: \"64\"}}}}}}}}]",
-        wamn_control_registry::environment_nats_user(&env_key),
+        wamn_control_registry::environment_nats_user(&project_env_key),
         source.name,
         source.subjects.join(","),
     ))
@@ -450,13 +450,13 @@ pub fn assert_rendered_identity(rendered: &str, expected: &HostIdentity) -> anyh
             .with_context(|| format!("rendered file declares no value for {name}"))?;
         ensure!(
             value == declared,
-            "rendered file claims {name}={value}, but this application declares {declared}"
+            "rendered file identity {name}={value}, but this application declares {declared}"
         );
     }
     Ok(())
 }
 
-/// Render both HTTP documents with one route and all five claims.
+/// Render both HTTP documents with one route and all five identity.
 pub fn render_http_workload(template: &str, input: &HttpWorkloadInput) -> anyhow::Result<String> {
     let mut documents = serde_yaml::Deserializer::from_str(template)
         .map(HttpDocument::deserialize)
@@ -481,7 +481,7 @@ pub fn render_http_workload(template: &str, input: &HttpWorkloadInput) -> anyhow
                 spec.environment.clone_from(&input.namespace);
                 let component = one_mut(&mut spec.components, "HTTP components")?;
                 component.image.clone_from(&input.image);
-                component.local_resources.config = input.claims.clone();
+                component.local_resources.config = input.identity.clone();
                 ensure!(
                     spec.host_interfaces
                         .iter()
@@ -765,7 +765,7 @@ struct HttpComponent {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct HttpResources {
-    config: HttpClaims,
+    config: HttpIdentity,
     #[serde(flatten)]
     extra: Extra,
 }
@@ -773,7 +773,8 @@ struct HttpResources {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct KindCluster {
-    kind: ClusterKind,
+    #[serde(rename = "kind")]
+    type_: ClusterKind,
     api_version: String,
     nodes: Vec<KindNode>,
     #[serde(flatten)]

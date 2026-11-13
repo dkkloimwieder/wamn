@@ -129,7 +129,7 @@ pub(super) fn verify_dev_command_output(output: &std::process::Output) -> anyhow
     );
     // The endpoint the activated release served, read off the public dev seam.
     // Only the Activate stage can publish it, so dropping that publish leaves
-    // this line absent — which is the gate wamn-10yt.10.28 asked for, and it
+    // this line absent — which is the condition wamn-10yt.10.28 asked for, and it
     // cannot be satisfied by anything the command knows before it activates.
     let served = stdout
         .lines()
@@ -230,9 +230,9 @@ pub(super) async fn verify_dev_target_package_and_acl_state(
     let packages = project
         .query(
             "SELECT package_id, package_version, artifact_digest \
-             FROM catalog.packages WHERE env_key = $1 \
+             FROM catalog.packages WHERE project_env_key = $1 \
              ORDER BY package_id COLLATE \"C\", package_version COLLATE \"C\"",
-            &[&identity().env_key().as_str()],
+            &[&identity().project_env_key().as_str()],
         )
         .await
         .context("read product-command target package coordinates")?;
@@ -264,9 +264,9 @@ pub(super) async fn verify_dev_target_package_and_acl_state(
     let migrations = project
         .query(
             "SELECT package_id, package_version, ordinal, relative_path, sha256 \
-             FROM catalog.package_migrations WHERE env_key = $1 \
+             FROM catalog.package_migrations WHERE project_env_key = $1 \
              ORDER BY package_id COLLATE \"C\", package_version COLLATE \"C\", ordinal",
-            &[&identity().env_key().as_str()],
+            &[&identity().project_env_key().as_str()],
         )
         .await
         .context("read product-command target migration records")?;
@@ -383,7 +383,7 @@ pub(super) async fn assert_dev_command(
     inputs: &mut DevJourneyInputs,
     event_provisioning: &async_nats::Client,
 ) -> anyhow::Result<()> {
-    // Keep the expensive product gate to one run. The filesystem adapter's
+    // Keep the expensive product condition to one run. The filesystem adapter's
     // `filesystem_events_map_owned_inputs_and_ignore_generated_outputs` owns
     // affected-suffix behavior deterministically.
     let scratch = ScratchRoot::create()?;
@@ -412,14 +412,14 @@ pub(super) async fn assert_dev_command(
     let durable_acl_before = current_database_acl(project.as_ref()).await?;
     // The first run recreates the target, which closes this connection.
     project_task.abort();
-    let event_scope = wamn_control_registry::Triple {
+    let event_target = wamn_control_registry::Triple {
         org: environment.identity.org.clone(),
         project: environment.identity.project.clone(),
         env: wamn_control_registry::Env::new(environment.identity.environment.clone()),
     };
     wamn_broker::streams::provision(
         &async_nats::jetstream::new(event_provisioning.clone()),
-        &event_scope,
+        &event_target,
         inputs.environment.stream_replicas,
         Duration::from_secs(inputs.environment.dup_window_secs),
         &[],

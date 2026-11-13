@@ -2,7 +2,7 @@
 //!
 //! The test creates the database wamn_system on the PostgreSQL server of its test
 //! process and holds the process lock of that server. It replaces system schemas,
-//! creates two fixture databases, and closes the cluster PUBLIC CONNECT floor.
+//! creates two fixture databases, and closes the cluster PUBLIC CONNECT base grants.
 
 use std::fs;
 use std::os::unix::fs::{MetadataExt as _, PermissionsExt as _};
@@ -17,7 +17,7 @@ use tokio_postgres::{Client, NoTls};
 use url::Url;
 use wamn_control_provision::session_target::{SESSION_TARGET_KEY, SessionTarget};
 use wamn_control_provision::{
-    CredentialGeneration, SYSTEM_SCHEMA_SQL, WorkloadRoleFamily, WorkloadRoleScope,
+    CredentialGeneration, SYSTEM_SCHEMA_SQL, WorkloadRoleFamily, WorkloadRoleIdentity,
     project_env_database_name, sql, workload_generation_role,
 };
 use wamn_test_infrastructure::locked_database;
@@ -38,7 +38,7 @@ const PROJECT: &str = "widgets";
 const ENVIRONMENT: &str = "dev";
 const INSTANCE: &str = "k3m9x2p7";
 const OTHER_INSTANCE: &str = "p7x2m9k3";
-const ENV_KEY: &str = "sessioncli--widgets--dev";
+const PROJECT_ENV_KEY: &str = "sessioncli--widgets--dev";
 
 fn database(instance: &str) -> String {
     project_env_database_name(ORG, PROJECT, ENVIRONMENT, instance)
@@ -47,7 +47,7 @@ fn database(instance: &str) -> String {
 fn generation_role(generation: CredentialGeneration) -> String {
     workload_generation_role(
         WorkloadRoleFamily::SessionRoleReader,
-        WorkloadRoleScope::ProjectEnvironment {
+        WorkloadRoleIdentity::ProjectEnvironment {
             org: ORG,
             project: PROJECT,
             environment: ENVIRONMENT,
@@ -55,7 +55,7 @@ fn generation_role(generation: CredentialGeneration) -> String {
         },
         generation,
     )
-    .expect("session reader has project-environment scope")
+    .expect("session reader has project-environment target")
 }
 
 fn database_url(raw: &str, name: &str) -> anyhow::Result<String> {
@@ -181,7 +181,7 @@ fn read_target(path: &Path, generation: CredentialGeneration) -> anyhow::Result<
             && target.triple().project == PROJECT
             && target.triple().env.as_str() == ENVIRONMENT
             && target.instance_suffix() == INSTANCE
-            && target.env_key() == ENV_KEY
+            && target.project_env_key() == PROJECT_ENV_KEY
             && target.connection().database() == database(INSTANCE)
             && target.connection().generation() == generation,
         "emitted target changed a trusted binding"
@@ -354,7 +354,7 @@ async fn journey(admin: &Client, system_url: &str, directory: &Path) -> anyhow::
     let rows = a.query("SELECT r.role_name FROM platform.\"user\" u JOIN platform.user_role r ON r.user_id=u.id WHERE u.status='active'", &[]).await?;
     anyhow::ensure!(
         rows.len() == 1 && rows[0].get::<_, String>(0) == "member",
-        "reader cannot load the target tenant's fresh roles"
+        "reader cannot load the target project's fresh roles"
     );
     for query in [
         "SELECT email FROM platform.\"user\"",
@@ -417,7 +417,8 @@ async fn journey(admin: &Client, system_url: &str, directory: &Path) -> anyhow::
     )?;
     let b_target = read_target(&b_path, CredentialGeneration::B)?;
     anyhow::ensure!(
-        a_target.audience() == b_target.audience() && a_target.env_key() == b_target.env_key(),
+        a_target.audience() == b_target.audience()
+            && a_target.project_env_key() == b_target.project_env_key(),
         "generation rotation changed the audience binding"
     );
     let b = connect(b_target.connection().url()).await?;

@@ -39,24 +39,24 @@ use wamn_release_control::publish_release::{
     compose_release_entry,
 };
 
-/// The environment coordinate of the box: the edge configuration's `[scope]`.
-/// The `env_key` of the release is [`project_env_key`] of the three.
+/// The environment coordinate of the box: the edge configuration's `[target]`.
+/// The `project_env_key` of the release is [`project_env_key`] of the three.
 #[derive(Debug, Clone, Copy)]
-pub struct EdgeScope<'a> {
+pub struct EdgeTarget<'a> {
     pub org: &'a str,
     pub project: &'a str,
     pub environment: &'a str,
 }
 
-impl EdgeScope<'_> {
-    fn env_key(&self) -> String {
+impl EdgeTarget<'_> {
+    fn project_env_key(&self) -> String {
         project_env_key(self.org, self.project, self.environment)
     }
 }
 
 /// Write the bundle of the local release in `release` into the new directory
 /// `out`, with the entry composed from the http-route guest at `ingress`, and
-/// return the digest of `edge-release.json`. `scope` is the coordinate the edge
+/// return the digest of `edge-release.json`. `target` is the coordinate the edge
 /// configuration names.
 ///
 /// Refuses an existing `out`, a release with a wiring, component bytes that do
@@ -66,7 +66,7 @@ pub fn write(
     release: &Path,
     ingress: &Path,
     out: &Path,
-    scope: EdgeScope<'_>,
+    target: EdgeTarget<'_>,
 ) -> anyhow::Result<String> {
     let manifest_bytes = fs::read(release.join(RELEASE_MANIFEST_FILE_NAME))
         .with_context(|| format!("read the release manifest in {}", release.display()))?;
@@ -83,7 +83,7 @@ pub fn write(
     write_bundle(
         &manifest_bytes,
         &facts,
-        &scope.env_key(),
+        &target.project_env_key(),
         application,
         |digest| {
             fs::read(local_component_path(release, digest)?)
@@ -106,14 +106,14 @@ pub fn write_package(
     component: &str,
     bytes: &Path,
     ingress: &Path,
-    scope: &EdgeScope<'_>,
+    target: &EdgeTarget<'_>,
     out: &Path,
 ) -> anyhow::Result<String> {
     let template = package
         .join(PACKAGE_COMPONENTS)
         .join(format!("{component}.json.in"));
-    let env_key = scope.env_key();
-    let document = render_declaration_document(&template, &env_key)?;
+    let project_env_key = target.project_env_key();
+    let document = render_declaration_document(&template, &project_env_key)?;
     let declaration = TemporaryFile::write(&serde_json::to_vec(&document)?)?;
     let admission = admit_component(AdmitComponentRequest {
         package: package.to_owned(),
@@ -138,9 +138,9 @@ pub fn write_package(
         )]
         .into(),
         application: None,
-        org: scope.org.to_owned(),
-        project: scope.project.to_owned(),
-        environment: scope.environment.to_owned(),
+        org: target.org.to_owned(),
+        project: target.project.to_owned(),
+        environment: target.environment.to_owned(),
         packages: vec![PackageCoordinate::new(
             admission.package_id(),
             admission.package_version(),
@@ -161,7 +161,7 @@ pub fn write_package(
     write_bundle(
         &assembled.published.canonical_bytes,
         &assembled.facts,
-        &env_key,
+        &project_env_key,
         entry.application(),
         |digest| {
             ensure!(
@@ -178,7 +178,7 @@ pub fn write_package(
 fn write_bundle(
     manifest_bytes: &[u8],
     facts: &LocalApplicationFacts,
-    env_key: &str,
+    project_env_key: &str,
     application: &wamn_catalog::ServingEntryMember,
     read_component: impl Fn(&str) -> anyhow::Result<Vec<u8>>,
     ingress: &Path,
@@ -186,7 +186,7 @@ fn write_bundle(
 ) -> anyhow::Result<String> {
     let (manifest, _) = ServingManifest::from_canonical_bytes(manifest_bytes)
         .context("the local release manifest is not canonical")?;
-    wamn_runtime::local_application::validate_local_facts(facts, &manifest, env_key)?;
+    wamn_runtime::local_application::validate_local_facts(facts, &manifest, project_env_key)?;
 
     let mut permissions = BTreeSet::new();
     for (id, attachment) in &manifest.attachments {
@@ -222,7 +222,7 @@ fn write_bundle(
         .iter()
         .zip(&bodies)
         .find(|(fact, _)| {
-            fact.scope.package_id == application.package_id
+            fact.target.package_id == application.package_id
                 && fact.component == application.component
                 && fact.component_digest == application.digest
         })

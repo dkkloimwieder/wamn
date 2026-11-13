@@ -2,7 +2,7 @@
 //!
 //! The package owns authored wiring data and the router owns a storage-blind
 //! walk. This module is the sole consumer boundary between them: callers supply
-//! one already-active wiring and the operation facts gated with it, and this
+//! one already-active wiring and the operation facts conditioned with it, and this
 //! module refuses any one-sided drift before constructing a [`Wiring`]. It does
 //! not read storage or define how the future component library persists facts;
 //! that library projects its component, interface, operation, digest, port and
@@ -20,18 +20,18 @@ use wamn_router::{
 };
 use wamn_runtime::plugins::wamn_postgres::ResolvedActiveWiring;
 
-/// Tenant/package/environment identity shared by a wiring and its admitted facts.
+/// Project/package/environment identity shared by a wiring and its admitted facts.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct WiringScope<'a> {
-    pub env_key: &'a str,
+pub struct WiringTarget<'a> {
+    pub project_env_key: &'a str,
     pub package_id: &'a str,
     pub environment: &'a str,
 }
 
 /// One active wiring row after exact-release membership and pointer resolution.
 #[derive(Debug, Clone, Copy)]
-pub struct GatedActiveWiring<'a> {
-    pub scope: WiringScope<'a>,
+pub struct ConditionedActiveWiring<'a> {
+    pub target: WiringTarget<'a>,
     pub package_version: &'a str,
     pub document: &'a WiringDocument,
 }
@@ -62,8 +62,8 @@ pub struct WiringOperationFact {
 
 /// Operation facts admitted for one exact package version in one environment.
 #[derive(Debug, Clone, Copy)]
-pub struct ScopedWiringOperationFacts<'a> {
-    pub scope: WiringScope<'a>,
+pub struct TargetWiringOperationFacts<'a> {
+    pub target: WiringTarget<'a>,
     pub package_version: &'a str,
     pub operations: &'a [WiringOperationFact],
 }
@@ -71,9 +71,9 @@ pub struct ScopedWiringOperationFacts<'a> {
 /// Project one persisted component-library row onto the lowering seam.
 ///
 /// Every component-owned field survives exactly. Environment is intentionally
-/// supplied by [`ScopedWiringOperationFacts`] because it belongs to the active
+/// supplied by [`TargetWiringOperationFacts`] because it belongs to the active
 /// wiring, not component admission. Typed schemas remain available on the
-/// source fact for the semantic gate and are erased only after that gate has
+/// source fact for the semantic condition and are erased only after that condition has
 /// established exact digest compatibility.
 pub fn project_component_operations(
     component: &wamn_catalog::AdmittedComponent,
@@ -115,7 +115,7 @@ pub fn project_component_operations(
 /// Stable classification for a refused catalog-to-router lowering.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WiringLoweringErrorType {
-    ScopeMismatch,
+    TargetMismatch,
     PackageVersionMismatch,
     MissingComponent,
     IncompatibleInterfaceVersion,
@@ -139,9 +139,9 @@ pub struct WiringLoweringError {
 }
 
 impl WiringLoweringError {
-    fn new(kind: WiringLoweringErrorType, detail: impl Into<Box<str>>) -> Self {
+    fn new(type_: WiringLoweringErrorType, detail: impl Into<Box<str>>) -> Self {
         Self {
-            type_: kind,
+            type_,
             detail: detail.into(),
             source: None,
         }
@@ -183,7 +183,7 @@ impl From<WiringError> for WiringLoweringError {
 /// is the router's instance-pool key. Two nodes can share a digest and keep
 /// different package identities in `resolved.node_components`.
 pub fn lower_resolved_wiring(
-    scope: WiringScope<'_>,
+    target: WiringTarget<'_>,
     resolved: &ResolvedActiveWiring,
 ) -> Result<Wiring, WiringLoweringError> {
     let mut executable = resolved.document.clone();
@@ -204,32 +204,32 @@ pub fn lower_resolved_wiring(
         }
     }
     lower_active_wiring(
-        GatedActiveWiring {
-            scope,
+        ConditionedActiveWiring {
+            target,
             package_version: &resolved.package_version,
             document: &executable,
         },
-        ScopedWiringOperationFacts {
-            scope,
+        TargetWiringOperationFacts {
+            target,
             package_version: &resolved.package_version,
             operations: &operations,
         },
     )
 }
 
-/// Lower one gated active wiring into the exact graph the router executes.
+/// Lower one conditioned active wiring into the exact graph the router executes.
 ///
-/// The operation-fact scope and exact package version must match the active row.
+/// The operation-fact target and exact package version must match the active row.
 /// Every document reference is validated before its authoring-only metadata is
 /// lowered. In particular, an absent target port is inferred only for a target
 /// operation declaring exactly one input, then carried by the router edge to
 /// the component invocation while source output ports continue to select
 /// successors.
 pub fn lower_active_wiring(
-    active: GatedActiveWiring<'_>,
-    facts: ScopedWiringOperationFacts<'_>,
+    active: ConditionedActiveWiring<'_>,
+    facts: TargetWiringOperationFacts<'_>,
 ) -> Result<Wiring, WiringLoweringError> {
-    validate_scope(active, facts)?;
+    validate_target(active, facts)?;
 
     let mut nodes = Vec::with_capacity(active.document.nodes.len());
     let mut resolved = BTreeMap::new();
@@ -284,21 +284,21 @@ pub fn lower_active_wiring(
     Wiring::compile(active.document.entry.clone(), nodes, edges).map_err(Into::into)
 }
 
-fn validate_scope(
-    active: GatedActiveWiring<'_>,
-    facts: ScopedWiringOperationFacts<'_>,
+fn validate_target(
+    active: ConditionedActiveWiring<'_>,
+    facts: TargetWiringOperationFacts<'_>,
 ) -> Result<(), WiringLoweringError> {
-    if active.scope != facts.scope {
+    if active.target != facts.target {
         return Err(WiringLoweringError::new(
-            WiringLoweringErrorType::ScopeMismatch,
+            WiringLoweringErrorType::TargetMismatch,
             format!(
-                "active wiring scope ({:?}, {:?}, {:?}) differs from operation-fact scope ({:?}, {:?}, {:?})",
-                active.scope.env_key,
-                active.scope.package_id,
-                active.scope.environment,
-                facts.scope.env_key,
-                facts.scope.package_id,
-                facts.scope.environment
+                "active wiring target ({:?}, {:?}, {:?}) differs from operation-fact target ({:?}, {:?}, {:?})",
+                active.target.project_env_key,
+                active.target.package_id,
+                active.target.environment,
+                facts.target.project_env_key,
+                facts.target.package_id,
+                facts.target.environment
             ),
         ));
     }
@@ -447,7 +447,7 @@ fn lower_terminal(terminal: &CatalogTerminal) -> Terminal {
 mod tests {
     use serde_json::json;
     use wamn_catalog::{
-        ComponentDeclaration, ComponentOperationDeclaration, ComponentPackageScope,
+        ComponentDeclaration, ComponentOperationDeclaration, ComponentPackageCoordinate,
         ComponentParameterDeclaration, ComponentPortDeclaration,
     };
     use wamn_digest::bytes_sha256;
@@ -497,8 +497,8 @@ mod tests {
     fn request() -> ComponentAdmissionRequest {
         ComponentAdmissionRequest {
             declaration: ComponentDeclaration {
-                scope: ComponentPackageScope {
-                    env_key: "tenant-a".to_string(),
+                target: ComponentPackageCoordinate {
+                    project_env_key: "org-a".to_string(),
                     package_id: "orders".to_string(),
                     package_version: "1.0.0".to_string(),
                 },
@@ -557,7 +557,7 @@ mod tests {
         assert!(projected.parameters["mapping"].required);
     }
 
-    /// A package-scoped fact for `operation`. All fixtures share one digest.
+    /// A package-targeted fact for `operation`. All fixtures share one digest.
     fn admitted(
         package_id: &str,
         package_version: &str,
@@ -565,8 +565,8 @@ mod tests {
     ) -> wamn_catalog::AdmittedComponent {
         wamn_catalog::normalize_component_fact(
             ComponentDeclaration {
-                scope: ComponentPackageScope {
-                    env_key: "tenant-a".to_owned(),
+                target: ComponentPackageCoordinate {
+                    project_env_key: "org-a".to_owned(),
                     package_id: package_id.to_owned(),
                     package_version: package_version.to_owned(),
                 },
@@ -639,8 +639,8 @@ mod tests {
         };
 
         let wiring = lower_resolved_wiring(
-            WiringScope {
-                env_key: "tenant-a",
+            WiringTarget {
+                project_env_key: "org-a",
                 package_id: "overlay",
                 environment: "prod",
             },

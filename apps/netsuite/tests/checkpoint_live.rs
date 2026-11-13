@@ -7,8 +7,8 @@ use serde_json::json;
 use wamn_engine::artifact_source::LocalComponentSource;
 use wamn_engine::operation::native_workload::NativeComponent;
 use wamn_engine::operation::{OperationCall, OperationClosure, invoke_operation, node_types};
-use wamn_engine::release_manifest::{LoadedRelease, ReleaseScope};
-use wamn_execution_host::{NativeFacts, NodeAcquisition, OperationHost, OperationScope};
+use wamn_engine::release_manifest::{LoadedRelease, ReleaseTarget};
+use wamn_execution_host::{NativeFacts, NodeAcquisition, OperationHost, OperationHostConfig};
 use wamn_package_control::component_admission::ComponentAdmission;
 use wamn_runtime::connection_credentials::ConnectionCredentials;
 use wamn_runtime::plugins::connection_http::transport::HttpTransport;
@@ -20,7 +20,7 @@ use wamn_runtime::plugins::wamn_postgres::{
     AuthorityClass, ClassCredentials, ProjectConfig, StaticCredentialProvider, WamnPostgres,
 };
 
-const ENV_KEY: &str = "rest--publication--test";
+const PROJECT_ENV_KEY: &str = "rest--publication--test";
 
 pub async fn invoke(
     roots: &[PathBuf],
@@ -36,7 +36,7 @@ pub async fn invoke(
     let release = Arc::new(LoadedRelease::load_canonical_bytes(
         &manifest.canonical_bytes(),
         "NetSuite checkpoint live",
-        ReleaseScope::new(ENV_KEY, "test")
+        ReleaseTarget::new(PROJECT_ENV_KEY, "test")
             .with_applications(super::consumer_live::declared("erp", manifest)),
     )?);
     let postgres = Arc::new(WamnPostgres::with_provider(Arc::new(
@@ -66,7 +66,7 @@ pub async fn invoke(
             wamn_broker::Publisher::default(),
             Arc::new(ConnectionCredentials::empty()),
             postgres,
-            ENV_KEY,
+            PROJECT_ENV_KEY,
             "test",
             "test",
         )),
@@ -74,7 +74,7 @@ pub async fn invoke(
         Arc::from([]),
         release,
         Arc::new(LocalComponentSource::new(PathBuf::new())),
-        OperationScope {
+        OperationHostConfig {
             project: "test".into(),
             schema: Some("wamn_integration".into()),
             owner_prefix: "netsuite-checkpoint-live".into(),
@@ -136,7 +136,7 @@ pub async fn invoke(
     // the consumer command refuses the node.
     let record = &wiring.nodes["record"];
     let registered = wamn_catalog::resolve_workflow_components(
-        ENV_KEY,
+        PROJECT_ENV_KEY,
         &super::consumer_live::declared("erp", manifest)["erp"].packages,
         manifest,
         &wiring,
@@ -155,7 +155,7 @@ pub async fn invoke(
     let without = workflow_host
         .workflow_node_caller(
             "test",
-            ENV_KEY,
+            PROJECT_ENV_KEY,
             &wamn_identity_protocol::workflow_user_id().to_string(),
             "netsuite-pull-without-record",
         )
@@ -200,7 +200,7 @@ pub async fn invoke(
                 deadline_ms: 10000,
                 facts: NativeFacts::entry(
                     NodeAcquisition {
-                        claims: host.claims(ENV_KEY, Some(host.release_identity())),
+                        identity: host.identity(PROJECT_ENV_KEY, Some(host.release_identity())),
                         invocation: wamn_execution_host::component_invocation(
                             component,
                             &write.operation,

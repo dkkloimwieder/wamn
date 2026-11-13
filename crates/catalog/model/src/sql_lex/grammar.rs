@@ -99,7 +99,7 @@ pub(crate) enum Piece {
     Param(usize),
 }
 
-/// Text that carries no token: the lexer must treat all four kinds as absent.
+/// Text that carries no token: the lexer must treat all four types as absent.
 #[derive(Debug, Clone, Copy)]
 pub(crate) enum Inert {
     LineComment(&'static str),
@@ -274,7 +274,7 @@ impl SelectStatement {
     }
 
     /// The name a qualified reference uses: the alias when there is one.
-    fn scope(&self) -> &'static str {
+    fn qualifier(&self) -> &'static str {
         self.alias.unwrap_or_else(|| self.relation_name())
     }
 
@@ -286,7 +286,7 @@ impl SelectStatement {
             }
             push_reference(
                 &mut pieces,
-                self.qualify.then(|| self.scope()),
+                self.qualify.then(|| self.qualifier()),
                 self.column(*column),
             );
         }
@@ -302,7 +302,7 @@ impl SelectStatement {
             pieces.push(Piece::Ident("where"));
             push_reference(
                 &mut pieces,
-                self.qualify.then(|| self.scope()),
+                self.qualify.then(|| self.qualifier()),
                 self.column(filter),
             );
             pieces.push(Piece::Equals);
@@ -313,7 +313,7 @@ impl SelectStatement {
             pieces.extend(lock.strength.iter().map(|word| Piece::Ident(word)));
             if lock.of {
                 pieces.push(Piece::Ident("of"));
-                pieces.push(Piece::Ident(self.scope()));
+                pieces.push(Piece::Ident(self.qualifier()));
             }
         }
         pieces
@@ -464,9 +464,9 @@ impl UpdateStatement {
     }
 }
 
-fn push_reference(pieces: &mut Vec<Piece>, scope: Option<&'static str>, column: &'static str) {
-    if let Some(scope) = scope {
-        pieces.push(Piece::Ident(scope));
+fn push_reference(pieces: &mut Vec<Piece>, qualifier: Option<&'static str>, column: &'static str) {
+    if let Some(qualifier) = qualifier {
+        pieces.push(Piece::Ident(qualifier));
         pieces.push(Piece::Dot);
     }
     pieces.push(Piece::Ident(column));

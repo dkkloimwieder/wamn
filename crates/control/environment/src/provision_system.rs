@@ -4,11 +4,11 @@
 //! The database and its owner role `wamn_system` exist before this runs. On
 //! CloudNativePG, the `initdb` bootstrap of the cluster creates both. The
 //! verb connects as the superuser, installs [`CONTROL_BOOTSTRAP_SQL`] as
-//! `wamn_system`, closes the PUBLIC floors, creates the login
+//! `wamn_system`, closes the PUBLIC minimums, creates the login
 //! `wamn_provisioner` of the provisioning worker and `wamn_apply`, and writes
 //! `registry.meta.platform_domain`. A complete installation needs no replay.
 //! Partial initialization requires explicit repair. Interrupted migrations resume
-//! through `wamn platform schema apply --scope system --chart <prepared-chart>`.
+//! through `wamn platform schema apply --target system --chart <prepared-chart>`.
 //!
 //! With the emit flags, the verb installs nothing. It writes the Secret
 //! manifest of `wamn_provisioner` and the role statement that sets its
@@ -35,7 +35,7 @@ use wamn_control_provision::provisioner::{PROVISIONER_ROLE, provisioner_statemen
 use crate::provision_project_env::{
     ensure_distinct_secret_paths, ensure_secret_path, write_secret_json,
 };
-use wamn_control_provision::schema_migrations::MigrationScope;
+use wamn_control_provision::schema_migrations::MigrationDatabase;
 use wamn_control_provision::{CONTROL_BOOTSTRAP_SQL, sql, validate_platform_domain};
 use wamn_schema_control::MigrationSource;
 
@@ -59,7 +59,7 @@ pub async fn provision_system(request: &ProvisionSystemRequest) -> anyhow::Resul
     let result = async {
         initialize_system(
             &mut client,
-            &crate::platform_migrations::embedded_sources(MigrationScope::System),
+            &crate::platform_migrations::embedded_sources(MigrationDatabase::System),
         )
         .await?;
         set_platform_domain(&mut client, &request.platform_domain).await?;
@@ -261,16 +261,16 @@ pub async fn install_control_store(admin: &Client) -> anyhow::Result<bool> {
             .await
             .context("release the control owner before cluster ACL convergence")?;
         admin
-            .batch_execute(sql::revoke_public_connect_floor_sql())
+            .batch_execute(sql::revoke_public_connect_base_grants_sql())
             .await
-            .context("converge the cluster PUBLIC CONNECT floor")?;
+            .context("converge the cluster PUBLIC CONNECT base grants")?;
         admin
             .batch_execute(
                 "DO $$ BEGIN EXECUTE format(\
                    'REVOKE TEMPORARY ON DATABASE %I FROM PUBLIC', current_database()); END $$;",
             )
             .await
-            .context("converge the system database PUBLIC TEMPORARY floor")?;
+            .context("converge the system database PUBLIC TEMPORARY base grants")?;
         admin
             .batch_execute(&wamn_control_provision::provisioner::ensure_provisioner_role_sql())
             .await

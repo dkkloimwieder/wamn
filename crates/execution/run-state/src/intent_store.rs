@@ -30,11 +30,13 @@ pub trait IntentStore: Send + Sync {
 /// One operation call, recorded before its export runs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Intent<'a> {
-    pub tenant: &'a str,
+    /// The idempotency partition: the edge supplies its organization; the cloud
+    /// host supplies its composed `project_env_key`.
+    pub partition: &'a str,
     pub release: &'a str,
     pub package: &'a str,
     pub operation: &'a str,
-    /// The caller's key. A repeated key within the tenant is the same intent.
+    /// The caller's key. A repeated key within the partition is the same intent.
     pub idempotency_key: &'a str,
     /// The request hash of the request element (`wamn_engine` `request_element_hash`).
     pub input_hash: &'a str,
@@ -74,7 +76,8 @@ pub struct StoredOutcome(pub serde_json::Value);
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UncertainIntent {
     pub id: IntentId,
-    pub tenant: String,
+    /// The partition supplied when the intent began.
+    pub partition: String,
     pub release: String,
     pub package: String,
     pub operation: String,
@@ -99,10 +102,10 @@ pub struct StoreError {
 }
 
 impl StoreError {
-    /// Build a failure of `kind` for the named `operation`.
-    pub fn new(kind: StoreErrorType, operation: &'static str, detail: impl Into<String>) -> Self {
+    /// Build a failure of `type` for the named `operation`.
+    pub fn new(type_: StoreErrorType, operation: &'static str, detail: impl Into<String>) -> Self {
         Self {
-            type_: kind,
+            type_,
             operation,
             detail: detail.into(),
         }

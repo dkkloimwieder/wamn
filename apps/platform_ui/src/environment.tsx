@@ -35,7 +35,7 @@ const operationActions = {
 };
 
 function OperationControls(props: ScreenProps) {
-  const scope = untrack(() => ({ project: props.params.project!, env: props.params.env! }));
+  const config = untrack(() => ({ project: props.params.project!, env: props.params.env! }));
   const [action, setAction] = createSignal<keyof typeof operationActions>();
   const [observed, setObserved] = createSignal<operation.OperationStatusResult>();
   const [busy, setBusy] = createSignal(false);
@@ -48,7 +48,7 @@ function OperationControls(props: ScreenProps) {
   });
   const poll = async (job: string) => {
     try {
-      const next = value(await operation.status(props.transport, [{ ...scope, job }], { signal: controller.signal }));
+      const next = value(await operation.status(props.transport, [{ ...config, job }], { signal: controller.signal }));
       if (controller.signal.aborted) return;
       setObserved(next);
       if (next.state === "pending" || next.state === "running") {
@@ -64,12 +64,12 @@ function OperationControls(props: ScreenProps) {
     }
   };
   return (
-    <Show when={Object.values(operationActions).some((entry) => props.holds(entry.route.operation, scope.project))}>
+    <Show when={Object.values(operationActions).some((entry) => props.holds(entry.route.operation, config.project))}>
       <DashboardPanel role="region" aria-label="Deployment controls">
         <h2>Application and schema operations</h2>
         <For each={Object.entries(operationActions)}>
           {([key, entry]) => (
-            <Show when={props.holds(entry.route.operation, scope.project)}>
+            <Show when={props.holds(entry.route.operation, config.project)}>
               <Button disabled={busy()} onClick={() => setAction(key as keyof typeof operationActions)}>
                 {entry.label}
               </Button>
@@ -85,7 +85,7 @@ function OperationControls(props: ScreenProps) {
             const needsApplication = selected === "rollback" || selected === "diff" || selected === "apply";
             const needsRelease = selected === "deploy" || needsApplication;
             const start = async (snapshot: typeof defaults) => {
-              if (busy() || controller.signal.aborted || !props.holds(entry.route.operation, scope.project)) return;
+              if (busy() || controller.signal.aborted || !props.holds(entry.route.operation, config.project)) return;
               setBusy(true);
               setTrouble(undefined);
               setObserved(undefined);
@@ -93,7 +93,7 @@ function OperationControls(props: ScreenProps) {
               const requestId = crypto.randomUUID();
               const options = { signal: controller.signal };
               const target = {
-                ...scope,
+                ...config,
                 application: snapshot.application.trim(),
                 release: snapshot.release.trim() || null,
               };
@@ -102,7 +102,7 @@ function OperationControls(props: ScreenProps) {
                   await (selected === "deploy"
                     ? application.deploy(
                         props.transport,
-                        [{ requestId, value: { ...scope, release: snapshot.release.trim() } }],
+                        [{ requestId, value: { ...config, release: snapshot.release.trim() } }],
                         options,
                       )
                     : selected === "rollback"
@@ -112,10 +112,10 @@ function OperationControls(props: ScreenProps) {
                         : selected === "apply"
                           ? schema.apply(props.transport, [{ requestId, value: { ...target, resolve: null } }], options)
                           : selected === "reset"
-                            ? schema.reset(props.transport, [{ requestId, value: scope }], options)
+                            ? schema.reset(props.transport, [{ requestId, value: config }], options)
                             : schema.adopt(
                                 props.transport,
-                                [{ requestId, value: { ...scope, application: null } }],
+                                [{ requestId, value: { ...config, application: null } }],
                                 options,
                               )),
                 );
@@ -148,7 +148,7 @@ function OperationControls(props: ScreenProps) {
             return (
               <>
                 <p>
-                  Project: {scope.project}; environment: {scope.env}
+                  Project: {config.project}; environment: {config.env}
                 </p>
                 <FormView
                   description={
@@ -185,7 +185,7 @@ function OperationControls(props: ScreenProps) {
                     <AlertDialog.Content>
                       <AlertDialog.Title>Confirm {entry.label.toLowerCase()}?</AlertDialog.Title>
                       <AlertDialog.Description>
-                        Project: {scope.project}; environment: {scope.env}; application:{" "}
+                        Project: {config.project}; environment: {config.env}; application:{" "}
                         {needsApplication ? confirmation()?.application : "all applications"}.
                         {needsRelease && ` Release: ${confirmation()?.release || "configured or previous release"}. `}
                         {entry.effect}
@@ -226,7 +226,7 @@ export function Environment(
     table?: "workloads" | "live-releases" | "operations" | "roles";
   },
 ): JSX.Element {
-  const scope = untrack(() => ({ project: props.params.project!, env: props.params.env! }));
+  const config = untrack(() => ({ project: props.params.project!, env: props.params.env! }));
   const [state, setState] = createSignal<"active" | "inactive">();
   const [status, setStatus] = createSignal<environment.EnvironmentStatusResult>();
   const [profile, setProfile] = createSignal<release.ReleaseProfileResult>();
@@ -239,14 +239,14 @@ export function Environment(
   });
   const refresh = async () => {
     const [listed, observed] = await Promise.all([
-      environment.list(props.transport, [{ project: scope.project }]),
-      environment.status(props.transport, [scope]),
+      environment.list(props.transport, [{ project: config.project }]),
+      environment.status(props.transport, [config]),
     ]);
     if (observed.status === "refused" && observed.code === "environment_not_found") {
       if (active) setMissing(true);
       return;
     }
-    const entry = value(listed).environments.find((entry) => entry.name === scope.env);
+    const entry = value(listed).environments.find((entry) => entry.name === config.env);
     if (active) setMissing(!entry);
     if (!entry) return;
     if (active) setState(entry.state);
@@ -256,7 +256,7 @@ export function Environment(
       if (!next.digest) setProfile(undefined);
     }
     if (next.digest) {
-      const nextProfile = value(await release.profile(props.transport, [{ ...scope, digest: next.digest }]));
+      const nextProfile = value(await release.profile(props.transport, [{ ...config, digest: next.digest }]));
       if (active) setProfile(nextProfile);
     }
   };
@@ -270,7 +270,7 @@ export function Environment(
     try {
       value(
         await (state() === "active" ? environment.inactivate : environment.activate)(props.transport, [
-          { requestId: crypto.randomUUID(), value: scope },
+          { requestId: crypto.randomUUID(), value: config },
         ]),
       );
       await refresh();
@@ -285,7 +285,7 @@ export function Environment(
       <Show when={trouble()}>{(text) => <FieldError role="alert">{text()}</FieldError>}</Show>
       <Show when={!props.table}>
         <Page
-          title={`${scope.project}/${scope.env}`}
+          title={`${config.project}/${config.env}`}
           actions={
             <Show
               when={

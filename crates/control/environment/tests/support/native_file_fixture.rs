@@ -50,7 +50,7 @@ pub async fn build_fixture(
     std::fs::write(
         package.join("publication/components/fixture.json.in"),
         serde_json::to_vec(&json!({
-            "scope":{"env_key":"__ENV_KEY__", "package-id":"file_fixture"},
+            "target":{"project_env_key":"__PROJECT_ENV_KEY__", "package-id":"file_fixture"},
             "component":"fixture", "interface-version":"0.1.0",
             "operations":{"file-fixture:fixture/run":{
                 "registered-operation":"file-fixture:fixture/run",
@@ -129,7 +129,7 @@ pub async fn build_fixture(
         });
     }
     std::fs::write(output.join(BUILD_RECORD_FILE), build_record.to_bytes())?;
-    let scope = wamn_catalog::ComponentPackageScope::new(
+    let coordinate = wamn_catalog::ComponentPackageCoordinate::new(
         wamn_control_registry::project_env_key(ORG, PROJECT, "files"),
         "file_fixture",
         "0.1.0",
@@ -140,7 +140,7 @@ pub async fn build_fixture(
             (
                 wamn_package_control::component_declaration::render_declaration_document(
                     &package.join("publication/components/fixture.json.in"),
-                    &scope.env_key,
+                    &coordinate.project_env_key,
                 )?,
                 vec!["wamn:node".into(), "wamn:postgres".into()],
             )
@@ -148,7 +148,9 @@ pub async fn build_fixture(
             let template = palette.join("declaration.json.in");
             let declaration =
                 wamn_package_control::component_declaration::render_palette_declaration(
-                    &template, &scope, None,
+                    &template,
+                    &coordinate,
+                    None,
                 )?;
             let packages = wamn_package_control::component_declaration::declared_platform_packages(
                 &template,

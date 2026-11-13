@@ -159,7 +159,7 @@ async fn enable_cdc(
     target_url: &str,
     identity: &super::activation::DevActivationIdentity,
 ) -> anyhow::Result<super::config::CdcReader> {
-    let scope = wamn_control_registry::Triple::new(
+    let coordinate = wamn_control_registry::Triple::new(
         &identity.org,
         &identity.project,
         identity.environment.clone(),
@@ -170,7 +170,7 @@ async fn enable_cdc(
         .map(|root| super::config::read_package_manifest(root))
         .collect::<Result<Vec<_>, _>>()?;
     let entities = manifests.iter().flat_map(PackageManifest::entity_pairs);
-    let consumers = wamn_broker::events::entity_consumers(&scope, entities);
+    let consumers = wamn_broker::events::entity_consumers(&coordinate, entities);
     let schemas = manifests
         .iter()
         .flat_map(|manifest| manifest.models.values().map(|model| model.schema.clone()))
@@ -264,7 +264,7 @@ async fn enable_cdc(
     let reader_secret = args.root.join("registry-reader.json");
     wamn_environment_control::provision_project_env::run_workload_action(
         &super::environment::generation_args(
-            &super::environment::JourneyScope {
+            &super::environment::JourneyTarget {
                 org: identity.org.clone(),
                 project: identity.project.clone(),
                 environment: identity.environment.clone(),

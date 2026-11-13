@@ -250,7 +250,12 @@ impl Integrations {
             let digest = &component.descriptor.component_digest;
             let package = &component.package_id;
             let declared = postgres
-                .declared_connection_interfaces(project, &release.scope().env_key, package, digest)
+                .declared_connection_interfaces(
+                    project,
+                    &release.target().project_env_key,
+                    package,
+                    digest,
+                )
                 .await?;
             let declared: Vec<_> = declared
                 .into_iter()
@@ -378,7 +383,7 @@ impl ConnectionDispatch for ComponentImports {
     }
 }
 
-/// Typed imports of the native HTTP entry, scoped to its component owners.
+/// Typed imports of the native HTTP entry, targeted to its component owners.
 #[derive(Debug)]
 pub struct IntegrationIngress {
     pub integrations: Arc<Integrations>,
@@ -415,14 +420,14 @@ impl wash_runtime::plugin::HostPlugin for IntegrationIngress {
             .context("integration entry has no composing member")?
             .package_id;
         let application =
-            wamn_catalog::application_for_package(&self.release.scope().applications, package)
+            wamn_catalog::application_for_package(&self.release.target().applications, package)
                 .context("integration entry application is ambiguous")?;
         let owners = manifest
             .components
             .iter()
             .filter(|component| {
                 wamn_catalog::application_for_package(
-                    &self.release.scope().applications,
+                    &self.release.target().applications,
                     &component.package_id,
                 ) == Some(application)
             })

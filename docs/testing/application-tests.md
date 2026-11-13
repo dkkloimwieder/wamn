@@ -54,7 +54,7 @@ The evidence names the overlay component by the digest the release manifest carr
 An additive base and a breaking combination need a second base that no candidate carries, so they are not cluster cases.
 
 This tests fresh-install compatibility, not an upgrade of an existing database.
-The installed-schema observer does not claim production schema-admission enforcement.
+The installed-schema observer does not assert production schema-admission enforcement.
 
 ## Committed events
 
@@ -108,7 +108,7 @@ Retain these observations through generated and application-owned operator code:
 - Unknown errors, malformed responses, and transport failures do not become editable refusals.
 - Target replacement resets data-dependent state and blocks submissions even when generated contracts are unchanged.
 - An intact previous target remains usable after failed replacement, while an invalidated target remains unavailable until matching activation succeeds.
-- Old-session responses cannot enter a new session, and restarting a pending submission neither resubmits it nor claims server cancellation.
+- Old-session responses cannot enter a new session, and restarting a pending submission neither resubmits it nor reports server cancellation.
 - Receiving composition retains projection, line editing, location selection, and submission interaction parity.
 - WMS renders the label key from the served response contract.
 - WMS displays a committed movement with label failure only from served completion evidence, and otherwise displays an unknown outcome.

@@ -1,4 +1,4 @@
-//! Prepare, retire, or abort a scoped identity database credential.
+//! Prepare, retire, or abort a targeted identity database credential.
 //!
 //! Preparation writes a Secret only after the new login authenticates. It
 //! does not install the Secret or access session signing keys. Retirement
@@ -177,7 +177,7 @@ pub async fn provision_identity_issuer(
             "identity credential provisioning requires the system database administrator"
         );
         admin
-            .query_one(sql::workload_scope_lock_sql(), &[&IDENTITY_ISSUER_ROLE])
+            .query_one(sql::workload_identity_lock_sql(), &[&IDENTITY_ISSUER_ROLE])
             .await?;
         if let Some(generation) = request.prepare_generation {
             prepare(&mut admin, &config, &request, generation).await?;
@@ -291,7 +291,7 @@ async fn exact_grants(
     anyhow::ensure!(
         rows.len() == count
             && rows.iter().all(|row| {
-                let kind: &str = row.get("object_type");
+                let type_: &str = row.get("object_type");
                 let schema: &str = row.get("schema_name");
                 let object: &str = row.get("object_name");
                 let privilege: &str = row.get("privilege_type");
@@ -299,12 +299,12 @@ async fn exact_grants(
                     && match expected {
                         Grants::None => false,
                         Grants::Generation => {
-                            kind == "database"
+                            type_ == "database"
                                 && object == IDENTITY_ISSUER_DATABASE
                                 && privilege == "CONNECT"
                         }
                         Grants::Stable | Grants::StableBeforePrepare => {
-                            kind == "schema"
+                            type_ == "schema"
                                 && if foundation {
                                     schema == "identity"
                                 } else {
@@ -312,7 +312,7 @@ async fn exact_grants(
                                 }
                                 && object == schema
                                 && privilege == "USAGE"
-                                || kind == "relation"
+                                || type_ == "relation"
                                     && schema == "identity"
                                     && IDENTITY_ISSUER_TABLES.contains(&object)
                                     && ["SELECT", "INSERT", "UPDATE", "DELETE"].contains(&privilege)
@@ -320,17 +320,17 @@ async fn exact_grants(
                                     && !previous
                                     && !read_only_pat
                                     && schema == "identity"
-                                    && ((kind == "routine"
+                                    && ((type_ == "routine"
                                         && object == "lock_password_principal"
                                         && privilege == "EXECUTE")
-                                        || (kind == "relation"
+                                        || (type_ == "relation"
                                             && object == "password_logins"
                                             && privilege == "DELETE")
-                                        || (kind == "relation"
+                                        || (type_ == "relation"
                                             && object == "password_attempts"
                                             && ["SELECT", "INSERT", "UPDATE", "DELETE"]
                                                 .contains(&privilege))
-                                        || (kind == "column"
+                                        || (type_ == "column"
                                             && IDENTITY_ISSUER_PASSWORD_COLUMNS.iter().any(
                                                 |(table, p, columns)| {
                                                     privilege == *p
@@ -340,7 +340,7 @@ async fn exact_grants(
                                                 },
                                             )))
                                 || !foundation
-                                    && kind == "column"
+                                    && type_ == "column"
                                     && privilege == "SELECT"
                                     && IDENTITY_ISSUER_READ_COLUMNS.iter().any(
                                         |(expected_schema, table, columns)| {
@@ -355,7 +355,7 @@ async fn exact_grants(
                                     )
                                 || !foundation
                                     && !read_only_pat
-                                    && kind == "column"
+                                    && type_ == "column"
                                     && schema == "identity"
                                     && privilege == "INSERT"
                                     && IDENTITY_ISSUER_PAT_INSERT_COLUMNS
@@ -377,7 +377,7 @@ async fn exact_grants(
     ).await?.get(0);
     anyhow::ensure!(
         !foreign,
-        "identity role has authority outside its system database scope"
+        "identity role has authority outside its system database target"
     );
     Ok(())
 }
@@ -424,13 +424,13 @@ async fn stable(client: &(impl GenericClient + Sync), before_prepare: bool) -> a
     Ok(())
 }
 
-async fn public_floor(client: &(impl GenericClient + Sync)) -> anyhow::Result<()> {
+async fn public_base_grants(client: &(impl GenericClient + Sync)) -> anyhow::Result<()> {
     anyhow::ensure!(
         client
             .query(sql::public_connect_databases_sql(), &[])
             .await?
             .is_empty(),
-        "prepare the cluster PUBLIC CONNECT floor before provisioning identity credentials"
+        "prepare the cluster PUBLIC CONNECT base grants before provisioning identity credentials"
     );
     anyhow::ensure!(
         !client
@@ -451,7 +451,7 @@ async fn prepare(
     let role = identity_issuer_generation_role(&args.issuer, generation)?;
     let other_role = identity_issuer_generation_role(&args.issuer, generation.other())?;
     let transaction = crate::provision_project_env::provisioning_transaction(admin).await?;
-    public_floor(&transaction).await?;
+    public_base_grants(&transaction).await?;
     stable(&transaction, true).await?;
     let target = state(&transaction, &role).await?;
     let other = state(&transaction, &other_role).await?;
@@ -508,7 +508,7 @@ async fn prepare(
         let _ = task.await;
         let observed = observed.context("authenticate prepared identity credential")?;
         anyhow::ensure!(observed.get::<_, String>(0) == role && observed.get::<_, String>(1) == IDENTITY_ISSUER_DATABASE,
-            "prepared identity credential authenticated with an unexpected scope");
+            "prepared identity credential authenticated with an unexpected target");
         stable(admin, false).await?;
         let prepared = state(admin, &role).await?.context("prepared identity credential disappeared")?;
         anyhow::ensure!(active(&prepared) && prepared.get::<_, Option<String>>("valid_until").as_deref() == Some(expires_at.as_str()),
@@ -573,7 +573,7 @@ async fn retire(
     let role = identity_issuer_generation_role(issuer, generation)?;
     let replacement_role = identity_issuer_generation_role(issuer, generation.other())?;
     let transaction = crate::provision_project_env::provisioning_transaction(admin).await?;
-    public_floor(&transaction).await?;
+    public_base_grants(&transaction).await?;
     stable(&transaction, false).await?;
     let old = state(&transaction, &role)
         .await?
@@ -646,7 +646,7 @@ mod tests {
     }
 
     #[test]
-    fn a_scoped_prepare_request_is_accepted_and_redacts_admin_credentials() {
+    fn a_targeted_prepare_request_is_accepted_and_redacts_admin_credentials() {
         let request = request();
         assert!(admin_config(&request).is_ok());
         assert!(!format!("{request:?}").contains("hidden-value"));

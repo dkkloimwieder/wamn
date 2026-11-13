@@ -67,23 +67,23 @@ async function times(response: Response): Promise<SessionTimes> {
 export async function environments(
   email: string,
   password: string,
-  scope: { readonly org: string; readonly project?: string },
+  filter: { readonly org: string; readonly project?: string },
   options: SessionOptions = {},
 ): Promise<Environment[]> {
-  return (await environmentPage(email, password, scope, {}, options)).environments;
+  return (await environmentPage(email, password, filter, {}, options)).environments;
 }
 
 /** One authorized audience page. Each request shares the login rate limit. */
 export async function environmentPage(
   email: string,
   password: string,
-  scope: { readonly org: string; readonly project?: string },
+  filter: { readonly org: string; readonly project?: string },
   paging: { readonly limit?: number; readonly cursor?: string },
   options: SessionOptions = {},
 ): Promise<{ environments: Environment[]; nextCursor: string | null; total: number | null }> {
   const response = await post(
     "/password/environments",
-    { email, password, org: scope.org, project: scope.project, ...paging },
+    { email, password, org: filter.org, project: filter.project, ...paging },
     options,
   );
   if (!response.ok) {

@@ -38,7 +38,7 @@ use wamn_package_control::component_declaration::{
 };
 use wamn_release_control::publish_release::{self, PublishReleaseRequest};
 use wamn_release_control::release_composition::{
-    CompositionError, CompositionErrorKind, PackageInput, SelectedComponentArtifact,
+    CompositionError, CompositionErrorType, PackageInput, SelectedComponentArtifact,
     SelectedPaletteArtifact, select_component_artifacts, select_palette_artifacts,
 };
 use wamn_schema_control::BareSchemaName;
@@ -169,8 +169,8 @@ impl fmt::Display for ProductionDevStageError {
 
 impl From<CompositionError> for ProductionDevStageError {
     fn from(error: CompositionError) -> Self {
-        match (error.kind, error.source) {
-            (CompositionErrorKind::Owner, Some(source)) => Self::owner(error.operation, source),
+        match (error.type_, error.source) {
+            (CompositionErrorType::Owner, Some(source)) => Self::owner(error.operation, source),
             _ => Self::invalid(error.operation, error.detail),
         }
     }
@@ -401,7 +401,7 @@ impl ProductionDevStageRunner {
             self.config.target_database_url(),
             &run_schema,
             &self.config.activation_identity().org,
-            &self.config.activation_identity().env_key(),
+            &self.config.activation_identity().project_env_key(),
             &self.config.activation_identity().environment,
         )
         .await
@@ -453,7 +453,7 @@ impl ProductionDevStageRunner {
             &identity.org,
             &identity.project,
             &identity.environment,
-            &identity.env_key(),
+            &identity.project_env_key(),
             self.config.platform_domain(),
         )
         .await
@@ -481,7 +481,7 @@ impl ProductionDevStageRunner {
             &self.config,
             self.target_instance
                 .as_deref()
-                .expect("prepare_run claimed the target instance"),
+                .expect("prepare_run assigned the target instance"),
             self.prepared_schema_inputs
                 .as_deref()
                 .expect("Migrate recorded the schema inputs"),
@@ -667,7 +667,7 @@ impl ProductionDevStageRunner {
             base_digests.extend(self.built_base_digests());
             let declaration = render_component_declaration(
                 &template,
-                &self.config.activation_identity().env_key(),
+                &self.config.activation_identity().project_env_key(),
             )?;
             let admission = admit_component(AdmitComponentRequest {
                 package: package.root,
@@ -685,14 +685,14 @@ impl ProductionDevStageRunner {
             require_admitted_identity(&admission, &artifact)?;
             self.admissions.push(admission);
         }
-        // Each palette component a wiring names, admitted into the scope of
+        // Each palette component a wiring names, admitted into the target of
         // its package with the packages its own declaration states, as the
         // cluster path pushes it (wamn-hw3n).
         for palette in self.palette_artifacts.clone() {
             let artifact = palette.artifact;
             let package = self.package_input(&artifact.package_id)?;
-            let scope = wamn_catalog::ComponentPackageScope {
-                env_key: self.config.activation_identity().env_key(),
+            let target = wamn_catalog::ComponentPackageCoordinate {
+                project_env_key: self.config.activation_identity().project_env_key(),
                 package_id: artifact.package_id.to_string(),
                 package_version: artifact.package_version.to_string(),
             };
@@ -704,7 +704,7 @@ impl ProductionDevStageRunner {
             .map_err(|source| ProductionDevStageError::owner("read connection aliases", source))?;
             require_wiring_store_alias(&components, &artifact, store_alias.as_deref())?;
             let document =
-                render_palette_declaration(&palette.declaration, &scope, store_alias.as_deref())
+                render_palette_declaration(&palette.declaration, &target, store_alias.as_deref())
                     .map_err(declaration_stage_error)?;
             let admitted_platform_packages =
                 declared_platform_packages(&palette.declaration, &document)
@@ -731,12 +731,12 @@ impl ProductionDevStageRunner {
         Ok(())
     }
 
-    fn gate(&mut self) -> impl Future<Output = Result<(), ProductionDevStageError>> {
-        self.clear_after(DevStage::Gate);
+    fn condition(&mut self) -> impl Future<Output = Result<(), ProductionDevStageError>> {
+        self.clear_after(DevStage::Condition);
         if self.admissions.len() != self.artifacts.len() + self.palette_artifacts.len() {
             return std::future::ready(Err(ProductionDevStageError::invalid(
-                "gate package admissions",
-                "every package and palette component must carry one exact admission before Gate",
+                "condition package admissions",
+                "every package and palette component must carry one exact admission before Condition",
             )));
         }
         std::future::ready(Ok(()))
@@ -788,7 +788,7 @@ impl ProductionDevStageRunner {
         reconcile_package_data_access::reconcile_local(
             &prepared.data_access,
             self.config.target_database_url(),
-            &self.config.activation_identity().env_key(),
+            &self.config.activation_identity().project_env_key(),
             &self.config.activation_identity().environment,
             apply,
         )
@@ -805,7 +805,7 @@ impl ProductionDevStageRunner {
         reconcile_local_replica_identity(self.config.target_database_url(), &packages, apply)
             .await
             .map_err(|source| {
-                ProductionDevStageError::owner("reconcile package replica identity", source)
+                ProductionDevStageError::owner("reconcile package replican identity", source)
             })?;
         Ok(())
     }
@@ -904,7 +904,7 @@ impl ProductionDevStageRunner {
         // foreign key needs the release row, which apply's stage writes.
         wamn_environment_control::environment::stage::write_release(
             self.config.target_database_url(),
-            &identity.env_key(),
+            &identity.project_env_key(),
             published.digest.as_str(),
             &published.manifest,
             &wamn_control_provision::PlatformComponent::Provisioning
@@ -959,7 +959,7 @@ impl ProductionDevStageRunner {
         wamn_runtime::local_application::validate_local_facts(
             &local_facts,
             &published.manifest,
-            &identity.env_key(),
+            &identity.project_env_key(),
         )
         .map_err(|source| {
             ProductionDevStageError::owner("validate complete local application", source)
@@ -1228,7 +1228,7 @@ impl ProductionDevStageRunner {
                 })?;
         let connection_task = tokio::spawn(connection);
         let authenticated =
-            wamn_platform_identity::authenticate_pat(&client, self.config.gate_bearer_token())
+            wamn_platform_identity::authenticate_pat(&client, self.config.condition_bearer_token())
                 .await;
         drop(client);
         let authenticated = match authenticated {
@@ -1280,7 +1280,7 @@ impl ProductionDevStageRunner {
                 self.admissions.clear();
                 self.release = None;
             }
-            DevStage::Gate | DevStage::Acl | DevStage::Release => {
+            DevStage::Condition | DevStage::Acl | DevStage::Release => {
                 self.release = None;
             }
             DevStage::Activate => {}
@@ -1618,9 +1618,9 @@ impl DevStageRunner for ProductionDevStageRunner {
             }
             self.target_instance = Some(instance);
         }
-        claim_environment_instance(
+        assign_environment_instance(
             self.config.system_database_url(),
-            &self.config.activation_identity().env_key(),
+            &self.config.activation_identity().project_env_key(),
             self.target_instance
                 .as_deref()
                 .expect("owned target instance"),
@@ -1639,7 +1639,7 @@ impl DevStageRunner for ProductionDevStageRunner {
             DevStage::Build => self.build().await,
             DevStage::Virtualize => self.virtualize(),
             DevStage::Admit => self.admit().await,
-            DevStage::Gate => self.gate().await,
+            DevStage::Condition => self.condition().await,
             DevStage::Acl => self.acl().await,
             DevStage::Release => self.release().await,
             DevStage::Activate => self.activate().await,
@@ -1760,7 +1760,7 @@ async fn prepare_local_bindings(
             &declaration.interface,
         )?;
         let mode = if input.read_only { "read" } else { "write" };
-        tx.execute("INSERT INTO catalog.connection_requirement(env_key,component_digest,package_id,name,interface,mode) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT DO NOTHING", &[&config.activation_identity().env_key(),&input.requirement.component_digest(),&input.package_id,&input.requirement.store_alias(),&interface,&mode]).await?;
+        tx.execute("INSERT INTO catalog.connection_requirement(project_env_key,component_digest,package_id,name,interface,mode) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT DO NOTHING", &[&config.activation_identity().project_env_key(),&input.requirement.component_digest(),&input.package_id,&input.requirement.store_alias(),&interface,&mode]).await?;
     }
     tx.commit().await?;
     Ok(prepared)
@@ -1819,7 +1819,7 @@ async fn resolve_local_bindings(
 ) -> anyhow::Result<Vec<wamn_runtime::local_application::LocalBindingFacts>> {
     wamn_runtime::local_application::require_local_target(
         config.target_database_url(),
-        &config.activation_identity().env_key(),
+        &config.activation_identity().project_env_key(),
         &config.activation_identity().environment,
     )
     .await?;
@@ -1853,8 +1853,8 @@ async fn resolve_local_bindings(
             .await?;
         client
             .query_one(
-                "SELECT set_config('app.env_key', $1, true)",
-                &[&config.activation_identity().env_key()],
+                "SELECT set_config('app.project_env_key', $1, true)",
+                &[&config.activation_identity().project_env_key()],
             )
             .await?;
         let mut bindings = Vec::new();
@@ -1911,7 +1911,7 @@ async fn resolve_local_bindings(
             let mut drops = wamn_broker::connection_changes::ConnectionDrops::default();
             wamn_environment_control::environment::bindings::write(
                 &tx,
-                &config.activation_identity().env_key(),
+                &config.activation_identity().project_env_key(),
                 digest,
                 &document,
                 &resolved,
@@ -1939,7 +1939,7 @@ async fn reconcile_local_replica_identity(
 ) -> anyhow::Result<()> {
     let (client, connection) = tokio_postgres::connect(database_url, NoTls)
         .await
-        .context("connect to the local target for replica identity")?;
+        .context("connect to the local target for replican identity")?;
     let driver = tokio::spawn(connection);
     let result = async {
         for root in packages {
@@ -1953,7 +1953,7 @@ async fn reconcile_local_replica_identity(
                 apply,
             )
             .await?;
-            tracing::info!(package = %package_id, flips = plan.flips.len(), apply, "reconciled package replica identity");
+            tracing::info!(package = %package_id, flips = plan.flips.len(), apply, "reconciled package replican identity");
         }
         Ok::<_, anyhow::Error>(())
     }
@@ -1972,38 +1972,38 @@ async fn reconcile_local_replica_identity(
 /// a connection open across the whole loop for one UPDATE would outlive its
 /// purpose. The routine refuses an environment that provisioning never projected —
 /// absence means durable, and a durable environment is never recreated.
-pub(crate) async fn claim_environment_instance(
+pub(crate) async fn assign_environment_instance(
     system_database_url: &str,
-    env_key: &str,
+    project_env_key: &str,
     instance: &str,
 ) -> Result<(), ProductionDevStageError> {
     let (mut client, connection) = tokio_postgres::connect(system_database_url, NoTls)
         .await
         .map_err(|source| {
             ProductionDevStageError::owner(
-                "connect to the control database to claim the environment instance",
+                "connect to the control database to assign the environment instance",
                 source.into(),
             )
         })?;
     let connection_task = tokio::spawn(connection);
-    let claimed = wamn_environment_control::provision_project_env::claim_environment_instance(
+    let assigned = wamn_environment_control::provision_project_env::assign_environment_instance(
         &mut client,
-        env_key,
+        project_env_key,
         instance,
     )
     .await;
     drop(client);
     connection_task.abort();
-    claimed
-        .map_err(|source| ProductionDevStageError::owner("claim the environment instance", source))
+    assigned
+        .map_err(|source| ProductionDevStageError::owner("assign the environment instance", source))
 }
 
 fn render_component_declaration(
     template: &Path,
-    env_key: &str,
+    project_env_key: &str,
 ) -> Result<TemporaryFile, ProductionDevStageError> {
     let document =
-        render_declaration_document(template, env_key).map_err(declaration_stage_error)?;
+        render_declaration_document(template, project_env_key).map_err(declaration_stage_error)?;
     let rendered = serde_json::to_vec(&document).map_err(|source| {
         ProductionDevStageError::owner("serialize component declaration", source.into())
     })?;

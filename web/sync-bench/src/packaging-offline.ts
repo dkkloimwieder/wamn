@@ -1,10 +1,10 @@
 import type { Feed, Persistence, Row, SyncCollection } from "@wfe/sync";
-import type { PackagingRow, PackagingScope } from "./generated/wamn_wms/packaging.js";
+import type { PackagingRow, PackagingFilter } from "./generated/wamn_wms/packaging.js";
 import { packagingCollection, packagingKey } from "./generated/wamn_wms/packaging.js";
 import { locationCollection, locationKey, type LocationRow } from "./generated/wamn_wms/location.js";
 import type { StatusFilter } from "./order.js";
 
-export function packagingScope(filter: StatusFilter): PackagingScope {
+export function packagingFilter(filter: StatusFilter): PackagingFilter {
   return filter === "all" ? {} : { filter: { status: [filter] } };
 }
 
@@ -41,14 +41,14 @@ function modelRows<T extends Row>(rows: T[]): T[] {
  * wamn-4qimg (empty saved collection and saved_at not restored). */
 function storedCollection<T extends Row, S>(
   feed: Feed<T, S>,
-  scope: S,
+  filter: S,
   key: string,
   persistence: Persistence,
   pollMs: number,
   online: () => boolean,
   makeCollection: (
     feed: Feed<T, S>,
-    scope: S,
+    filter: S,
     follow: { persistence: Persistence; pollMs: number },
   ) => SyncCollection<T>,
   initial?: Page<T>,
@@ -75,7 +75,7 @@ function storedCollection<T extends Row, S>(
   };
   const c = makeCollection(
     {
-      async list(scope, signal) {
+      async list(filter, signal) {
         let page = staged;
         if (page === undefined && !online()) {
           const entry = await persistence.load(key);
@@ -84,22 +84,22 @@ function storedCollection<T extends Row, S>(
           asOf = entry.saved_at;
           page = { rows: entry.rows as T[], cursor: entry.cursor, complete: true };
         } else {
-          page ??= await feed.list(scope, signal);
+          page ??= await feed.list(filter, signal);
           asOf = new Date().toISOString();
         }
         cursor = page.cursor;
         return page;
       },
       moved: async () => online(),
-      async changes(scope, since, limit, signal) {
+      async changes(filter, since, limit, signal) {
         if (!online()) return { rows: [], next_cursor: since, complete: true };
-        const page = await feed.changes(scope, since, limit, signal);
+        const page = await feed.changes(filter, since, limit, signal);
         cursor = page.next_cursor;
         asOf = new Date().toISOString();
         return page;
       },
     },
-    scope,
+    filter,
     { persistence: saved, pollMs },
   );
   return {
@@ -127,21 +127,21 @@ export interface OfflineResult {
   needed: number;
 }
 
-/** The packaging scope and the whole location model share one user-owned store. */
+/** The packaging filter and the whole location model share one user-owned store. */
 export function packagingOffline(options: {
-  packaging: Feed<PackagingRow, PackagingScope>;
+  packaging: Feed<PackagingRow, PackagingFilter>;
   location: Feed<LocationRow, Record<string, never>>;
-  scope: PackagingScope;
+  filter: PackagingFilter;
   persistence: Persistence;
   pollMs?: number;
   online?: () => boolean;
   estimate?: () => Promise<StorageEstimate>;
 }) {
-  const { persistence, scope } = options;
+  const { persistence, filter } = options;
   const online = options.online ?? (() => navigator.onLine);
   const pollMs = options.pollMs ?? 10_000;
-  const key = packagingKey(scope);
-  const packaging = storedCollection(options.packaging, scope, key, persistence, pollMs, online, packagingCollection);
+  const key = packagingKey(filter);
+  const packaging = storedCollection(options.packaging, filter, key, persistence, pollMs, online, packagingCollection);
   type Locations = ReturnType<typeof storedCollection<LocationRow, Record<string, never>>>;
   let location: Locations | undefined;
   let closed = false;
@@ -171,7 +171,7 @@ export function packagingOffline(options: {
       await restored;
       // Read the full chosen set into memory to measure its actual serialized size.
       // Reuse these pages for fill, so the estimate needs no second list read.
-      const p = await options.packaging.list(scope);
+      const p = await options.packaging.list(filter);
       const l = await options.location.list({});
       if (p.complete === false || l.complete === false) throw new Error("The chosen set is incomplete.");
       const asOf = new Date().toISOString();

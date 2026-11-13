@@ -4,25 +4,25 @@
 -- tables are the facts its host-owned production driver writes.
 --
 -- STANDALONE ARTIFACT: deliberately NOT included by deploy/sql/postgres-init.sql, the
--- same convention as deploy/sql/catalog-schema.sql (3.1/3.4/3.5/3.6). The S3/S6 gate
+-- same convention as deploy/sql/catalog-schema.sql (3.1/3.4/3.5/3.6). The S3/S6 condition
 -- fixtures carry their own `runs` copy (postgres-init.sql schema
 -- `s3`) so flowbench exercises the rewired runner; this file is the production schema and the
 -- live-apply target. Assumes the pre-existing `wamn_app` ACL role;
 -- `wamn_platform` and `wamn_run_retention` are the two roles this file creates
--- itself, because it NAMES them -- the floor arms below target the first
+-- itself, because it NAMES them -- the base policy arms below target the first
 -- (`wamn-0h0g.22.17`) and the `runs` grants target the second
 -- (`wamn-0h0g.12.69`) -- and naming a role that may not exist is an apply-time
 -- failure rather than a degradation. Role and
--- scoped LOGIN credential-generation lifecycle is provisioning-owned.
+-- targeted LOGIN credential-generation lifecycle is provisioning-owned.
 --
--- Security shape mirrors the rest of the platform (s2/s3, catalog): tenant
+-- Security shape mirrors the rest of the platform (s2/s3, catalog): project
 -- separation from `current_user` (wamn-0h0g.22.6). Every guest-reachable table
 -- FORCEs RLS keyed on
---   wamn_authority.tenant_key(env_key) = wamn_authority.current_tenant_key()
+--   wamn_authority.project_key(project_env_key) = wamn_authority.current_project_key()
 -- and carries the matching `<table>_tkey` expression index; CHECK
--- (env_key <> '') forbids a ''-tenant row, so the floor is structural.
+-- (project_env_key <> '') forbids a ''-project row, so the minimum is structural.
 --
--- SCOPE (what 5.7 does NOT own, reserved as nullable seams below): the durable
+-- TARGET (what 5.7 does NOT own, reserved as nullable seams below): the durable
 -- run QUEUE + leases (5.14) co-transact with these INSERTs but own
 -- their own table; the run-level I/O CAPTURE policy (9.6) is fixed at admission
 -- and full capture fills scrubbed `input_json`/`output_json` plus the output
@@ -31,11 +31,11 @@
 
 CREATE SCHEMA IF NOT EXISTS wamn_run AUTHORIZATION CURRENT_USER;
 
--- The shared platform group role every non-guest tenant-floor arm below targets
+-- The shared platform group role every non-guest project-base-grants arm below targets
 -- (`wamn-0h0g.22.17`). Created HERE, not assumed, for the reason
--- `crates/control/provision/src/tenant_key.rs` already gives for its own
+-- `crates/control/provision/src/project_key.rs` already gives for its own
 -- bootstrap: naming a role that may not exist adds a new precondition to every
--- applier — seven live gates plus the production path in `services/ctl` — and
+-- applier — seven live acceptance tests plus the production path in `services/ctl` — and
 -- `CREATE POLICY ... TO wamn_platform` fails outright against a cluster without
 -- it.
 --
@@ -56,9 +56,9 @@ END $platform_group$;
 -- The stable run-retention ACL role the `runs` grants below name
 -- (`wamn-0h0g.12.69`). Created HERE for exactly the reason `wamn_platform` is:
 -- a `GRANT ... TO` a role that does not exist fails the whole apply, and every
--- in-tree applier of this artifact -- a dozen live gates plus the production
+-- in-tree applier of this artifact -- a dozen live acceptance tests plus the production
 -- reconcile path -- would otherwise acquire a new precondition. The stable role
--- is a grant carrier only; its scoped A/B LOGIN generations, their CONNECT and
+-- is a grant carrier only; its targeted A/B LOGIN generations, their CONNECT and
 -- their Secret are provisioning-owned.
 --
 -- EXCEPTION-guarded under the shared advisory lock, the same shape and for the
@@ -79,17 +79,17 @@ GRANT USAGE ON SCHEMA wamn_run TO wamn_app;
 GRANT USAGE ON SCHEMA wamn_run TO wamn_run_retention;
 
 -- ---------------------------------------------------------------------------
--- The per-database authority derivations every tenant policy below calls
--- (`wamn-0h0g.22.6`). Guest tenant authority comes from `current_user`, not
--- from a claim the session can set: a session that can set its own tenant can
--- read every tenant.
+-- The per-database authority derivations every project policy below calls
+-- (`wamn-0h0g.22.6`). Guest project authority comes from `current_user`, not
+-- from an identity the session can set: a session that can set its own project can
+-- read every project.
 --
 -- GENERATED — this block is `authority_derivations_bootstrap_sql()` verbatim,
 -- pinned by a byte-equality guard in wamn-control-provision. Do not hand-edit;
 -- change the builder.
 --
 -- It is the BOOTSTRAP rendering because this file is applied to databases whose
--- names are not known here, and `tenant_key` must bake the name in as a literal
+-- names are not known here, and `project_key` must bake the name in as a literal
 -- to stay `IMMUTABLE` — without which the expression indexes below are not even
 -- creatable.
 -- ---------------------------------------------------------------------------
@@ -98,7 +98,7 @@ BEGIN
     EXECUTE replace(replace($wamn_authority_derivations$CREATE SCHEMA IF NOT EXISTS "wamn_authority" AUTHORIZATION CURRENT_USER;
 REVOKE ALL ON SCHEMA "wamn_authority" FROM PUBLIC;
 GRANT USAGE ON SCHEMA "wamn_authority" TO "wamn_app";
-CREATE OR REPLACE FUNCTION "wamn_authority".tenant_key(env_key text)
+CREATE OR REPLACE FUNCTION "wamn_authority".project_key(project_env_key text)
 RETURNS text
 LANGUAGE sql
 IMMUTABLE
@@ -107,17 +107,17 @@ STRICT
 SET search_path = pg_catalog
 AS $$
     SELECT substr(encode(sha256(
-           int8send(19::bigint) || convert_to('wamn.app.scope.v0.1', 'UTF8')
-        || int8send(7::bigint) || convert_to('env_key', 'UTF8')
-        || int8send(octet_length(convert_to(env_key, 'UTF8'))::bigint) || convert_to(env_key, 'UTF8')
+           int8send(22::bigint) || convert_to('wamn.app.identity.v0.1', 'UTF8')
+        || int8send(15::bigint) || convert_to('project_env_key', 'UTF8')
+        || int8send(octet_length(convert_to(project_env_key, 'UTF8'))::bigint) || convert_to(project_env_key, 'UTF8')
         || int8send(8::bigint) || convert_to('database', 'UTF8')
         || int8send(@wamn_database_octets@::bigint) || convert_to(@wamn_database_literal@, 'UTF8')
        ), 'hex'), 1, 40)
 $$;
-ALTER FUNCTION "wamn_authority".tenant_key(text) OWNER TO CURRENT_USER;
-REVOKE ALL ON FUNCTION "wamn_authority".tenant_key(text) FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION "wamn_authority".tenant_key(text) TO "wamn_app";
-CREATE OR REPLACE FUNCTION "wamn_authority".current_tenant_key()
+ALTER FUNCTION "wamn_authority".project_key(text) OWNER TO CURRENT_USER;
+REVOKE ALL ON FUNCTION "wamn_authority".project_key(text) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION "wamn_authority".project_key(text) TO "wamn_app";
+CREATE OR REPLACE FUNCTION "wamn_authority".current_project_key()
 RETURNS text
 LANGUAGE sql
 STABLE
@@ -126,9 +126,9 @@ SET search_path = pg_catalog
 AS $$
     SELECT substring(current_user::text from '^wamn_app_([0-9a-f]{40})_[ab]$')
 $$;
-ALTER FUNCTION "wamn_authority".current_tenant_key() OWNER TO CURRENT_USER;
-REVOKE ALL ON FUNCTION "wamn_authority".current_tenant_key() FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION "wamn_authority".current_tenant_key() TO "wamn_app";$wamn_authority_derivations$,
+ALTER FUNCTION "wamn_authority".current_project_key() OWNER TO CURRENT_USER;
+REVOKE ALL ON FUNCTION "wamn_authority".current_project_key() FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION "wamn_authority".current_project_key() TO "wamn_app";$wamn_authority_derivations$,
         '@wamn_database_literal@', quote_literal(current_database())),
         '@wamn_database_octets@', octet_length(convert_to(current_database(), 'UTF8'))::text);
 END
@@ -151,7 +151,7 @@ END
 $$;
 
 -- Admission pins, including the release's `manifest_digest`, never change
--- (docs/architecture/overview.md#release-identity). A claiming pod shows it carries that
+-- (docs/architecture/overview.md#release-identity). A leasing pod shows it carries that
 -- release by its digest. A candidate run carries no release pin.
 CREATE FUNCTION wamn_run.guard_run_admission_pins_immutable()
 RETURNS trigger
@@ -207,7 +207,7 @@ REVOKE ALL ON FUNCTION wamn_run.guard_terminal_run_delete() FROM PUBLIC;
 -- Owner ruling wamn-0h0g.20.7 (2026-08-21): the system env policy is projected
 -- by `reconcile-run-plane`; publication verifies the projected source identity.
 -- A project database is constant for (org, project, env), so expected_environment
--- is verified, never selected as a second key. One tenant has one row; a missing
+-- is verified, never selected as a second key. One project has one row; a missing
 -- or mismatched projection refuses publication.
 -- The nullable source carriers make the additive migration honest for older
 -- rows: release publishing refuses an unattested row until the sole policy-copy
@@ -217,11 +217,11 @@ CREATE TABLE wamn_run.environment_policies (
     created_by uuid NOT NULL,
     updated_at timestamptz NOT NULL,
     updated_by uuid NOT NULL,
-    env_key              text NOT NULL CHECK (env_key <> ''),
+    project_env_key              text NOT NULL CHECK (project_env_key <> ''),
     expected_environment text NOT NULL CHECK (expected_environment <> ''),
     source_policy_org   text,
     source_policy_hash  text,
-    PRIMARY KEY (env_key)
+    PRIMARY KEY (project_env_key)
 );
 CREATE TRIGGER wamn_record_history_stamp
     BEFORE INSERT OR UPDATE ON wamn_run.environment_policies
@@ -229,16 +229,16 @@ CREATE TRIGGER wamn_record_history_stamp
         'created_at', 'created_by', 'updated_at', 'updated_by');
 ALTER TABLE wamn_run.environment_policies ENABLE ROW LEVEL SECURITY;
 ALTER TABLE wamn_run.environment_policies FORCE ROW LEVEL SECURITY;
-CREATE POLICY environment_policies_env_key
+CREATE POLICY environment_policies_project_env_key
 ON wamn_run.environment_policies
 FOR SELECT
 TO wamn_app
-USING (wamn_authority.tenant_key(env_key) = wamn_authority.current_tenant_key());
+USING (wamn_authority.project_key(project_env_key) = wamn_authority.current_project_key());
 CREATE POLICY environment_policies_platform ON wamn_run.environment_policies
     AS PERMISSIVE FOR SELECT TO wamn_platform
     USING (true);
 CREATE INDEX environment_policies_tkey
-    ON wamn_run.environment_policies ((wamn_authority.tenant_key(env_key)));
+    ON wamn_run.environment_policies ((wamn_authority.project_key(project_env_key)));
 REVOKE ALL PRIVILEGES ON TABLE wamn_run.environment_policies
     FROM PUBLIC, wamn_app;
 GRANT SELECT ON TABLE wamn_run.environment_policies TO wamn_app;
@@ -249,13 +249,13 @@ GRANT SELECT ON TABLE wamn_run.environment_policies TO wamn_app;
 -- completion; `state_json` carries transient run state such as bounded-retry
 -- scheduling and execution context. `idempotency_key` dedupes at-least-once
 -- redelivery of the same trigger (a partial-unique index). `fail_type` mirrors
--- the engine `FailKind` so history can
+-- the engine `FailType` so history can
 -- flag an upstream bug (`invalid-input`) apart from a terminal error or an
 -- exhausted retry budget. Status values are exactly wamn_run_store::RunStatus
 -- as_sql (tied to the crate by a drift-guard test).
 -- ---------------------------------------------------------------------------
 CREATE TABLE wamn_run.runs (
-    env_key         text NOT NULL CHECK (env_key <> ''),
+    project_env_key         text NOT NULL CHECK (project_env_key <> ''),
     run_id          text NOT NULL DEFAULT gen_random_uuid()::text,
     package_id      text NOT NULL,
     environment     text NOT NULL,
@@ -263,7 +263,7 @@ CREATE TABLE wamn_run.runs (
     registration_id text,
     -- Trusted immutable CDC event ancestry is distinct from retired execution
     -- lineage. The immediate source lets admission verify the carried root/depth
-    -- under tenant RLS.
+    -- under project RLS.
     event_source_run_id text,
     event_root_run_id text,
     event_depth      int CHECK (event_depth BETWEEN 0 AND 16),
@@ -294,7 +294,7 @@ CREATE TABLE wamn_run.runs (
     -- (component-digest, store-alias); callers never author this value.
     binding_world_json jsonb,
     -- Admission pins the exact release by its manifest digest, the SHA-256 of
-    -- its RFC 8785 canonical manifest. At claim, the worker shows its mounted
+    -- its RFC 8785 canonical manifest. At lease, the worker shows its mounted
     -- release has that digest. A candidate run carries no pin.
     manifest_digest text,
     input_json      jsonb,
@@ -456,42 +456,42 @@ CREATE TABLE wamn_run.runs (
       (trigger_source IS NOT DISTINCT FROM 'automation')
       = (service_principal_id IS NOT NULL)
     ),
-    PRIMARY KEY (env_key, run_id),
+    PRIMARY KEY (project_env_key, run_id),
     CONSTRAINT runs_release_fk
-        FOREIGN KEY (env_key, manifest_digest)
-        REFERENCES catalog.releases (env_key, manifest_digest)
+        FOREIGN KEY (project_env_key, manifest_digest)
+        REFERENCES catalog.releases (project_env_key, manifest_digest)
 );
 -- At-least-once: a redelivered trigger with the same key collapses to one run.
-CREATE UNIQUE INDEX runs_idempotency ON wamn_run.runs (env_key, idempotency_key)
+CREATE UNIQUE INDEX runs_idempotency ON wamn_run.runs (project_env_key, idempotency_key)
     WHERE idempotency_key IS NOT NULL;
 -- History listing and trusted CDC event-causation traversal.
-CREATE INDEX runs_event_root ON wamn_run.runs (env_key, event_root_run_id)
+CREATE INDEX runs_event_root ON wamn_run.runs (project_env_key, event_root_run_id)
     WHERE event_root_run_id IS NOT NULL;
-CREATE INDEX runs_response_deadline ON wamn_run.runs (env_key, response_deadline_at)
+CREATE INDEX runs_response_deadline ON wamn_run.runs (project_env_key, response_deadline_at)
     WHERE caller_released_at IS NULL
       AND response_deadline_at IS NOT NULL
       AND status IN ('dispatched', 'running');
-CREATE INDEX runs_run_deadline ON wamn_run.runs (env_key, run_deadline_at)
+CREATE INDEX runs_run_deadline ON wamn_run.runs (project_env_key, run_deadline_at)
     WHERE run_deadline_at IS NOT NULL
       AND status IN ('dispatched', 'running');
 ALTER TABLE wamn_run.runs ENABLE ROW LEVEL SECURITY;
 ALTER TABLE wamn_run.runs FORCE ROW LEVEL SECURITY;
-CREATE POLICY runs_env_key ON wamn_run.runs
+CREATE POLICY runs_project_env_key ON wamn_run.runs
     TO wamn_app
-    USING (wamn_authority.tenant_key(env_key) = wamn_authority.current_tenant_key())
-    WITH CHECK (wamn_authority.tenant_key(env_key) = wamn_authority.current_tenant_key());
+    USING (wamn_authority.project_key(project_env_key) = wamn_authority.current_project_key())
+    WITH CHECK (wamn_authority.project_key(project_env_key) = wamn_authority.current_project_key());
 CREATE POLICY runs_platform ON wamn_run.runs
     AS PERMISSIVE FOR ALL TO wamn_platform
     USING (true)
     WITH CHECK (true);
 CREATE INDEX runs_tkey
-    ON wamn_run.runs ((wamn_authority.tenant_key(env_key)));
+    ON wamn_run.runs ((wamn_authority.project_key(project_env_key)));
 
 CREATE TRIGGER runs_event_lineage_immutable
 BEFORE UPDATE OF event_source_run_id, event_root_run_id, event_depth
 ON wamn_run.runs
 FOR EACH ROW EXECUTE FUNCTION wamn_run.guard_event_lineage_immutable();
--- The guard is column-scoped, so the claim-time record columns must be named
+-- The guard is column-targeted, so the lease-time record columns must be named
 -- here or the transition arm never fires for them.
 CREATE TRIGGER runs_admission_pins_immutable
 BEFORE UPDATE OF package_id, environment,
@@ -504,7 +504,7 @@ FOR EACH ROW EXECUTE FUNCTION wamn_run.guard_run_admission_pins_immutable();
 CREATE TRIGGER runs_terminal_delete_only
 BEFORE DELETE ON wamn_run.runs
 FOR EACH ROW EXECUTE FUNCTION wamn_run.guard_terminal_run_delete();
--- Hot HTTP and stream delivery no longer author runs, and executor claim/reap
+-- Hot HTTP and stream delivery no longer author runs, and executor lease/reap
 -- no longer belongs to the guest ACL. `wamn_app` therefore retains only the
 -- read and terminal-history pruning surface; private management INSERT and
 -- executor UPDATE grants are provisioned to their dedicated authorities by
@@ -513,11 +513,11 @@ FOR EACH ROW EXECUTE FUNCTION wamn_run.guard_terminal_run_delete();
 -- `wamn_run_retention` (`wamn-0h0g.12.69`) is run history pruning's OWN
 -- principal, and the grant below is its ENTIRE authority anywhere in the
 -- cluster: `DELETE`, plus `SELECT` on EXACTLY the three columns the prune
--- statement's WHERE clause reads. The `SELECT` is COLUMN-SCOPED and that is
+-- statement's WHERE clause reads. The `SELECT` is COLUMN-TARGETED and that is
 -- load bearing, not tidiness. `wamn_run_retention` is a member of
--- `wamn_platform`, whose one permissive floor arm is `USING (true)`, so a
+-- `wamn_platform`, whose one permissive base policy arm is `USING (true)`, so a
 -- table-level `SELECT` here would let a retention credential read EVERY
--- tenant's `input_json`, `result_json` and `state_json` — measured. Column
+-- project's `input_json`, `result_json` and `state_json` — measured. Column
 -- scoping is the only grant-shaped bound available: PostgreSQL privileges are
 -- relation- and column-shaped, never row-shaped, so what the shared arm buys
 -- retention is limited HERE or nowhere.
@@ -537,22 +537,22 @@ FOR EACH ROW EXECUTE FUNCTION wamn_run.guard_terminal_run_delete();
 -- THE ACCEPTED RESIDUAL (`wamn-0h0g.22.34`). Column scoping bounds WHAT a
 -- retention credential may read; it bounds nothing about WHOSE rows it may
 -- delete. A raw session holding a retention generation credential can DELETE
--- another tenant's terminal runs, because the shared `USING (true)` floor arm
+-- another project's terminal runs, because the shared `USING (true)` base policy arm
 -- matches every row and PostgreSQL privileges are relation- and column-shaped,
--- never row-shaped. There is no grant that expresses "only this tenant's rows".
+-- never row-shaped. There is no grant that expresses "only this project's rows".
 --
 -- This is ACCEPTED, not overlooked, on silo reasoning: ONE PROJECT-ENVIRONMENT
--- DATABASE SERVES EXACTLY ONE TENANT, so the "other tenant" the residual
+-- DATABASE SERVES EXACTLY ONE PROJECT, so the "other project" the residual
 -- reaches does not exist in this plane. The walls are the database boundary and the credential.
 --
 -- `runs_terminal_delete_only` REMAINS THE GUARD and must not be weakened: it is
 -- what keeps the residual confined to terminal history rather than live runs,
 -- and it is caller-independent because it is an invoker-rights trigger rather
--- than a grant. If a tier ever places two tenants in one database, the shape to
--- reach for is a tenant arm on that trigger. It is deliberately NOT built here,
+-- than a grant. If a tier ever places two projects in one database, the shape to
+-- reach for is a project arm on that trigger. It is deliberately NOT built here,
 -- because today it would guard against a neighbour that cannot exist.
 REVOKE ALL PRIVILEGES ON TABLE wamn_run.runs
     FROM PUBLIC, wamn_app, wamn_run_retention;
 GRANT SELECT, DELETE ON wamn_run.runs TO wamn_app;
-GRANT SELECT (env_key, status, created_at), DELETE
+GRANT SELECT (project_env_key, status, created_at), DELETE
     ON wamn_run.runs TO wamn_run_retention;

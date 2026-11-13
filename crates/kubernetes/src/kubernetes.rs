@@ -58,7 +58,7 @@ impl KubernetesStore {
         reference: &str,
         version: &str,
         value: Option<&[u8]>,
-        scope: Option<&Triple>,
+        target: Option<&Triple>,
     ) -> Result<(), Error> {
         uuid::Uuid::parse_str(version).map_err(|e| failure("resolve", reference, e))?;
         for _ in 0..5 {
@@ -76,8 +76,8 @@ impl KubernetesStore {
                     "Secret has no resourceVersion",
                 ));
             }
-            if let Some(scope) = scope {
-                document.metadata.attributes.insert("labels".into(), json!({"wamn.org":scope.org,"wamn.project":scope.project,"wamn.env":scope.env.as_str()}));
+            if let Some(target) = target {
+                document.metadata.attributes.insert("labels".into(), json!({"wamn.org":target.org,"wamn.project":target.project,"wamn.env":target.env.as_str()}));
             }
             if let Some(value) = value {
                 document.data.insert(version.into(), STANDARD.encode(value));
@@ -114,14 +114,14 @@ impl KubernetesStore {
 impl Store for KubernetesStore {
     async fn put(
         &self,
-        scope: &Triple,
+        target: &Triple,
         credential_id: uuid::Uuid,
         value: &[u8],
     ) -> Result<StoreVersion, Error> {
         if [
-            scope.org.as_str(),
-            scope.project.as_str(),
-            scope.env.as_str(),
+            target.org.as_str(),
+            target.project.as_str(),
+            target.env.as_str(),
         ]
         .into_iter()
         .any(str::is_empty)
@@ -132,9 +132,9 @@ impl Store for KubernetesStore {
                 "the environment coordinate is absent",
             ));
         }
-        let reference = credential_secret_name(&scope.org, &scope.project, scope.env.as_str());
+        let reference = credential_secret_name(&target.org, &target.project, target.env.as_str());
         let version = credential_id.to_string();
-        self.change(&reference, &version, Some(value), Some(scope))
+        self.change(&reference, &version, Some(value), Some(target))
             .await?;
         Ok(StoreVersion {
             store: "k8s",

@@ -72,9 +72,9 @@ function proxy(parsed: DevConfiguration): Record<string, ProxyOptions> {
  * The dev server answers `/config.json` with the org and the project of
  * `dev.json`, as `wamn web upload` writes the file beside `index.html`.
  */
-function scopePlugin(dev: DevConfiguration): Plugin {
+function configPlugin(dev: DevConfiguration): Plugin {
   return {
-    name: "wamn-scope",
+    name: "wamn-config",
     configureServer(server) {
       server.middlewares.use("/config.json", (_request, response) => {
         response.setHeader("content-type", "application/json");
@@ -125,7 +125,7 @@ export function solidApplication(
 
 /**
  * The server and the output of one application. The dev server alone adds
- * the scope response and the proxy to the local stack.
+ * the config response and the proxy to the local stack.
  */
 export function applicationConfig(options: ApplicationOptions): ApplicationConfig {
   const at = (path: string) => fileURLToPath(new URL(path, options.root));
@@ -133,7 +133,7 @@ export function applicationConfig(options: ApplicationOptions): ApplicationConfi
   const store = fileURLToPath(new URL("../../node_modules", import.meta.url));
   const dev = options.command === "serve" ? devConfiguration() : undefined;
   return {
-    plugins: dev === undefined ? [] : [scopePlugin(dev)],
+    plugins: dev === undefined ? [] : [configPlugin(dev)],
     resolve: {},
     server: {
       port: options.port,

@@ -9,7 +9,7 @@ The branch is `worktree-docs`, rebased onto main `779cbf125`.
 | --- | --- | --- | --- |
 | `.1` Completed plans out | H2-2, H2-3 | `64933dbf8` | Ten completed plans and `docs-audit.md` are deleted. `bd show` confirmed each bead closed. Seven mixed plans keep their unresolved design and every rule that no reference page states. |
 | `.2` One reference owner | H2-1, H2-4 | `82df826ce`, `fe812ec01` | The standing rules of `platform-deploy.md` are in `CLAUDE.md`, the platform version procedure is in `operations/building.md`, and the cloud prerequisites are in `operations/gcp.md`. Rules of built work moved to eleven architecture and operations pages. `platform-deploy.md` and `integrations.md` are deleted. |
-| `.3` Links and evidence | H2-5, H2-6, H2-7 | `93926c34b` | The five `wamn-sync.md` links and all other missing local links resolve. Twelve evidence links are removed, and each claim keeps its bead and the note "evidence not retained". The three snapshot pages are deleted, and git holds them at `82df826ce`. |
+| `.3` Links and evidence | H2-5, H2-6, H2-7 | `93926c34b` | The five `wamn-sync.md` links and all other missing local links resolve. Twelve evidence links are removed, and each statement keeps its bead and the note "evidence not retained". The three snapshot pages are deleted, and git holds them at `82df826ce`. |
 | `.4` Navigation | H2-8 | `7821b47d8` | The plan index lists all sixteen retained plans. `docs/README.md` names `audit/`. The history index maps every page to its successor, bead or revision. |
 | `.5` Auth cache ignores | `wamn-kov6v.6` part | `31d54aa71` | The three `auth_cache.rs` cases use `requires: env:WAMN_NATIVE_C_NATS_BIN` and test it before setup. Their exclusion rows are removed. |
 
@@ -44,7 +44,7 @@ The owner accepted the epic on 2026-11-02 and ruled on the open items.
 1. The two runtime strings that cited deleted pages now cite their owners: `tools/repo-lint-dependencies:63` cites `architecture/naming.md`, and `crates/control/lib/src/platform/steps.rs:329` cites `operations/gcp.md` section 2.
 2. The 31 undecided rules (D) stay as recorded. They are not copied into any page. Git holds them at `40be5b96d`, and a person who needs one files a bead.
 3. The 66 contradicted rules (C) get no beads. The resolution table is the list for a later owner pass. One bead covers the teardown example: `wamn-e70ys`.
-4. The rule "An epic is at most three issues" is deleted from `CLAUDE.md`. It contradicts the 2026-09-25 ruling that an instruction can scope more work.
+4. The rule "An epic is at most three issues" is deleted from `CLAUDE.md`. It contradicts the 2026-09-25 ruling that an instruction can target more work.
 
 ## Open items
 

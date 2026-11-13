@@ -74,7 +74,7 @@ fn component_schema(
             .map_err(|error| malformed(&path, error))?;
         let declaration: ComponentDeclaration = serde_json::from_value(document)
             .map_err(|error| malformed(&path, format!("invalid component declaration: {error}")))?;
-        if declaration.scope.package_id != attachment.package_id
+        if declaration.target.package_id != attachment.package_id
             || declaration.component != component
             || interface_version.is_some_and(|version| declaration.interface_version != version)
         {
@@ -246,7 +246,7 @@ mod tests {
         );
         let fixture = Publication::new();
         fixture.write("components/fixture.json.in", &json!({
-            "scope": {"env_key": "tenant-a", "package-id": "platform_fixture"},
+            "target": {"project_env_key": "org-a", "package-id": "platform_fixture"},
             "component": "fixture", "interface-version": "1.0.0",
             "operations": {"platform-fixture:widget/archive@1.0.0": {
                 "registered-operation": "platform-fixture:widget/archive@1.0.0",

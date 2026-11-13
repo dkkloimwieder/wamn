@@ -30,7 +30,7 @@ package wamn:node@0.1.0;
 /// keyed by the node's component digest, call `run`, route the emission by port,
 /// and classify a `node-error` into retry, throttle, error edge, dead-letter, or
 /// non-failure cancellation.
-/// Effective-release admission maps each package-scoped logical operation in
+/// Effective-release admission maps each package-targeted logical operation in
 /// the exact release composition to one digest plus one exact exported handler
 /// instance. The router selects that operation-named instance and invokes its
 /// unchanged `run` function; several operations may therefore share bytes.
@@ -53,13 +53,13 @@ interface types {
   /// derives a dedup key from this record — the same key `emit` presents at the
   /// boundary for producer dedup.
   record node-context {
-    /// The wiring this delivery is running. With `wiring-version` it scopes an
+    /// The wiring this delivery is running. With `wiring-version` it targets an
     /// authored dedup key to the graph revision that asked for the effect, so a
     /// pointer flip to a corrected wiring is not suppressed by the superseded
     /// one's key.
     wiring-id: string,
     /// The active wiring version the router resolved for this delivery. Wirings
-    /// are versioned, gated data hot-activated by pointer flip; a delivery runs
+    /// are versioned, conditioned data hot-activated by pointer flip; a delivery runs
     /// against exactly one version, resolved once at its start.
     wiring-version: u32,
     /// This node's instance id within the wiring graph. Two instances of the
@@ -126,7 +126,7 @@ interface types {
     /// wiring's error edge.
     terminal(error-detail),
     /// The input violated this node's declared contract. Never retried and never
-    /// merely error-edged: shape safety is the gate's jurisdiction, so reaching
+    /// merely error-edged: shape safety is the condition's jurisdiction, so reaching
     /// this at runtime means the payload is poison — it dead-letters (stream
     /// path) rather than being redelivered forever against the same bad input.
     invalid-input(error-detail),

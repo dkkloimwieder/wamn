@@ -9,7 +9,7 @@
 //! the pattern names. A package with models runs on `cloud` only. An
 //! overlay numbers, stamps and keys only the relation owner's fields.
 
-use wamn_number_pattern::{Key, Pattern, Scope};
+use wamn_number_pattern::{Key, Pattern, Policy};
 use wamn_scalar::SqlValueType;
 
 use super::{BTreeMap, CatalogIr, Table, column, relation};
@@ -172,7 +172,7 @@ fn validate_numbered_field(
         )));
     }
     for counter in pattern.counters() {
-        if let Scope::Per(Key::Field(name)) = counter.scope()
+        if let Policy::Per(Key::Field(name)) = counter.policy()
             && key == Some(&**name)
         {
             return Err(invalid(format!(

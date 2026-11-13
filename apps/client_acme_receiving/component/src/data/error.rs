@@ -136,15 +136,15 @@ impl AccessError {
         constraint: Option<&str>,
         allowed_constraints: AllowedConstraints,
     ) -> Self {
-        let (kind, constraint) = classify(type_, constraint, allowed_constraints);
-        let mut error = Self::new(kind, context);
+        let (type_, constraint) = classify(type_, constraint, allowed_constraints);
+        let mut error = Self::new(type_, context);
         error.constraint = constraint;
         error
     }
 
-    fn new(kind: AccessErrorType, context: impl Into<Box<str>>) -> Self {
+    fn new(type_: AccessErrorType, context: impl Into<Box<str>>) -> Self {
         Self {
-            type_: kind,
+            type_,
             context: context.into(),
             constraint: None,
             field: None,
@@ -250,19 +250,19 @@ mod tests {
                 (AccessErrorType::InternalError, None)
             );
         }
-        for kind in [
+        for type_ in [
             StatementErrorType::UniqueViolation,
             StatementErrorType::ForeignKeyViolation,
             StatementErrorType::CheckViolation,
             StatementErrorType::ExclusionViolation,
         ] {
             assert_eq!(
-                classify(kind, Some("allowed_exclusion"), AllowedConstraints::NONE),
+                classify(type_, Some("allowed_exclusion"), AllowedConstraints::NONE),
                 (AccessErrorType::InternalError, None)
             );
-            if kind != StatementErrorType::ExclusionViolation {
+            if type_ != StatementErrorType::ExclusionViolation {
                 assert_eq!(
-                    classify(kind, Some("allowed_exclusion"), allowed),
+                    classify(type_, Some("allowed_exclusion"), allowed),
                     (AccessErrorType::InternalError, None)
                 );
             }

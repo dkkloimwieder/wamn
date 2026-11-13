@@ -13,7 +13,7 @@ use tokio::time::{Instant, timeout};
 use tracing_subscriber::layer::SubscriberExt as _;
 use wamn_broker::Publisher;
 use wamn_catalog::{
-    AdmittedComponent, AdmittedComponentOperation, ComponentPackageScope, ComponentSqlField,
+    AdmittedComponent, AdmittedComponentOperation, ComponentPackageCoordinate, ComponentSqlField,
     ComponentSqlStatement, PackageCoordinate, SERVING_MANIFEST_FORMAT_VERSION, ServingComponent,
     ServingManifest, ServingRelease,
 };
@@ -30,7 +30,7 @@ use wamn_runtime::plugins::connection_http::{
 use wamn_runtime::plugins::wamn_blobstore::plugin::WamnBlobstore;
 use wamn_runtime::plugins::wamn_logging::{WamnLogging, WamnLoggingConfig};
 use wamn_runtime::plugins::wamn_postgres::{
-    ReleaseIdentity, SessionClaims, StaticCredentialProvider, WAMN_POSTGRES_ID, WamnPostgres,
+    ReleaseIdentity, SessionIdentity, StaticCredentialProvider, WAMN_POSTGRES_ID, WamnPostgres,
 };
 use wash_runtime::engine::Engine;
 use wash_runtime::engine::ctx::{SharedCtx, extract_active_ctx};
@@ -510,7 +510,7 @@ struct Observation {
     phase: u32,
     scope: String,
     native_identity: bool,
-    claims: Option<SessionClaims>,
+    identity: Option<SessionIdentity>,
     invocation: Option<ConnectionInvocation>,
     /// The same host-attested coordinates as seen from the postgres surface,
     /// which binds its own registry (`wamn-0h0g.7.9`).
@@ -570,10 +570,10 @@ impl HostPlugin for Observe {
                         .read()
                         .expect("bindings lock")
                         .contains_key(&scope);
-                    let claims = policy.resources.postgres.session_claims(&scope);
+                    let identity = policy.resources.postgres.session_identity(&scope);
                     let invocation = policy.resources.blobstore.invocation(&scope);
                     let postgres_invocation = policy.resources.postgres.invocation(&scope);
-                    let logging = policy.resources.logging.claim_snapshot(&scope);
+                    let logging = policy.resources.logging.identity_snapshot(&scope);
                     let _effect = invocation
                         .as_ref()
                         .filter(|_| phase == 1)
@@ -588,7 +588,7 @@ impl HostPlugin for Observe {
                         phase,
                         scope,
                         native_identity,
-                        claims,
+                        identity,
                         invocation,
                         postgres_invocation,
                         logging,
@@ -619,8 +619,8 @@ impl HostPlugin for Observe {
 
 fn fact(operation: &str, bytes: &[u8], registered: bool) -> AdmittedComponent {
     AdmittedComponent {
-        scope: ComponentPackageScope {
-            env_key: "tenant-a".into(),
+        target: ComponentPackageCoordinate {
+            project_env_key: "org-a".into(),
             package_id: operation
                 .split_once(':')
                 .expect("qualified operation")
@@ -750,7 +750,7 @@ impl Fixture {
                     .iter()
                     .chain(&callees)
                     .map(|fact| {
-                        PackageCoordinate::new(&fact.scope.package_id, "1.0.0")
+                        PackageCoordinate::new(&fact.target.package_id, "1.0.0")
                             .expect("package coordinate")
                     })
                     .collect(),
@@ -765,7 +765,7 @@ impl Fixture {
             LoadedRelease::load_canonical_bytes(
                 &manifest.canonical_bytes(),
                 "native policy fixture",
-                wamn_engine::release_manifest::ReleaseScope::new("tenant-a", "test")
+                wamn_engine::release_manifest::ReleaseTarget::new("org-a", "test")
                     .with_applications(
                         serde_json::from_value(
                             serde_json::json!({"receiving": {"packages": ["root", "child"]}}),
@@ -785,9 +785,9 @@ impl Fixture {
             Publisher::default(),
             Arc::new(ConnectionCredentials::empty()),
             Arc::clone(&postgres),
-            "tenant-a",
+            "org-a",
             "test",
-            release.scope().environment.as_str(),
+            release.target().environment.as_str(),
         ));
         let policy = new_native_policy(
             &native,
@@ -799,7 +799,7 @@ impl Fixture {
                     Arc::clone(&postgres),
                     Arc::new(HttpTransport::new().expect("HTTP transport")),
                     Arc::clone(&facts),
-                    "tenant-a",
+                    "org-a",
                     "test",
                     Arc::from(Vec::new()),
                     Some(Arc::clone(&release)),
@@ -807,7 +807,7 @@ impl Fixture {
                 blobstore: Arc::new(WamnBlobstore::new(
                     Arc::clone(&postgres),
                     facts,
-                    "tenant-a",
+                    "org-a",
                     "test",
                     Some(Arc::clone(&release)),
                 )),
@@ -827,7 +827,7 @@ impl Fixture {
         {
             assert_eq!(
                 component.application, "receiving",
-                "the claim uses the environment map name"
+                "the identity uses the environment map name"
             );
         }
         let events = Arc::default();
@@ -921,13 +921,13 @@ impl Fixture {
             },
             facts: NativeFacts::entry(
                 NodeAcquisition {
-                    claims: SessionClaims {
-                        env_key: "tenant-a".into(),
+                    identity: SessionIdentity {
+                        project_env_key: "org-a".into(),
                         project: Some("test".into()),
                         release: Some(ReleaseIdentity::for_test(
                             self.policy.resources.release.manifest().digest(),
                         )),
-                        ..SessionClaims::default()
+                        ..SessionIdentity::default()
                     },
                     invocation: ConnectionInvocation {
                         origin: ConnectionOrigin {
@@ -989,7 +989,7 @@ impl Fixture {
                 self.policy
                     .resources
                     .postgres
-                    .session_claims(&event.scope)
+                    .session_identity(&event.scope)
                     .is_none()
             );
             assert!(
@@ -1011,7 +1011,7 @@ impl Fixture {
                 self.policy
                     .resources
                     .logging
-                    .claim_snapshot(&event.scope)
+                    .identity_snapshot(&event.scope)
                     .is_none()
             );
             assert!(
@@ -1157,7 +1157,7 @@ async fn run_case(case: Case) {
                 event.native_identity,
                 "initialization carries only native component identity"
             );
-            assert!(event.claims.is_none());
+            assert!(event.identity.is_none());
             assert!(event.invocation.is_none());
             assert!(event.postgres_invocation.is_none());
             assert!(event.logging.is_none());
@@ -1166,24 +1166,27 @@ async fn run_case(case: Case) {
                 !event.native_identity,
                 "execution carries a distinct invocation scope"
             );
-            let claims = event.claims.as_ref().expect("execution has host claims");
-            assert_eq!(claims.env_key, "tenant-a");
+            let identity = event
+                .identity
+                .as_ref()
+                .expect("execution has host identity");
+            assert_eq!(identity.project_env_key, "org-a");
             if !matches!(case, Case::Cancellation) {
                 assert_eq!(
-                    claims.user_id,
+                    identity.user_id,
                     Some(PlatformComponent::Materializer.principal_id().to_string()),
                     "a callerless delivery binds its platform principal"
                 );
                 assert_eq!(
-                    claims.operation.as_deref(),
+                    identity.operation.as_deref(),
                     Some(ROOT),
                     "a callerless delivery binds the operation that it runs"
                 );
             }
             assert_eq!(
                 event.logging,
-                Some(("tenant-a".into(), "test".into())),
-                "execution has a logging claim"
+                Some(("org-a".into(), "test".into())),
+                "execution has a logging identity"
             );
             let invocation = event
                 .invocation
@@ -1330,7 +1333,7 @@ async fn assert_postgres_bind_warns() {
         .expect("the isolated test process installs the warn capture first");
 
     // The driver's native path: preload, then one request, with an empty
-    // workload config that a wash bind would treat as a missing tenant.
+    // workload config that a wash bind would treat as a missing project.
     let fixture = Fixture::new(Case::PostgresImport).await;
     let target = fixture.target().await;
     prepare_native(&target, Instant::now() + CLEANUP)
@@ -1355,7 +1358,7 @@ async fn assert_postgres_bind_warns() {
         .await
         .expect("unbind fixture workload");
 
-    // A wash bind of the same import with no tenant still warns, so the
+    // A wash bind of the same import with no project still warns, so the
     // capture above counts this warn when it happens.
     let wash = Arc::new(WamnPostgres::with_provider(Arc::new(
         StaticCredentialProvider::new(HashMap::new(), None),
@@ -1395,7 +1398,7 @@ async fn assert_postgres_bind_warns() {
         .await
         .expect("resolve the wash workload");
     assert_eq!(wash.scope_registrations(), 1);
-    assert_eq!(warns.count(), 1, "a wash bind with no tenant warns once");
+    assert_eq!(warns.count(), 1, "a wash bind with no project warns once");
     resolved
         .unbind_all_plugins()
         .await
@@ -1403,9 +1406,9 @@ async fn assert_postgres_bind_warns() {
 }
 
 #[test]
-fn native_postgres_guest_binds_without_the_env_key_warn() {
+fn native_postgres_guest_binds_without_the_project_env_key_warn() {
     run_isolated_test(
-        "native_postgres_guest_binds_without_the_env_key_warn",
+        "native_postgres_guest_binds_without_the_project_env_key_warn",
         assert_postgres_bind_warns(),
     );
 }
@@ -1519,7 +1522,7 @@ async fn assert_call_owner() {
             policy
                 .resources
                 .postgres
-                .session_claims(&event.scope)
+                .session_identity(&event.scope)
                 .is_none()
         );
         assert!(
@@ -1533,7 +1536,7 @@ async fn assert_call_owner() {
             policy
                 .resources
                 .logging
-                .claim_snapshot(&event.scope)
+                .identity_snapshot(&event.scope)
                 .is_none()
         );
         assert!(
@@ -1599,7 +1602,7 @@ fn released_component_validation_reuses_only_the_immutable_list() {
         LoadedRelease::load_canonical_bytes(
             &manifest.canonical_bytes(),
             "validation fixture",
-            wamn_engine::release_manifest::ReleaseScope::new("tenant-a", "test").with_applications(
+            wamn_engine::release_manifest::ReleaseTarget::new("org-a", "test").with_applications(
                 serde_json::from_value(
                     serde_json::json!({"receiving": {"packages": ["root", "child"]}}),
                 )
@@ -1653,7 +1656,7 @@ fn released_component_validation_reuses_only_the_immutable_list() {
         LoadedRelease::load_canonical_bytes(
             &next_manifest.canonical_bytes(),
             "another release",
-            wamn_engine::release_manifest::ReleaseScope::new("tenant-a", "test").with_applications(
+            wamn_engine::release_manifest::ReleaseTarget::new("org-a", "test").with_applications(
                 serde_json::from_value(
                     serde_json::json!({"receiving": {"packages": ["root", "child"]}}),
                 )

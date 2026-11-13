@@ -20,7 +20,7 @@ pub(super) async fn persisted_literal_leg(su: &Client) {
     seed_run_admission_facts(su, "t1", "cat", "dev").await;
     su.batch_execute(&format!(
         "INSERT INTO {SCHEMA}.runs \
-             (env_key,run_id,wiring_id,wiring_version,wiring_hash,binding_world_json,package_id, \
+             (project_env_key,run_id,wiring_id,wiring_version,wiring_hash,binding_world_json,package_id, \
               environment) \
              VALUES ('t1','r-budget','fixture-wiring',1,'sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd','[]'::jsonb,'cat','dev');"
     ))
@@ -49,7 +49,7 @@ pub(super) async fn persisted_literal_leg(su: &Client) {
         .execute(
             &format!(
                 "UPDATE {SCHEMA}.runs SET fail_type = 'runaway-budget' \
-                 WHERE env_key = 't1' AND run_id = 'r-budget'"
+                 WHERE project_env_key = 't1' AND run_id = 'r-budget'"
             ),
             &[],
         )

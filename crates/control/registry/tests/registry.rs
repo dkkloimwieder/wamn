@@ -1,7 +1,7 @@
 //! Integration tests for the control-plane registry model: import/export
 //! round-trip, triple-driven routing, and placement resolution (cluster + Secret
 //! reference), including the D18 recovery-domain cluster derivation and the
-//! wamn-8df.4 org-scoped policies (templates; T2/T4 coexistence).
+//! wamn-8df.4 org-targeted policies (templates; T2/T4 coexistence).
 
 use wamn_control_registry::{
     ClusterRef, EventReader, Org, Project, ProjectEnv, RecoveryDomain, Registry, RegistryError,
@@ -204,7 +204,7 @@ fn resolve_routes_canary_own_to_its_own_cluster() {
 }
 
 #[test]
-fn t2_and_t4_orgs_coexist_via_org_scoped_policies() {
+fn t2_and_t4_orgs_coexist_via_org_targeted_policies() {
     // THE wamn-8df.4 headline: one platform holds a `standard` org (canary
     // shared-with prod) AND a `dedicated` org (canary own) at the same time —
     // impossible under platform-global policies, where one canary row would have

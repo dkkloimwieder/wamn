@@ -31,8 +31,8 @@ import {
   type SessionState,
   type Transport,
 } from "@wamn/web-runtime";
-import { audienceKind, createAddress, type Address, type Kind } from "./address";
-import type { Scope } from "./scope";
+import { audienceType, createAddress, type Address, type Type } from "./address";
+import type { Config } from "./config";
 import { identityPage, SignInForm } from "./identity";
 import { EntryPage, Frame, NotFound, NotFoundBoundary } from "./page";
 
@@ -93,7 +93,7 @@ export interface ShellSection {
   readonly screens: readonly ShellScreen[];
   readonly routes?: readonly ShellRoute[];
 }
-export interface ShellProps extends Scope {
+export interface ShellProps extends Config {
   readonly title: string;
   readonly sections: readonly ShellSection[];
   readonly controlSections?: readonly ShellSection[];
@@ -167,14 +167,14 @@ export function controlHolds(mine: Pick<control.ControlMineResult, "orgAdmin" | 
     environment.ENVIRONMENT_ACTIVATE_ROUTE.operation,
     environment.ENVIRONMENT_INACTIVATE_ROUTE.operation,
   ]);
-  return (operation, scope) => {
+  return (operation, config) => {
     if (operation === control.CONTROL_MINE_ROUTE.operation)
       return mine.orgAdmin || mine.projects.some((entry) => entry.projectAdmin);
     if (orgOperations.has(operation)) return mine.orgAdmin;
     return (
       projectOperations.has(operation) &&
       (mine.orgAdmin ||
-        mine.projects.some((entry) => entry.projectAdmin && (scope === undefined || entry.project === scope)))
+        mine.projects.some((entry) => entry.projectAdmin && (config === undefined || entry.project === config)))
     );
   };
 }
@@ -223,17 +223,17 @@ export function Shell(props: ShellProps): JSX.Element {
           <Show when={audience()} keyed fallback={<NotFound />}>
             {(aud) => (
               <Show
-                when={audienceKind(aud, props)}
+                when={audienceType(aud, props)}
                 keyed
                 fallback={<NotFound message="This address names an environment of another org." />}
               >
-                {(kind) => <Session {...props} aud={aud} kind={kind} options={options} address={address} />}
+                {(type) => <Session {...props} aud={aud} type={type} options={options} address={address} />}
               </Show>
             )}
           </Show>
         }
       >
-        {(Identity) => <Identity title={props.title} scope={props} options={options} address={address} />}
+        {(Identity) => <Identity title={props.title} config={props} options={options} address={address} />}
       </Show>
     </Loading>
   );
@@ -258,19 +258,19 @@ function saved(aud: string) {
 }
 
 function Session(
-  props: ShellProps & { aud: string; kind: Kind; options: SessionOptions; address: Address },
+  props: ShellProps & { aud: string; type: Type; options: SessionOptions; address: Address },
 ): JSX.Element {
   const [state, setState] = createSignal<SessionState | null>(null);
   const [view, setView] = createSignal<View>();
   const [trouble, setTrouble] = createSignal<string>();
   // The last signed-in user, shown while the first renewal cannot reach the identity service.
   const [offlineUser, setOfflineUser] = createSignal<string>();
-  const store = props.kind === "application" ? saved(props.aud) : undefined;
+  const store = props.type === "application" ? saved(props.aud) : undefined;
   const userId = () => {
     const current = state();
     return current?.status === "signedIn" ? current.userId : offlineUser();
   };
-  const sections = props.kind === "control" ? (props.controlSections ?? []) : props.sections;
+  const sections = props.type === "control" ? (props.controlSections ?? []) : props.sections;
   const transport = createTransport({
     ...props.options,
     baseUrl: API_BASE,
@@ -305,7 +305,7 @@ function Session(
     return held === undefined ? undefined : applicationView(held, sections);
   }
   async function readView(id: string): Promise<View> {
-    if (props.kind === "control") return controlView(transport, sections);
+    if (props.type === "control") return controlView(transport, sections);
     const held = await applicationHeld(transport, id);
     if (held !== undefined) {
       store?.view.save(held);
@@ -428,7 +428,7 @@ function Session(
               >
                 <NotFoundBoundary home={`/${props.aud}`} path={props.address.url().pathname}>
                   <Layout
-                    title={props.kind === "control" ? props.org : props.title}
+                    title={props.type === "control" ? props.org : props.title}
                     aud={props.aud}
                     sections={shown().sections}
                     holds={shown().holds}

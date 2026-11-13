@@ -75,7 +75,7 @@ pub fn decode<I: Id>(encoded: &str, model: &str) -> Result<Cursor<I>, Invalid> {
 }
 
 /// One changed row: its data, or `None` when the row is deleted or left the
-/// scope of the read.
+/// target of the read.
 #[derive(Debug)]
 pub struct Change<Row, I> {
     pub id: I,

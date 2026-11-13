@@ -116,12 +116,12 @@ impl EnvironmentsRequest {
 /// matches every org or project. The control audience of an org has no
 /// project, so the org alone selects it.
 #[derive(Default)]
-struct Scope {
+struct ProjectFilter {
     org: Option<String>,
     project: Option<String>,
 }
 
-impl Scope {
+impl ProjectFilter {
     fn holds(&self, org: &str, project: &str) -> bool {
         self.org.as_deref().is_none_or(|wanted| wanted == org)
             && self
@@ -134,12 +134,12 @@ impl Scope {
 fn discovery_page(
     input: &serde_json::Value,
     principal: &PrincipalId,
-    scope: &Scope,
+    filter: &ProjectFilter,
 ) -> Result<ListPage, wamn_platform_identity::IdentityError> {
     ListPage::new(
         input,
         "/password/environments",
-        serde_json::json!({"principal":principal.to_string().as_str(), "org":scope.org, "project":scope.project}),
+        serde_json::json!({"principal":principal.to_string().as_str(), "org":filter.org, "project":filter.project}),
         Order::Audience,
     )
 }
@@ -147,7 +147,7 @@ fn discovery_page(
 /// Where a discovery page's control orgs start and how many it reads.
 /// Control audiences come first. None means the cursor is past them.
 fn control_window(page: &ListPage) -> Option<(Option<&str>, Option<i64>)> {
-    match page.after_kind() {
+    match page.after_type() {
         Some(1) => None,
         Some(_) => Some((
             page.after(1).and_then(control_audience_org),
@@ -159,7 +159,7 @@ fn control_window(page: &ListPage) -> Option<(Option<&str>, Option<i64>)> {
 
 /// Where a discovery page's application audiences start.
 fn application_after(page: &ListPage) -> std::ops::Bound<&str> {
-    match (page.after_kind(), page.after(1)) {
+    match (page.after_type(), page.after(1)) {
         (Some(1), Some(after)) => std::ops::Bound::Excluded(after),
         _ => std::ops::Bound::Unbounded,
     }
@@ -401,13 +401,13 @@ async fn handle(
             }
         }
         "/password/session" | "/password/environments" => {
-            let (email, password, audience, carrier, scope, paging) =
+            let (email, password, audience, carrier, filter, paging) =
                 if parts.uri.path() == "/password/environments" {
                     let Ok(request) = serde_json::from_slice::<EnvironmentsRequest>(&bytes) else {
                         return invalid();
                     };
                     let paging = request.paging_input();
-                    let scope = Scope {
+                    let filter = ProjectFilter {
                         org: request.org,
                         project: request.project,
                     };
@@ -416,7 +416,7 @@ async fn handle(
                         request.password,
                         None,
                         Carrier::Bearer,
-                        scope,
+                        filter,
                         paging,
                     )
                 } else {
@@ -428,7 +428,7 @@ async fn handle(
                         request.password,
                         Some(request.aud),
                         request.carrier,
-                        Scope::default(),
+                        ProjectFilter::default(),
                         serde_json::json!({}),
                     )
                 };
@@ -471,7 +471,7 @@ async fn handle(
                 Err(error) => return password_failure(&error),
             };
             let Some(audience) = audience else {
-                let Ok(page) = discovery_page(&paging, principal.principal().id(), &scope) else {
+                let Ok(page) = discovery_page(&paging, principal.principal().id(), &filter) else {
                     return invalid();
                 };
                 let orgs = match control_window(&page) {
@@ -479,7 +479,7 @@ async fn handle(
                     Some((after_org, limit)) => match control_orgs_page(
                         &tx,
                         principal.principal().id(),
-                        scope.org.as_deref(),
+                        filter.org.as_deref(),
                         after_org,
                         limit,
                     )
@@ -512,7 +512,7 @@ async fn handle(
                     {
                         let target = &configured.binding;
                         let triple = target.triple();
-                        if !scope.holds(&triple.org, &triple.project) {
+                        if !filter.holds(&triple.org, &triple.project) {
                             continue;
                         }
                         match session::authorized_roles(inner, &principal, configured).await {
@@ -527,9 +527,9 @@ async fn handle(
                                     break;
                                 }
                             }
-                            Err(error) => match error.kind {
-                                session::FailureKind::Unauthorized => (),
-                                session::FailureKind::Unavailable => return unavailable(),
+                            Err(error) => match error.type_ {
+                                session::FailureType::Unauthorized => (),
+                                session::FailureType::Unavailable => return unavailable(),
                             },
                         }
                     }
@@ -781,9 +781,9 @@ async fn handle(
 }
 
 fn authority_failure(error: &session::ExchangeFailure) -> Response<Full<Bytes>> {
-    match error.kind {
-        session::FailureKind::Unauthorized => session::unauthorized(),
-        session::FailureKind::Unavailable => unavailable(),
+    match error.type_ {
+        session::FailureType::Unauthorized => session::unauthorized(),
+        session::FailureType::Unavailable => unavailable(),
     }
 }
 
@@ -892,7 +892,7 @@ fn with_cookies(
     cookies: [(&str, &str, i64); 3],
 ) -> Response<Full<Bytes>> {
     for (name, value, max_age) in cookies {
-        // Only the renewal cookie is scoped to the identity service; only the CSRF cookie is readable.
+        // Only the renewal cookie is restricted to the identity service; only the CSRF cookie is readable.
         let path = if name == RENEWAL_COOKIE {
             "/password"
         } else {
@@ -1089,21 +1089,21 @@ mod tests {
     };
 
     #[test]
-    fn a_scope_lists_only_its_org_and_project() {
-        let scope = Scope {
+    fn a_filter_lists_only_its_org_and_project() {
+        let filter = ProjectFilter {
             org: Some("dkk".to_owned()),
             project: Some("wms".to_owned()),
         };
-        assert!(scope.holds("dkk", "wms"));
-        assert!(!scope.holds("dkk", "receiving"));
-        assert!(!scope.holds("other", "wms"));
-        assert!(Scope::default().holds("dkk", "receiving"));
+        assert!(filter.holds("dkk", "wms"));
+        assert!(!filter.holds("dkk", "receiving"));
+        assert!(!filter.holds("other", "wms"));
+        assert!(ProjectFilter::default().holds("dkk", "receiving"));
     }
 
     #[test]
     fn discovery_pages_bind_principal_filters_and_preserve_complete_totals() {
         let principal: PrincipalId = "00000000-0000-0000-0000-000000000001".parse().unwrap();
-        let scope = Scope {
+        let filter = ProjectFilter {
             org: Some("acme".into()),
             project: Some("widgets".into()),
         };
@@ -1112,27 +1112,31 @@ mod tests {
             json!([1, "app-a"]),
             json!([1, "app-b"]),
         ];
-        let first = discovery_page(&json!({"limit":1}), &principal, &scope).unwrap();
+        let first = discovery_page(&json!({"limit":1}), &principal, &filter).unwrap();
         let answer = first.answer("environments", rows[..2].to_vec(), Clone::clone);
         assert_eq!(answer["environments"], json!([rows[0]]));
         assert!(answer["total"].is_null());
         let next = discovery_page(
             &json!({"limit":1,"cursor":answer["next_cursor"]}),
             &principal,
-            &scope,
+            &filter,
         )
         .unwrap();
-        assert_eq!(next.after_kind(), Some(0));
+        assert_eq!(next.after_type(), Some(0));
         assert_eq!(next.after(1), Some("urn:wamn:control:acme"));
         let answer = next.answer("environments", rows[1..].to_vec(), Clone::clone);
-        let last =
-            discovery_page(&json!({"cursor":answer["next_cursor"]}), &principal, &scope).unwrap();
+        let last = discovery_page(
+            &json!({"cursor":answer["next_cursor"]}),
+            &principal,
+            &filter,
+        )
+        .unwrap();
         let answer = last.answer("environments", rows[2..].to_vec(), Clone::clone);
         assert_eq!(answer["environments"], json!([rows[2]]));
         assert!(answer["next_cursor"].is_null());
         assert!(answer["total"].is_null());
         for input in [json!({}), json!({"limit":100})] {
-            let answer = discovery_page(&input, &principal, &scope).unwrap().answer(
+            let answer = discovery_page(&input, &principal, &filter).unwrap().answer(
                 "environments",
                 rows.clone(),
                 Clone::clone,
@@ -1149,32 +1153,32 @@ mod tests {
             Clone::clone,
         );
         let input = json!({"cursor":controls["next_cursor"]});
-        let control = discovery_page(&input, &principal, &scope).unwrap();
-        assert_eq!(control.after_kind(), Some(0));
+        let control = discovery_page(&input, &principal, &filter).unwrap();
+        assert_eq!(control.after_type(), Some(0));
         assert_eq!(
             control.after(1).and_then(control_audience_org),
             Some("acme")
         );
-        assert!(discovery_page(&input, &principal, &Scope::default()).is_err());
+        assert!(discovery_page(&input, &principal, &ProjectFilter::default()).is_err());
         assert!(
             discovery_page(
                 &input,
                 &principal,
-                &Scope {
-                    org: scope.org.clone(),
+                &ProjectFilter {
+                    org: filter.org.clone(),
                     project: None
                 }
             )
             .is_err()
         );
         let other: PrincipalId = "00000000-0000-0000-0000-000000000002".parse().unwrap();
-        assert!(discovery_page(&input, &other, &scope).is_err());
+        assert!(discovery_page(&input, &other, &filter).is_err());
     }
 
     #[test]
     fn discovery_steps_from_control_orgs_to_application_audiences_across_a_page_boundary() {
         let principal: PrincipalId = "00000000-0000-0000-0000-000000000001".parse().unwrap();
-        let scope = Scope {
+        let filter = ProjectFilter {
             org: Some("acme".into()),
             project: None,
         };
@@ -1182,7 +1186,7 @@ mod tests {
         let acme = json!([0, "urn:wamn:control:acme"]);
         let app = json!([1, "app-a"]);
         // Page one reads the control orgs first, then fills the lookahead with an application.
-        let first = discovery_page(&json!({"limit":1}), &principal, &scope).unwrap();
+        let first = discovery_page(&json!({"limit":1}), &principal, &filter).unwrap();
         assert_eq!(control_window(&first), Some((None, Some(2))));
         assert_eq!(application_after(&first), std::ops::Bound::Unbounded);
         let answer = first.answer("environments", vec![acme.clone(), app.clone()], key);
@@ -1192,10 +1196,10 @@ mod tests {
         let second = discovery_page(
             &json!({"limit":1,"cursor":answer["next_cursor"]}),
             &principal,
-            &scope,
+            &filter,
         )
         .unwrap();
-        assert_eq!(second.after_kind(), Some(0));
+        assert_eq!(second.after_type(), Some(0));
         assert_eq!(control_window(&second), Some((Some("acme"), Some(2))));
         assert_eq!(application_after(&second), std::ops::Bound::Unbounded);
         let answer = second.answer("environments", vec![app.clone()], key);
@@ -1207,16 +1211,16 @@ mod tests {
         let third = discovery_page(
             &json!({"limit":1,"cursor":apps["next_cursor"]}),
             &principal,
-            &scope,
+            &filter,
         )
         .unwrap();
-        assert_eq!(third.after_kind(), Some(1));
+        assert_eq!(third.after_type(), Some(1));
         assert_eq!(control_window(&third), None);
         assert_eq!(
             application_after(&third),
             std::ops::Bound::Excluded("app-a")
         );
-        let all = discovery_page(&json!({}), &principal, &scope).unwrap();
+        let all = discovery_page(&json!({}), &principal, &filter).unwrap();
         assert_eq!(control_window(&all), Some((None, None)));
     }
 
@@ -1296,7 +1300,12 @@ mod tests {
             body["password"] = json!("password");
             let request: EnvironmentsRequest = serde_json::from_value(body).unwrap();
             assert!(
-                discovery_page(&request.paging_input(), &principal, &Scope::default()).is_err()
+                discovery_page(
+                    &request.paging_input(),
+                    &principal,
+                    &ProjectFilter::default()
+                )
+                .is_err()
             );
         }
         let response = invalid();
@@ -1611,7 +1620,7 @@ mod tests {
         assert_eq!(repeated.status(), 400);
         mail_task.await.unwrap();
         requests.await.unwrap();
-        // Concurrent requests through separate scoped connections share the limit.
+        // Concurrent requests through separate authorized connections share the limit.
         let mut jobs = tokio::task::JoinSet::new();
         for _ in 0..8 {
             let url = url.to_string();

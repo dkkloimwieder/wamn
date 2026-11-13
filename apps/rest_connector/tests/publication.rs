@@ -4,7 +4,7 @@ mod support;
 
 use serde_json::json;
 use std::collections::BTreeSet;
-use wamn_catalog::{ComponentPackageScope, PackageCoordinate, WiringDocument};
+use wamn_catalog::{ComponentPackageCoordinate, PackageCoordinate, WiringDocument};
 use wamn_release_control::publish_release::{PublishReleaseRequest, assemble_local_release};
 use wamn_schema_generator::operation_reference::{AuthoredDocument, read_authored_document};
 
@@ -44,8 +44,8 @@ async fn both_applications_publish_with_exact_dependencies_and_private_state() -
             BTreeSet::new(),
         ),
     ];
-    let scope = ComponentPackageScope {
-        env_key: "rest--publication--test".into(),
+    let target = ComponentPackageCoordinate {
+        project_env_key: "rest--publication--test".into(),
         package_id: "rest_connector".into(),
         package_version: "0.1.1".into(),
     };
@@ -60,7 +60,7 @@ async fn both_applications_publish_with_exact_dependencies_and_private_state() -
                 .unwrap(),
             )
             .unwrap();
-            (scope.clone(), document)
+            (target.clone(), document)
         })
         .collect();
     let args = PublishReleaseRequest {
@@ -86,7 +86,12 @@ async fn both_applications_publish_with_exact_dependencies_and_private_state() -
         .map(|p| p.package_id().to_owned())
         .collect();
     for (_, document) in &documents {
-        wamn_catalog::gate_workflow_document(&scope.env_key, &packages, release, document)?;
+        wamn_catalog::condition_workflow_document(
+            &target.project_env_key,
+            &packages,
+            release,
+            document,
+        )?;
     }
     composed_sql_uses_released_schemas(&roots, release, &admissions).await?;
     let mut wrong_port = documents.clone();
@@ -98,8 +103,13 @@ async fn both_applications_publish_with_exact_dependencies_and_private_state() -
         .unwrap()
         .from_port = "main".into();
     assert!(
-        wamn_catalog::gate_workflow_document(&scope.env_key, &packages, release, &wrong_port[0].1)
-            .is_err()
+        wamn_catalog::condition_workflow_document(
+            &target.project_env_key,
+            &packages,
+            release,
+            &wrong_port[0].1
+        )
+        .is_err()
     );
     // Environment workflows resolve the node operation against the release,
     // not the package-local operation-dependency alias.
@@ -111,8 +121,8 @@ async fn both_applications_publish_with_exact_dependencies_and_private_state() -
         .unwrap()
         .operation = "rest-consumer-fixture:item/other@0.1.0".into();
     assert!(
-        wamn_catalog::gate_workflow_document(
-            &scope.env_key,
+        wamn_catalog::condition_workflow_document(
+            &target.project_env_key,
             &packages,
             release,
             &wrong_dependency[0].1

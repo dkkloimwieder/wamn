@@ -7,20 +7,20 @@ use std::sync::Arc;
 use serde_json::json;
 use tokio_postgres::Client;
 use wamn_control_provision::{
-    CredentialGeneration, WorkloadRoleFamily, WorkloadRoleScope, sql, workload_generation_role,
+    CredentialGeneration, WorkloadRoleFamily, WorkloadRoleIdentity, sql, workload_generation_role,
 };
 use wamn_engine::operation::{OperationCall, OperationClosure, invoke_operation, node_types};
 use wamn_environment_control::reconcile_package_data_access::{
     ReconcilePackageDataAccessRequest, reconcile_package_data_access,
 };
-use wamn_execution_host::{NativeFacts, NodeAcquisition, OperationHost, OperationScope};
+use wamn_execution_host::{NativeFacts, NodeAcquisition, OperationHost, OperationHostConfig};
 use wamn_package_control::apply_package::{ApplyPackageRequest, PackageRoot, apply_package};
 use wamn_package_control::component_admission::ComponentAdmission;
 use wamn_runtime::plugins::wamn_postgres::{
     AuthorityClass, ClassCredentials, ProjectConfig, StaticCredentialProvider, WamnPostgres,
 };
 
-const ENV_KEY: &str = "rest--publication--test";
+const PROJECT_ENV_KEY: &str = "rest--publication--test";
 const OPERATION: &str = "rest-consumer-fixture:item/record@0.1.1";
 const PASSWORD: &str = "rest-consumer-live-test";
 /// The execution role of the rest_connector item: exactly the operation its
@@ -84,7 +84,7 @@ pub async fn execution_role(
 
 /// Install the run plane, the environment policy and `manifest` as the
 /// serving release, and return the host's platform database access under the
-/// scoped logins of its families: the executor for admission, and the
+/// targeted logins of its families: the executor for admission, and the
 /// admitter for the per-node grant read. The host's credential test refuses
 /// any other login, the superuser included.
 pub async fn workflow_host(
@@ -106,12 +106,12 @@ pub async fn workflow_host(
                 .to_string()],
         )
         .await?;
-    admin.execute("INSERT INTO wamn_run.environment_policies (env_key,expected_environment) VALUES ($1,'test')", &[&ENV_KEY]).await?;
+    admin.execute("INSERT INTO wamn_run.environment_policies (project_env_key,expected_environment) VALUES ($1,'test')", &[&PROJECT_ENV_KEY]).await?;
     let (_, digest) =
         wamn_catalog::ServingManifest::from_canonical_bytes(&manifest.canonical_bytes())?;
     wamn_environment_control::environment::stage::write_release(
         database.url(),
-        ENV_KEY,
+        PROJECT_ENV_KEY,
         digest.as_str(),
         manifest,
         &wamn_control_provision::PlatformComponent::Provisioning
@@ -132,8 +132,8 @@ pub async fn workflow_host(
     ] {
         let role = workload_generation_role(
             family,
-            WorkloadRoleScope::ProjectEnvironment {
-                org: ENV_KEY,
+            WorkloadRoleIdentity::ProjectEnvironment {
+                org: PROJECT_ENV_KEY,
                 project: "test",
                 environment: "test",
                 database: database.name(),
@@ -261,7 +261,7 @@ pub async fn schedule_run(
     match host
         .admit_schedule_run(
             "test",
-            ENV_KEY,
+            PROJECT_ENV_KEY,
             &ScheduleRunAdmission {
                 environment: "test",
                 application,
@@ -300,7 +300,7 @@ pub async fn run_caller(
             && execution_role == role,
         "the schedule run executes as {principal} with {execution_role}, not the workflow user with {role}"
     );
-    host.workflow_node_caller("test", ENV_KEY, &principal, &execution_role)
+    host.workflow_node_caller("test", PROJECT_ENV_KEY, &principal, &execution_role)
         .await?
         .ok_or_else(|| anyhow::anyhow!("the workflow user does not hold {execution_role}"))
 }
@@ -357,8 +357,8 @@ pub async fn install(
     .await?;
     let role = workload_generation_role(
         WorkloadRoleFamily::App,
-        WorkloadRoleScope::EnvKey {
-            env_key: ENV_KEY,
+        WorkloadRoleIdentity::ProjectEnvKey {
+            project_env_key: PROJECT_ENV_KEY,
             database: database.name(),
         },
         CredentialGeneration::A,
@@ -397,7 +397,7 @@ pub async fn install(
     wamn_environment_control::environment::stage::materialize_application_principals(
         system.url(),
         database.url(),
-        ENV_KEY,
+        PROJECT_ENV_KEY,
         manifest,
         &manifests,
         &wamn_broker::Publisher::default(),
@@ -459,7 +459,7 @@ pub async fn invoke(
 ) -> anyhow::Result<()> {
     use wamn_engine::artifact_source::LocalComponentSource;
     use wamn_engine::operation::native_workload::NativeComponent;
-    use wamn_engine::release_manifest::{LoadedRelease, ReleaseScope};
+    use wamn_engine::release_manifest::{LoadedRelease, ReleaseTarget};
     use wamn_runtime::connection_credentials::ConnectionCredentials;
     use wamn_runtime::plugins::connection_http::transport::HttpTransport;
     use wamn_runtime::plugins::connection_http::{
@@ -470,7 +470,8 @@ pub async fn invoke(
     let release = Arc::new(LoadedRelease::load_canonical_bytes(
         &manifest.canonical_bytes(),
         "consumer live",
-        ReleaseScope::new(ENV_KEY, "test").with_applications(declared("rest_connector", manifest)),
+        ReleaseTarget::new(PROJECT_ENV_KEY, "test")
+            .with_applications(declared("rest_connector", manifest)),
     )?);
     let postgres = Arc::new(WamnPostgres::with_provider(Arc::new(
         StaticCredentialProvider::new(
@@ -499,7 +500,7 @@ pub async fn invoke(
             wamn_broker::Publisher::default(),
             Arc::new(ConnectionCredentials::empty()),
             postgres,
-            ENV_KEY,
+            PROJECT_ENV_KEY,
             "test",
             "test",
         )),
@@ -507,7 +508,7 @@ pub async fn invoke(
         Arc::from([]),
         release,
         Arc::new(LocalComponentSource::new(PathBuf::new())),
-        OperationScope {
+        OperationHostConfig {
             project: "test".into(),
             schema: Some("wamn_integration".into()),
             owner_prefix: "consumer-live".into(),
@@ -638,7 +639,7 @@ pub async fn invoke(
             deadline_ms: 10000,
             facts: NativeFacts::entry(
                 NodeAcquisition {
-                    claims: host.claims(ENV_KEY, Some(host.release_identity())),
+                    identity: host.identity(PROJECT_ENV_KEY, Some(host.release_identity())),
                     invocation: wamn_execution_host::component_invocation(
                         component,
                         operation,

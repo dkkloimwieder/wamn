@@ -6,7 +6,7 @@ import { collection } from "@wfe/sync";
 import { applyChanges } from "@wfe/sync/internal";
 import type { Change, Feed } from "@wfe/sync";
 import { fakeFeed, makeRows, randomChanges, seeded } from "./fake.js";
-import type { PackagingRow, PackagingScope } from "./generated/wamn_wms/packaging.js";
+import type { PackagingRow, PackagingFilter } from "./generated/wamn_wms/packaging.js";
 import type { StatusFilter } from "./order.js";
 import { shapeA } from "./shape-a.js";
 import { shapeB } from "./shape-b.js";
@@ -45,12 +45,12 @@ const size = Number(params.get("size") ?? sizes[0]);
 const seed = Number(params.get("seed") ?? 1);
 const only = params.get("shape");
 const shapes: Shape[] = only === "a" || only === "b" ? [only] : ["a", "b"];
-const scope: PackagingScope = {};
+const feedFilter: PackagingFilter = {};
 
 const frame = () => new Promise<number>((resolve) => requestAnimationFrame(() => resolve(performance.now())));
 
 /** A feed that notes when its `list` answers. */
-function timedFeed(rows: PackagingRow[]): { feed: Feed<PackagingRow, PackagingScope>; listed: Promise<number> } {
+function timedFeed(rows: PackagingRow[]): { feed: Feed<PackagingRow, PackagingFilter>; listed: Promise<number> } {
   const inner = fakeFeed(() => rows);
   let mark!: (time: number) => void;
   const listed = new Promise<number>((resolve) => (mark = resolve));
@@ -76,7 +76,7 @@ async function firstRow(shape: Shape): Promise<number> {
 }
 
 function App() {
-  const [filter, setFilter] = createSignal<StatusFilter>("all");
+  const [statusFilter, setStatusFilter] = createSignal<StatusFilter>("all");
   const [batches, setBatches] = createSignal(0);
   const rows = makeRows(size, seed);
   const random = seeded(seed + 1000);
@@ -88,9 +88,9 @@ function App() {
   function mount(shape: Shape) {
     const { feed, listed } = timedFeed(rows);
     if (shape === "a") {
-      const c = collection(feed, scope, { key: "bench", version: (row) => Number(row.rowVersion) });
+      const c = collection(feed, feedFilter, { key: "bench", version: (row) => Number(row.rowVersion) });
       onCleanup(() => queueMicrotask(() => void c.cleanup()));
-      const source = shapeA(c, filter);
+      const source = shapeA(c, statusFilter);
       mounted.push({
         shape,
         apply: (changes) => applyChanges(c, changes),
@@ -98,7 +98,7 @@ function App() {
       });
       return { source, status: source.status };
     }
-    const source = shapeB(feed, scope, filter);
+    const source = shapeB(feed, feedFilter, statusFilter);
     mounted.push({
       shape,
       apply: (changes) => source.apply(changes),
@@ -156,7 +156,7 @@ function App() {
         </nav>
         <label>
           Status{" "}
-          <select value={filter()} onChange={(event) => setFilter(event.currentTarget.value as StatusFilter)}>
+          <select value={statusFilter()} onChange={(event) => setStatusFilter(event.currentTarget.value as StatusFilter)}>
             <option value="all">all</option>
             <option value="available">available</option>
             <option value="consumed">consumed</option>

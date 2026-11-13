@@ -21,12 +21,12 @@ mod router_delivery;
 pub use host_route::{HostRouteDelivery, HostRouteHandlers};
 pub use operation::{
     CallIntents, InvocationSite, NativeFacts, NativePolicy, NodeAcquisition, OperationHost,
-    OperationScope, component_invocation, invocation_span, node_trace_context,
+    OperationHostConfig, component_invocation, invocation_span, node_trace_context,
     remote_trace_context,
 };
 pub use readiness::{
     RELEASE_READINESS_INVALIDATED, RELEASE_READINESS_PROBE_FAILED, RouterReadinessProbe,
-    RouterReadinessSnapshot, RouterReadinessStatus, synchronous_request_kind,
+    RouterReadinessSnapshot, RouterReadinessStatus, synchronous_request_type,
     synchronous_route_count,
 };
 pub use router_delivery::{DeadlineAdjustment, RouterDeliveryBridge};

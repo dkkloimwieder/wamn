@@ -25,7 +25,7 @@ impl SourceEvent {
 
     pub fn identity(
         &self,
-        env_key: &str,
+        project_env_key: &str,
         project: &str,
         environment: &str,
         headers: &[&str],
@@ -35,7 +35,7 @@ impl SourceEvent {
                 crate::verified_source_event_id(project, environment, envelope, headers)
             }
             Self::Derived(event) => crate::verified_derived_source_event_id(
-                env_key,
+                project_env_key,
                 project,
                 environment,
                 event,
@@ -67,13 +67,13 @@ pub struct EventTrigger {
 /// A stored condition or an event that cannot be evaluated safely.
 #[derive(Debug)]
 pub struct TriggerMatchError {
-    pub kind: TriggerMatchErrorKind,
+    pub type_: TriggerMatchErrorType,
     pub workflow_id: String,
     detail: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TriggerMatchErrorKind {
+pub enum TriggerMatchErrorType {
     Condition,
     Event,
 }
@@ -93,7 +93,7 @@ impl EventTrigger {
         event: &SourceEvent,
         sequence: u64,
         packages: &BTreeSet<String>,
-        env_key: &str,
+        project_env_key: &str,
     ) -> Result<Option<serde_json::Value>, TriggerMatchError> {
         if sequence <= self.enable_sequence {
             return Ok(None);
@@ -109,7 +109,7 @@ impl EventTrigger {
             condition: self.condition.clone(),
         };
         let condition = serviceable(&registration).map_err(|error| TriggerMatchError {
-            kind: TriggerMatchErrorKind::Condition,
+            type_: TriggerMatchErrorType::Condition,
             workflow_id: self.workflow_id.clone(),
             detail: format!("{error:?}"),
         })?;
@@ -119,8 +119,8 @@ impl EventTrigger {
                 condition.as_ref(),
                 envelope,
                 packages,
-                env_key,
-                Some(env_key),
+                project_env_key,
+                Some(project_env_key),
                 MAX_CAUSATION_DEPTH,
             ),
             SourceEvent::Derived(event) => crate::decide_derived(
@@ -128,7 +128,7 @@ impl EventTrigger {
                 condition.as_ref(),
                 event,
                 packages,
-                env_key,
+                project_env_key,
                 MAX_CAUSATION_DEPTH,
             ),
         };
@@ -136,7 +136,7 @@ impl EventTrigger {
             Verdict::Deliver(input) => Ok(Some(input)),
             Verdict::Skip(_) => Ok(None),
             Verdict::Refuse(reason) => Err(TriggerMatchError {
-                kind: TriggerMatchErrorKind::Event,
+                type_: TriggerMatchErrorType::Event,
                 workflow_id: self.workflow_id.clone(),
                 detail: format!("{reason:?}"),
             }),
@@ -182,13 +182,13 @@ mod tests {
         };
         assert!(
             trigger
-                .matches(&source, 41, &packages, "tenant")
+                .matches(&source, 41, &packages, "project")
                 .unwrap()
                 .is_none()
         );
         assert!(
             trigger
-                .matches(&source, 42, &packages, "tenant")
+                .matches(&source, 42, &packages, "project")
                 .unwrap()
                 .is_some()
         );
@@ -212,7 +212,7 @@ mod tests {
         ] {
             assert!(
                 changed
-                    .matches(&source, 42, &packages, "tenant")
+                    .matches(&source, 42, &packages, "project")
                     .unwrap()
                     .is_none()
             );
@@ -222,8 +222,8 @@ mod tests {
             ..trigger.clone()
         };
         assert_eq!(
-            trigger.matches(&source, 42, &packages, "tenant").unwrap(),
-            second.matches(&source, 42, &packages, "tenant").unwrap()
+            trigger.matches(&source, 42, &packages, "project").unwrap(),
+            second.matches(&source, 42, &packages, "project").unwrap()
         );
         let SourceEvent::Cdc(mut missing_old) = source else {
             unreachable!()
@@ -231,10 +231,10 @@ mod tests {
         missing_old.old = None;
         assert_eq!(
             trigger
-                .matches(&SourceEvent::Cdc(missing_old), 42, &packages, "tenant")
+                .matches(&SourceEvent::Cdc(missing_old), 42, &packages, "project")
                 .unwrap_err()
-                .kind,
-            TriggerMatchErrorKind::Event
+                .type_,
+            TriggerMatchErrorType::Event
         );
     }
 }

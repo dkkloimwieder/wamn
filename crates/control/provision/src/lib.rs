@@ -1,6 +1,6 @@
 //! wamn project provisioning (2.3) — the **pure** core.
 //!
-//! MVP outcome: provisioning · publish · additive schema · tenant isolation (T1 minting).
+//! MVP outcome: provisioning · publish · additive schema · project isolation (T1 minting).
 //!
 //! Standing up a project environment turns the SQL-emitting E3 crates into a
 //! live system: provision a per-project-env Postgres **database** (D6:
@@ -20,7 +20,7 @@
 //! # Isolation model
 //!
 //! Postgres roles are **cluster-global**, so one shared cluster has one shared
-//! `wamn_app` role (the grantee every generated floor and hand-written schema
+//! `wamn_app` role (the grantee every generated minimum and hand-written schema
 //! already targets). Cross-project isolation is therefore **not** at the role
 //! level — it is:
 //!
@@ -30,7 +30,7 @@
 //! 2. **per-generation CONNECT** — `PUBLIC` and the stable `wamn_app` role hold
 //!    no `CONNECT`; each generation login is granted `CONNECT` on its own
 //!    database only, so a generation cannot open a session on another database;
-//! 3. **RLS within** — the 3.2 tenant floor confines rows by `app.env_key`.
+//! 3. **RLS within** — the 3.2 project base grants confines rows by `app.project_env_key`.
 //!
 //! Per-project **distinct** roles/passwords (stronger credential isolation) are
 //! a hardening follow-up (8.2), not this MVP.
@@ -40,12 +40,12 @@
 //! This crate's tests exercise the **decision** (which statement, what shape,
 //! which binds); they cannot exercise the **statement** — the pure model has no
 //! planner, isolation level, lock manager, or RLS. A statement can be modelled
-//! correctly here and still misbehave live: a prior run-queue batch claim
-//! passed every pure test while the real statement over-claimed on a
+//! correctly here and still misbehave live: a prior run-queue batch lease
+//! passed every pure test while the real statement over-leased on a
 //! plan-dependent `SKIP LOCKED` re-scan — the `AS MATERIALIZED` fix is a
 //! property of the emitted SQL no pure test can observe. Convention (SR12a):
 //! every composed or plan-sensitive statement carries a comment naming what the
-//! pure tests do NOT cover; the live half is the throwaway-PG gates over the
+//! pure tests do NOT cover; the live half is the throwaway-PG acceptance tests over the
 //! real prepared-statement path (SR12b).
 
 pub mod apply;
@@ -62,6 +62,8 @@ mod name;
 pub mod operation_grants;
 pub mod org;
 pub mod platform_principals;
+/// The pure derivation guest RLS uses to reach a project from `current_user`.
+pub mod project_key;
 pub mod provisioner;
 #[cfg(feature = "ops")]
 pub mod recovery;
@@ -71,11 +73,9 @@ pub mod secret;
 pub mod session_role_reader;
 pub mod session_target;
 pub mod sql;
-/// The two T1 control-database read consumers' scoped credential contract.
+/// The two T1 control-database read consumers' targeted credential contract.
 pub mod system_reader;
-/// The pure derivation guest RLS uses to reach a tenant from `current_user`.
-pub mod tenant_key;
-/// Test databases with the system control store floor.
+/// Test databases with the system control store minimum.
 #[cfg(any(test, feature = "test-util"))]
 pub mod test_database;
 pub mod workload_role;
@@ -86,7 +86,7 @@ pub use backup::{
     object_store_name, render_object_store, render_scheduled_backup, scheduled_backup_name,
 };
 pub use database::render_project_env_database;
-pub use error::{ProvisionError, require_env_key_environment_identity};
+pub use error::{ProvisionError, require_project_env_key_environment_identity};
 pub use name::{
     APP_ROLE, CDC_OBJECT_PREFIX, CDC_SECRET_PREFIX, DB_OWNER_ROLE, DB_PREFIX, GUEST_SECRET_PREFIX,
     INSTANCE_SUFFIX_LEN, MAX_DB_NAME_LEN, MAX_NAMESPACE_LEN, MAX_NAMESPACE_STEM_LEN,
@@ -107,7 +107,7 @@ pub use recovery::{
 };
 pub use system_reader::{
     SystemReader, SystemReaderConnection, SystemReaderUrlError, SystemReaderUrlErrorType,
-    parse_system_reader_url, system_reader_generation_role, system_reader_scope_hash,
+    parse_system_reader_url, system_reader_generation_role, system_reader_identity_hash,
 };
 
 pub use secret::{
@@ -121,9 +121,9 @@ pub use wamn_identity_protocol::PlatformComponent;
 pub use wamn_run_state::CredentialGeneration;
 pub use workload_role::{
     ADMINISTRATION_ROLE, AUDIT_RETENTION_ROLE, CONTROL_ROLE, PLATFORM_GROUP_ROLE, RETENTION_ROLE,
-    SERVICE_READER_ROLE, WorkloadRoleFamily, WorkloadRoleScope, WorkloadRoleScopeError,
-    WorkloadRoleScopeKind, WorkloadSecretBodyKind, workload_generation_role,
-    workload_role_scope_hash,
+    SERVICE_READER_ROLE, WorkloadRoleFamily, WorkloadRoleIdentity, WorkloadRoleIdentityError,
+    WorkloadRoleIdentityType, WorkloadSecretBodyType, workload_generation_role,
+    workload_role_identity_hash,
 };
 
 /// Core control-database schema, applied first by a fresh bootstrap.
@@ -138,14 +138,14 @@ pub const SYSTEM_SCHEMA_SQL: &str = concat!(
     include_str!("../../../../deploy/sql/system-schema-baseline.sql"),
 );
 
-/// Environment declarations and scoped connection-reader authority.
+/// Environment declarations and targeted connection-reader authority.
 pub const CONTROL_PORTABLE_STORE_SQL: &str =
     include_str!("../../../../deploy/sql/control-portable-store.sql");
 
 /// The declarations applied to a fresh control database, in order.
 pub const CONTROL_BOOTSTRAP_SQL: [&str; 2] = [SYSTEM_SCHEMA_SQL, CONTROL_PORTABLE_STORE_SQL];
 
-/// The per-tenant authorization and configuration schema, applied to a project
+/// The per-project authorization and configuration schema, applied to a project
 /// database after its catalog schema.
 ///
 /// Every relation it creates carries a stamp trigger that calls

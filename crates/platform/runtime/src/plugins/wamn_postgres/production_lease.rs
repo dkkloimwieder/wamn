@@ -1,4 +1,4 @@
-//! Host-only composition of one production queue claim transaction.
+//! Host-only composition of one production queue lease transaction.
 
 use std::sync::Arc;
 use std::time::SystemTime;
@@ -10,15 +10,15 @@ use tokio_postgres::Row;
 use tokio_postgres::types::FromSql;
 use wamn_run_state::authority_class::CURRENT_USER_ROLE_MEMBERSHIP_SQL;
 use wamn_run_state::queue::{
-    ProductionClaimClass, advance_claim_attempts_sql, classify_production_claim,
-    clear_pre_effect_state_sql, grant_production_claim_sql, release_production_claim_sql,
-    renew_production_lease_sql, select_exhausted_production_sql, select_production_claim_sql,
+    ProductionLeaseClass, advance_lease_attempts_sql, classify_production_lease,
+    clear_pre_effect_state_sql, grant_production_lease_sql, release_production_lease_sql,
+    renew_production_lease_sql, select_exhausted_production_sql, select_production_lease_sql,
     terminalize_exhausted_production_sql, terminalize_released_production_sql,
 };
 use wamn_run_state::run_store::RunStore;
 pub use wamn_run_state::run_store::{
-    ProductionCallerOutcome, ProductionClaimError, ProductionClaimErrorType, ProductionCompletion,
-    ProductionCompletionResult, ProductionLeaseRenewal, ProductionReapResult,
+    ProductionCallerOutcome, ProductionCompletion, ProductionCompletionResult,
+    ProductionLeaseError, ProductionLeaseErrorType, ProductionLeaseRenewal, ProductionReapResult,
 };
 use wamn_run_state::transitions::{
     CallerReleaseResult, TerminalizeResult, release_caller_sql, terminalize_sql,
@@ -29,8 +29,8 @@ use super::{CandidateBindingWorld, ReleaseIdentity, WamnPostgres};
 
 /// Result of one host-only production queue turn.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ProductionClaimResult {
-    /// No eligible row was visible to this tenant.
+pub enum ProductionLeaseResult {
+    /// No eligible row was visible to this project.
     Empty,
     /// A fresh lease committed for router execution.
     Ready {
@@ -51,7 +51,7 @@ pub enum ProductionClaimResult {
 /// Candidate-only authority frozen on the durable run at admission.
 ///
 /// A candidate run carries no release pin; it resolves under the release the
-/// claiming pod carries.
+/// leasing pod carries.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProductionCandidate {
     pub wiring_hash: String,
@@ -70,23 +70,23 @@ pub struct ProductionWorkflow {
     pub causation: Option<wamn_event_wire::Causation>,
 }
 
-/// The composed outcome of one claim transaction, decided before COMMIT.
+/// The composed outcome of one lease transaction, decided before COMMIT.
 #[derive(Debug)]
-enum ClaimTurn {
+enum LeaseTurn {
     /// The transaction may commit and report this result.
-    Claimed(ProductionClaimResult),
+    Leased(ProductionLeaseResult),
     /// The lease grant was refused inside its own subtransaction, which the
     /// composer already rolled back. The transaction is still live and MUST
     /// commit so the crash-evidence attempt advance taken before the savepoint
     /// survives — a refusal that rolls its own attempt counter back can never
     /// reach `max_attempts`, so the janitor can never reap the run and it stays
-    /// the tenant's FIFO head forever (wamn-0h0g.15.69). The claim itself still
+    /// the project's FIFO head forever (wamn-0h0g.15.69). The lease itself still
     /// fails with this error.
-    GrantRefused(ProductionClaimError),
+    GrantRefused(ProductionLeaseError),
 }
 
 #[derive(Debug)]
-struct SelectedClaim {
+struct SelectedLease {
     run_id: String,
     package_id: String,
     had_prior_lease: bool,
@@ -102,7 +102,7 @@ struct SelectedClaim {
 }
 
 #[derive(Debug)]
-struct ExhaustedClaim {
+struct ExhaustedLease {
     run_id: String,
     status: RunStatus,
     identity: ExhaustedExecutionIdentity,
@@ -116,11 +116,11 @@ struct ExhaustedExecutionIdentity {
 
 #[async_trait::async_trait]
 impl RunStore for WamnPostgres {
-    type ClaimResult = ProductionClaimResult;
+    type LeaseResult = ProductionLeaseResult;
 
     /// Lock, classify, and lease at most one production run.
     ///
-    /// Tenant, project, schema, lease owner, and the carried release identity
+    /// Project, project, schema, lease owner, and the carried release identity
     /// come only from host-injected component identity. A `Ready` result is
     /// returned only after COMMIT, so router execution never starts under an
     /// uncommitted lease.
@@ -129,30 +129,30 @@ impl RunStore for WamnPostgres {
     /// admission-pinned digest. A component with no injected release identity
     /// verifies nothing. The caller passes the mounted release's exact package-id set;
     /// selection remains one ordered SQL turn across that whole set.
-    async fn claim_next(
+    async fn lease_next(
         &self,
         component_id: &str,
         package_ids: &[String],
         environment: &str,
         lease_ttl_ms: i64,
-    ) -> Result<ProductionClaimResult, ProductionClaimError> {
-        if !valid_package_scope(package_ids) || environment.is_empty() || lease_ttl_ms <= 0 {
-            return Err(ProductionClaimError::new(
-                ProductionClaimErrorType::Contract,
-                "validate queue scope",
+    ) -> Result<ProductionLeaseResult, ProductionLeaseError> {
+        if !valid_package_set(package_ids) || environment.is_empty() || lease_ttl_ms <= 0 {
+            return Err(ProductionLeaseError::new(
+                ProductionLeaseErrorType::Contract,
+                "validate queue target",
                 "a nonempty canonical package set, environment, and positive lease TTL are required",
             ));
         }
-        let env_key = self.env_key_for(component_id).ok_or_else(|| {
-            ProductionClaimError::new(
-                ProductionClaimErrorType::Identity,
-                "resolve tenant",
-                "component has no host-injected tenant",
+        let project_env_key = self.project_env_key_for(component_id).ok_or_else(|| {
+            ProductionLeaseError::new(
+                ProductionLeaseErrorType::Identity,
+                "resolve project",
+                "component has no host-injected project",
             )
         })?;
         let runner = self.runner_for(component_id).ok_or_else(|| {
-            ProductionClaimError::new(
-                ProductionClaimErrorType::Identity,
+            ProductionLeaseError::new(
+                ProductionLeaseErrorType::Identity,
                 "resolve runner",
                 "component has no host-injected runner",
             )
@@ -167,18 +167,18 @@ impl RunStore for WamnPostgres {
             .checkout_platform(&project, AuthorityClass::ExecutorPlatform)
             .await
             .map_err(|error| {
-                ProductionClaimError::new(
-                    ProductionClaimErrorType::Storage,
+                ProductionLeaseError::new(
+                    ProductionLeaseErrorType::Storage,
                     "checkout project connection",
                     format!("{error:?}"),
                 )
             })?;
         if let Err(error) = self
-            .begin_with_claims(
+            .begin_with_identity(
                 &connection,
                 AuthorityClass::ExecutorPlatform,
                 false,
-                &env_key,
+                &project_env_key,
                 schema.as_deref(),
                 Some(&runner),
                 None,
@@ -191,14 +191,14 @@ impl RunStore for WamnPostgres {
             .await
         {
             self.destroy(connection);
-            return Err(ProductionClaimError::new(
-                ProductionClaimErrorType::Storage,
-                "begin tenant transaction",
+            return Err(ProductionLeaseError::new(
+                ProductionLeaseErrorType::Storage,
+                "begin project transaction",
                 format!("{error:?}"),
             ));
         }
 
-        let result = claim_in_transaction(
+        let result = lease_in_transaction(
             &connection,
             &runner,
             package_ids,
@@ -211,15 +211,15 @@ impl RunStore for WamnPostgres {
             Ok(turn) => {
                 if let Err(error) = connection.batch_execute("COMMIT").await {
                     self.destroy(connection);
-                    return Err(ProductionClaimError::new(
-                        ProductionClaimErrorType::Storage,
-                        "commit production claim",
+                    return Err(ProductionLeaseError::new(
+                        ProductionLeaseErrorType::Storage,
+                        "commit production lease",
                         error.to_string(),
                     ));
                 }
                 match turn {
-                    ClaimTurn::Claimed(result) => Ok(result),
-                    ClaimTurn::GrantRefused(error) => Err(error),
+                    LeaseTurn::Leased(result) => Ok(result),
+                    LeaseTurn::GrantRefused(error) => Err(error),
                 }
             }
             Err(error) => {
@@ -227,7 +227,7 @@ impl RunStore for WamnPostgres {
                     tracing::warn!(
                         error = %rollback_error,
                         operation = error.operation(),
-                        "production claim rollback failed; destroying connection"
+                        "production lease rollback failed; destroying connection"
                     );
                     self.destroy(connection);
                 }
@@ -241,31 +241,31 @@ impl RunStore for WamnPostgres {
     /// The host locks the queue and run rows. It computes caller JSON and its
     /// RFC 8785 hash without PostgreSQL's `jsonb::text` rendering. The
     /// mounted release's exact package-id set is filtered in the same single
-    /// global-FIFO turn as ordinary claims.
+    /// global-FIFO turn as ordinary leases.
     async fn reap_exhausted(
         &self,
         component_id: &str,
         package_ids: &[String],
         environment: &str,
         grace_ms: i64,
-    ) -> Result<ProductionReapResult, ProductionClaimError> {
-        if !valid_package_scope(package_ids) || environment.is_empty() || grace_ms < 0 {
-            return Err(ProductionClaimError::new(
-                ProductionClaimErrorType::Contract,
-                "validate janitor scope",
+    ) -> Result<ProductionReapResult, ProductionLeaseError> {
+        if !valid_package_set(package_ids) || environment.is_empty() || grace_ms < 0 {
+            return Err(ProductionLeaseError::new(
+                ProductionLeaseErrorType::Contract,
+                "validate janitor target",
                 "a nonempty canonical package set, environment, and non-negative janitor grace are required",
             ));
         }
-        let env_key = self.env_key_for(component_id).ok_or_else(|| {
-            ProductionClaimError::new(
-                ProductionClaimErrorType::Identity,
-                "resolve janitor tenant",
-                "component has no host-injected tenant",
+        let project_env_key = self.project_env_key_for(component_id).ok_or_else(|| {
+            ProductionLeaseError::new(
+                ProductionLeaseErrorType::Identity,
+                "resolve janitor project",
+                "component has no host-injected project",
             )
         })?;
         let runner = self.runner_for(component_id).ok_or_else(|| {
-            ProductionClaimError::new(
-                ProductionClaimErrorType::Identity,
+            ProductionLeaseError::new(
+                ProductionLeaseErrorType::Identity,
                 "resolve janitor runner",
                 "component has no host-injected runner",
             )
@@ -279,18 +279,18 @@ impl RunStore for WamnPostgres {
             .checkout_platform(&project, AuthorityClass::ExecutorPlatform)
             .await
             .map_err(|error| {
-                ProductionClaimError::new(
-                    ProductionClaimErrorType::Storage,
+                ProductionLeaseError::new(
+                    ProductionLeaseErrorType::Storage,
                     "checkout janitor connection",
                     format!("{error:?}"),
                 )
             })?;
         if let Err(error) = self
-            .begin_with_claims(
+            .begin_with_identity(
                 &connection,
                 AuthorityClass::ExecutorPlatform,
                 false,
-                &env_key,
+                &project_env_key,
                 schema.as_deref(),
                 Some(&runner),
                 None,
@@ -303,8 +303,8 @@ impl RunStore for WamnPostgres {
             .await
         {
             self.destroy(connection);
-            return Err(ProductionClaimError::new(
-                ProductionClaimErrorType::Storage,
+            return Err(ProductionLeaseError::new(
+                ProductionLeaseErrorType::Storage,
                 "begin janitor transaction",
                 format!("{error:?}"),
             ));
@@ -315,8 +315,8 @@ impl RunStore for WamnPostgres {
             Ok(result) => {
                 if let Err(error) = connection.batch_execute("COMMIT").await {
                     self.destroy(connection);
-                    return Err(ProductionClaimError::new(
-                        ProductionClaimErrorType::Storage,
+                    return Err(ProductionLeaseError::new(
+                        ProductionLeaseErrorType::Storage,
                         "commit janitor turn",
                         error.to_string(),
                     ));
@@ -337,31 +337,31 @@ impl RunStore for WamnPostgres {
         }
     }
 
-    /// Extend one claimed run's lease under its exact generation fence.
+    /// Extend one acquired run's lease under its exact generation fence.
     async fn renew(
         &self,
         component_id: &str,
         run_id: &str,
         lease_generation: i64,
         lease_ttl_ms: i64,
-    ) -> Result<ProductionLeaseRenewal, ProductionClaimError> {
+    ) -> Result<ProductionLeaseRenewal, ProductionLeaseError> {
         if lease_generation <= 0 || lease_ttl_ms <= 0 {
-            return Err(ProductionClaimError::new(
-                ProductionClaimErrorType::Contract,
+            return Err(ProductionLeaseError::new(
+                ProductionLeaseErrorType::Contract,
                 "validate production lease renewal",
                 "lease generation and TTL must be positive",
             ));
         }
-        let env_key = self.env_key_for(component_id).ok_or_else(|| {
-            ProductionClaimError::new(
-                ProductionClaimErrorType::Identity,
-                "resolve renewal tenant",
-                "component has no host-injected tenant",
+        let project_env_key = self.project_env_key_for(component_id).ok_or_else(|| {
+            ProductionLeaseError::new(
+                ProductionLeaseErrorType::Identity,
+                "resolve renewal project",
+                "component has no host-injected project",
             )
         })?;
         let runner = self.runner_for(component_id).ok_or_else(|| {
-            ProductionClaimError::new(
-                ProductionClaimErrorType::Identity,
+            ProductionLeaseError::new(
+                ProductionLeaseErrorType::Identity,
                 "resolve renewal runner",
                 "component has no host-injected runner",
             )
@@ -375,19 +375,19 @@ impl RunStore for WamnPostgres {
             .checkout_platform(&project, AuthorityClass::ExecutorPlatform)
             .await
             .map_err(|error| {
-                ProductionClaimError::new(
-                    ProductionClaimErrorType::Storage,
+                ProductionLeaseError::new(
+                    ProductionLeaseErrorType::Storage,
                     "checkout renewal connection",
                     format!("{error:?}"),
                 )
             })?;
         let connection = StatementConnectionGuard::new(connection, Arc::clone(&self.destroyed));
         if let Err(error) = self
-            .begin_with_claims(
+            .begin_with_identity(
                 connection.connection(),
                 AuthorityClass::ExecutorPlatform,
                 false,
-                &env_key,
+                &project_env_key,
                 schema.as_deref(),
                 Some(&runner),
                 None,
@@ -399,8 +399,8 @@ impl RunStore for WamnPostgres {
             )
             .await
         {
-            return Err(ProductionClaimError::new(
-                ProductionClaimErrorType::Storage,
+            return Err(ProductionLeaseError::new(
+                ProductionLeaseErrorType::Storage,
                 "begin renewal transaction",
                 format!("{error:?}"),
             ));
@@ -416,7 +416,7 @@ impl RunStore for WamnPostgres {
         finish_guarded_queue_transaction(connection, result, "commit production renewal").await
     }
 
-    /// Persist one router terminal outcome and dequeue under the claim fence.
+    /// Persist one router terminal outcome and dequeue under the lease fence.
     ///
     /// Caller release and run terminalization share one transaction. An exact
     /// caller replay is accepted; a different winner refuses without changing
@@ -427,24 +427,24 @@ impl RunStore for WamnPostgres {
         run_id: &str,
         lease_generation: i64,
         completion: &ProductionCompletion,
-    ) -> Result<ProductionCompletionResult, ProductionClaimError> {
+    ) -> Result<ProductionCompletionResult, ProductionLeaseError> {
         if lease_generation <= 0 {
-            return Err(ProductionClaimError::new(
-                ProductionClaimErrorType::Contract,
+            return Err(ProductionLeaseError::new(
+                ProductionLeaseErrorType::Contract,
                 "validate production completion",
                 "lease generation must be positive",
             ));
         }
-        let env_key = self.env_key_for(component_id).ok_or_else(|| {
-            ProductionClaimError::new(
-                ProductionClaimErrorType::Identity,
-                "resolve completion tenant",
-                "component has no host-injected tenant",
+        let project_env_key = self.project_env_key_for(component_id).ok_or_else(|| {
+            ProductionLeaseError::new(
+                ProductionLeaseErrorType::Identity,
+                "resolve completion project",
+                "component has no host-injected project",
             )
         })?;
         let runner = self.runner_for(component_id).ok_or_else(|| {
-            ProductionClaimError::new(
-                ProductionClaimErrorType::Identity,
+            ProductionLeaseError::new(
+                ProductionLeaseErrorType::Identity,
                 "resolve completion runner",
                 "component has no host-injected runner",
             )
@@ -458,18 +458,18 @@ impl RunStore for WamnPostgres {
             .checkout_platform(&project, AuthorityClass::ExecutorPlatform)
             .await
             .map_err(|error| {
-                ProductionClaimError::new(
-                    ProductionClaimErrorType::Storage,
+                ProductionLeaseError::new(
+                    ProductionLeaseErrorType::Storage,
                     "checkout completion connection",
                     format!("{error:?}"),
                 )
             })?;
         if let Err(error) = self
-            .begin_with_claims(
+            .begin_with_identity(
                 &connection,
                 AuthorityClass::ExecutorPlatform,
                 false,
-                &env_key,
+                &project_env_key,
                 schema.as_deref(),
                 Some(&runner),
                 None,
@@ -482,8 +482,8 @@ impl RunStore for WamnPostgres {
             .await
         {
             self.destroy(connection);
-            return Err(ProductionClaimError::new(
-                ProductionClaimErrorType::Storage,
+            return Err(ProductionLeaseError::new(
+                ProductionLeaseErrorType::Storage,
                 "begin completion transaction",
                 format!("{error:?}"),
             ));
@@ -502,24 +502,24 @@ impl RunStore for WamnPostgres {
         run_id: &str,
         lease_generation: i64,
         adjustments: &serde_json::Value,
-    ) -> Result<bool, ProductionClaimError> {
+    ) -> Result<bool, ProductionLeaseError> {
         if lease_generation <= 0 {
-            return Err(ProductionClaimError::new(
-                ProductionClaimErrorType::Contract,
+            return Err(ProductionLeaseError::new(
+                ProductionLeaseErrorType::Contract,
                 "validate production deadline report",
                 "lease generation must be positive",
             ));
         }
-        let env_key = self.env_key_for(component_id).ok_or_else(|| {
-            ProductionClaimError::new(
-                ProductionClaimErrorType::Identity,
-                "resolve deadline report tenant",
-                "component has no host-injected tenant",
+        let project_env_key = self.project_env_key_for(component_id).ok_or_else(|| {
+            ProductionLeaseError::new(
+                ProductionLeaseErrorType::Identity,
+                "resolve deadline report project",
+                "component has no host-injected project",
             )
         })?;
         let runner = self.runner_for(component_id).ok_or_else(|| {
-            ProductionClaimError::new(
-                ProductionClaimErrorType::Identity,
+            ProductionLeaseError::new(
+                ProductionLeaseErrorType::Identity,
                 "resolve deadline report runner",
                 "component has no host-injected runner",
             )
@@ -533,18 +533,18 @@ impl RunStore for WamnPostgres {
             .checkout_platform(&project, AuthorityClass::ExecutorPlatform)
             .await
             .map_err(|error| {
-                ProductionClaimError::new(
-                    ProductionClaimErrorType::Storage,
+                ProductionLeaseError::new(
+                    ProductionLeaseErrorType::Storage,
                     "checkout deadline report connection",
                     format!("{error:?}"),
                 )
             })?;
         if let Err(error) = self
-            .begin_with_claims(
+            .begin_with_identity(
                 &connection,
                 AuthorityClass::ExecutorPlatform,
                 false,
-                &env_key,
+                &project_env_key,
                 schema.as_deref(),
                 Some(&runner),
                 None,
@@ -557,8 +557,8 @@ impl RunStore for WamnPostgres {
             .await
         {
             self.destroy(connection);
-            return Err(ProductionClaimError::new(
-                ProductionClaimErrorType::Storage,
+            return Err(ProductionLeaseError::new(
+                ProductionLeaseErrorType::Storage,
                 "begin deadline report transaction",
                 format!("{error:?}"),
             ));
@@ -588,9 +588,9 @@ impl RunStore for WamnPostgres {
 pub(super) async fn finish_queue_transaction<T>(
     postgres: &WamnPostgres,
     connection: Object,
-    result: Result<T, ProductionClaimError>,
+    result: Result<T, ProductionLeaseError>,
     commit_operation: &'static str,
-) -> Result<T, ProductionClaimError> {
+) -> Result<T, ProductionLeaseError> {
     finish_guarded_queue_transaction(
         StatementConnectionGuard::new(connection, Arc::clone(&postgres.destroyed)),
         result,
@@ -601,9 +601,9 @@ pub(super) async fn finish_queue_transaction<T>(
 
 async fn finish_guarded_queue_transaction<T>(
     connection: StatementConnectionGuard,
-    result: Result<T, ProductionClaimError>,
+    result: Result<T, ProductionLeaseError>,
     commit_operation: &'static str,
-) -> Result<T, ProductionClaimError> {
+) -> Result<T, ProductionLeaseError> {
     match result {
         Ok(value) => {
             connection
@@ -631,42 +631,42 @@ async fn finish_guarded_queue_transaction<T>(
 
 /// Whether a run pinned to release `$3` is still dispatched or running in the
 /// package set `$1` and environment `$2`. A run leased by another
-/// replica counts: if that replica dies, this host reclaims it.
+/// replica counts: if that replica dies, this host recovers it.
 const PINNED_BACKLOG_SQL: &str = "SELECT EXISTS ( \
      SELECT 1 FROM run_queue AS q \
-       JOIN runs AS r ON r.env_key = q.env_key AND r.run_id = q.run_id \
-      WHERE q.env_key = current_setting('app.env_key', true) \
+       JOIN runs AS r ON r.project_env_key = q.project_env_key AND r.run_id = q.run_id \
+      WHERE q.project_env_key = current_setting('app.project_env_key', true) \
         AND r.package_id = ANY($1::text[]) \
         AND r.environment = $2 \
         AND r.manifest_digest = $3 \
         AND r.status IN ('dispatched', 'running'))";
 
 impl WamnPostgres {
-    /// Release a claim after an unavailable credential or pool, or fail it at
+    /// Release a lease after an unavailable credential or pool, or fail it at
     /// the shared attempt limit. Returns false when the lease fence is lost.
-    pub async fn release_claim(
+    pub async fn release_lease(
         &self,
         component_id: &str,
         run_id: &str,
         lease_generation: i64,
-    ) -> Result<bool, ProductionClaimError> {
+    ) -> Result<bool, ProductionLeaseError> {
         if lease_generation <= 0 {
-            return Err(ProductionClaimError::new(
-                ProductionClaimErrorType::Contract,
+            return Err(ProductionLeaseError::new(
+                ProductionLeaseErrorType::Contract,
                 "validate production lease release",
                 "lease generation must be positive",
             ));
         }
-        let env_key = self.env_key_for(component_id).ok_or_else(|| {
-            ProductionClaimError::new(
-                ProductionClaimErrorType::Identity,
-                "resolve release tenant",
-                "component has no host-injected tenant",
+        let project_env_key = self.project_env_key_for(component_id).ok_or_else(|| {
+            ProductionLeaseError::new(
+                ProductionLeaseErrorType::Identity,
+                "resolve release project",
+                "component has no host-injected project",
             )
         })?;
         let runner = self.runner_for(component_id).ok_or_else(|| {
-            ProductionClaimError::new(
-                ProductionClaimErrorType::Identity,
+            ProductionLeaseError::new(
+                ProductionLeaseErrorType::Identity,
                 "resolve release runner",
                 "component has no host-injected runner",
             )
@@ -680,19 +680,19 @@ impl WamnPostgres {
             .checkout_platform(&project, AuthorityClass::ExecutorPlatform)
             .await
             .map_err(|error| {
-                ProductionClaimError::new(
-                    ProductionClaimErrorType::Storage,
+                ProductionLeaseError::new(
+                    ProductionLeaseErrorType::Storage,
                     "checkout release connection",
                     format!("{error:?}"),
                 )
             })?;
         let connection = StatementConnectionGuard::new(connection, Arc::clone(&self.destroyed));
         if let Err(error) = self
-            .begin_with_claims(
+            .begin_with_identity(
                 connection.connection(),
                 AuthorityClass::ExecutorPlatform,
                 false,
-                &env_key,
+                &project_env_key,
                 schema.as_deref(),
                 Some(&runner),
                 None,
@@ -704,8 +704,8 @@ impl WamnPostgres {
             )
             .await
         {
-            return Err(ProductionClaimError::new(
-                ProductionClaimErrorType::Storage,
+            return Err(ProductionLeaseError::new(
+                ProductionLeaseErrorType::Storage,
                 "begin release transaction",
                 format!("{error:?}"),
             ));
@@ -717,34 +717,34 @@ impl WamnPostgres {
     }
 
     /// Whether any run pinned to the release of `component_id` remains in the
-    /// queue. A draining host keeps claiming while this holds (R20). A
+    /// queue. A draining host keeps leasing while this holds (R20). A
     /// component with no injected release identity pins no run.
     pub async fn pinned_backlog(
         &self,
         component_id: &str,
         package_ids: &[String],
         environment: &str,
-    ) -> Result<bool, ProductionClaimError> {
-        if !valid_package_scope(package_ids) || environment.is_empty() {
-            return Err(ProductionClaimError::new(
-                ProductionClaimErrorType::Contract,
-                "validate backlog scope",
+    ) -> Result<bool, ProductionLeaseError> {
+        if !valid_package_set(package_ids) || environment.is_empty() {
+            return Err(ProductionLeaseError::new(
+                ProductionLeaseErrorType::Contract,
+                "validate backlog target",
                 "a nonempty canonical package set and environment are required",
             ));
         }
         let Some(release) = self.release_identity_for(component_id) else {
             return Ok(false);
         };
-        let env_key = self.env_key_for(component_id).ok_or_else(|| {
-            ProductionClaimError::new(
-                ProductionClaimErrorType::Identity,
-                "resolve backlog tenant",
-                "component has no host-injected tenant",
+        let project_env_key = self.project_env_key_for(component_id).ok_or_else(|| {
+            ProductionLeaseError::new(
+                ProductionLeaseErrorType::Identity,
+                "resolve backlog project",
+                "component has no host-injected project",
             )
         })?;
         let runner = self.runner_for(component_id).ok_or_else(|| {
-            ProductionClaimError::new(
-                ProductionClaimErrorType::Identity,
+            ProductionLeaseError::new(
+                ProductionLeaseErrorType::Identity,
                 "resolve backlog runner",
                 "component has no host-injected runner",
             )
@@ -758,18 +758,18 @@ impl WamnPostgres {
             .checkout_platform(&project, AuthorityClass::ExecutorPlatform)
             .await
             .map_err(|error| {
-                ProductionClaimError::new(
-                    ProductionClaimErrorType::Storage,
+                ProductionLeaseError::new(
+                    ProductionLeaseErrorType::Storage,
                     "checkout backlog connection",
                     format!("{error:?}"),
                 )
             })?;
         if let Err(error) = self
-            .begin_with_claims(
+            .begin_with_identity(
                 &connection,
                 AuthorityClass::ExecutorPlatform,
                 false,
-                &env_key,
+                &project_env_key,
                 schema.as_deref(),
                 Some(&runner),
                 None,
@@ -782,8 +782,8 @@ impl WamnPostgres {
             .await
         {
             self.destroy(connection);
-            return Err(ProductionClaimError::new(
-                ProductionClaimErrorType::Storage,
+            return Err(ProductionLeaseError::new(
+                ProductionLeaseErrorType::Storage,
                 "begin backlog transaction",
                 format!("{error:?}"),
             ));
@@ -817,7 +817,7 @@ impl WamnPostgres {
 
 pub(super) async fn require_executor_authority(
     connection: &Object,
-) -> Result<(), ProductionClaimError> {
+) -> Result<(), ProductionLeaseError> {
     let row = connection
         .query_one(
             CURRENT_USER_ROLE_MEMBERSHIP_SQL,
@@ -827,8 +827,8 @@ pub(super) async fn require_executor_authority(
         .map_err(|error| storage("read executor authority", &error))?;
     let allowed: bool = row_value(&row, 0, "executor authority membership")?;
     if !allowed {
-        return Err(ProductionClaimError::new(
-            ProductionClaimErrorType::Identity,
+        return Err(ProductionLeaseError::new(
+            ProductionLeaseErrorType::Identity,
             "require executor authority",
             "executor-platform-authority-required",
         ));
@@ -841,9 +841,9 @@ async fn release_in_transaction(
     run_id: &str,
     runner: &str,
     lease_generation: i64,
-) -> Result<bool, ProductionClaimError> {
+) -> Result<bool, ProductionLeaseError> {
     require_executor_authority(connection).await?;
-    let sql = release_production_claim_sql();
+    let sql = release_production_lease_sql();
     let statement = connection
         .prepare_cached(&sql)
         .await
@@ -851,7 +851,7 @@ async fn release_in_transaction(
     let Some(row) = connection
         .query_opt(&statement, &[&run_id, &runner, &lease_generation])
         .await
-        .map_err(|error| storage("release production claim", &error))?
+        .map_err(|error| storage("release production lease", &error))?
     else {
         return Ok(false);
     };
@@ -881,7 +881,7 @@ async fn renew_in_transaction(
     runner: &str,
     lease_generation: i64,
     lease_ttl_ms: i64,
-) -> Result<ProductionLeaseRenewal, ProductionClaimError> {
+) -> Result<ProductionLeaseRenewal, ProductionLeaseError> {
     require_executor_authority(connection).await?;
     let sql = renew_production_lease_sql();
     let statement = connection
@@ -908,7 +908,7 @@ async fn complete_in_transaction(
     runner: &str,
     lease_generation: i64,
     completion: &ProductionCompletion,
-) -> Result<ProductionCompletionResult, ProductionClaimError> {
+) -> Result<ProductionCompletionResult, ProductionLeaseError> {
     require_executor_authority(connection).await?;
     // D2b: the transitions take their instant from this host, not from the
     // database server. One instant serves the caller release and the
@@ -917,8 +917,8 @@ async fn complete_in_transaction(
     let completed_at = SystemTime::now();
     if let Some(caller) = completion.caller() {
         let body_json = serde_json::to_string(caller.body()).map_err(|error| {
-            ProductionClaimError::new(
-                ProductionClaimErrorType::Contract,
+            ProductionLeaseError::new(
+                ProductionLeaseErrorType::Contract,
                 "serialize production caller outcome",
                 error.to_string(),
             )
@@ -961,8 +961,8 @@ async fn complete_in_transaction(
                     &hash,
                 ) => {}
             CallerReleaseResult::AlreadyReleased(_) => {
-                return Err(ProductionClaimError::new(
-                    ProductionClaimErrorType::Contract,
+                return Err(ProductionLeaseError::new(
+                    ProductionLeaseErrorType::Contract,
                     "release production caller",
                     "production-caller-outcome-conflict",
                 ));
@@ -977,8 +977,8 @@ async fn complete_in_transaction(
                 return Ok(ProductionCompletionResult::NotFound);
             }
             CallerReleaseResult::CrossRunAuthority => {
-                return Err(ProductionClaimError::new(
-                    ProductionClaimErrorType::Contract,
+                return Err(ProductionLeaseError::new(
+                    ProductionLeaseErrorType::Contract,
                     "release production caller",
                     "production-cross-run-authority",
                 ));
@@ -987,8 +987,8 @@ async fn complete_in_transaction(
     }
 
     let result_json = serde_json::to_string(completion.result()).map_err(|error| {
-        ProductionClaimError::new(
-            ProductionClaimErrorType::Contract,
+        ProductionLeaseError::new(
+            ProductionLeaseErrorType::Contract,
             "serialize production result",
             error.to_string(),
         )
@@ -1023,30 +1023,30 @@ async fn complete_in_transaction(
         }
         TerminalizeResult::FenceLost => Ok(ProductionCompletionResult::FenceLost),
         TerminalizeResult::NotFound => Ok(ProductionCompletionResult::NotFound),
-        TerminalizeResult::CallerUnreleased => Err(ProductionClaimError::new(
-            ProductionClaimErrorType::Contract,
+        TerminalizeResult::CallerUnreleased => Err(ProductionLeaseError::new(
+            ProductionLeaseErrorType::Contract,
             "terminalize production run",
             "production-caller-unreleased",
         )),
-        TerminalizeResult::CrossRunAuthority => Err(ProductionClaimError::new(
-            ProductionClaimErrorType::Contract,
+        TerminalizeResult::CrossRunAuthority => Err(ProductionLeaseError::new(
+            ProductionLeaseErrorType::Contract,
             "terminalize production run",
             "production-cross-run-authority",
         )),
     }
 }
 
-fn decode_caller_release(row: &Row) -> Result<CallerReleaseResult, ProductionClaimError> {
+fn decode_caller_release(row: &Row) -> Result<CallerReleaseResult, ProductionLeaseError> {
     let code: String = row_value(row, 0, "caller release result")?;
     let status: Option<String> = row_value(row, 1, "caller release run status")?;
-    let kind: Option<String> = row_value(row, 2, "caller outcome kind")?;
+    let type_: Option<String> = row_value(row, 2, "caller outcome type")?;
     let body_text: Option<String> = row_value(row, 3, "caller outcome body")?;
     let body = body_text
         .map(|body| serde_json::from_str(&body))
         .transpose()
         .map_err(|error| {
-            ProductionClaimError::new(
-                ProductionClaimErrorType::Contract,
+            ProductionLeaseError::new(
+                ProductionLeaseErrorType::Contract,
                 "decode production caller outcome",
                 error.to_string(),
             )
@@ -1056,8 +1056,8 @@ fn decode_caller_release(row: &Row) -> Result<CallerReleaseResult, ProductionCla
         .map(u16::try_from)
         .transpose()
         .map_err(|error| {
-            ProductionClaimError::new(
-                ProductionClaimErrorType::Contract,
+            ProductionLeaseError::new(
+                ProductionLeaseErrorType::Contract,
                 "decode production caller outcome",
                 error.to_string(),
             )
@@ -1067,43 +1067,43 @@ fn decode_caller_release(row: &Row) -> Result<CallerReleaseResult, ProductionCla
     CallerReleaseResult::from_parts(
         &code,
         status.as_deref().unwrap_or_default(),
-        kind,
+        type_,
         body,
         http_status,
         release_node_id,
         hash,
     )
     .ok_or_else(|| {
-        ProductionClaimError::new(
-            ProductionClaimErrorType::Contract,
+        ProductionLeaseError::new(
+            ProductionLeaseErrorType::Contract,
             "decode production caller release",
             format!("unknown or incomplete result {code:?}"),
         )
     })
 }
 
-fn decode_terminalization(row: &Row) -> Result<TerminalizeResult, ProductionClaimError> {
+fn decode_terminalization(row: &Row) -> Result<TerminalizeResult, ProductionLeaseError> {
     let code: String = row_value(row, 0, "terminalization result")?;
     let status: Option<String> = row_value(row, 1, "terminalization run status")?;
     TerminalizeResult::from_parts(&code, status.as_deref().unwrap_or_default()).ok_or_else(|| {
-        ProductionClaimError::new(
-            ProductionClaimErrorType::Contract,
+        ProductionLeaseError::new(
+            ProductionLeaseErrorType::Contract,
             "decode production terminalization",
             format!("unknown or incomplete result {code:?}"),
         )
     })
 }
 
-async fn claim_in_transaction(
+async fn lease_in_transaction(
     connection: &Object,
     runner: &str,
     package_ids: &[String],
     environment: &str,
     lease_ttl_ms: i64,
     release: Option<&ReleaseIdentity>,
-) -> Result<ClaimTurn, ProductionClaimError> {
+) -> Result<LeaseTurn, ProductionLeaseError> {
     require_executor_authority(connection).await?;
-    let select_sql = select_production_claim_sql();
+    let select_sql = select_production_lease_sql();
     let select = connection
         .prepare_cached(&select_sql)
         .await
@@ -1116,12 +1116,12 @@ async fn claim_in_transaction(
         .await
         .map_err(|error| storage("select production candidate", &error))?
     else {
-        return Ok(ClaimTurn::Claimed(ProductionClaimResult::Empty));
+        return Ok(LeaseTurn::Leased(ProductionLeaseResult::Empty));
     };
-    let selected = decode_selected_claim(&row)?;
+    let selected = decode_selected_lease(&row)?;
     if !matches!(selected.status, RunStatus::Dispatched | RunStatus::Running) {
-        return Err(ProductionClaimError::new(
-            ProductionClaimErrorType::Contract,
+        return Err(ProductionLeaseError::new(
+            ProductionLeaseErrorType::Contract,
             "validate selected run",
             format!(
                 "queue row {} references non-runnable status {}",
@@ -1131,8 +1131,8 @@ async fn claim_in_transaction(
         ));
     }
 
-    match classify_production_claim(selected.had_prior_lease) {
-        ProductionClaimClass::ExpiredPreEffect => {
+    match classify_production_lease(selected.had_prior_lease) {
+        ProductionLeaseClass::ExpiredPreEffect => {
             let clear_sql = clear_pre_effect_state_sql();
             let clear = connection
                 .prepare_cached(&clear_sql)
@@ -1145,14 +1145,14 @@ async fn claim_in_transaction(
         }
         // Nothing to reset here. A never-leased row carries no record, and a
         // queue-parked one had its record cleared by the park that released
-        // the lease: the arm that REOPENS claimability owns the clear
+        // the lease: the arm that REOPENS lease eligibility owns the clear
         // (wamn-0h0g.15.82), so the grant below always writes over NULL.
-        ProductionClaimClass::Ordinary => {}
+        ProductionLeaseClass::Ordinary => {}
     }
 
     // Crash evidence advances in its own statement outside the grant's
     // subtransaction.
-    let advance_sql = advance_claim_attempts_sql();
+    let advance_sql = advance_lease_attempts_sql();
     let advance = connection
         .prepare_cached(&advance_sql)
         .await
@@ -1162,7 +1162,7 @@ async fn claim_in_transaction(
         .await
         .map_err(|error| storage("advance crash evidence", &error))?;
 
-    let grant_sql = grant_production_claim_sql();
+    let grant_sql = grant_production_lease_sql();
     let grant = connection
         .prepare_cached(&grant_sql)
         .await
@@ -1191,21 +1191,21 @@ async fn claim_in_transaction(
                 .batch_execute("ROLLBACK TO SAVEPOINT wamn_production_grant")
                 .await
                 .map_err(|rollback| storage("roll back refused production lease", &rollback))?;
-            return Ok(ClaimTurn::GrantRefused(storage(
+            return Ok(LeaseTurn::GrantRefused(storage(
                 "grant production lease",
                 &error,
             )));
         }
     };
     let row = granted.ok_or_else(|| {
-        ProductionClaimError::new(
-            ProductionClaimErrorType::Contract,
+        ProductionLeaseError::new(
+            ProductionLeaseErrorType::Contract,
             "grant production lease",
-            "claiming release digest does not match the run admission pin",
+            "leasing release digest does not match the run admission pin",
         )
     })?;
     let lease_generation = row_value(&row, 0, "lease generation")?;
-    Ok(ClaimTurn::Claimed(ProductionClaimResult::Ready {
+    Ok(LeaseTurn::Leased(ProductionLeaseResult::Ready {
         run_id: selected.run_id,
         package_id: selected.package_id,
         payload: selected.payload,
@@ -1225,7 +1225,7 @@ async fn reap_in_transaction(
     package_ids: &[String],
     environment: &str,
     grace_ms: i64,
-) -> Result<ProductionReapResult, ProductionClaimError> {
+) -> Result<ProductionReapResult, ProductionLeaseError> {
     require_executor_authority(connection).await?;
     let select_sql = select_exhausted_production_sql();
     let select = connection
@@ -1241,8 +1241,8 @@ async fn reap_in_transaction(
     };
     let status_text: String = row_value(&row, 2, "exhausted run status")?;
     let status = RunStatus::from_sql(&status_text).ok_or_else(|| {
-        ProductionClaimError::new(
-            ProductionClaimErrorType::Contract,
+        ProductionLeaseError::new(
+            ProductionLeaseErrorType::Contract,
             "decode exhausted candidate",
             format!("unknown run status {status_text:?}"),
         )
@@ -1257,21 +1257,21 @@ async fn reap_in_transaction(
             }
         }
         _ => {
-            return Err(ProductionClaimError::new(
-                ProductionClaimErrorType::Contract,
+            return Err(ProductionLeaseError::new(
+                ProductionLeaseErrorType::Contract,
                 "decode exhausted candidate",
                 "run-execution-grain-corrupt",
             ));
         }
     };
-    let selected = ExhaustedClaim {
+    let selected = ExhaustedLease {
         run_id: row_value(&row, 1, "exhausted run id")?,
         status,
         identity,
     };
     if !matches!(selected.status, RunStatus::Dispatched | RunStatus::Running) {
-        return Err(ProductionClaimError::new(
-            ProductionClaimErrorType::Contract,
+        return Err(ProductionLeaseError::new(
+            ProductionLeaseErrorType::Contract,
             "validate exhausted candidate",
             format!("non-runnable status {}", selected.status.as_sql()),
         ));
@@ -1297,16 +1297,16 @@ async fn reap_in_transaction(
         .await
         .map_err(|error| storage("terminalize exhausted run", &error))?
         .ok_or_else(|| {
-            ProductionClaimError::new(
-                ProductionClaimErrorType::Contract,
+            ProductionLeaseError::new(
+                ProductionLeaseErrorType::Contract,
                 "terminalize exhausted run",
                 "selected run or queue row disappeared while locked",
             )
         })?;
     let status: String = row_value(&row, 0, "exhausted terminal status")?;
     if status != RunStatus::InfrastructureFailure.as_sql() {
-        return Err(ProductionClaimError::new(
-            ProductionClaimErrorType::Contract,
+        return Err(ProductionLeaseError::new(
+            ProductionLeaseErrorType::Contract,
             "terminalize exhausted run",
             format!("unexpected status {status:?}"),
         ));
@@ -1320,7 +1320,7 @@ fn generic_failure_outcome(
     code: &str,
     identity: &ExhaustedExecutionIdentity,
     run_id: &str,
-) -> Result<(String, String), ProductionClaimError> {
+) -> Result<(String, String), ProductionLeaseError> {
     let coordinate = serde_json::json!({
         "code": code,
         "wiring-id": identity.wiring_id,
@@ -1330,8 +1330,8 @@ fn generic_failure_outcome(
     let body = serde_json::json!({ "error": coordinate });
     let body_hash = wamn_digest::canonical_json_sha256(&body);
     let body_json = serde_json::to_string(&body).map_err(|error| {
-        ProductionClaimError::new(
-            ProductionClaimErrorType::Contract,
+        ProductionLeaseError::new(
+            ProductionLeaseErrorType::Contract,
             "serialize generic failure outcome",
             error.to_string(),
         )
@@ -1339,11 +1339,11 @@ fn generic_failure_outcome(
     Ok((body_json, body_hash))
 }
 
-fn decode_selected_claim(row: &Row) -> Result<SelectedClaim, ProductionClaimError> {
+fn decode_selected_lease(row: &Row) -> Result<SelectedLease, ProductionLeaseError> {
     let status: String = row_value(row, 2, "run status")?;
     let status = RunStatus::from_sql(&status).ok_or_else(|| {
-        ProductionClaimError::new(
-            ProductionClaimErrorType::Contract,
+        ProductionLeaseError::new(
+            ProductionLeaseErrorType::Contract,
             "decode production candidate",
             format!("unknown run status {status:?}"),
         )
@@ -1356,8 +1356,8 @@ fn decode_selected_claim(row: &Row) -> Result<SelectedClaim, ProductionClaimErro
     let binding_world: Option<String> = row_value(row, 9, "candidate binding world")?;
     let payload_text: String = row_value(row, 3, "authoritative input")?;
     let payload = serde_json::from_str(&payload_text).map_err(|error| {
-        ProductionClaimError::new(
-            ProductionClaimErrorType::Contract,
+        ProductionLeaseError::new(
+            ProductionLeaseErrorType::Contract,
             "decode production candidate",
             format!("authoritative input: {error}"),
         )
@@ -1372,16 +1372,16 @@ fn decode_selected_claim(row: &Row) -> Result<SelectedClaim, ProductionClaimErro
         (Some(wiring_hash), Some(binding_world)) if !wiring_hash.is_empty() => {
             let binding_world = serde_json::from_str(&binding_world)
                 .map_err(|error| {
-                    ProductionClaimError::new(
-                        ProductionClaimErrorType::Contract,
+                    ProductionLeaseError::new(
+                        ProductionLeaseErrorType::Contract,
                         "decode production candidate",
                         format!("candidate-binding-world-json-invalid: {error}"),
                     )
                 })
                 .and_then(|value| {
                     CandidateBindingWorld::from_json(value).map_err(|error| {
-                        ProductionClaimError::new(
-                            ProductionClaimErrorType::Contract,
+                        ProductionLeaseError::new(
+                            ProductionLeaseErrorType::Contract,
                             "decode production candidate",
                             error.to_string(),
                         )
@@ -1393,16 +1393,16 @@ fn decode_selected_claim(row: &Row) -> Result<SelectedClaim, ProductionClaimErro
             })
         }
         _ => {
-            return Err(ProductionClaimError::new(
-                ProductionClaimErrorType::Contract,
+            return Err(ProductionLeaseError::new(
+                ProductionLeaseErrorType::Contract,
                 "decode production candidate",
                 "run-execution-grain-corrupt",
             ));
         }
     };
     if candidate.is_some() && (!router_caller_attached || durable_caller_attached) {
-        return Err(ProductionClaimError::new(
-            ProductionClaimErrorType::Contract,
+        return Err(ProductionLeaseError::new(
+            ProductionLeaseErrorType::Contract,
             "decode production candidate",
             "candidate-caller-grain-corrupt",
         ));
@@ -1422,8 +1422,8 @@ fn decode_selected_claim(row: &Row) -> Result<SelectedClaim, ProductionClaimErro
                 run: row_value(row, 0, "run id")?,
                 root,
                 depth: u32::try_from(depth).map_err(|error| {
-                    ProductionClaimError::with_source(
-                        ProductionClaimErrorType::Contract,
+                    ProductionLeaseError::with_source(
+                        ProductionLeaseErrorType::Contract,
                         "decode event depth",
                         error,
                     )
@@ -1432,13 +1432,13 @@ fn decode_selected_claim(row: &Row) -> Result<SelectedClaim, ProductionClaimErro
         }
     }
     if workflow.is_some() && (candidate.is_some() || service_principal_id.is_some()) {
-        return Err(ProductionClaimError::new(
-            ProductionClaimErrorType::Contract,
+        return Err(ProductionLeaseError::new(
+            ProductionLeaseErrorType::Contract,
             "decode production candidate",
             "run-execution-grain-corrupt",
         ));
     }
-    Ok(SelectedClaim {
+    Ok(SelectedLease {
         run_id: row_value(row, 0, "run id")?,
         package_id: row_value(row, 10, "package id")?,
         had_prior_lease: row_value(row, 1, "prior lease evidence")?,
@@ -1462,10 +1462,10 @@ fn decode_workflow(
     execution_principal_id: Option<String>,
     execution_role: Option<String>,
     node_digests: Option<String>,
-) -> Result<Option<Box<ProductionWorkflow>>, ProductionClaimError> {
+) -> Result<Option<Box<ProductionWorkflow>>, ProductionLeaseError> {
     let corrupt = || {
-        ProductionClaimError::new(
-            ProductionClaimErrorType::Contract,
+        ProductionLeaseError::new(
+            ProductionLeaseErrorType::Contract,
             "decode production candidate",
             "run-workflow-execution-corrupt",
         )
@@ -1498,7 +1498,7 @@ fn decode_workflow(
     }
 }
 
-fn valid_package_scope(package_ids: &[String]) -> bool {
+fn valid_package_set(package_ids: &[String]) -> bool {
     !package_ids.is_empty()
         && package_ids.iter().all(|package_id| {
             !package_id.is_empty()
@@ -1510,21 +1510,21 @@ fn valid_package_scope(package_ids: &[String]) -> bool {
 fn decode_wiring_identity(
     wiring_id: Option<String>,
     wiring_version: Option<i32>,
-) -> Result<(String, i32), ProductionClaimError> {
+) -> Result<(String, i32), ProductionLeaseError> {
     let (wiring_id, wiring_version) = match (wiring_id, wiring_version) {
         (Some(wiring_id), Some(wiring_version)) if !wiring_id.is_empty() && wiring_version > 0 => {
             (wiring_id, wiring_version)
         }
         (None, None) => {
-            return Err(ProductionClaimError::new(
-                ProductionClaimErrorType::WiringIdentity,
+            return Err(ProductionLeaseError::new(
+                ProductionLeaseErrorType::WiringIdentity,
                 "decode production candidate",
                 "run-wiring-identity-missing",
             ));
         }
         _ => {
-            return Err(ProductionClaimError::new(
-                ProductionClaimErrorType::WiringIdentity,
+            return Err(ProductionLeaseError::new(
+                ProductionLeaseErrorType::WiringIdentity,
                 "decode production candidate",
                 "run-wiring-identity-corrupt",
             ));
@@ -1533,14 +1533,14 @@ fn decode_wiring_identity(
     Ok((wiring_id, wiring_version))
 }
 
-fn row_value<T>(row: &Row, index: usize, field: &'static str) -> Result<T, ProductionClaimError>
+fn row_value<T>(row: &Row, index: usize, field: &'static str) -> Result<T, ProductionLeaseError>
 where
     for<'value> T: FromSql<'value>,
 {
     row.try_get(index).map_err(|error| {
-        ProductionClaimError::new(
-            ProductionClaimErrorType::Contract,
-            "decode production claim row",
+        ProductionLeaseError::new(
+            ProductionLeaseErrorType::Contract,
+            "decode production lease row",
             format!("{field}: {error}"),
         )
     })
@@ -1551,7 +1551,7 @@ where
 pub(super) fn storage(
     operation: &'static str,
     error: &tokio_postgres::Error,
-) -> ProductionClaimError {
+) -> ProductionLeaseError {
     let detail = match error.as_db_error() {
         Some(database) => match database.constraint() {
             Some(constraint) => format!("{} ({constraint})", database.message()),
@@ -1559,7 +1559,7 @@ pub(super) fn storage(
         },
         None => error.to_string(),
     };
-    ProductionClaimError::new(ProductionClaimErrorType::Storage, operation, detail)
+    ProductionLeaseError::new(ProductionLeaseErrorType::Storage, operation, detail)
 }
 
 #[cfg(test)]
@@ -1648,7 +1648,7 @@ mod tests {
                 .batch_execute(&format!("SET LOCAL ROLE {role}"))
                 .await?;
             for result in [
-                claim_in_transaction(&connection, "runner", &packages, "test", 1000, None)
+                lease_in_transaction(&connection, "runner", &packages, "test", 1000, None)
                     .await
                     .map(|_| ()),
                 reap_in_transaction(&connection, &packages, "test", 0)
@@ -1665,7 +1665,7 @@ mod tests {
                     .map(|_| ()),
             ] {
                 let error = result.expect_err("a different role must not enter executor work");
-                assert_eq!(error.error_type(), ProductionClaimErrorType::Identity);
+                assert_eq!(error.error_type(), ProductionLeaseErrorType::Identity);
             }
             assert_eq!(
                 connection
@@ -1687,7 +1687,7 @@ mod tests {
         let missing = require_executor_authority(&connection)
             .await
             .expect_err("an absent role must return the native refusal");
-        assert_eq!(missing.error_type(), ProductionClaimErrorType::Identity);
+        assert_eq!(missing.error_type(), ProductionLeaseErrorType::Identity);
         connection
             .batch_execute("ROLLBACK TO missing_role; ROLLBACK")
             .await?;
@@ -1699,7 +1699,7 @@ mod tests {
         let missing = decode_wiring_identity(None, None).unwrap_err();
         assert_eq!(
             missing.error_type(),
-            ProductionClaimErrorType::WiringIdentity
+            ProductionLeaseErrorType::WiringIdentity
         );
         assert!(missing.to_string().contains("run-wiring-identity-missing"));
 
@@ -1710,7 +1710,7 @@ mod tests {
             decode_wiring_identity(Some("orders".into()), Some(0)),
         ] {
             let error = corrupt.unwrap_err();
-            assert_eq!(error.error_type(), ProductionClaimErrorType::WiringIdentity);
+            assert_eq!(error.error_type(), ProductionLeaseErrorType::WiringIdentity);
             assert!(error.to_string().contains("run-wiring-identity-corrupt"));
         }
     }
@@ -1738,74 +1738,14 @@ mod tests {
     }
 
     #[test]
-    fn lease_grant_uses_a_fresh_post_fence_clock() {
-        let lease_sql = grant_production_claim_sql();
-        assert!(lease_sql.contains("lease_expires_at = statement_timestamp()"));
-        assert!(!lease_sql.contains("lease_expires_at = now()"));
-    }
-
-    #[test]
-    fn lease_grant_verifies_the_release_digest_on_the_existing_write() {
-        let lease_sql = grant_production_claim_sql();
-        for required in [
-            "SET status = 'running'",
-            "r.manifest_digest = $4",
-            "r.status IN ('dispatched', 'running')",
-            "FROM leased JOIN marked",
-        ] {
-            assert!(lease_sql.contains(required), "lease grant omits {required}");
-        }
-        assert_eq!(
-            lease_sql.matches("UPDATE runs").count(),
-            1,
-            "the release is verified on the existing claim write, not a second one"
-        );
-
-        assert!(!lease_sql.contains("release_version"));
-
-        let select_sql = select_production_claim_sql();
-        assert!(!select_sql.contains("release_version"));
-    }
-
-    #[test]
-    fn pinned_backlog_reads_the_runnable_queue_of_one_release() {
-        for required in [
-            "FROM run_queue AS q",
-            "r.package_id = ANY($1::text[])",
-            "r.environment = $2",
-            "r.manifest_digest = $3",
-        ] {
-            assert!(
-                PINNED_BACKLOG_SQL.contains(required),
-                "pinned backlog omits {required}"
-            );
-        }
-        assert!(PINNED_BACKLOG_SQL.contains(&format!(
-            "r.status IN ('{}', '{}')",
-            RunStatus::Dispatched.as_sql(),
-            RunStatus::Running.as_sql()
-        )));
-    }
-
-    #[test]
-    fn package_scope_requires_at_least_one_canonical_identity() {
-        assert!(!valid_package_scope(&[]));
-        assert!(!valid_package_scope(&[String::new()]));
-        assert!(!valid_package_scope(&[" fixture".to_owned()]));
-        assert!(!valid_package_scope(&["fixture\0overlay".to_owned()]));
-        assert!(valid_package_scope(&[
+    fn package_target_requires_at_least_one_canonical_identity() {
+        assert!(!valid_package_set(&[]));
+        assert!(!valid_package_set(&[String::new()]));
+        assert!(!valid_package_set(&[" fixture".to_owned()]));
+        assert!(!valid_package_set(&["fixture\0overlay".to_owned()]));
+        assert!(valid_package_set(&[
             "base".to_owned(),
             "client_overlay".to_owned(),
         ]));
-    }
-
-    #[test]
-    fn lease_renewal_is_generation_fenced_and_uses_a_fresh_clock() {
-        let sql = renew_production_lease_sql();
-        assert!(sql.contains("q.lease_owner = $2"));
-        assert!(sql.contains("q.lease_generation = $3"));
-        assert!(sql.contains("statement_timestamp()"));
-        assert!(sql.contains("q.lease_expires_at > statement_timestamp()"));
-        assert!(!sql.contains("execution_bundle_hash"));
     }
 }

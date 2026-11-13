@@ -1,4 +1,4 @@
-//! Real-transport acceptance gate for the private `sqlx-command` driver (wamn-0h0g.22.2a).
+//! Real-transport acceptance test for the private `sqlx-command` driver (wamn-0h0g.22.2a).
 //!
 //! The separately built WASI command uses SQLx's generic API, while this host
 //! supplies the production `wamn:postgres` plugin and a real PostgreSQL 18
@@ -28,8 +28,8 @@ use wasmtime_wasi::p3::bindings::Command;
 
 const COMPONENT_ENV: &str = "WAMN_SQLX_TRANSACTION_COMPONENT";
 const COMPONENT_ID: &str = "sqlx-command-live";
-const SCHEMA: &str = "sqlx_command_gate";
-const ENV_KEY: &str = "sqlx-command-tenant";
+const SCHEMA: &str = "sqlx_command_acceptance_test";
+const PROJECT_ENV_KEY: &str = "sqlx-command-project";
 const PASSWORD: &str = "sqlx-command-live";
 
 struct TraceHarness {
@@ -80,7 +80,7 @@ async fn connect(url: &str) -> anyhow::Result<Client> {
 fn generation_role(database: &str) -> String {
     format!(
         "wamn_app_{}_a",
-        wamn_run_state::app_scope_hash(ENV_KEY, database)
+        wamn_run_state::app_identity_hash(PROJECT_ENV_KEY, database)
     )
 }
 
@@ -162,7 +162,7 @@ async fn run_component(component_path: &Path, guest_url: String) -> anyhow::Resu
         statement_timeout_ms: 5_000,
         row_limit: 100,
     })?);
-    postgres.set_env_key(COMPONENT_ID, ENV_KEY)?;
+    postgres.set_project_env_key(COMPONENT_ID, PROJECT_ENV_KEY)?;
     postgres.set_schema(COMPONENT_ID, SCHEMA)?;
 
     let engine = build_engine(&[])?;
@@ -222,7 +222,7 @@ async fn acceptance(admin: &Client, admin_url: &str, component: &Path) -> anyhow
         .get(0);
     ensure!(
         version / 10_000 == 18,
-        "gate requires PostgreSQL 18, got {version}"
+        "condition requires PostgreSQL 18, got {version}"
     );
     let database: String = admin
         .query_one("SELECT current_database()", &[])
@@ -285,7 +285,7 @@ async fn sqlx_command_commits_rolls_back_and_obeys_current_user_rls() {
         fixture_is_clean(&admin, &role)
             .await
             .expect("inspect SQLx transaction fixture"),
-        "SQLx transaction gate requires a fresh cluster: wamn_app, {role}, or {SCHEMA} exists"
+        "SQLx transaction condition requires a fresh cluster: wamn_app, {role}, or {SCHEMA} exists"
     );
 
     let result = acceptance(&admin, admin_url, &component).await;

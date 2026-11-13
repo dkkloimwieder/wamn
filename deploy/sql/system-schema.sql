@@ -8,13 +8,13 @@
 -- catalog from deploy/sql/catalog-schema.sql.
 --
 -- STANDALONE ARTIFACT: deliberately NOT included by deploy/sql/postgres-init.sql
--- (which builds the S2–S6 *tenant-data* fixtures). This is applied into the T1
+-- (which builds the S2–S6 *project-data* fixtures). This is applied into the T1
 -- system DB — a different plane entirely.
 --
--- PLATFORM-GLOBAL, NOT TENANT-SCOPED — the sharpest difference from
--- catalog-schema.sql: the system DB is the platform's own single-tenant
--- control-plane state. There is NO `app.env_key` claim, NO per-tenant RLS floor,
--- NO NULLIF/CHECK(tenant_id <> '') pattern here. The top-level key is `org_id`;
+-- PLATFORM-GLOBAL, NOT PROJECT-OWNED — the sharpest difference from
+-- catalog-schema.sql: the system DB is the platform's own single-project
+-- control-plane state. There is NO `app.project_env_key` identity, NO per-project RLS base grants,
+-- NO NULLIF/CHECK(project_id <> '') pattern here. The top-level key is `org_id`;
 -- access is the `wamn_system` owner role (from wamn-q3n.2). The control-plane
 -- families get their grants from `stable_surface_sql` in wamn-control-provision.
 --
@@ -33,7 +33,7 @@
 -- and wamn-ctl bind wamn:provisioning, and test fixtures bind a principal.
 --
 -- THE GENERIC DEPLOYMENT MODEL (D18, wamn-8df.3;
--- org-scoped policies + templates, wamn-8df.4): the closed tier/env CHECK
+-- org-owned policies + templates, wamn-8df.4): the closed tier/env CHECK
 -- enumerations are RETIRED. `env` is a validated slug resolving a
 -- `registry.env_policies` row IN ITS ORG's set (referential integrity — the
 -- composite FK below — replaces the old `env IN ('dev','canary','prod')`
@@ -46,18 +46,18 @@
 --
 -- THE FOUR INVARIANTS for T1, and how this schema
 -- encodes / makes each testable:
---   (1) control-plane authority: tenant workloads cannot connect here.
---       Scoped identity readers perform fresh PAT authentication.
+--   (1) control-plane authority: project workloads cannot connect here.
+--       Authorized identity readers perform fresh PAT authentication.
 --       The separate identity issuer has explicit key, credential, and throttle grants.
---   (2) no tenant-database credentials (R8b) — `project_envs` stores a Secret
---       *reference* (secret_name + optional secret_namespace) and NO tenant DB
+--   (2) no project-database credentials (R8b) — `project_envs` stores a Secret
+--       *reference* (secret_name + optional secret_namespace) and NO project DB
 --       credential column (no url/password/dsn). First-party user login hashes
 --       live separately under `identity`. Session signing keys are the explicit
 --       authority-only exception: only wamn-identity receives their private part.
---   (3) no tenant data — the only tables here are the control-plane set below
+--   (3) no project data — the only tables here are the control-plane set below
 --       (registry + provisioning + first-party platform identity). No catalogs,
 --       run state, payloads, or per-project application users. The live-apply
---       gate asserts the exact table set.
+--       condition asserts the exact table set.
 --   (4) dev ≠ prod recovery domain — under D18 this is enforced by the DERIVATION
 --       plus crates/control/registry validate(), not a per-org DB CHECK: two
 --       own-domain envs (dev, prod) derive distinct clusters (<org>-dev vs
@@ -182,11 +182,11 @@ INSERT INTO registry.target (name, type, status) VALUES ('cloud', 'cloud', 'acti
 -- row) — the registry is not a versioned per-row document like the catalog.
 --
 -- `platform_domain` is the deployment's platform principal email domain: every
--- tenant's `platform."user"` platform row carries `<component>@<domain>`
+-- project's `platform."user"` platform row carries `<component>@<domain>`
 -- (wamn-0h0g.9.15). It belongs to the deployment and not to an org, so it sits
 -- on this singleton. It starts NULL because static SQL cannot read deployment
 -- configuration; the bootstrap that applies this file sets it, and
--- `reconcile-run-plane` refuses to create a tenant's platform rows while it is
+-- `reconcile-run-plane` refuses to create a project's platform rows while it is
 -- unset. The CHECK carries the same shape and the same two length limits that
 -- `wamn_control_provision::validate_platform_domain` enforces: dot-separated
 -- labels of lowercase letters, digits and inner hyphens, each label at most 63
@@ -262,7 +262,7 @@ CREATE TRIGGER wamn_record_history_stamp
     EXECUTE FUNCTION wamn_history.stamp_row('created_at', 'created_by', 'updated_at', 'updated_by');
 
 -- ---------------------------------------------------------------------------
--- Env policies (D18, wamn-8df.3; ORG-SCOPED by wamn-8df.4) — each org's own
+-- Env policies (D18, wamn-8df.3; ORG-OWNED by wamn-8df.4) — each org's own
 -- environment configurations (crates/control/registry EnvPolicy, keyed per org as
 -- OrgEnvPolicy). The `name` IS the env slug: a project-env's `env` both
 -- identifies it in the triple and (via the composite FK below) resolves its
@@ -356,12 +356,12 @@ CREATE TRIGGER wamn_record_history_stamp
 -- principal cannot authenticate.
 --
 -- `email` is the deliverable address of a user. `reconcile-run-plane` copies
--- it into the `platform."user"` user row of every tenant the user can write
+-- it into the `platform."user"` user row of every project the user can write
 -- in (wamn-0h0g.9.18). Only a user carries one: `principals_email_check`
 -- refuses an email on another type and refuses a user without one. `subject`
 -- is email-shaped by its own CHECK, but it is an authentication token, so
 -- nothing reads it as an address. A service and a platform row take
--- `<subject>@<platform-domain>` in the tenant, built from
+-- `<subject>@<platform-domain>` in the project, built from
 -- `registry.meta.platform_domain`, so neither needs a column here.
 --
 -- `UNIQUE (email)` says the rule plainly: an address names one user. It needs
@@ -370,8 +370,8 @@ CREATE TRIGGER wamn_record_history_stamp
 -- constraint touches no service or platform row.
 --
 -- The refusal belongs here, where the address is entered.
--- `platform."user"` is `UNIQUE (tenant_id, email)`, so without this the two
--- users collide inside a tenant instead. That failure stops a whole
+-- `platform."user"` is `UNIQUE (project_id, email)`, so without this the two
+-- users collide inside a project instead. That failure stops a whole
 -- `reconcile-run-plane` run, unrelated schema repair included.
 -- ---------------------------------------------------------------------------
 CREATE TABLE identity.principals (
@@ -548,7 +548,7 @@ CREATE INDEX pats_principal_idx ON identity.pats (principal_id);
 -- These tables hold credential material and stamps, never row-image history.
 -- The identity library serializes enrollment on the principal row and consumes
 -- all outstanding invitations in the same transaction as password creation.
--- Scoped issuer grants belong to the password endpoint implementation.
+-- Authorized issuer grants belong to the password endpoint implementation.
 CREATE TABLE identity.password_credentials (
     principal_id uuid PRIMARY KEY,
     principal_type text NOT NULL DEFAULT 'user' CHECK (principal_type = 'user'),
@@ -735,7 +735,7 @@ CREATE TRIGGER wamn_record_history_stamp
 -- existing environment's admitted component fact immutable BY CONSTRUCTION
 -- rather than by a caller remembering to withhold a flag. The condition is
 -- anchored in THIS row, never in a CLI argument or a stage: the target decides.
--- This row is the AUTHORITY; `catalog.tenant_environments` in the control store
+-- This row is the AUTHORITY; `catalog.project_environments` in the control store
 -- carries the projected copy the admit path reads (deploy/sql/control-portable-store.sql).
 --
 -- `status` is `active` or `inactive` (docs/plan/platform-ui.md §5.4). Identity
@@ -824,7 +824,7 @@ ALTER TABLE registry.env_policies
 -- deleted the only record of its `instance_suffix` is gone — and with it every
 -- name derived from it (the Kubernetes namespace above all). The orphaned
 -- namespace and whatever survived inside it then have NO handle: nothing can
--- enumerate them, so nothing can reclaim them.
+-- enumerate them, so nothing can release them.
 --
 -- This is RECLAIM, not collision-prevention. Randomness remains the entire
 -- uniqueness mechanism (wamn-0h0g.13.57) and nothing here is ever consulted when
@@ -1632,7 +1632,7 @@ LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = pg_catalog AS $$
 BEGIN
  RETURN QUERY
  SELECT c.id, i.name, c.active_generation, g.parameters || jsonb_build_object('provider',c.integration_type)
- FROM wamn_authority.author_login_tenants login
+ FROM wamn_authority.author_login_projects login
  JOIN registry.connection c ON (c.org,c.project,c.env)=(login.org_id,login.project_id,login.environment)
  JOIN registry.integration i ON i.id=c.integration_id AND i.status='active'
  JOIN registry.integration_type t ON t.code=c.integration_type AND t.runtime_type='host'
@@ -1688,7 +1688,7 @@ BEGIN
  RETURN QUERY
  SELECT c.active_generation, c.status='active' AND i.status='active' AND p.status='active', g.credential_id,
    t.exclusive, c.target_id, c.resource_key, target.type, c.service_principal_id
- FROM wamn_authority.author_login_tenants login
+ FROM wamn_authority.author_login_projects login
  JOIN registry.connection c ON (c.org,c.project,c.env)=(login.org_id,login.project_id,login.environment)
  JOIN registry.integration i ON i.id=c.integration_id
  JOIN registry.integration_type t ON t.code=c.integration_type
@@ -1707,7 +1707,7 @@ LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog AS $$
 DECLARE generation bigint;
 BEGIN
  SELECT c.active_generation INTO generation
- FROM wamn_authority.author_login_tenants login
+ FROM wamn_authority.author_login_projects login
  JOIN registry.connection c ON (c.org,c.project,c.env)=(login.org_id,login.project_id,login.environment)
  WHERE login.login_identity=session_user AND login.org_id=org_id AND login.project_id=project_id
    AND login.environment=environment AND c.id=requested_connection AND c.status='active'
@@ -1725,7 +1725,7 @@ BEGIN
  RETURN QUERY
  SELECT i.name, c.integration_type, t.runtime_type, i.auth_type, i.external_system_id::text,
         g.parameters
- FROM wamn_authority.author_login_tenants login
+ FROM wamn_authority.author_login_projects login
  JOIN registry.connection c ON (c.org,c.project,c.env)=(login.org_id,login.project_id,login.environment)
  JOIN registry.integration i ON i.id=c.integration_id
  JOIN registry.integration_type t ON t.code=c.integration_type
@@ -1741,7 +1741,7 @@ LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = pg_catalog AS $$
 BEGIN
  RETURN QUERY
  SELECT k.store, k.ref, k.version
- FROM wamn_authority.author_login_tenants login
+ FROM wamn_authority.author_login_projects login
  JOIN registry.connection c ON (c.org,c.project,c.env)=(login.org_id,login.project_id,login.environment)
  JOIN identity.credential k ON k.connection_id=c.id
  WHERE login.login_identity=session_user AND login.org_id=org_id AND login.project_id=project_id
@@ -1755,7 +1755,7 @@ LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = pg_catalog AS $$
 BEGIN
  RETURN QUERY
  SELECT i.name, c.id
- FROM wamn_authority.author_login_tenants login
+ FROM wamn_authority.author_login_projects login
  JOIN registry.connection c ON (c.org,c.project,c.env)=(login.org_id,login.project_id,login.environment)
  JOIN registry.integration i ON i.id=c.integration_id
  WHERE login.login_identity=session_user AND login.org_id=org_id AND login.project_id=project_id

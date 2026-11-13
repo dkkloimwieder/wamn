@@ -11,7 +11,7 @@
  *
  * Environment: WAMN_ENDPOINT, WAMN_ROUTE_HOST, WAMN_BEARER, WAMN_USER_ID,
  * WAMN_AUD (the fixture session audience), WAMN_LOCATION_ID
- * (a location of the scope), WAMN_FIRST_ID (a row the list returns).
+ * (a location of the filter), WAMN_FIRST_ID (a row the list returns).
  * Run `pnpm run build` first. The last line is the result as JSON.
  */
 import { request } from "node:http";

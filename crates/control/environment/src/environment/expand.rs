@@ -104,7 +104,7 @@ pub(super) async fn prepare_at(
 ) -> anyhow::Result<()> {
     let document = super::analyse::select_application(document, Some(application))?;
     let document = &document;
-    let env_key =
+    let project_env_key =
         wamn_control_provision::project_env_key(&document.org, &document.project, &document.env);
     let mut project = super::analyse::connect_project(project_url)
         .await
@@ -121,8 +121,8 @@ pub(super) async fn prepare_at(
         ensure!(
             project
                 .query_opt(
-                    "SELECT 1 FROM catalog.packages WHERE env_key=$1 AND package_id=$2",
-                    &[&env_key, &package.package_id()]
+                    "SELECT 1 FROM catalog.packages WHERE project_env_key=$1 AND package_id=$2",
+                    &[&project_env_key, &package.package_id()]
                 )
                 .await?
                 .is_some(),
@@ -134,17 +134,20 @@ pub(super) async fn prepare_at(
     let bindings = super::bindings::analyse(&system, document, packages).await?;
     let changes = platform.auth_changes().await?;
     // The immutable cache can survive a later preparation failure. It selects no release.
-    super::stage::write_release(project_url, &env_key, digest, manifest, actor).await?;
+    super::stage::write_release(project_url, &project_env_key, digest, manifest, actor).await?;
     let tx = project.transaction().await?;
     tx.batch_execute(&wamn_control_provision::bind_platform_principal_sql(
         wamn_identity_protocol::PlatformComponent::Provisioning,
     ))
     .await?;
-    tx.query_one("SELECT set_config('app.env_key', $1, true)", &[&env_key])
-        .await?;
+    tx.query_one(
+        "SELECT set_config('app.project_env_key', $1, true)",
+        &[&project_env_key],
+    )
+    .await?;
     wamn_package_control::connection_requirement::prepare_release(
         &tx,
-        &env_key,
+        &project_env_key,
         manifest,
         packages,
         platform.component_source()?,
@@ -152,14 +155,29 @@ pub(super) async fn prepare_at(
     .await?;
     tx.query_one(
         wamn_control_provision::operation_grants::OPERATION_GRANT_LOCK_SQL,
-        &[&env_key],
+        &[&project_env_key],
     )
     .await?;
     let mut auth = wamn_broker::auth_changes::AuthDrops::default();
-    super::stage::write_runtime_grants(&system, &tx, &env_key, manifest, packages, &mut auth)
-        .await?;
+    super::stage::write_runtime_grants(
+        &system,
+        &tx,
+        &project_env_key,
+        manifest,
+        packages,
+        &mut auth,
+    )
+    .await?;
     let mut drops = wamn_broker::connection_changes::ConnectionDrops::default();
-    super::bindings::write(&tx, &env_key, digest, document, &bindings, &mut drops).await?;
+    super::bindings::write(
+        &tx,
+        &project_env_key,
+        digest,
+        document,
+        &bindings,
+        &mut drops,
+    )
+    .await?;
     tx.commit().await?;
     changes.publish(auth).await;
     changes.publish(drops).await;

@@ -6,7 +6,7 @@ use std::process::{Command as Proc, Stdio};
 
 use serde_json::json;
 use wamn_control_provision::{
-    CredentialGeneration, WorkloadRoleFamily, WorkloadRoleScope, sql as provision_sql,
+    CredentialGeneration, WorkloadRoleFamily, WorkloadRoleIdentity, sql as provision_sql,
     workload_generation_role,
 };
 use wamn_run_state::{FailType, RunStatus};
@@ -38,7 +38,7 @@ fn status_sql_literals_round_trip() {
 }
 
 #[test]
-fn persisted_fail_kind_vocabulary_is_exact_and_alias_free() {
+fn persisted_fail_type_vocabulary_is_exact_and_alias_free() {
     const EXPECTED: [&str; 11] = [
         "terminal",
         "retry-exhausted",
@@ -55,11 +55,11 @@ fn persisted_fail_kind_vocabulary_is_exact_and_alias_free() {
 
     assert_eq!(FailType::ALL.map(FailType::as_sql), EXPECTED);
     for literal in EXPECTED {
-        let kind = FailType::from_sql(literal).expect("frozen fail_type literal parses");
-        assert_eq!(serde_json::to_value(kind).unwrap(), json!(literal));
+        let type_ = FailType::from_sql(literal).expect("frozen fail_type literal parses");
+        assert_eq!(serde_json::to_value(type_).unwrap(), json!(literal));
         assert_eq!(
             serde_json::from_value::<FailType>(json!(literal)).unwrap(),
-            kind
+            type_
         );
     }
 
@@ -84,7 +84,7 @@ fn persisted_fail_kind_vocabulary_is_exact_and_alias_free() {
     }
 }
 
-// ---- live-apply gate (optional) --------------------------------------------
+// ---- live-apply acceptance test (optional) --------------------------------------------
 
 fn live_database(url: &str) -> String {
     let output = std::process::Command::new("psql")
@@ -102,7 +102,7 @@ fn live_database(url: &str) -> String {
         .to_string()
 }
 
-/// Apply `deploy/sql/run-state.sql` to a test database and assert the tenant RLS
+/// Apply `deploy/sql/run-state.sql` to a test database and assert the project RLS
 /// isolates rows, the idempotency index dedupes, and the INSTALLED run-status CHECK
 /// admits exactly the crate's [`RunStatus`] vocabulary while refusing the retired
 /// run-level `parked`. The installed `fail_type` CHECK admits exactly
@@ -126,8 +126,8 @@ fn run_state_schema_applies_and_isolates_on_postgres() {
     let database = live_database(&url);
     let app_role = workload_generation_role(
         WorkloadRoleFamily::App,
-        WorkloadRoleScope::EnvKey {
-            env_key: "t1",
+        WorkloadRoleIdentity::ProjectEnvKey {
+            project_env_key: "t1",
             database: &database,
         },
         CredentialGeneration::A,
@@ -163,8 +163,8 @@ fn run_state_schema_applies_and_isolates_on_postgres() {
          DROP SCHEMA IF EXISTS catalog CASCADE;\n\
          CREATE SCHEMA catalog;\n\
          CREATE TABLE catalog.releases (\n\
-           env_key text NOT NULL, manifest_digest text NOT NULL,\n\
-           PRIMARY KEY (env_key, manifest_digest)\n\
+           project_env_key text NOT NULL, manifest_digest text NOT NULL,\n\
+           PRIMARY KEY (project_env_key, manifest_digest)\n\
          );\n\
          INSERT INTO catalog.releases VALUES\n\
            ('t1','sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a'), ('t2','sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a'),\n\
@@ -182,15 +182,15 @@ fn run_state_schema_applies_and_isolates_on_postgres() {
     script.push('\n');
     script.push_str(
         "INSERT INTO wamn_run.environment_policies \
-           (env_key, expected_environment) VALUES \
+           (project_env_key, expected_environment) VALUES \
            ('t1', 'test'), \
            ('t2', 'test'), \
            ('t3', 'test');\n",
     );
-    // Seed two tenants as the superuser (bypasses RLS): each has one run.
+    // Seed two projects as the superuser (bypasses RLS): each has one run.
     script.push_str(
         "INSERT INTO wamn_run.runs (\
-           env_key, run_id, wiring_hash,binding_world_json, package_id, manifest_digest, environment,\
+           project_env_key, run_id, wiring_hash,binding_world_json, package_id, manifest_digest, environment,\
            wiring_id, wiring_version, status, idempotency_key\
          ) VALUES\
            ('t1','run-a','sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd','[]'::jsonb,'run-state-fixture','sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a','test',\
@@ -198,8 +198,8 @@ fn run_state_schema_applies_and_isolates_on_postgres() {
            ('t2','run-b','sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd','[]'::jsonb,'run-state-fixture','sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a','test',\
             'fixture-wiring',1,'running','k-b');\n",
     );
-    // The generation's `current_user` derives tenant t1 and sees only that
-    // tenant's run without trusting a settable claim.
+    // The generation's `current_user` derives project t1 and sees only that
+    // project's run without trusting a settable identity.
     writeln!(
         script,
         "BEGIN;\n\
@@ -209,22 +209,22 @@ fn run_state_schema_applies_and_isolates_on_postgres() {
          COMMIT;"
     )
     .expect("writing to a String cannot fail");
-    // Intentional refusal fixture: the stable ACL role carries no tenant key,
+    // Intentional refusal fixture: the stable ACL role carries no project key,
     // so even a superuser's SET ROLE probe sees zero rows.
     script.push_str(
         "BEGIN;\n\
          SET LOCAL ROLE wamn_app;\n\
          SET LOCAL search_path TO wamn_run;\n\
-         DO $$ BEGIN ASSERT (SELECT count(*) FROM runs) = 0, 'stable role has no tenant'; END $$;\n\
+         DO $$ BEGIN ASSERT (SELECT count(*) FROM runs) = 0, 'stable role has no project'; END $$;\n\
          COMMIT;\n",
     );
-    // The idempotency index rejects a duplicate (tenant, key); a different tenant
+    // The idempotency index rejects a duplicate (project, key); a different project
     // may reuse the same key.
     script.push_str(
         "DO $$ BEGIN \
            BEGIN \
              INSERT INTO wamn_run.runs (\
-               env_key, run_id, wiring_hash,binding_world_json, package_id, manifest_digest, environment,\
+               project_env_key, run_id, wiring_hash,binding_world_json, package_id, manifest_digest, environment,\
                wiring_id, wiring_version, idempotency_key\
              ) VALUES ('t1','run-a2','sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd','[]'::jsonb,'run-state-fixture','sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a','test',\
                'fixture-wiring',1,'k-a'); \
@@ -232,7 +232,7 @@ fn run_state_schema_applies_and_isolates_on_postgres() {
            EXCEPTION WHEN unique_violation THEN NULL; END; \
          END $$;\n\
          INSERT INTO wamn_run.runs (\
-           env_key, run_id, wiring_hash,binding_world_json, package_id, manifest_digest, environment,\
+           project_env_key, run_id, wiring_hash,binding_world_json, package_id, manifest_digest, environment,\
            wiring_id, wiring_version, idempotency_key\
          ) VALUES ('t3','run-c','sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd','[]'::jsonb,'run-state-fixture','sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a','test',\
            'fixture-wiring',1,'k-a');\n",
@@ -260,7 +260,7 @@ fn run_state_schema_applies_and_isolates_on_postgres() {
              ordinal := ordinal + 1;\n\
              BEGIN\n\
                INSERT INTO wamn_run.runs (\
-                 env_key, run_id, wiring_hash,binding_world_json, package_id, manifest_digest,\
+                 project_env_key, run_id, wiring_hash,binding_world_json, package_id, manifest_digest,\
                  environment, wiring_id, wiring_version, status, idempotency_key\
                ) VALUES ('t3', 'status-probe-' || ordinal, 'sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd','[]'::jsonb, 'run-state-fixture', 'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a',\
                  'test', 'fixture-wiring', 1, candidate, 'status-probe-' || ordinal);\n\
@@ -289,7 +289,7 @@ fn run_state_schema_applies_and_isolates_on_postgres() {
     .expect("writing to a String cannot fail");
     // The installed fail_type CHECK, asked for its literal set like the status one.
     script.push_str(
-        "SELECT 'fail-kind-installed ' || string_agg(DISTINCT literal, ' ' ORDER BY literal)\n\
+        "SELECT 'fail-type-installed ' || string_agg(DISTINCT literal, ' ' ORDER BY literal)\n\
          FROM (\n\
            SELECT hit.parts[1] AS literal\n\
            FROM pg_constraint AS con\n\
@@ -310,7 +310,7 @@ fn run_state_schema_applies_and_isolates_on_postgres() {
          EXECUTE prune('t3', 7); \
          DO $$ BEGIN \
            ASSERT NOT EXISTS (SELECT FROM runs WHERE run_id LIKE 'prune-old-%' \
-                              AND env_key='t3' AND status IN \
+                              AND project_env_key='t3' AND status IN \
                                   ('completed','failed','infrastructure-failure')), \
              'pruning removes every old terminal status'; \
            ASSERT (SELECT count(*) FROM runs WHERE run_id LIKE 'prune-%') = 5, \
@@ -319,7 +319,7 @@ fn run_state_schema_applies_and_isolates_on_postgres() {
         wamn_run_state::sql::prune_terminal_runs_sql()
     )
     .unwrap();
-    // The environment policy floor: the App generation reads its own tenant's
+    // The environment policy minimum: the App generation reads its own project's
     // row only and cannot write one.
     writeln!(
         script,
@@ -328,11 +328,11 @@ fn run_state_schema_applies_and_isolates_on_postgres() {
          DO $$ BEGIN\n\
            ASSERT (SELECT count(*) FROM wamn_run.environment_policies) = 1,\n\
              'the App generation reads only its own environment policy';\n\
-           ASSERT (SELECT env_key FROM wamn_run.environment_policies) = 't1',\n\
-             'the App generation reads its own tenant''s policy';\n\
+           ASSERT (SELECT project_env_key FROM wamn_run.environment_policies) = 't1',\n\
+             'the App generation reads its own project''s policy';\n\
            BEGIN\n\
              INSERT INTO wamn_run.environment_policies\n\
-               (env_key, expected_environment) VALUES ('t4', 'test');\n\
+               (project_env_key, expected_environment) VALUES ('t4', 'test');\n\
              ASSERT false, 'the App generation must not write an environment policy';\n\
            EXCEPTION WHEN insufficient_privilege THEN NULL; END;\n\
          END $$;\n\
@@ -342,8 +342,8 @@ fn run_state_schema_applies_and_isolates_on_postgres() {
     // Terminal run history remains deletable.
     script.push_str(
         "UPDATE wamn_run.runs SET status='completed' \
-           WHERE env_key='t1' AND run_id='run-a';\n\
-         DELETE FROM wamn_run.runs WHERE env_key='t1' AND run_id='run-a';\n",
+           WHERE project_env_key='t1' AND run_id='run-a';\n\
+         DELETE FROM wamn_run.runs WHERE project_env_key='t1' AND run_id='run-a';\n",
     );
     writeln!(
         script,
@@ -380,10 +380,10 @@ fn run_state_schema_applies_and_isolates_on_postgres() {
     let stdout = String::from_utf8(out.stdout).expect("psql stdout is UTF-8");
     let mut answers = std::collections::BTreeMap::new();
     let mut installed = None;
-    let mut fail_kinds = None;
+    let mut fail_types = None;
     for line in stdout.lines() {
-        if let Some(rest) = line.strip_prefix("fail-kind-installed ") {
-            fail_kinds = Some(rest.to_string());
+        if let Some(rest) = line.strip_prefix("fail-type-installed ") {
+            fail_types = Some(rest.to_string());
         }
         if let Some(rest) = line.strip_prefix("status-answer ") {
             let (literal, answer) = rest
@@ -422,7 +422,7 @@ fn run_state_schema_applies_and_isolates_on_postgres() {
     let mut fail_vocabulary = FailType::ALL.map(FailType::as_sql);
     fail_vocabulary.sort_unstable();
     assert_eq!(
-        fail_kinds.as_deref(),
+        fail_types.as_deref(),
         Some(fail_vocabulary.join(" ").as_str()),
         "the installed runs fail_type CHECK admits a different vocabulary than FailType::ALL"
     );
@@ -452,13 +452,13 @@ END $$;
 
 -- A run defaults to no capture and refuses an unsupported capture mode.
 INSERT INTO wamn_run.runs (
-  env_key, run_id, wiring_hash,binding_world_json, package_id, manifest_digest, environment,
+  project_env_key, run_id, wiring_hash,binding_world_json, package_id, manifest_digest, environment,
   wiring_id, wiring_version, status, idempotency_key
 ) VALUES ('t3', 'record-probe', 'sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd','[]'::jsonb, 'run-state-fixture', 'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a', 'test',
           'fixture-wiring', 1, 'running', 'record-probe');
 DO $$ BEGIN
   ASSERT (SELECT capture_mode FROM wamn_run.runs
-           WHERE env_key = 't3' AND run_id = 'record-probe') = 'off',
+           WHERE project_env_key = 't3' AND run_id = 'record-probe') = 'off',
     'an admitted run defaults to capture off';
 END $$;
 DO $$
@@ -470,7 +470,7 @@ BEGIN
   ] LOOP
     BEGIN
       EXECUTE format(
-        'INSERT INTO wamn_run.runs (env_key, run_id, wiring_hash,binding_world_json, package_id, '
+        'INSERT INTO wamn_run.runs (project_env_key, run_id, wiring_hash,binding_world_json, package_id, '
         'manifest_digest, environment, wiring_id, wiring_version, idempotency_key, '
         'capture_mode) VALUES (''t3'', ''record-refused'', ''sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd'',''[]''::jsonb, '
         '''run-state-fixture'', ''sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a'', ''test'', ''fixture-wiring'', 1, ''record-refused'', %s)',
@@ -495,7 +495,7 @@ BEGIN
     refusal := NULL;
     BEGIN
       EXECUTE 'UPDATE wamn_run.runs SET ' || assignment
-        || ' WHERE env_key = ''t3'' AND run_id = ''record-probe''';
+        || ' WHERE project_env_key = ''t3'' AND run_id = ''record-probe''';
     EXCEPTION WHEN object_not_in_prerequisite_state THEN refusal := SQLERRM; END;
     ASSERT refusal = 'run-admission-pin-immutable',
       format('changing %s must be refused as run-admission-pin-immutable, got %s',
@@ -507,12 +507,12 @@ END $$;
 -- terminal status goes. The guard runs with its caller's rights and PUBLIC
 -- cannot call it.
 UPDATE wamn_run.runs SET status = 'running'
- WHERE env_key = 't3' AND run_id = 'record-probe';
+ WHERE project_env_key = 't3' AND run_id = 'record-probe';
 DO $$
 DECLARE refusal text;
 BEGIN
   BEGIN
-    DELETE FROM wamn_run.runs WHERE env_key = 't3' AND run_id = 'record-probe';
+    DELETE FROM wamn_run.runs WHERE project_env_key = 't3' AND run_id = 'record-probe';
   EXCEPTION WHEN object_not_in_prerequisite_state THEN refusal := SQLERRM; END;
   ASSERT refusal = 'run-delete-nonterminal',
     format('a running run must not be deletable, got %s', coalesce(refusal, 'a delete'));
@@ -522,11 +522,11 @@ DECLARE terminal text;
 BEGIN
   FOREACH terminal IN ARRAY ARRAY['completed', 'failed', 'infrastructure-failure'] LOOP
     INSERT INTO wamn_run.runs (
-      env_key, run_id, wiring_hash,binding_world_json, package_id, manifest_digest, environment,
+      project_env_key, run_id, wiring_hash,binding_world_json, package_id, manifest_digest, environment,
       wiring_id, wiring_version, status, idempotency_key
     ) VALUES ('t3', 'terminal-' || terminal, 'sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd','[]'::jsonb, 'run-state-fixture', 'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a', 'test',
               'fixture-wiring', 1, terminal, 'terminal-' || terminal);
-    DELETE FROM wamn_run.runs WHERE env_key = 't3' AND run_id = 'terminal-' || terminal;
+    DELETE FROM wamn_run.runs WHERE project_env_key = 't3' AND run_id = 'terminal-' || terminal;
   END LOOP;
   ASSERT NOT (SELECT prosecdef FROM pg_proc
                WHERE oid = 'wamn_run.guard_terminal_run_delete()'::regprocedure),
@@ -547,13 +547,13 @@ DO $$ BEGIN
     'wamn_app must not write runs';
 END $$;
 
--- The environment policy relation: one row per tenant, forced row security,
--- a platform policy that reads every row, and an index on the tenant key.
+-- The environment policy relation: one row per project, forced row security,
+-- a platform policy that reads every row, and an index on the project key.
 DO $$ BEGIN
   BEGIN
-    INSERT INTO wamn_run.environment_policies (env_key, expected_environment)
+    INSERT INTO wamn_run.environment_policies (project_env_key, expected_environment)
       VALUES ('t1', 'test');
-    ASSERT false, 'a second environment policy for one tenant must be refused';
+    ASSERT false, 'a second environment policy for one project must be refused';
   EXCEPTION WHEN unique_violation THEN NULL; END;
   ASSERT (SELECT relrowsecurity AND relforcerowsecurity FROM pg_class
            WHERE oid = 'wamn_run.environment_policies'::regclass),
@@ -561,8 +561,8 @@ DO $$ BEGIN
   ASSERT EXISTS (
     SELECT FROM pg_index
      WHERE indrelid = 'wamn_run.environment_policies'::regclass
-       AND pg_get_indexdef(indexrelid) LIKE '%tenant_key(env_key)%'
-  ), 'environment_policies indexes its tenant key';
+       AND pg_get_indexdef(indexrelid) LIKE '%project_key(project_env_key)%'
+  ), 'environment_policies indexes its project key';
   ASSERT EXISTS (
     SELECT FROM pg_policy
      WHERE polrelid = 'wamn_run.environment_policies'::regclass
@@ -585,7 +585,7 @@ BEGIN
         'waiting_child_occurrence','wait_generation','invoke_depth','invoke_root_run_id')
   ), 'retired execution lineage stays absent';
   FOR relation, required IN VALUES
-    ('wamn_run.runs'::regclass, ARRAY['env_key','run_id','wiring_hash','binding_world_json',
+    ('wamn_run.runs'::regclass, ARRAY['project_env_key','run_id','wiring_hash','binding_world_json',
       'status','trigger_source','capture_mode','input_json','result_json','state_json',
       'fail_type','updated_at','package_id','manifest_digest','attachment_id',
       'registration_id','caller_outcome_type','caller_outcome_json','caller_http_status',
@@ -602,7 +602,7 @@ BEGIN
 END $$;
 
 -- Event ancestry must be complete, and each coordinate stays immutable.
-INSERT INTO wamn_run.runs (env_key,run_id,wiring_hash,binding_world_json,package_id,environment,
+INSERT INTO wamn_run.runs (project_env_key,run_id,wiring_hash,binding_world_json,package_id,environment,
   wiring_id,wiring_version,trigger_source,event_source_run_id,event_root_run_id,event_depth)
 VALUES ('t3','lineage-probe','sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd','[]'::jsonb,'run-state-fixture','test','fixture-wiring',1,
   'event','source','root',1);
@@ -623,7 +623,7 @@ BEGIN
     '''event'',''source'',NULL,1', '''event'',''source'','''',1',
     '''event'',''source'',''root'',NULL'] LOOP
     BEGIN
-      EXECUTE 'INSERT INTO wamn_run.runs (env_key,run_id,wiring_hash,binding_world_json,package_id,'
+      EXECUTE 'INSERT INTO wamn_run.runs (project_env_key,run_id,wiring_hash,binding_world_json,package_id,'
         || 'environment,wiring_id,wiring_version,trigger_source,event_source_run_id,'
         || 'event_root_run_id,event_depth) VALUES (''t3'',''bad-lineage'',''sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd'',''[]''::jsonb,'
         || '''run-state-fixture'',''test'',''fixture-wiring'',1,' || assignment || ')';
@@ -632,14 +632,14 @@ BEGIN
   END LOOP;
 END $$;
 
--- Retention spans terminal states, age, and tenants.
-INSERT INTO wamn_run.runs (env_key,run_id,wiring_hash,binding_world_json,package_id,environment,
+-- Retention spans terminal states, age, and projects.
+INSERT INTO wamn_run.runs (project_env_key,run_id,wiring_hash,binding_world_json,package_id,environment,
   wiring_id,wiring_version,status,created_at)
-SELECT tenant, 'prune-' || age || '-' || state, 'sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd','[]'::jsonb,'run-state-fixture','test',
+SELECT project, 'prune-' || age || '-' || state, 'sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd','[]'::jsonb,'run-state-fixture','test',
   'fixture-wiring',1,state,now()-CASE age WHEN 'old' THEN interval '8 days' ELSE interval '1 day' END
 FROM (VALUES ('t3','old','completed'),('t3','old','failed'),
   ('t3','old','infrastructure-failure'),('t3','old','dispatched'),('t3','old','running'),
   ('t3','recent','completed'),('t3','recent','failed'),('t1','old','completed'))
-  AS fixtures(tenant,age,state);
+  AS fixtures(project,age,state);
 
 ";

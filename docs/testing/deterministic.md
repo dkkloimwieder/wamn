@@ -11,7 +11,7 @@ The [walk tests](../../crates/execution/workflow/router/tests/walk.rs) drive rea
 They evaluate the [walk invariants](../../crates/execution/workflow/router/src/invariants.rs) after each applied outcome.
 This tests walk decisions, not guest execution or process recovery.
 
-The [queue invariants](../../crates/execution/run-state/src/invariants.rs) inspect pure queue decisions for leases, claimability, and attempt limits.
+The [queue invariants](../../crates/execution/run-state/src/invariants.rs) inspect pure queue decisions for leases, lease eligibility, and attempt limits.
 They do not establish database admission history, terminal-row immutability, or producer-key uniqueness.
 ## Event traffic
 

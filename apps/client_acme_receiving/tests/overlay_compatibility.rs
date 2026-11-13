@@ -5,10 +5,10 @@ include!("overlay_compatibility_fixture.rs");
 fn required_contract_observation_refuses_changed_consumed_fields_and_constraints() {
     let required = json!({"tables":[{"schema":"receiving","table":"odd_probe",
         "fields":[{"name":"probe_key","type":"uuid","nullable":false}],
-        "constraints":[{"name":"odd_probe_key","definition":{"kind":"primary_key","columns":["probe_key"]}}]}]});
+        "constraints":[{"name":"odd_probe_key","definition":{"type":"primary_key","columns":["probe_key"]}}]}]});
     let live = json!({"tables":[{"schema":"receiving","name":"odd_probe",
         "columns":[{"name":"probe_key","type":"uuid","nullable":false},{"name":"unused","type":"text","nullable":true}],
-        "constraints":[{"name":"odd_probe_key","kind":"primary_key","columns":["probe_key"]}]}]});
+        "constraints":[{"name":"odd_probe_key","type":"primary_key","columns":["probe_key"]}]}]});
     assert_eq!(
         required_contract_observation(&required, &live).unwrap(),
         json!({"tables":1,"fields":1,"constraints":1,"result":"satisfied"})
@@ -136,7 +136,7 @@ async fn installed_contract_observer_reads_a_production_install_and_refuses_chan
     let evidence = json!({
         "case":"installed-overlay-contract-observer", "server_version_num":version,
         "installed_schema_acl":schema_acl, "retained_schema_acl":retained_acl,
-        "schema_admission_claim":false,
+        "schema_admission_assertion":false,
         "positive":positive, "controls":negative,
         "baseline_observed_schema_sha256":bytes_sha256(&serde_json::to_vec(&baseline)?),
         "additive_observed_schema_sha256":bytes_sha256(&serde_json::to_vec(&additive)?),

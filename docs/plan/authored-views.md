@@ -1,6 +1,6 @@
 # Authored views
 
-## Purpose and scope
+## Purpose and target
 
 A package can author PostgreSQL views in its own schema.
 A view is a named, reviewed relation that holds one join and its column list in one place.

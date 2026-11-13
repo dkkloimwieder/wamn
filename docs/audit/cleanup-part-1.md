@@ -36,9 +36,9 @@ Not run: `registry_image_archive -- --ignored`, whose test changed in Issue 4. I
 
 `deploy/sql/corrections/wamn-a04x-wms-0007.sql` (owner retired 2026-11-01), `backfill_generation_passwords_sql`, `wamn_run.effect_attempt_dispatches`, `docs/plan/package-upgrade.md`.
 
-## Scope
+## Target
 
-The explicit out-of-scope list was the hard stop, and named deletions were in scope. So this branch deletes or edits files that One NATS also edits: `upgrade_environment.rs`, `event-reader-rbac`, `system-schema.sql` and others. `values-host-default`, the PAT overlays, `values-host-base` and `values-host` stay because they have readers.
+The explicit out-of-target list was the hard stop, and named deletions were in target. So this branch deletes or edits files that One NATS also edits: `upgrade_environment.rs`, `event-reader-rbac`, `system-schema.sql` and others. `values-host-default`, the PAT overlays, `values-host-base` and `values-host` stay because they have readers.
 
 ## Merge
 
@@ -59,7 +59,7 @@ The explicit out-of-scope list was the hard stop, and named deletions were in sc
   - part 2: `deploy/platform/values-host-receiving-pat.yaml`, read by `host_values_files.rs:76,154` and `apps/wamn_receiving/tests/route_authentication_live/cluster.rs:578`.
   - part 2: `deploy/infra/cnpg-cluster.yaml`, read by `test-support/infrastructure/delivery_cluster.rs:438` and `crates/control/lib/tests/environment_apply_kind.rs:846`.
 - G2-1 adds a lock-under-queued-prune case that does not use a version bump.
-- `test-support/harness/src/case_release.rs:704` writes `floors`, which blocks the Rust field, the KCL declaration and the fixture blocks.
+- `test-support/harness/src/case_release.rs:704` writes `minimums`, which blocks the Rust field, the KCL declaration and the fixture blocks.
 - `test-support/fixture-package/src/lib.rs:79,83,93` blocks removal of fixture upgrade support and `predecessor_version`.
 - `delivery/environment.rs` ENVIRONMENTS, path and read lost their production caller.
 - part 2b (owner ruling 2026-11-03): `deploy/infra/cnpg-cluster.yaml`, read by the hard stop `crates/control/lib/src/platform/journey.rs:103`.

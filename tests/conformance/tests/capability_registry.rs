@@ -1,8 +1,8 @@
 //! The capability registry's WASI families admit the pinned WASI adapter.
 //!
-//! Tenant admission sees virtualized component imports. The HTTP shell's
+//! Project admission sees virtualized component imports. The HTTP shell's
 //! vendored WIT describes a separate platform workload and cannot establish
-//! those versions. This gate generates adapter bytes through the pinned
+//! those versions. This acceptance test generates adapter bytes through the pinned
 //! WASI-Virt public API and inspects their interfaces on the production engine.
 //! The WASI-Virt revision and adapter digest stay exact
 //! (docs/plan/alignment.md W2). No guest build or external artifact is
@@ -200,8 +200,8 @@ fn vendored_wasi_packages_are_registered_or_deliberately_absent() {
     // Deliberately unregistered: reachable in the tree's WIT, refused by
     // admission. `wasi:sockets` is the denied egress package; `wasi:http` is
     // imported only by `http-route`, a `wash push` workload on the
-    // non-tenant path the registry does not govern. The platform materializer
-    // exports wasi:cli/run as a service workload, not a tenant import.
+    // non-project path the registry does not govern. The platform materializer
+    // exports wasi:cli/run as a service workload, not a project import.
     const DELIBERATELY_ABSENT: [&str; 3] = ["wasi:sockets", "wasi:http", "wasi:cli"];
 
     let vendored = vendored_wasi_versions(&repository_root());

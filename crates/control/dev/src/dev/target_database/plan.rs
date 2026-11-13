@@ -19,7 +19,7 @@ pub fn template_fingerprint(
         "org": identity.org,
         "project": identity.project,
         "environment": identity.environment,
-        "env_key": identity.env_key(),
+        "project_env_key": identity.project_env_key(),
         "catalog": identity.catalog,
     });
     wamn_digest::canonical_json_sha256(&fields)

@@ -151,12 +151,12 @@ fn read_authorization(live: Option<&str>) -> anyhow::Result<Authorization> {
     })
 }
 
-fn render(scope: &wamn_control_registry::Triple, authorization: &mut Authorization) -> Vec<Value> {
-    let env_key =
-        wamn_control_registry::project_env_key(&scope.org, &scope.project, scope.env.as_str());
-    let source = source_stream_config(scope, 1, Duration::from_secs(120));
-    let advisory = advisory_stream_config(scope, 1);
-    let user = wamn_control_registry::environment_nats_user(&env_key);
+fn render(target: &wamn_control_registry::Triple, authorization: &mut Authorization) -> Vec<Value> {
+    let project_env_key =
+        wamn_control_registry::project_env_key(&target.org, &target.project, target.env.as_str());
+    let source = source_stream_config(target, 1, Duration::from_secs(120));
+    let advisory = advisory_stream_config(target, 1);
+    let user = wamn_control_registry::environment_nats_user(&project_env_key);
     // The environment's events, and what its host and its materializer read
     // on that environment's own stream: every consumer of the stream, by
     // wildcard. The materializer creates application consumers with filters
@@ -175,7 +175,7 @@ fn render(scope: &wamn_control_registry::Triple, authorization: &mut Authorizati
         format!("$JS.ACK.{}.>", source.name),
     ]);
     for bucket in ["wamn-auth", "wamn-connection"] {
-        publish.extend(memory_subjects(bucket, &env_key));
+        publish.extend(memory_subjects(bucket, &project_env_key));
     }
     publish.push(format!(
         "$JS.API.CONSUMER.CREATE.KV_wamn-auth.*.$KV.wamn-auth.{}.>",
@@ -200,7 +200,7 @@ fn render(scope: &wamn_control_registry::Triple, authorization: &mut Authorizati
     );
     // Environment provisioning owns the materializer and its host's data binding.
     vec![environment_certificate(
-        &format!("wamn-nats-{env_key}"),
+        &format!("wamn-nats-{project_env_key}"),
         &user,
     )]
 }
@@ -286,7 +286,7 @@ fn control_user(org: &str) -> (Account, Value) {
 pub async fn update_authorization(
     target: &wamn_kubernetes::Target,
     org: &str,
-    scope: Option<&Triple>,
+    coordinate: Option<&Triple>,
 ) -> anyhow::Result<Vec<Value>> {
     let mut certificates = Vec::new();
     wamn_kubernetes::secret::update(
@@ -307,12 +307,12 @@ pub async fn update_authorization(
                 )
             };
             anyhow::ensure!(
-                scope.is_none() || secret.metadata.resource_version.is_some(),
+                coordinate.is_none() || secret.metadata.resource_version.is_some(),
                 "missing event broker authorization Secret"
             );
             let mut authorization = read_authorization(live)?;
-            if let Some(scope) = scope {
-                certificates = render(scope, &mut authorization);
+            if let Some(target) = coordinate {
+                certificates = render(target, &mut authorization);
             } else {
                 keep_platform_users(&mut authorization);
                 let (user, certificate) = control_user(org);
@@ -339,7 +339,7 @@ mod tests {
     }
 
     #[test]
-    fn platform_certificate_users_keep_scheduler_permissions_scoped() {
+    fn platform_certificate_users_keep_scheduler_permissions_targeted() {
         let users = platform_users();
         assert!(users.iter().all(|user| user.password.is_none()));
         for name in ["wasmcloud-operator", "wasmcloud-runtime"] {
@@ -373,7 +373,7 @@ mod tests {
                 || subject.contains("$KV.wamn-auth.=identity.");
             assert!(
                 shared || subject.contains("one"),
-                "{subject} is not scoped to environment one"
+                "{subject} is not targeted to environment one"
             );
             assert!(
                 !subject.contains("two"),
@@ -489,11 +489,11 @@ mod tests {
             tokio::time::sleep(Duration::from_millis(50)).await;
         };
         crate::kv_memory::create_buckets(&admin).await.unwrap();
-        let env_key = wamn_control_registry::project_env_key("test", "one", "dev");
-        for (user, scope) in [
+        let project_env_key = wamn_control_registry::project_env_key("test", "one", "dev");
+        for (user, target) in [
             (
-                wamn_control_registry::environment_nats_user(&env_key),
-                Some(env_key.as_str()),
+                wamn_control_registry::environment_nats_user(&project_env_key),
+                Some(project_env_key.as_str()),
             ),
             (wamn_control_registry::control_nats_user("test"), None),
         ] {
@@ -505,7 +505,7 @@ mod tests {
                     .await
                     .unwrap();
             let cache = std::sync::Arc::new(wamn_runtime::auth_cache::AuthCache::default());
-            wamn_runtime::auth_cache::test_util::watched(&client, scope, cache).await;
+            wamn_runtime::auth_cache::test_util::watched(&client, target, cache).await;
         }
         let _ = server.kill();
         let _ = server.wait();

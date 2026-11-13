@@ -13,7 +13,7 @@ use wamn_runtime::plugins::wamn_postgres::{
     WamnPostgresConfig, WiringLookup,
 };
 
-const ENV_KEY: &str = "effect-snapshot-live";
+const PROJECT_ENV_KEY: &str = "effect-snapshot-live";
 const PACKAGE: &str = "snapshot_fixture";
 const COMPONENT: &str = "http-request";
 const GENERATION: &str = "wamn_http_admitter_snapshot_live_a";
@@ -92,17 +92,17 @@ async fn cluster_effect_snapshot_as_http_admitter() -> anyhow::Result<()> {
     let bytes = serde_json::to_vec(&manifest)?;
     let manifest_digest: String = admin
         .query_one(
-            "INSERT INTO catalog.releases (env_key, manifest_digest, canonical_bytes) \
+            "INSERT INTO catalog.releases (project_env_key, manifest_digest, canonical_bytes) \
              VALUES ($1, 'sha256:' || encode(sha256($2::bytea), 'hex'), $2) \
              RETURNING manifest_digest",
-            &[&ENV_KEY, &bytes],
+            &[&PROJECT_ENV_KEY, &bytes],
         )
         .await?
         .get(0);
     admin.execute(
-        "INSERT INTO catalog.connection_requirement(env_key,component_digest,package_id,name,interface,mode) \
+        "INSERT INTO catalog.connection_requirement(project_env_key,component_digest,package_id,name,interface,mode) \
          VALUES($1,$2,$3,'erp','wamn:connection/http@0.1.0','write')",
-        &[&ENV_KEY,&component_digest,&PACKAGE],
+        &[&PROJECT_ENV_KEY,&component_digest,&PACKAGE],
     ).await?;
     let graph = WiringDocument::new(
         "snapshot",
@@ -124,12 +124,12 @@ async fn cluster_effect_snapshot_as_http_admitter() -> anyhow::Result<()> {
     admin
         .execute(
             "INSERT INTO catalog.workflows \
-             (env_key, environment, application, workflow_id, version, graph_json, \
+             (project_env_key, environment, application, workflow_id, version, graph_json, \
               wiring_hash, trigger, execution_type, created_by) \
              VALUES ($1, 'dev', $2, 'snapshot', 1, $3::text::jsonb, $4, 'manual', \
                      'invoker', '00000000-0000-0000-0000-000000000001')",
             &[
-                &ENV_KEY,
+                &PROJECT_ENV_KEY,
                 &PACKAGE,
                 &serde_json::to_string(&graph)?,
                 &graph.wiring_hash().as_str(),
@@ -169,7 +169,7 @@ async fn cluster_effect_snapshot_as_http_admitter() -> anyhow::Result<()> {
         statement_timeout_ms: 10_000,
         row_limit: 10_000,
     })?);
-    postgres.set_env_key(COMPONENT, ENV_KEY)?;
+    postgres.set_project_env_key(COMPONENT, PROJECT_ENV_KEY)?;
     let lookup = ConnectionEffectLookup {
         entry: ConnectionEntryLookup {
             package_id: PACKAGE,
@@ -199,7 +199,7 @@ async fn cluster_effect_snapshot_as_http_admitter() -> anyhow::Result<()> {
     wamn_broker::kv_memory::create_buckets(&broker).await?;
     let changes = wamn_runtime::connection_memory::replicate(
         &broker,
-        Some(ENV_KEY),
+        Some(PROJECT_ENV_KEY),
         std::sync::Arc::clone(&memory),
     );
     tokio::time::timeout(std::time::Duration::from_secs(5), async {
@@ -214,12 +214,12 @@ async fn cluster_effect_snapshot_as_http_admitter() -> anyhow::Result<()> {
         changes,
         std::sync::Arc::new(wamn_runtime::connection_credentials::ConnectionCredentials::empty()),
         std::sync::Arc::clone(&postgres),
-        ENV_KEY,
+        PROJECT_ENV_KEY,
         DEFAULT_PROJECT,
         "dev",
     );
     let snapshot = postgres
-        .connection_effect_snapshot(COMPONENT, DEFAULT_PROJECT, ENV_KEY, &lookup, &facts)
+        .connection_effect_snapshot(COMPONENT, DEFAULT_PROJECT, PROJECT_ENV_KEY, &lookup, &facts)
         .await
         .context("run the cluster effect snapshot as the HTTP admitter")?
         .context("the provisioned role must read the workflow and release")?;
@@ -235,11 +235,11 @@ async fn cluster_effect_snapshot_as_http_admitter() -> anyhow::Result<()> {
         Some("snapshot_fixture/request")
     );
     assert!(snapshot.node_permitted);
-    assert!(memory.release(ENV_KEY, &manifest_digest).is_ok());
+    assert!(memory.release(PROJECT_ENV_KEY, &manifest_digest).is_ok());
     let first_reads = reads(&admin).await?;
     assert!(first_reads > 0, "the cold snapshot reads PostgreSQL");
     let repeated = postgres
-        .connection_effect_snapshot(COMPONENT, DEFAULT_PROJECT, ENV_KEY, &lookup, &facts)
+        .connection_effect_snapshot(COMPONENT, DEFAULT_PROJECT, PROJECT_ENV_KEY, &lookup, &facts)
         .await?
         .context("the repeated snapshot resolves")?;
     assert_eq!(repeated.wiring_hash, snapshot.wiring_hash);

@@ -39,7 +39,7 @@ pub(crate) struct Inputs {
     route_endpoint: String,
     route_host: String,
     operator_secret: PathBuf,
-    env_key: String,
+    project_env_key: String,
     caller_role: String,
     evidence_file: PathBuf,
     component_digests: BTreeMap<String, String>,
@@ -1085,11 +1085,11 @@ async fn project_admin(
     wamn_platform_identity::application::project_authority(
         &authority,
         &transaction,
-        wamn_platform_identity::application::ApplicationScope {
+        wamn_platform_identity::application::ApplicationTarget {
             org: &inputs.org,
             project: &inputs.project,
             env: &inputs.environment,
-            env_key: &inputs.env_key,
+            project_env_key: &inputs.project_env_key,
         },
         principal,
         &mut drops,

@@ -61,7 +61,7 @@ The `wamn dev up` and `wamn dev clean-test` times are the whole command.
 The restart row comes from a later test run at source `dbfdd492bac0da4518ee7ad021b5c23cb65ee379`, from a clean worktree.
 At that source, Generate compares each generated file with the file on disk and writes only the files that differ.
 Cargo built `wamn` and `wamn-host` from that source before the test run.
-The test run used the same commands in a new environment of the same kind, with Compose project `rcv-rerun-llst8`.
+The test run used the same commands in a new environment of the same type, with Compose project `rcv-rerun-llst8`.
 One process served a first run and stopped.
 A second process then served the restart with unchanged source.
 
@@ -69,18 +69,18 @@ A second process then served the restart with unchanged source.
 | --- | ---: | --- | --- | ---: |
 | `wamn dev up` | 6.143 | not a loop run | not a loop run | 17080 |
 | First run | 33.745 | all ten | none | 18239 |
-| Warm edit | 22.323 | build, virtualize, admit, gate, release, activate | migrate, introspect, generate, acl | 18239 |
-| Restart with unchanged source | 19.869 | generate, build, virtualize, acl, admit, gate, release, activate | migrate, introspect | 18239 |
-| Restore edit | 17.660 | build, virtualize, admit, gate, release, activate | migrate, introspect, generate, acl | 18239 |
+| Warm edit | 22.323 | build, virtualize, admit, condition, release, activate | migrate, introspect, generate, acl | 18239 |
+| Restart with unchanged source | 19.869 | generate, build, virtualize, acl, admit, condition, release, activate | migrate, introspect | 18239 |
+| Restore edit | 17.660 | build, virtualize, admit, condition, release, activate | migrate, introspect, generate, acl | 18239 |
 | `wamn dev clean-test` | 0.763 | not a loop run | not a loop run | not used |
 
 The loop printed these stage times, in the order of the loop rows above:
 
 ```text
-watch stage-ms: prepare=127ms migrate=261ms introspect=66ms generate=793ms build=4966ms virtualize=900ms acl=1619ms admit=5970ms gate=439ms release=6263ms activate=12137ms
-watch stage-ms: prepare=5ms migrate=0ms introspect=0ms generate=549ms build=4209ms virtualize=867ms acl=546ms admit=4553ms gate=446ms release=5224ms activate=5476ms
-watch stage-ms: prepare=217ms migrate=0ms introspect=0ms generate=885ms build=785ms virtualize=1022ms acl=1541ms admit=4657ms gate=629ms release=6640ms activate=2872ms
-watch stage-ms: prepare=4ms migrate=0ms introspect=0ms generate=490ms build=4286ms virtualize=873ms acl=484ms admit=4338ms gate=436ms release=5196ms activate=1191ms
+watch stage-ms: prepare=127ms migrate=261ms introspect=66ms generate=793ms build=4966ms virtualize=900ms acl=1619ms admit=5970ms condition=439ms release=6263ms activate=12137ms
+watch stage-ms: prepare=5ms migrate=0ms introspect=0ms generate=549ms build=4209ms virtualize=867ms acl=546ms admit=4553ms condition=446ms release=5224ms activate=5476ms
+watch stage-ms: prepare=217ms migrate=0ms introspect=0ms generate=885ms build=785ms virtualize=1022ms acl=1541ms admit=4657ms condition=629ms release=6640ms activate=2872ms
+watch stage-ms: prepare=4ms migrate=0ms introspect=0ms generate=490ms build=4286ms virtualize=873ms acl=484ms admit=4338ms condition=436ms release=5196ms activate=1191ms
 ```
 
 A skipped stage reports the time that the loop used to find its inputs unchanged.
@@ -182,15 +182,15 @@ The `wamn dev up` and `wamn dev clean-test` times are the whole command.
 | `wamn dev up` | 5.071 | not a loop run | not a loop run | not sampled |
 | First run | 29.535 | all ten | none | 18239 |
 | Column save | 27.310 | all ten | none | 18239 |
-| Restart with unchanged source | 47.311 | generate, build, virtualize, acl, admit, gate, release, activate | migrate, introspect | 18239 |
+| Restart with unchanged source | 47.311 | generate, build, virtualize, acl, admit, condition, release, activate | migrate, introspect | 18239 |
 | `wamn dev clean-test` | 10.074 | not a loop run | not a loop run | not used |
 
 The loop printed these stage times, in the order of the loop rows above:
 
 ```text
-watch stage-ms: prepare=130ms migrate=261ms introspect=56ms generate=769ms build=4558ms virtualize=750ms acl=1463ms admit=3961ms gate=399ms release=5558ms activate=11417ms
-watch stage-ms: prepare=128ms migrate=241ms introspect=64ms generate=2317ms build=5132ms virtualize=1051ms acl=1730ms admit=4481ms gate=475ms release=5571ms activate=5660ms
-watch stage-ms: prepare=748ms migrate=0ms introspect=0ms generate=7023ms build=2261ms virtualize=2945ms acl=6203ms admit=11042ms gate=991ms release=11991ms activate=3032ms
+watch stage-ms: prepare=130ms migrate=261ms introspect=56ms generate=769ms build=4558ms virtualize=750ms acl=1463ms admit=3961ms condition=399ms release=5558ms activate=11417ms
+watch stage-ms: prepare=128ms migrate=241ms introspect=64ms generate=2317ms build=5132ms virtualize=1051ms acl=1730ms admit=4481ms condition=475ms release=5571ms activate=5660ms
+watch stage-ms: prepare=748ms migrate=0ms introspect=0ms generate=7023ms build=2261ms virtualize=2945ms acl=6203ms admit=11042ms condition=991ms release=11991ms activate=3032ms
 ```
 
 Every command returned exit status 0.

@@ -2,7 +2,7 @@
 //!
 //! [`Workflows`] is the one interface a client uses, for example
 //! `wamn-ctl` or a test. [`PostgresWorkflows`]
-//! implements it over the run plane of one tenant and environment.
+//! implements it over the run plane of one project and environment.
 //!
 //! Manual starts use the host route. A park holds a queued run that no replica holds, and a
 //! release returns it to the queue. Park acts on the queue row only, so a
@@ -21,7 +21,7 @@ pub use postgres::PostgresWorkflows;
 /// Park, release, and list the workflow runs of one environment.
 #[async_trait::async_trait]
 pub trait Workflows: Send + Sync {
-    /// Hold a queued run, so no claim takes it. Parking a parked run changes
+    /// Hold a queued run, so no lease takes it. Parking a parked run changes
     /// nothing.
     async fn park(&self, run_id: &str) -> Result<(), WorkflowError>;
 
@@ -41,7 +41,7 @@ pub struct WorkflowRun {
     pub wiring_version: u32,
     pub trigger_source: Option<String>,
     pub status: RunStatus,
-    /// A queue row exists: the run waits for a claim or is running.
+    /// A queue row exists: the run waits for a lease or is running.
     pub queued: bool,
     pub parked: bool,
     /// RFC 3339, UTC.
@@ -66,7 +66,7 @@ pub enum WorkflowErrorType {
     Storage,
 }
 
-/// A contract call failure, with its kind and context.
+/// A contract call failure, with its type and context.
 #[derive(Debug)]
 pub struct WorkflowError {
     type_: WorkflowErrorType,
@@ -75,9 +75,9 @@ pub struct WorkflowError {
 }
 
 impl WorkflowError {
-    fn new(kind: WorkflowErrorType, message: impl Into<String>) -> Self {
+    fn new(type_: WorkflowErrorType, message: impl Into<String>) -> Self {
         Self {
-            type_: kind,
+            type_,
             message: message.into(),
             source: None,
         }

@@ -182,9 +182,9 @@ impl PackageMigrationError {
         self.actual_hash.as_deref()
     }
 
-    pub(crate) fn new(kind: PackageMigrationErrorType, context: impl Into<String>) -> Self {
+    pub(crate) fn new(type_: PackageMigrationErrorType, context: impl Into<String>) -> Self {
         Self {
-            type_: kind,
+            type_,
             context: context.into().into_boxed_str(),
             coordinate: None,
             path: None,
@@ -432,8 +432,8 @@ fn record_migration_statement(
     Ok(SqlStatement {
         summary: format!("record {}", migration.relative_path),
         sql: "INSERT INTO catalog.package_migrations \
-              (env_key, package_id, package_version, ordinal, relative_path, sha256, outcome, applied_at) \
-              VALUES (NULLIF(current_setting('app.env_key', true), ''), $1, $2, $3, $4, $5, $6, \
+              (project_env_key, package_id, package_version, ordinal, relative_path, sha256, outcome, applied_at) \
+              VALUES (NULLIF(current_setting('app.project_env_key', true), ''), $1, $2, $3, $4, $5, $6, \
                       CASE WHEN $6 = 'applied' THEN now() END)"
             .into(),
         params: vec![

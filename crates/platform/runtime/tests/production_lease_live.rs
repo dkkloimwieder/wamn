@@ -1,31 +1,31 @@
-//! Live tests of standard queue claims, leases, and exhausted-run reaping.
+//! Live tests of standard queue leases, leases, and exhausted-run reaping.
 //!
-//! The fixture includes an effect attempt to show that claims and reaping
+//! The fixture includes an effect attempt to show that leases and reaping
 //! ignore it. FIFO order, lease recovery, crash accounting, caller outcomes,
 //! and release pins retain their standard behavior.
 
 use std::collections::BTreeSet;
 
 use serde_json::{Value, json};
-use wamn_run_state::{RunStore as _, queue::select_production_claim_sql};
+use wamn_run_state::{RunStore as _, queue::select_production_lease_sql};
 use wamn_runtime::plugins::wamn_postgres::{
-    ProductionClaimErrorType, ProductionClaimResult, ProductionReapResult,
+    ProductionLeaseErrorType, ProductionLeaseResult, ProductionReapResult,
 };
 
 mod common;
 
 use common::{
-    COMPONENT, EMPTY_HASH, ENV_KEY, ENVIRONMENT, PACKAGE_ID, POD_MANIFEST_DIGEST, ROLLED_COMPONENT,
-    SCHEMA, WIRING_ID, WIRING_VERSION, assert_callerless_terminal, assert_prior_winner_terminal,
-    assert_terminal_status_dequeued, connect, expire_effect_run, install_fixture,
-    install_prior_caller_winner, make_callerless, queue_attempts, quote_literal, ready_run,
-    release_record, seed_exhausted_run, seed_run, teardown,
+    COMPONENT, EMPTY_HASH, ENVIRONMENT, PACKAGE_ID, POD_MANIFEST_DIGEST, PROJECT_ENV_KEY,
+    ROLLED_COMPONENT, SCHEMA, WIRING_ID, WIRING_VERSION, assert_callerless_terminal,
+    assert_prior_winner_terminal, assert_terminal_status_dequeued, connect, expire_effect_run,
+    install_fixture, install_prior_caller_winner, make_callerless, queue_attempts, quote_literal,
+    ready_run, release_record, seed_exhausted_run, seed_run, teardown,
 };
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn production_claim_live() -> anyhow::Result<()> {
+async fn production_lease_live() -> anyhow::Result<()> {
     let _lock = wamn_test_postgres::lock();
-    let database = wamn_catalog::test_database::tenant();
+    let database = wamn_catalog::test_database::project();
     let url = database.url();
     let fixture = install_fixture(url).await?;
     let admin = &fixture.admin;
@@ -46,9 +46,9 @@ async fn production_claim_live() -> anyhow::Result<()> {
     let mut fifo = Vec::new();
     for _ in 0..3 {
         let result = plugin
-            .claim_next(COMPONENT, &release_package_ids, ENVIRONMENT, 30_000)
+            .lease_next(COMPONENT, &release_package_ids, ENVIRONMENT, 30_000)
             .await?;
-        let ProductionClaimResult::Ready {
+        let ProductionLeaseResult::Ready {
             run_id, package_id, ..
         } = result
         else {
@@ -65,22 +65,25 @@ async fn production_claim_live() -> anyhow::Result<()> {
         ]
     );
 
-    // A second claimer skips the exact FIFO head while the first claimer holds
-    // its production row locks, then the rolled-back head remains claimable.
+    // A second leaseholder skips the exact FIFO head while the first leaseholder holds
+    // its production row locks, then the rolled-back head remains leasable.
     seed_run(admin, "double-a", "cat_main").await?;
     seed_run(admin, "double-b", "cat_main").await?;
-    let first_claimer = connect(url).await?;
-    first_claimer
+    let first_leaseholder = connect(url).await?;
+    first_leaseholder
         .batch_execute(&format!(
             "BEGIN; SET LOCAL search_path TO {SCHEMA}, pg_catalog"
         ))
         .await?;
-    first_claimer
-        .execute("SELECT set_config('app.env_key', $1, true)", &[&ENV_KEY])
+    first_leaseholder
+        .execute(
+            "SELECT set_config('app.project_env_key', $1, true)",
+            &[&PROJECT_ENV_KEY],
+        )
         .await?;
-    let locked = first_claimer
+    let locked = first_leaseholder
         .query_one(
-            &select_production_claim_sql(),
+            &select_production_lease_sql(),
             &[
                 &release_package_ids.as_slice(),
                 &ENVIRONMENT,
@@ -91,19 +94,19 @@ async fn production_claim_live() -> anyhow::Result<()> {
     assert_eq!(locked.get::<_, String>(0), "double-a");
     let skipped = ready_run(
         plugin
-            .claim_next(COMPONENT, &release_package_ids, ENVIRONMENT, 30_000)
+            .lease_next(COMPONENT, &release_package_ids, ENVIRONMENT, 30_000)
             .await?,
     );
     assert_eq!(skipped, "double-b");
-    first_claimer.batch_execute("ROLLBACK").await?;
+    first_leaseholder.batch_execute("ROLLBACK").await?;
     let released = ready_run(
         plugin
-            .claim_next(COMPONENT, &release_package_ids, ENVIRONMENT, 30_000)
+            .lease_next(COMPONENT, &release_package_ids, ENVIRONMENT, 30_000)
             .await?,
     );
-    let claimed = BTreeSet::from([skipped, released]);
+    let acquired = BTreeSet::from([skipped, released]);
     assert_eq!(
-        claimed,
+        acquired,
         BTreeSet::from(["double-a".into(), "double-b".into()])
     );
 
@@ -113,23 +116,23 @@ async fn production_claim_live() -> anyhow::Result<()> {
         .execute(
             &format!(
                 "INSERT INTO {SCHEMA}.runs \
-                   (env_key,run_id,wiring_hash,status,package_id,manifest_digest, \
+                   (project_env_key,run_id,wiring_hash,status,package_id,manifest_digest, \
                     environment,wiring_id,wiring_version,trigger_source) \
                  VALUES ($1,'janitor','sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd','running','cat_main','{POD_MANIFEST_DIGEST}', \
                          'test',$2,$3,'http')"
             ),
-            &[&ENV_KEY, &WIRING_ID, &WIRING_VERSION],
+            &[&PROJECT_ENV_KEY, &WIRING_ID, &WIRING_VERSION],
         )
         .await?;
     admin
         .execute(
             &format!(
                 "INSERT INTO {SCHEMA}.run_queue \
-                   (env_key,run_id,available_at,lease_owner,lease_expires_at, \
+                   (project_env_key,run_id,available_at,lease_owner,lease_expires_at, \
                     attempts,max_attempts) \
                  VALUES ($1,'janitor','2000-01-01','dead','2000-01-01',3,3)"
             ),
-            &[&ENV_KEY],
+            &[&PROJECT_ENV_KEY],
         )
         .await?;
     assert_eq!(
@@ -146,10 +149,10 @@ async fn production_claim_live() -> anyhow::Result<()> {
                 "SELECT status,caller_outcome_json::text,caller_http_status,caller_release_node_id, \
                         caller_outcome_hash,caller_released_at IS NOT NULL, \
                         EXISTS (SELECT 1 FROM {SCHEMA}.run_queue q \
-                                 WHERE q.env_key=r.env_key AND q.run_id=r.run_id) \
-                   FROM {SCHEMA}.runs r WHERE env_key=$1 AND run_id='janitor'"
+                                 WHERE q.project_env_key=r.project_env_key AND q.run_id=r.run_id) \
+                   FROM {SCHEMA}.runs r WHERE project_env_key=$1 AND run_id='janitor'"
             ),
-            &[&ENV_KEY],
+            &[&PROJECT_ENV_KEY],
         )
         .await?;
     let janitor_body = json!({"error": {
@@ -206,7 +209,7 @@ async fn production_claim_live() -> anyhow::Result<()> {
     // refusal of that statement rolled the increment back with it: the run
     // could never reach `max_attempts`, the janitor could never reap it, and
     // nothing locked it after rollback — one run head-of-line-blocked the
-    // tenant forever. The advance now runs before the grant's subtransaction,
+    // project forever. The advance now runs before the grant's subtransaction,
     // so a refusal still counts as crash evidence. A probe trigger stands in
     // for any database guard that can refuse the grant.
     seed_run(admin, "grant-refused", "cat_main").await?;
@@ -216,9 +219,9 @@ async fn production_claim_live() -> anyhow::Result<()> {
                 "UPDATE {SCHEMA}.run_queue \
                     SET lease_owner='dead', lease_expires_at='2000-01-01', \
                         attempts=2, max_attempts=3 \
-                  WHERE env_key=$1 AND run_id='grant-refused'"
+                  WHERE project_env_key=$1 AND run_id='grant-refused'"
             ),
-            &[&ENV_KEY],
+            &[&PROJECT_ENV_KEY],
         )
         .await?;
     admin
@@ -238,15 +241,15 @@ async fn production_claim_live() -> anyhow::Result<()> {
         ))
         .await?;
     let starved = plugin
-        .claim_next(COMPONENT, &release_package_ids, ENVIRONMENT, 30_000)
+        .lease_next(COMPONENT, &release_package_ids, ENVIRONMENT, 30_000)
         .await
         .expect_err("the probed grant refuses");
-    assert_eq!(starved.error_type(), ProductionClaimErrorType::Storage);
+    assert_eq!(starved.error_type(), ProductionLeaseErrorType::Storage);
     assert_eq!(starved.operation(), "grant production lease");
     assert_eq!(
         queue_attempts(admin, "grant-refused").await?,
         3,
-        "the refused claim rolled its own crash evidence back"
+        "the refused lease rolled its own crash evidence back"
     );
     admin
         .batch_execute(&format!(
@@ -267,7 +270,7 @@ async fn production_claim_live() -> anyhow::Result<()> {
 
     // ---- the admission pin (docs/architecture/overview.md#release-identity) ------------------------
     //
-    // Admission pins the release by its manifest digest. A matching pod claims
+    // Admission pins the release by its manifest digest. A matching pod leases
     // the run and never writes the pin.
     seed_run(admin, "release-record", PACKAGE_ID).await?;
     let recorded = Some(POD_MANIFEST_DIGEST.to_string());
@@ -275,35 +278,35 @@ async fn production_claim_live() -> anyhow::Result<()> {
     assert_eq!(
         ready_run(
             plugin
-                .claim_next(COMPONENT, &release_package_ids, ENVIRONMENT, 30_000)
+                .lease_next(COMPONENT, &release_package_ids, ENVIRONMENT, 30_000)
                 .await?
         ),
         "release-record"
     );
     assert_eq!(release_record(admin, "release-record").await?, recorded);
 
-    // SAME-RELEASE RE-CLAIM. The classifier's pre-effect reclaim keeps the pin.
+    // SAME-RELEASE RE-LEASE. The classifier's pre-effect recover keeps the pin.
     expire_effect_run(admin, "release-record").await?;
     assert_eq!(
         ready_run(
             plugin
-                .claim_next(COMPONENT, &release_package_ids, ENVIRONMENT, 30_000)
+                .lease_next(COMPONENT, &release_package_ids, ENVIRONMENT, 30_000)
                 .await?
         ),
         "release-record"
     );
     assert_eq!(release_record(admin, "release-record").await?, recorded);
 
-    // A release is an admission pin, not a claim-time rollout slot. A pod
+    // A release is an admission pin, not a lease-time rollout slot. A pod
     // carrying another release does not select this run at all (R20): the
     // candidate select filters by the pod's release, and the grant keeps the
     // test again.
     expire_effect_run(admin, "release-record").await?;
     assert_eq!(
         plugin
-            .claim_next(ROLLED_COMPONENT, &release_package_ids, ENVIRONMENT, 30_000)
+            .lease_next(ROLLED_COMPONENT, &release_package_ids, ENVIRONMENT, 30_000)
             .await?,
-        ProductionClaimResult::Empty,
+        ProductionLeaseResult::Empty,
         "a different release must not select an admitted run"
     );
     assert!(
@@ -322,7 +325,7 @@ async fn production_claim_live() -> anyhow::Result<()> {
     assert_eq!(
         ready_run(
             plugin
-                .claim_next(COMPONENT, &release_package_ids, ENVIRONMENT, 30_000)
+                .lease_next(COMPONENT, &release_package_ids, ENVIRONMENT, 30_000)
                 .await?
         ),
         "release-record"
@@ -335,9 +338,9 @@ async fn production_claim_live() -> anyhow::Result<()> {
             .execute(
                 &format!(
                     "UPDATE {SCHEMA}.runs SET manifest_digest={assignment} \
-                      WHERE env_key=$1 AND run_id='release-record'"
+                      WHERE project_env_key=$1 AND run_id='release-record'"
                 ),
-                &[&ENV_KEY],
+                &[&PROJECT_ENV_KEY],
             )
             .await
             .expect_err("no path may rewrite an admitted release in place");
@@ -352,9 +355,9 @@ async fn production_claim_live() -> anyhow::Result<()> {
         .execute(
             &format!(
                 "DELETE FROM {SCHEMA}.run_queue \
-                  WHERE env_key=$1 AND run_id='release-record'"
+                  WHERE project_env_key=$1 AND run_id='release-record'"
             ),
-            &[&ENV_KEY],
+            &[&PROJECT_ENV_KEY],
         )
         .await?;
 
@@ -362,21 +365,21 @@ async fn production_claim_live() -> anyhow::Result<()> {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn queue_writers_stamp_existing_executor_claims() -> anyhow::Result<()> {
+async fn queue_writers_stamp_existing_executor_leases() -> anyhow::Result<()> {
     let _lock = wamn_test_postgres::lock();
-    let database = wamn_catalog::test_database::tenant();
+    let database = wamn_catalog::test_database::project();
     let fixture = install_fixture(database.url()).await?;
     let admin = &fixture.admin;
     let plugin = &fixture.plugin;
     // Admission already binds the executor in its existing transaction.
-    admin.execute("INSERT INTO wamn_run.environment_policies (env_key, expected_environment) VALUES ($1, $2)", &[&ENV_KEY, &ENVIRONMENT]).await?;
+    admin.execute("INSERT INTO wamn_run.environment_policies (project_env_key, expected_environment) VALUES ($1, $2)", &[&PROJECT_ENV_KEY, &ENVIRONMENT]).await?;
     let actor = wamn_identity_protocol::PlatformComponent::Executor
         .principal_id()
         .to_string();
     let admitted = plugin
         .admit_manual_run(
             "default",
-            ENV_KEY,
+            PROJECT_ENV_KEY,
             &wamn_runtime::plugins::wamn_postgres::ManualRunAdmission {
                 package_id: PACKAGE_ID,
                 manifest_digest: POD_MANIFEST_DIGEST,
@@ -409,17 +412,17 @@ async fn queue_writers_stamp_existing_executor_claims() -> anyhow::Result<()> {
         .execute("DELETE FROM wamn_run.run_queue WHERE run_id=$1", &[&run_id])
         .await?;
 
-    seed_run(admin, "history-claim", PACKAGE_ID).await?;
-    let claimed = ready_run(
+    seed_run(admin, "history-lease", PACKAGE_ID).await?;
+    let acquired = ready_run(
         plugin
-            .claim_next(COMPONENT, &[PACKAGE_ID.to_owned()], ENVIRONMENT, 30_000)
+            .lease_next(COMPONENT, &[PACKAGE_ID.to_owned()], ENVIRONMENT, 30_000)
             .await?,
     );
-    assert_eq!(claimed, "history-claim");
+    assert_eq!(acquired, "history-lease");
     wamn_test_infrastructure::record_history::assert_stamp(
         admin,
         "wamn_run.run_queue",
-        "run_id='history-claim'",
+        "run_id='history-lease'",
         &wamn_identity_protocol::PlatformComponent::Provisioning
             .principal_id()
             .to_string(),
@@ -432,7 +435,7 @@ async fn queue_writers_stamp_existing_executor_claims() -> anyhow::Result<()> {
 #[tokio::test(flavor = "multi_thread")]
 async fn mixed_retries_end_with_the_last_cause() -> anyhow::Result<()> {
     let _lock = wamn_test_postgres::lock();
-    let database = wamn_catalog::test_database::tenant();
+    let database = wamn_catalog::test_database::project();
     let fixture = install_fixture(database.url()).await?;
     let admin = &fixture.admin;
     let plugin = &fixture.plugin;
@@ -450,18 +453,18 @@ async fn mixed_retries_end_with_the_last_cause() -> anyhow::Result<()> {
                 &[&run],
             )
             .await?;
-        let claim = plugin
-            .claim_next(COMPONENT, &packages, ENVIRONMENT, 30_000)
+        let lease = plugin
+            .lease_next(COMPONENT, &packages, ENVIRONMENT, 30_000)
             .await?;
-        let ProductionClaimResult::Ready {
+        let ProductionLeaseResult::Ready {
             lease_generation, ..
-        } = claim
+        } = lease
         else {
-            panic!("first claim missing")
+            panic!("first lease missing")
         };
         assert!(
             plugin
-                .release_claim(COMPONENT, run, lease_generation)
+                .release_lease(COMPONENT, run, lease_generation)
                 .await?
         );
         assert_eq!(queue_attempts(admin, run).await?, 1);
@@ -471,24 +474,24 @@ async fn mixed_retries_end_with_the_last_cause() -> anyhow::Result<()> {
                 &[&run],
             )
             .await?;
-        let claim = plugin
-            .claim_next(COMPONENT, &packages, ENVIRONMENT, 30_000)
+        let lease = plugin
+            .lease_next(COMPONENT, &packages, ENVIRONMENT, 30_000)
             .await?;
-        assert_eq!(ready_run(claim), run);
+        assert_eq!(ready_run(lease), run);
         assert_eq!(
             queue_attempts(admin, run).await?,
             1,
-            "a released claim must not count twice"
+            "a released lease must not count twice"
         );
         expire_effect_run(admin, run).await?;
-        let claim = plugin
-            .claim_next(COMPONENT, &packages, ENVIRONMENT, 30_000)
+        let lease = plugin
+            .lease_next(COMPONENT, &packages, ENVIRONMENT, 30_000)
             .await?;
-        let ProductionClaimResult::Ready {
+        let ProductionLeaseResult::Ready {
             lease_generation, ..
-        } = claim
+        } = lease
         else {
-            panic!("expired claim missing")
+            panic!("expired lease missing")
         };
         assert_eq!(
             queue_attempts(admin, run).await?,
@@ -498,7 +501,7 @@ async fn mixed_retries_end_with_the_last_cause() -> anyhow::Result<()> {
         if last_release {
             assert!(
                 plugin
-                    .release_claim(COMPONENT, run, lease_generation)
+                    .release_lease(COMPONENT, run, lease_generation)
                     .await?
             );
             assert_terminal_status_dequeued(admin, run, "failed").await?;
@@ -516,7 +519,7 @@ async fn mixed_retries_end_with_the_last_cause() -> anyhow::Result<()> {
             assert_eq!(
                 ready_run(
                     plugin
-                        .claim_next(COMPONENT, &packages, ENVIRONMENT, 30_000)
+                        .lease_next(COMPONENT, &packages, ENVIRONMENT, 30_000)
                         .await?
                 ),
                 run
@@ -525,9 +528,9 @@ async fn mixed_retries_end_with_the_last_cause() -> anyhow::Result<()> {
             expire_effect_run(admin, run).await?;
             assert!(matches!(
                 plugin
-                    .claim_next(COMPONENT, &packages, ENVIRONMENT, 30_000)
+                    .lease_next(COMPONENT, &packages, ENVIRONMENT, 30_000)
                     .await?,
-                ProductionClaimResult::Empty
+                ProductionLeaseResult::Empty
             ));
             assert_eq!(
                 plugin
@@ -552,7 +555,7 @@ async fn mixed_retries_end_with_the_last_cause() -> anyhow::Result<()> {
         }
         assert!(
             !plugin
-                .release_claim(COMPONENT, run, lease_generation)
+                .release_lease(COMPONENT, run, lease_generation)
                 .await?,
             "a terminal run cannot be released again"
         );
@@ -561,9 +564,9 @@ async fn mixed_retries_end_with_the_last_cause() -> anyhow::Result<()> {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn claim_release_fences_and_bounds_backoff() -> anyhow::Result<()> {
+async fn lease_release_fences_and_bounds_backoff() -> anyhow::Result<()> {
     let _lock = wamn_test_postgres::lock();
-    let database = wamn_catalog::test_database::tenant();
+    let database = wamn_catalog::test_database::project();
     let fixture = install_fixture(database.url()).await?;
     let admin = &fixture.admin;
     let plugin = &fixture.plugin;
@@ -571,14 +574,14 @@ async fn claim_release_fences_and_bounds_backoff() -> anyhow::Result<()> {
     for attempts in [0_i32, 1, 2, 8, 9, 18] {
         let run = format!("backoff-{attempts}");
         seed_run(admin, &run, PACKAGE_ID).await?;
-        let claim = plugin
-            .claim_next(COMPONENT, &packages, ENVIRONMENT, 30_000)
+        let lease = plugin
+            .lease_next(COMPONENT, &packages, ENVIRONMENT, 30_000)
             .await?;
-        let ProductionClaimResult::Ready {
+        let ProductionLeaseResult::Ready {
             lease_generation, ..
-        } = claim
+        } = lease
         else {
-            panic!("claim missing")
+            panic!("lease missing")
         };
         admin
             .execute(
@@ -588,12 +591,12 @@ async fn claim_release_fences_and_bounds_backoff() -> anyhow::Result<()> {
             .await?;
         assert!(
             !plugin
-                .release_claim(COMPONENT, &run, lease_generation + 1)
+                .release_lease(COMPONENT, &run, lease_generation + 1)
                 .await?
         );
         assert!(
             !plugin
-                .release_claim(ROLLED_COMPONENT, &run, lease_generation)
+                .release_lease(ROLLED_COMPONENT, &run, lease_generation)
                 .await?
         );
         assert_eq!(queue_attempts(admin, &run).await?, attempts);
@@ -603,7 +606,7 @@ async fn claim_release_fences_and_bounds_backoff() -> anyhow::Result<()> {
             .get(0);
         assert!(
             plugin
-                .release_claim(COMPONENT, &run, lease_generation)
+                .release_lease(COMPONENT, &run, lease_generation)
                 .await?
         );
         let base = (1000_i64 << attempts).min(300_000);
@@ -625,7 +628,7 @@ async fn claim_release_fences_and_bounds_backoff() -> anyhow::Result<()> {
         );
         assert!(
             !plugin
-                .release_claim(COMPONENT, &run, lease_generation)
+                .release_lease(COMPONENT, &run, lease_generation)
                 .await?
         );
         admin

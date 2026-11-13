@@ -1,5 +1,5 @@
 //! The `provision-org` subcommand (wamn-q3n.6; D18 model by wamn-8df.3;
-//! template-driven + org-scoped policies by wamn-8df.4): stamp an org from a
+//! template-driven + org-targeted policies by wamn-8df.4): stamp an org from a
 //! named [`Template`] — its placement **and** its own env-policy set in one step
 //! — then render its CNPG `Cluster` set (one cluster per recovery-domain owner,
 //! each sized by the org's policy for that env).
@@ -242,7 +242,7 @@ async fn record_org_rows(
         ))
         .await
         .context("bind wamn:provisioning as the actor")?;
-    let placement_type = org.placement.kind_str();
+    let placement_type = org.placement.type_str();
     // The pool cluster is set only for a pooled org; NULL for a dedicated org.
     let pool = org.placement.pool();
     client
@@ -359,7 +359,7 @@ mod tests {
     #[test]
     fn templates_drive_placement_and_cluster_shape() {
         let (pooled, _) = Template::trials().stamp("trialco", "wamn-pg");
-        assert_eq!(pooled.placement.kind_str(), "pooled");
+        assert_eq!(pooled.placement.type_str(), "pooled");
         assert_eq!(pooled.placement.pool(), Some("wamn-pg"));
         assert!(
             one_org_registry(&Template::trials(), "trialco")
@@ -377,7 +377,7 @@ mod tests {
         );
 
         let (std_org, _) = Template::standard().stamp("acme", "wamn-pg");
-        assert_eq!(std_org.placement.kind_str(), "dedicated");
+        assert_eq!(std_org.placement.type_str(), "dedicated");
         let set = wamn_control_provision::org::render_org_cluster_set(
             &std_org,
             &Template::standard().policies,

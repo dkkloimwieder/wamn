@@ -1,4 +1,4 @@
-//! Deterministically removes ambient WASI CLI imports from native tenant components.
+//! Deterministically removes ambient WASI CLI imports from native project components.
 
 use std::path::{Path, PathBuf};
 
@@ -14,7 +14,7 @@ const WASI_VIRT_ADAPTER_SHA256: &str =
 #[command(
     name = "wamn-component-virtualizer",
     version,
-    about = "Normalize a native tenant component to the closed Wamn import policy"
+    about = "Normalize a native project component to the closed Wamn import policy"
 )]
 struct Args {
     /// Native wasm32-wasip2 component to normalize.

@@ -343,7 +343,7 @@ mod tests {
             ("/node_pools/0/taint", json!("role=main:unknown")),
             ("/node_pools/1/name", json!("main")),
             ("/node_pools", json!([])),
-            ("/kind_registry/repository_id", json!("Kind")),
+            ("/kind_registry/repository_id", json!("Type")),
             ("/kind_registry/location", json!("us-central1-a")),
             ("/kind_registry/cleanup_older_than_days", json!(0)),
             ("/dns_zone/name", json!("Zone")),

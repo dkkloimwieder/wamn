@@ -2,11 +2,11 @@
 
 A capability is an interface through which a component accesses platform resources.
 A binding connects a declared requirement to an authorized environment resource.
-The guest names its requirement and logical input. The host owns endpoints, credentials, and deployment scope.
+The guest names its requirement and logical input. The host owns endpoints, credentials, and deployment target.
 
 ## Import admission
 
-The code-owned [capability declaration](../../crates/platform/component-policy/src/lib.rs) defines the closed tenant import set.
+The code-owned [capability declaration](../../crates/platform/component-policy/src/lib.rs) defines the closed project import set.
 It admits package and version pairs.
 A `wamn:*`, `wasmcloud:*` or `wasi:logging` row names an exact version.
 A `wasi:io`, `wasi:clocks` or `wasi:random` row names the family `0.2`.
@@ -40,7 +40,7 @@ Its connection descriptor, publication mapping, binding coordinates, and plugin 
 Per-effect spans and latency series belong to the implementation.
 The [native alignment page](native-alignment.md) records retained differences and their removal conditions.
 
-Capabilities used only by the platform need no guest import or tenant admission row.
+Capabilities used only by the platform need no guest import or project admission row.
 A new security class or unsupported method needs an explicit owner decision.
 The existing code declaration records that decision and does not infer it from a guest's imports.
 
@@ -77,7 +77,7 @@ The host refuses a name that the calling component did not declare.
 HTTP method authorization and object-store access enforce a declaration's read mode.
 
 The host resolves private credentials through the environment store.
-Each lookup requires the trusted organization, project, and environment scope.
+Each lookup requires the trusted organization, project, and environment target.
 Credential changes use the current generation without a host restart.
 The existing refresh behavior remains in place.
 
@@ -85,7 +85,7 @@ Guest SQL, queue maintenance, HTTP admission, and event materialization use dist
 Private event binding files remain outside guest configuration, and workload configuration cannot replace them.
 Credential generations remain separate from invocation identity.
 A replacement generation must demonstrate live use before the previous generation can retire.
-A resource or connection cannot silently cross a tenant, environment, or generation boundary.
+A resource or connection cannot silently cross a project, environment, or generation boundary.
 The [database contract](data-access.md) owns SQL-specific authorization and transaction behavior.
 
 `wamn:postgres` binds no connection instance, so it has no connection generation.
@@ -186,9 +186,9 @@ The credential holds a PEM private key. RSA accepts PKCS#8 or PKCS#1, and P-256 
 The host supports PS256, RS256, and ES256. ES256 uses the fixed 64-byte signature format.
 The assertion header carries `alg`, `kid` from `key_id`, and `typ` set to `JWT`.
 
-The claims carry `iss` from `client_id`, `aud` from `token_url`, and `iat` from the host clock.
+The JWT claims carry `iss` from `client_id`, `aud` from `token_url`, and `iat` from the host clock.
 The expiry, `exp`, is 300 seconds later. Each assertion carries a fresh random 256-bit `jti`.
-Optional `scopes` form the `scope` claim and the form field. Empty scopes omit both.
+Optional `scopes` form the `scope` JWT claim and the form field. Empty scopes omit both.
 The `scope_separator` accepts a space or comma and defaults to a space.
 
 The token form carries `grant_type=client_credentials`, the RFC 7523 `client_assertion_type`, and `client_assertion`.
@@ -207,7 +207,7 @@ A token failure before any API request returns `credential-unavailable` without 
 The guest receives no credential. The workflow queue owns other retries.
 
 The transport pins the approved peer and compares the connected peer.
-Its client identity includes the connection scope and credential generation.
+Its client identity includes the connection target and credential generation.
 It does not follow redirects or retry a request automatically.
 Requests share bounded client, socket, and concurrent-request capacity.
 
@@ -297,17 +297,17 @@ The unauthenticated NATS HTTP monitor binds loopback and has no Service exposure
 Administrator process access remains separate from environment observation.
 
 Derived events use the host's admitted terminal, logical deduplication input, and bound causation.
-The guest cannot supply `env_key`, project, or environment authority.
+The guest cannot supply `project_env_key`, project, or environment authority.
 Causation depth bounds recursion. The current materializer limit is 16.
 These delivery rules do not create exactly-once application effects.
 
 ## Session role reader
 
 `POST /password/session` signs in a user and returns a bounded session token.
-The request supplies the audience and cannot supply roles, an `env_key`, or a database URL.
-A mounted target declaration selects the exact audience, `env_key`, database, and dedicated `SessionRoleReader` credential.
+The request supplies the audience and cannot supply roles, an `project_env_key`, or a database URL.
+A mounted target declaration selects the exact audience, `project_env_key`, database, and dedicated `SessionRoleReader` credential.
 
-That role reads active users and their role assignments within the selected tenant.
+That role reads active users and their role assignments within the selected project.
 It cannot write application data, read permission tables, or use catalog and execution authority.
 The query binds the principal explicitly. The target selects its environment database.
 The service reads roles for each login.
@@ -315,7 +315,7 @@ An inactive user or empty role set refuses login.
 
 Connections are lazy and retained only for active configured targets.
 An unused target opens no connection.
-A retained connection never transfers to another audience or `env_key`.
+A retained connection never transfers to another audience or `project_env_key`.
 The [execution page](execution.md#caller-authentication) owns token acceptance and revocation bounds.
 
 ## PAT issuance

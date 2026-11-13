@@ -4,24 +4,24 @@
 //! lock of that server, because it creates roles.
 //!
 //! The case applies the real `deploy/sql/run-state.sql` and
-//! `deploy/sql/run-queue.sql` on the tenant floor, mints a real
+//! `deploy/sql/run-queue.sql` on the project base grants, mints a real
 //! `wamn_run_retention` credential generation, seeds run history for two
-//! tenants, and runs the real verb through `wamn-ctl-ops`. It tests four things:
+//! projects, and runs the real verb through `wamn-ctl-ops`. It tests four things:
 //!
-//! 1. The verb removes only old terminal runs of the tenant of the credential,
+//! 1. The verb removes only old terminal runs of the project of the credential,
 //!    and the queue row of each removed run goes with it through its cascade.
-//! 2. The verb refuses a tenant that the credential was not minted for, an
-//!    unknown tenant, and the shared `wamn_app` login. The case reads the
+//! 2. The verb refuses a project that the credential was not minted for, an
+//!    unknown project, and the shared `wamn_app` login. The case reads the
 //!    post-state, because a refusal must not look like a match of nothing.
 //! 3. The generation reads only the three columns of the prune predicate, holds
 //!    nothing on `run_queue` and nothing outside `runs`, and the terminal-only
 //!    trigger refuses its raw non-terminal delete.
 //! 4. The `wamn_platform` arm still lets the generation read those three columns
-//!    of another tenant. No grant can close that, so the case asserts it.
+//!    of another project. No grant can close that, so the case asserts it.
 
 use tokio_postgres::{Client, NoTls};
 use wamn_control_provision::{
-    APP_ROLE, CredentialGeneration, WorkloadRoleFamily, WorkloadRoleScope, compose_url, sql,
+    APP_ROLE, CredentialGeneration, WorkloadRoleFamily, WorkloadRoleIdentity, compose_url, sql,
     workload_generation_role,
 };
 use wamn_test_infrastructure::ctl_process;
@@ -30,10 +30,10 @@ use wamn_test_infrastructure::locked_database;
 const RUN_STATE_SQL: &str = include_str!("../../../deploy/sql/run-state.sql");
 const RUN_QUEUE_SQL: &str = include_str!("../../../deploy/sql/run-queue.sql");
 const SCHEMA: &str = "wamn_run";
-const ENV_KEY: &str = "run-retention-t--fixture--dev";
-/// A second tenant with history of its own. Without it the cross-tenant
+const PROJECT_ENV_KEY: &str = "run-retention-t--fixture--dev";
+/// A second project with history of its own. Without it the cross-project
 /// refusal could not be told from a match of nothing.
-const OTHER_ENV_KEY: &str = "run-retention-other--fixture--dev";
+const OTHER_PROJECT_ENV_KEY: &str = "run-retention-other--fixture--dev";
 const PACKAGE_ID: &str = "run_retention_fixture";
 /// The release every seeded run pins: the digest of the bytes `{}`.
 const RELEASE_DIGEST: &str =
@@ -52,7 +52,7 @@ async fn connect(url: &str) -> Client {
     client
 }
 
-/// Install the run plane on the tenant floor, with one effective release for each tenant.
+/// Install the run plane on the project base grants, with one effective release for each project.
 async fn provision(admin: &Client) {
     admin
         .batch_execute(RUN_STATE_SQL)
@@ -65,9 +65,9 @@ async fn provision(admin: &Client) {
     admin
         .batch_execute(&format!(
             "SELECT set_config('app.user_id', '{}', false), set_config('app.operation', 'admin:seed-catalog-fixture', false); \
-             INSERT INTO catalog.releases (env_key, manifest_digest, canonical_bytes) \
-             VALUES ('{ENV_KEY}', '{RELEASE_DIGEST}', '{{}}'), \
-                    ('{OTHER_ENV_KEY}', '{RELEASE_DIGEST}', '{{}}');",
+             INSERT INTO catalog.releases (project_env_key, manifest_digest, canonical_bytes) \
+             VALUES ('{PROJECT_ENV_KEY}', '{RELEASE_DIGEST}', '{{}}'), \
+                    ('{OTHER_PROJECT_ENV_KEY}', '{RELEASE_DIGEST}', '{{}}');",
             wamn_control_provision::PlatformComponent::Provisioning.principal_id()
         ))
         .await
@@ -125,37 +125,43 @@ async fn mint(admin: &Client, database: &str, role: &str) {
 }
 
 /// Insert a run created `age_days` days ago, and its queue row.
-async fn seed_run(admin: &Client, env_key: &str, run_id: &str, status: &str, age_days: i64) {
+async fn seed_run(
+    admin: &Client,
+    project_env_key: &str,
+    run_id: &str,
+    status: &str,
+    age_days: i64,
+) {
     admin
         .execute(
             &format!(
                 "INSERT INTO {SCHEMA}.runs ( \
-                   env_key, run_id, wiring_id,wiring_version,wiring_hash,binding_world_json, package_id, manifest_digest, \
+                   project_env_key, run_id, wiring_id,wiring_version,wiring_hash,binding_world_json, package_id, manifest_digest, \
                    environment, status, input_json, created_at \
                  ) VALUES ($1, $2, 'fixture-wiring',1,'sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd','[]'::jsonb, '{PACKAGE_ID}', '{RELEASE_DIGEST}', 'test', $3, \
                            jsonb_build_object('payload', $1::text), \
                            now() - ($4::bigint * interval '1 day'))"
             ),
-            &[&env_key, &run_id, &status, &age_days],
+            &[&project_env_key, &run_id, &status, &age_days],
         )
         .await
         .expect("seed a run");
     admin
         .execute(
-            &format!("INSERT INTO {SCHEMA}.run_queue (env_key, run_id) VALUES ($1, $2)"),
-            &[&env_key, &run_id],
+            &format!("INSERT INTO {SCHEMA}.run_queue (project_env_key, run_id) VALUES ($1, $2)"),
+            &[&project_env_key, &run_id],
         )
         .await
         .expect("seed a queue row");
 }
 
-/// The `tenant/run` keys of `relation`, in order.
+/// The `project/run` keys of `relation`, in order.
 async fn keys(admin: &Client, relation: &str) -> Vec<String> {
     admin
         .query(
             &format!(
-                "SELECT env_key || '/' || run_id FROM {SCHEMA}.{relation} \
-                  ORDER BY env_key, run_id"
+                "SELECT project_env_key || '/' || run_id FROM {SCHEMA}.{relation} \
+                  ORDER BY project_env_key, run_id"
             ),
             &[],
         )
@@ -166,7 +172,7 @@ async fn keys(admin: &Client, relation: &str) -> Vec<String> {
         .collect()
 }
 
-fn prune_argv<'a>(url: &'a str, env_key: &'a str) -> [&'a str; 13] {
+fn prune_argv<'a>(url: &'a str, project_env_key: &'a str) -> [&'a str; 13] {
     [
         "prune-run-history",
         "--database-url",
@@ -174,7 +180,7 @@ fn prune_argv<'a>(url: &'a str, env_key: &'a str) -> [&'a str; 13] {
         "--schema",
         SCHEMA,
         "--org",
-        env_key.split("--").next().expect("fixture org"),
+        project_env_key.split("--").next().expect("fixture org"),
         "--project",
         "fixture",
         "--environment",
@@ -185,8 +191,8 @@ fn prune_argv<'a>(url: &'a str, env_key: &'a str) -> [&'a str; 13] {
 }
 
 /// Run the verb and require the identity refusal, not a success that reports zero.
-async fn assert_refused(url: &str, env_key: &str, label: &str) {
-    ctl_process::require_ops_success(prune_argv(url, env_key))
+async fn assert_refused(url: &str, project_env_key: &str, label: &str) {
+    ctl_process::require_ops_success(prune_argv(url, project_env_key))
         .await
         .expect_err(label);
 }
@@ -238,8 +244,8 @@ async fn assert_authority(credential: &Client) {
     // The grant bounds who may delete, and the trigger bounds what.
     let error = credential
         .execute(
-            &format!("DELETE FROM {SCHEMA}.runs WHERE env_key = $1 AND status = 'running'"),
-            &[&ENV_KEY],
+            &format!("DELETE FROM {SCHEMA}.runs WHERE project_env_key = $1 AND status = 'running'"),
+            &[&PROJECT_ENV_KEY],
         )
         .await
         .expect_err("the trigger refuses a raw non-terminal delete");
@@ -271,24 +277,24 @@ async fn assert_authority(credential: &Client) {
         "the run retention role holds privileges outside runs"
     );
 
-    // The residual: the platform arm still shows the other tenant's three columns.
+    // The residual: the platform arm still shows the other project's three columns.
     let foreign: i64 = credential
         .query_one(
-            &format!("SELECT count(*) FROM {SCHEMA}.runs WHERE env_key = $1"),
-            &[&OTHER_ENV_KEY],
+            &format!("SELECT count(*) FROM {SCHEMA}.runs WHERE project_env_key = $1"),
+            &[&OTHER_PROJECT_ENV_KEY],
         )
         .await
-        .expect("read the other tenant's rows under the platform arm")
+        .expect("read the other project's rows under the platform arm")
         .get(0);
     assert!(
         foreign > 0,
-        "the platform arm no longer exposes the other tenant's predicate columns"
+        "the platform arm no longer exposes the other project's predicate columns"
     );
 }
 
 #[tokio::test]
-async fn prune_removes_only_old_terminal_runs_of_the_credential_env_key() {
-    let url = locked_database::database(wamn_catalog::test_database::tenant);
+async fn prune_removes_only_old_terminal_runs_of_the_credential_project_env_key() {
+    let url = locked_database::database(wamn_catalog::test_database::project);
     let admin = connect(&url).await;
     let database: String = admin
         .query_one("SELECT current_database()::text", &[])
@@ -298,18 +304,25 @@ async fn prune_removes_only_old_terminal_runs_of_the_credential_env_key() {
     provision(&admin).await;
 
     // An old completed run, a recent completed run, an old running run, and an
-    // old completed run of the other tenant.
-    seed_run(&admin, ENV_KEY, "old-done", "completed", 40).await;
-    seed_run(&admin, ENV_KEY, "recent-done", "completed", 1).await;
-    seed_run(&admin, ENV_KEY, "old-running", "running", 40).await;
-    seed_run(&admin, OTHER_ENV_KEY, "foreign-done", "completed", 40).await;
+    // old completed run of the other project.
+    seed_run(&admin, PROJECT_ENV_KEY, "old-done", "completed", 40).await;
+    seed_run(&admin, PROJECT_ENV_KEY, "recent-done", "completed", 1).await;
+    seed_run(&admin, PROJECT_ENV_KEY, "old-running", "running", 40).await;
+    seed_run(
+        &admin,
+        OTHER_PROJECT_ENV_KEY,
+        "foreign-done",
+        "completed",
+        40,
+    )
+    .await;
     let seeded_runs = keys(&admin, "runs").await;
     let seeded_queue = keys(&admin, "run_queue").await;
 
     let generation_role = workload_generation_role(
         WorkloadRoleFamily::Retention,
-        WorkloadRoleScope::EnvKey {
-            env_key: ENV_KEY,
+        WorkloadRoleIdentity::ProjectEnvKey {
+            project_env_key: PROJECT_ENV_KEY,
             database: &database,
         },
         CredentialGeneration::A,
@@ -328,17 +341,17 @@ async fn prune_removes_only_old_terminal_runs_of_the_credential_env_key() {
     // The refusals run first, against the populated store.
     assert_refused(
         &credential_url,
-        OTHER_ENV_KEY,
+        OTHER_PROJECT_ENV_KEY,
         "foreign environment coordinate",
     )
     .await;
     assert_refused(
         &credential_url,
-        "no-such-tenant",
+        "no-such-project",
         "unknown environment coordinate",
     )
     .await;
-    assert_refused(&app_url, ENV_KEY, "wamn_app login").await;
+    assert_refused(&app_url, PROJECT_ENV_KEY, "wamn_app login").await;
     assert_eq!(
         (keys(&admin, "runs").await, keys(&admin, "run_queue").await),
         (seeded_runs, seeded_queue),
@@ -349,7 +362,7 @@ async fn prune_removes_only_old_terminal_runs_of_the_credential_env_key() {
     assert_authority(&credential).await;
     drop(credential);
 
-    let pruned = ctl_process::require_ops_success(prune_argv(&credential_url, ENV_KEY))
+    let pruned = ctl_process::require_ops_success(prune_argv(&credential_url, PROJECT_ENV_KEY))
         .await
         .expect("prune run history through wamn-ctl-ops");
     let stdout = String::from_utf8(pruned.stdout).expect("prune output is UTF-8");
@@ -359,9 +372,9 @@ async fn prune_removes_only_old_terminal_runs_of_the_credential_env_key() {
         "the verb did not report one pruned run: {stdout}"
     );
     let kept = vec![
-        format!("{OTHER_ENV_KEY}/foreign-done"),
-        format!("{ENV_KEY}/old-running"),
-        format!("{ENV_KEY}/recent-done"),
+        format!("{OTHER_PROJECT_ENV_KEY}/foreign-done"),
+        format!("{PROJECT_ENV_KEY}/old-running"),
+        format!("{PROJECT_ENV_KEY}/recent-done"),
     ];
     assert_eq!(keys(&admin, "runs").await, kept, "the retained runs");
     assert_eq!(

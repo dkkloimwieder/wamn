@@ -18,13 +18,13 @@ fn environment_names(command: &clap::Command, names: &mut BTreeSet<OsString>) {
 
 fn is_secret_environment(name: &std::ffi::OsStr) -> bool {
     let name = name.to_string_lossy();
-    // These keys select files or an environment scope, not credential contents.
+    // These keys select files or an environment target, not credential contents.
     if name.ends_with("_FILE")
         || name.ends_with("_PATH")
         || name.ends_with("_PATHS")
         || matches!(
             name.as_ref(),
-            "WAMN_NATS_TLS_KEY" | "WAMN_DEV_ENV_NATS_TLS_KEY" | "WAMN_MANAGEMENT_ENV_KEY"
+            "WAMN_NATS_TLS_KEY" | "WAMN_DEV_ENV_NATS_TLS_KEY" | "WAMN_MANAGEMENT_PROJECT_ENV_KEY"
         )
     {
         return false;

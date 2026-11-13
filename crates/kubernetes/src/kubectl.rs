@@ -193,7 +193,7 @@ pub async fn apply<T: Serialize>(
     let secret = serde_json::to_value(object)
         .context("encode the kubectl object")?
         .get("kind")
-        .is_none_or(|kind| kind == "Secret");
+        .is_none_or(|type_| type_ == "Secret");
     run(
         kubeconfig,
         context,
@@ -216,10 +216,10 @@ pub async fn get<T: DeserializeOwned>(
     kubeconfig: &Path,
     context: &str,
     namespace: &str,
-    kind: &str,
+    type_: &str,
     name: &str,
 ) -> anyhow::Result<Option<T>> {
-    let arguments = get_arguments(kind, name);
+    let arguments = get_arguments(type_, name);
     let arguments: Vec<_> = arguments.iter().map(String::as_str).collect();
     let output = kubectl(kubeconfig, context, namespace, &arguments, None).await?;
     decode_object(&output)
@@ -234,12 +234,12 @@ pub async fn wait(
     kubeconfig: &Path,
     context: &str,
     namespace: &str,
-    kind: &str,
+    type_: &str,
     name: &str,
     condition: &str,
     duration: &str,
 ) -> anyhow::Result<()> {
-    let arguments = wait_arguments(kind, name, condition, duration);
+    let arguments = wait_arguments(type_, name, condition, duration);
     let arguments: Vec<_> = arguments.iter().map(String::as_str).collect();
     kubectl(kubeconfig, context, namespace, &arguments, None)
         .await
@@ -285,7 +285,8 @@ mod tests {
 
     #[derive(Debug, PartialEq, Serialize, Deserialize)]
     struct Object {
-        kind: String,
+        #[serde(rename = "kind")]
+        type_: String,
         metadata: Metadata,
     }
 

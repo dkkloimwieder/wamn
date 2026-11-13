@@ -118,11 +118,11 @@ fn fixture(root: &Path) -> anyhow::Result<()> {
 }
 
 async fn simulator() -> anyhow::Result<(String, Arc<AtomicUsize>, tokio::task::JoinHandle<()>)> {
-    simulator_with_gate(None).await
+    simulator_with_condition(None).await
 }
 
-async fn simulator_with_gate(
-    gate: Option<Arc<tokio::sync::Semaphore>>,
+async fn simulator_with_condition(
+    condition: Option<Arc<tokio::sync::Semaphore>>,
 ) -> anyhow::Result<(String, Arc<AtomicUsize>, tokio::task::JoinHandle<()>)> {
     // Select a private interface without sending a datagram.
     let route = tokio::net::UdpSocket::bind("0.0.0.0:0").await?;
@@ -136,7 +136,7 @@ async fn simulator_with_gate(
         loop {
             let (mut stream, _) = listener.accept().await.unwrap();
             let number = accepts.fetch_add(1, Ordering::SeqCst);
-            let gate = gate.clone();
+            let condition = condition.clone();
             tokio::spawn(async move {
                 if number == 0 {
                     tokio::time::sleep(Duration::from_millis(20)).await;
@@ -144,8 +144,8 @@ async fn simulator_with_gate(
                 let mut frame = [0; 12];
                 stream.read_exact(&mut frame).await.unwrap();
                 assert_eq!(&frame[2..6], &[0, 0, 0, 6]);
-                if let Some(gate) = gate {
-                    gate.acquire().await.unwrap().forget();
+                if let Some(condition) = condition {
+                    condition.acquire().await.unwrap().forget();
                 }
                 if frame[7] == 6 {
                     assert_eq!(&frame[6..], &[17, 6, 0, 7, 0xbe, 0xef]);
@@ -188,7 +188,7 @@ impl Application {
                 &package.join("publication/components/modbus_reader.json.in"),
                 "acme--one--dev",
             )?;
-        declaration["scope"]["package-version"] = json!("0.1.0");
+        declaration["target"]["package-version"] = json!("0.1.0");
         let operation = declaration["operations"]
             .as_object()
             .context("reader operations missing")?
@@ -378,7 +378,7 @@ fn loaded_release(
     wamn_engine::release_manifest::LoadedRelease::load_canonical_bytes(
         &manifest.canonical_bytes(),
         "connection read fixture",
-        wamn_engine::release_manifest::ReleaseScope::new("acme--one--dev", "dev")
+        wamn_engine::release_manifest::ReleaseTarget::new("acme--one--dev", "dev")
             .with_applications(
                 [(
                     application.to_owned(),
@@ -427,11 +427,11 @@ async fn apply(
         let bindings = bindings::analyse(&source, &selected, packages).await?;
         source.commit().await?;
         let release = loaded_release(document, application)?;
-        let env_key = "acme--one--dev";
+        let project_env_key = "acme--one--dev";
         let digest = release.release().manifest_digest.as_str();
         wamn_environment_control::environment::stage::write_release(
             project_url,
-            env_key,
+            project_env_key,
             digest,
             release.manifest(),
             &wamn_control_provision::PlatformComponent::Provisioning
@@ -455,11 +455,11 @@ async fn apply(
                 wamn_catalog::manifest::ConnectionMode::Read => "read",
                 wamn_catalog::manifest::ConnectionMode::Write => "write",
             };
-            tx.execute("INSERT INTO catalog.connection_requirement(env_key,component_digest,package_id,name,interface,mode) VALUES($1,$2,$3,'registers',$4,$5) ON CONFLICT DO NOTHING", &[&env_key, &component.descriptor.component_digest, package, &requirement.interface, &mode]).await?;
+            tx.execute("INSERT INTO catalog.connection_requirement(project_env_key,component_digest,package_id,name,interface,mode) VALUES($1,$2,$3,'registers',$4,$5) ON CONFLICT DO NOTHING", &[&project_env_key, &component.descriptor.component_digest, package, &requirement.interface, &mode]).await?;
         }
         bindings::write(
             &tx,
-            env_key,
+            project_env_key,
             digest,
             &selected,
             &bindings,
@@ -481,7 +481,7 @@ async fn application_releases_keep_independent_integration_versions() -> anyhow:
     let scratch = wamn_test_infrastructure::scratch::ScratchRoot::create()?;
     fixture(scratch.path())?;
     let database = wamn_control_provision::test_database::system();
-    let project_database = wamn_platform_identity::test_database::tenant_platform();
+    let project_database = wamn_platform_identity::test_database::project_platform();
     let mut admin = connect(database.url()).await?;
     admin
         .batch_execute(&format!(
@@ -573,11 +573,11 @@ async fn application_releases_keep_independent_integration_versions() -> anyhow:
         &packages,
     )
     .await?;
-    // A dedicated reader login fixes scope through session_user, independent of GUCs.
+    // A dedicated reader login fixes target through session_user, independent of GUCs.
     let login = format!("c9_integration_{}", std::process::id());
     database.execute(&[
         &sql::grant_connection_reader_surface_sql(),
-        &format!("CREATE ROLE {login} LOGIN PASSWORD 'fixture'; GRANT wamn_conn_reader TO {login}; GRANT CONNECT ON DATABASE \"{}\" TO {login}; BEGIN; SET LOCAL ROLE wamn_system; {} INSERT INTO wamn_authority.author_login_tenants(login_identity,env_key,org_id,project_id,environment) VALUES ('{login}','acme--one--dev','acme','one','dev'); COMMIT;", database.name(), bind_platform_principal_sql(PlatformComponent::Provisioning)),
+        &format!("CREATE ROLE {login} LOGIN PASSWORD 'fixture'; GRANT wamn_conn_reader TO {login}; GRANT CONNECT ON DATABASE \"{}\" TO {login}; BEGIN; SET LOCAL ROLE wamn_system; {} INSERT INTO wamn_authority.author_login_projects(login_identity,project_env_key,org_id,project_id,environment) VALUES ('{login}','acme--one--dev','acme','one','dev'); COMMIT;", database.name(), bind_platform_principal_sql(PlatformComponent::Provisioning)),
     ])?;
     let mut reader_url = url::Url::parse(database.url())?;
     reader_url.set_username(&login).unwrap();

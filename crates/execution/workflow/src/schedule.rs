@@ -38,10 +38,10 @@ pub trait ScheduleRows: Send + Sync {
 }
 
 /// The enabled schedule workflows of the declared applications. Binds: `$1`
-/// tenant, `$2` environment, `$3` the application name.
+/// project, `$2` environment, `$3` the application name.
 const ENABLED_SCHEDULES_SQL: &str = "\
 SELECT application, workflow_id, schedule FROM catalog.workflows \
- WHERE env_key = $1 AND environment = $2 AND application = $3 \
+ WHERE project_env_key = $1 AND environment = $2 AND application = $3 \
    AND enabled AND trigger = 'schedule'";
 
 /// The schedule rows of the application that the host serves. It
@@ -64,7 +64,7 @@ impl std::fmt::Debug for PostgresSchedules {
 }
 
 impl PostgresSchedules {
-    /// Serve the schedules of `applications` in `env_key` and `environment`,
+    /// Serve the schedules of `applications` in `project_env_key` and `environment`,
     /// against the release `manifest_digest`.
     pub fn new(
         client: tokio_postgres::Client,
@@ -84,8 +84,8 @@ impl PostgresSchedules {
 #[async_trait::async_trait]
 impl ScheduleRows for PostgresSchedules {
     async fn enabled(&self) -> anyhow::Result<Vec<EnabledSchedule>> {
-        let scope = self.release.scope();
-        let (application, _) = scope
+        let target = self.release.target();
+        let (application, _) = target
             .applications
             .first_key_value()
             .context("schedule host has no application")?;
@@ -93,7 +93,7 @@ impl ScheduleRows for PostgresSchedules {
             .client
             .query(
                 ENABLED_SCHEDULES_SQL,
-                &[&scope.env_key, &scope.environment, application],
+                &[&target.project_env_key, &target.environment, application],
             )
             .await
             .context("read the enabled workflow schedules")?;
@@ -114,17 +114,17 @@ impl ScheduleRows for PostgresSchedules {
         schedule: &EnabledSchedule,
         due: DateTime<Utc>,
     ) -> anyhow::Result<ScheduleRunAdmitted> {
-        let scope = self.release.scope();
-        let application = scope
+        let target = self.release.target();
+        let application = target
             .applications
             .get(&schedule.application)
             .with_context(|| format!("application {:?} is not declared", schedule.application))?;
         self.postgres
             .admit_schedule_run(
                 &self.project,
-                &scope.env_key,
+                &target.project_env_key,
                 &ScheduleRunAdmission {
-                    environment: &scope.environment,
+                    environment: &target.environment,
                     application: &schedule.application,
                     application_packages: &application.packages,
                     workflow_id: &schedule.workflow_id,

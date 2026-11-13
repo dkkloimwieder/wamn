@@ -5,7 +5,7 @@
 //! before the handler runs. A route runs in one host-owned transaction under
 //! the environment's `wamn_administration` login, which binds `app.user_id`
 //! to the caller and `app.operation` to the route's sealed operation id. A
-//! role or permission write first takes the tenant lock that `wamn-ctl` and
+//! role or permission write first takes the project lock that `wamn-ctl` and
 //! release reconciliation take. The writes are the functions of
 //! `wamn_platform_identity::application`, which `wamn-ctl` also calls, so no
 //! second writer exists. A grant stores one row, and a caller holds exactly
@@ -25,7 +25,7 @@ use serde_json::{Value, json};
 use tokio_postgres::Client;
 use wamn_broker::auth_changes::AuthDrops;
 use wamn_catalog::{
-    HostAttachment, HostHandler, HostRouteAuthority, gate_workflow_document,
+    HostAttachment, HostHandler, HostRouteAuthority, condition_workflow_document,
     resolve_workflow_components, sealed_operation_reference,
 };
 use wamn_control_provision::operation_grants::OPERATION_GRANT_LOCK_SQL;
@@ -166,7 +166,7 @@ impl ApplicationRoutes<'_> {
     /// Admit one run of the enabled version of a workflow of an application the
     /// environment declares
     /// (docs/architecture/execution.md#environment-workflows). The stored graph
-    /// is gated against the release the host serves, and the run freezes the
+    /// is subject to the conditions of the release the host serves, and the run freezes the
     /// component digest of every node. A `role` workflow executes as the
     /// `workflow` user with its role, an `invoker` workflow as the caller with
     /// its active role. The caller is recorded as the invoker.
@@ -186,9 +186,9 @@ impl ApplicationRoutes<'_> {
             return Err(start_refusal("invalid_input", "idempotency_key"));
         }
         let manifest = self.release.manifest();
-        let scope = self.release.scope();
-        let env_key = scope.env_key.as_str();
-        let Some(declared) = scope.applications.get(&request.application) else {
+        let target = self.release.target();
+        let project_env_key = target.project_env_key.as_str();
+        let Some(declared) = target.applications.get(&request.application) else {
             return Err(start_refusal("application_not_declared", "application"));
         };
         let application = request.application.as_str();
@@ -197,21 +197,22 @@ impl ApplicationRoutes<'_> {
             .postgres
             .enabled_workflow(
                 self.project,
-                env_key,
-                &scope.environment,
+                project_env_key,
+                &target.environment,
                 application,
                 &request.workflow_id,
             )
             .await?
             .ok_or_else(|| start_refusal("workflow_not_enabled", "workflow_id"))?;
         let not_served = |_| start_refusal("workflow_not_served", "workflow_id");
-        let hash = gate_workflow_document(env_key, packages, manifest, &workflow.graph)
-            .map_err(not_served)?;
+        let hash =
+            condition_workflow_document(project_env_key, packages, manifest, &workflow.graph)
+                .map_err(not_served)?;
         if hash.as_str() != workflow.wiring_hash {
             return Err(start_refusal("workflow_not_served", "workflow_id"));
         }
         let node_digests: serde_json::Map<String, Value> =
-            resolve_workflow_components(env_key, packages, manifest, &workflow.graph)
+            resolve_workflow_components(project_env_key, packages, manifest, &workflow.graph)
                 .map_err(not_served)?
                 .into_iter()
                 .map(|(node, component)| (node, Value::String(component.component_digest)))
@@ -246,11 +247,11 @@ impl ApplicationRoutes<'_> {
             .postgres
             .admit_manual_run(
                 self.project,
-                env_key,
+                project_env_key,
                 &ManualRunAdmission {
                     package_id: application,
                     manifest_digest: self.release.release().manifest_digest.as_str(),
-                    environment: &scope.environment,
+                    environment: &target.environment,
                     workflow_id: &request.workflow_id,
                     workflow_version: workflow.version,
                     wiring_hash: &workflow.wiring_hash,
@@ -287,13 +288,13 @@ impl ApplicationRoutes<'_> {
                 .set_counter(attachment, principal, request_id, request)
                 .await;
         }
-        let env_key = self.release.scope().env_key.as_str();
+        let project_env_key = self.release.target().project_env_key.as_str();
         let mut drops = AuthDrops::default();
         let result = self
-            .serve(attachment, principal, payload, env_key, &mut drops)
+            .serve(attachment, principal, payload, project_env_key, &mut drops)
             .await;
         // The host drops its own memory at once, and the message reaches the
-        // other hosts of the tenant.
+        // other hosts of the project.
         if result.is_ok() && !drops.is_empty() {
             self.postgres.auth_cache().clear();
             self.changes.publish(drops).await;
@@ -306,7 +307,7 @@ impl ApplicationRoutes<'_> {
         attachment: &HostAttachment,
         principal: &PrincipalId,
         payload: &str,
-        env_key: &str,
+        project_env_key: &str,
         drops: &mut AuthDrops,
     ) -> Result<Value, Refusal> {
         match attachment.route.handler {
@@ -340,7 +341,8 @@ impl ApplicationRoutes<'_> {
             HostHandler::RoleCreate => {
                 let request: RoleRequest = parse(payload)?;
                 self.run(attachment, principal, true, async |client| {
-                    let created = create_role(client, env_key, &request.role, drops).await?;
+                    let created =
+                        create_role(client, project_env_key, &request.role, drops).await?;
                     Ok(json!({ "created": created }))
                 })
                 .await
@@ -348,7 +350,8 @@ impl ApplicationRoutes<'_> {
             HostHandler::RoleDelete => {
                 let request: RoleRequest = parse(payload)?;
                 self.run(attachment, principal, true, async |client| {
-                    let deleted = delete_role(client, env_key, &request.role, drops).await?;
+                    let deleted =
+                        delete_role(client, project_env_key, &request.role, drops).await?;
                     Ok(json!({ "deleted": deleted }))
                 })
                 .await
@@ -370,7 +373,7 @@ impl ApplicationRoutes<'_> {
                 self.run(attachment, principal, true, async |client| {
                     let outcome = mutate_grant(
                         client,
-                        env_key,
+                        project_env_key,
                         GrantAuthority::User(principal),
                         GrantChange::Permission {
                             role: &request.role,
@@ -389,7 +392,7 @@ impl ApplicationRoutes<'_> {
                 self.run(attachment, principal, true, async |client| {
                     mutate_grant(
                         client,
-                        env_key,
+                        project_env_key,
                         GrantAuthority::User(principal),
                         GrantChange::Permission {
                             role: &request.role,
@@ -411,7 +414,7 @@ impl ApplicationRoutes<'_> {
                 self.run(attachment, principal, true, async |client| {
                     let granted = mutate_grant(
                         client,
-                        env_key,
+                        project_env_key,
                         GrantAuthority::User(principal),
                         GrantChange::UserRole {
                             user_id,
@@ -433,7 +436,7 @@ impl ApplicationRoutes<'_> {
                 self.run(attachment, principal, true, async |client| {
                     let revoked = mutate_grant(
                         client,
-                        env_key,
+                        project_env_key,
                         GrantAuthority::User(principal),
                         GrantChange::UserRole {
                             user_id,
@@ -465,7 +468,7 @@ impl ApplicationRoutes<'_> {
         request_id: Option<&str>,
         request: CounterSetRequest,
     ) -> Result<Value, Refusal> {
-        require_counter_application(&self.release.scope().applications, &request.application)
+        require_counter_application(&self.release.target().applications, &request.application)
             .map_err(|refusal| counter_set_refusal(&refusal))?;
         let set = CounterSet {
             application: request.application,
@@ -478,7 +481,7 @@ impl ApplicationRoutes<'_> {
             .postgres
             .set_number_counter(
                 self.project,
-                self.release.scope().env_key.as_str(),
+                self.release.target().project_env_key.as_str(),
                 principal.to_string().as_str(),
                 &attachment.operation,
                 request_id.unwrap_or_default(),
@@ -503,7 +506,7 @@ impl ApplicationRoutes<'_> {
     }
 
     /// Run `work` in one administration transaction of the route. A role or
-    /// permission write first takes the tenant lock.
+    /// permission write first takes the project lock.
     async fn run(
         &self,
         attachment: &HostAttachment,
@@ -511,17 +514,17 @@ impl ApplicationRoutes<'_> {
         lock: bool,
         work: impl AsyncFnOnce(&Client) -> Result<Value, Refusal>,
     ) -> Result<Value, Refusal> {
-        let env_key = self.release.scope().env_key.as_str();
+        let project_env_key = self.release.target().project_env_key.as_str();
         self.postgres
             .administration_transaction(
                 self.project,
-                env_key,
+                project_env_key,
                 principal,
                 &attachment.operation,
                 async |client| {
                     if lock {
                         client
-                            .query_one(OPERATION_GRANT_LOCK_SQL, &[&env_key])
+                            .query_one(OPERATION_GRANT_LOCK_SQL, &[&project_env_key])
                             .await?;
                     }
                     work(client).await

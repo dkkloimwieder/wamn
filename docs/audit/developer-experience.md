@@ -112,11 +112,11 @@ Evidence: `apps/client_acme_receiving/wamn.k:15`, `apps/client_acme_receiving/wa
 
 Problem: Acme pins Receiving’s operation, then repeats its request, result, error details, and canonicalization rules. Its Rust component manually translates matching request and error structures. The base version also appears in authored WIT despite the exact dependency declaration.
 
-Proposal: Let an overlay operation explicitly consume the wire shape of an operation from its pinned base artifact. Generate conversions and imports from that relationship. Keep Acme’s identity, claim scope, inspection behavior, and intentional contract overrides explicit.
+Proposal: Let an overlay operation explicitly consume the wire shape of an operation from its pinned base artifact. Generate conversions and imports from that relationship. Keep Acme’s identity, claim target, inspection behavior, and intentional contract overrides explicit.
 
 Deletes: The copied contract portions, the handwritten base WIT import, `base_request`, and matching branches of `base_error`.
 
-Risk: Incorrect inheritance can merge operation identities or change rollback behavior. Prove that a refused inspection rolls back the base receipt and that retries retain separate claim scopes. Retain overlay schema evidence from `apps/client_acme_receiving/tests/overlay_compatibility.rs:24`.
+Risk: Incorrect inheritance can merge operation identities or change rollback behavior. Prove that a refused inspection rolls back the base receipt and that retries retain separate statement targets. Retain overlay schema evidence from `apps/client_acme_receiving/tests/overlay_compatibility.rs:24`.
 
 Owner review 2026-10-31: keep, Group 4 Do, after A5, because composition is where the base wire shape is consumed. Question 3 is answered: yes.
 
@@ -241,13 +241,13 @@ Effort: M
 Area: crates/control/lib/src/dev/coordinator.rs  
 Evidence: `crates/control/lib/src/dev/coordinator.rs:1416`, `crates/control/lib/src/dev/coordinator.rs:1455`, `docs/operations/development-loop.md:266`, `apps/wamn_receiving/tests/route_authentication_live/dev/local_delivery.rs:172`
 
-Problem: A changed package input digest calls `shutdown()` during preparation, before Generate, Build, or Gate. A later failure therefore leaves no previous application serving requests. This contradicts the documented promise that build and gate failures preserve the running application. The invalid-SQL acceptance case requires the previous application to remain reachable.
+Problem: A changed package input digest calls `shutdown()` during preparation, before Generate, Build, or Condition. A later failure therefore leaves no previous application serving requests. This contradicts the documented promise that build and condition failures preserve the running application. The invalid-SQL acceptance case requires the previous application to remain reachable.
 
 Proposal: Prepare artifacts before stopping the active host. Keep the stop boundary at activation for compatible changes, and stop earlier only when database changes require exclusive access.
 
 Deletes: Remove unconditional shutdown on a changed package digest.
 
-Risk: Running an old component against an incompatible schema can break requests. Extend the existing invalid-SQL case to cover compiler failure, gate refusal, and an incompatible migration.
+Risk: Running an old component against an incompatible schema can break requests. Extend the existing invalid-SQL case to cover compiler failure, condition refusal, and an incompatible migration.
 
 Owner review 2026-10-31: keep, Group 2 Do, as written. Fix before any stack rework.
 
@@ -262,7 +262,7 @@ Problem: Standup fixes the coordinate to `acme/receiving/dev` and requires exact
 
 Proposal: Read `environment.k` before provisioning and use its coordinate throughout. Derive package schemas from `wamn.k` without collapsing them into one application schema.
 
-Deletes: Remove Receiving constants and `JourneyScope::receiving()` from the product startup path. Remove the single-schema restriction.
+Deletes: Remove Receiving constants and `JourneyTarget::receiving()` from the product startup path. Remove the single-schema restriction.
 
 Risk: Identity, database markers, and event subjects must retain the same coordinate. Add a startup case with a different coordinate and two schemas, then make authenticated requests through both.
 
@@ -285,14 +285,14 @@ Risk: Cleanup must never remove another session's services. Prove concurrent sta
 
 Owner review 2026-10-31: keep, Group 2 Do. Bare `wamn dev` owns a private stack, and external endpoints are explicit overrides. F2-9 folds in here. Question 1 is answered: yes. Docker on Linux x86_64 is the supported host for now, the reviewer's pick for the owner to confirm.
 
-## Finding F2-6: Startup requires 22 input kinds that largely describe local machinery
+## Finding F2-6: Startup requires 22 input types that largely describe local machinery
 
 Severity: medium  
 Effort: M  
 Area: services/ctl/src/dev/up.rs  
 Evidence: `services/ctl/src/dev/up.rs:29`, `services/ctl/src/dev/up.rs:109`, `services/ctl/src/dev/up.rs:153`, `services/ctl/src/dev/command.rs:21`, `apps/wamn_receiving/tests/examples/delivery_timings.rs:338`
 
-Problem: `dev up` requires 22 input kinds through flags or environment variables, including four event credential pairs. Only the platform UI path has a value default. The optional `--overlay-root` controls the printed next command, but that next command requires it. Startup therefore exposes provisioning details before the developer can run an application.
+Problem: `dev up` requires 22 input types through flags or environment variables, including four event credential pairs. Only the platform UI path has a value default. The optional `--overlay-root` controls the printed next command, but that next command requires it. Startup therefore exposes provisioning details before the developer can run an application.
 
 Proposal: Take package identities, dependencies, components, schemas, and connection requirements from `wamn.k`. Take the coordinate, route host, and application map from `environment.k`. Default binary paths to siblings of `wamn`, resolve component paths from build output, and allocate a private session root and service ports. Generate local broker credentials and use the fixture's local values of one replica and a 120-second duplicate window. Keep connection instance selections and external credentials explicit.
 
@@ -414,7 +414,7 @@ Proposal: Record the following current path once from a cold checkout and once w
    `--platform-ui` defaults to `apps/platform_ui/dist`. `--local-bindings` supplies explicit connection selections when needed. Time: unmeasured. Control and web startup has a 120-second readiness limit (`crates/control/lib/src/dev/control.rs:217`).
 
 7. Write `environment.k` beside `dev.json`, with its application map and coordinate. For declared connections, set `WAMN_CONTROL_URL` and `WAMN_TOKEN`, then write the connection and its initial credential. Time: unmeasured.
-8. Run `wamn dev --config "$DEV_ROOT/dev.json" --overlay-root "$PWD/apps/wamn_receiving" --watch`. Use `--hold` for a persistent one-shot run. Without either mode, the application stops after activation. Time: unmeasured. The loop reports Prepare, Migrate, Introspect, Generate, Build, Virtualize, ACL, Admit, Gate, Release, and Activate. Endpoint reachability has a shared five-second budget. HTTP workload readiness allows 120 seconds, and CDC streaming allows 60 seconds (`crates/control/lib/src/dev/config.rs:26`, `crates/control/lib/src/dev/activation.rs:35`, `crates/control/lib/src/dev/cdc_reader.rs:21`).
+8. Run `wamn dev --config "$DEV_ROOT/dev.json" --overlay-root "$PWD/apps/wamn_receiving" --watch`. Use `--hold` for a persistent one-shot run. Without either mode, the application stops after activation. Time: unmeasured. The loop reports Prepare, Migrate, Introspect, Generate, Build, Virtualize, ACL, Admit, Condition, Release, and Activate. Endpoint reachability has a shared five-second budget. HTTP workload readiness allows 120 seconds, and CDC streaming allows 60 seconds (`crates/control/lib/src/dev/config.rs:26`, `crates/control/lib/src/dev/activation.rs:35`, `crates/control/lib/src/dev/cdc_reader.rs:21`).
 9. Open the emitted application URL and complete local invitation sign-in when needed. API requests return 503 before application activation. Stop the loop, then run `wamn dev down --root "$DEV_ROOT"` and stop external services separately. Time: unmeasured (`docs/operations/development-loop.md:109`, `docs/operations/development-loop.md:120`, `docs/operations/development-loop.md:125`).
 
 Deletes: Replace scattered startup recipes with the selected application path. Retain detailed provisioning instructions for external-service overrides.

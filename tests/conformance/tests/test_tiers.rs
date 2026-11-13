@@ -509,7 +509,7 @@ fn every_ignored_environment_input_has_one_preparation_or_operator_owner() {
                 self.0.extend(
                     names
                         .into_iter()
-                        .filter(|(kind, _)| *kind == "env")
+                        .filter(|(type_, _)| *type_ == "env")
                         .map(|(_, name)| name.to_owned()),
                 );
             }

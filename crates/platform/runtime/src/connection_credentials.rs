@@ -1,4 +1,4 @@
-//! Host-owned connection credentials read through login-scoped database functions.
+//! Host-owned connection credentials read through login-targeted database functions.
 //!
 //! Secret material never enters guests or stored run facts. An absent reader
 //! is unavailable. A reader with no matching enabled connection returns none.
@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 use anyhow::Context as _;
 
-/// Connection credentials scoped by the authenticated reader login.
+/// Connection credentials targeted by the authenticated reader login.
 #[derive(Clone)]
 pub struct ConnectionCredentials {
     org: Option<String>,
@@ -293,7 +293,7 @@ mod tests {
     use test_util::Fixture;
 
     #[tokio::test]
-    async fn active_references_are_scoped_and_disabled_connections_refuse() {
+    async fn active_references_are_targeted_and_disabled_connections_refuse() {
         let _lock = wamn_test_postgres::lock();
         let mut fixture = Fixture::new().await;
         fixture.put("erp", "first", &["project-a"]).await;

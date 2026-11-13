@@ -1,4 +1,4 @@
-//! Live SESSION gate for the App (guest) family's tenant isolation
+//! Live SESSION acceptance test for the App (guest) family's project isolation
 //! (`wamn-dkzr`, from the `wamn-0h0g.12.185` acceptance).
 //!
 //! The App family already has a GRANT-level arm. `workload_generation_live`
@@ -8,7 +8,7 @@
 //! connection, which passes every ACL test and so hides a role defect
 //! completely.
 //!
-//! This gate asks the other question. It opens a REAL session as the minted
+//! This acceptance test asks the other question. It opens a REAL session as the minted
 //! generation login and records what the server answers at authentication time.
 //!
 //! The topology is the one the reach crossed. Two neighbouring project-env
@@ -34,7 +34,7 @@ use tokio_postgres::error::SqlState;
 use tokio_postgres::{Client, NoTls};
 
 use wamn_control_provision::{
-    CredentialGeneration, WorkloadRoleFamily, WorkloadRoleScope, project_env_database_name, sql,
+    CredentialGeneration, WorkloadRoleFamily, WorkloadRoleIdentity, project_env_database_name, sql,
     workload_generation_role,
 };
 use wamn_environment_control::provision_project_env::{privilege_sql, role_posture_sql};
@@ -49,9 +49,9 @@ const HOME_ENVIRONMENT: &str = "dev";
 /// environments on one cluster.
 const NEIGHBOUR_ENVIRONMENT: &str = "staging";
 const INSTANCE: &str = "q4w8z1n6";
-/// ONE tenant across both environments. Same tenant, different database, so the
-/// refusal cannot be explained away as a tenant mismatch.
-const ENV_KEY: &str = "tenant-dkzr";
+/// ONE project across both environments. Same project, different database, so the
+/// refusal cannot be explained away as a project mismatch.
+const PROJECT_ENV_KEY: &str = "project-dkzr";
 /// A throwaway probe string for a disposable server that dies with this test
 /// process. It is never printed and it names no real credential.
 const GENERATION_PROBE_PASSWORD: &str = "app-generation-probe";
@@ -117,13 +117,13 @@ async fn an_app_generation_cannot_open_a_session_on_a_neighbouring_project_env_d
     // `--prepare-guest-generation` calls.
     let generation = workload_generation_role(
         WorkloadRoleFamily::App,
-        WorkloadRoleScope::EnvKey {
-            env_key: ENV_KEY,
+        WorkloadRoleIdentity::ProjectEnvKey {
+            project_env_key: PROJECT_ENV_KEY,
             database: &home,
         },
         CredentialGeneration::A,
     )
-    .expect("the App family takes a tenant scope");
+    .expect("the App family takes a project target");
     run_alone(
         &superuser,
         &sql::prepare_workload_generation_sql(
@@ -157,7 +157,7 @@ async fn an_app_generation_cannot_open_a_session_on_a_neighbouring_project_env_d
         .await
         .expect_err(
             "the App generation opened a session on a NEIGHBOURING project-env \
-             database, which is a live tenant-isolation defect",
+             database, which is a live project-isolation defect",
         );
     assert_eq!(
         refusal.code(),

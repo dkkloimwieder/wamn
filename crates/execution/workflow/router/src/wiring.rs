@@ -138,7 +138,7 @@ impl Wiring {
             out.entry(edge.from.clone()).or_default().push(edge);
         }
         // Fan-out order is the explicit `WiringEdge::ordinal`, not array
-        // position. Ordinals are scoped to a `(from, from_port)` group, so
+        // position. Ordinals are bound to a `(from, from_port)` group, so
         // sorting a whole from-node group here and filtering by port in
         // `successors` yields each port's edges in ordinal order. Stable, so a
         // wiring built without ordinals keeps the order its edges were built in.
@@ -157,7 +157,7 @@ impl Wiring {
     /// Override the per-delivery hop limit. Cycles are a wiring feature, so
     /// termination is bounded at runtime instead: once the walk has handed out
     /// this many invocations (retries included) for one delivery, it fails with
-    /// the terminal [`FailureKind::HopLimit`](crate::FailureKind::HopLimit) —
+    /// the terminal [`FailureType::HopLimit`](crate::FailureType::HopLimit) —
     /// never routed to an error path, which could itself be part of the loop.
     pub fn set_hop_limit(&mut self, limit: u64) {
         self.hop_limit = limit;

@@ -20,7 +20,7 @@ use run_history::persisted_literal_leg;
 use tokio_postgres::{Client, NoTls};
 
 use wamn_control_provision::{
-    CredentialGeneration, WorkloadRoleFamily, WorkloadRoleScope, project_env_database_name,
+    CredentialGeneration, WorkloadRoleFamily, WorkloadRoleIdentity, project_env_database_name,
     sql as provision_sql, workload_generation_role,
 };
 use wamn_environment_control::reconcile_run_plane::{
@@ -28,7 +28,7 @@ use wamn_environment_control::reconcile_run_plane::{
     ReconcileTargetErrorType,
 };
 use wamn_environment_control::verification_policy::project_environment_policy;
-use wamn_schema_control::{BareSchemaName, RunPlaneActionKind, rewrite_schema};
+use wamn_schema_control::{BareSchemaName, RunPlaneActionType, rewrite_schema};
 use wamn_test_infrastructure::locked_database;
 
 const RUN_STATE_SQL: &str = include_str!("../../../../deploy/sql/run-state.sql");
@@ -94,7 +94,7 @@ async fn seed_system_env_policy(su: &Client) {
 }
 
 /// The deployment platform domain and the identity relations the reconciler
-/// reads to build a tenant's `platform."user"` rows (`wamn-0h0g.9.15`).
+/// reads to build a project's `platform."user"` rows (`wamn-0h0g.9.15`).
 ///
 /// The shapes are the columns this reader uses, in the simplified style the
 /// rest of this fixture keeps. `deploy/sql/system-schema.sql` owns the real
@@ -148,7 +148,7 @@ const FIXTURE_SERVICE_ID: &str = "11111111-1111-4111-8111-111111111111";
 /// The one user the fixture admits to `acme/billing/dev` (`wamn-0h0g.9.18`).
 const FIXTURE_USER_ID: &str = "22222222-2222-4222-8222-222222222222";
 
-/// The tenant identity rows one reconcile installs (`wamn-0h0g.9.15`).
+/// The project identity rows one reconcile installs (`wamn-0h0g.9.15`).
 ///
 /// `reconcile-run-plane` is the production application of
 /// `deploy/sql/app-schema.sql` and of the platform principal rows, which
@@ -159,12 +159,12 @@ const FIXTURE_USER_ID: &str = "22222222-2222-4222-8222-222222222222";
 /// The fixture's first user holds a membership in `acme/billing/dev` and gets
 /// a user row carrying its own `identity.principals.email`
 /// (`wamn-0h0g.9.18`). The second user holds the same project role but its
-/// membership names `prod`, so this tenant gives it NO row: the membership
+/// membership names `prod`, so this project gives it NO row: the membership
 /// admits a user, and it admits one environment.
 ///
 /// Called after each apply in this leg, so a second run writing a second time
 /// fails here.
-async fn env_key_identity_leg(su: &Client) {
+async fn project_env_key_identity_leg(su: &Client) {
     let rows: Vec<(String, String, String, String)> = su
         .query(
             "SELECT id::text, type, email, created_by::text FROM platform.\"user\" \
@@ -172,7 +172,7 @@ async fn env_key_identity_leg(su: &Client) {
             &[],
         )
         .await
-        .expect("read the tenant identity rows")
+        .expect("read the project identity rows")
         .into_iter()
         .map(|row| (row.get(0), row.get(1), row.get(2), row.get(3)))
         .collect();
@@ -229,7 +229,7 @@ async fn env_key_identity_leg(su: &Client) {
                 provisioning.to_string(),
             ),
         ],
-        "the tenant carries its five platform rows, the workflow user, one service row and one \
+        "the project carries its five platform rows, the workflow user, one service row and one \
          user row, each stamped by wamn:provisioning, and no row for the member of another \
          environment",
     );
@@ -288,7 +288,7 @@ async fn stale_user_leg(su: &Client, system_su: &Client, system_url: &str, targe
         .await
         .expect("revoke the fixture user's membership");
     let outcome = reconcile().await;
-    assert_eq!(outcome.env_key_identity.user_rows_removed, 1);
+    assert_eq!(outcome.project_env_key_identity.user_rows_removed, 1);
     let rows: Vec<(String, i64)> = su
         .query(
             "SELECT type, count(*) FROM platform.\"user\" \
@@ -296,7 +296,7 @@ async fn stale_user_leg(su: &Client, system_su: &Client, system_url: &str, targe
             &[],
         )
         .await
-        .expect("count the tenant identity rows")
+        .expect("count the project identity rows")
         .into_iter()
         .map(|row| (row.get(0), row.get(1)))
         .collect();
@@ -320,7 +320,10 @@ async fn stale_user_leg(su: &Client, system_su: &Client, system_url: &str, targe
         )
         .await
         .expect("grant the membership again");
-    assert_eq!(reconcile().await.env_key_identity.user_rows_written, 1);
+    assert_eq!(
+        reconcile().await.project_env_key_identity.user_rows_written,
+        1
+    );
     su.batch_execute("DELETE FROM platform.role WHERE name = 'stale-reader'")
         .await
         .expect("remove the fixture role");
@@ -337,7 +340,13 @@ async fn stale_user_leg(su: &Client, system_su: &Client, system_url: &str, targe
         )
         .await
         .expect("make the fixture user a project admin");
-    assert_eq!(reconcile().await.env_key_identity.admin_rows_written, 1);
+    assert_eq!(
+        reconcile()
+            .await
+            .project_env_key_identity
+            .admin_rows_written,
+        1
+    );
     let admin: i64 = su
         .query_one(
             "SELECT count(*) FROM platform.user_role \
@@ -348,7 +357,13 @@ async fn stale_user_leg(su: &Client, system_su: &Client, system_url: &str, targe
         .expect("count the admin rows")
         .get(0);
     assert_eq!(admin, 1);
-    assert_eq!(reconcile().await.env_key_identity.admin_rows_written, 0);
+    assert_eq!(
+        reconcile()
+            .await
+            .project_env_key_identity
+            .admin_rows_written,
+        0
+    );
     system_su
         .execute(
             "DELETE FROM identity.project_roles WHERE principal_id = $1::text::uuid",
@@ -423,22 +438,27 @@ async fn connect_as(url: &str, role: &str, password: &str) -> Client {
     client
 }
 
-async fn seed_run_admission_facts(su: &Client, env_key: &str, package_id: &str, environment: &str) {
+async fn seed_run_admission_facts(
+    su: &Client,
+    project_env_key: &str,
+    package_id: &str,
+    environment: &str,
+) {
     su.execute(
         &format!(
             "INSERT INTO {SCHEMA}.environment_policies \
-               (env_key,expected_environment) \
+               (project_env_key,expected_environment) \
              VALUES ($1,$2)"
         ),
-        &[&env_key, &environment],
+        &[&project_env_key, &environment],
     )
     .await
     .expect("seed the project-local environment policy");
     su.execute(
         "INSERT INTO catalog.packages \
-           (physical_schema_fingerprint, env_key,package_id,package_version,artifact_digest) \
+           (physical_schema_fingerprint, project_env_key,package_id,package_version,artifact_digest) \
          VALUES ('sha256:' || repeat('c', 64), $1,$2,'1.0.0',$3)",
-        &[&env_key, &package_id, &EMPTY_EXECUTION_BUNDLE_HASH],
+        &[&project_env_key, &package_id, &EMPTY_EXECUTION_BUNDLE_HASH],
     )
     .await
     .expect("seed run-pin package");
@@ -542,8 +562,8 @@ async fn run_plane_reconcile_live() {
 }
 
 /// A table owner remains subject to `FORCE ROW LEVEL SECURITY`. Letting that
-/// role reconciliation would hide tenant history, so refuse before even a
-/// dry-run observation can claim completeness.
+/// role reconciliation would hide project history, so refuse before even a
+/// dry-run observation can assert completeness.
 async fn forced_rls_owner_refusal_leg(su: &Client) {
     reset(su).await;
     let schema = schema();
@@ -560,7 +580,7 @@ async fn forced_rls_owner_refusal_leg(su: &Client) {
            'GRANT TEMPORARY ON DATABASE %I TO rp_owner_no_bypass', current_database()); \
          END $temporary$; \
          INSERT INTO {SCHEMA}.runs \
-           (env_key,run_id,wiring_id,wiring_version,wiring_hash,binding_world_json,package_id,environment,status) VALUES \
+           (project_env_key,run_id,wiring_id,wiring_version,wiring_hash,binding_world_json,package_id,environment,status) VALUES \
            ('hidden','owner','fixture-wiring',1,'sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd','[]'::jsonb,'owner','dev','running'); \
          ALTER TABLE {SCHEMA}.runs OWNER TO rp_owner_no_bypass; \
          SET ROLE rp_owner_no_bypass; \
@@ -618,14 +638,14 @@ async fn drop_generation_role(su: &Client, role: &str) {
     .expect("drop the disposable generation role");
 }
 
-/// Mint one guest-SQL generation LOGIN for `env_key` and dial it
+/// Mint one guest-SQL generation LOGIN for `project_env_key` and dial it
 /// (`wamn-0h0g.22.36`).
 ///
 /// # THE BARE `wamn_app` ACL ROLE CANNOT STAND IN FOR THIS
 ///
-/// After `wamn-0h0g.22.6` the tenant floor is
-/// `wamn_authority.tenant_key(env_key) = wamn_authority.current_tenant_key()`,
-/// and `current_tenant_key` recovers a key ONLY from the guest generation
+/// After `wamn-0h0g.22.6` the project base grants are
+/// `wamn_authority.project_key(project_env_key) = wamn_authority.current_project_key()`,
+/// and `current_project_key` recovers a key ONLY from the guest generation
 /// pattern. Under the ACL role it derives NULL, a NULL-compared predicate
 /// matches nothing, and the read returns ZERO ROWS WITH NO ERROR — an assertion
 /// dialing `wamn_app` cannot tell REFUSED from MATCHED-NOTHING, which is the
@@ -636,7 +656,7 @@ async fn drop_generation_role(su: &Client, role: &str) {
 /// production prepare builder also supplies the exact membership edge, direct
 /// database `CONNECT`, finite expiry and stable-role hardening. No test
 /// authenticates as the stable `wamn_app` ACL role.
-async fn mint_guest_generation(su: &Client, url: &str, env_key: &str) -> (String, Client) {
+async fn mint_guest_generation(su: &Client, url: &str, project_env_key: &str) -> (String, Client) {
     let database: String = su
         .query_one("SELECT current_database()", &[])
         .await
@@ -644,13 +664,13 @@ async fn mint_guest_generation(su: &Client, url: &str, env_key: &str) -> (String
         .get(0);
     let generation = workload_generation_role(
         WorkloadRoleFamily::App,
-        WorkloadRoleScope::EnvKey {
-            env_key,
+        WorkloadRoleIdentity::ProjectEnvKey {
+            project_env_key,
             database: &database,
         },
         CredentialGeneration::A,
     )
-    .expect("the guest family takes a tenant scope");
+    .expect("the guest family takes a project target");
     drop_generation_role(su, &generation).await;
     su.batch_execute(&provision_sql::prepare_workload_generation_sql(
         WorkloadRoleFamily::App,
@@ -712,10 +732,10 @@ async fn environment_identity_leg(
     .await
     .expect("reconcile-run-plane applies");
 
-    env_key_identity_leg(su).await;
+    project_env_key_identity_leg(su).await;
 
     su.batch_execute(&format!(
-        "DELETE FROM {SCHEMA}.environment_policies WHERE env_key='acme--billing--dev'"
+        "DELETE FROM {SCHEMA}.environment_policies WHERE project_env_key='acme--billing--dev'"
     ))
     .await
     .expect("remove the local policy before testing projection repair");
@@ -735,7 +755,7 @@ async fn environment_identity_leg(
         .query_one(
             &format!(
                 "SELECT count(*) FROM {SCHEMA}.environment_policies \
-                 WHERE env_key='acme--billing--dev'"
+                 WHERE project_env_key='acme--billing--dev'"
             ),
             &[],
         )
@@ -759,7 +779,7 @@ async fn environment_identity_leg(
     .await
     .expect("reconcile restores the missing local policy");
     // A second apply writes no second copy of any identity row.
-    env_key_identity_leg(su).await;
+    project_env_key_identity_leg(su).await;
     stale_user_leg(su, system_su, system_url, target_url).await;
     // Idempotence: a second reconcile plans nothing.
     let again = reconcile_run_plane::reconcile(su, &schema, false)
@@ -769,7 +789,7 @@ async fn environment_identity_leg(
 }
 
 /// Manifestations 3 + 5 + 6 (the ephemeral-fixture wipe): a database with no
-/// project schemas. The fixed runtime roles are cluster-scoped and shared, so
+/// project schemas. The fixed runtime roles are cluster-targeted and shared, so
 /// this leg must preserve them even when another database has an object owned
 /// by `wamn_app`. Dry-run first (strictly read-only), then apply provisions run
 /// plane + `catalog`, and a functional smoke as `wamn_app` shows grants + RLS
@@ -877,13 +897,13 @@ async fn from_zero_leg(su: &Client, base_url: &str) {
     // Functional smoke as the runtime principal: the sections' grants + RLS
     // hold. wamn-0h0g.22.7 (b1d42599) took every run-plane WRITE away from
     // `wamn_app` — table SELECT and DELETE on `runs`, nothing at all on
-    // `run_queue` — so both tenants' rows are seeded as superuser and the guest
+    // `run_queue` — so both projects' rows are seeded as superuser and the guest
     // is shown to READ its own under RLS and to be REFUSED on write.
     //
     // *** THE PRINCIPAL IS A MINTED GENERATION LOGIN, NOT `SET ROLE wamn_app`
-    // (wamn-0h0g.22.36). *** After wamn-0h0g.22.6 the floor is
-    // `wamn_authority.tenant_key(env_key) = wamn_authority.current_tenant_key()`
-    // and `current_tenant_key` recovers a key ONLY from the guest generation
+    // (wamn-0h0g.22.36). *** After wamn-0h0g.22.6 the minimum is
+    // `wamn_authority.project_key(project_env_key) = wamn_authority.current_project_key()`
+    // and `current_project_key` recovers a key ONLY from the guest generation
     // pattern. Under the BARE ACL role it derives NULL, a NULL-compared
     // predicate matches nothing, and PostgreSQL returns ZERO ROWS WITH NO
     // ERROR — so the retired probe could not tell REFUSED from MATCHED-NOTHING
@@ -894,30 +914,33 @@ async fn from_zero_leg(su: &Client, base_url: &str) {
     seed_run_admission_facts(su, "t2", "cat", "dev").await;
     su.batch_execute(&format!(
         "INSERT INTO {SCHEMA}.runs \
-             (env_key,run_id,wiring_id,wiring_version,wiring_hash,binding_world_json,package_id, \
+             (project_env_key,run_id,wiring_id,wiring_version,wiring_hash,binding_world_json,package_id, \
               environment) \
              VALUES ('acme--billing--dev','r1','fixture-wiring',1,'sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd','[]'::jsonb,'cat','dev'), \
                     ('t2','r2','fixture-wiring',1,'sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd','[]'::jsonb,'cat','dev'); \
-         INSERT INTO {SCHEMA}.run_queue (env_key, run_id) VALUES ('acme--billing--dev', 'r1');"
+         INSERT INTO {SCHEMA}.run_queue (project_env_key, run_id) VALUES ('acme--billing--dev', 'r1');"
     ))
     .await
-    .expect("seed both tenants' run-plane rows");
+    .expect("seed both projects' run-plane rows");
     let seeded: i64 = su
         .query_one(&format!("SELECT count(*) FROM {SCHEMA}.runs"), &[])
         .await
         .expect("superuser sees the whole table")
         .get(0);
-    assert_eq!(seeded, 2, "both tenants' rows exist before the guest reads");
+    assert_eq!(
+        seeded, 2,
+        "both projects' rows exist before the guest reads"
+    );
 
     let (guest_generation, guest) = mint_guest_generation(su, base_url, "acme--billing--dev").await;
     for refused in [
         format!(
             "INSERT INTO {SCHEMA}.runs \
-               (env_key,run_id,wiring_id,wiring_version,wiring_hash,binding_world_json,package_id,environment) \
+               (project_env_key,run_id,wiring_id,wiring_version,wiring_hash,binding_world_json,package_id,environment) \
              VALUES ('acme--billing--dev','r3','fixture-wiring',1,'sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd','[]'::jsonb,'cat','dev')"
         ),
         format!(
-            "INSERT INTO {SCHEMA}.run_queue (env_key, run_id) VALUES ('acme--billing--dev','r3')"
+            "INSERT INTO {SCHEMA}.run_queue (project_env_key, run_id) VALUES ('acme--billing--dev','r3')"
         ),
     ] {
         let denied = guest
@@ -927,23 +950,23 @@ async fn from_zero_leg(su: &Client, base_url: &str) {
         assert_db_code(&denied, "42501", "runtime-role write refusal");
     }
     // THE POST-STATE, not merely a count: the row the guest reads is ITS OWN,
-    // and the foreign tenant's row — shown present above — is absent from the
+    // and the foreign project's row — shown present above — is absent from the
     // result. One query settles admission and isolation together, so a
     // regression to matched-nothing fails on the left half and a regression to
-    // a `USING (true)` floor fails on the right.
+    // a `USING (true)` minimum fails on the right.
     let visible = guest
         .query(
-            &format!("SELECT env_key, run_id FROM {SCHEMA}.runs ORDER BY run_id"),
+            &format!("SELECT project_env_key, run_id FROM {SCHEMA}.runs ORDER BY run_id"),
             &[],
         )
         .await
-        .expect("tenant read");
+        .expect("project read");
     let visible: Vec<(String, String)> =
         visible.iter().map(|row| (row.get(0), row.get(1))).collect();
     assert_eq!(
         visible,
         vec![("acme--billing--dev".to_string(), "r1".to_string())],
-        "the guest generation sees exactly its own tenant's row"
+        "the guest generation sees exactly its own project's row"
     );
     // `runs` is the only run-plane relation the guest role can still read;
     // wamn-0h0g.22.7 (b1d42599) left it nothing at all on `run_queue`.
@@ -975,10 +998,13 @@ async fn from_zero_leg(su: &Client, base_url: &str) {
     drop_database(su, sentinel_database).await;
 }
 
-async fn visible_environment_policy_rows(app: &Client, env_key: &str) -> i64 {
-    app.query_one("SELECT set_config('app.env_key', $1, false)", &[&env_key])
-        .await
-        .expect("set app tenant for environment-policy probe");
+async fn visible_environment_policy_rows(app: &Client, project_env_key: &str) -> i64 {
+    app.query_one(
+        "SELECT set_config('app.project_env_key', $1, false)",
+        &[&project_env_key],
+    )
+    .await
+    .expect("set app project for environment-policy probe");
     app.query_one(
         &format!("SELECT count(*) FROM {SCHEMA}.environment_policies"),
         &[],
@@ -989,7 +1015,7 @@ async fn visible_environment_policy_rows(app: &Client, env_key: &str) -> i64 {
 }
 
 /// Named mutants for the four independent ways an existing env-policy table
-/// can lose tenant confinement. Each repair is followed by a fresh observation
+/// can lose project confinement. Each repair is followed by a fresh observation
 /// showing the catalog converged, not merely that the SQL happened to run.
 async fn environment_policy_row_security_leg(su: &Client, url: &str) {
     reset(su).await;
@@ -997,7 +1023,7 @@ async fn environment_policy_row_security_leg(su: &Client, url: &str) {
     let schema = schema();
     su.batch_execute(&format!(
         "INSERT INTO {SCHEMA}.environment_policies \
-           (env_key, expected_environment) \
+           (project_env_key, expected_environment) \
          VALUES ('acme--billing--dev', 'dev')"
     ))
     .await
@@ -1014,18 +1040,18 @@ async fn environment_policy_row_security_leg(su: &Client, url: &str) {
             format!("ALTER TABLE {SCHEMA}.environment_policies NO FORCE ROW LEVEL SECURITY"),
         ),
         (
-            "missing tenant policy",
+            "missing project policy",
             format!(
-                "DROP POLICY environment_policies_env_key \
+                "DROP POLICY environment_policies_project_env_key \
                    ON {SCHEMA}.environment_policies"
             ),
         ),
         (
-            "widened tenant policy",
+            "widened project policy",
             format!(
-                "DROP POLICY environment_policies_env_key \
+                "DROP POLICY environment_policies_project_env_key \
                    ON {SCHEMA}.environment_policies; \
-                 CREATE POLICY environment_policies_env_key \
+                 CREATE POLICY environment_policies_project_env_key \
                    ON {SCHEMA}.environment_policies AS PERMISSIVE \
                    FOR ALL TO wamn_app USING (true) WITH CHECK (true); \
                  CREATE POLICY environment_policies_extra \
@@ -1042,7 +1068,7 @@ async fn environment_policy_row_security_leg(su: &Client, url: &str) {
             assert_eq!(
                 visible_environment_policy_rows(&guest, "t2").await,
                 1,
-                "the disabled-RLS mutant must expose the foreign tenant row"
+                "the disabled-RLS mutant must expose the foreign project row"
             );
         }
 
@@ -1050,7 +1076,7 @@ async fn environment_policy_row_security_leg(su: &Client, url: &str) {
             .await
             .unwrap_or_else(|error| panic!("observe {mutant} mutant: {error}"));
         assert_eq!(dry.actions.len(), 1, "{mutant}: {:#?}", dry.actions);
-        assert_eq!(dry.actions[0].kind, RunPlaneActionKind::RepairRowSecurity);
+        assert_eq!(dry.actions[0].type_, RunPlaneActionType::RepairRowSecurity);
         assert_eq!(dry.actions[0].target, "environment_policies.row-security");
 
         let applied = reconcile_run_plane::reconcile(su, &schema, true)
@@ -1061,7 +1087,7 @@ async fn environment_policy_row_security_leg(su: &Client, url: &str) {
             assert_eq!(
                 visible_environment_policy_rows(&guest, "t2").await,
                 0,
-                "the repaired policy must hide the foreign tenant row"
+                "the repaired policy must hide the foreign project row"
             );
         }
 

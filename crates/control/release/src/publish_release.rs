@@ -26,12 +26,12 @@ use std::path::PathBuf;
 use anyhow::{Context as _, ensure};
 use tokio_postgres::{Client, NoTls, Transaction};
 use wamn_catalog::{
-    AdmittedComponent, AttachmentTarget, ComponentConnection, ComponentPackageScope,
+    AdmittedComponent, AttachmentTarget, ComponentConnection, ComponentPackageCoordinate,
     ManifestDigest, OperationType, PackageCoordinate, SERVING_MANIFEST_FORMAT_VERSION,
     ServingAttachment, ServingComponent, ServingManifest, ServingRelation, ServingRelease,
     ServingRoute,
 };
-use wamn_engine::release_manifest::ReleaseScope;
+use wamn_engine::release_manifest::ReleaseTarget;
 use wamn_schema_control::{
     BareSchemaName, HttpRoute as AuthoredHttpRoute, canonical_http_route_template,
     normalize_http_route,
@@ -60,10 +60,10 @@ pub use manifest_push::push_manifest_bytes;
 #[cfg(test)]
 use attachments::merge_package_attachment_documents;
 
-const CLAIM_ENV_KEY_SQL: &str = "SELECT set_config('app.env_key', $1, false)";
+const ASSIGN_PROJECT_ENV_KEY_SQL: &str = "SELECT set_config('app.project_env_key', $1, false)";
 const READ_RELEASE_SQL: &str = "\
 SELECT canonical_bytes FROM catalog.releases \
- WHERE env_key = $1 AND manifest_digest = $2";
+ WHERE project_env_key = $1 AND manifest_digest = $2";
 
 /// Inputs owned by the release publisher.
 #[derive(Debug)]
@@ -80,7 +80,7 @@ pub struct PublishReleaseManifest<'a> {
 
 impl PublishReleaseManifest<'_> {
     /// The composed environment key derived from the environment coordinate.
-    pub fn env_key(&self) -> String {
+    pub fn project_env_key(&self) -> String {
         wamn_control_registry::project_env_key(self.org, self.project, self.environment)
     }
 }
@@ -178,9 +178,9 @@ pub struct PublishManifestError {
 }
 
 impl PublishManifestError {
-    pub fn new(kind: PublishManifestErrorType, detail: impl Into<String>) -> Self {
+    pub fn new(type_: PublishManifestErrorType, detail: impl Into<String>) -> Self {
         Self {
-            type_: kind,
+            type_,
             detail: detail.into(),
             source: None,
         }
@@ -229,11 +229,11 @@ impl std::error::Error for PublishManifestError {
 pub type RouteContracts = BTreeMap<(String, String), RouteContract>;
 
 /// What a route takes from the generated contract `operation.json` of its
-/// operation: the kind, the relations a read reads, and the revision field of
+/// operation: the type, the relations a read reads, and the revision field of
 /// a `get`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RouteContract {
-    kind: OperationType,
+    type_: OperationType,
     reads: BTreeSet<ServingRelation>,
     revision: Option<String>,
     idempotency: Option<String>,
@@ -241,9 +241,9 @@ pub struct RouteContract {
 
 #[cfg(test)]
 impl From<OperationType> for RouteContract {
-    fn from(kind: OperationType) -> Self {
+    fn from(type_: OperationType) -> Self {
         Self {
-            kind,
+            type_,
             reads: BTreeSet::new(),
             revision: None,
             idempotency: None,
@@ -269,7 +269,7 @@ pub struct PublishReleaseRequest {
 
 impl PublishReleaseRequest {
     /// The composed environment key derived from the environment coordinate.
-    pub fn env_key(&self) -> String {
+    pub fn project_env_key(&self) -> String {
         wamn_control_registry::project_env_key(&self.org, &self.project, &self.environment)
     }
 }
@@ -315,18 +315,19 @@ pub async fn publish_local(
 )> {
     wamn_runtime::local_application::require_local_target(
         target.database_url,
-        &args.env_key(),
+        &args.project_env_key(),
         &args.environment,
     )
     .await?;
     ensure!(
-        read_projected_environment_disposable(target.control_database_url, &args.env_key()).await?,
+        read_projected_environment_disposable(target.control_database_url, &args.project_env_key())
+            .await?,
         "local candidates require a provisioned disposable environment"
     );
     let (client, connection) = tokio_postgres::connect(target.database_url, NoTls).await?;
     let driver = tokio::spawn(connection);
     client
-        .query_one(CLAIM_ENV_KEY_SQL, &[&args.env_key()])
+        .query_one(ASSIGN_PROJECT_ENV_KEY_SQL, &[&args.project_env_key()])
         .await?;
     let assembled = assemble_local_release(&args, package_roots, admissions)?;
     let run_schema = BareSchemaName::new(target.run_schema.to_owned())?;
@@ -337,11 +338,11 @@ pub async fn publish_local(
     )
     .await?;
     let projected =
-        read_projected_environment_policy(&client, &run_schema, &args.env_key()).await?;
+        read_projected_environment_policy(&client, &run_schema, &args.project_env_key()).await?;
     verify_projected_environment_policy(
         projected.as_ref(),
         &policy,
-        &ReleaseScope::new(args.env_key(), &args.environment),
+        &ReleaseTarget::new(args.project_env_key(), &args.environment),
         &run_schema,
     )?;
     drop(client);
@@ -414,7 +415,7 @@ fn compose_verified_application(
         digest,
         route_digest: route_digest.to_owned(),
         application: wamn_catalog::ServingEntryMember {
-            package_id: application.scope.package_id.as_str().to_owned(),
+            package_id: application.target.package_id.as_str().to_owned(),
             component: application.component.as_str().to_owned(),
             digest: application.component_digest.as_str().to_owned(),
         },
@@ -465,7 +466,7 @@ pub fn refresh_composed_entry(
     let (member, bytes) = covering_application(published, candidates, applications, None)?;
     let route_digest = wamn_digest::bytes_sha256(route_bytes);
     if entry.as_ref().is_some_and(|entry| {
-        entry.application.package_id == member.scope.package_id
+        entry.application.package_id == member.target.package_id
             && entry.application.component == member.component
             && entry.application.digest == member.component_digest
             && entry.route_digest == route_digest
@@ -525,9 +526,9 @@ fn covering_application<'a>(
     for (member, bytes) in candidates {
         if definition
             .packages
-            .contains(member.scope.package_id.as_str())
+            .contains(member.target.package_id.as_str())
             && published.manifest.components.iter().any(|released| {
-                released.package_id == member.scope.package_id
+                released.package_id == member.target.package_id
                     && released.descriptor.component == member.component
                     && released.descriptor.component_digest == member.component_digest
             })
@@ -549,7 +550,10 @@ fn covering_application<'a>(
                 "application {name:?} has multiple members covering every route: {}",
                 members
                     .iter()
-                    .map(|(member, _)| format!("{}::{}", member.scope.package_id, member.component))
+                    .map(|(member, _)| format!(
+                        "{}::{}",
+                        member.target.package_id, member.component
+                    ))
                     .collect::<BTreeSet<_>>()
                     .into_iter()
                     .collect::<Vec<_>>()
@@ -606,11 +610,11 @@ pub fn assemble_local_release(
     for admission in admissions {
         let fact = admission.facts();
         ensure!(
-            fact.scope.env_key == args.env_key()
+            fact.target.project_env_key == args.project_env_key()
                 && packages
                     .iter()
-                    .any(|package| package.package_id() == fact.scope.package_id
-                        && package.package_version() == fact.scope.package_version),
+                    .any(|package| package.package_id() == fact.target.package_id
+                        && package.package_version() == fact.target.package_version),
             "local admission is outside package membership"
         );
         release_components.insert(
@@ -692,7 +696,7 @@ async fn publish_candidate(
     let (_, application) = select_application(&args.applications, args.application.as_deref())?;
     let (coordinates, opened) =
         package_sources::open_application(registry, application, &args.packages).await?;
-    let release_components = descriptor_components(&args.env_key(), &coordinates, &opened)?;
+    let release_components = descriptor_components(&args.project_env_key(), &coordinates, &opened)?;
     let roots = opened
         .iter()
         .map(|package| package.root().to_owned())
@@ -746,10 +750,13 @@ pub(crate) struct ProjectedEnvironmentPolicy {
 pub(crate) async fn read_projected_environment_policy(
     client: &Client,
     run_schema: &BareSchemaName,
-    env_key: &str,
+    project_env_key: &str,
 ) -> Result<Option<ProjectedEnvironmentPolicy>, PublishManifestError> {
     client
-        .query_opt(&projected_environment_policy_sql(run_schema), &[&env_key])
+        .query_opt(
+            &projected_environment_policy_sql(run_schema),
+            &[&project_env_key],
+        )
         .await
         .map(|row| {
             row.map(|row| ProjectedEnvironmentPolicy {
@@ -761,24 +768,24 @@ pub(crate) async fn read_projected_environment_policy(
         .map_err(|error| storage("read the provisioned environment policy", error))
 }
 
-/// Whether provisioning marked this tenant's environment disposable.
+/// Whether provisioning marked this project's environment disposable.
 ///
 /// The same projection the admit path reads (wamn-10yt.38), from the same
 /// control store, read ONCE per release publish rather than once per fact. An
 /// absent relation is a stale store and says so rather than defaulting
-/// quietly. A tenant with no projected row
+/// quietly. A project with no projected row
 /// is DURABLE, which is what keeps the change additive.
 const SELECT_ENVIRONMENT_DISPOSABLE_SQL: &str = "SELECT coalesce((\
-         SELECT disposable FROM catalog.tenant_environments WHERE env_key = $1\
+         SELECT disposable FROM catalog.project_environments WHERE project_env_key = $1\
      ), false)";
 
 async fn read_projected_environment_disposable(
     control_database_url: &str,
-    env_key: &str,
+    project_env_key: &str,
 ) -> anyhow::Result<bool> {
     on_control_plane(control_database_url, async |control| {
         let row = control
-            .query_one(SELECT_ENVIRONMENT_DISPOSABLE_SQL, &[&env_key])
+            .query_one(SELECT_ENVIRONMENT_DISPOSABLE_SQL, &[&project_env_key])
             .await
             .context("read the projected environment's disposable marker")?;
         Ok(row.get(0))
@@ -891,19 +898,19 @@ impl ReleaseComponents {
         ensure!(
             self.connections
                 .insert(
-                    (fact.scope.package_id.clone(), fact.component.clone()),
+                    (fact.target.package_id.clone(), fact.component.clone()),
                     connections,
                 )
                 .is_none(),
             "package {}@{} names component {} twice",
-            fact.scope.package_id,
-            fact.scope.package_version,
+            fact.target.package_id,
+            fact.target.package_version,
             fact.component
         );
         self.facts
             .entry((
-                fact.scope.package_id.clone(),
-                fact.scope.package_version.clone(),
+                fact.target.package_id.clone(),
+                fact.target.package_version.clone(),
             ))
             .or_default()
             .push(fact);
@@ -947,14 +954,14 @@ impl ReleaseComponents {
         fact: &AdmittedComponent,
     ) -> Result<Vec<ComponentConnection>, PublishManifestError> {
         self.connections
-            .get(&(fact.scope.package_id.clone(), fact.component.clone()))
+            .get(&(fact.target.package_id.clone(), fact.component.clone()))
             .cloned()
             .ok_or_else(|| {
                 PublishManifestError::new(
                     PublishManifestErrorType::Component,
                     format!(
                         "component {:?} of package {:?} has no descriptor",
-                        fact.component, fact.scope.package_id
+                        fact.component, fact.target.package_id
                     ),
                 )
             })
@@ -979,15 +986,15 @@ fn package_files(roots: &[PathBuf]) -> (Vec<PathBuf>, Vec<PathBuf>) {
 /// Read the canonical bytes of an installed release.
 pub async fn read_release(
     transaction: &Transaction<'_>,
-    env_key: &str,
+    project_env_key: &str,
     manifest_digest: &str,
 ) -> Result<Option<Vec<u8>>, PublishManifestError> {
     transaction
-        .query_one(CLAIM_ENV_KEY_SQL, &[&env_key])
+        .query_one(ASSIGN_PROJECT_ENV_KEY_SQL, &[&project_env_key])
         .await
-        .map_err(|error| storage("claim the release tenant", error))?;
+        .map_err(|error| storage("bind the release project identity", error))?;
     transaction
-        .query_opt(READ_RELEASE_SQL, &[&env_key, &manifest_digest])
+        .query_opt(READ_RELEASE_SQL, &[&project_env_key, &manifest_digest])
         .await
         .map(|row| row.map(|row| row.get(0)))
         .map_err(|error| storage("read the release", error))
@@ -998,17 +1005,20 @@ fn storage(context: &'static str, error: tokio_postgres::Error) -> PublishManife
 }
 
 fn descriptor_components(
-    env_key: &str,
+    project_env_key: &str,
     packages: &[PackageCoordinate],
     opened: &[OpenedPackage],
 ) -> anyhow::Result<ReleaseComponents> {
     let mut components = ReleaseComponents::default();
     for (package, opened) in packages.iter().zip(opened) {
-        let scope =
-            ComponentPackageScope::new(env_key, package.package_id(), package.package_version())
-                .context("name the release component scope")?;
+        let target = ComponentPackageCoordinate::new(
+            project_env_key,
+            package.package_id(),
+            package.package_version(),
+        )
+        .context("name the release component target")?;
         for descriptor in wamn_package_control::package_artifact::read_descriptors(opened.root())? {
-            let facts = descriptor.into_admitted(scope.clone());
+            let facts = descriptor.into_admitted(target.clone());
             wamn_catalog::verify_stored_effect_projection(&facts.component).with_context(|| {
                 format!(
                     "component {:?} of package {}@{} carries an invalid effect projection",
@@ -1112,8 +1122,8 @@ mod tests {
                 environment_is_disposable: false,
             };
             let mut component = closure_component("source_fixture", None);
-            component.scope.package_id = "source_fixture".to_owned();
-            component.scope.env_key = request.env_key();
+            component.target.package_id = "source_fixture".to_owned();
+            component.target.project_env_key = request.project_env_key();
             let mut components = ReleaseComponents::default();
             components
                 .insert(component, Vec::new(), BTreeMap::new())
@@ -1163,7 +1173,7 @@ mod tests {
     ) -> ServingAttachment {
         let definition = serde_json::json!({
             "id": attachment_id,
-            "kind": "http",
+            "type": "http",
             "route": {"path": path},
         });
         let definition_hash = wamn_digest::canonical_json_sha256(&definition);
@@ -1322,7 +1332,7 @@ mod tests {
     fn release_publish_binds_each_attachment_hash_to_its_definition() {
         let definition = serde_json::json!({
             "id": "fixture-http",
-            "kind": "http",
+            "type": "http",
             "route": {"path": "/widget/get"},
         });
         let definition_hash = wamn_digest::canonical_json_sha256(&definition);
@@ -1357,7 +1367,7 @@ mod tests {
     fn release_publish_writes_no_route_host_and_refuses_an_authored_one() {
         let definition = serde_json::json!({
             "id": "fixture-http",
-            "kind": "http",
+            "type": "http",
             "route": {"path": "/widget/get"},
         });
         let authored_hash = wamn_digest::canonical_json_sha256(&definition);
@@ -1418,7 +1428,7 @@ mod tests {
             .expect("the attachment exists")
             .type_ = wamn_catalog::AttachmentType::Internal;
         let package_host = resolve_route_methods(&non_routed, &fixture_route_contracts(&authored))
-            .expect_err("every attachment kind refuses an authored route hostname");
+            .expect_err("every attachment type refuses an authored route hostname");
         assert_eq!(
             package_host.error_type(),
             PublishManifestErrorType::Document
@@ -1457,7 +1467,7 @@ mod tests {
     }
 
     #[test]
-    fn release_publish_writes_the_method_from_the_operation_kind() {
+    fn release_publish_writes_the_method_from_the_operation_type() {
         let route = |id: &str, operation: &str, path: &str| {
             let mut attachment = package_http_attachment(id, "source_fixture", id, operation, path);
             attachment.target = wamn_catalog::AttachmentTarget::Route {
@@ -1499,7 +1509,7 @@ mod tests {
                 ),
             ),
         ]);
-        let kinds: RouteContracts = [
+        let types: RouteContracts = [
             ("widget/get", OperationType::Get),
             ("widget/query", OperationType::Query),
             ("widget/load", OperationType::Projection),
@@ -1508,18 +1518,18 @@ mod tests {
             ("widget/flow", OperationType::Command),
         ]
         .into_iter()
-        .map(|(operation, kind)| {
+        .map(|(operation, type_)| {
             (
                 (
                     "source_fixture".to_owned(),
                     format!("source-fixture:{operation}@1.0.0"),
                 ),
-                RouteContract::from(kind),
+                RouteContract::from(type_),
             )
         })
         .collect();
         let resolved =
-            resolve_route_methods(&authored, &kinds).expect("every route resolves a method");
+            resolve_route_methods(&authored, &types).expect("every route resolves a method");
         for (id, method) in [
             ("get-http", "GET"),
             ("query-http", "GET"),
@@ -1532,7 +1542,7 @@ mod tests {
         }
 
         let unknown = resolve_route_methods(&authored, &BTreeMap::new())
-            .expect_err("a route to an operation with no contract kind refuses");
+            .expect_err("a route to an operation with no contract type refuses");
         assert_eq!(
             unknown.error_type(),
             PublishManifestErrorType::PackageManifest
@@ -1544,7 +1554,7 @@ mod tests {
             .expect("the attachment exists");
         get.definition["route"]["method"] = serde_json::json!("GET");
         refresh_definition_hash(get);
-        let refusal = resolve_route_methods(&authored_method, &kinds)
+        let refusal = resolve_route_methods(&authored_method, &types)
             .expect_err("an authored method refuses");
         assert_eq!(refusal.error_type(), PublishManifestErrorType::Document);
         assert!(
@@ -1641,7 +1651,7 @@ mod tests {
             .zip(&bytes)
             .map(|(package, bytes)| {
                 let mut fact = closure_component("entry", None);
-                fact.scope.package_id = package.into();
+                fact.target.package_id = package.into();
                 fact.component_digest = wamn_digest::bytes_sha256(bytes);
                 fact
             })
@@ -1650,7 +1660,7 @@ mod tests {
             ServingRelease {
                 packages: facts
                     .iter()
-                    .map(|fact| PackageCoordinate::new(&fact.scope.package_id, "1.0.0").unwrap())
+                    .map(|fact| PackageCoordinate::new(&fact.target.package_id, "1.0.0").unwrap())
                     .collect(),
             },
             facts
@@ -1660,7 +1670,7 @@ mod tests {
             facts[..2]
                 .iter()
                 .map(|fact| ServingRoute {
-                    package_id: fact.scope.package_id.clone(),
+                    package_id: fact.target.package_id.clone(),
                     component: "entry".into(),
                     operation: "run".into(),
                     type_: OperationType::Get,
@@ -1696,7 +1706,7 @@ mod tests {
         // component is outside its declared packages and cannot become its member.
         let (member, _) =
             covering_application(&published, &candidates(), &applications, None).unwrap();
-        assert_eq!(member.scope.package_id, "overlay");
+        assert_eq!(member.target.package_id, "overlay");
         assert_eq!(
             covering_application(&published, &candidates(), &applications, Some("orders"))
                 .unwrap()
@@ -1786,9 +1796,9 @@ mod tests {
     }
 
     /// The release component carries the descriptor layer byte for byte, and
-    /// two tenants read one component from one artifact.
+    /// two projects read one component from one artifact.
     #[tokio::test]
-    async fn a_release_component_carries_its_descriptor_layer_in_every_env_key() {
+    async fn a_release_component_carries_its_descriptor_layer_in_every_project_env_key() {
         let fact = closure_component("registered-component", Some("base:widget/get@1.0.0"));
         let (root, layer) = unpacked_descriptor("layer", &fact);
         let opened = wamn_package_control::package_artifact::open_package_source(
@@ -1797,11 +1807,12 @@ mod tests {
         .await
         .unwrap();
         let packages = [PackageCoordinate::new("base", "1.0.0").unwrap()];
-        let project = |env_key: &str| {
+        let project = |project_env_key: &str| {
             let components =
-                descriptor_components(env_key, &packages, std::slice::from_ref(&opened)).unwrap();
+                descriptor_components(project_env_key, &packages, std::slice::from_ref(&opened))
+                    .unwrap();
             let fact = &components.facts[&("base".to_owned(), "1.0.0".to_owned())][0];
-            assert_eq!(fact.scope.env_key, env_key);
+            assert_eq!(fact.target.project_env_key, project_env_key);
             project_serving_component(fact, components.connections(fact).unwrap()).unwrap()
         };
         let first = project("acme--plant--dev");
@@ -1968,10 +1979,10 @@ mod tests {
         let base_operation = "base:stock/record-widget@1.0.0";
         let overlay_operation = "overlay:stock/record-widget@3.0.0";
         let mut base = closure_component("base-component", Some(base_operation));
-        base.scope.package_id = "base".to_owned();
+        base.target.package_id = "base".to_owned();
         let mut overlay = closure_component("overlay-component", Some(overlay_operation));
-        overlay.scope.package_id = "overlay".to_owned();
-        overlay.scope.package_version = "3.0.0".to_owned();
+        overlay.target.package_id = "overlay".to_owned();
+        overlay.target.package_version = "3.0.0".to_owned();
         overlay.component_digest = format!("sha256:{}", "b".repeat(64));
         let roots = BTreeMap::from([("entry".to_owned(), overlay.clone())]);
         let facts = BTreeMap::from([
@@ -2044,10 +2055,10 @@ mod tests {
         let base_operation = "base:stock/record-widget@1.0.0";
         let overlay_operation = "overlay:stock/record-widget@3.0.0";
         let mut base = closure_component("base-component", Some(base_operation));
-        base.scope.package_id = "base".to_owned();
+        base.target.package_id = "base".to_owned();
         let mut overlay = closure_component("overlay-component", Some(overlay_operation));
-        overlay.scope.package_id = "overlay".to_owned();
-        overlay.scope.package_version = "3.0.0".to_owned();
+        overlay.target.package_id = "overlay".to_owned();
+        overlay.target.package_version = "3.0.0".to_owned();
         overlay.component_digest = format!("sha256:{}", "b".repeat(64));
         let stale_pin = format!("sha256:{}", "d".repeat(64));
         assert_ne!(stale_pin, base.component_digest);
@@ -2089,7 +2100,7 @@ mod tests {
     }
 
     #[test]
-    fn release_projection_preserves_operation_scoped_statement_facts() {
+    fn release_projection_preserves_operation_targeted_statement_facts() {
         let operation = "base:widget/get@1.0.0";
         let sql = "SELECT row_version FROM widget WHERE id = $1";
         let path = "generated/sql/widget/get.sql".to_owned();
@@ -2129,7 +2140,7 @@ mod tests {
             policy: wamn_control_registry::EnvPolicy::prod(),
             source_policy_hash: authoritative_hash.clone().into_boxed_str(),
         };
-        let release = ReleaseScope::new("tenant-a", "prod");
+        let release = ReleaseTarget::new("org-a", "prod");
         let schema = BareSchemaName::new("wamn_run").unwrap();
         assert_eq!(
             verify_projected_environment_policy(None, &source_policy, &release, &schema)

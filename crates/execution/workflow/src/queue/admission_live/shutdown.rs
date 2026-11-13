@@ -9,7 +9,9 @@ use wamn_runtime::plugins::wamn_postgres::WamnPostgres;
 use wash_runtime::engine::Engine;
 use wash_runtime::host::probes::Liveness;
 
-use super::{NODE_TYPES, OPERATION, QUEUE_CLAIM_SCOPE, QueueScope, RouterDriver, WamnJetstream};
+use super::{
+    NODE_TYPES, OPERATION, QUEUE_LEASE_INVOCATION, QueueTarget, RouterDriver, WamnJetstream,
+};
 
 pub(super) fn component_bytes() -> Vec<u8> {
     wat::parse_str(format!(r#"(component
@@ -51,7 +53,7 @@ pub(super) struct Execution<'a> {
     pub(super) engine: &'a Engine,
     pub(super) logging: &'a WamnLogging,
     pub(super) capture: &'a Capture,
-    pub(super) scope: &'a QueueScope,
+    pub(super) target: &'a QueueTarget,
     pub(super) jetstream: &'a WamnJetstream,
 }
 
@@ -72,7 +74,7 @@ pub(super) async fn run(
                 execution.driver,
                 execution.postgres,
                 execution.jetstream,
-                execution.scope,
+                execution.target,
                 1000,
                 &liveness,
             ))
@@ -82,9 +84,9 @@ pub(super) async fn run(
             Ok(execution
                 .postgres
                 .pinned_backlog(
-                    QUEUE_CLAIM_SCOPE,
-                    &execution.scope.package_ids,
-                    &execution.scope.environment,
+                    QUEUE_LEASE_INVOCATION,
+                    &execution.target.package_ids,
+                    &execution.target.environment,
                 )
                 .await?)
         },
@@ -100,22 +102,26 @@ pub(super) async fn run(
             }
         }
     }).await.expect("actual guest entry before signal");
-    let scopes = execution.postgres.invocation_scopes_for_test();
-    assert_eq!(scopes.len(), 1, "one real guest invocation holds authority");
-    let scope = &scopes[0];
+    let targets = execution.postgres.invocation_scopes_for_test();
+    assert_eq!(
+        targets.len(),
+        1,
+        "one real guest invocation holds authority"
+    );
+    let target = &targets[0];
     assert_eq!(
         execution
             .postgres
-            .session_claims(scope)
+            .session_identity(target)
             .unwrap()
             .user_id
             .as_deref(),
         Some(super::SERVICE)
     );
-    assert!(execution.logging.claim_snapshot(scope).is_some());
+    assert!(execution.logging.identity_snapshot(target).is_some());
     let before = admin
         .query_one(
-            "SELECT r.status,q.lease_generation FROM wamn_run.runs r JOIN wamn_run.run_queue q USING (env_key,run_id) WHERE run_id=$1",
+            "SELECT r.status,q.lease_generation FROM wamn_run.runs r JOIN wamn_run.run_queue q USING (project_env_key,run_id) WHERE run_id=$1",
             &[&run],
         )
         .await?;
@@ -144,12 +150,12 @@ pub(super) async fn run(
         "shutdown must discard the interrupted lease renewal connection"
     );
     admin.batch_execute("ROLLBACK").await?;
-    assert!(execution.postgres.invocation(scope).is_none());
-    assert!(execution.postgres.session_claims(scope).is_none());
-    assert!(execution.logging.claim_snapshot(scope).is_none());
+    assert!(execution.postgres.invocation(target).is_none());
+    assert!(execution.postgres.session_identity(target).is_none());
+    assert!(execution.logging.identity_snapshot(target).is_none());
     let after = admin
         .query_one(
-            "SELECT r.status,q.lease_generation,r.result_json::text FROM wamn_run.runs r JOIN wamn_run.run_queue q USING (env_key,run_id) WHERE run_id=$1",
+            "SELECT r.status,q.lease_generation,r.result_json::text FROM wamn_run.runs r JOIN wamn_run.run_queue q USING (project_env_key,run_id) WHERE run_id=$1",
             &[&run],
         )
         .await?;
@@ -161,7 +167,7 @@ pub(super) async fn run(
     assert_eq!(
         after.get::<_, i64>(1),
         generation,
-        "shutdown never claims again"
+        "shutdown never leases again"
     );
     assert!(after.get::<_, Option<String>>(2).is_none());
     timeout(Duration::from_secs(3), async {
@@ -171,17 +177,17 @@ pub(super) async fn run(
             tokio::time::sleep(Duration::from_millis(20)).await;
         }
     }).await.expect("aborted lease expires without further renewal")?;
-    let reclaimed = execution
+    let recovered = execution
         .postgres
-        .claim_next(
-            QUEUE_CLAIM_SCOPE,
-            &execution.scope.package_ids,
-            &execution.scope.environment,
+        .lease_next(
+            QUEUE_LEASE_INVOCATION,
+            &execution.target.package_ids,
+            &execution.target.environment,
             1000,
         )
         .await?;
-    match reclaimed {
-        super::super::ProductionClaimResult::Ready {
+    match recovered {
+        super::super::ProductionLeaseResult::Ready {
             run_id,
             lease_generation,
             ..
@@ -189,14 +195,14 @@ pub(super) async fn run(
             assert_eq!(run_id, run);
             assert!(lease_generation > generation, "recovery owns a new fence");
         }
-        super::super::ProductionClaimResult::Empty => {
-            panic!("aborted run must be reclaimable: Empty")
+        super::super::ProductionLeaseResult::Empty => {
+            panic!("aborted run must be recoverable: Empty")
         }
     }
     let stale = execution
         .postgres
         .complete(
-            QUEUE_CLAIM_SCOPE,
+            QUEUE_LEASE_INVOCATION,
             &run,
             generation,
             &wamn_runtime::plugins::wamn_postgres::ProductionCompletion::completed(
@@ -206,11 +212,13 @@ pub(super) async fn run(
         )
         .await?;
     assert_eq!(stale, super::super::ProductionCompletionResult::FenceLost);
-    execution.postgres.revoke_session_claims(QUEUE_CLAIM_SCOPE);
+    execution
+        .postgres
+        .revoke_session_identity(QUEUE_LEASE_INVOCATION);
     assert!(
         execution
             .postgres
-            .session_claims(QUEUE_CLAIM_SCOPE)
+            .session_identity(QUEUE_LEASE_INVOCATION)
             .is_none()
     );
     timeout(Duration::from_secs(25), async {

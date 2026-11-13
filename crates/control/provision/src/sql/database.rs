@@ -61,7 +61,7 @@ pub fn set_database_owner_sql(database: &str) -> String {
 /// Pass a name from [`project_env_database_name`](crate::project_env_database_name)
 /// (`wamn-db-<org>--<project>--<env>--<instance>`). In production the CNPG `Database` CRD
 /// creates the per-project-env database; this is the plain-SQL equivalent the
-/// substrate-agnostic gate uses off-cluster (wamn-q3n.8).
+/// substrate-agnostic condition uses off-cluster (wamn-q3n.8).
 /// PostgreSQL extensions the PLATFORM installs in every project-environment
 /// database. Closed, and owned here rather than by any package.
 ///
@@ -109,7 +109,7 @@ pub fn create_database_named_sql(database: &str) -> String {
 }
 
 /// `DROP DATABASE IF EXISTS "<database>" WITH (FORCE)`, naming the database
-/// directly (teardown / gate only; destructive). Autocommit.
+/// directly (teardown / condition only; destructive). Autocommit.
 pub fn drop_database_named_sql(database: &str) -> String {
     format!(
         "DROP DATABASE IF EXISTS {} WITH (FORCE)",

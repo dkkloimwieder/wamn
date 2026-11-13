@@ -15,7 +15,7 @@
 //!    never an interior entry, and writes no marker.
 //! 2. A live row keeps its retained diffs after its insert expires. A deleted
 //!    row whose images expired keeps no entry.
-//! 3. The verb refuses a login outside the audit retention family and a tenant
+//! 3. The verb refuses a login outside the audit retention family and a project
 //!    that the credential was not minted for. The case reads the post-state.
 //! 4. The role reads no history image column and holds no `wamn_platform` edge.
 //!    It holds pruning grants on finite history and successful write claims.
@@ -25,8 +25,8 @@ use std::path::{Path, PathBuf};
 
 use tokio_postgres::{Client, NoTls};
 use wamn_control_provision::{
-    AUDIT_RETENTION_ROLE, CredentialGeneration, WorkloadRoleFamily, WorkloadRoleScope, compose_url,
-    sql, workload_generation_role,
+    AUDIT_RETENTION_ROLE, CredentialGeneration, WorkloadRoleFamily, WorkloadRoleIdentity,
+    compose_url, sql, workload_generation_role,
 };
 use wamn_package_control::apply_package::{self, ApplyOutcome, ApplyPackageRequest};
 use wamn_test_infrastructure::ctl_process;
@@ -34,8 +34,8 @@ use wamn_test_infrastructure::locked_database;
 
 const SCHEMA: &str = "record_retention";
 const PACKAGE_ID: &str = "record_retention_fixture";
-const ENV_KEY: &str = "record-retention-t--fixture--dev";
-const OTHER_ENV_KEY: &str = "record-retention-other";
+const PROJECT_ENV_KEY: &str = "record-retention-t--fixture--dev";
+const OTHER_PROJECT_ENV_KEY: &str = "record-retention-other";
 const GENERATION_PASSWORD: &str = "record-retention-test-generation";
 /// The test principal that the fixture writes bind.
 const FIXTURE_PRINCIPAL: &str = "00000000-0000-4000-8000-0000000000f2";
@@ -65,7 +65,7 @@ async fn current_database(admin: &Client) -> String {
         .get(0)
 }
 
-/// Install the catalog and the application floor on a clean database.
+/// Install the catalog and the application minimum on a clean database.
 async fn provision(admin: &Client) {
     admin
         .batch_execute(sql::ensure_db_owner_role_sql())
@@ -181,10 +181,13 @@ async fn apply(url: &str, package: &Path) -> anyhow::Result<ApplyOutcome> {
     .await
 }
 
-fn generation(family: WorkloadRoleFamily, env_key: &str, database: &str) -> String {
+fn generation(family: WorkloadRoleFamily, project_env_key: &str, database: &str) -> String {
     workload_generation_role(
         family,
-        WorkloadRoleScope::EnvKey { env_key, database },
+        WorkloadRoleIdentity::ProjectEnvKey {
+            project_env_key,
+            database,
+        },
         CredentialGeneration::A,
     )
     .unwrap_or_else(|error| panic!("derive the {} generation identity: {error}", family.label()))
@@ -301,13 +304,13 @@ async fn positions(admin: &Client) -> BTreeMap<String, Vec<i64>> {
     observed
 }
 
-fn prune_argv<'a>(url: &'a str, env_key: &'a str) -> [&'a str; 9] {
+fn prune_argv<'a>(url: &'a str, project_env_key: &'a str) -> [&'a str; 9] {
     [
         "prune-record-history",
         "--database-url",
         url,
         "--org",
-        env_key.split("--").next().expect("fixture org"),
+        project_env_key.split("--").next().expect("fixture org"),
         "--project",
         "fixture",
         "--environment",
@@ -316,8 +319,8 @@ fn prune_argv<'a>(url: &'a str, env_key: &'a str) -> [&'a str; 9] {
 }
 
 /// Run the verb and require the identity refusal.
-async fn assert_refused(url: &str, env_key: &str, label: &str) {
-    ctl_process::require_ops_success(prune_argv(url, env_key))
+async fn assert_refused(url: &str, project_env_key: &str, label: &str) {
+    ctl_process::require_ops_success(prune_argv(url, project_env_key))
         .await
         .expect_err(label);
 }
@@ -409,7 +412,7 @@ async fn assert_authority(admin: &Client, credential_url: &str) {
 
 #[tokio::test]
 async fn prune_removes_only_the_expired_prefix_of_each_row() {
-    let url = locked_database::database(wamn_platform_identity::test_database::tenant_platform);
+    let url = locked_database::database(wamn_platform_identity::test_database::project_platform);
     let admin = connect(&url).await;
     let database = current_database(&admin).await;
     provision(&admin).await;
@@ -556,8 +559,12 @@ async fn prune_removes_only_the_expired_prefix_of_each_row() {
     }
     let seeded = positions(&admin).await;
 
-    let credential_role = generation(WorkloadRoleFamily::AuditRetention, ENV_KEY, &database);
-    let run_retention_role = generation(WorkloadRoleFamily::Retention, ENV_KEY, &database);
+    let credential_role = generation(
+        WorkloadRoleFamily::AuditRetention,
+        PROJECT_ENV_KEY,
+        &database,
+    );
+    let run_retention_role = generation(WorkloadRoleFamily::Retention, PROJECT_ENV_KEY, &database);
     mint(
         &admin,
         WorkloadRoleFamily::AuditRetention,
@@ -578,12 +585,17 @@ async fn prune_removes_only_the_expired_prefix_of_each_row() {
     // Spec test 15, against the populated history.
     assert_refused(
         &credential_url,
-        OTHER_ENV_KEY,
+        OTHER_PROJECT_ENV_KEY,
         "foreign environment coordinate",
     )
     .await;
-    assert_refused(&run_retention_url, ENV_KEY, "run retention generation").await;
-    assert_refused(&url, ENV_KEY, "superuser login").await;
+    assert_refused(
+        &run_retention_url,
+        PROJECT_ENV_KEY,
+        "run retention generation",
+    )
+    .await;
+    assert_refused(&url, PROJECT_ENV_KEY, "superuser login").await;
     assert_eq!(
         positions(&admin).await,
         seeded,
@@ -592,7 +604,7 @@ async fn prune_removes_only_the_expired_prefix_of_each_row() {
 
     assert_authority(&admin, &credential_url).await;
 
-    ctl_process::require_ops_success(prune_argv(&credential_url, ENV_KEY))
+    ctl_process::require_ops_success(prune_argv(&credential_url, PROJECT_ENV_KEY))
         .await
         .expect("prune record history through wamn-ctl-ops");
 
@@ -678,7 +690,7 @@ async fn wait_for_blocker(observer: &Client, application: &str, blocker: i32) {
 
 #[tokio::test]
 async fn history_table_creation_waits_for_a_running_prune() {
-    let url = locked_database::database(wamn_platform_identity::test_database::tenant_platform);
+    let url = locked_database::database(wamn_platform_identity::test_database::project_platform);
     let admin = connect(&url).await;
     provision(&admin).await;
     let package = fixture_root("prune-record-history-lock");

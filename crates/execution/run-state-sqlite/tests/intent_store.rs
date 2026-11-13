@@ -26,7 +26,7 @@ fn database(name: &str) -> PathBuf {
 
 fn intent<'a>(key: &'a str, input_hash: &'a str) -> Intent<'a> {
     Intent {
-        tenant: "tenant-a",
+        partition: "org-a",
         release: "release-1",
         package: "scale",
         operation: "record_sample",
@@ -37,7 +37,7 @@ fn intent<'a>(key: &'a str, input_hash: &'a str) -> Intent<'a> {
 }
 
 /// Each case of the shared intent store case set opens a fresh file. One
-/// SQLite file serves every tenant, so both stores of a case are one store.
+/// SQLite file serves every partition, so both stores of a case are one store.
 struct Files;
 
 #[async_trait::async_trait]
@@ -47,9 +47,9 @@ impl IntentStoreFixture for Files {
             Arc::new(SqliteIntentStore::open(database(case)).expect("open"));
         CaseStores {
             store: Arc::clone(&store),
-            tenant: "tenant-a".to_owned(),
+            partition: "org-a".to_owned(),
             other: store,
-            other_tenant: "tenant-b".to_owned(),
+            other_partition: "org-b".to_owned(),
         }
     }
 }
@@ -75,8 +75,8 @@ async fn a_repeated_key_with_another_input_conflicts() {
 }
 
 #[tokio::test]
-async fn keys_belong_to_their_tenant() {
-    intent_cases::keys_belong_to_their_tenant(&Files).await;
+async fn keys_belong_to_their_partition() {
+    intent_cases::keys_belong_to_their_partition(&Files).await;
 }
 
 #[tokio::test]

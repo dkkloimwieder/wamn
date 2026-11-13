@@ -247,11 +247,11 @@ pub fn forget_generation_password_sql() -> &'static str {
     "DELETE FROM registry.generation_passwords WHERE role = $1"
 }
 
-/// Session-scoped serialization primitive for workload credential mutation.
+/// Session-targeted serialization primitive for workload credential mutation.
 ///
 /// The generic lifecycle supplies a family-global key because it normalizes
 /// every current member of that family's stable ACL role. Serializing at a
-/// narrower scope would let a stale cross-scope read regrant a retired member.
-pub fn workload_scope_lock_sql() -> &'static str {
+/// narrower target would let a stale cross-target read regrant a retired member.
+pub fn workload_identity_lock_sql() -> &'static str {
     "SELECT pg_advisory_lock(hashtextextended($1::text, 0))"
 }

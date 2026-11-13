@@ -50,7 +50,7 @@ The logs are in `/var/tmp/wamn-ag3a-log`. The runs did not use kind on this bran
 
 ## Open items
 
-- The doc comment of `project_env_key` at `crates/control/registry/src/types.rs:392` still says "the tenant of a project environment". The wording is older than this epic and belongs to the tenant wording cleanup.
+- The doc comment of `project_env_key` at `crates/control/registry/src/types.rs:392` still says "the project of a project environment". The wording is older than this epic and belongs to the project wording cleanup.
 - The display text at `crates/control/lib/src/platform/steps.rs:216` keeps the old credential name. It is in a hard-stop file, and `alignment-f0` changes it later.
 - The subject of main commit `47b9984d6` uses a word that the vocabulary rule removes. The commit is pushed and stays as it is.
 - `wamn-dxyqc` adds one local install-sequence live test with a case per failure of test-cluster runs 1 to 6. Commits `47b9984d6` and `0decdb998` have no test of their own until it lands.

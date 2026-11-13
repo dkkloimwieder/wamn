@@ -1,6 +1,6 @@
-//! The platform principal rows that provisioning writes into a tenant database.
+//! The platform principal rows that provisioning writes into a project database.
 //!
-//! Every platform component that writes in a tenant has an `platform."user"`
+//! Every platform component that writes in a project has an `platform."user"`
 //! row of type `platform`. The row carries the derived id, the
 //! `wamn:<component>` name, and the email `<component>@<platform-domain>`.
 //! `deploy/sql/app-schema.sql` pins each name and id pair. Static SQL cannot
@@ -66,10 +66,10 @@ pub fn bind_platform_principal_sql(component: PlatformComponent) -> String {
     )
 }
 
-/// Render the SQL that creates the platform rows of one tenant.
+/// Render the SQL that creates the platform rows of one project.
 ///
 /// The SQL first binds `wamn:provisioning` as the actor and the operation. The
-/// `wamn:provisioning` row comes next, because it is the first row in a tenant
+/// `wamn:provisioning` row comes next, because it is the first row in a project
 /// database, and it stamps itself. The other components follow. The SQL
 /// carries no transaction control, so the caller runs it inside one
 /// transaction. The binding ends with that transaction.
@@ -79,7 +79,7 @@ pub fn bind_platform_principal_sql(component: PlatformComponent) -> String {
 /// `workflow@<platform-domain>`. The platform grants it no role.
 ///
 /// Each insert keeps a row that is already there. Running the SQL twice, or
-/// running it against a tenant that holds part of the list, writes the rest
+/// running it against a project that holds part of the list, writes the rest
 /// and changes nothing else (`wamn-0h0g.9.15`).
 ///
 /// # Errors
@@ -178,7 +178,7 @@ mod tests {
         assert_eq!(
             sql.matches("ON CONFLICT (id) DO NOTHING").count(),
             PlatformComponent::ALL.len() + 1,
-            "every insert keeps a row that is already there, so a env_key holding part of the \
+            "every insert keeps a row that is already there, so a project_env_key holding part of the \
              list converges to the whole list"
         );
     }

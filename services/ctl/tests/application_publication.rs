@@ -46,7 +46,7 @@ fn package(work: &Path, id: &str, version: &str) -> anyhow::Result<PathBuf> {
     std::fs::write(
         root.join("publication/components/entry.json.in"),
         serde_json::to_vec(&json!({
-            "scope": {"env_key": "__ENV_KEY__", "package-id": id},
+            "target": {"project_env_key": "__PROJECT_ENV_KEY__", "package-id": id},
             "component": "entry", "interface-version": "0.1.0",
             "operations": {&reference: {"registered-operation": reference,
                 "input-ports": [], "output-ports": [], "parameters": []}}, "connections": []

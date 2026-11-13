@@ -48,14 +48,14 @@ impl WamnJetstream {
         postgres: &WamnPostgres,
         admission: &EventBatchAdmission<'_>,
     ) -> Result<(), JsError> {
-        let env_key = self.materializer_env_key()?;
+        let project_env_key = self.materializer_project_env_key()?;
         let coordinates = &self.event_coordinates;
         let source = SourceEvent::decode(admission.envelope.as_bytes())
             .map_err(|error| JsError::Other(error.to_string()))?;
         if admission.sequence == 0
             || source
                 .identity(
-                    &env_key,
+                    &project_env_key,
                     &coordinates.project,
                     &coordinates.environment,
                     &[admission.source_event_id],
@@ -70,7 +70,11 @@ impl WamnJetstream {
             return Ok(());
         }
         let triggers = postgres
-            .event_triggers(&coordinates.project, &env_key, &coordinates.environment)
+            .event_triggers(
+                &coordinates.project,
+                &project_env_key,
+                &coordinates.environment,
+            )
             .await
             .map_err(|error| JsError::Other(error.to_string()))?;
         let applications: BTreeSet<_> = triggers
@@ -134,23 +138,27 @@ impl WamnJetstream {
         postgres: &WamnPostgres,
         release: &LoadedRelease,
     ) -> Result<(), JsError> {
-        let env_key = self.materializer_env_key()?;
+        let project_env_key = self.materializer_project_env_key()?;
         let coordinates = &self.event_coordinates;
-        if release.scope().applications.len() != 1
-            || release.scope().env_key != env_key
-            || release.scope().environment != coordinates.environment.as_ref()
+        if release.target().applications.len() != 1
+            || release.target().project_env_key != project_env_key
+            || release.target().environment != coordinates.environment.as_ref()
         {
             return Err(JsError::Other(UNREGISTERED_SOURCE.into()));
         }
         let triggers = postgres
-            .event_triggers(&coordinates.project, &env_key, &coordinates.environment)
+            .event_triggers(
+                &coordinates.project,
+                &project_env_key,
+                &coordinates.environment,
+            )
             .await
             .map_err(|error| JsError::Other(error.to_string()))?;
         let sources: BTreeSet<_> = triggers
             .iter()
             .filter(|trigger| {
                 release
-                    .scope()
+                    .target()
                     .applications
                     .contains_key(&trigger.application)
             })

@@ -104,10 +104,10 @@ fn a_puller_verifies_the_publisher_layout_without_knowing_the_size() {
     );
 }
 
-fn scope(canonical: &[u8]) -> wamn_engine::release_manifest::ReleaseScope {
+fn target(canonical: &[u8]) -> wamn_engine::release_manifest::ReleaseTarget {
     let (manifest, _) = wamn_catalog::ServingManifest::from_canonical_bytes(canonical)
         .expect("the published manifest is valid");
-    wamn_engine::release_manifest::ReleaseScope::new("t1", "prod").with_applications(
+    wamn_engine::release_manifest::ReleaseTarget::new("t1", "prod").with_applications(
         [(
             "catalog".to_owned(),
             wamn_catalog::ApplicationDefinition {
@@ -129,7 +129,7 @@ fn pulled_bytes_load_the_release_naming_their_carrier() {
     let canonical = br#"{"attachments":{},"components":[],"format-version":11,"release":{"packages":[{"package-id":"cat","package-version":"1.0.0"}]},"routes":[]}"#;
 
     let loaded_release =
-        LoadedRelease::load_canonical_bytes(canonical, ARTIFACT_BASE, scope(canonical))
+        LoadedRelease::load_canonical_bytes(canonical, ARTIFACT_BASE, target(canonical))
             .expect("verified canonical bytes load without a mount");
     assert_eq!(
         loaded_release.release().manifest_digest.as_str(),
@@ -138,7 +138,7 @@ fn pulled_bytes_load_the_release_naming_their_carrier() {
 
     let mut trailing = canonical.to_vec();
     trailing.push(b'\n');
-    let error = LoadedRelease::load_canonical_bytes(&trailing, ARTIFACT_BASE, scope(canonical))
+    let error = LoadedRelease::load_canonical_bytes(&trailing, ARTIFACT_BASE, target(canonical))
         .expect_err("a non-canonical body refuses");
     assert!(
         error.to_string().contains(ARTIFACT_BASE),
@@ -202,7 +202,7 @@ async fn a_digest_that_cannot_name_an_artifact_refuses_before_any_transport() {
 
 /// One required live-leg fact, or a failure naming the variable and its shape.
 ///
-/// `#[ignore]` gates *selection*; once a run has selected this leg, an absent
+/// `#[ignore]` conditions *selection*; once a run has selected this leg, an absent
 /// variable is a failed test. A `let Ok(value) = var(..) else { return }` skip
 /// would report success in every default run and show nothing.
 fn live_env(name: &str, expectation: &str) -> String {
@@ -252,7 +252,7 @@ async fn a_published_release_pulls_back_byte_exact_and_loads_the_release_it_name
 
     let origin = format!("{artifact_base}@{manifest_digest}");
     let loaded_release =
-        LoadedRelease::load_canonical_bytes(&canonical_bytes, &origin, scope(&canonical_bytes))
+        LoadedRelease::load_canonical_bytes(&canonical_bytes, &origin, target(&canonical_bytes))
             .expect("the pulled bytes load the release");
 
     // The identity comes out of the transferred content, and it agrees with

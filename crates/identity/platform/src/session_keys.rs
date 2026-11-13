@@ -1,4 +1,4 @@
-//! Issuer-scoped Ed25519 keys stay inside the system-database signing authority.
+//! Issuer-targeted Ed25519 keys stay inside the system-database signing authority.
 //!
 //! Publication and activation are separate committed operations. Signers hold
 //! the issuer row's shared lock until signing completes; lifecycle mutations

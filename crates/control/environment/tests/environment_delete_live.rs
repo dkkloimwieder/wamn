@@ -122,7 +122,7 @@ esac
         .batch_execute("GRANT wamn_platform TO wamn_db_owner WITH INHERIT TRUE, SET FALSE")
         .await?;
     let mut project = connect(project_url.as_str()).await?;
-    let env_key =
+    let project_env_key =
         wamn_control_provision::project_env_key(&triple.org, &triple.project, &triple.env);
     let bytes = b"stranded release";
     let digest = wamn_digest::bytes_sha256(bytes);
@@ -132,8 +132,8 @@ esac
             wamn_control_provision::PlatformComponent::Provisioning,
         ))
         .await?;
-    transaction.execute("INSERT INTO catalog.releases(env_key,manifest_digest,canonical_bytes) VALUES($1,$2,$3)", &[&env_key, &digest, &&bytes[..]]).await?;
-    transaction.execute("INSERT INTO wamn_run.runs(env_key,run_id,package_id,environment,status,manifest_digest,wiring_id,wiring_version,wiring_hash,binding_world_json) VALUES($1,'stranded-work','app',$2,'dispatched',$3,'work',1,$3,'[]')", &[&env_key, &triple.env.as_str(), &digest]).await?;
+    transaction.execute("INSERT INTO catalog.releases(project_env_key,manifest_digest,canonical_bytes) VALUES($1,$2,$3)", &[&project_env_key, &digest, &&bytes[..]]).await?;
+    transaction.execute("INSERT INTO wamn_run.runs(project_env_key,run_id,package_id,environment,status,manifest_digest,wiring_id,wiring_version,wiring_hash,binding_world_json) VALUES($1,'stranded-work','app',$2,'dispatched',$3,'work',1,$3,'[]')", &[&project_env_key, &triple.env.as_str(), &digest]).await?;
     transaction.commit().await?;
     let run_before: serde_json::Value = project
         .query_one("SELECT to_jsonb(r) FROM wamn_run.runs r", &[])
@@ -227,20 +227,23 @@ async fn cancellation_retains_registry_inputs_until_cleanup_commits() -> anyhow:
     let triple = Triple::new("acme", "app", "dev");
     let other = Triple::new("acme", "app", "prod");
     let transaction = provisioning_transaction(&mut system).await?;
-    for scope in [&triple, &other] {
+    for target in [&triple, &other] {
         transaction
             .batch_execute(
                 &wamn_control_provision::test_database::seed_org_project_env_sql(
-                    &scope.org,
-                    &scope.project,
-                    &scope.env,
+                    &target.org,
+                    &target.project,
+                    &target.env,
                 ),
             )
             .await?;
-        let env_key =
-            wamn_control_provision::project_env_key(&scope.org, &scope.project, &scope.env);
+        let project_env_key =
+            wamn_control_provision::project_env_key(&target.org, &target.project, &target.env);
         transaction
-            .query_one("SELECT set_config('app.env_key', $1, true)", &[&env_key])
+            .query_one(
+                "SELECT set_config('app.project_env_key', $1, true)",
+                &[&project_env_key],
+            )
             .await?;
     }
     transaction.batch_execute(
@@ -288,7 +291,7 @@ async fn cancellation_retains_registry_inputs_until_cleanup_commits() -> anyhow:
         .await?
         .get(0);
     let held = blocker.transaction().await?;
-    held.batch_execute("LOCK TABLE catalog.tenant_environments IN SHARE MODE")
+    held.batch_execute("LOCK TABLE catalog.project_environments IN SHARE MODE")
         .await?;
     let mut deleting = connect(database.url()).await?;
     deleting.batch_execute("SET ROLE wamn_system").await?;

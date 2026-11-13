@@ -57,7 +57,7 @@ pub async fn provision_resources(
     let private = PrivateDirectory::create()?;
     let namespace = platform.target.namespace.as_str();
 
-    // The row, the role posture, the Database CR, the privilege floor, the
+    // The row, the role posture, the Database CR, the base privileges, the
     // database Secret, and the management-author PAT when absent.
     let pat_name = management_author_pat_name(&triple);
     let issue_pat = platform.pat_issuer.endpoint.is_some()
@@ -87,7 +87,7 @@ pub async fn provision_resources(
     admin
         .batch_execute(&outcome.privilege_sql)
         .await
-        .context("ensure the database privilege floor")?;
+        .context("ensure the database base privileges")?;
     private.apply_and_shred(platform, &database_secret).await?;
     if issue_pat {
         private.apply_and_shred(platform, &pat_secret).await?;
@@ -329,7 +329,7 @@ pub fn materializer_host_values(
     if let Some(image) = super::runtime::host_image(installed, group["name"].as_str().unwrap()) {
         group["image"] = image.clone();
     }
-    let env_key =
+    let project_env_key =
         wamn_control_provision::project_env_key(&document.org, &document.project, &document.env);
     Ok(json!({
         "roles": [],
@@ -339,7 +339,7 @@ pub fn materializer_host_values(
             "automountServiceAccountToken": true,
             "hostGroups": [group]
         }},
-        "global": {"certificates": {"dataCertSecretName": format!("wamn-nats-{env_key}")}}
+        "global": {"certificates": {"dataCertSecretName": format!("wamn-nats-{project_env_key}")}}
     }))
 }
 
@@ -358,7 +358,7 @@ pub fn materializer_workload(
             workload: format!("{name}-materializer"),
             namespace: namespace.to_owned(),
             image: super::runtime::pod_artifact_base(insecure_registry, image)?.into_owned(),
-            env_key: wamn_control_provision::project_env_key(
+            project_env_key: wamn_control_provision::project_env_key(
                 &document.org,
                 &document.project,
                 &document.env,
@@ -532,7 +532,7 @@ pub async fn ensure_project_database(
         admin,
         admin_url,
         &crate::platform_migrations::embedded_sources(
-            wamn_control_provision::schema_migrations::MigrationScope::Project,
+            wamn_control_provision::schema_migrations::MigrationDatabase::Project,
         ),
     )
     .await
@@ -886,7 +886,7 @@ pub(crate) async fn ensure_cdc_inputs(
 }
 
 /// Provision the environment's source and advisory streams, with the same
-/// scope, consumers and duplicate window as [`enable_cdc`], and no slot,
+/// target, consumers and duplicate window as [`enable_cdc`], and no slot,
 /// publication or reader. Without an event broker there is nothing to provision.
 async fn ensure_streams(
     platform: &Platform,
@@ -1052,7 +1052,7 @@ pub(super) async fn secret_exists(
 /// Wait for a CloudNativePG CR to report `status.applied`.
 pub(super) async fn wait_applied(
     platform: &Platform,
-    kind: &str,
+    type_: &str,
     name: &str,
 ) -> anyhow::Result<()> {
     kubectl(
@@ -1060,7 +1060,7 @@ pub(super) async fn wait_applied(
         &platform.database_namespace,
         &[
             "wait",
-            &format!("{kind}/{name}"),
+            &format!("{type_}/{name}"),
             "--for=jsonpath={.status.applied}=true",
             APPLIED_TIMEOUT,
         ],
@@ -1068,7 +1068,7 @@ pub(super) async fn wait_applied(
     )
     .await
     .map(drop)
-    .with_context(|| format!("wait for {kind} {name} to report status.applied"))
+    .with_context(|| format!("wait for {type_} {name} to report status.applied"))
 }
 
 /// Run `kubectl` against the platform's cluster in `namespace`.

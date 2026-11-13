@@ -26,8 +26,8 @@ export default function Layout(props: {
     return parts[2] === "project-env" ? { org: parts[3]!, project: parts[4]!, env: parts[5]! } : undefined;
   };
   const projectPath = () => {
-    const scope = application()!;
-    return `/urn:wamn:control:${scope.org}/projects/${encodeURIComponent(scope.project)}`;
+    const config = application()!;
+    return `/urn:wamn:control:${config.org}/projects/${encodeURIComponent(config.project)}`;
   };
   const follow = (path: string, close?: () => void) => (event: MouseEvent) => {
     if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
@@ -103,12 +103,12 @@ export default function Layout(props: {
   const scroll = () => selected()?.route.scroll ?? "main";
   const breadcrumbs = () => {
     const root = `/${props.aud}`;
-    const scope = application();
-    const entries = scope
+    const config = application();
+    const entries = config
       ? [
-          { label: scope.org, href: `/urn:wamn:control:${scope.org}/projects` },
-          { label: scope.project, href: projectPath() },
-          { label: scope.env, href: root },
+          { label: config.org, href: `/urn:wamn:control:${config.org}/projects` },
+          { label: config.project, href: projectPath() },
+          { label: config.env, href: root },
         ]
       : [{ label: props.title, href: root }];
     const parts = props.address.url().pathname.split("/").slice(2).filter(Boolean);
@@ -136,7 +136,7 @@ export default function Layout(props: {
         const params = matchPath(route.path, path)!;
         entries.push({
           label: label ?? params[segment.slice(1)] ?? parts[index]!,
-          href: `${root}/${path}${scope && segment === ":role" ? "/permissions" : ""}`,
+          href: `${root}/${path}${config && segment === ":role" ? "/permissions" : ""}`,
         });
       } else if (index === parts.length - 1) {
         entries.push({ label: "No page here", href: `${root}/${path}` });
@@ -214,7 +214,7 @@ export default function Layout(props: {
                     fallback={
                       <div class="ui-dashboard-menu">
                         <Show when={application()}>
-                          {(scope) => (
+                          {(config) => (
                             <SidebarContextSwitcher
                               value={
                                 roleName()
@@ -222,7 +222,7 @@ export default function Layout(props: {
                                   : {
                                       id: `/${props.aud}`,
                                       kind: "Environment",
-                                      name: `${scope().project}/${scope().env}`,
+                                      name: `${config().project}/${config().env}`,
                                     }
                               }
                               options={[]}
@@ -231,9 +231,9 @@ export default function Layout(props: {
                                   ? {
                                       id: `/${props.aud}/administration/roles`,
                                       kind: "Environment",
-                                      name: `${scope().project}/${scope().env}`,
+                                      name: `${config().project}/${config().env}`,
                                     }
-                                  : { id: projectPath(), kind: "Project", name: scope().project }
+                                  : { id: projectPath(), kind: "Project", name: config().project }
                               }
                               compact={navigation.compact()}
                               onValueChange={(context) => {

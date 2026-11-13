@@ -14,19 +14,19 @@
 --
 -- DISTINCT FROM the T1 control-plane registry (deploy/sql/system-schema.sql,
 -- wamn-q3n.3): that is the PLATFORM-GLOBAL system DB (orgs / projects /
--- project_envs / sagas), owned by wamn_system, NOT tenant-scoped, NO RLS floor.
+-- project_envs / sagas), owned by wamn_system, NOT project-targeted, NO RLS base grants.
 -- THIS schema belongs to one project environment database. Its tables have no
--- row security. The shared catalog retains its tenant policies. wamn_app's
+-- row security. The shared catalog retains its project policies. wamn_app's
 -- WRITE authority is NOT uniform across these tables — see WRITE AUTHORITY
 -- below. Different plane, different owner, different security model — hence a
 -- different file, and deliberately NOT named system-schema.sql.
 --
 -- STANDALONE ARTIFACT: like deploy/sql/catalog-schema.sql, this file is NOT included
--- by deploy/sql/postgres-init.sql (which builds the S2–S6 gate fixtures). It is the
+-- by deploy/sql/postgres-init.sql (which builds the S2–S6 condition fixtures). It is the
 -- persistence target a project database provisions; shipping it here keeps the
--- 2.4 schema reviewable in one place without touching the gate fixtures. It
+-- 2.4 schema reviewable in one place without touching the condition fixtures. It
 -- assumes a pre-existing wamn_app role (NOSUPERUSER, no BYPASSRLS), as in
--- production and as the live-apply gate provisions.
+-- production and as the live-apply acceptance test provisions.
 --
 -- RECORD HISTORY: every table carries created_at, created_by, updated_at, and
 -- updated_by as NOT NULL columns, and a wamn_record_history_stamp trigger that calls
@@ -40,9 +40,9 @@
 -- app.operation. The HISTORY TABLES section at the end creates them.
 --
 -- SECURITY SHAPE: one database per project environment separates these rows.
--- The account and configuration tables and their history tables have no tenant
--- column, row policy, or tenant-key index. Shared catalog and run tables retain
--- their existing tenant policies and use the authority functions below.
+-- The account and configuration tables and their history tables have no project
+-- column, row policy, or project-key index. Shared catalog and run tables retain
+-- their existing project policies and use the authority functions below.
 --
 -- WRITE AUTHORITY (R11): grants control which relations a caller can read or write.
 --
@@ -50,12 +50,12 @@
 --   and the platform configuration tables.
 --   SELECT only. The trust chain consumes these rows as authorization INPUT: the
 --   3.5 RLS builder compiles app.user_id and app.role into the data policies it
---   generates, and 4.2 resolves both claims from user + user_role. Author SQL
+--   generates, and 4.2 resolves both identity fields from user + user_role. Author SQL
 --   holding DML here could write itself the credential its own policies are then
 --   evaluated against, and the compiler would faithfully enforce the forgery. A
---   tenant's authorization state is written BY the platform, never by the
---   tenant's own SQL. There is no wamn_app writer to lose today: the write path
---   is platform-pending — 4.2 (wamn-0xd) resolves the claims from these rows and
+--   project's authorization state is written BY the platform, never by the
+--   project's own SQL. There is no wamn_app writer to lose today: the write path
+--   is platform-pending — 4.2 (wamn-0xd) resolves the identity from these rows and
 --   the first-party identity authority (wamn-ctc8) mints them, both on a
 --   platform identity, not on this grant. The application advances
 --   number_counter through platform.bump_counter, platform.assign_counter and
@@ -66,7 +66,7 @@
 --
 --   WRITE LOG — write_log. INSERT, SELECT, UPDATE (result) and DELETE only.
 --   The engine claims the key of every create, update, delete and command here. It is outside
---   the tenant floor and the record history: see THE WRITE LOG below.
+--   the project base grants and the record history: see THE WRITE LOG below.
 --
 --   HISTORY: the <table>_history tables. No grant. The log trigger fires as
 --   the writer, and wamn_app writes no table that has a history table.
@@ -74,11 +74,11 @@
 -- TRUNCATE is not mentioned anywhere below because it was never granted to
 -- wamn_app: only the table owner holds it.
 --
--- CLAIM INTEGRATION (3.5 / 4.2): `user.id` is a `uuid` — the ownership target
+-- IDENTITY INTEGRATION (3.5 / 4.2): `user.id` is a `uuid` — the ownership target
 -- the 3.5 RLS builder reads as NULLIF(current_setting('app.user_id', true),
 -- '')::uuid, so a data table's owner column referencing a user resolves. Role
 -- NAMES (`role.name`, text) are what the builder reads as
--- COALESCE(current_setting('app.role', true), '') IN (...). The claims
+-- COALESCE(current_setting('app.role', true), '') IN (...). The identity fields
 -- themselves are INJECTED by the plugin from a resolved user/session (4.2) —
 -- this schema is the SUBSTRATE, not the auth logic: NO password hashing / JWT /
 -- session management here. `api_key.key_hash` is a one-way digest column (the
@@ -88,9 +88,9 @@ CREATE SCHEMA IF NOT EXISTS platform AUTHORIZATION CURRENT_USER;
 
 -- The shared platform group role that catalog and run policies target
 -- (`wamn-0h0g.22.17`). Created HERE, not assumed, for the reason
--- `crates/control/provision/src/tenant_key.rs` already gives for its own
+-- `crates/control/provision/src/project_key.rs` already gives for its own
 -- bootstrap: naming a role that may not exist adds a new precondition to every
--- applier — seven live gates plus the production path in `services/ctl` — and
+-- applier — seven live acceptance tests plus the production path in `services/ctl` — and
 -- `CREATE POLICY ... TO wamn_platform` fails outright against a cluster without
 -- it.
 --
@@ -111,16 +111,16 @@ GRANT USAGE ON SCHEMA platform TO wamn_app;
 
 -- ---------------------------------------------------------------------------
 -- The per-database authority derivations that catalog and run policies call
--- (`wamn-0h0g.22.6`). Guest tenant authority comes from `current_user`, not
--- from a claim the session can set: a session that can set its own tenant can
--- read every tenant.
+-- (`wamn-0h0g.22.6`). Guest project authority comes from `current_user`, not
+-- from an identity the session can set: a session that can set its own project can
+-- read every project.
 --
 -- GENERATED — this block is `authority_derivations_bootstrap_sql()` verbatim,
 -- pinned by a byte-equality guard in wamn-control-provision. Do not hand-edit;
 -- change the builder.
 --
 -- It is the BOOTSTRAP rendering because this file is applied to databases whose
--- names are not known here, and `tenant_key` must bake the name in as a literal
+-- names are not known here, and `project_key` must bake the name in as a literal
 -- to stay `IMMUTABLE` — without which the expression indexes below are not even
 -- creatable.
 -- ---------------------------------------------------------------------------
@@ -129,7 +129,7 @@ BEGIN
     EXECUTE replace(replace($wamn_authority_derivations$CREATE SCHEMA IF NOT EXISTS "wamn_authority" AUTHORIZATION CURRENT_USER;
 REVOKE ALL ON SCHEMA "wamn_authority" FROM PUBLIC;
 GRANT USAGE ON SCHEMA "wamn_authority" TO "wamn_app";
-CREATE OR REPLACE FUNCTION "wamn_authority".tenant_key(env_key text)
+CREATE OR REPLACE FUNCTION "wamn_authority".project_key(project_env_key text)
 RETURNS text
 LANGUAGE sql
 IMMUTABLE
@@ -138,17 +138,17 @@ STRICT
 SET search_path = pg_catalog
 AS $$
     SELECT substr(encode(sha256(
-           int8send(19::bigint) || convert_to('wamn.app.scope.v0.1', 'UTF8')
-        || int8send(7::bigint) || convert_to('env_key', 'UTF8')
-        || int8send(octet_length(convert_to(env_key, 'UTF8'))::bigint) || convert_to(env_key, 'UTF8')
+           int8send(22::bigint) || convert_to('wamn.app.identity.v0.1', 'UTF8')
+        || int8send(15::bigint) || convert_to('project_env_key', 'UTF8')
+        || int8send(octet_length(convert_to(project_env_key, 'UTF8'))::bigint) || convert_to(project_env_key, 'UTF8')
         || int8send(8::bigint) || convert_to('database', 'UTF8')
         || int8send(@wamn_database_octets@::bigint) || convert_to(@wamn_database_literal@, 'UTF8')
        ), 'hex'), 1, 40)
 $$;
-ALTER FUNCTION "wamn_authority".tenant_key(text) OWNER TO CURRENT_USER;
-REVOKE ALL ON FUNCTION "wamn_authority".tenant_key(text) FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION "wamn_authority".tenant_key(text) TO "wamn_app";
-CREATE OR REPLACE FUNCTION "wamn_authority".current_tenant_key()
+ALTER FUNCTION "wamn_authority".project_key(text) OWNER TO CURRENT_USER;
+REVOKE ALL ON FUNCTION "wamn_authority".project_key(text) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION "wamn_authority".project_key(text) TO "wamn_app";
+CREATE OR REPLACE FUNCTION "wamn_authority".current_project_key()
 RETURNS text
 LANGUAGE sql
 STABLE
@@ -157,9 +157,9 @@ SET search_path = pg_catalog
 AS $$
     SELECT substring(current_user::text from '^wamn_app_([0-9a-f]{40})_[ab]$')
 $$;
-ALTER FUNCTION "wamn_authority".current_tenant_key() OWNER TO CURRENT_USER;
-REVOKE ALL ON FUNCTION "wamn_authority".current_tenant_key() FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION "wamn_authority".current_tenant_key() TO "wamn_app";$wamn_authority_derivations$,
+ALTER FUNCTION "wamn_authority".current_project_key() OWNER TO CURRENT_USER;
+REVOKE ALL ON FUNCTION "wamn_authority".current_project_key() FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION "wamn_authority".current_project_key() TO "wamn_app";$wamn_authority_derivations$,
         '@wamn_database_literal@', quote_literal(current_database())),
         '@wamn_database_octets@', octet_length(convert_to(current_database(), 'UTF8'))::text);
 END
@@ -169,10 +169,10 @@ $wamn_authority_bootstrap$;
 -- User — application accounts. `id` (uuid) is org-issued at birth and has no
 -- database default; it is the app.user_id ownership target (3.5). Identity
 -- only: no credential material lives here (auth is 4.2/8.1).
--- `status` gates whether the account may authenticate (enforced by 4.2, not this
+-- `status` conditions whether the account may authenticate (enforced by 4.2, not this
 -- schema). Email is unique in the database.
 --
--- `type` names the kind of principal: a user, a service (a station or an
+-- `type` names the type of principal: a user, a service (a station or an
 -- integration), or a platform component. It has no default, so every insert
 -- names its type. A platform row carries its `wamn:<component>` name in
 -- `display_name` and the id that `wamn-identity-protocol` derives from that name.
@@ -182,8 +182,8 @@ $wamn_authority_bootstrap$;
 -- the platform rows and their `<component>@<platform-domain>` email.
 --
 -- The database is the org boundary (owner ruling of 2026-10-23 on
--- wamn-83eth.6), so the table has no tenant_id, no row policy and no
--- tenant_key index.
+-- wamn-83eth.6), so the table has no project_id, no row policy and no
+-- project_key index.
 -- ---------------------------------------------------------------------------
 CREATE TABLE platform."user" (
     id           uuid NOT NULL,
@@ -221,7 +221,7 @@ GRANT SELECT ON platform."user" TO wamn_app;
 
 -- ---------------------------------------------------------------------------
 -- Roles — named roles. `name` is the app.role value the 3.5 RLS builder compares
--- (a role gate is COALESCE(app.role,'') IN ('r1', …)), so the NAME is the
+-- (a role condition is COALESCE(app.role,'') IN ('r1', …)), so the NAME is the
 -- load-bearing identity (the primary key). `admin` is the one built-in role:
 -- apply-package writes it, and it holds every operation the serving release
 -- serves with no permission rows. Every other role is authored. A user or
@@ -248,7 +248,7 @@ GRANT SELECT ON platform.role TO wamn_app;
 
 -- ---------------------------------------------------------------------------
 -- User↔role linkage (many-to-many). 4.2 reads this to compute a user's role for
--- the app.role claim it injects. Both sides FK ON DELETE CASCADE, so removing
+-- the app.role identity it injects. Both sides FK ON DELETE CASCADE, so removing
 -- a user or a role prunes the grant.
 -- ---------------------------------------------------------------------------
 CREATE TABLE platform.user_role (
@@ -303,7 +303,7 @@ GRANT SELECT ON platform.permission TO wamn_app;
 -- is shown once at creation, never stored); `prefix` is a short NON-secret
 -- lookup prefix so verification finds the candidate row before the hash compare.
 -- A key authenticates AS a user (FK ON DELETE CASCADE). `revoked_at` /
--- `expires_at` gate validity (enforced by 4.2). key_hash is unique in the database.
+-- `expires_at` condition validity (enforced by 4.2). key_hash is unique in the database.
 -- ---------------------------------------------------------------------------
 CREATE TABLE platform.api_key (
     id           uuid NOT NULL DEFAULT gen_random_uuid(),
@@ -353,7 +353,7 @@ GRANT SELECT ON platform.environment TO wamn_app;
 
 -- ---------------------------------------------------------------------------
 -- HISTORY TABLES. The database separates environments, so these tables have
--- no tenant column or row policy. Each log keeps unlimited history.
+-- no project column or row policy. Each log keeps unlimited history.
 -- ---------------------------------------------------------------------------
 DO $history_tables$ BEGIN
   PERFORM wamn_history.create_history_table('platform', 'user', false);
@@ -408,8 +408,8 @@ CREATE TRIGGER wamn_record_history_log
 -- operation without its @version, so a retry across a release answers the
 -- stored result, and two packages in one database do not collide.
 --
--- The table is outside the tenant floor and the record history on purpose.
--- The database is the tenant, so it has no tenant_id and no row policy. The
+-- The table is outside the project base grants and the record history on purpose.
+-- The database is the project, so it has no project_id and no row policy. The
 -- rows that the work writes carry the actor, so it has no user columns and no
 -- stamp or log trigger. wamn_app inserts a claim, reads a claim, writes the
 -- result and deletes a refused two-step claim, and changes no other column.
@@ -440,15 +440,15 @@ GRANT DELETE ON platform.write_log TO wamn_app;
 -- targets stay in the control plane, so no table here holds them.
 --
 -- The database is the org boundary (owner ruling of 2026-10-23 on
--- wamn-83eth.6), so these tables have no tenant_id, no row policy and no
--- tenant_key index. Each table has the record history of the tables above.
+-- wamn-83eth.6), so these tables have no project_id, no row policy and no
+-- project_key index. Each table has the record history of the tables above.
 -- number_counter is the one exception: it has no history table and no log
 -- trigger, because one history entry per bump would double the writes of
 -- every create, and the write log is the audit (owner ruling, wamn-aqd0m.1).
 --
--- Org and project ids are the text slugs of the system database, so scope_id
--- and project_id are text. A role scope names a role by name, and an
--- application scope names an application by name.
+-- Org and project ids are the text slugs of the system database, so target_id
+-- and project_id are text. A role target names a role by name, and an
+-- application target names an application by name.
 --
 -- ---------------------------------------------------------------------------
 -- File objects belong to one application and use the active storage generation.
@@ -522,11 +522,11 @@ CREATE TABLE platform.number_counter (
         REFERENCES platform.number_sequence (id) ON DELETE CASCADE
 );
 
--- Display and view settings, resolved from least to most specific scope. A
--- locked row stops overrides at more specific scopes.
+-- Display and view settings, resolved from least to most specific target. A
+-- locked row stops overrides at more specific targets.
 CREATE TABLE platform.setting (
-    scope_type text NOT NULL,
-    scope_id   text NOT NULL CHECK (scope_id <> ''),
+    target_type text NOT NULL,
+    target_id   text NOT NULL CHECK (target_id <> ''),
     key        text NOT NULL CHECK (key <> ''),
     value      jsonb NOT NULL,
     locked     boolean NOT NULL DEFAULT false,
@@ -534,9 +534,9 @@ CREATE TABLE platform.setting (
     created_by uuid NOT NULL,
     updated_at timestamptz NOT NULL,
     updated_by uuid NOT NULL,
-    PRIMARY KEY (scope_type, scope_id, key),
-    CONSTRAINT setting_scope_type_check
-        CHECK (scope_type IN ('org', 'project', 'application', 'role', 'user'))
+    PRIMARY KEY (target_type, target_id, key),
+    CONSTRAINT setting_target_type_check
+        CHECK (target_type IN ('org', 'project', 'application', 'role', 'user'))
 );
 
 GRANT SELECT ON platform.external_system, platform.integration, platform.connection TO wamn_app;
@@ -555,7 +555,7 @@ BEGIN
   END LOOP;
 END $platform_configuration$;
 
--- The history table of each table except number_counter, with no tenant_id.
+-- The history table of each table except number_counter, with no project_id.
 DO $platform_configuration_history$
 DECLARE relation text;
 BEGIN
@@ -595,8 +595,8 @@ END $platform_configuration_history$;
 -- per= counter. Neither reads an application table: a set that gives a
 -- number a record already carries is caught by that model's UQ.
 --
--- The database is the org boundary, so no function tests a tenant. No
--- function reads the app.application claim, which guest SQL can rewrite.
+-- The database is the org boundary, so no function tests a project. No
+-- function reads the app.application identity, which guest SQL can rewrite.
 -- Each takes a sequence id and refuses an id that is not a sequence with
 -- undefined_object. The renderer of the wamn:postgres plugin resolves the
 -- sequence id from the application in host state and the sequence name, and

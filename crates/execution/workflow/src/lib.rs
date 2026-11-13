@@ -45,7 +45,7 @@ pub use router_driver::{
     WorkflowRunRequest,
 };
 pub use wiring_lowering::{
-    GatedActiveWiring, ScopedWiringOperationFacts, WiringLoweringError, WiringLoweringErrorType,
-    WiringOperationFact, WiringParameterFact, WiringScope, lower_active_wiring,
-    lower_resolved_wiring, project_component_operations,
+    ConditionedActiveWiring, TargetWiringOperationFacts, WiringLoweringError,
+    WiringLoweringErrorType, WiringOperationFact, WiringParameterFact, WiringTarget,
+    lower_active_wiring, lower_resolved_wiring, project_component_operations,
 };

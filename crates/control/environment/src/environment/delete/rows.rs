@@ -19,15 +19,18 @@ pub async fn delete_registry_rows(
         triple.project.as_str(),
         triple.env.as_str(),
     );
-    let env_key = wamn_control_provision::project_env_key(org, project, env);
+    let project_env_key = wamn_control_provision::project_env_key(org, project, env);
     let mut lines = Vec::new();
     let transaction = crate::provision_project_env::provisioning_transaction(system)
         .await
         .context("begin the row delete")?;
     transaction
-        .query_one("SELECT set_config('app.env_key', $1, true)", &[&env_key])
+        .query_one(
+            "SELECT set_config('app.project_env_key', $1, true)",
+            &[&project_env_key],
+        )
         .await
-        .context("claim the tenant")?;
+        .context("bind the project identity")?;
     let credentials: i64 = transaction
         .query_one(
             wamn_control_registry::sql::delete_environment_connections_sql(),
@@ -36,27 +39,27 @@ pub async fn delete_registry_rows(
         .await
         .context("delete the environment's connections")?
         .get(0);
-    let env_key_table: bool = transaction
+    let project_env_key_table: bool = transaction
         .query_one(
-            "SELECT to_regclass('catalog.tenant_environments') IS NOT NULL",
+            "SELECT to_regclass('catalog.project_environments') IS NOT NULL",
             &[],
         )
         .await
-        .context("probe catalog.tenant_environments")?
+        .context("probe catalog.project_environments")?
         .get(0);
-    if env_key_table {
+    if project_env_key_table {
         transaction
             .execute(
-                "DELETE FROM catalog.tenant_environments \
+                "DELETE FROM catalog.project_environments \
                   WHERE org = $1 AND project = $2 AND env = $3 AND instance_suffix = $4",
                 &[&org, &project, &env, &instance],
             )
             .await
-            .context("delete the catalog.tenant_environments row")?;
+            .context("delete the catalog.project_environments row")?;
     }
     transaction
         .execute(
-            "DELETE FROM wamn_authority.author_login_tenants \
+            "DELETE FROM wamn_authority.author_login_projects \
               WHERE org_id=$1 AND project_id=$2 AND environment=$3",
             &[&org, &project, &env],
         )

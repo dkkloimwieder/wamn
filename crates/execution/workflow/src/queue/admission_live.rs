@@ -1,6 +1,6 @@
 //! Manual and event workflow admission through the real queue.
 
-use super::{QUEUE_CLAIM_SCOPE, QueueScope, drain_one};
+use super::{QUEUE_LEASE_INVOCATION, QueueTarget, drain_one};
 use serde_json::json;
 use std::collections::BTreeSet;
 use std::sync::Arc;
@@ -8,7 +8,7 @@ use std::time::Duration;
 use tokio_postgres::NoTls;
 use wamn_catalog::{ComponentDeclaration, ServingManifest, WiringDocument};
 use wamn_control_provision::{
-    CredentialGeneration, WorkloadRoleFamily, WorkloadRoleScope, sql, workload_generation_role,
+    CredentialGeneration, WorkloadRoleFamily, WorkloadRoleIdentity, sql, workload_generation_role,
 };
 use wamn_engine::artifact_source::{LocalComponentSource, local_component_path};
 use wamn_engine::component_admission::{ComponentAdmissionRequest, validate_component_admission};
@@ -21,19 +21,19 @@ use wamn_runtime::plugins::wamn_jetstream::WamnJetstream;
 use wamn_runtime::plugins::wamn_logging::WamnLogging;
 use wamn_runtime::plugins::wamn_postgres::{
     AuthorityClass, ClassCredentials, EventBatchAdmission, ProjectConfig, ReleaseIdentity,
-    SessionClaims, StaticCredentialProvider, WamnPostgres,
+    SessionIdentity, StaticCredentialProvider, WamnPostgres,
 };
 use wamn_schema_control::BareSchemaName;
 use wash_runtime::host::probes::Liveness;
 
 use crate::{PostgresWorkflows, RouterDriver, WorkflowErrorType, Workflows as _};
-use wamn_execution_host::{OperationHost, OperationScope};
+use wamn_execution_host::{OperationHost, OperationHostConfig};
 use wamn_identity_protocol::PlatformComponent;
 
 #[path = "admission_live/shutdown.rs"]
 mod shutdown;
 
-const ENV_KEY: &str = "automation-live";
+const PROJECT_ENV_KEY: &str = "automation-live";
 const SERVICE: &str = "00000000-0000-4000-8000-000000000074";
 const OPERATION: &str = "automation:echo/run@1.0.0";
 /// The stable reference that an authored role stores for [`OPERATION`].
@@ -131,15 +131,15 @@ async fn run_current(mode: Mode) -> anyhow::Result<()> {
       INSERT INTO platform.role (name) VALUES ('automation');
       INSERT INTO platform.user_role (user_id,role_name) VALUES ('{SERVICE}','automation');
       INSERT INTO platform.permission (role_name,permission) VALUES ('automation','{REFERENCE}'), ('automation','wamn-control:workflow/start');
-      INSERT INTO wamn_run.environment_policies (env_key,expected_environment) VALUES ('{ENV_KEY}','test');
-      INSERT INTO catalog.packages (physical_schema_fingerprint, env_key,package_id,package_version,artifact_digest) VALUES ('sha256:' || repeat('c', 64), '{ENV_KEY}','automation','1.0.0','{HASH}');")).await?;
+      INSERT INTO wamn_run.environment_policies (project_env_key,expected_environment) VALUES ('{PROJECT_ENV_KEY}','test');
+      INSERT INTO catalog.packages (physical_schema_fingerprint, project_env_key,package_id,package_version,artifact_digest) VALUES ('sha256:' || repeat('c', 64), '{PROJECT_ENV_KEY}','automation','1.0.0','{HASH}');")).await?;
     let engine = Arc::new(build_engine(&[])?);
     let bytes = match mode {
         Mode::Shutdown => shutdown::component_bytes(),
         Mode::Event => component_bytes(),
     };
     let declaration: ComponentDeclaration = serde_json::from_value(json!({
-        "scope": {"env_key":ENV_KEY,"package-id":"automation","package-version":"1.0.0"},
+        "target": {"project_env_key":PROJECT_ENV_KEY,"package-id":"automation","package-version":"1.0.0"},
         "component":"echo","interface-version":"0.1.0",
         "operations":{(OPERATION):{"registered-operation":OPERATION,
             "input-ports":[{"name":"input","schema":{}}],
@@ -172,30 +172,31 @@ async fn run_current(mode: Mode) -> anyhow::Result<()> {
     }))?;
     let workflow_user = wamn_identity_protocol::workflow_user_id().to_string();
     admin.execute("INSERT INTO platform.user_role (user_id, role_name) VALUES ($1::text::uuid, 'automation')", &[&workflow_user]).await?;
-    admin.execute("INSERT INTO catalog.workflows (env_key, environment, application, workflow_id, version, graph_json, wiring_hash, trigger, source_package, entity, ops, enable_sequence, execution_type, execution_role, enabled, created_by) VALUES ($1, 'test', 'automation', 'echo', 1, $2::text::jsonb, $3, 'event', 'automation', 'movement', ARRAY['insert'], 0, 'role', 'automation', true, $4::text::uuid)", &[&ENV_KEY, &serde_json::to_string(&document)?, &graph_hash.as_str(), &workflow_user]).await?;
+    admin.execute("INSERT INTO catalog.workflows (project_env_key, environment, application, workflow_id, version, graph_json, wiring_hash, trigger, source_package, entity, ops, enable_sequence, execution_type, execution_role, enabled, created_by) VALUES ($1, 'test', 'automation', 'echo', 1, $2::text::jsonb, $3, 'event', 'automation', 'movement', ARRAY['insert'], 0, 'role', 'automation', true, $4::text::uuid)", &[&PROJECT_ENV_KEY, &serde_json::to_string(&document)?, &graph_hash.as_str(), &workflow_user]).await?;
     let mut manual = document;
     manual.wiring_id = "echo-manual".into();
     admin.execute(
-        "INSERT INTO catalog.workflows (env_key, environment, application, workflow_id, version, graph_json, wiring_hash, trigger, execution_type, enabled, created_by) VALUES ($1, 'test', 'automation', 'echo-manual', 1, $2::text::jsonb, $3, 'manual', 'invoker', true, $4::text::uuid)",
-        &[&ENV_KEY, &serde_json::to_string(&manual)?, &manual.wiring_hash().as_str(), &SERVICE],
+        "INSERT INTO catalog.workflows (project_env_key, environment, application, workflow_id, version, graph_json, wiring_hash, trigger, execution_type, enabled, created_by) VALUES ($1, 'test', 'automation', 'echo-manual', 1, $2::text::jsonb, $3, 'manual', 'invoker', true, $4::text::uuid)",
+        &[&PROJECT_ENV_KEY, &serde_json::to_string(&manual)?, &manual.wiring_hash().as_str(), &SERVICE],
     ).await?;
     let canonical = manifest.canonical_bytes();
     let release = Arc::new(LoadedRelease::load_canonical_bytes(
         &canonical,
         "automation-live",
-        wamn_engine::release_manifest::ReleaseScope::new(ENV_KEY, "test").with_applications(
-            [(
-                "automation".to_owned(),
-                wamn_catalog::ApplicationDefinition {
-                    connections: std::collections::BTreeMap::new(),
-                    packages: ["automation".to_owned()].into(),
-                },
-            )]
-            .into(),
-        ),
+        wamn_engine::release_manifest::ReleaseTarget::new(PROJECT_ENV_KEY, "test")
+            .with_applications(
+                [(
+                    "automation".to_owned(),
+                    wamn_catalog::ApplicationDefinition {
+                        connections: std::collections::BTreeMap::new(),
+                        packages: ["automation".to_owned()].into(),
+                    },
+                )]
+                .into(),
+            ),
     )?);
-    admin.execute("INSERT INTO catalog.releases (env_key,manifest_digest,canonical_bytes) VALUES ($1,$2,$3)",
-        &[&ENV_KEY,&release.release().manifest_digest.as_str(),&canonical]).await?;
+    admin.execute("INSERT INTO catalog.releases (project_env_key,manifest_digest,canonical_bytes) VALUES ($1,$2,$3)",
+        &[&PROJECT_ENV_KEY,&release.release().manifest_digest.as_str(),&canonical]).await?;
     let mut credentials = ClassCredentials::default();
     let db_name: String = admin
         .query_one("SELECT current_database()", &[])
@@ -212,20 +213,20 @@ async fn run_current(mode: Mode) -> anyhow::Result<()> {
             AuthorityClass::CallableHttp,
         ),
     ] {
-        let role_scope = if family == WorkloadRoleFamily::App {
-            WorkloadRoleScope::EnvKey {
-                env_key: ENV_KEY,
+        let role_target = if family == WorkloadRoleFamily::App {
+            WorkloadRoleIdentity::ProjectEnvKey {
+                project_env_key: PROJECT_ENV_KEY,
                 database: &db_name,
             }
         } else {
-            WorkloadRoleScope::ProjectEnvironment {
-                org: ENV_KEY,
+            WorkloadRoleIdentity::ProjectEnvironment {
+                org: PROJECT_ENV_KEY,
                 project: "default",
                 environment: "test",
                 database: &db_name,
             }
         };
-        let role = workload_generation_role(family, role_scope, CredentialGeneration::A)?;
+        let role = workload_generation_role(family, role_target, CredentialGeneration::A)?;
         admin
             .batch_execute(&sql::prepare_workload_generation_sql(
                 family,
@@ -259,10 +260,10 @@ async fn run_current(mode: Mode) -> anyhow::Result<()> {
     );
     let postgres = Arc::new(WamnPostgres::with_provider(Arc::new(provider)));
     postgres
-        .bind_session_claims(
-            QUEUE_CLAIM_SCOPE,
-            &SessionClaims {
-                env_key: ENV_KEY.to_owned(),
+        .bind_session_identity(
+            QUEUE_LEASE_INVOCATION,
+            &SessionIdentity {
+                project_env_key: PROJECT_ENV_KEY.to_owned(),
                 project: Some("default".to_owned()),
                 schema: Some("wamn_run".to_owned()),
                 runner: Some("automation-live".to_owned()),
@@ -271,7 +272,7 @@ async fn run_current(mode: Mode) -> anyhow::Result<()> {
                 release: Some(ReleaseIdentity::for_test(
                     release.release().manifest_digest.clone(),
                 )),
-                ..SessionClaims::default()
+                ..SessionIdentity::default()
             },
         )
         .await?;
@@ -302,7 +303,7 @@ async fn run_current(mode: Mode) -> anyhow::Result<()> {
             wamn_broker::Publisher::default(),
             Arc::new(ConnectionCredentials::empty()),
             Arc::clone(&postgres),
-            ENV_KEY,
+            PROJECT_ENV_KEY,
             "default",
             "test",
         )),
@@ -310,15 +311,15 @@ async fn run_current(mode: Mode) -> anyhow::Result<()> {
         Arc::from([]),
         Arc::clone(&release),
         Arc::new(LocalComponentSource::new(scratch.path().to_owned())),
-        OperationScope {
+        OperationHostConfig {
             project: "default".to_owned(),
             schema: Some("application_data".to_owned()),
             owner_prefix: "automation-live".to_owned(),
             warm_reuse: wamn_engine::warm_reuse::WarmReuse::default(),
         },
     )?)));
-    let scope = QueueScope {
-        env_key: ENV_KEY.to_owned(),
+    let target = QueueTarget {
+        project_env_key: PROJECT_ENV_KEY.to_owned(),
         project: "default".to_owned(),
         package_ids: vec!["automation".to_owned()],
         environment: "test".to_owned(),
@@ -327,7 +328,7 @@ async fn run_current(mode: Mode) -> anyhow::Result<()> {
     let (client, connection) = tokio_postgres::connect(database.url(), NoTls).await?;
     tokio::spawn(connection);
     let workflows = WorkflowsFixture {
-        runs: PostgresWorkflows::new(client, schema.as_str(), ENV_KEY, "test"),
+        runs: PostgresWorkflows::new(client, schema.as_str(), PROJECT_ENV_KEY, "test"),
         postgres: Arc::clone(&postgres),
         host: wamn_execution_host::HostRouteDelivery::new(
             Arc::clone(&release),
@@ -358,7 +359,7 @@ async fn run_current(mode: Mode) -> anyhow::Result<()> {
                     engine: &engine,
                     logging: &logging,
                     capture: &capture,
-                    scope: &scope,
+                    target: &target,
                     jetstream: &jetstream,
                 },
             )
@@ -366,7 +367,7 @@ async fn run_current(mode: Mode) -> anyhow::Result<()> {
         }
         Mode::Event => {
             event_run(
-                &admin, &workflows, &release, &driver, &postgres, &scope, &jetstream,
+                &admin, &workflows, &release, &driver, &postgres, &target, &jetstream,
             )
             .await
         }
@@ -405,7 +406,7 @@ impl WorkflowsFixture {
             .unwrap();
         let held = self
             .postgres
-            .user_operation_permissions("default", ENV_KEY, &SERVICE.parse()?)
+            .user_operation_permissions("default", PROJECT_ENV_KEY, &SERVICE.parse()?)
             .await?;
         let active_role = held.pat_role();
         let caller = wamn_engine::flow_http_routing::AuthenticatedCaller::new(
@@ -452,7 +453,7 @@ async fn event_run(
     release: &LoadedRelease,
     driver: &RouterDriver,
     postgres: &WamnPostgres,
-    scope: &QueueScope,
+    target: &QueueTarget,
     jetstream: &WamnJetstream,
 ) -> anyhow::Result<()> {
     let liveness = Liveness::new(Duration::from_secs(90));
@@ -460,7 +461,7 @@ async fn event_run(
         "package_id": "automation", "entity": "movement", "table": "movement", "lsn": 7,
         "txid": 1, "commit_ts": "2026-10-25T00:00:00Z"})
     .to_string();
-    let source_id = wamn_event_wire::msg_id(&scope.project, "test", 7);
+    let source_id = wamn_event_wire::msg_id(&target.project, "test", 7);
     let mut admission = EventBatchAdmission {
         source_package: "automation",
         entity: "movement",
@@ -469,10 +470,10 @@ async fn event_run(
         source_event_id: &source_id,
     };
     postgres
-        .admit_event_batch(&scope.project, release, &admission)
+        .admit_event_batch(&target.project, release, &admission)
         .await?;
     postgres
-        .admit_event_batch(&scope.project, release, &admission)
+        .admit_event_batch(&target.project, release, &admission)
         .await?;
     let runs = admin
         .query(
@@ -488,7 +489,7 @@ async fn event_run(
     admission.envelope = &other;
     assert!(
         postgres
-            .admit_event_batch(&scope.project, release, &admission)
+            .admit_event_batch(&target.project, release, &admission)
             .await
             .is_err(),
         "changed input must conflict"
@@ -503,13 +504,13 @@ async fn event_run(
     assert!(entry.queued && !entry.parked);
     workflows.park(&run).await?;
     assert!(
-        !drain_one(driver, postgres, jetstream, scope, 30_000, &liveness).await?,
-        "no claim takes a parked event run"
+        !drain_one(driver, postgres, jetstream, target, 30_000, &liveness).await?,
+        "no lease takes a parked event run"
     );
     workflows.release(&run).await?;
     assert!(
-        drain_one(driver, postgres, jetstream, scope, 30_000, &liveness).await?,
-        "the queue claims the released event run"
+        drain_one(driver, postgres, jetstream, target, 30_000, &liveness).await?,
+        "the queue leases the released event run"
     );
     let stored = admin
         .query_one(

@@ -1,7 +1,7 @@
 //! Connection pooling + credential resolution for `wamn:postgres` (SR4 split,
 //! wamn-cjv.18): the per-project config/policy, the `CredentialProvider` seam,
 //! the live `ProjectPool`, the R18 connect-time assertion, and connection
-//! teardown. The pool/claim METHODS live on `WamnPostgres` in `claims.rs`.
+//! teardown. The pool/identity METHODS live on `WamnPostgres` in `identity.rs`.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -11,7 +11,7 @@ use anyhow::Context as _;
 use deadpool_postgres::{Hook, HookError, Object, Pool};
 use tokio_postgres::Config;
 
-use wamn_run_state::{AuthorityClass, app_scope_hash};
+use wamn_run_state::{AuthorityClass, app_identity_hash};
 
 use super::DEFAULT_PROJECT;
 use super::credential_exactness::{
@@ -44,7 +44,7 @@ pub struct WamnPostgresConfig {
     pub credentials: Option<ClassCredentials>,
     /// Connections reserved for guest-visible `wamn:postgres` calls.
     pub guest_pool_max_size: usize,
-    /// Connections reserved for host-owned claim, authorization, and plan-supply work.
+    /// Connections reserved for host-owned identity, authorization, and plan-supply work.
     pub platform_pool_max_size: usize,
     /// Max wait for a pool checkout before `connection-unavailable`.
     pub wait_timeout_ms: u64,
@@ -234,7 +234,7 @@ pub struct ResolvedCredential {
 }
 
 /// Resolves a project id to its database connection + policy. This is the seam
-/// that separates *which project am I* (a host-injected claim, non-spoofable)
+/// that separates *which project am I* (a host-injected identity, non-spoofable)
 /// from *where does that project's data live* (a deployment/secret concern).
 pub trait CredentialProvider: Send + Sync {
     /// `Ok(Some)` = resolved; `Ok(None)` = unknown project (the caller returns
@@ -246,16 +246,16 @@ pub trait CredentialProvider: Send + Sync {
     /// (`wamn-0h0g.22.16`): a project names one login per class, and a class it
     /// does not name resolves to an error rather than to another class's login.
     ///
-    /// `env_key` is `Some` for guest-SQL and `None` for host-owned platform
-    /// work. After `wamn-0h0g.22.6` the guest's tenant comes from
-    /// `current_user`, so for that class THE CREDENTIAL IS THE TENANT
+    /// `project_env_key` is `Some` for guest-SQL and `None` for host-owned platform
+    /// work. After `wamn-0h0g.22.6` the guest's project comes from
+    /// `current_user`, so for that class THE CREDENTIAL IS THE PROJECT
     /// AUTHORITY: resolution must refuse rather than hand back a credential
     /// minted for someone else.
     fn resolve(
         &self,
         project: &str,
         class: AuthorityClass,
-        env_key: Option<&str>,
+        project_env_key: Option<&str>,
     ) -> anyhow::Result<Option<ResolvedCredential>>;
 }
 
@@ -402,11 +402,11 @@ impl CredentialProvider for StaticCredentialProvider {
     /// was. The class remains part of the POOL KEY as well: two authorities must
     /// never share a pooled session even when they resolve to the same URL.
     ///
-    /// FOR GUEST SQL THE TENANT BINDING IS VERIFIED, NOT CONFIGURED. The
-    /// credential's login role carries the tenant key as its scope digest, and
+    /// FOR GUEST SQL THE PROJECT BINDING IS VERIFIED, NOT CONFIGURED. The
+    /// credential's login role carries the project key as its identity digest, and
     /// the same key is what every governed predicate computes — so the binding
     /// is validated from the credential itself rather than declared beside it,
-    /// and a credential minted for another tenant is REFUSED instead of
+    /// and a credential minted for another project is REFUSED instead of
     /// silently borrowed. Selection happens FIRST and the test runs on the
     /// selected credential, so it fires on exactly the credential that would be
     /// handed back — never on a different class's login.
@@ -414,7 +414,7 @@ impl CredentialProvider for StaticCredentialProvider {
         &self,
         project: &str,
         class: AuthorityClass,
-        env_key: Option<&str>,
+        project_env_key: Option<&str>,
     ) -> anyhow::Result<Option<ResolvedCredential>> {
         let Some(cfg) = self.projects.get(project) else {
             return Ok(None);
@@ -426,18 +426,18 @@ impl CredentialProvider for StaticCredentialProvider {
             )
         })?;
         if class == AuthorityClass::GuestSql {
-            let env_key = env_key.context(
-                "guest-SQL resolution requires the tenant: after wamn-0h0g.22.6 the \
-                 credential IS the tenant authority",
+            let project_env_key = project_env_key.context(
+                "guest-SQL resolution requires the project: after wamn-0h0g.22.6 the \
+                 credential IS the project authority",
             )?;
             let database = credential_database(&resolved.database_url)?;
             let role = credential_generation_role(&resolved.database_url)?;
-            let key = app_scope_hash(env_key, &database);
+            let key = app_identity_hash(project_env_key, &database);
             anyhow::ensure!(
                 role.contains(&key),
                 "the credential for project {project:?} authenticates as {role:?}, which \
-                 does not carry the tenant key for the requested tenant; refusing rather \
-                 than reading another tenant's rows"
+                 does not carry the project key for the requested project; refusing rather \
+                 than reading another project's rows"
             );
         }
         Ok(Some(resolved))
@@ -485,7 +485,7 @@ impl PoolKey {
 /// The credential generation identity a resolved URL carries.
 ///
 /// The provisioner mints an A/B credential generation AS THE LOGIN ROLE
-/// (`wamn_app_<scope-hash>_a` / `_b`, `wamn-0h0g.13.59`), so the generation
+/// (`wamn_app_<identity-hash>_a` / `_b`, `wamn-0h0g.13.59`), so the generation
 /// already travels inside the URL's user component. Deriving it here rather
 /// than declaring a second field is deliberate: a declared generation could
 /// disagree with the URL that actually authenticates, and then the key would
@@ -508,7 +508,7 @@ pub(super) fn credential_generation_role(database_url: &str) -> anyhow::Result<S
 ///
 /// Read from the URL rather than configured beside it for the same reason the
 /// generation role is: a declared database could disagree with the one that
-/// actually connects, and the tenant key is computed over BOTH the tenant and
+/// actually connects, and the project key is computed over BOTH the project and
 /// the database — so a disagreement would compute a key for a database the
 /// session is not in.
 pub(super) fn credential_database(database_url: &str) -> anyhow::Result<String> {
@@ -531,7 +531,7 @@ pub(super) struct ProjectPool {
 }
 
 /// Options last applied outside a transaction on one physical connection.
-/// Caller claims are never cached here. Weak ownership drops dead sessions.
+/// Caller identity are never cached here. Weak ownership drops dead sessions.
 pub(super) struct SessionSettings {
     pub(super) connection: std::sync::Weak<deadpool_postgres::StatementCache>,
     pub(super) schema: Option<String>,
@@ -577,13 +577,13 @@ impl PoolLifecycle {
     }
 }
 
-/// Raw checkout state, observed before any claim injection. Gate probes use
-/// this to assert a fresh checkout is transaction-free and claim-free.
+/// Raw checkout state, observed before any identity injection. Condition probes use
+/// this to assert a fresh checkout is transaction-free and identity-free.
 #[derive(Debug)]
 pub struct CheckoutProbe {
     pub backend_pid: i32,
-    /// `current_setting('app.env_key', true)` — must be NULL on a clean conn.
-    pub env_key_claim: Option<String>,
+    /// `current_setting('app.project_env_key', true)` — must be NULL on a clean conn.
+    pub project_env_key_identity: Option<String>,
     /// `pg_current_xact_id_if_assigned()` — non-NULL means a leaked open
     /// transaction that performed writes.
     pub xact_id: Option<String>,
@@ -613,8 +613,8 @@ fn standard_conforming_strings_ok(setting: &str) -> bool {
 ///
 /// This is what closes the loop that split B opened. B keys the pool on
 /// (project, class, generation) taken from the resolved url; the url is a
-/// CLAIM about who will connect. The probe is the server's own answer to
-/// whether that claim is true: it compares `session_user`, `current_user` and
+/// IDENTITY about who will connect. The probe is the server's own answer to
+/// whether that identity is true: it compares `session_user`, `current_user` and
 /// the database against the expectation, and asks the server whether the
 /// principal really holds the class's ACL role. A generation mismatch
 /// therefore fails the connection rather than serving under a stale principal.
@@ -678,7 +678,7 @@ pub(super) fn credential_exactness_hook(
             // deadpool hands a `ClientWrapper`; the probe wants the
             // `tokio_postgres::Client` it derefs to.
             probe.probe_pooled(&**client).await.map_err(|error| {
-                // The error carries a predicate and a kind, never credential
+                // The error carries a predicate and a type, never credential
                 // material or server detail.
                 HookError::message(format!(
                     "credential exactness refused the connection: {error}"
@@ -691,12 +691,12 @@ pub(super) fn credential_exactness_hook(
 /// Apply the project's `statement_timeout` once, when the connection is created.
 ///
 /// The value comes from [`ResolvedCredential`], which is resolved per
-/// (project, class, tenant) -- exactly the pool key -- so every borrower of a
+/// (project, class, project) -- exactly the pool key -- so every borrower of a
 /// given connection wants the same number. Paying a `SET` round trip for it on
 /// every request is waste: measured at 0.293 ms of each authenticated request
 /// (measurement record in commit `b40a1714b8a0`).
 ///
-/// SESSION scope, so a later transaction-LOCAL `set_config` still wins. That is
+/// SESSION lifetime, so a later transaction-LOCAL `set_config` still wins. That is
 /// what keeps the guest paths unchanged: they set their own timeout alongside
 /// `search_path`, which is per-component and therefore CANNOT be hoisted here.
 pub(super) fn session_statement_timeout_hook(statement_timeout_ms: u32) -> Hook {
@@ -906,20 +906,20 @@ mod tests {
     ///
     /// The test must read the credential the GUEST would actually connect with,
     /// not whatever url the project happens to carry for some other authority.
-    /// This project's platform login carries `acme`'s tenant key and its
+    /// This project's platform login carries `acme`'s project key and its
     /// guest login carries `evil`'s, so a test that read the wrong credential
-    /// would ADMIT a cross-tenant guest read. Both directions are asserted.
+    /// would ADMIT a cross-project guest read. Both directions are asserted.
     #[test]
-    fn the_guest_env_key_requirement_reads_the_credential_the_guest_would_connect_with() {
+    fn the_guest_project_env_key_requirement_reads_the_credential_the_guest_would_connect_with() {
         let credentials = ClassCredentials::every_class(format!(
             "postgres://wamn_app_{}_a:pw@db/billing",
-            app_scope_hash("acme", "billing")
+            app_identity_hash("acme", "billing")
         ))
         .with_class(
             AuthorityClass::GuestSql,
             format!(
                 "postgres://wamn_app_{}_a:pw@db/billing",
-                app_scope_hash("evil", "billing")
+                app_identity_hash("evil", "billing")
             ),
         );
         let mut projects = HashMap::new();
@@ -930,27 +930,27 @@ mod tests {
             provider
                 .resolve("billing", AuthorityClass::GuestSql, Some("acme"))
                 .is_err(),
-            "the guest credential is minted for another tenant and must be REFUSED, \
+            "the guest credential is minted for another project and must be REFUSED, \
              not borrowed — reading the platform credential here would admit a \
-             cross-tenant read"
+             cross-project read"
         );
         assert!(
             provider
                 .resolve("billing", AuthorityClass::GuestSql, Some("evil"))
-                .expect("the guest credential's own tenant resolves")
+                .expect("the guest credential's own project resolves")
                 .is_some()
         );
         assert!(
             provider
                 .resolve("billing", AuthorityClass::GuestSql, None)
                 .is_err(),
-            "guest resolution without a tenant has no authority to validate"
+            "guest resolution without a project has no authority to validate"
         );
-        // The platform class is project-environment scoped: no tenant binding.
+        // The platform class is restricted to a project-environment: no project binding.
         assert!(
             provider
                 .resolve("billing", AuthorityClass::ExecutorPlatform, None)
-                .expect("platform resolution needs no tenant")
+                .expect("platform resolution needs no project")
                 .is_some()
         );
     }
@@ -961,8 +961,8 @@ mod tests {
     ///
     /// Resolved as a PLATFORM class deliberately: the subject here is the
     /// project MAP, and guest resolution additionally verifies the credential's
-    /// tenant binding (`wamn-0h0g.22.6.7`), which has its own test. Mixing the
-    /// two would make a project-selection failure and a tenant-binding failure
+    /// project binding (`wamn-0h0g.22.6.7`), which has its own test. Mixing the
+    /// two would make a project-selection failure and a project-binding failure
     /// indistinguishable.
     #[test]
     fn an_unlisted_project_does_not_borrow_another_projects_credential() {
@@ -1100,7 +1100,7 @@ mod tests {
                 "",
             )
             .is_err(),
-            "an empty tenant binding must refuse"
+            "an empty project binding must refuse"
         );
     }
 
@@ -1111,7 +1111,7 @@ mod tests {
     fn every_authority_probes_for_its_own_acl_role() {
         // THE ROLE NAMES ARE SPELLED OUT, NOT DERIVED (`wamn-0h0g.22.31`). This
         // arm previously asserted only that a probe was produced and that the
-        // four `acl_role()` values differ — a claim about the enum, not about
+        // four `acl_role()` values differ — an identity about the enum, not about
         // the probe — so a hook that expected one fixed role for every class
         // passed it. The literals below are the second document the expectation
         // is validated against, and they are what makes the arm per-family.

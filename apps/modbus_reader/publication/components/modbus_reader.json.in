@@ -1,6 +1,6 @@
 {
-  "scope": {
-    "env_key": "__ENV_KEY__",
+  "target": {
+    "project_env_key": "__PROJECT_ENV_KEY__",
     "package-id": "modbus_reader"
   },
   "component": "modbus_reader",

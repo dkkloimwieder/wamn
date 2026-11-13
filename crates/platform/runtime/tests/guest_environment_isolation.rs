@@ -1,4 +1,4 @@
-//! The runtime floor beneath the tenant allowlist: a guest never sees the host
+//! The runtime minimum beneath the project allowlist: a guest never sees the host
 //! process environment (`wamn-3ynz`, replacing `wamn-mrfr`'s source scan).
 //!
 //! # Why this is load-bearing and not hypothetical
@@ -9,9 +9,9 @@
 //! component would read the platform's database credential directly. So the
 //! `WasiCtx` construction is a genuine second control.
 //!
-//! # This is the floor, not the whole story
+//! # This is the minimum, not the whole story
 //!
-//! Tenant admission separately DENIES `wasi:cli/environment` to tenant code —
+//! Project admission separately DENIES `wasi:cli/environment` to project code —
 //! the closed allowlist in `crates/platform/component-policy`, reached from
 //! `crates/control/package/src/component_admission.rs` through `validate_component_admission`.
 //! That is the first door. This test tests the guarantee that holds for a guest

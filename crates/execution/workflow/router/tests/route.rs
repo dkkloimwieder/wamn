@@ -12,7 +12,7 @@
 
 use serde_json::{Value, json};
 use wamn_router::{
-    Delivery, FailureKind, NodeCall, NodeOutcome, Outcome, Terminal, ThrottleKey, Verdict,
+    Delivery, FailureType, NodeCall, NodeOutcome, Outcome, Terminal, ThrottleKey, Verdict,
     WalkStatus, Wiring, WiringEdge, WiringNode,
 };
 
@@ -79,14 +79,14 @@ fn drive(
     )
 }
 
-fn failure(outcome: &Outcome) -> (&str, FailureKind, Option<&str>) {
+fn failure(outcome: &Outcome) -> (&str, FailureType, Option<&str>) {
     let failure = outcome
         .failure
         .as_ref()
         .expect("a failed walk records its failure");
     (
         failure.node.as_str(),
-        failure.kind,
+        failure.type_,
         failure.detail.code.as_deref(),
     )
 }
@@ -107,7 +107,7 @@ fn a_respond_node_without_a_caller_fails_the_delivery_not_the_router() {
         failure(&outcome),
         (
             "a",
-            FailureKind::RespondWithoutCaller,
+            FailureType::RespondWithoutCaller,
             Some("respond-without-caller")
         )
     );
@@ -132,7 +132,7 @@ fn a_second_terminal_fails_the_delivery_not_the_router() {
     assert_eq!(outcome.status, WalkStatus::Failed);
     assert_eq!(
         failure(&outcome),
-        ("second", FailureKind::SecondVerdict, Some("second-verdict"))
+        ("second", FailureType::SecondVerdict, Some("second-verdict"))
     );
     assert_eq!(
         outcome.verdict,

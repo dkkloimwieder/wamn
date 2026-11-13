@@ -273,7 +273,7 @@ describe("User decisions", () => {
     await waitFor(() => expect(opened).toBe(`users/${principalId}/memberships`));
     expect(writes).toEqual([{ principal_id: principalId, project: "widgets", env: "dev" }]);
   });
-  it("scopes all four access writes to the addressed user and reads each project", async () => {
+  it("views all four access writes to the addressed user and reads each project", async () => {
     const calls: string[] = [];
     const writes: { path: string; value: unknown }[] = [];
     let environments: string[] = [];

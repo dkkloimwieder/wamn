@@ -1,4 +1,4 @@
-//! A route answers every platform fixture operation kind the same way as the
+//! A route answers every platform fixture operation type the same way as the
 //! one-node wiring it replaces.
 //!
 //! Every fixture attachment is a route. One local application serves each one
@@ -8,7 +8,7 @@
 //! projections are served by a route only: no wiring for them exists in the
 //! release or the catalog, so their answers prove that a route runs no graph
 //! walk. The later sections show the conditional read of a list route, the
-//! page of a query, the ceiling, and each scope filter mode, the search and
+//! page of a query, the ceiling, and each target filter mode, the search and
 //! the band.
 
 #[path = "../../../services/ctl/src/read_query.rs"]
@@ -83,8 +83,8 @@ impl Paths {
     /// require the same status and the same answer. A wiring is a POST. A
     /// route to a read is a GET, and every other route is a POST.
     async fn alike(&self, path: &str, body: &Value) -> anyhow::Result<Value> {
-        let wiring = self.by_kind(path, body).await?;
-        let route = self.by_kind(&format!("{ROUTE_PREFIX}{path}"), body).await?;
+        let wiring = self.by_type(path, body).await?;
+        let route = self.by_type(&format!("{ROUTE_PREFIX}{path}"), body).await?;
         anyhow::ensure!(
             wiring == route,
             "{path} answered differently\n wiring: {wiring:?}\n  route: {route:?}"
@@ -119,7 +119,7 @@ impl Paths {
 
     /// Send one body through the route only.
     async fn route(&self, path: &str, body: &Value) -> anyhow::Result<Value> {
-        let (status, value) = self.by_kind(&format!("{ROUTE_PREFIX}{path}"), body).await?;
+        let (status, value) = self.by_type(&format!("{ROUTE_PREFIX}{path}"), body).await?;
         anyhow::ensure!(status == 200, "route {path} answered {status}: {value}");
         Ok(value)
     }
@@ -128,7 +128,7 @@ impl Paths {
 impl Paths {
     /// A route to a read carries no request identity, so a request element without
     /// one is a read.
-    async fn by_kind(&self, path: &str, body: &Value) -> anyhow::Result<(u16, Value)> {
+    async fn by_type(&self, path: &str, body: &Value) -> anyhow::Result<(u16, Value)> {
         if body[0].get("request_id").is_none() {
             self.get(path, body).await
         } else {
@@ -212,7 +212,7 @@ async fn start(
         scratch: scratch.path(),
         component_directory: &components,
         flow_http_wasm: &flow_http,
-        env_key: "route-interface",
+        project_env_key: "route-interface",
         org: "acme",
         project: "fixture",
         environment: "dev",
@@ -263,7 +263,7 @@ async fn health_head_needs_no_credential() -> anyhow::Result<()> {
 
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "requires: env:WAMN_APPLICATION_COMPONENTS, env:WAMN_FLOW_HTTP_COMPONENT, env:WAMN_NATIVE_C_NATS_BIN"]
-async fn a_route_answers_every_operation_kind_consistently_across_aliases() -> anyhow::Result<()> {
+async fn a_route_answers_every_operation_type_consistently_across_aliases() -> anyhow::Result<()> {
     wamn_test_postgres::require_ignored_prerequisites(
         "requires: env:WAMN_APPLICATION_COMPONENTS, env:WAMN_FLOW_HTTP_COMPONENT, env:WAMN_NATIVE_C_NATS_BIN",
     );
@@ -815,7 +815,7 @@ async fn composed_reads_use_one_statement_plus_optional_wal() -> anyhow::Result<
     result
 }
 
-/// One feed read of the widget list: the changes in the scope of `filter`
+/// One feed read of the widget list: the changes in the target of `filter`
 /// since `cursor`.
 async fn widget_changes(paths: &Paths, filter: &Value, cursor: &str) -> anyhow::Result<Value> {
     let answer = paths
@@ -1027,19 +1027,19 @@ async fn the_feed_of_a_list_read_follows_its_snapshot() -> anyhow::Result<()> {
             "an unchanged feed answers 304: {status} {again:?} {body}"
         );
 
-        // SCOPE. A row updated out of the list's filter arrives as deleted.
+        // TARGET. A row updated out of the list's filter arrives as deleted.
         let kept = json!({"note": ["kept"]});
-        let scoped = paths
+        let targeted = paths
             .route("/widget/query", &json!([{"filter": kept}]))
             .await?;
-        let scoped_cursor = value(&scoped)?["cursor"]
+        let targeted_cursor = value(&targeted)?["cursor"]
             .as_str()
             .context("a cursor")?
             .to_owned();
         note_widget(&paths, &first, version, "gone").await?;
-        let scope_changes = widget_changes(&paths, &kept, &scoped_cursor).await?;
-        feed_versions(&scope_changes)?;
-        let gone = change_of(&scope_changes, &first)?;
+        let target_changes = widget_changes(&paths, &kept, &targeted_cursor).await?;
+        feed_versions(&target_changes)?;
+        let gone = change_of(&target_changes, &first)?;
         anyhow::ensure!(
             gone["deleted"] == json!(true) && gone.get("data").is_none(),
             "a row that left the filter arrives as deleted: {gone}"
@@ -1047,7 +1047,7 @@ async fn the_feed_of_a_list_read_follows_its_snapshot() -> anyhow::Result<()> {
 
         // DELETE. A deleted row arrives as deleted, with no data and the
         // statement snapshot.
-        let deleted_cursor = scope_changes["next_cursor"]
+        let deleted_cursor = target_changes["next_cursor"]
             .as_str()
             .context("a cursor")?
             .to_owned();
@@ -1220,13 +1220,13 @@ async fn an_authored_view_feed_maps_joined_changes_moves_and_expiry() -> anyhow:
         screen_ids(&inserted, &[four], false)?;
         anyhow::ensure!(inserted["rows"][0]["data"]["order_label"] == "inserted order" && inserted["rows"][0]["data"]["item_label"] == "inserted item", "{inserted}");
         cursor = inserted["next_cursor"].as_str().unwrap().to_owned();
-        let scoped = paths.route("/feed_line/screen", &json!([{"order_id": old_order}])).await?;
-        let scoped_cursor = value(&scoped)?["cursor"].as_str().context("scoped cursor")?;
+        let targeted = paths.route("/feed_line/screen", &json!([{"order_id": old_order}])).await?;
+        let targeted_cursor = value(&targeted)?["cursor"].as_str().context("targeted cursor")?;
         writer.batch_execute("UPDATE inventory.feed_line SET order_id = '00000000-0000-4000-8000-000000000002' WHERE label = 'new line'").await?;
         let moved = screen_changes(&paths, &cursor, None).await?;
         screen_ids(&moved, &[one], false)?;
         anyhow::ensure!(moved["rows"][0]["data"]["order_label"] == "order two", "{moved}");
-        screen_ids(&screen_changes(&paths, scoped_cursor, Some(old_order)).await?, &[one], true)?;
+        screen_ids(&screen_changes(&paths, targeted_cursor, Some(old_order)).await?, &[one], true)?;
         cursor = moved["next_cursor"].as_str().unwrap().to_owned();
         writer.batch_execute("UPDATE inventory.feed_line SET enabled = false WHERE label = 'line two'").await?;
         let filtered = screen_changes(&paths, &cursor, None).await?;
@@ -1551,10 +1551,10 @@ async fn a_role_without_the_permission_is_refused_an_authored_feed() -> anyhow::
 /// Local assembly does not run env apply, so install its sequence defaults
 /// under the administration role that owns configuration writes.
 fn seed_number_sequences(database: &wamn_test_postgres::Database) -> anyhow::Result<()> {
-    use wamn_control_provision::{CredentialGeneration, WorkloadRoleFamily, WorkloadRoleScope};
+    use wamn_control_provision::{CredentialGeneration, WorkloadRoleFamily, WorkloadRoleIdentity};
     let role = wamn_control_provision::workload_generation_role(
         WorkloadRoleFamily::Administration,
-        WorkloadRoleScope::ProjectEnvironment {
+        WorkloadRoleIdentity::ProjectEnvironment {
             org: "acme",
             project: "platform",
             environment: "dev",
@@ -1651,7 +1651,7 @@ async fn an_overlay_insert_inherits_numbering_and_actor_stamps() -> anyhow::Resu
         scratch: scratch.path(),
         component_directory: &components,
         flow_http_wasm: &flow_http,
-        env_key: "numbered-overlay",
+        project_env_key: "numbered-overlay",
         org: "acme",
         project: "platform",
         environment: "dev",

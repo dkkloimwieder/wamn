@@ -40,15 +40,15 @@ pub(in super::super) fn stable_grant_set(family: WorkloadRoleFamily) -> Option<S
 ///
 /// Deliberately a per-schema shape — iterate whatever schemas the role holds
 /// anything in and require each to be EXACTLY this set — because retention
-/// is likewise a tenant-scoped family whose grants land inside each project-env
+/// is likewise a project-targeted family whose grants land inside each project-env
 /// database's run-plane schema, and a widened grant in a schema nobody thought
 /// to name is exactly the drift a per-schema allow-list would miss.
 ///
-/// The `SELECT` is COLUMN-scoped and the assertion has to keep it that way. The
-/// role is a `wamn_platform` member, that group's floor arm on `wamn_run.runs`
+/// The `SELECT` is COLUMN-targeted and the assertion has to keep it that way. The
+/// role is a `wamn_platform` member, that group's base policy arm on `wamn_run.runs`
 /// is `USING (true)`, and PostgreSQL grants are relation- and column-shaped
 /// rather than row-shaped — so this column list is the only thing standing
-/// between a retention credential and every tenant's run payloads. A
+/// between a retention credential and every project's run payloads. A
 /// `("relation", "runs", "SELECT")` entry appearing here is that regression, and
 /// it fails as an unexpected member of the exact set.
 pub(super) fn verify_retention_grants(
@@ -168,15 +168,15 @@ pub(in super::super) fn verify_audit_retention_grants(
         }
     }
     let actual = acl_tuples(grants);
-    for (kind, schema, object, privilege) in actual.iter().chain(&expected) {
+    for (type_, schema, object, privilege) in actual.iter().chain(&expected) {
         anyhow::ensure!(
-            matches!(kind.as_str(), "schema" | "relation" | "column"),
-            "stable role {role:?} carries non-retention {kind} ACL in database {database:?}"
+            matches!(type_.as_str(), "schema" | "relation" | "column"),
+            "stable role {role:?} carries non-retention {type_} ACL in database {database:?}"
         );
         anyhow::ensure!(
             (schema == "platform"
                 && matches!(
-                    (kind.as_str(), object.as_str(), privilege.as_str()),
+                    (type_.as_str(), object.as_str(), privilege.as_str()),
                     ("schema", "platform", "USAGE")
                         | ("relation", "write_log", "DELETE")
                         | (
@@ -205,7 +205,7 @@ pub(in super::super) fn verify_audit_retention_grants(
     Ok(())
 }
 
-/// The `aclexplode` grants as `(kind, schema, object, privilege)` tuples.
+/// The `aclexplode` grants as `(type, schema, object, privilege)` tuples.
 pub(super) fn acl_tuples(grants: &[RoleAcl]) -> BTreeSet<(String, String, String, String)> {
     grants
         .iter()
@@ -220,7 +220,7 @@ pub(super) fn acl_tuples(grants: &[RoleAcl]) -> BTreeSet<(String, String, String
         .collect()
 }
 
-/// Make sure of the reader's two column-scoped reads and no other direct grants.
+/// Make sure of the reader's two column-targeted reads and no other direct grants.
 pub(in super::super) fn verify_session_role_reader_grants(
     role: &str,
     database: &str,
@@ -264,11 +264,11 @@ pub(in super::super) fn verify_session_role_reader_grants(
 ///
 /// EQUALITY against the server's own `aclexplode` answer, never containment: a
 /// containment test passes a role that has ALSO acquired `INSERT` on `runs`,
-/// and this family's credentials match the permissive `TO wamn_platform` floor
-/// arm, so any privilege it holds it holds over EVERY tenant's rows.
+/// and this family's credentials match the permissive `TO wamn_platform` minimum
+/// arm, so any privilege it holds it holds over EVERY project's rows.
 ///
 /// The `routine` rows are part of the matrix, not an exemption. The surface
-/// grants two function EXECUTEs — its own authority guard and the tenant-key
+/// grants two function EXECUTEs — its own authority guard and the project-key
 /// derivation the `runs_tkey` expression index makes load bearing — and
 /// `sql::role_database_grants_sql` reports routine ACLs, so omitting
 /// them here would refuse a correctly converged role. (The management-admitter
@@ -335,7 +335,7 @@ pub(super) fn verify_executor_platform_grants(
         (
             "routine".to_string(),
             "wamn_authority".to_string(),
-            "tenant_key".to_string(),
+            "project_key".to_string(),
             "EXECUTE".to_string(),
         ),
     ]);
@@ -501,7 +501,7 @@ pub(in super::super) fn verify_http_admitter_grants(
 /// Exact surface of the administration family (`wamn-a40n.2`): `USAGE` on
 /// `catalog`, `platform` and `wamn_history`, `SELECT`, `INSERT`, `UPDATE`
 /// and `DELETE` on each relation of `sql::ADMINISTRATION_RELATIONS`, `INSERT`
-/// on the entry columns of its history table (without a tenant column), `SELECT` on `catalog.releases`
+/// on the entry columns of its history table (without a project column), `SELECT` on `catalog.releases`
 /// (`wamn-aemxz.1`), and `EXECUTE` on `row_image`. The grants go to `wamn_administration` alone.
 pub(in super::super) fn verify_administration_grants(
     role: &str,
@@ -603,7 +603,7 @@ pub(in super::super) fn verify_event_materializer_grants(
     Ok(())
 }
 
-/// Require only the login-scoped credential lookup in the control database,
+/// Require only the login-targeted credential lookup in the control database,
 /// and the OAuth token rows that the host's reader login locks and writes.
 pub(in super::super) fn verify_connection_reader_grants(
     role: &str,
@@ -867,7 +867,8 @@ pub(in super::super) struct RoleAcl {
 /// The only `runs` columns run-history pruning reads: the three its `WHERE`
 /// clause names. `run_id` is deliberately absent — the statement never selects
 /// it, and the verb reports a COUNT rather than a list.
-pub(super) const RETENTION_RUN_READ_COLUMNS: [&str; 3] = ["env_key", "status", "created_at"];
+pub(super) const RETENTION_RUN_READ_COLUMNS: [&str; 3] =
+    ["project_env_key", "status", "created_at"];
 
 impl StableGrantSet {
     pub(super) fn verify(

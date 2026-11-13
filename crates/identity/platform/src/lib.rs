@@ -137,12 +137,12 @@ pub fn operator_subject(
     canonical_subject(&format!("wamn-operator-{org}--{project}--{environment}"))
 }
 
-/// The service subject of one scheduled application in one environment tenant.
-pub fn application_subject(env_key: &str, package: &str) -> Result<String, IdentityError> {
-    canonical_subject(&format!("wamn-app-{env_key}--{package}"))
+/// The service subject of one scheduled application in one environment project.
+pub fn application_subject(project_env_key: &str, package: &str) -> Result<String, IdentityError> {
+    canonical_subject(&format!("wamn-app-{project_env_key}--{package}"))
 }
 
-/// The kind of first-party platform principal.
+/// The type of first-party platform principal.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PrincipalType {
     /// A user resolved from an external identity or represented by a PAT.
@@ -171,7 +171,7 @@ impl PrincipalType {
             "platform" => Ok(Self::Platform),
             other => Err(IdentityError::new(
                 IdentityErrorType::CorruptData,
-                format!("unknown stored principal kind {other:?}"),
+                format!("unknown stored principal type {other:?}"),
             )),
         }
     }
@@ -224,7 +224,7 @@ impl fmt::Display for PrincipalStatus {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Principal {
     id: PrincipalId,
-    kind: PrincipalType,
+    type_: PrincipalType,
     subject: Box<str>,
     display_name: Box<str>,
     status: PrincipalStatus,
@@ -238,7 +238,7 @@ impl Principal {
 
     /// Return whether this is a user, service, or platform principal.
     pub const fn principal_type(&self) -> PrincipalType {
-        self.kind
+        self.type_
     }
 
     /// Return the normalized first-party subject.
@@ -387,7 +387,7 @@ impl fmt::Debug for IssuedPat {
 pub enum IdentityErrorType {
     /// Caller input violated a local invariant.
     InvalidInput,
-    /// A principal with the same kind and subject already exists.
+    /// A principal with the same type and subject already exists.
     Conflict,
     /// A referenced principal or project does not exist.
     NotFound,
@@ -419,7 +419,7 @@ pub enum IdentityRefusal {
     AdminCovered,
 }
 
-/// Canonical identity-core error with a stable kind and diagnostic message.
+/// Canonical identity-core error with a stable type and diagnostic message.
 #[derive(Debug)]
 pub struct IdentityError {
     type_: IdentityErrorType,
@@ -428,22 +428,22 @@ pub struct IdentityError {
 }
 
 impl IdentityError {
-    fn new(kind: IdentityErrorType, message: impl Into<Box<str>>) -> Self {
+    fn new(type_: IdentityErrorType, message: impl Into<Box<str>>) -> Self {
         Self {
-            type_: kind,
+            type_,
             message: message.into(),
             refusal: None,
         }
     }
 
     fn refused(
-        kind: IdentityErrorType,
+        type_: IdentityErrorType,
         refusal: IdentityRefusal,
         message: impl Into<Box<str>>,
     ) -> Self {
         Self {
             refusal: Some(refusal),
-            ..Self::new(kind, message)
+            ..Self::new(type_, message)
         }
     }
 
@@ -499,7 +499,7 @@ impl From<wamn_identity_protocol::SessionError> for IdentityError {
 /// `email` is the user's deliverable address. It is separate from `subject`,
 /// which authenticates and carries no promise of delivery.
 /// `reconcile-run-plane` copies the email into the `platform."user"` user
-/// row of every tenant this user can write in (`wamn-0h0g.9.18`), so a user
+/// row of every project this user can write in (`wamn-0h0g.9.18`), so a user
 /// principal always has one.
 pub async fn create_user(
     client: &(impl GenericClient + Sync),
@@ -607,16 +607,19 @@ pub async fn resolve_principal(
         .transpose()
 }
 
-/// Resolve a principal by kind and normalized subject without authenticating
+/// Resolve a principal by type and normalized subject without authenticating
 /// the caller.
 pub async fn resolve_subject(
     client: &(impl GenericClient + Sync),
-    kind: PrincipalType,
+    type_: PrincipalType,
     subject: &str,
 ) -> Result<Option<Principal>, IdentityError> {
     let subject = canonical_subject(subject)?;
     client
-        .query_opt(SELECT_PRINCIPAL_BY_SUBJECT_SQL, &[&kind.as_str(), &subject])
+        .query_opt(
+            SELECT_PRINCIPAL_BY_SUBJECT_SQL,
+            &[&type_.as_str(), &subject],
+        )
         .await
         .map_err(|error| database_error(&error))?
         .as_ref()
@@ -718,7 +721,7 @@ fn decide_pat(
     let principal = decode_principal(&row)?;
     // The pats foreign key refuses a platform principal, so a stored token
     // for one is corrupt data. It never authenticates.
-    if principal.kind == PrincipalType::Platform {
+    if principal.type_ == PrincipalType::Platform {
         return Err(IdentityError::new(
             IdentityErrorType::CorruptData,
             "stored token names a platform principal",
@@ -780,7 +783,7 @@ pub async fn assign_project_role(
     role: &str,
     drops: &mut AuthDrops,
 ) -> Result<(), IdentityError> {
-    let org = require_scope_segment("org", org)?;
+    let org = require_target_segment("org", org)?;
     let service: bool = client.query_one(
         "SELECT EXISTS (SELECT 1 FROM identity.principals WHERE id=$1::text::uuid AND type='service')",
         &[&principal_id.to_string().as_str()],
@@ -789,7 +792,7 @@ pub async fn assign_project_role(
         org::active_member(client, principal_id, &org).await?;
     }
 
-    let project = require_scope_segment("project", project)?;
+    let project = require_target_segment("project", project)?;
     let role = role.parse::<RoleName>()?.to_string();
     let written = client
         .execute(
@@ -811,8 +814,8 @@ pub async fn project_roles(
     org: &str,
     project: &str,
 ) -> Result<Vec<RoleName>, IdentityError> {
-    let org = require_scope_segment("org", org)?;
-    let project = require_scope_segment("project", project)?;
+    let org = require_target_segment("org", org)?;
+    let project = require_target_segment("project", project)?;
     let rows = client
         .query(
             SELECT_PROJECT_ROLES_SQL,
@@ -835,7 +838,7 @@ fn decode_project_roles(rows: Vec<Row>) -> Result<Vec<RoleName>, IdentityError> 
 /// Grant a user principal membership in one registered project-environment.
 ///
 /// Repeated grants are harmless. The database rejects service principals and
-/// missing environments. Membership does not create tenant users or assign roles.
+/// missing environments. Membership does not create project users or assign roles.
 pub async fn grant_project_env_membership(
     client: &(impl GenericClient + Sync),
     principal_id: &PrincipalId,
@@ -844,8 +847,8 @@ pub async fn grant_project_env_membership(
     env: &str,
 ) -> Result<(), IdentityError> {
     let org = org::active_member(client, principal_id, org).await?;
-    let project = require_scope_segment("project", project)?;
-    let env = require_scope_segment("env", env)?;
+    let project = require_target_segment("project", project)?;
+    let env = require_target_segment("env", env)?;
     client
         .execute(
             GRANT_PROJECT_ENV_MEMBERSHIP_SQL,
@@ -867,9 +870,9 @@ pub async fn has_project_env_membership(
     project: &str,
     env: &str,
 ) -> Result<bool, IdentityError> {
-    let org = require_scope_segment("org", org)?;
-    let project = require_scope_segment("project", project)?;
-    let env = require_scope_segment("env", env)?;
+    let org = require_target_segment("org", org)?;
+    let project = require_target_segment("project", project)?;
+    let env = require_target_segment("env", env)?;
     client
         .query_one(
             SELECT_PROJECT_ENV_MEMBERSHIP_SQL,
@@ -890,10 +893,10 @@ pub async fn revoke_project_env_membership(
     env: &str,
     drops: &mut AuthDrops,
 ) -> Result<bool, IdentityError> {
-    let org = require_scope_segment("org", org)?;
+    let org = require_target_segment("org", org)?;
     org::lock_membership(client, principal_id, &org).await?;
-    let project = require_scope_segment("project", project)?;
-    let env = require_scope_segment("env", env)?;
+    let project = require_target_segment("project", project)?;
+    let env = require_target_segment("env", env)?;
     let removed = client
         .execute(
             REVOKE_PROJECT_ENV_MEMBERSHIP_SQL,
@@ -938,7 +941,7 @@ impl PreparedIdentityReads {
         })
     }
 
-    /// Authenticate a route PAT and its system scope in one round trip.
+    /// Authenticate a route PAT and its system target in one round trip.
     ///
     /// Services need one of the accepted project roles. The caller must still
     /// enforce the configured service identity and read operation permissions.
@@ -954,8 +957,8 @@ impl PreparedIdentityReads {
             return Ok(None);
         };
         let prefix = parsed.lookup();
-        let org = require_scope_segment("org", org)?;
-        let project = require_scope_segment("project", project)?;
+        let org = require_target_segment("org", org)?;
+        let project = require_target_segment("project", project)?;
         let roles = accepted_roles
             .iter()
             .map(|role| role.parse::<RoleName>().map(|value| value.to_string()))
@@ -970,13 +973,13 @@ impl PreparedIdentityReads {
 
 fn decode_principal(row: &Row) -> Result<Principal, IdentityError> {
     let id: String = row.try_get(0).map_err(|error| database_error(&error))?;
-    let kind: String = row.try_get(1).map_err(|error| database_error(&error))?;
+    let type_: String = row.try_get(1).map_err(|error| database_error(&error))?;
     let subject: String = row.try_get(2).map_err(|error| database_error(&error))?;
     let display_name: String = row.try_get(3).map_err(|error| database_error(&error))?;
     let status: String = row.try_get(4).map_err(|error| database_error(&error))?;
     Ok(Principal {
         id: id.parse()?,
-        kind: PrincipalType::parse(&kind)?,
+        type_: PrincipalType::parse(&type_)?,
         subject: subject.into(),
         display_name: display_name.into(),
         status: PrincipalStatus::parse(&status)?,
@@ -1109,7 +1112,7 @@ pub fn require_user_contact(email: &str, display_name: &str) -> Result<(), Ident
     Ok(())
 }
 
-fn require_scope_segment(name: &'static str, value: &str) -> Result<String, IdentityError> {
+fn require_target_segment(name: &'static str, value: &str) -> Result<String, IdentityError> {
     let value = value.trim();
     if value.is_empty() || value.len() > 40 {
         return Err(IdentityError::refused(
@@ -1122,7 +1125,7 @@ fn require_scope_segment(name: &'static str, value: &str) -> Result<String, Iden
 }
 
 fn database_error(error: &tokio_postgres::Error) -> IdentityError {
-    let kind = match error.code() {
+    let type_ = match error.code() {
         Some(code) if code == &SqlState::UNIQUE_VIOLATION => IdentityErrorType::Conflict,
         Some(code) if code == &SqlState::FOREIGN_KEY_VIOLATION => IdentityErrorType::NotFound,
         _ => IdentityErrorType::Database,
@@ -1141,7 +1144,7 @@ fn database_error(error: &tokio_postgres::Error) -> IdentityError {
         },
     );
     IdentityError::new(
-        kind,
+        type_,
         format!("platform identity database operation failed: {reason}"),
     )
 }
@@ -1151,7 +1154,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn application_subject_is_scoped_to_env_key_and_package() {
+    fn application_subject_is_targeted_to_project_env_key_and_package() {
         assert_eq!(
             application_subject("acme--erp--prod", "integration").unwrap(),
             "wamn-app-acme--erp--prod--integration"
@@ -1164,17 +1167,17 @@ mod tests {
             application_subject("acme--erp--prod", "integration").unwrap(),
             application_subject("acme--erp--prod", "consumer").unwrap()
         );
-        assert!(application_subject("bad tenant", "integration").is_err());
+        assert!(application_subject("bad project", "integration").is_err());
     }
 
     #[test]
-    fn principal_kind_literals_round_trip() {
-        for kind in [
+    fn principal_type_literals_round_trip() {
+        for type_ in [
             PrincipalType::User,
             PrincipalType::Service,
             PrincipalType::Platform,
         ] {
-            assert_eq!(PrincipalType::parse(kind.as_str()).unwrap(), kind);
+            assert_eq!(PrincipalType::parse(type_.as_str()).unwrap(), type_);
         }
         assert_eq!(PrincipalType::Platform.as_str(), "platform");
         assert_eq!(
@@ -1238,7 +1241,7 @@ mod tests {
     }
 
     #[test]
-    fn operator_subject_is_exactly_environment_scoped_and_validated() {
+    fn operator_subject_is_exactly_environment_targeted_and_validated() {
         assert_eq!(
             operator_subject("demo", "widgets", "prod").unwrap(),
             "wamn-operator-demo--widgets--prod"

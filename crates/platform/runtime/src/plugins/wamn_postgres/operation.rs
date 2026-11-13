@@ -13,11 +13,11 @@ use wamn_engine::router_delivery::DeliveryClass;
 use wash_runtime::engine::ctx::ActiveCtx;
 use wash_runtime::wasmtime::component::{Accessor, HasData, Resource, ResourceTable};
 
-use super::claims::{ClaimError, ClaimErrorKind};
+use super::session_identity::{SessionIdentityError, SessionIdentityErrorType};
 use super::write_log::OpaqueBegun;
 use super::{
     OperationTransaction, PgCommitFailure, PreparedStatementMembers, PreparedStatementSet,
-    ReleaseIdentity, SessionClaims, StatementField, VerifiedStatement, WAMN_POSTGRES_ID,
+    ReleaseIdentity, SessionIdentity, StatementField, VerifiedStatement, WAMN_POSTGRES_ID,
     WamnPostgres,
 };
 
@@ -41,7 +41,7 @@ impl Default for OperationMetrics {
 impl OperationMetrics {
     fn record(&self, source: &str, class: DeliveryClass) {
         let mut attributes = vec![
-            opentelemetry::KeyValue::new("wamn.source.kind", "attachment"),
+            opentelemetry::KeyValue::new("wamn.source.type", "attachment"),
             opentelemetry::KeyValue::new("wamn.source.id", source.to_owned()),
         ];
         self.attempts.add(1, &attributes);
@@ -57,7 +57,7 @@ impl OperationMetrics {
 pub(super) struct OperationWorkload {
     start: (String, String),
     release: Arc<LoadedRelease>,
-    claims: SessionClaims,
+    identity: SessionIdentity,
     operations: BTreeMap<String, PreparedStatementSet>,
     grants: BTreeMap<String, Option<String>>,
     schemas: BTreeMap<String, String>,
@@ -76,7 +76,7 @@ impl WamnPostgres {
         release: Arc<LoadedRelease>,
         reference: &str,
         component_name: &str,
-        claims: SessionClaims,
+        identity: SessionIdentity,
     ) -> anyhow::Result<()> {
         let entry = release
             .manifest()
@@ -88,8 +88,8 @@ impl WamnPostgres {
             "composed entry reference differs from the release"
         );
         anyhow::ensure!(
-            claims.env_key == release.scope().env_key
-                && claims.release.as_ref() == Some(&ReleaseIdentity::from_loaded(&release)),
+            identity.project_env_key == release.target().project_env_key
+                && identity.release.as_ref() == Some(&ReleaseIdentity::from_loaded(&release)),
             "operation release mismatch"
         );
         let components = entry
@@ -115,7 +115,7 @@ impl WamnPostgres {
         let mut applications = BTreeMap::new();
         for component in &components {
             let application = wamn_catalog::application_for_package(
-                &release.scope().applications,
+                &release.target().applications,
                 &component.package_id,
             )
             .with_context(|| {
@@ -181,7 +181,7 @@ impl WamnPostgres {
             Arc::new(OperationWorkload {
                 start: (component_name.to_owned(), reference.to_owned()),
                 release,
-                claims,
+                identity,
                 operations,
                 grants,
                 schemas,
@@ -286,7 +286,7 @@ impl Drop for OpenOperation {
                 .record(&self.source, DeliveryClass::ExecutionFailed);
         }
         self.postgres.revoke_operation_transaction(&self.scope);
-        self.postgres.revoke_session_claims(&self.scope);
+        self.postgres.revoke_session_identity(&self.scope);
         self.postgres.clear_statement_scope(&self.scope);
     }
 }
@@ -300,14 +300,14 @@ fn state(table: &mut ResourceTable) -> Option<&mut StoreOperation> {
 /// Context for failures below the WIT boundary.
 #[derive(Debug)]
 struct OperationError {
-    kind: OperationErrorKind,
+    type_: OperationErrorType,
     scope: String,
-    source: ClaimError,
+    source: SessionIdentityError,
 }
 
 #[derive(Debug)]
-enum OperationErrorKind {
-    Claims,
+enum OperationErrorType {
+    Identity,
     Statements,
     Transaction,
 }
@@ -317,7 +317,7 @@ impl std::fmt::Display for OperationError {
         write!(
             f,
             "bind {:?} for {}: {}",
-            self.kind, self.scope, self.source
+            self.type_, self.scope, self.source
         )
     }
 }
@@ -328,25 +328,25 @@ impl std::error::Error for OperationError {
     }
 }
 
-fn binding_error(kind: OperationErrorKind, scope: &str, source: anyhow::Error) -> Refusal {
+fn binding_error(type_: OperationErrorType, scope: &str, source: anyhow::Error) -> Refusal {
     // Principal reads classify their failures. The other binding steps only
-    // validate claims and install local authority.
+    // validate identity and install local authority.
     let source = source
-        .downcast::<ClaimError>()
-        .unwrap_or_else(|source| ClaimError {
-            kind: ClaimErrorKind::Authorization,
+        .downcast::<SessionIdentityError>()
+        .unwrap_or_else(|source| SessionIdentityError {
+            type_: SessionIdentityErrorType::Authorization,
             context: "bind operation authority",
             source,
         });
     let error = OperationError {
-        kind,
+        type_,
         scope: scope.to_owned(),
         source,
     };
-    tracing::warn!(category = ?error.source.kind, error = %error, "operation binding refused");
-    Refusal::Postgres(match error.source.kind {
-        ClaimErrorKind::Authorization => super::PgError::PermissionDenied,
-        ClaimErrorKind::Infrastructure => super::PgError::ConnectionUnavailable,
+    tracing::warn!(category = ?error.source.type_, error = %error, "operation binding refused");
+    Refusal::Postgres(match error.source.type_ {
+        SessionIdentityErrorType::Authorization => super::PgError::PermissionDenied,
+        SessionIdentityErrorType::Infrastructure => super::PgError::ConnectionUnavailable,
     })
 }
 
@@ -634,11 +634,11 @@ fn entry_invocation_span(
         .expect("operation workloads lock poisoned")
         .get(workload)
         .cloned()?;
-    let release = facts.release.scope();
+    let release = facts.release.target();
     let span = wamn_engine::invocation_trace::invocation_span(
         &wamn_engine::invocation_trace::InvocationSite {
-            env_key: &release.env_key,
-            project: facts.claims.project.as_deref().unwrap_or_default(),
+            project_env_key: &release.project_env_key,
+            project: facts.identity.project.as_deref().unwrap_or_default(),
             environment: &release.environment,
             wiring_id: "",
             wiring_version: 0,
@@ -721,27 +721,27 @@ async fn begin(
         settled: true,
         request_trace: None,
     };
-    let claims = SessionClaims {
+    let identity = SessionIdentity {
         schema: facts
             .schemas
             .get(&open.operation)
             .cloned()
-            .or_else(|| facts.claims.schema.clone()),
+            .or_else(|| facts.identity.schema.clone()),
         user_id: caller.map(|caller| caller.principal_id().to_owned()),
         operation: Some(open.operation.clone()),
         application: Some(facts.applications[&open.operation].clone()),
-        ..facts.claims.clone()
+        ..facts.identity.clone()
     };
     if authorize_only {
         // The host-issued caller already passed authentication and grant tests.
         postgres
-            .bind_request_element_session_claims(&open.scope, &claims)
-            .map_err(|error| binding_error(OperationErrorKind::Claims, &open.scope, error))?;
+            .bind_request_element_session_identity(&open.scope, &identity)
+            .map_err(|error| binding_error(OperationErrorType::Identity, &open.scope, error))?;
     } else {
         postgres
-            .bind_session_claims(&open.scope, &claims)
+            .bind_session_identity(&open.scope, &identity)
             .await
-            .map_err(|error| binding_error(OperationErrorKind::Claims, &open.scope, error))?;
+            .map_err(|error| binding_error(OperationErrorType::Identity, &open.scope, error))?;
     }
     postgres.set_current_run(
         &open.scope,
@@ -757,7 +757,7 @@ async fn begin(
             postgres.bind_prepared_statement_operation(&open.scope, &open.operation, statements)
         })
         .and_then(|()| postgres.activate_statement_operation(&open.scope, &open.operation))
-        .map_err(|error| binding_error(OperationErrorKind::Statements, &open.scope, error))?;
+        .map_err(|error| binding_error(OperationErrorType::Statements, &open.scope, error))?;
     if authorize_only {
         open.settled = false;
         return Ok((Some(open), Begun::New(delivery)));
@@ -785,7 +785,7 @@ async fn begin(
     }
     postgres
         .bind_operation_transaction(&open.scope, &transaction)
-        .map_err(|error| binding_error(OperationErrorKind::Transaction, &open.scope, error))?;
+        .map_err(|error| binding_error(OperationErrorType::Transaction, &open.scope, error))?;
     open.transaction = Some(transaction);
     open.settled = false;
     Ok((Some(open), Begun::New(delivery)))

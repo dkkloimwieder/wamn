@@ -16,7 +16,7 @@ use anyhow::anyhow;
 use wamn_catalog::manifest::PackageManifest;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum CompositionErrorKind {
+pub enum CompositionErrorType {
     /// The inputs do not describe a release.
     Invalid,
     /// A file could not be read or parsed.
@@ -26,7 +26,7 @@ pub enum CompositionErrorKind {
 /// A refused derivation, with the operation that refused.
 #[derive(Debug)]
 pub struct CompositionError {
-    pub kind: CompositionErrorKind,
+    pub type_: CompositionErrorType,
     pub operation: &'static str,
     pub detail: Box<str>,
     pub source: Option<anyhow::Error>,
@@ -35,7 +35,7 @@ pub struct CompositionError {
 impl CompositionError {
     fn invalid(operation: &'static str, detail: impl Into<Box<str>>) -> Self {
         Self {
-            kind: CompositionErrorKind::Invalid,
+            type_: CompositionErrorType::Invalid,
             operation,
             detail: detail.into(),
             source: None,
@@ -44,7 +44,7 @@ impl CompositionError {
 
     fn owner(operation: &'static str, source: anyhow::Error) -> Self {
         Self {
-            kind: CompositionErrorKind::Owner,
+            type_: CompositionErrorType::Owner,
             operation,
             detail: format!("{source:#}").into_boxed_str(),
             source: Some(source),
@@ -73,7 +73,7 @@ pub struct SelectedComponentArtifact {
     pub digest: Box<str>,
 }
 
-/// A palette component admitted into the scope of the package whose wiring
+/// A palette component admitted into the target of the package whose wiring
 /// names it.
 #[derive(Clone, Debug)]
 pub struct SelectedPaletteArtifact {

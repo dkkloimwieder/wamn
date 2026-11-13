@@ -10,7 +10,7 @@ use crate::connection_credentials::test_util::Fixture;
 use crate::connection_memory::replicate;
 use crate::plugins::wamn_postgres::WamnPostgresConfig;
 
-const ENV_KEY: &str = "acme--project-a--dev";
+const PROJECT_ENV_KEY: &str = "acme--project-a--dev";
 
 async fn write(fixture: &mut Fixture, password: &str) -> ConnectionDrops {
     let tx = fixture.admin.transaction().await.unwrap();
@@ -80,7 +80,7 @@ async fn setup(
             })
             .unwrap(),
         ),
-        ENV_KEY,
+        PROJECT_ENV_KEY,
         "project-a",
         "dev",
     );
@@ -113,22 +113,22 @@ async fn a_committed_write_serves_the_new_generation_after_the_delete() {
     let _lock = wamn_test_postgres::lock();
     let (_server, client) = nats().await;
     let memory = Arc::new(ConnectionMemory::default());
-    let changes = replicate(&client, Some(ENV_KEY), Arc::clone(&memory));
+    let changes = replicate(&client, Some(PROJECT_ENV_KEY), Arc::clone(&memory));
     until("the connection watch runs", || memory.watched()).await;
     let (mut fixture, facts, id) = setup(Arc::clone(&memory), changes.clone()).await;
     let old = facts.connection(&id).await.unwrap().unwrap();
-    assert_eq!(memory.connection(ENV_KEY, &id), Ok(old.clone()));
+    assert_eq!(memory.connection(PROJECT_ENV_KEY, &id), Ok(old.clone()));
     let old_secret = facts.secret(&old.credential_id.unwrap()).await.unwrap();
     let drops = write(&mut fixture, "new").await;
     changes.publish(drops).await;
     until("the host sees the committed delete", || {
-        memory.connection(ENV_KEY, &id).is_err()
+        memory.connection(PROJECT_ENV_KEY, &id).is_err()
     })
     .await;
     let new = facts.connection(&id).await.unwrap().unwrap();
     assert_eq!(new.active_generation, old.active_generation + 1);
     assert_ne!(new.credential_id, old.credential_id);
-    assert_eq!(memory.connection(ENV_KEY, &id), Ok(new.clone()));
+    assert_eq!(memory.connection(PROJECT_ENV_KEY, &id), Ok(new.clone()));
     assert_eq!(
         serde_json::from_str::<serde_json::Value>(
             facts
@@ -154,7 +154,7 @@ async fn a_suppressed_delete_serves_the_new_generation_when_the_ttl_expires() {
     let (_server, client) = nats().await;
     let ttl = Duration::from_secs(1);
     let memory = Arc::new(ConnectionMemory::with_ttl(ttl));
-    let changes = replicate(&client, Some(ENV_KEY), Arc::clone(&memory));
+    let changes = replicate(&client, Some(PROJECT_ENV_KEY), Arc::clone(&memory));
     until("the connection watch runs", || memory.watched()).await;
     let (mut fixture, facts, id) = setup(Arc::clone(&memory), changes).await;
     let old = facts.connection(&id).await.unwrap().unwrap();
@@ -163,7 +163,7 @@ async fn a_suppressed_delete_serves_the_new_generation_when_the_ttl_expires() {
     drop(drops);
     assert_eq!(facts.connection(&id).await.unwrap(), Some(old.clone()));
     until("the local fact expires", || {
-        memory.connection(ENV_KEY, &id).is_err()
+        memory.connection(PROJECT_ENV_KEY, &id).is_err()
     })
     .await;
     let new = facts.connection(&id).await.unwrap().unwrap();
@@ -181,11 +181,11 @@ async fn a_stopped_broker_reads_each_generation_without_keeping_a_fact() {
     let _lock = wamn_test_postgres::lock();
     let (server, client) = nats().await;
     let memory = Arc::new(ConnectionMemory::default());
-    let changes = replicate(&client, Some(ENV_KEY), Arc::clone(&memory));
+    let changes = replicate(&client, Some(PROJECT_ENV_KEY), Arc::clone(&memory));
     until("the connection watch runs", || memory.watched()).await;
     let (mut fixture, facts, id) = setup(Arc::clone(&memory), changes).await;
     let old = facts.connection(&id).await.unwrap().unwrap();
-    assert_eq!(memory.connection(ENV_KEY, &id), Ok(old.clone()));
+    assert_eq!(memory.connection(PROJECT_ENV_KEY, &id), Ok(old.clone()));
     drop(server);
     tokio::time::timeout(Duration::from_secs(30), async {
         while memory.watched() {
@@ -196,7 +196,7 @@ async fn a_stopped_broker_reads_each_generation_without_keeping_a_fact() {
     .expect("the broken watch drops its facts");
     for _ in 0..2 {
         assert_eq!(facts.connection(&id).await.unwrap(), Some(old.clone()));
-        assert!(memory.connection(ENV_KEY, &id).is_err());
+        assert!(memory.connection(PROJECT_ENV_KEY, &id).is_err());
         assert_postgres_read(&fixture, &facts, &id).await;
     }
     let drops = write(&mut fixture, "new").await;
@@ -205,7 +205,7 @@ async fn a_stopped_broker_reads_each_generation_without_keeping_a_fact() {
         let new = facts.connection(&id).await.unwrap().unwrap();
         assert_eq!(new.active_generation, old.active_generation + 1);
         assert_ne!(new.credential_id, old.credential_id);
-        assert!(memory.connection(ENV_KEY, &id).is_err());
+        assert!(memory.connection(PROJECT_ENV_KEY, &id).is_err());
         assert_postgres_read(&fixture, &facts, &id).await;
     }
 }

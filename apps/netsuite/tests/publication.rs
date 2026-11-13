@@ -10,7 +10,7 @@ mod consumer_live;
 mod support;
 
 use std::collections::BTreeSet;
-use wamn_catalog::{ComponentPackageScope, PackageCoordinate, WiringDocument};
+use wamn_catalog::{ComponentPackageCoordinate, PackageCoordinate, WiringDocument};
 use wamn_release_control::publish_release::{PublishReleaseRequest, assemble_local_release};
 use wamn_schema_generator::operation_reference::{AuthoredDocument, read_authored_document};
 
@@ -18,7 +18,7 @@ struct Fixture {
     args: PublishReleaseRequest,
     roots: Vec<std::path::PathBuf>,
     admissions: Vec<wamn_package_control::component_admission::ComponentAdmission>,
-    documents: Vec<(ComponentPackageScope, WiringDocument)>,
+    documents: Vec<(ComponentPackageCoordinate, WiringDocument)>,
 }
 
 fn fixture() -> Fixture {
@@ -64,8 +64,8 @@ fn fixture() -> Fixture {
             BTreeSet::new(),
         ),
     ];
-    let scope = ComponentPackageScope {
-        env_key: "rest--publication--test".into(),
+    let target = ComponentPackageCoordinate {
+        project_env_key: "rest--publication--test".into(),
         package_id: "netsuite".into(),
         package_version: "0.1.1".into(),
     };
@@ -88,7 +88,7 @@ fn fixture() -> Fixture {
             .unwrap(),
         )
         .unwrap();
-        (scope.clone(), document)
+        (target.clone(), document)
     })
     .collect();
     let args = PublishReleaseRequest {
@@ -119,7 +119,7 @@ async fn pull_checkpoint_commits_through_the_application_role() -> anyhow::Resul
         documents,
     } = fixture();
     let assembled = assemble_local_release(&args, &roots, &admissions)?;
-    gate_documents(&args, &assembled.published.manifest, &documents)?;
+    condition_documents(&args, &assembled.published.manifest, &documents)?;
     checkpoint_live::invoke(&roots, &assembled.published.manifest, &admissions).await
 }
 
@@ -132,7 +132,7 @@ fn invalid_ports_and_dependencies_refuse_workflow_authorship() {
         documents,
     } = fixture();
     let assembled = assemble_local_release(&args, &roots, &admissions).unwrap();
-    gate_documents(&args, &assembled.published.manifest, &documents).unwrap();
+    condition_documents(&args, &assembled.published.manifest, &documents).unwrap();
     assert_eq!(
         assembled
             .published
@@ -153,7 +153,7 @@ fn invalid_ports_and_dependencies_refuse_workflow_authorship() {
         .find(|edge| edge.from == "rows")
         .unwrap()
         .from_port = "main".into();
-    assert!(gate_documents(&args, &assembled.published.manifest, &wrong_port).is_err());
+    assert!(condition_documents(&args, &assembled.published.manifest, &wrong_port).is_err());
     // Environment workflows resolve the node operation against the release,
     // not the package-local operation-dependency alias.
     let mut wrong_dependency = documents;
@@ -163,13 +163,13 @@ fn invalid_ports_and_dependencies_refuse_workflow_authorship() {
         .get_mut("record")
         .unwrap()
         .operation = "rest-consumer-fixture:item/other@0.1.0".into();
-    assert!(gate_documents(&args, &assembled.published.manifest, &wrong_dependency).is_err());
+    assert!(condition_documents(&args, &assembled.published.manifest, &wrong_dependency).is_err());
 }
 
-fn gate_documents(
+fn condition_documents(
     args: &PublishReleaseRequest,
     manifest: &wamn_catalog::ServingManifest,
-    documents: &[(ComponentPackageScope, WiringDocument)],
+    documents: &[(ComponentPackageCoordinate, WiringDocument)],
 ) -> anyhow::Result<()> {
     let packages = args
         .packages
@@ -177,7 +177,12 @@ fn gate_documents(
         .map(|p| p.package_id().to_owned())
         .collect();
     for (_, document) in documents {
-        wamn_catalog::gate_workflow_document(&args.env_key(), &packages, manifest, document)?;
+        wamn_catalog::condition_workflow_document(
+            &args.project_env_key(),
+            &packages,
+            manifest,
+            document,
+        )?;
     }
     Ok(())
 }

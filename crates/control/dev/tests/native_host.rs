@@ -6,7 +6,7 @@ use std::time::{Duration, Instant};
 use tokio::io::AsyncReadExt as _;
 use tokio::process::Command;
 use wamn_control_provision::{
-    CredentialGeneration, WorkloadRoleFamily, WorkloadRoleScope, workload_generation_role,
+    CredentialGeneration, WorkloadRoleFamily, WorkloadRoleIdentity, workload_generation_role,
 };
 use wamn_control_registry::Triple;
 use wamn_dev_control::dev::environment::connect;

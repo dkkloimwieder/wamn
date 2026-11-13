@@ -118,7 +118,7 @@ async fn recover_and_close_record_each_capture_gap() {
             &[
                 &ORG,
                 &ENV,
-                &r#"{"kind":"pool"}"#,
+                &r#"{"type":"pool"}"#,
                 &0i32,
                 &1i32,
                 &"1Gi",

@@ -1,4 +1,4 @@
-//! Pure byte admission for tenant component-library entries.
+//! Pure byte admission for project component-library entries.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
@@ -69,7 +69,7 @@ pub fn validate_integration_admission(
     component_bytes: &[u8],
     label: &str,
 ) -> Result<AdmittedIntegration, ComponentAdmissionError> {
-    let refuse = |kind, source: anyhow::Error| ComponentAdmissionError::new(kind, label, source);
+    let refuse = |type_, source: anyhow::Error| ComponentAdmissionError::new(type_, label, source);
     let component = Component::new(engine.inner(), component_bytes).map_err(|source| {
         refuse(
             ComponentAdmissionErrorType::InvalidComponentBytes,
@@ -369,7 +369,7 @@ pub fn validate_component_admission(
         ));
     }
     let policy_imports = wamn_component_policy::ComponentImports::new(imports.iter().cloned());
-    wamn_component_policy::analyze_tenant(
+    wamn_component_policy::analyze_project(
         &policy_imports,
         &request.admitted_platform_packages,
         &component_name,
@@ -444,10 +444,10 @@ fn owned_operation_value(ty: &wash_runtime::wasmtime::component::Type) -> bool {
 /// first push of a blobstore guest through `push-component` refused
 /// `wasmcloud:blobstore/*` as undeclared operation dependencies
 /// (`wamn-362o.41`). Matching is on the registered PACKAGE at any version:
-/// this asks what KIND of import it is, and refusing a version is admission's
+/// this asks what TYPE of import it is, and refusing a version is admission's
 /// job elsewhere.
 ///
-/// The `wasi` and `wamn` families are platform-kind even when unregistered
+/// The `wasi` and `wamn` families are platform-type even when unregistered
 /// (`wasi:sockets`): those imports must reach the import policy, which fails
 /// closed by ABSENCE and names them -- the raw-socket screen's contract.
 /// Classifying them as application dependencies would refuse them one step
@@ -478,7 +478,7 @@ fn operation_signature_mismatch(
 /// been removed, so every remaining package is authority-free or an admitted
 /// platform capability. `effectful_dependencies` carries the other half of the
 /// union: a wrapper with an empty capability list reaches an effect
-/// through the operations it calls, and an empty projection claims it pure.
+/// through the operations it calls, and an empty projection declares it pure.
 ///
 /// A dependency contributes its PACKAGE and no interface, so its fact carries
 /// the INHERITED provenance and the audited-imports test stays with the
@@ -610,7 +610,7 @@ mod tests {
 
     use serde_json::json;
     use wamn_catalog::{
-        ComponentOperationDeclaration, ComponentPackageScope, ComponentParameterDeclaration,
+        ComponentOperationDeclaration, ComponentPackageCoordinate, ComponentParameterDeclaration,
         ComponentPortDeclaration,
     };
     use wit_component::{ComponentEncoder, StringEncoding, dummy_module, embed_component_metadata};
@@ -742,8 +742,8 @@ mod tests {
     fn request() -> ComponentAdmissionRequest {
         ComponentAdmissionRequest {
             declaration: ComponentDeclaration {
-                scope: ComponentPackageScope {
-                    env_key: "tenant-a".to_string(),
+                target: ComponentPackageCoordinate {
+                    project_env_key: "org-a".to_string(),
                     package_id: "orders".to_string(),
                     package_version: "1.0.0".to_string(),
                 },

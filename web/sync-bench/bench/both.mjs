@@ -15,10 +15,10 @@ const page = await browser.newPage({ viewport: { width: 1600, height: 900 } });
 await page.goto(`${server.resolvedUrls.local[0]}?size=100000`);
 await page.evaluate(() => window.bench.ready);
 for (const shape of ["a", "b"]) {
-  const scope = page.locator(`[data-shape="${shape}"]`);
-  const rows = await scope.locator("[data-bench-rows]").getAttribute("data-bench-rows");
-  const total = await scope.locator("[data-bench-total-count]").getAttribute("data-bench-total-count");
-  const painted = await scope.locator(".bench-scroll tr[data-row]").count();
+  const filter = page.locator(`[data-shape="${shape}"]`);
+  const rows = await filter.locator("[data-bench-rows]").getAttribute("data-bench-rows");
+  const total = await filter.locator("[data-bench-total-count]").getAttribute("data-bench-total-count");
+  const painted = await filter.locator(".bench-scroll tr[data-row]").count();
   console.log(`shape ${shape}: ${rows} rows, total count ${total}, ${painted} rows in the DOM`);
 }
 await page.screenshot({ path: process.argv[2] ?? "both.png" });

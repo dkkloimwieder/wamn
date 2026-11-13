@@ -1,4 +1,4 @@
-//! Address floor for administrator-bound HTTP destinations.
+//! Address minimum for administrator-bound HTTP destinations.
 
 use std::net::{IpAddr, Ipv6Addr, SocketAddr};
 
@@ -34,7 +34,7 @@ mod tests {
     };
 
     #[test]
-    fn bound_address_floor_preserves_private_targets() {
+    fn bound_address_minimum_preserves_private_targets() {
         for address in [
             "169.254.0.1:80",
             "169.254.169.254:80",

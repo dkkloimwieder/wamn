@@ -233,11 +233,11 @@ impl Web {
             file
         };
         if config && row.platform_ui.is_empty() {
-            let mut scope: serde_json::Map<String, serde_json::Value> =
+            let mut target: serde_json::Map<String, serde_json::Value> =
                 serde_json::from_slice(&file.bytes).context("read web config.json")?;
-            scope.insert("release".into(), row.digest.clone().into());
-            scope.insert("web".into(), row.webs[host].clone().into());
-            file.bytes = serde_json::to_vec(&scope)?.into();
+            target.insert("release".into(), row.digest.clone().into());
+            target.insert("web".into(), row.webs[host].clone().into());
+            file.bytes = serde_json::to_vec(&target)?.into();
         }
         let length = file.bytes.len();
         Ok(Response::builder()

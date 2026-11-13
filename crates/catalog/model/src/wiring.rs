@@ -1,10 +1,10 @@
-//! The wiring document — the typed graph a tenant authors over the palette.
+//! The wiring document — the typed graph a project authors over the palette.
 //!
 //! A wiring is the composition artifact of the component-palette model
 //! (`docs/architecture/execution.md#results-and-effects`): nodes name `(component, interface-version)`
 //! from the palette, edges connect declared ports, node parameters bind
 //! declared params. It is
-//! *data, not code* — versioned, gated against one environment effective
+//! *data, not code* — versioned, conditioned against one environment effective
 //! release, and read from its environment workflow row in `catalog.workflows`.
 //!
 //! # The entry and the terminal are the router's authoring source (wamn-0h0g.18.5)
@@ -15,7 +15,7 @@
 //! `None` and `wamn_router::Wiring::compile`'s entry with no value to take.
 //! [`WiringDocument::entry`] and [`WiringNode::terminal`] are that source, and
 //! they are wiring **data**: this document is what `catalog.workflows.graph_json`
-//! stores and `wiring_hash` covers, so re-terminalling a graph is a new gated
+//! stores and `wiring_hash` covers, so re-terminalling a graph is a new conditioned
 //! definition rather than an edit to a live one.
 //!
 //! # Identity
@@ -117,8 +117,8 @@ pub struct WiringNode {
     pub operation_dependency: Option<WiringOperationDependency>,
     /// Values bound to the component's declared params — a generic `entity`
     /// node's relation and filter spec, for instance. Typed by the component's
-    /// WIT declaration and validated by the gate (wamn-0h0g.18.3), not by this
-    /// crate: the palette is tenant data, so a shape written here would be a
+    /// WIT declaration and validated by the condition (wamn-0h0g.18.3), not by this
+    /// crate: the palette is project data, so a shape written here would be a
     /// second, staler copy of it.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub params: BTreeMap<String, Value>,
@@ -227,7 +227,7 @@ impl WiringDocument {
     /// Build and validate one wiring document from its parts.
     ///
     /// Unlike [`ServingManifest::new`](crate::ServingManifest), this is not
-    /// fenced behind `test-util`: authoring emits ordinary gated wirings —
+    /// fenced behind `test-util`: authoring emits ordinary conditioned wirings —
     /// `generate crud` (wamn-0h0g.23.3) is a production producer — so a fence
     /// here would block the emitter rather than a misuse.
     pub fn new(
@@ -357,7 +357,7 @@ impl WiringDocument {
 }
 
 /// Inspect values, not reference names or object keys. These recognizable
-/// prefixes match the existing payload-redaction floor; arbitrary secrets
+/// prefixes match the existing payload-redaction minimum; arbitrary secrets
 /// cannot be identified by their spelling.
 fn contains_secret_value(value: &Value) -> bool {
     match value {
@@ -374,7 +374,7 @@ fn contains_secret_value(value: &Value) -> bool {
 pub fn partial_response_schema(committed_schema: &Value) -> Value {
     let mut committed_schema = committed_schema.clone();
     if let Some(schema) = committed_schema.as_object_mut() {
-        // Keep document-local references scoped to the original success schema.
+        // Keep document-local references targeted to the original success schema.
         schema
             .entry("$id")
             .or_insert_with(|| Value::String("urn:wamn:committed-result".to_owned()));
@@ -800,9 +800,9 @@ mod tests {
             .insert("relation".to_owned(), json!("orders"));
         assert_ne!(reparameterized.wiring_hash(), hash);
 
-        // The terminal and the entry are gated definition content, not runtime
+        // The terminal and the entry are conditioned definition content, not runtime
         // configuration: re-terminalling or re-entering a graph is a new
-        // `catalog.workflows` row to gate and flip onto, never an edit to the
+        // `catalog.workflows` row to condition and flip onto, never an edit to the
         // definition an environment already confirmed.
         let mut reterminaled = wiring.clone();
         reterminaled

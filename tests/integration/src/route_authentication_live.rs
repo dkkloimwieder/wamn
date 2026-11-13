@@ -28,8 +28,8 @@ use wamn_runtime::plugins::wamn_postgres::{
 
 use crate::fixture_membership::{self, MembershipRequest};
 use wamn_dev_control::dev::environment::{
-    ENV_KEY, ENVIRONMENT, JourneyScope, ORG, PROJECT, connect, generation_args, provision_route,
-    reset_control_store,
+    ENVIRONMENT, JourneyTarget, ORG, PROJECT, PROJECT_ENV_KEY, connect, generation_args,
+    provision_route, reset_control_store,
 };
 use wamn_test_infrastructure::scratch::ScratchRoot;
 
@@ -90,7 +90,7 @@ async fn reset_and_install_control(admin: &Client) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Write the operator service's tenant `user` row, as `reconcile-run-plane`
+/// Write the operator service's project `user` row, as `reconcile-run-plane`
 /// does, and grant its authored role through the application mutation owner.
 async fn grant_service_operator(
     system_url: &str,
@@ -116,7 +116,7 @@ async fn grant_service_operator(
     project.batch_execute("BEGIN").await?;
     let outcome = wamn_platform_identity::application::mutate_grant(
         project,
-        ENV_KEY,
+        PROJECT_ENV_KEY,
         wamn_platform_identity::application::GrantAuthority::Provisioning,
         wamn_platform_identity::application::GrantChange::UserRole {
             user_id: principal.id().to_string().as_str(),
@@ -161,7 +161,7 @@ async fn install_project_and_reconcile(project: &Client, project_url: &str) -> a
     project
         .batch_execute("CREATE SCHEMA wamn_run AUTHORIZATION postgres")
         .await
-        .context("create the empty run-plane revoke scope")?;
+        .context("create the empty run-plane revoke target")?;
     // The fixture writes as its test principal, whose row stamps itself. Both
     // bindings stay on this session for the later role and permission changes.
     project
@@ -257,7 +257,7 @@ async fn install_project_and_reconcile(project: &Client, project_url: &str) -> a
 fn load_serving_release() -> anyhow::Result<Arc<LoadedRelease>> {
     let definition = serde_json::json!({
         "id": ATTACHMENT_ID,
-        "kind": "http",
+        "type": "http",
         "route": {
             "host": "receiving.example.test",
             "path": "/purchase-orders/get",
@@ -293,16 +293,17 @@ fn load_serving_release() -> anyhow::Result<Arc<LoadedRelease>> {
     Ok(Arc::new(LoadedRelease::load_canonical_bytes(
         &bytes,
         "route-authentication-live fixture",
-        wamn_engine::release_manifest::ReleaseScope::new(ENV_KEY, ENVIRONMENT).with_applications(
-            [(
-                "inventory".to_owned(),
-                wamn_catalog::ApplicationDefinition {
-                    connections: std::collections::BTreeMap::new(),
-                    packages: [FIXTURE_PACKAGE_ID.to_owned()].into(),
-                },
-            )]
-            .into(),
-        ),
+        wamn_engine::release_manifest::ReleaseTarget::new(PROJECT_ENV_KEY, ENVIRONMENT)
+            .with_applications(
+                [(
+                    "inventory".to_owned(),
+                    wamn_catalog::ApplicationDefinition {
+                        connections: std::collections::BTreeMap::new(),
+                        packages: [FIXTURE_PACKAGE_ID.to_owned()].into(),
+                    },
+                )]
+                .into(),
+            ),
     )?))
 }
 
@@ -363,7 +364,7 @@ async fn invoke(
     Ok(())
 }
 
-async fn issue_scoped_token(
+async fn issue_targeted_token(
     admin: &Client,
     project: &str,
     environment: &str,
@@ -376,7 +377,7 @@ async fn issue_scoped_token(
         &mut wamn_broker::auth_changes::AuthDrops::default(),
     )
     .await
-    .context("create wrong-scope operator service")?;
+    .context("create wrong-target operator service")?;
     assign_project_role(
         admin,
         principal.id(),
@@ -386,11 +387,11 @@ async fn issue_scoped_token(
         &mut wamn_broker::auth_changes::AuthDrops::default(),
     )
     .await
-    .context("assign wrong-scope operator role")?;
+    .context("assign wrong-target operator role")?;
     Ok(
         issue_pat(admin, principal.id(), "operator", Duration::from_secs(3600))
             .await
-            .context("issue wrong-scope route PAT")?
+            .context("issue wrong-target route PAT")?
             .token()
             .to_owned(),
     )
@@ -591,7 +592,7 @@ async fn assert_user_environment_membership(
     other_project
         .batch_execute(&wamn_control_provision::sql::ensure_app_acl_role_sql())
         .await?;
-    wamn_dev_control::dev::environment::install_journey_platform_floor(
+    wamn_dev_control::dev::environment::install_journey_platform_base_grants(
         &other_project,
         "example.test",
     )
@@ -614,7 +615,7 @@ async fn assert_user_environment_membership(
         .batch_execute(
             "INSERT INTO platform.role (name) VALUES ('user-reader'); \
              INSERT INTO platform.permission (role_name, permission) \
-             VALUES ('user-reader', 'route-auth-fixture:item/other-tenant')",
+             VALUES ('user-reader', 'route-auth-fixture:item/other-project')",
         )
         .await?;
     other_project
@@ -734,8 +735,8 @@ async fn assert_user_environment_membership(
         "all of this user's environment roles contribute permissions"
     );
     assert!(
-        !caller.permits("route-auth-fixture:item/other-tenant@1.0.0"),
-        "another tenant's role leaked"
+        !caller.permits("route-auth-fixture:item/other-project@1.0.0"),
+        "another project's role leaked"
     );
 
     fixture_membership::grant(membership(
@@ -922,12 +923,12 @@ async fn production_operator_authentication(root: &Path) {
         .expect("parse PostgreSQL version");
     assert!(
         version >= 180_000,
-        "the gate requires PostgreSQL 18 or newer"
+        "the condition requires PostgreSQL 18 or newer"
     );
     reset_and_install_control(&admin)
         .await
         .expect("install the control plane");
-    let route = provision_route(&JourneyScope::receiving(), &admin_url, &admin, root, None)
+    let route = provision_route(&JourneyTarget::receiving(), &admin_url, &admin, root, None)
         .await
         .expect("mint the production operator service");
     assert_eq!(
@@ -952,7 +953,7 @@ async fn production_operator_authentication(root: &Path) {
 
     let identity_secret = root.join("identity-reader.json");
     provision_project_env::run_workload_action(&generation_args(
-        &JourneyScope::receiving(),
+        &JourneyTarget::receiving(),
         WorkloadRoleFamily::IdentityReader,
         &admin_url,
         None,
@@ -962,7 +963,7 @@ async fn production_operator_authentication(root: &Path) {
     .expect("prepare the production identity-reader generation");
     let http_secret = root.join("http-admitter.json");
     provision_project_env::run_workload_action(&generation_args(
-        &JourneyScope::receiving(),
+        &JourneyTarget::receiving(),
         WorkloadRoleFamily::HttpAdmitter,
         &admin_url,
         Some(&route.database_url),
@@ -979,7 +980,7 @@ async fn production_operator_authentication(root: &Path) {
         PROJECT,
         ENVIRONMENT,
     )
-    .expect("the identity-reader Secret passes its consumer's exact scope gate");
+    .expect("the identity-reader Secret passes its consumer's exact target condition");
     let (identity_reader, identity_task) = connect(&identity_url)
         .await
         .expect("connect exact identity-reader generation");
@@ -1053,11 +1054,11 @@ async fn production_operator_authentication(root: &Path) {
             &[&ORG, &OTHER_PROJECT],
         )
         .await
-        .expect("seed wrong-project role scope");
-    let wrong_project = issue_scoped_token(&admin, OTHER_PROJECT, ENVIRONMENT)
+        .expect("seed wrong-project role target");
+    let wrong_project = issue_targeted_token(&admin, OTHER_PROJECT, ENVIRONMENT)
         .await
         .expect("mint wrong-project PAT");
-    let wrong_environment = issue_scoped_token(&admin, PROJECT, OTHER_ENVIRONMENT)
+    let wrong_environment = issue_targeted_token(&admin, PROJECT, OTHER_ENVIRONMENT)
         .await
         .expect("mint wrong-environment PAT");
     let unauthorized = Refusal::Authentication(401, "unauthorized".to_owned());

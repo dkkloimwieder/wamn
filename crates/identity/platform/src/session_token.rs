@@ -31,7 +31,7 @@ impl IssuedSessionToken {
         &self.token
     }
 
-    /// Borrow the claims with the signing-time age bounds applied.
+    /// Borrow the JWT claims with the signing-time age bounds applied.
     pub fn claims(&self) -> &SessionClaims {
         &self.claims
     }
@@ -60,7 +60,7 @@ pub fn minting_times(
     Ok((signing_at, expires_at))
 }
 
-/// Sign claims using the issuer's active generation without recording a token.
+/// Sign JWT claims using the issuer's active generation without recording a token.
 ///
 /// The exchange owner must have validated identity, membership, and these roles
 /// fresh at `validation_started_at`. This primitive does not do those reads.
@@ -85,7 +85,7 @@ pub async fn sign_session_token(
 /// Sign within the caller's login transaction and optional absolute deadline.
 ///
 /// The caller retains the signing lock through commit and must not deliver a
-/// token before that commit succeeds. Supplied claim times are always replaced.
+/// token before that commit succeeds. Supplied JWT claim times are always replaced.
 pub async fn sign_session_token_in_transaction(
     transaction: &Transaction<'_>,
     mut claims: SessionClaims,

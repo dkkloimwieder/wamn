@@ -31,8 +31,8 @@ const SUPPLIED_PATHS: [(&str, SuppliedType); 5] = [
 /// The transaction of a command that runs each outer input on its own.
 const PER_INPUT_TRANSACTION: &str = "explicit_per_input";
 
-/// The operation kind that no operator calls.
-const PRIVATE_KIND: &str = "event_handler";
+/// The operation type that no operator calls.
+const PRIVATE_TYPE: &str = "event_handler";
 
 /// What an operator does on one screen.
 ///
@@ -64,9 +64,9 @@ impl Role {
 /// Why one operation's shape has no supported role.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NoRole {
-    /// The operation kind is outside the client vocabulary.
-    UnknownKind,
-    /// A read kind and its result class do not agree on what comes back.
+    /// The operation type is outside the client vocabulary.
+    UnknownType,
+    /// A read type and its result class do not agree on what comes back.
     UnsupportedResult,
 }
 
@@ -75,8 +75,8 @@ impl NoRole {
     #[must_use]
     pub const fn reason(self) -> &'static str {
         match self {
-            Self::UnknownKind => "the operation kind has no screen role",
-            Self::UnsupportedResult => "the result class does not fit the operation kind",
+            Self::UnknownType => "the operation type has no screen role",
+            Self::UnsupportedResult => "the result class does not fit the operation type",
         }
     }
 }
@@ -100,7 +100,7 @@ pub fn idempotency_field(input_contract: &serde_json::Value) -> Option<String> {
         .find(|field| {
             SUPPLIED_PATHS
                 .iter()
-                .any(|(path, kind)| *kind == SuppliedType::IdempotencyKey && *path == field.path)
+                .any(|(path, type_)| *type_ == SuppliedType::IdempotencyKey && *path == field.path)
         })
         .map(|field| field.path.clone())
 }
@@ -463,10 +463,10 @@ pub struct TableAction<'a> {
     pub many: bool,
 }
 
-/// Another table that shows the records of one row, scoped by that row.
+/// Another table that shows the records of one row, targeted by that row.
 ///
 /// The child declares a filter on a column that names a record of this
-/// table's model, so the parent row's id is the child's scope value.
+/// table's model, so the parent row's id is the child's target value.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ChildTable<'a> {
     /// Canonical identity of the child's read.
@@ -475,7 +475,7 @@ pub struct ChildTable<'a> {
     pub model: &'a str,
     /// Operation name of the child's read inside its own model.
     pub name: &'a str,
-    /// Result field of the child that its scope filter narrows.
+    /// Result field of the child that its target filter narrows.
     pub field: &'a str,
 }
 
@@ -532,7 +532,7 @@ pub struct ScreenPlan<'a> {
     /// Served operations one table row opens, row links first, then row
     /// forms, each with whether it takes many rows.
     pub actions: Vec<TableAction<'a>>,
-    /// Tables scoped by one row of this table, in plan order.
+    /// Tables targeted by one row of this table, in plan order.
     pub child_tables: Vec<ChildTable<'a>>,
 }
 
@@ -805,7 +805,7 @@ impl<'a> ModelPlan<'a> {
         let mut screens: Vec<_> = model
             .operations
             .iter()
-            .filter(|operation| operation.type_ != PRIVATE_KIND)
+            .filter(|operation| operation.type_ != PRIVATE_TYPE)
             .map(|operation| ScreenPlan::from_ir(&model.name, operation))
             .collect();
         screens.sort_by(|left, right| left.name.cmp(right.name));
@@ -860,9 +860,9 @@ impl<'a> ScreenPlan<'a> {
                 SUPPLIED_PATHS
                     .iter()
                     .find(|(path, _)| *path == field.path)
-                    .map(|(_, kind)| SuppliedField {
+                    .map(|(_, type_)| SuppliedField {
                         path: field.path.as_str(),
-                        type_: *kind,
+                        type_: *type_,
                     })
             })
             .collect();
@@ -965,9 +965,9 @@ impl<'a> ScreenPlan<'a> {
     /// A read clears its rows when the operator changes an input.
     #[must_use]
     pub fn is_read(&self) -> bool {
-        let kind: Result<OperationType, serde::de::value::Error> =
+        let type_: Result<OperationType, serde::de::value::Error> =
             OperationType::deserialize(self.contract.type_.as_str().into_deserializer());
-        kind.is_ok_and(OperationType::is_read)
+        type_.is_ok_and(OperationType::is_read)
     }
 
     /// Whether the operator confirms before the screen submits.
@@ -982,7 +982,7 @@ struct Target<'a> {
     operation: &'a str,
     model: &'a str,
     name: &'a str,
-    kind: &'a str,
+    type_: &'a str,
     served: bool,
     record: Option<RecordLink<'a>>,
     revision_read: Option<&'a str>,
@@ -994,7 +994,7 @@ impl<'a> Target<'a> {
             operation: screen.contract.operation.as_str(),
             model: screen.model,
             name: screen.name,
-            kind: screen.contract.type_.as_str(),
+            type_: screen.contract.type_.as_str(),
             served: screen.contract.route.is_some(),
             record: screen.record,
             revision_read: screen.revision.map(|revision| revision.read_operation),
@@ -1010,7 +1010,7 @@ fn row_links<'a>(from: &Target<'a>, targets: &[Target<'a>]) -> Vec<RowLink<'a>> 
         .filter_map(|to| {
             let reason = if to.revision_read == Some(from.operation) {
                 LinkReason::Revision
-            } else if to.kind == "get"
+            } else if to.type_ == "get"
                 && from.record.zip(to.record).is_some_and(|(from, to)| {
                     from.relation == to.relation
                         && from.key_field == to.key_field
@@ -1478,13 +1478,13 @@ pub fn effective_result_fields(operation: &OperationIr) -> &[FieldIr] {
 }
 
 /// Select the screen role for one contract shape.
-fn role(kind: &str, result_class: Option<&str>) -> Role {
-    match (kind, result_class) {
+fn role(type_: &str, result_class: Option<&str>) -> Role {
+    match (type_, result_class) {
         ("query" | "projection", Some("bounded_list" | "page")) => Role::Table,
         ("get", Some("one")) => Role::Detail,
         ("create" | "update" | "command", _) => Role::Form,
         ("delete", _) => Role::Delete,
         ("get" | "query" | "projection", _) => Role::Unsupported(NoRole::UnsupportedResult),
-        _ => Role::Unsupported(NoRole::UnknownKind),
+        _ => Role::Unsupported(NoRole::UnknownType),
     }
 }

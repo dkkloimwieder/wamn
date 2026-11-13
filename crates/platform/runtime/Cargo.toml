@@ -42,9 +42,9 @@ wamn-identity-protocol = { workspace = true }
 postgres-protocol = { workspace = true }
 # The one parser of document-number patterns, which the renderer renders.
 wamn-number-pattern = { workspace = true }
-# `tenant-key`: the shipped runtime needs the framed scope digest to test a
-# guest credential against the tenant it will serve (wamn-0h0g.22.6.7).
-wamn-run-state = { workspace = true, features = ["tenant-key"] }
+# `project-key`: the shipped runtime needs the framed target digest to test a
+# guest credential against the project it will serve (wamn-0h0g.22.6.7).
+wamn-run-state = { workspace = true, features = ["project-key"] }
 anyhow = { workspace = true }
 base64 = { workspace = true }
 tokio = { workspace = true, features = ["time", "fs", "net", "io-util", "rt", "macros", "sync"] }
@@ -102,7 +102,7 @@ tokio = { workspace = true, features = ["test-util"] }
 hyper = { workspace = true, features = ["server"] }
 rcgen = { workspace = true }
 # M-TEST-UTIL: the release-manifest reader's test fixtures build manifests from
-# parts, which wamn-catalog gates behind `test-util`. A DEV-dependency feature
+# parts, which wamn-catalog conditions behind `test-util`. A DEV-dependency feature
 # does not reach the production graph, so this crate's own build still cannot
 # assemble a manifest no canonical bytes ever carried.
 #
@@ -131,7 +131,7 @@ wamn-engine = { workspace = true, features = ["test-util"] }
 # lib-only build, so production code still builds it only from a loaded release.
 wamn-runtime = { path = ".", features = ["test-util"] }
 # The write log store runs the intent store case set.
-wamn-run-state = { workspace = true, features = ["tenant-key", "test-util"] }
+wamn-run-state = { workspace = true, features = ["project-key", "test-util"] }
 
 [lints]
 workspace = true

@@ -8,17 +8,17 @@ use anyhow::Context as _;
 use ring::rand::SecureRandom as _;
 
 use super::grants::{
-    RoleAclExpectation, stable_grant_set, verify_public_access_floor, verify_role_grants,
+    RoleAclExpectation, stable_grant_set, verify_public_base_grants, verify_role_grants,
 };
 use super::{
     CredentialGeneration, DateTime, GenericClient, OrgWorkloadActionRequest, PLATFORM_GROUP_ROLE,
     PgConfig, SecondsFormat, SessionTarget, SystemRandom, Triple, Utc, WorkloadActionOutcome,
     WorkloadActionRequest, WorkloadActionVerb, WorkloadGenerationAction, WorkloadRoleFamily,
-    WorkloadRoleScope, WorkloadRoleScopeKind, WorkloadSecretBody, WorkloadSecretBodyKind,
+    WorkloadRoleIdentity, WorkloadRoleIdentityType, WorkloadSecretBody, WorkloadSecretBodyType,
     connect_config, database_host, ensure_secret_path, exact_project_database_config,
-    named_database_config, project_env_database_name, read_project_env_instance,
+    named_database_config, project_env_database_name, project_key, read_project_env_instance,
     read_project_env_policy, render_org_workload_secret_manifest, render_workload_secret_manifest,
-    resolve_cluster, role_sql, sql, tenant_key, validate_project_env, validate_session_env_key,
+    resolve_cluster, role_sql, sql, validate_project_env, validate_session_project_env_key,
     workload_action_flag, workload_config, workload_generation_role, workload_secret_flag,
     workload_url, write_output, write_secret_json,
 };
@@ -84,12 +84,12 @@ pub(super) use plan::WorkloadLifecycle;
 
 impl<'a> WorkloadLifecycle<'a> {
     pub(super) fn database(self) -> &'a str {
-        self.scope.database()
+        self.target.database()
     }
 
     pub(super) fn role(self, generation: CredentialGeneration) -> String {
-        workload_generation_role(self.family, self.scope, generation)
-            .expect("the lifecycle constructor pairs each family with its exact scope")
+        workload_generation_role(self.family, self.target, generation)
+            .expect("the lifecycle constructor pairs each family with its exact target")
     }
 
     pub(super) fn family_lock_key(self) -> String {
@@ -117,9 +117,10 @@ pub(crate) async fn restore_database_access(
     let passwords =
         GenerationPasswords::connect(&named_database_config(system_url, "system database")?)
             .await?;
-    let env_key = wamn_control_registry::project_env_key(&triple.org, &triple.project, &triple.env);
+    let project_env_key =
+        wamn_control_registry::project_env_key(&triple.org, &triple.project, &triple.env);
     for family in WorkloadRoleFamily::project_env_families()
-        .filter(|family| family.scope_kind() != WorkloadRoleScopeKind::Control)
+        .filter(|family| family.identity_type() != WorkloadRoleIdentityType::Control)
     {
         let lifecycle = workload_lifecycle(
             family,
@@ -128,7 +129,7 @@ pub(crate) async fn restore_database_access(
                 project: &triple.project,
                 environment: &triple.env,
             },
-            &env_key,
+            &project_env_key,
             &database,
         );
         lock_workload_family(&admin, lifecycle).await?;
@@ -216,7 +217,7 @@ async fn converge_stable_workload_memberships(
     else {
         return Ok(());
     };
-    // Only the generations of this scope: the stable role is cluster-wide, and
+    // Only the generations of this target: the stable role is cluster-wide, and
     // the members of another environment can belong to a role that made them
     // and that the provisioner cannot change (owner ruling of 2026-10-03 on
     // wamn-zua8.3).
@@ -279,8 +280,8 @@ async fn converge_stable_workload_memberships(
 ///
 /// Replaces four copy-pasted `run_*_action` functions and the dispatch chain
 /// that chose between them. Everything this needs is DERIVED from the family:
-/// its scope grain picks the identity inputs, the admin database and the
-/// lifecycle scope; its label names the action in every message; its declared
+/// its target grain picks the identity inputs, the admin database and the
+/// lifecycle target; its label names the action in every message; its declared
 /// Secret body shape picks what the published Secret carries. What is
 /// deliberately NOT derived is the GRANT SET, which is where a family's
 /// authority actually lives.
@@ -337,8 +338,9 @@ pub(crate) async fn run_workload_action_with_admin(
             );
             None
         };
-    let env_key = wamn_control_registry::project_env_key(&args.org, &args.project, &args.env);
-    let env_key = env_key.as_str();
+    let project_env_key =
+        wamn_control_registry::project_env_key(&args.org, &args.project, &args.env);
+    let project_env_key = project_env_key.as_str();
     let identity = workload_action_identity(args)?;
     let WorkloadActionIdentity {
         org,
@@ -346,7 +348,7 @@ pub(crate) async fn run_workload_action_with_admin(
         environment,
     } = identity;
     if family == WorkloadRoleFamily::SessionRoleReader {
-        validate_session_env_key(env_key)?;
+        validate_session_project_env_key(project_env_key)?;
     }
     let triple = Triple::new(org, project, environment);
     let system_url = args
@@ -354,12 +356,12 @@ pub(crate) async fn run_workload_action_with_admin(
         .as_deref()
         .with_context(|| format!("{label} generation actions require --system-database-url"))?;
 
-    // A CONTROL-scoped family addresses the control database the system URL
+    // A CONTROL-targeted family addresses the control database the system URL
     // already names; every other family addresses the project environment's own
     // database, whose instance suffix is READ from the registry rather than
-    // typed. One derivation over the scope grain, not a branch per family.
-    let (admin_url, database, admin_config, instance) = if family.scope_kind()
-        == WorkloadRoleScopeKind::Control
+    // typed. One derivation over the target grain, not a branch per family.
+    let (admin_url, database, admin_config, instance) = if family.identity_type()
+        == WorkloadRoleIdentityType::Control
     {
         anyhow::ensure!(
             args.target_admin_database_url.is_none(),
@@ -380,7 +382,7 @@ pub(crate) async fn run_workload_action_with_admin(
         let config = exact_project_database_config(admin_url, &database)?;
         (admin_url, database, config, Some(instance))
     };
-    let lifecycle = workload_lifecycle(family, identity, env_key, &database);
+    let lifecycle = workload_lifecycle(family, identity, project_env_key, &database);
     let mut passwords =
         GenerationPasswords::connect(&named_database_config(system_url, "system database")?)
             .await?;
@@ -407,8 +409,8 @@ pub(crate) async fn run_workload_action_with_admin(
             let expires_at = workload_expires_at(Utc::now());
             // The key the RLS predicate computes, taken from the ONE Rust
             // definition rather than re-derived here — the Secret's label must
-            // name the same tenant the role name's digest does.
-            let key = tenant_key(env_key, &database);
+            // name the same project the role name's digest does.
+            let key = project_key(project_env_key, &database);
             prepare_workload_generation(
                 &admin_config,
                 &mut passwords,
@@ -418,37 +420,37 @@ pub(crate) async fn run_workload_action_with_admin(
                 |role, password| {
                     let credential_url =
                         workload_url(admin_url, &db_host, args.db_port, role, password, &database)?;
-                    let secret = match family.secret_body_kind() {
-                        WorkloadSecretBodyKind::Url => render_workload_secret_manifest(
+                    let secret = match family.secret_body_type() {
+                        WorkloadSecretBodyType::Url => render_workload_secret_manifest(
                             family,
                             &triple,
                             &args.namespace,
                             WorkloadSecretBody::Url(&credential_url),
                         ),
-                        WorkloadSecretBodyKind::EnvKeyUrl => {
+                        WorkloadSecretBodyType::ProjectEnvKeyUrl => {
                             anyhow::ensure!(
                                 role.contains(&key),
-                                "the minted {label} login does not carry the tenant key the RLS \
+                                "the minted {label} login does not carry the project key the RLS \
                                  predicate computes, so every guest read would refuse"
                             );
                             render_workload_secret_manifest(
                                 family,
                                 &triple,
                                 &args.namespace,
-                                WorkloadSecretBody::EnvKeyUrl {
-                                    env_key,
-                                    tenant_key: &key,
+                                WorkloadSecretBody::ProjectEnvKeyUrl {
+                                    project_env_key,
+                                    project_key: &key,
                                     url: &credential_url,
                                 },
                             )
                         }
-                        WorkloadSecretBodyKind::SessionTarget => {
+                        WorkloadSecretBodyType::SessionTarget => {
                             let target = SessionTarget::new(
                                 &triple,
                                 instance
                                     .as_deref()
-                                    .expect("session readers use project-environment scope"),
-                                env_key,
+                                    .expect("session readers use project-environment target"),
+                                project_env_key,
                                 &credential_url,
                             )?;
                             render_workload_secret_manifest(
@@ -497,7 +499,7 @@ pub(crate) async fn run_workload_action_with_admin(
     }
 }
 
-/// ONE org-scoped generation action (`wamn-a40n.2`), run by `provision-org`.
+/// ONE org-targeted generation action (`wamn-a40n.2`), run by `provision-org`.
 ///
 /// The same lifecycle as [`run_workload_action`]: an org family addresses the
 /// control database the system URL names, and its Secret carries one `url`.
@@ -511,7 +513,7 @@ pub async fn run_org_workload_action(
     } = args.action;
     let label = family.label();
     anyhow::ensure!(
-        family.scope_kind() == WorkloadRoleScopeKind::Org,
+        family.identity_type() == WorkloadRoleIdentityType::Org,
         "{label} is not an org credential; provision-project-env mints it"
     );
     let admin_config = named_database_config(&args.system_database_url, &format!("{label} admin"))?;
@@ -521,11 +523,11 @@ pub async fn run_org_workload_action(
         .to_string();
     let lifecycle = WorkloadLifecycle {
         family,
-        scope: WorkloadRoleScope::Org {
+        target: WorkloadRoleIdentity::Org {
             org: &args.org,
             database: &database,
         },
-        control_env_key: None,
+        control_project_env_key: None,
     };
     let mut passwords = GenerationPasswords::connect(&admin_config).await?;
     match verb {
@@ -623,10 +625,10 @@ where
         .await
         .with_context(|| format!("begin {} generation prepare", lifecycle.label()))?;
     transaction
-        .batch_execute(sql::revoke_public_connect_floor_sql())
+        .batch_execute(sql::revoke_public_connect_base_grants_sql())
         .await
-        .context("converge cluster PUBLIC CONNECT floor")?;
-    verify_public_access_floor(&transaction, &lifecycle.label()).await?;
+        .context("converge cluster PUBLIC CONNECT base grants")?;
+    verify_public_base_grants(&transaction, &lifecycle.label()).await?;
     converge_stable_workload_memberships(&transaction, passwords, admin_config, lifecycle).await?;
     let desired =
         converge_workload_generation_state(&transaction, passwords, lifecycle, &role).await?;
@@ -719,27 +721,27 @@ where
         .with_context(|| format!("prepare {} credential generation", lifecycle.label()))?;
     passwords.record(&role, &password).await?;
     if let (
-        Some(env_key),
-        WorkloadRoleScope::Control {
+        Some(project_env_key),
+        WorkloadRoleIdentity::Control {
             org,
             project,
             environment,
             ..
         },
-    ) = (lifecycle.control_env_key, lifecycle.scope)
+    ) = (lifecycle.control_project_env_key, lifecycle.target)
     {
         let mapping = super::provisioning_transaction(&mut passwords.client).await?;
         let mapped: Option<String> = mapping
             .query_opt(
-                sql::upsert_control_author_env_key_mapping_sql(),
-                &[&role, &env_key, &org, &project, &environment],
+                sql::upsert_control_author_project_env_key_mapping_sql(),
+                &[&role, &project_env_key, &org, &project, &environment],
             )
             .await
-            .context("record control-author login tenant mapping")?
-            .map(|row| row.get("env_key"));
+            .context("record control-author login project mapping")?
+            .map(|row| row.get("project_env_key"));
         anyhow::ensure!(
-            mapped.as_deref() == Some(env_key),
-            "control-author login identity already maps to a different tenant"
+            mapped.as_deref() == Some(project_env_key),
+            "control-author login identity already maps to a different project"
         );
         mapping.commit().await?;
     }
@@ -868,7 +870,7 @@ async fn retire_workload_generation(
         .transaction()
         .await
         .with_context(|| format!("begin {} generation retirement", lifecycle.label()))?;
-    verify_public_access_floor(&transaction, &lifecycle.label()).await?;
+    verify_public_base_grants(&transaction, &lifecycle.label()).await?;
     converge_stable_workload_memberships(&transaction, passwords, admin_config, lifecycle).await?;
     let old = converge_workload_generation_state(&transaction, passwords, lifecycle, &old_role)
         .await?
@@ -958,7 +960,7 @@ async fn abort_workload_generation(
         .transaction()
         .await
         .with_context(|| format!("begin {} generation abort", lifecycle.label()))?;
-    verify_public_access_floor(&transaction, &lifecycle.label()).await?;
+    verify_public_base_grants(&transaction, &lifecycle.label()).await?;
     converge_stable_workload_memberships(&transaction, passwords, admin_config, lifecycle).await?;
     let prepared = converge_workload_generation_state(&transaction, passwords, lifecycle, &role)
         .await?
@@ -1073,7 +1075,7 @@ async fn lock_workload_family(
 ) -> anyhow::Result<()> {
     let family_key = lifecycle.family_lock_key();
     client
-        .query_one(sql::workload_scope_lock_sql(), &[&family_key])
+        .query_one(sql::workload_identity_lock_sql(), &[&family_key])
         .await
         .with_context(|| format!("acquire {} family rotation lock", lifecycle.label()))?;
     Ok(())

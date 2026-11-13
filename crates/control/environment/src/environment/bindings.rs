@@ -1,4 +1,4 @@
-//! Resolve project integrations and write release-scoped environment bindings.
+//! Resolve project integrations and write release-targeted environment bindings.
 
 pub(super) mod plan;
 pub(crate) use plan::exports_satisfy;
@@ -199,7 +199,7 @@ pub async fn analyse(
 /// changed row records the memory key of the release in `drops`.
 pub async fn write(
     tx: &tokio_postgres::Transaction<'_>,
-    env_key: &str,
+    project_env_key: &str,
     digest: &str,
     document: &EnvironmentDocument,
     bindings: &[Binding],
@@ -221,17 +221,17 @@ pub async fn write(
             "connection projection {} is absent or inactive; run env connections",
             binding.connection_id
         );
-        changed += tx.execute("INSERT INTO catalog.release_connection(env_key,manifest_digest,connection_id,version) VALUES ($1,$2,$3::text::uuid,$4) ON CONFLICT (env_key,manifest_digest,connection_id) DO NOTHING", &[&env_key,&digest,&binding.connection_id,&binding.version]).await?;
+        changed += tx.execute("INSERT INTO catalog.release_connection(project_env_key,manifest_digest,connection_id,version) VALUES ($1,$2,$3::text::uuid,$4) ON CONFLICT (project_env_key,manifest_digest,connection_id) DO NOTHING", &[&project_env_key,&digest,&binding.connection_id,&binding.version]).await?;
     }
     for row in tx
         .query(
             "SELECT q.component_digest,q.package_id,q.name,q.interface,q.mode \
-         FROM catalog.connection_requirement q WHERE q.env_key=$1 AND EXISTS (\
+         FROM catalog.connection_requirement q WHERE q.project_env_key=$1 AND EXISTS (\
          SELECT FROM catalog.releases r CROSS JOIN LATERAL \
          jsonb_array_elements(convert_from(r.canonical_bytes,'UTF8')::jsonb->'components') c \
-         WHERE r.env_key=$1 AND r.manifest_digest=$2 AND c->>'package-id'=q.package_id \
+         WHERE r.project_env_key=$1 AND r.manifest_digest=$2 AND c->>'package-id'=q.package_id \
          AND c->'descriptor'->>'component-digest'=q.component_digest)",
-            &[&env_key, &digest],
+            &[&project_env_key, &digest],
         )
         .await?
     {
@@ -256,10 +256,10 @@ pub async fn write(
             "connection_read_imports_write_interface: {application}.{name}"
         );
         let component: String = row.get(0);
-        changed += tx.execute("INSERT INTO catalog.connection_binding(env_key,manifest_digest,component_digest,package_id,name,connection_id) VALUES ($1,$2,$3,$4,$5,$6::text::uuid) ON CONFLICT (env_key,manifest_digest,component_digest,package_id,name) DO NOTHING", &[&env_key,&digest,&component,&package,&name,&binding.connection_id]).await?;
+        changed += tx.execute("INSERT INTO catalog.connection_binding(project_env_key,manifest_digest,component_digest,package_id,name,connection_id) VALUES ($1,$2,$3,$4,$5,$6::text::uuid) ON CONFLICT (project_env_key,manifest_digest,component_digest,package_id,name) DO NOTHING", &[&project_env_key,&digest,&component,&package,&name,&binding.connection_id]).await?;
     }
     if changed > 0 {
-        drops.release(env_key, digest);
+        drops.release(project_env_key, digest);
     }
     Ok(())
 }
@@ -268,7 +268,7 @@ pub async fn write(
 /// The caller holds the operation grant lock and supplies a fresh host observation.
 pub async fn contract(
     tx: &tokio_postgres::Transaction<'_>,
-    env_key: &str,
+    project_env_key: &str,
     application: &str,
     declared: &wamn_catalog::EnvironmentApplications,
     retired: &[&str],
@@ -289,8 +289,8 @@ pub async fn contract(
             continue;
         }
         let row = tx.query_one(
-            "SELECT canonical_bytes FROM catalog.releases WHERE env_key=$1 AND manifest_digest=$2",
-            &[&env_key, digest],
+            "SELECT canonical_bytes FROM catalog.releases WHERE project_env_key=$1 AND manifest_digest=$2",
+            &[&project_env_key, digest],
         ).await?;
         let (manifest, actual) = wamn_catalog::ServingManifest::from_canonical_bytes(row.get(0))?;
         anyhow::ensure!(
@@ -315,9 +315,9 @@ pub async fn contract(
         );
         let needed: bool = tx
             .query_one(
-                "SELECT EXISTS (SELECT FROM wamn_run.runs WHERE env_key=$1 AND manifest_digest=$2 \
+                "SELECT EXISTS (SELECT FROM wamn_run.runs WHERE project_env_key=$1 AND manifest_digest=$2 \
              AND status NOT IN ('completed','failed','infrastructure-failure'))",
-                &[&env_key, digest],
+                &[&project_env_key, digest],
             )
             .await?
             .get(0);
@@ -326,12 +326,12 @@ pub async fn contract(
         }
         for table in ["catalog.connection_binding", "catalog.release_connection"] {
             tx.execute(
-                &format!("DELETE FROM {table} WHERE env_key=$1 AND manifest_digest=$2"),
-                &[&env_key, digest],
+                &format!("DELETE FROM {table} WHERE project_env_key=$1 AND manifest_digest=$2"),
+                &[&project_env_key, digest],
             )
             .await?;
         }
-        drops.release(env_key, digest);
+        drops.release(project_env_key, digest);
         removed.push((*digest).to_owned());
     }
     Ok(removed)

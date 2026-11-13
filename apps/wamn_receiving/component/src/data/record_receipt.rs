@@ -182,9 +182,9 @@ impl RecordReceiptError {
         self.constraint
     }
 
-    fn new(kind: RecordReceiptErrorType, context: impl Into<Box<str>>) -> Self {
+    fn new(type_: RecordReceiptErrorType, context: impl Into<Box<str>>) -> Self {
         Self {
-            type_: kind,
+            type_,
             context: context.into(),
             field: None,
             id: None,
@@ -234,7 +234,7 @@ impl RecordReceiptError {
         context: &'static str,
         source: StatementError,
     ) -> Self {
-        let kind = match classified {
+        let type_ = match classified {
             AccessErrorType::Retry => RecordReceiptErrorType::Retry,
             AccessErrorType::Timeout => RecordReceiptErrorType::Timeout,
             AccessErrorType::PermissionDenied => RecordReceiptErrorType::PermissionDenied,
@@ -249,7 +249,7 @@ impl RecordReceiptError {
             | AccessErrorType::InternalError => RecordReceiptErrorType::InternalError,
         };
         Self {
-            type_: kind,
+            type_,
             context: context.into(),
             field: None,
             id: None,
@@ -486,7 +486,7 @@ async fn record_receipt_in(
 }
 
 fn refuse_line_outcome(outcome: &str, id: Option<WamnUuid>) -> Result<(), RecordReceiptError> {
-    let (kind, field) = match outcome {
+    let (type_, field) = match outcome {
         "ready" => return Ok(()),
         "purchase_order_line_not_found" => (
             RecordReceiptErrorType::PurchaseOrderLineNotFound,
@@ -517,7 +517,7 @@ fn refuse_line_outcome(outcome: &str, id: Option<WamnUuid>) -> Result<(), Record
     let id = id.ok_or_else(|| {
         RecordReceiptError::internal("line validator refusal omitted its offending id")
     })?;
-    Err(RecordReceiptError::domain_id(kind, outcome, field, id.0))
+    Err(RecordReceiptError::domain_id(type_, outcome, field, id.0))
 }
 
 fn sql_error(context: &'static str, source: StatementError) -> RecordReceiptError {

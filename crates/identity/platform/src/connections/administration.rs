@@ -1,4 +1,4 @@
-//! Project-scoped integration administration and private credential writes.
+//! Project-targeted integration administration and private credential writes.
 
 use serde_json::{Value, json};
 use tokio_postgres::Transaction;
@@ -424,7 +424,7 @@ async fn generation(
 
 async fn store_credential(
     store: &dyn Store,
-    scope: &wamn_control_registry::Triple,
+    target: &wamn_control_registry::Triple,
     value: &str,
 ) -> Result<Value, ConnectionError> {
     let id = uuid::Uuid::new_v4();
@@ -433,7 +433,7 @@ async fn store_credential(
         reference,
         version,
     } = store
-        .put(scope, id, value.as_bytes())
+        .put(target, id, value.as_bytes())
         .await
         .map_err(store_error)?;
     let hint: String = value
@@ -633,7 +633,7 @@ mod tests {
     impl Store for RecordingStore {
         async fn put(
             &self,
-            _scope: &wamn_control_registry::Triple,
+            _target: &wamn_control_registry::Triple,
             id: uuid::Uuid,
             value: &[u8],
         ) -> Result<StoreVersion, wamn_kubernetes::Error> {

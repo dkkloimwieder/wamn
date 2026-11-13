@@ -1,6 +1,6 @@
 # Manifest authoring
 
-**Scoping rule.** This document names two epics. Only epic 1 is scoped to issues. Epic 2 is named with its goal and boundary and nothing more, and is scoped only after epic 1 is closed and reviewed by the owner. An agent that finishes epic 1 stops.
+**Scoping rule.** This document names two epics. Only epic 1 is bound to issues. Epic 2 is named with its goal and boundary and nothing more, and is targeted only after epic 1 is closed and reviewed by the owner. An agent that finishes epic 1 stops.
 
 ## 2. Fixed rules
 
@@ -40,7 +40,7 @@ See [overlay composition](../operations/building.md#package-manifests).
 
 See [the current build contract](../operations/building.md#wamn-build).
 
-## 6. Out of scope
+## 6. Out of target
 
 - Epic 2, constraints the JSON vocabulary cannot state. Goal: cross-field tests at compile time (a `revision` input names a `Ref` input; a `writable_field` exists on the model; a `relation` names a table some statement touches). Boundary: compile-time refusals only; no new compiled vocabulary.
 - Any change to the Retain/Derive table, to `relations`/`statements` authoring, or to the canonical JSON.

@@ -152,7 +152,7 @@ pub async fn image_ready(
     let node = std::str::from_utf8(&names)?
         .lines()
         .next()
-        .context("kind reported no node")?;
+        .context("type reported no node")?;
     let observed = command_json(&mut node_image(node, image)).await?;
     let config = observed
         .pointer("/info/imageSpec")
@@ -182,7 +182,7 @@ pub async fn image_ready(
         .collect::<BTreeSet<_>>();
     ensure!(
         names.len() == 3,
-        "kind must report exactly three distinct nodes"
+        "type must report exactly three distinct nodes"
     );
     let loaded = loaded_image_digest(image, &names, evidence).await;
     if loaded.is_err() {
@@ -376,7 +376,7 @@ pub async fn cross_environment_refused(
         let answer = String::from_utf8(output.stdout)?.trim().to_owned();
         ensure!(
             answer == if expected { "yes" } else { "no" },
-            "operator Event permission {verb} differs from its declared scope"
+            "operator Event permission {verb} differs from its declared target"
         );
         ensure!(
             output.status.code() == Some(i32::from(!expected)),

@@ -1,6 +1,6 @@
 use super::{
     DateTime, PLATFORM_GROUP_ROLE, SecondsFormat, Utc, WORKLOAD_CREDENTIAL_TTL_DAYS,
-    WorkloadActionRequest, WorkloadRoleFamily, WorkloadRoleScope, WorkloadRoleScopeKind,
+    WorkloadActionRequest, WorkloadRoleFamily, WorkloadRoleIdentity, WorkloadRoleIdentityType,
     validate_project_env,
 };
 
@@ -9,10 +9,10 @@ pub(in super::super) fn is_workload_generation_role(
     role: &str,
 ) -> bool {
     let prefix = format!("{}_", family.generation_prefix());
-    let Some(scoped) = role.strip_prefix(&prefix) else {
+    let Some(targeted) = role.strip_prefix(&prefix) else {
         return false;
     };
-    let Some((hash, generation)) = scoped.split_once('_') else {
+    let Some((hash, generation)) = targeted.split_once('_') else {
         return false;
     };
     hash.len() == 40
@@ -24,18 +24,18 @@ pub(in super::super) fn is_workload_generation_role(
 
 /// ONE lifecycle constructor, for any family (`wamn-0h0g.22.16`).
 ///
-/// Replaces four copy-pasted constructors that differed only in the scope arm
-/// they filled in. The scope GRAIN is the family's own declaration, so pairing a
+/// Replaces four copy-pasted constructors that differed only in the target arm
+/// they filled in. The target GRAIN is the family's own declaration, so pairing a
 /// family with the wrong grain is not something a caller can get wrong here.
 ///
-/// The control tenant follows the same derivation: only a control-scoped family
-/// records a login-to-tenant mapping row, because that row is the control
+/// The control project follows the same derivation: only a control-targeted family
+/// records a login-to-project mapping row, because that row is the control
 /// plane's and a project-environment credential never reaches the control
 /// database.
 pub(in super::super) fn workload_lifecycle<'a>(
     family: WorkloadRoleFamily,
     identity: WorkloadActionIdentity<'a>,
-    env_key: &'a str,
+    project_env_key: &'a str,
     database: &'a str,
 ) -> WorkloadLifecycle<'a> {
     let WorkloadActionIdentity {
@@ -43,30 +43,34 @@ pub(in super::super) fn workload_lifecycle<'a>(
         project,
         environment,
     } = identity;
-    let scope = match family.scope_kind() {
-        // Tenant scope for the guest credential: the digest in the role name IS
-        // the tenant key, so the login the mint issues and the key
-        // `wamn_authority.tenant_key` computes are the same string
+    let target = match family.identity_type() {
+        // Project target for the guest credential: the digest in the role name IS
+        // the project key, so the login the mint issues and the key
+        // `wamn_authority.project_key` computes are the same string
         // (`wamn-0h0g.22.6.4`).
-        WorkloadRoleScopeKind::EnvKey => WorkloadRoleScope::EnvKey { env_key, database },
-        WorkloadRoleScopeKind::ProjectEnvironment => WorkloadRoleScope::ProjectEnvironment {
+        WorkloadRoleIdentityType::ProjectEnvKey => WorkloadRoleIdentity::ProjectEnvKey {
+            project_env_key,
+            database,
+        },
+        WorkloadRoleIdentityType::ProjectEnvironment => WorkloadRoleIdentity::ProjectEnvironment {
             org,
             project,
             environment,
             database,
         },
-        WorkloadRoleScopeKind::Control => WorkloadRoleScope::Control {
+        WorkloadRoleIdentityType::Control => WorkloadRoleIdentity::Control {
             org,
             project,
             environment,
             database,
         },
-        WorkloadRoleScopeKind::Org => WorkloadRoleScope::Org { org, database },
+        WorkloadRoleIdentityType::Org => WorkloadRoleIdentity::Org { org, database },
     };
     WorkloadLifecycle {
         family,
-        scope,
-        control_env_key: (family.scope_kind() == WorkloadRoleScopeKind::Control).then_some(env_key),
+        target,
+        control_project_env_key: (family.identity_type() == WorkloadRoleIdentityType::Control)
+            .then_some(project_env_key),
     }
 }
 
@@ -122,8 +126,8 @@ pub(super) struct WorkloadRoleState {
 #[derive(Debug, Clone, Copy)]
 pub(in super::super) struct WorkloadLifecycle<'a> {
     pub(in super::super) family: WorkloadRoleFamily,
-    pub(in super::super) scope: WorkloadRoleScope<'a>,
-    pub(in super::super) control_env_key: Option<&'a str>,
+    pub(in super::super) target: WorkloadRoleIdentity<'a>,
+    pub(in super::super) control_project_env_key: Option<&'a str>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -204,7 +208,7 @@ impl WorkloadRoleState {
     /// THE ONE PARENT EDGE A STABLE ACL ROLE MAY CARRY (`wamn-0h0g.22.17`).
     ///
     /// A platform-grain family's ACL role is a member of
-    /// [`PLATFORM_GROUP_ROLE`], and it has to be: the tenant floor is narrowed
+    /// [`PLATFORM_GROUP_ROLE`], and it has to be: the project base grants are narrowed
     /// `TO wamn_app`, PostgreSQL default-denies when no policy matches the
     /// connected role, and the permissive arm names the group. Nothing else may
     /// appear here — an extra parent is authority this provisioner did not

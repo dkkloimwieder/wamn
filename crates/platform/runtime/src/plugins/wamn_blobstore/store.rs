@@ -473,7 +473,7 @@ mod tests {
 
     #[tokio::test]
     async fn put_get_delete_list_round_trip() {
-        let (container, _store) = bound("tenant-a/labels");
+        let (container, _store) = bound("org-a/labels");
 
         assert!(!container.has("a.zpl").await.expect("has succeeds"));
         container
@@ -523,7 +523,7 @@ mod tests {
     /// wall exists to hide.
     #[tokio::test]
     async fn listing_returns_author_relative_keys_and_never_the_prefix() {
-        let (container, _store) = bound("tenant-a/labels");
+        let (container, _store) = bound("org-a/labels");
         container.put("a.zpl", b"x".to_vec()).await.expect("put");
         container
             .put("deep/b.zpl", b"x".to_vec())
@@ -534,7 +534,7 @@ mod tests {
         assert_eq!(keys, vec!["a.zpl".to_string(), "deep/b.zpl".to_string()]);
         for key in &keys {
             assert!(
-                !key.contains("tenant-a/labels"),
+                !key.contains("org-a/labels"),
                 "listing leaked the bound prefix in {key:?}"
             );
         }
@@ -544,15 +544,15 @@ mod tests {
     /// key never reaches an object another binding could see.
     #[tokio::test]
     async fn a_traversal_key_is_refused_before_the_store_is_touched() {
-        let (container, store) = bound("tenant-a");
-        // An object belonging to another tenant, planted directly.
+        let (container, store) = bound("org-a");
+        // An object belonging to another project, planted directly.
         store
-            .put(&Path::from("tenant-b/secret"), b"theirs".to_vec().into())
+            .put(&Path::from("org-b/secret"), b"theirs".to_vec().into())
             .await
             .expect("plant");
 
         let error = container
-            .get("../tenant-b/secret")
+            .get("../org-b/secret")
             .await
             .expect_err("must refuse");
         assert_eq!(error.code(), "key_parent_traversal");
@@ -583,8 +583,8 @@ mod tests {
     #[tokio::test]
     async fn two_prefixes_on_one_store_are_isolated() {
         let store = Arc::new(InMemory::new()) as Arc<dyn ObjectStore>;
-        let a = BoundContainer::new(Arc::clone(&store), "wamn-labels", "tenant-a");
-        let b = BoundContainer::new(Arc::clone(&store), "wamn-labels", "tenant-b");
+        let a = BoundContainer::new(Arc::clone(&store), "wamn-labels", "org-a");
+        let b = BoundContainer::new(Arc::clone(&store), "wamn-labels", "org-b");
 
         a.put("shared-name.zpl", b"a's".to_vec())
             .await
@@ -624,8 +624,8 @@ mod tests {
     #[tokio::test]
     async fn clear_empties_only_the_bound_prefix() {
         let store = Arc::new(InMemory::new()) as Arc<dyn ObjectStore>;
-        let mine = BoundContainer::new(Arc::clone(&store), "wamn-labels", "tenant-a");
-        let theirs = BoundContainer::new(Arc::clone(&store), "wamn-labels", "tenant-b");
+        let mine = BoundContainer::new(Arc::clone(&store), "wamn-labels", "org-a");
+        let theirs = BoundContainer::new(Arc::clone(&store), "wamn-labels", "org-b");
 
         mine.put("x.zpl", b"mine".to_vec()).await.expect("put");
         mine.put("deep/y.zpl", b"mine".to_vec()).await.expect("put");

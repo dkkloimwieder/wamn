@@ -62,11 +62,11 @@ For example, PostgreSQL establishes migration retry behavior, while one SQL-Job 
 
 **Bad:** create a separate database, apply a chart containing only a ConfigMap, and make sure that the database row survived.
 **Good:** create records in alpha and beta through their application routes, deploy alpha, read the records back, and test the specified beta deployment state remains unchanged.
-A Helm-only test tests Helm reapply/recovery and makes no application-data claim.
+A Helm-only test tests Helm reapply/recovery and makes no application-data assertion.
 
 Project meaningful state rather than comparing all database rows or Kubernetes metadata.
-For code-only deployment, test application data and schema identity; permit the targeted control writes accepted in `docs/plan/deploy.md` under Deployment ownership.
-Release-cache additions, application bindings and scoped grants are not forbidden application-data mutations.
+For code-only deployment, test application data and scheman identity; permit the targeted control writes accepted in `docs/plan/deploy.md` under Deployment ownership.
+Release-cache additions, application bindings and targeted grants are not forbidden application-data mutations.
 Make sure of beta's effective permissions as well as its release where permission isolation is the requirement.
 
 ### Migration retry must expose repeated effects
@@ -103,16 +103,16 @@ An error alone does not establish absence of effects; the test must not automati
 
 ### Published execution must not depend on source
 
-**Bad:** make sure that a package-copy helper wrote a directory and claim deployed SQL uses published bytes.
+**Bad:** make sure that a package-copy helper wrote a directory and assert deployed SQL uses published bytes.
 **Good:** publish through the product owner, retain the immutable digest, make the source unavailable, apply the selected release, and inspect its database effect and recorded artifact identity.
 `crates/control/environment/tests/application_activation_live.rs` contains this test shape.
 
 Use a real registry when the publication/pull behavior is the subject.
-An executor-only test may supply verified artifacts directly but must not claim registry or deployed Job coverage.
+An executor-only test may supply verified artifacts directly but must not assert registry or deployed Job coverage.
 
 ### Event admission must inspect the created run
 
-**Bad:** count NATS messages or inspect a passed argument and claim the run selected the correct release.
+**Bad:** count NATS messages or inspect a passed argument and assert the run selected the correct release.
 **Good:** admit events for alpha and beta through the actual admission interface and inspect each run's application and manifest digest.
 Make a different release available without selecting it and make sure that the admitting host still uses its loaded release.
 Redelivery must preserve an existing run's identity and pinned release under the accepted duplicate-prevention rule.
@@ -131,7 +131,7 @@ Reset exclusion and concurrent independent application deployment are separate p
 ## Independent deployed cases
 
 Reuse the entry points in `crates/control/dev/tests/platform_apply_kind.rs`.
-These are intended coverage responsibilities, not a claim that each current function already has minimal setup.
+These are intended coverage responsibilities, not an assertion that each current function already has minimal setup.
 Any execution remains subject to the approval and preflight rules above.
 
 | Case | Minimal starting state | Distinct observation |
@@ -192,7 +192,7 @@ Compilation-blocked tests can be reviewed for relevance but remain unexecuted.
 
 | Disposition | When | Required change |
 |---|---|---|
-| Keep | Suitable detector for retained behavior | Preserve its accurate scope |
+| Keep | Suitable detector for retained behavior | Preserve its accurate target |
 | Strengthen | Correct path, weak observation | Add a result that distinguishes the real defect |
 | Rewrite | Retained rule, implementation-spelling assertion | Observe behavior; demonstrate that harmless refactoring passes and the relevant defect fails |
 | Move lower | A cheaper interface establishes the same contract | Demonstrate detection at the cheaper interface; remove the duplicated expensive matrix and exclusive preparation |
@@ -230,7 +230,7 @@ Whether assertions detect the same behavior remains a review judgment, not a sou
 
 Evaluate representative changes when their test or preparation owner is being changed:
 
-| Exercise | Evidence required before claiming improvement |
+| Exercise | Evidence required before reporting improvement |
 |---|---|
 | Migration-policy correction | The validator/publication test detects the violation without platform builds or cluster setup |
 | Migration retry correction | Real PostgreSQL shows 7 → 8 → 8; deliberately repeating a committed migration fails the relevant assertion |
@@ -245,11 +245,11 @@ Compare comparable inputs and cache conditions, separating cold setup from warm 
 Use existing timings to identify work removed and time saved; set time expectations from measurements rather than an arbitrary universal duration.
 Fewer tests, deleted lines and a passing full run are not substitutes for these observations.
 
-**Completion criterion:** a testing improvement is complete only when its claimed reduction in coupling or execution work is demonstrated at the affected boundary, redundant assertions and exclusive preparation are removed, and retained behavior remains covered or explicitly untested.
+**Completion criterion:** a testing improvement is complete only when its reported reduction in coupling or execution work is demonstrated at the affected boundary, redundant assertions and exclusive preparation are removed, and retained behavior remains covered or explicitly untested.
 New names and a passing combined run do not establish that improvement.
 Record the result in the existing issue; unresolved tests remain incomplete rather than being closed on intent.
 
-## Scope and results
+## Target and results
 
 Use real application and platform functions through existing Rust test owners.
 Generated claim tests complement full-command execution and do not replace it.

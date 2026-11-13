@@ -14,7 +14,7 @@ use wamn_control_provision::CredentialGeneration;
 use wamn_control_provision::identity_issuer::{
     IDENTITY_ISSUER_ROLE, identity_issuer_generation_role, prepare_identity_issuer_generation_sql,
 };
-use wamn_control_provision::sql::revoke_public_connect_floor_sql;
+use wamn_control_provision::sql::revoke_public_connect_base_grants_sql;
 use wamn_identity::cli::Cli;
 use wamn_identity::{IdentityConfig, IdentityService, serve, tls_config};
 use wamn_identity_protocol::keys::{PublicSessionKey, SessionJwks};
@@ -26,7 +26,7 @@ const PASSWORD: &str = "identity-surface-fixture-secret";
 #[test]
 fn cli_and_validated_configuration_debug_do_not_disclose_database_credentials() {
     let role =
-        identity_issuer_generation_role(ISSUER, CredentialGeneration::A).expect("scoped role");
+        identity_issuer_generation_role(ISSUER, CredentialGeneration::A).expect("targeted role");
     let url = format!("postgres://{role}:{PASSWORD}@127.0.0.1/wamn_system");
     for args in [
         vec![
@@ -62,7 +62,7 @@ fn cli_and_validated_configuration_debug_do_not_disclose_database_credentials() 
         assert!(!format!("{cli:?}").contains(PASSWORD));
         assert!(!format!("{cli:?}").contains(&url));
     }
-    let config = IdentityConfig::new(ISSUER, &url).expect("scoped configuration");
+    let config = IdentityConfig::new(ISSUER, &url).expect("targeted configuration");
     assert!(!format!("{config:?}").contains(PASSWORD));
     assert!(!format!("{config:?}").contains(&url));
     let refused = format!("postgres://wamn_system:{PASSWORD}@unreachable.invalid/wamn_system");
@@ -86,7 +86,7 @@ async fn identity_https_has_only_public_jwks_and_health() {
         .get(0);
     assert_eq!(database, "wamn_system", "never reset another database");
     let role =
-        identity_issuer_generation_role(ISSUER, CredentialGeneration::A).expect("scoped role");
+        identity_issuer_generation_role(ISSUER, CredentialGeneration::A).expect("targeted role");
     let existing: bool = admin
         .query_one(
             "SELECT EXISTS (SELECT FROM pg_roles WHERE rolname = ANY($1::text[]))",
@@ -122,13 +122,13 @@ async fn identity_https_has_only_public_jwks_and_health() {
         .await
         .expect("restore fixture admin");
     admin
-        .batch_execute(revoke_public_connect_floor_sql())
+        .batch_execute(revoke_public_connect_base_grants_sql())
         .await
-        .expect("production CONNECT floor");
+        .expect("production CONNECT minimum");
     admin
         .batch_execute("REVOKE TEMPORARY ON DATABASE wamn_system FROM PUBLIC")
         .await
-        .expect("production TEMPORARY floor");
+        .expect("production TEMPORARY minimum");
     admin
         .batch_execute(
             &prepare_identity_issuer_generation_sql(
@@ -137,34 +137,34 @@ async fn identity_https_has_only_public_jwks_and_health() {
                 PASSWORD,
                 "2100-01-01T00:00:00Z",
             )
-            .expect("scoped credential SQL"),
+            .expect("targeted credential SQL"),
         )
         .await
         .expect("provision narrow identity credential");
-    let mut scoped = url::Url::parse(admin_url).expect("fixture URL shape");
-    scoped.set_username(&role).expect("scoped login");
-    scoped
+    let mut targeted = url::Url::parse(admin_url).expect("fixture URL shape");
+    targeted.set_username(&role).expect("targeted login");
+    targeted
         .set_password(Some(PASSWORD))
         .expect("fixture password");
-    scoped.set_query(None);
-    scoped.set_fragment(None);
-    let scoped = scoped.to_string();
+    targeted.set_query(None);
+    targeted.set_fragment(None);
+    let targeted = targeted.to_string();
 
-    let published = cli(&scoped, &["publish"]).await;
+    let published = cli(&targeted, &["publish"]).await;
     let public = public_key(&published);
     assert_eq!(
-        cli(&scoped, &["activate", "--kid", &public.kid]).await["activated"],
+        cli(&targeted, &["activate", "--kid", &public.kid]).await["activated"],
         true
     );
     let other = publish_session_key(&mut admin, "https://other.identity.service.internal")
         .await
         .expect("other issuer control");
-    let config = IdentityConfig::new(ISSUER, &scoped).expect("validated service configuration");
+    let config = IdentityConfig::new(ISSUER, &targeted).expect("validated service configuration");
     let service = IdentityService::connect(config)
         .await
-        .expect("scoped service connection");
+        .expect("targeted service connection");
     assert!(!format!("{service:?}").contains(PASSWORD));
-    assert!(!format!("{service:?}").contains(&scoped));
+    assert!(!format!("{service:?}").contains(&targeted));
     let (certificate, private_key, ca) = certificates();
     let tls = tls_config(&certificate, &private_key).expect("production TLS configuration");
     let listener = TcpListener::bind("127.0.0.1:0")
@@ -271,14 +271,14 @@ async fn identity_https_has_only_public_jwks_and_health() {
     );
 
     assert_eq!(
-        cli(&scoped, &["remove", "--kid", &public.kid]).await["removed"],
+        cli(&targeted, &["remove", "--kid", &public.kid]).await["removed"],
         true
     );
     assert_eq!(
-        cli(&scoped, &["remove", "--kid", &public.kid]).await["removed"],
+        cli(&targeted, &["remove", "--kid", &public.kid]).await["removed"],
         false
     );
-    assert_eq!(cli(&scoped, &["retire"]).await["retired"], 0);
+    assert_eq!(cli(&targeted, &["retire"]).await["retired"], 0);
     let bytes = trusted
         .get(format!("{endpoint}/.well-known/jwks.json"))
         .send()

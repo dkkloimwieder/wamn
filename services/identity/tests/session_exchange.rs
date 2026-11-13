@@ -21,16 +21,16 @@ use wamn_control_provision::project_env_database_name;
 use wamn_control_provision::session_target::SessionTarget;
 use wamn_control_provision::sql::{
     ensure_db_owner_role_sql, prepare_workload_generation_sql, record_generation_password_sql,
-    revoke_public_connect_floor_sql,
+    revoke_public_connect_base_grants_sql,
 };
-use wamn_control_provision::workload_role::{WorkloadRoleScope, workload_generation_role};
+use wamn_control_provision::workload_role::{WorkloadRoleIdentity, workload_generation_role};
 use wamn_control_provision::{
     CredentialGeneration, PlatformComponent, SYSTEM_SCHEMA_SQL, WorkloadRoleFamily,
 };
 use wamn_control_registry::Triple;
 use wamn_identity::{IdentityConfig, IdentityService, serve, tls_config};
 use wamn_identity_protocol::keys::SessionJwks;
-use wamn_identity_protocol::test_util::{Scope, verify};
+use wamn_identity_protocol::test_util::{Audience, verify};
 use wamn_identity_protocol::token::SessionClaims;
 use wamn_platform_identity::session_keys::{activate_session_key, publish_session_key};
 use wamn_platform_identity::{
@@ -43,11 +43,11 @@ mod password_lifecycle;
 
 const ISSUER: &str = "https://identity.session-test.internal";
 const PASSWORD: &str = "session-exchange-disposable-fixture-password";
-const ENV_KEY: &str = "session-tenant-a";
+const PROJECT_ENV_KEY: &str = "session-org-a";
 const SUFFIX: &str = "s3ss10n2";
 /// The test principal that each environment fixture writes as.
 const FIXTURE_PRINCIPAL: &str = "00000000-0000-4000-8000-0000000000f1";
-const SCOPES: [(&str, &str); 3] = [("demo", "dev"), ("demo", "prod"), ("other", "dev")];
+const TARGETS: [(&str, &str); 3] = [("demo", "dev"), ("demo", "prod"), ("other", "dev")];
 /// Bounds a wait for an observed backend state. A wait ends when PostgreSQL
 /// shows that state, never after a fixed delay. This bound only stops a test
 /// that would otherwise hang because of a defect, so machine load cannot reach it.
@@ -169,14 +169,14 @@ async fn verify_response(
         .iter()
         .find(|key| key.kid == kid)
         .expect_redacted("key from actual public JWKS");
-    let scope = Scope {
+    let coordinate = Audience {
         issuer: ISSUER,
         org: &target.triple().org,
         audience: target.audience(),
     };
-    let claims = verify(token, key, scope, unix_seconds())
+    let claims = verify(token, key, coordinate, unix_seconds())
         .await
-        .expect_redacted("public signature and exact scope");
+        .expect_redacted("public signature and exact coordinate");
     assert!(claims.sub == *principal.id(), "exact authenticated subject");
     assert!(
         claims.roles
@@ -184,27 +184,27 @@ async fn verify_response(
                 .iter()
                 .map(|role| role.parse::<wamn_identity_protocol::RoleName>().unwrap())
                 .collect::<Vec<_>>(),
-        "exact current tenant roles"
+        "exact current project roles"
     );
     assert_eq!(body["expires_at"].as_i64(), Some(claims.exp));
     assert_eq!(body["sub"], serde_json::to_value(claims.sub).unwrap());
     for wrong in [
-        Scope {
+        Audience {
             issuer: "https://wrong-issuer.invalid",
-            ..scope
+            ..coordinate
         },
-        Scope {
+        Audience {
             org: "wrong-org",
-            ..scope
+            ..coordinate
         },
-        Scope {
+        Audience {
             audience: "wrong-audience",
-            ..scope
+            ..coordinate
         },
     ] {
         assert!(
             verify(token, key, wrong, unix_seconds()).await.is_err(),
-            "signed claims cannot change configured scope"
+            "signed JWT claims cannot change configured coordinate"
         );
     }
     claims
@@ -232,16 +232,16 @@ async fn record_password_fingerprint(system: &Client, role: &str) {
 
 async fn seed_user(client: &Client, principal: &Principal, role: &str) {
     client.execute("INSERT INTO platform.\"user\" (id,type,email) VALUES ($1::text::uuid,'user',$2) ON CONFLICT (id) DO UPDATE SET status='active'", &[&principal.id().to_string().as_str(), &format!("{}@fixture.invalid", principal.id())])
-        .await.expect_redacted("tenant user fixture");
+        .await.expect_redacted("project user fixture");
     client
         .execute(
             "INSERT INTO platform.role (name) VALUES ($1) ON CONFLICT DO NOTHING",
             &[&role],
         )
         .await
-        .expect_redacted("tenant role fixture");
+        .expect_redacted("project role fixture");
     client.execute("INSERT INTO platform.user_role (user_id,role_name) VALUES ($1::text::uuid,$2) ON CONFLICT DO NOTHING", &[&principal.id().to_string().as_str(), &role])
-        .await.expect_redacted("exact tenant/principal role fixture");
+        .await.expect_redacted("exact project/principal role fixture");
 }
 
 async fn grant(system: &Client, principal: &Principal, org: &str, env: &str) {
@@ -272,7 +272,7 @@ async fn setup(raw: &str) -> Fixture {
     ];
     roles.extend(["wamn_app", "wamn_platform", "wamn_run_retention"].map(str::to_owned));
     let mut targets = Vec::new();
-    for (org, env) in SCOPES {
+    for (org, env) in TARGETS {
         let triple = Triple {
             org: org.into(),
             project: "widgets".into(),
@@ -281,7 +281,7 @@ async fn setup(raw: &str) -> Fixture {
         let name = project_env_database_name(org, "widgets", env, SUFFIX);
         let role = workload_generation_role(
             WorkloadRoleFamily::SessionRoleReader,
-            WorkloadRoleScope::ProjectEnvironment {
+            WorkloadRoleIdentity::ProjectEnvironment {
                 org,
                 project: "widgets",
                 environment: env,
@@ -290,8 +290,13 @@ async fn setup(raw: &str) -> Fixture {
             CredentialGeneration::A,
         )
         .expect_redacted("reader role");
-        let target = SessionTarget::new(&triple, SUFFIX, ENV_KEY, &login_url(&admin, &name, &role))
-            .expect_redacted("production target capability");
+        let target = SessionTarget::new(
+            &triple,
+            SUFFIX,
+            PROJECT_ENV_KEY,
+            &login_url(&admin, &name, &role),
+        )
+        .expect_redacted("production target capability");
         assert!(!format!("{target:?}").contains(PASSWORD));
         roles.push(role);
         targets.push(target);
@@ -341,14 +346,14 @@ async fn setup(raw: &str) -> Fixture {
     }
     system
         .client
-        .batch_execute(revoke_public_connect_floor_sql())
+        .batch_execute(revoke_public_connect_base_grants_sql())
         .await
-        .expect_redacted("production CONNECT floor on disposable cluster");
+        .expect_redacted("production CONNECT minimum on disposable cluster");
     system
         .client
         .batch_execute("REVOKE TEMPORARY ON DATABASE wamn_system FROM PUBLIC")
         .await
-        .expect_redacted("system TEMP floor");
+        .expect_redacted("system TEMP minimum");
     system
         .client
         .batch_execute(
@@ -407,7 +412,7 @@ async fn setup(raw: &str) -> Fixture {
                 escape_identifier(target.connection().database())
             ))
             .await
-            .expect_redacted("environment TEMP floor");
+            .expect_redacted("environment TEMP minimum");
         environment
             .client
             .batch_execute(&prepare_workload_generation_sql(
@@ -473,7 +478,7 @@ async fn start_config(config: IdentityConfig) -> Https {
     assert!(!format!("{config:?}").contains(PASSWORD));
     let service = IdentityService::connect(config)
         .await
-        .expect_redacted("production scoped service");
+        .expect_redacted("production targeted service");
     assert!(!format!("{service:?}").contains(PASSWORD));
     let (certificate, private, ca) = certificates();
     let listener = TcpListener::bind("127.0.0.1:0")
@@ -523,7 +528,7 @@ async fn connect(url: &str) -> Database {
 fn login_url(admin: &url::Url, database: &str, role: &str) -> String {
     let mut url = admin.clone();
     url.set_path(&format!("/{database}"));
-    url.set_username(role).expect_redacted("scoped role");
+    url.set_username(role).expect_redacted("targeted role");
     url.set_password(Some(PASSWORD))
         .expect_redacted("fixture password");
     url.set_query(None);
@@ -829,7 +834,7 @@ async fn password_environment_discovery_requires_current_authority() {
     }).collect::<Vec<_>>()})
     };
 
-    // A tenant role alone never supplies membership, including across organizations.
+    // A project role alone never supplies membership, including across organizations.
     assert_environments(discover().send().await.unwrap(), expected(&[])).await;
     grant(&fixture.system.client, &alice, "demo", "dev").await;
     assert_environments(discover().send().await.unwrap(), expected(&[0])).await;

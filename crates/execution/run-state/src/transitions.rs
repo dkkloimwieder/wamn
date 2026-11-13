@@ -13,20 +13,20 @@ use crate::RunStatus;
 
 pub(crate) const FENCED_PREFIX: &str = "\
 WITH input AS ( \
-    SELECT NULLIF(current_setting('app.env_key', true), '')::text AS env_key, \
+    SELECT NULLIF(current_setting('app.project_env_key', true), '')::text AS project_env_key, \
            $1::text AS target_run_id, $2::text AS authority_run_id, \
            $3::text AS lease_owner, $4::bigint AS lease_generation \
 ), \
 locked_run AS MATERIALIZED ( \
     SELECT r.* FROM runs AS r, input AS i \
      WHERE i.target_run_id = i.authority_run_id \
-       AND r.env_key = i.env_key AND r.run_id = i.target_run_id \
+       AND r.project_env_key = i.project_env_key AND r.run_id = i.target_run_id \
      FOR UPDATE OF r \
 ), \
 locked_queue AS MATERIALIZED ( \
     SELECT q.* FROM run_queue AS q \
       JOIN locked_run AS r \
-        ON r.env_key = q.env_key AND r.run_id = q.run_id \
+        ON r.project_env_key = q.project_env_key AND r.run_id = q.run_id \
      FOR UPDATE OF q \
 ), \
 authority AS ( \
@@ -41,7 +41,7 @@ authority AS ( \
                THEN 'fence-lost' \
              ELSE 'ready' \
            END AS result_code, \
-           r.env_key, r.run_id, r.status, \
+           r.project_env_key, r.run_id, r.status, \
            r.caller_outcome_type, r.caller_outcome_json, \
            r.caller_http_status, r.caller_release_node_id, \
            r.caller_outcome_hash, r.caller_released_at, r.run_deadline_at \
@@ -69,13 +69,13 @@ impl StoredCallerOutcome {
     /// or incorrectly decoded row.
     pub fn exactly_matches(
         &self,
-        kind: &str,
+        type_: &str,
         body: &Value,
         http_status: Option<u16>,
         release_node_id: Option<&str>,
         hash: &str,
     ) -> bool {
-        self.type_ == kind
+        self.type_ == type_
             && &self.body == body
             && self.http_status == http_status
             && self.release_node_id.as_deref() == release_node_id
@@ -99,7 +99,7 @@ impl CallerReleaseResult {
     pub fn from_parts(
         code: &str,
         run_status: &str,
-        kind: Option<String>,
+        type_: Option<String>,
         body: Option<Value>,
         http_status: Option<u16>,
         release_node_id: Option<String>,
@@ -108,7 +108,7 @@ impl CallerReleaseResult {
         match code {
             "released" => Some(CallerReleaseResult::Released),
             "already-released" => Some(CallerReleaseResult::AlreadyReleased(StoredCallerOutcome {
-                type_: kind?,
+                type_: type_?,
                 body: body?,
                 http_status,
                 release_node_id,
@@ -133,8 +133,8 @@ impl CallerReleaseResult {
 /// Release the durable caller outcome under the queue fence.
 ///
 /// Params: target run id, authority run id, lease owner, lease generation,
-/// outcome kind, outcome JSON text, HTTP status, release node id, outcome hash,
-/// release instant. The one returned row is `(result_code, run_status, kind,
+/// outcome type, outcome JSON text, HTTP status, release node id, outcome hash,
+/// release instant. The one returned row is `(result_code, run_status, type,
 /// body_text, http_status, release_node_id, hash)`.
 ///
 /// The caller supplies the instant (D2b). The statement never reads the server
@@ -151,7 +151,7 @@ pub fn release_caller_sql() -> String {
                       WHEN a.caller_released_at IS NOT NULL THEN 'already-released' \
                       ELSE 'ready' \
                     END AS result_code, \
-                    a.env_key, a.run_id, a.status, \
+                    a.project_env_key, a.run_id, a.status, \
                     a.caller_outcome_type, a.caller_outcome_json, \
                     a.caller_http_status, a.caller_release_node_id, \
                     a.caller_outcome_hash, a.caller_released_at \
@@ -168,7 +168,7 @@ pub fn release_caller_sql() -> String {
                     updated_at = $10::timestamptz \
                FROM classified AS c \
               WHERE c.result_code = 'ready' \
-                AND r.env_key = c.env_key AND r.run_id = c.run_id \
+                AND r.project_env_key = c.project_env_key AND r.run_id = c.run_id \
              RETURNING r.status, r.caller_outcome_type, r.caller_outcome_json, \
                        r.caller_http_status, r.caller_release_node_id, \
                        r.caller_outcome_hash \
@@ -226,7 +226,7 @@ pub fn record_deadline_adjustments_sql() -> String {
         "{FENCED_PREFIX}, recorded AS ( \
              UPDATE runs AS r SET deadline_adjustments_json = $5::text::jsonb \
                FROM authority AS a WHERE a.result_code = 'ready' \
-                AND r.env_key = a.env_key AND r.run_id = a.run_id \
+                AND r.project_env_key = a.project_env_key AND r.run_id = a.run_id \
              RETURNING r.run_id \
          ) SELECT EXISTS (SELECT 1 FROM recorded)"
     )
@@ -235,7 +235,7 @@ pub fn record_deadline_adjustments_sql() -> String {
 /// Take the first durable terminal result and remove its queue row atomically.
 ///
 /// Params: target run id, authority run id, lease owner, lease generation,
-/// terminal status, terminal reason, result JSON text, failure kind, terminal
+/// terminal status, terminal reason, result JSON text, failure type, terminal
 /// instant. Completing a caller-attached run before caller release is a typed
 /// refusal.
 ///
@@ -254,7 +254,7 @@ pub fn terminalize_sql() -> String {
                         THEN 'caller-unreleased' \
                       ELSE 'ready' \
                     END AS result_code, \
-                    a.env_key, a.run_id, a.status, a.caller_released_at \
+                    a.project_env_key, a.run_id, a.status, a.caller_released_at \
                FROM authority AS a \
          ), \
          terminalized AS ( \
@@ -264,12 +264,12 @@ pub fn terminalize_sql() -> String {
                     updated_at = $9::timestamptz \
                FROM classified AS c \
               WHERE c.result_code = 'ready' \
-                AND r.env_key = c.env_key AND r.run_id = c.run_id \
-             RETURNING r.env_key, r.run_id, r.status \
+                AND r.project_env_key = c.project_env_key AND r.run_id = c.run_id \
+             RETURNING r.project_env_key, r.run_id, r.status \
          ), \
          dequeued AS ( \
              DELETE FROM run_queue AS q USING terminalized AS t \
-              WHERE q.env_key = t.env_key AND q.run_id = t.run_id \
+              WHERE q.project_env_key = t.project_env_key AND q.run_id = t.run_id \
              RETURNING q.run_id \
          ) \
          SELECT CASE WHEN t.run_id IS NOT NULL THEN 'terminalized' ELSE c.result_code END \

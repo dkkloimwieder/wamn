@@ -1,13 +1,13 @@
 # wamn offline and sync
 
-## Purpose and scope
+## Purpose and target
 
 The platform handles intermittent network failure lasting seconds to minutes, with the tab open or reopened during the outage.
 A browser store keeps saved rows, follows changes, and records writes locally for replay through ordinary operations.
 Full offline use of an application, or part of one, requires an application design.
 The platform supplies the mechanism, and sync-bench tests it through take-offline.
 
-The platform scope includes:
+The platform target includes:
 
 - A change feed on each list read that a sync screen uses, generated or authored.
 - Browser collections and live queries, with a Solid 2 adapter in `@wfe/sync`.
@@ -49,7 +49,7 @@ Only case 1 defines the platform's availability target.
 | Data shape | Operational screens with collections | The application selects records and references |
 | Writes | Locally recorded calls, then ordinary replay | The application selects operations that work against its local set |
 | Conflicts | Ordinary revision refusals | The application defines its conflict policy within ordinary host rules |
-| Scope | Platform behavior | Per-application design, tested through take-offline in sync-bench |
+| Target | Platform behavior | Per-application design, tested through take-offline in sync-bench |
 
 A screen with saved rows renders them before the network read resolves.
 The outbox reports a write recorded only after its IndexedDB transaction commits.
@@ -116,16 +116,16 @@ export type Change<T extends Row> =
 
 export interface Feed<T extends Row, S> {
   list(
-    scope: S,
+    target: S,
     signal?: AbortSignal,
   ): Promise<{ rows: T[]; cursor: string; complete?: boolean }>
   changes(
-    scope: S,
+    target: S,
     cursor: string,
     limit?: number,
     signal?: AbortSignal,
   ): Promise<{ rows: Change<T>[]; next_cursor: string; complete: boolean }>
-  moved?(scope: S, since: string, signal?: AbortSignal): Promise<boolean>
+  moved?(target: S, since: string, signal?: AbortSignal): Promise<boolean>
 }
 
 export interface Persistence {
@@ -137,7 +137,7 @@ export interface Persistence {
 }
 
 export interface Trigger {
-  subscribe(scopeKey: string, fire: () => void): () => void
+  subscribe(targetKey: string, fire: () => void): () => void
 }
 
 // Supporting declarations, not re-exported by index.ts.
@@ -166,7 +166,7 @@ export type AnyCollection<T extends Row> = Collection<
 // @wfe/sync: collection.ts, re-exported by index.ts
 export function collection<T extends Row, S>(
   feed: Feed<T, S>,
-  scope: S,
+  target: S,
   options: {
     key: string
     persistence?: Persistence
@@ -329,7 +329,7 @@ wamn supplies:
 - A `Feed` that reads all list pages up to the table cap and maps the generated changes result.
 - `Send`, which calls generated bindings with the current session and maps host outcomes.
 - `probe`, which calls `HEAD /api/health`.
-- IndexedDB persistence and database names scoped by application, environment, and user.
+- IndexedDB persistence and database names targeted by application, environment, and user.
 - Shape keys, worker build assets, reload control, and the status surface.
 - Generated collection and write helpers under Epic 5.
 
@@ -338,7 +338,7 @@ wamn supplies:
 | Section | Owner |
 | --- | --- |
 | Query feed (host) | wamn host and generator |
-| Browser store and live queries | `@wfe/sync`, with wamn's `Feed`, version accessor, and scope key |
+| Browser store and live queries | `@wfe/sync`, with wamn's `Feed`, version accessor, and target key |
 | Solid 2 adapter | `@wfe/sync` |
 | Writes | `@wfe/sync` queue, with wamn's send mapping, ids, numbers, and refusal panel |
 | Shell and storage | `@wfe/sync` worker mechanism, with wamn's assets, bypass paths, and database names |
@@ -479,12 +479,12 @@ The build refuses a feed on an authored statement that groups, uses window funct
 
 A query feed covers exactly the query's own filters and arguments.
 The restricted run applies them, so a key outside them is a deletion.
-No client-side scope rules remain.
-A collection's scope is the query's argument set.
+No client-side target rules remain.
+A collection's target is the query's argument set.
 
 | Rule | Invariant | Test |
 | --- | --- | --- |
-| Scope | Feed rows match the query's filters, and a row that leaves them is a deletion | Host test that changes a filtered column |
+| Target | Feed rows match the query's filters, and a row that leaves them is a deletion | Host test that changes a filtered column |
 
 ### Prerequisites and build refusal
 
@@ -509,7 +509,7 @@ The optional generic `Feed.moved` member stays part of the package surface.
 The bench's offline wrapper uses it only to suppress network reads while offline.
 
 [`http-route/src/entry.rs`](../../apps/platform/ingress/http-route/src/entry.rs), `changes_etag`, derives a weak ETag from the returned cursor and route release.
-[`http-route/src/lib.rs`](../../apps/platform/ingress/http-route/src/lib.rs), `feed_cache_control`, preserves the list's cache scope and adds `no-cache`.
+[`http-route/src/lib.rs`](../../apps/platform/ingress/http-route/src/lib.rs), `feed_cache_control`, preserves the list's cache target and adds `no-cache`.
 A matching ETag produces 304.
 The read's route supplies authentication and authorization for both result variants.
 
@@ -667,7 +667,7 @@ It imports `createStore`, `createProjection`, `createOptimisticStore`, `action`,
 | `<Errored>` | `<Errored fallback={err => ...}>` | feed and `fill` failures |
 | `createEffect` | `createEffect(compute, apply, { defer? })`, apply can return cleanup. `{ effect, error }` bundle form | pushing status to the outbox panel. Never to write stores |
 | `createMemo` | `createMemo(fn, { lazy?, unobserved? })`. `lazy` autodisposes at zero subscribers | `syncStatus`, `syncComplete`, and `outboxStatus` |
-| `onCleanup`, `onSettled` | cleanup registration in an owned scope. `onSettled` runs after render settles and can return cleanup | unsubscribe from `subscribeChanges`. Worker registration |
+| `onCleanup`, `onSettled` | cleanup registration in an owned target. `onSettled` runs after render settles and can return cleanup | unsubscribe from `subscribeChanges`. Worker registration |
 | `flush` | `flush()` applies batched writes now | tests only |
 | `snapshot` | `snapshot(store)` → plain value | persisting rows. Building a request from a store row |
 | `reconcile` | `reconcile(value, key)` | Bulk replacement in the measurement comparison |
@@ -854,7 +854,7 @@ The page calls `shell` with the worker URL resolved from the Vite base.
 
 ### Storage
 
-[`names.ts`](../../web/runtime/src/sync/names.ts), `rowsDatabase` and `outboxDatabase`, scope separate databases by application, environment, and user.
+[`names.ts`](../../web/runtime/src/sync/names.ts), `rowsDatabase` and `outboxDatabase`, target separate databases by application, environment, and user.
 The rows database stores `rows`, `cursor`, and `saved_at` under each collection key.
 The outbox database stores entries by `seq`.
 There is no release metadata store, because row shape keys and ordinary request validation supply the required boundaries.
@@ -868,7 +868,7 @@ Replay runs while the application is open without a Background Sync dependency.
 
 Take-offline exists in sync-bench as a test of the mechanism.
 It does not promise full offline coverage for generated applications.
-[`packaging-offline.ts`](../../web/sync-bench/src/packaging-offline.ts), `packagingOffline`, saves the selected packaging scope and the whole location reference model.
+[`packaging-offline.ts`](../../web/sync-bench/src/packaging-offline.ts), `packagingOffline`, saves the selected packaging target and the whole location reference model.
 [`client_ts_sync.ts`](../../crates/schema/generator/src/client_ts_sync.ts) emits `locationFeed`, which reads every reference page in groups of 100.
 
 The action refuses an incomplete set.
@@ -888,7 +888,7 @@ A missing local set shows “needs a connection”.
 | --- | --- |
 | Service worker | The open page works. `shellStatus` reports the worker unavailable. |
 | Persistent storage grant | The page reports storage unprotected. Take-offline remains available if quota permits. |
-| IndexedDB | Collection load failures permit network fills. Durable outbox recording fails rather than claiming that a write is saved. |
+| IndexedDB | Collection load failures permit network fills. Durable outbox recording fails rather than asserting that a write is saved. |
 | Storage estimate | Take-offline refuses because it cannot establish headroom. |
 | Web Locks | Replay runs without the lock and relies on host deduplication. |
 | Another browser | Capability results control behavior, not the browser name. |
@@ -902,7 +902,7 @@ The environment comes from the page route through [`packaging-writes.ts`](../../
 
 [`saved-user.ts`](../../web/runtime/src/saved-user.ts), `savedUser`, keeps the last signed-in id per application and environment in local storage.
 [`live.tsx`](../../web/sync-bench/src/live.tsx), `App`, opens that user's rows and outbox during an offline reopen.
-`SessionPackaging` gates upload on the matching signed-in user and shows “sign in to upload” while upload waits.
+`SessionPackaging` conditions upload on the matching signed-in user and shows “sign in to upload” while upload waits.
 Local recording needs no token.
 
 Replay uses the host's current authorization. The per-application active role and picker belong to [platform configuration C6](platform-config.md#roles).
@@ -915,7 +915,7 @@ Signing out deletes saved rows and entries only when the offline profile sets `c
 
 The offline profile is an application setting that decides what the page can do offline.
 Each environment holds its own value.
-The values are three `setting` rows at application scope, as [platform configuration, Settings](platform-config.md#settings) describes.
+The values are three `setting` rows at application target, as [platform configuration, Settings](platform-config.md#settings) describes.
 The platform declares the three keys in its closed key set.
 The epic `wamn-9y7wu` builds the profile.
 
@@ -1082,7 +1082,7 @@ Each row names a measurable rule and its test boundary.
 | Abort forwarding | Closing an outbox aborts the binding's fetch | Sender, binding, and transport tests |
 | Client identity | Create requires an id. Server-owned and numbered keys refuse at generation | Generator refusal tests |
 | Pending number | Number consumers wait until the feed supplies the host field | Number helper test |
-| Offline reopen | The remembered user opens the same scoped rows and outbox before renewal | Browser reopen test |
+| Offline reopen | The remembered user opens the same targeted rows and outbox before renewal | Browser reopen test |
 | Shell fallback | Network failure on a deep navigation serves the fallback | Browser worker test |
 | Worker bypass | Exact `/wamn` and `/password` segments never use the worker cache | Worker path-boundary tests |
 | Reload | Pending or sending blocks reload. Refused alone does not | `canReload` test |
@@ -1101,7 +1101,7 @@ Each row names a measurable rule and its test boundary.
 | A feeding query reads only tables with history, and its rows have a unique root id | [Prerequisites and build refusal](#prerequisites-and-build-refusal) | The build refuses the feed and names the table |
 | The selected read shape fits the screen's memory budget | Measure the screen with its selected rows | The application reduces its local set or uses ordinary pages |
 | Keyed Solid projections preserve row identity | Adapter tests against the pinned runtime | The adapter needs a correction before adoption |
-| Host request identity deduplicates a resend | Send one entry twice and assert one effect | Replay cannot claim effective single application |
+| Host request identity deduplicates a resend | Send one entry twice and assert one effect | Replay cannot assert effective single application |
 | The browser keeps IndexedDB data during ordinary use | Browser tests on supported devices | The UI must report failed recording or unprotected storage |
 
 ## Deferred
@@ -1120,7 +1120,7 @@ Each item waits for a consumer:
 
 ## Epics
 
-| Epic | Repo | Scope | Done when |
+| Epic | Repo | Target | Done when |
 | --- | --- | --- | --- |
 | 5. Generator | wamn | Manifest fields, query feeds, collection and screen emission, feed opt-out, and build refusal | Receiving and WMS regenerate without hand edits. Refusal cases fail at build. |
 

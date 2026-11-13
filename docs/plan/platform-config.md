@@ -35,7 +35,7 @@ See [environment database authority](../architecture/data-access.md#actors).
 | level | table | columns | written by | application reads |
 | --- | --- | --- | --- | --- |
 | org | `user` | id, name, email, type (`user`, `service`, `platform`), active | platform routes | yes |
-| application, per env | `setting` | scope\_type, scope\_id, key, value (jsonb), locked | platform routes, per environment | no (UI reads via routes) |
+| application, per env | `setting` | target\_type, target\_id, key, value (jsonb), locked | platform routes, per environment | no (UI reads via routes) |
 
 Control plane only, reached through platform routes and the host:
 
@@ -195,7 +195,7 @@ $ wamn env apply environments/   # every environment inheriting the default move
 
 ## Roles
 
-A role is per application, and an application is the composed unit. A user may hold several roles on an application and has exactly one active per application per session, chosen explicitly; permissions are never rolled up across held roles. This amends what runs today, where a request is validated against every role the token carries; the token's role claim becomes one role per application and the platform UI gains the picker.
+A role is per application, and an application is the composed unit. A user may hold several roles on an application and has exactly one active per application per session, chosen explicitly; permissions are never rolled up across held roles. This amends what runs today, where a request is validated against every role the token carries; the token's role identity becomes one role per application and the platform UI gains the picker.
 
 Intent, not yet a ruling: a project has at most one interactive application — the one people use, composed from packages. Any other application in the project is a service: a sync job, a local program on a box. Services hold service principals, not user roles. Under that intent "roles per application" and "roles per project" are one set, and the shared database exists so a service writes rows the interactive application reads as relations.
 
@@ -206,25 +206,25 @@ Intent, not yet a ruling: a project has at most one interactive application — 
 
 ## Settings
 
-Display and view settings are one table with a scope column, resolved from least to most specific, with a lock to stop overrides. It lives in each project environment's database beside the role rows: environments are isolated, so a setting in `dev` never reaches `prod`. No application statement reads it; the UI reads it through platform routes.
+Display and view settings are one table with a target column, resolved from least to most specific, with a lock to stop overrides. It lives in each project environment's database beside the role rows: environments are isolated, so a setting in `dev` never reaches `prod`. No application statement reads it; the UI reads it through platform routes.
 
 ```
 setting
-  scope_type  text    -- org | project | application | role | user
-  scope_id    uuid
+  target_type  text    -- org | project | application | role | user
+  target_id    uuid
   key         text    -- platform-declared set
   value       jsonb
   locked      boolean not null default false
-  UQ (scope_type, scope_id, key)
+  UQ (target_type, target_id, key)
 ```
 
 - Resolution: application declaration → org → project → application → role → user. Each level overrides the one before. A role is per application, so role rows are per application by construction; with one active role per application there is no tie.
 - The base of the hierarchy is not a row: the application's own declaration (default columns, sort, filters in the table definition) and platform defaults in code. A `setting` row only overrides them.
-- Lock: a locked row wins over every more specific scope for its key; a write at a more specific scope is refused while the lock holds; existing more specific rows are ignored, not deleted, so unlocking restores them.
+- Lock: a locked row wins over every more specific target for its key; a write at a more specific target is refused while the lock holds; existing more specific rows are ignored, not deleted, so unlocking restores them.
 - Keys are a closed set declared by the platform: `display.theme`, `display.density`, `format.date`, `format.time`, `format.number`, `locale`, `timezone`, `calendar.first_weekday`, `table.<table id>.layout`, `table.<table id>.view.<name>`, and the offline profile keys `sync.offline_profile`, `sync.pending_max_age`, `sync.clear_on_sign_out` ([wamn-sync, Offline profile](wamn-sync.md#offline-profile)). An undeclared key is a write refusal.
-- Views are rows, not a table: `table.<id>.view.<name>` at user scope is a personal view, at role scope a shared default for that role, at application scope a shipped one. A separate `view` table is warranted only if views need what scope cannot express — ownership transfer or a publish step — and that has no consumer yet.
-- `org` and `project` scope rows are set per environment: the org and project settings screens carry an environment picker, and a value set in one environment reaches no other. There is no fan-out and no drift detection; a dev environment that looks different from prod is intended. The admin-hierarchy path only grants the org or project admin the right to write those rows in each environment.
-- Copying a role to another environment copies its role-scope settings with it; the copy route does that. An environment copy carries the whole table. User-scope rows are per environment like every other: a user's `prod` layout is not their `dev` layout.
+- Views are rows, not a table: `table.<id>.view.<name>` at user target is a personal view, at role target a shared default for that role, at application target a shipped one. A separate `view` table is warranted only if views need what target cannot express — ownership transfer or a publish step — and that has no consumer yet.
+- `org` and `project` target rows are set per environment: the org and project settings screens carry an environment picker, and a value set in one environment reaches no other. There is no fan-out and no drift detection; a dev environment that looks different from prod is intended. The admin-hierarchy path only grants the org or project admin the right to write those rows in each environment.
+- Copying a role to another environment copies its role-target settings with it; the copy route does that. An environment copy carries the whole table. User-target rows are per environment like every other: a user's `prod` layout is not their `dev` layout.
 - Application data about a user (my open orders, my shift) is an application table, never a setting. A value an application reads in SQL (default facility) is application configuration, never a setting.
 
 ## Environment copy
@@ -255,7 +255,7 @@ Each rule has one test that runs in the platform test set.
 | a lock stops overrides without deleting them | org row locked: user write refused, pre-existing user row ignored; unlock: user row applies |
 | setting keys are a closed set | write with an undeclared key is refused |
 | settings never cross environments | set in `dev`; read in `prod` shows the declaration default |
-| a role copy carries its settings | copy role to another environment; its role-scope rows exist there with the new role id |
+| a role copy carries its settings | copy role to another environment; its role-target rows exist there with the new role id |
 | an environment copy carries counters | copy an environment with records numbered to 17; the first insert in the copy renders 17, not 1 |
 | seed rows come from the package, idempotently | apply twice; seed rows exist once, by code; an edited seed row is overwritten, an added row is kept |
 | an environment runs on one target | environment.k names one target; a second target line is refused at apply; the same application on a box and in the cloud shows two environments with two target\_application rows |
@@ -270,7 +270,7 @@ Each rule has one test that runs in the platform test set.
 | the control host already writes rows into every project database on the admin-hierarchy path, and that path can carry `platform.*` rows | the write path is a function the new tables call with no new transport | the `platform` schema needs its own write path before any table lands |
 | the host's connection plugin, not the application, opens connections and reads credentials from the control plane | no application statement can compile against a credential; the plugin has a control-plane handle | credentials move to a secret manager; the plugin reads references |
 | the issuer can sign a short-lived token for a service principal, not only a logged-in user | the target's connection plugin signs with the target key and the target application verifies it as it verifies a user token | a long-lived service token stored in `credential`, rotated by hand, until the issuer signs for services |
-| transaction claims can carry `app.application` beside the existing `app.user_id`, `app.role` and `app.operation` | one more `set_config` in the claim statement; the claim is for logging only, and `next_number` takes the application from host state (wamn-9e4ks) | `next_number` takes the application as a parameter and a shared database trusts its caller; acceptable only while a project database serves one application |
+| transaction identity can carry `app.application` beside the existing `app.user_id`, `app.role` and `app.operation` | one more `set_config` in the identity statement; the identity is for logging only, and `next_number` takes the application from host state (wamn-9e4ks) | `next_number` takes the application as a parameter and a shared database trusts its caller; acceptable only while a project database serves one application |
 | the `wamn:postgres` plugin can host the renderer and run the counter SQL inside the operation transaction, on Postgres through `bump_counter` and on SQLite directly | `next_number` as a plugin call renders the same text on both engines for the same pattern and counters; the Postgres app role shows no `UPDATE` grant on `number_counter` | the renderer becomes a pgrx extension plus a registered SQLite function: one crate, two loaders, a custom Postgres image, no managed Postgres for that database |
 | one `number_counter` row per distinct key is acceptable growth | count rows per sequence after a month of batches and periods | a retention rule on `per=` rows older than their records' retention; nothing else |
 | row-lock serialization of creates per counter and key is acceptable | measure creates per second per document type with the Postgres benchmark replay | switch that sequence to a Postgres sequence and accept gaps, per sequence, not globally |
@@ -279,7 +279,7 @@ Each rule has one test that runs in the platform test set.
 | a connector can be a dependency of an application: admission has a connector class that grants a component sockets and refuses postgres, and an application bundle carries its connectors by digest | one wasm connector pinned in `environment.k`, pulled with the application onto a local target, started and restarted with the host running; sockets granted to it and still refused to application components | every connector is `form = host`; the `connectors` line in `environment.k` is always `host`; a connector bump is a platform release |
 | a bundle is one application, so a target serving two applications runs two bundles | the bundle names one manifest | `target_application` keys on bundle, not application, and the bundle lists its applications |
 | an http transport can hold a box-initiated connection the cloud calls down, with a result back | a request connection round-trips to a named application on a local target within its timeout | only the event exchange reaches a box until it does; request connections stay cloud-to-cloud |
-| the session token claim can carry a per-application role map | the token verifier accepts a map claim on cloud and edge | one token per application, shell holds several |
+| the session JWT claim can carry a per-application role map | the token verifier accepts a map claim on cloud and edge | one token per application, shell holds several |
 | a project has at most one interactive application | no project needs two applications a person logs into | the token map is exercised within one project and roles stay per application; nothing in the tables changes |
 | the box can issue sessions: its key signs session tokens its own operations accept, against a credential projection for users with roles there | offline login on a box succeeds and an operation accepts the token; the same token is refused by the cloud | offline operator use on a box is bounded by the 930 s token lifetime; the operator UI on the box is online-only |
 | a projection can be fed from the source environment's change stream over the platform connection into a read-only SQLite table | one projected model on one box stays within a stated lag while online and serves while offline | projections stay `feed = "operation"` only |
@@ -301,7 +301,7 @@ See [standing repository rules](../../CLAUDE.md#standing-repository-rules), [pla
 
 See [numbering](../architecture/data-access.md#numbering) and [integration and connection schema](integration-schema.md).
 
-The application role reads `setting`, and `scope_id` is text. These differences still need the owner decisions below.
+The application role reads `setting`, and `target_id` is text. These differences still need the owner decisions below.
 
 ### Epics
 
@@ -311,8 +311,8 @@ Tag = the spec's dependency tag. Owner = which running agent takes it, in its qu
 | --- | --- | --- | --- | --- |
 | C3 | **Connections, bindings and targets.** Run the ruling 18 kind test. `wamn` connections, with service-token signing, are `wamn-ym204`. Target application records and the platform connection are `wamn-ztxg2`. | now | integrations agent | The REST connection from `rest_connector` to `rest_consumer_fixture` works in the WMS dev document with no values in `environment.k`. |
 | C4 | **Files.** `platform.file`, pinned connection generations, native streaming `file.put/get/delete/expose`, grants, exposure, signed URLs, and staging repair on GCS and S3. Disk stores and eviction belong to C10. | now | integrations agent, after C3.5 | File invariants pass, including origin 404 after unexpose and staging-only age cleanup. |
-| C5 | **Admin screens.** Control: project integrations and environment connections with write-only credentials, sequences (`set_counter`), settings (org/project scope with the environment picker). Application: settings at application/role/user scope, views as settings rows. Settings table semantics (resolution, lock, closed key set, copy with role). | now | platform UI agent, after M6 | Settings invariants pass. An admin creates an integration and connection, sets a counter and locks a setting from the browser. The server refuses what the UI hides. |
-| C6 | **Active role.** Token claim `application → role` map; the auth test uses the active entry only; role picker in the shell; reissue on switch; a user with one role gets it without a choice. | now (ruled) | platform UI agent, after M4, before C5 if M4 finishes first | Invariant "one active role per application per session" passes; existing M2/M4 flows unchanged for single-role users. |
+| C5 | **Admin screens.** Control: project integrations and environment connections with write-only credentials, sequences (`set_counter`), settings (org/project target with the environment picker). Application: settings at application/role/user target, views as settings rows. Settings table semantics (resolution, lock, closed key set, copy with role). | now | platform UI agent, after M6 | Settings invariants pass. An admin creates an integration and connection, sets a counter and locks a setting from the browser. The server refuses what the UI hides. |
+| C6 | **Active role.** JWT claim `application → role` map; the auth test uses the active entry only; role picker in the shell; reissue on switch; a user with one role gets it without a choice. | now (ruled) | platform UI agent, after M4, before C5 if M4 finishes first | Invariant "one active role per application per session" passes; existing M2/M4 flows unchanged for single-role users. |
 | C7 | **Environment copy and seed rows.** `environment copy` carries `number_counter`, `setting`, roles; package seed data upserted at env apply. | now | platform-install agent, after E5 | Copy and seed invariants pass on kind. |
 | C8 | **Transaction refusal.** Host refuses storage and connection calls while `begin-operation` is open. | after A5 | perf-arch agent (A5 owner) | The network-in-transaction invariant passes. |
 | C9 | **Loadable connectors.** Spec assumption 11 spike first (connector class in admission, sockets granted to a connector component and refused to applications, bundle carries connectors). Then `integration.form`, `connectors` pins in `environment.k`, `wamn integration build/publish`, `target_application` digests. | after loadable connectors | integrations agent, after C4 | One wasm connector pinned per environment, bumped by an `environment.k` edit, no platform release. |
@@ -330,13 +330,13 @@ The owner ruled that no kind run follows C2.4. Its rulings replace the C2 ruling
 - Counter authority, case 1 (C2.4.6, recorded on `wamn-83eth.13`): no application surface runs arbitrary SQL. An application guest runs only the statements its package declares, and admission denies the raw `wamn:postgres/client` interface to applications. Component admission parses each declared statement with `pg_query`, which is Postgres's own grammar. It refuses a counter function call, `DO`, dynamic `EXECUTE`, `query_to_xml*`, `cursor_to_xml*` and `U&` identifiers. `sqlparser` was refused, because a grammar difference is the bypass that the test closes.
 - Package backfill SQL is outside the counter test, because it runs as `wamn_db_owner`, which already holds more authority. Who may author backfill SQL is `wamn-o1hwr`.
 - Migration 0031 stays rewritten in place, because no wamn-dev database ran it.
-- `CounterSetError` and `numbering::Failure` become error structs with a kind (C2.4.18).
+- `CounterSetError` and `numbering::Failure` become error structs with a type (C2.4.18).
 - No sleep inside the tokio test, no NATS port race, and the numbering live tests reuse `test_database` (C2.4.21).
 
 Rulings for C2 as filed:
 
 - `next-number(name, keys) -> text` and `peek-number(name, keys) -> text` are two added functions on `wamn:postgres/statements`, with no version bump. `peek` is generated from `peek-number` (owner ruling 2026-10-23). It renders the current value with no lock and no advance. The host refuses both outside an open operation transaction. The renderer lives in the plugin. The three platform functions, `bump_counter`, `assign_counter` and `set_counter`, are the only writers of `number_counter` (owner rulings 2026-10-23).
-- `{date:FMT}` uses the environment's `timezone` setting row at application scope when present, else UTC. Settings resolution across scopes is C5 (admin screens).
+- `{date:FMT}` uses the environment's `timezone` setting row at application target when present, else UTC. Settings resolution across targets is C5 (admin screens).
 - `targets` is declared and validated at build: a package with models is `cloud` only. The apply-side target refusal is C10 (local environments).
 - C2.4 allows a sequence with no field and no caller. A sequence key need not belong to every model that uses the sequence (owner ruling 2026-10-24).
 - `set_counter` is a host route granted per role: a new `HostRouteAuthority` variant in `host_route.rs`, added in place with no `wamn.json` version bump, and `permission.grant` accepts it. It runs in the operation transaction and writes through `platform.set_counter` (SECURITY DEFINER, `EXECUTE` for the application role; the route resolves the sequence by the application it validated against the release and the sequence name) under the counter row lock. The engine write log and the counter row's `updated_by` record the actor (owner ruling 2026-10-23). It never touches a `per=` mapping. C2.4 removed the dry render: the set reads and writes counter rows only, and a model's `UQ` catches a live number (owner ruling 2026-10-24).
@@ -349,12 +349,12 @@ The test budget, the stops and the closeout are the same as for C2.
 
 Owner rulings of 2026-10-25 on the C3 scoping questions. They replace the text below where they differ:
 
-1. C3.1 removes `tenant_id` only from `role`, `user_role`, `permission`, `api_key` and `environment`, with their history tables, policies and indexes. The shared control, catalog and run tables keep the environment key (`org--project--env`). `wamn-8yflb` renames that key to `env_key`, including its wire fields. The separate `environment` field keeps the short name.
-2. The event field is `env_key`, and credential hashes frame `"env_key"`. No format number changes.
+1. C3.1 removes `project_id` only from `role`, `user_role`, `permission`, `api_key` and `environment`, with their history tables, policies and indexes. The shared control, catalog and run tables keep the environment key (`org--project--env`). `wamn-8yflb` renames that key to `project_env_key`, including its wire fields. The separate `environment` field keeps the short name.
+2. The event field is `project_env_key`, and credential hashes frame `"project_env_key"`. No format number changes.
 3. See [integration and connection schema](integration-schema.md).
 4. See [integration and connection schema](integration-schema.md).
 5. See [integration and connection schema](integration-schema.md).
-6. Both principal kinds stay, and nothing migrates. The application principal runs schedules and integrations, as ruled earlier. The connection principal is only for inbound calls, and it holds the roles that an admin grants it.
+6. Both principal types stay, and nothing migrates. The application principal runs schedules and integrations, as ruled earlier. The connection principal is only for inbound calls, and it holds the roles that an admin grants it.
 8. A failed auth deletion is logged, and the TTL limits the stale fact. A durable retry is `wamn-3gqi1`.
 9. See [integration and connection schema](integration-schema.md).
 10. See [integration and connection schema](integration-schema.md).
@@ -382,7 +382,7 @@ The docs audit ([docs-audit.md](../history/README.md#docs-audit), 2026-10-24) li
 
 - Item 3: `relations` in `wamn.k`. The manifest derives relations and has no such key.
 - Item 4: the `user` shape. The code has `display_name` and `status`, not `name` and `active`.
-- Item 5: `setting` is readable by the application role, and `scope_id` is text.
+- Item 5: `setting` is readable by the application role, and `target_id` is text.
 - Item 6: the counter route is `number_counter.set`. It refuses any `per=` counter, and the write log has no actor column.
 - Item 7: `peek-number` returns the last number issued, with no lock. The spec text describes a preview of the next number.
 - Item 9: a synced model numbering its key field (wamn-sync rule).
@@ -397,7 +397,7 @@ The proposal has no owning bead in the retired plan.
 
 `provision-project-env` stays outside `env apply` (R21).
 The session-target Secret goes to the identity namespace, which no `env apply` input names.
-The gates use local port-forward files for login.
+The conditions use local port-forward files for login.
 The mint-pat Job, the Rust identity journey, and three live tests call `provision-project-env`.
 The work stays open and unscheduled (`wamn-7yse3`, reason on `wamn-r3qqf.3`).
 

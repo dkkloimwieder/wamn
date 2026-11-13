@@ -100,8 +100,8 @@ pub(super) async fn execute_migration(
             }
         }
         let quoted_role = postgres_protocol::escape::escape_identifier(&role);
-        let scope = if transactional { "LOCAL " } else { "" };
-        tx.batch_execute(&format!("SET {scope}ROLE {quoted_role}"))
+        let target = if transactional { "LOCAL " } else { "" };
+        tx.batch_execute(&format!("SET {target}ROLE {quoted_role}"))
             .await
             .with_context(|| format!("select owner role of package {owner}"))?;
         let start = usize::try_from(raw.stmt_location)?;

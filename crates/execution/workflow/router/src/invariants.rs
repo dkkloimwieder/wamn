@@ -1,5 +1,5 @@
 //! WALK-1..6 as plain functions over an observed walk, originally D8a.
-//! Current scope: `docs/testing/deterministic.md#existing-boundaries`.
+//! Current target: `docs/testing/deterministic.md#existing-boundaries`.
 //!
 //! No cargo feature and no flag: these are ordinary library functions the walk
 //! simulator and any other driver call after every `apply`. Wiring them into the
@@ -16,7 +16,7 @@ use std::collections::BTreeMap;
 
 use crate::outcome::{NodeError, NodeOutcome};
 use crate::retry::RetryPolicy;
-use crate::walk::{FailureKind, NodeCall, Step, Walk, WalkStatus};
+use crate::walk::{FailureType, NodeCall, Step, Walk, WalkStatus};
 use crate::wiring::Wiring;
 use wamn_catalog::ERROR_PORT;
 
@@ -44,7 +44,7 @@ fn violated(invariant: &'static str, detail: String) -> Violation {
 /// Which outcome a driver fed back for one call — the routing-relevant variant
 /// with the payload dropped.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum OutcomeKind {
+pub enum OutcomeType {
     Success,
     Retryable,
     RateLimited,
@@ -53,14 +53,14 @@ pub enum OutcomeKind {
     Cancelled,
 }
 
-fn outcome_kind(outcome: &NodeOutcome) -> OutcomeKind {
+fn outcome_type(outcome: &NodeOutcome) -> OutcomeType {
     match outcome {
-        NodeOutcome::Success { .. } => OutcomeKind::Success,
-        NodeOutcome::Cancelled => OutcomeKind::Cancelled,
-        NodeOutcome::Error(NodeError::Retryable(_)) => OutcomeKind::Retryable,
-        NodeOutcome::Error(NodeError::RateLimited(_)) => OutcomeKind::RateLimited,
-        NodeOutcome::Error(NodeError::Terminal(_)) => OutcomeKind::Terminal,
-        NodeOutcome::Error(NodeError::InvalidInput(_)) => OutcomeKind::InvalidInput,
+        NodeOutcome::Success { .. } => OutcomeType::Success,
+        NodeOutcome::Cancelled => OutcomeType::Cancelled,
+        NodeOutcome::Error(NodeError::Retryable(_)) => OutcomeType::Retryable,
+        NodeOutcome::Error(NodeError::RateLimited(_)) => OutcomeType::RateLimited,
+        NodeOutcome::Error(NodeError::Terminal(_)) => OutcomeType::Terminal,
+        NodeOutcome::Error(NodeError::InvalidInput(_)) => OutcomeType::InvalidInput,
     }
 }
 
@@ -71,7 +71,7 @@ pub struct Call {
     pub node: String,
     pub attempt: u32,
     pub occurrence: u32,
-    pub outcome: OutcomeKind,
+    pub outcome: OutcomeType,
 }
 
 /// What a driver observed while walking one delivery.
@@ -117,7 +117,7 @@ impl WalkTrace {
             node: call.node.clone(),
             attempt: call.attempt,
             occurrence: call.occurrence,
-            outcome: outcome_kind(outcome),
+            outcome: outcome_type(outcome),
         });
         let port = match outcome {
             NodeOutcome::Success { port, .. } => port.as_str(),
@@ -238,7 +238,7 @@ fn walk_4_retry_budget(state: &WalkState<'_>) -> Result<(), Violation> {
         if retried
             && !matches!(
                 previous.outcome,
-                OutcomeKind::Retryable | OutcomeKind::RateLimited
+                OutcomeType::Retryable | OutcomeType::RateLimited
             )
         {
             return Err(violated(
@@ -275,10 +275,10 @@ fn walk_5_wait_never_in_the_past(state: &WalkState<'_>) -> Result<(), Violation>
 }
 
 /// WALK-6: a `Terminal` outcome ends the walk with the matching verdict —
-/// `FailureKind::Terminal` naming that node when nothing caught it, and a walk
+/// `FailureType::Terminal` naming that node when nothing caught it, and a walk
 /// that carries on down the error edge when something did.
 ///
-/// [`FailureKind::HopLimit`] is the one failure this invariant ignores in the
+/// [`FailureType::HopLimit`] is the one failure this invariant ignores in the
 /// caught case: `apply` never produces it, `Wiring::next` does, so a walk that
 /// routed the terminal outcome down an error edge and then spent its last hop
 /// is exactly the behaviour this invariant expects.
@@ -286,7 +286,7 @@ fn walk_6_terminal_outcome_matches(state: &WalkState<'_>) -> Result<(), Violatio
     let Some(last) = state.trace.calls.last() else {
         return Ok(());
     };
-    if last.outcome != OutcomeKind::Terminal {
+    if last.outcome != OutcomeType::Terminal {
         return Ok(());
     }
     let caught = state
@@ -297,7 +297,7 @@ fn walk_6_terminal_outcome_matches(state: &WalkState<'_>) -> Result<(), Violatio
     match (caught, state.walk.failure()) {
         (false, Some(failure))
             if state.walk.status() == WalkStatus::Failed
-                && failure.kind == FailureKind::Terminal
+                && failure.type_ == FailureType::Terminal
                 && failure.node == last.node =>
         {
             Ok(())
@@ -311,12 +311,12 @@ fn walk_6_terminal_outcome_matches(state: &WalkState<'_>) -> Result<(), Violatio
             ),
         )),
         (true, None) => Ok(()),
-        (true, Some(failure)) if failure.kind == FailureKind::HopLimit => Ok(()),
+        (true, Some(failure)) if failure.type_ == FailureType::HopLimit => Ok(()),
         (true, Some(failure)) => Err(violated(
             "WALK-6",
             format!(
                 "node {:?} has an error edge, but its terminal outcome failed the walk {:?}",
-                last.node, failure.kind
+                last.node, failure.type_
             ),
         )),
     }

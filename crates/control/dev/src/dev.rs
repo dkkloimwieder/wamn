@@ -1,7 +1,7 @@
 //! Ordered orchestration boundary for the local development loop.
 //!
 //! This module owns stage order only. Stage implementations remain with their
-//! existing migration, build, gate, and publication owners and enter through
+//! existing migration, build, condition, and publication owners and enter through
 //! [`DevStageRunner`].
 
 pub(super) mod plan;
@@ -594,24 +594,24 @@ mod tests {
     async fn runner_lifecycle_reports_the_exact_suffix_and_failure() {
         let mut runner = LifecycleRunner {
             events: Vec::new(),
-            fail_at: DevStage::Gate,
+            fail_at: DevStage::Condition,
         };
 
         let error = run_suffix(DevStage::Admit, &mut runner)
             .await
-            .expect_err("the synthetic Gate failure must stop the suffix");
+            .expect_err("the synthetic Condition failure must stop the suffix");
 
-        assert_eq!(error.stage(), DevStage::Gate);
+        assert_eq!(error.stage(), DevStage::Condition);
         assert_eq!(
             runner.events,
             [
                 LifecycleEvent::Reset(DevStage::Admit),
                 LifecycleEvent::Started(DevStage::Admit),
                 LifecycleEvent::Completed(DevStage::Admit),
-                LifecycleEvent::Started(DevStage::Gate),
+                LifecycleEvent::Started(DevStage::Condition),
                 LifecycleEvent::Failed(
-                    DevStage::Gate,
-                    DevStageFailure::new("dev-stage-failed", "synthetic gate failure", None)
+                    DevStage::Condition,
+                    DevStageFailure::new("dev-stage-failed", "synthetic condition failure", None)
                 ),
             ]
         );
@@ -762,7 +762,7 @@ mod tests {
                 from: DevStage::Generate,
             },
             DevInvalidation::Rerun {
-                from: DevStage::Gate,
+                from: DevStage::Condition,
             },
         ]);
         let mut source = FakeSource::new(events);
@@ -786,7 +786,7 @@ mod tests {
         }]);
         let mut source = FakeSource::new(events.clone());
         let mut runner = WatchRunner::inject_during(
-            DevStage::Gate,
+            DevStage::Condition,
             vec![
                 DevInvalidation::Rerun {
                     from: DevStage::Acl,
@@ -828,13 +828,13 @@ mod tests {
         }]);
         let mut source = FakeSource::new(events.clone());
         let mut runner = WatchRunner::inject_during(
-            DevStage::Gate,
+            DevStage::Condition,
             vec![DevInvalidation::Rerun {
                 from: DevStage::Virtualize,
             }],
             events,
         );
-        runner.fail_once_at = Some(DevStage::Gate);
+        runner.fail_once_at = Some(DevStage::Condition);
         let mut observer = RecordingObserver::default();
 
         run_watch_loop(&mut runner, &mut source, &mut observer)
@@ -846,7 +846,7 @@ mod tests {
             DevStage::Virtualize,
             DevStage::Acl,
             DevStage::Admit,
-            DevStage::Gate,
+            DevStage::Condition,
         ]
         .into_iter()
         .chain(
@@ -862,7 +862,7 @@ mod tests {
             .as_ref()
             .expect_err("first run fails at the injected stage");
         assert_eq!(first.error_type(), DevRunErrorType::StageFailed);
-        assert_eq!(first.stage(), DevStage::Gate);
+        assert_eq!(first.stage(), DevStage::Condition);
         assert!(observer.outcomes[1].result().is_ok());
     }
 }

@@ -295,7 +295,7 @@ async fn compile_guest(repository: &Path, rustflags: &str, guest: &Guest) -> Res
         };
         let cdylib = message["target"]["crate_types"]
             .as_array()
-            .is_some_and(|types| types.iter().any(|kind| kind == "cdylib"));
+            .is_some_and(|types| types.iter().any(|type_| type_ == "cdylib"));
         if message["reason"] != "compiler-artifact" || !cdylib {
             continue;
         }

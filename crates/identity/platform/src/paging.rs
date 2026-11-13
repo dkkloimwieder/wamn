@@ -1,4 +1,4 @@
-//! Scoped keyset cursors for control and identity lists.
+//! Bound keyset cursors for control and identity lists.
 
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
@@ -26,12 +26,12 @@ pub enum Order {
 struct Cursor {
     v: u8,
     operation: String,
-    scope: Value,
+    binding: Value,
     order: Order,
     key: Value,
 }
 
-/// A validated request, bound to the current caller and scope.
+/// A validated request, bound to the current caller and binding.
 #[derive(Debug)]
 pub struct ListPage {
     limit: Option<usize>,
@@ -60,10 +60,10 @@ fn valid_key(order: Order, key: &Value) -> bool {
                         .is_ok_and(|parsed| parsed.to_string().as_str() == id)
                 })
         }
-        (Order::Audience, [kind, audience]) => {
-            matches!(kind.as_u64(), Some(0 | 1))
+        (Order::Audience, [type_, audience]) => {
+            matches!(type_.as_u64(), Some(0 | 1))
                 && text(audience)
-                && (kind.as_u64() != Some(0)
+                && (type_.as_u64() != Some(0)
                     || audience
                         .as_str()
                         .and_then(crate::control::control_audience_org)
@@ -78,7 +78,7 @@ impl ListPage {
     pub fn new(
         input: &Value,
         operation: &str,
-        scope: Value,
+        binding: Value,
         order: Order,
     ) -> Result<Self, IdentityError> {
         let limit = input.get("limit");
@@ -99,7 +99,7 @@ impl ListPage {
         let expected = Cursor {
             v: 1,
             operation: operation.into(),
-            scope,
+            binding,
             order,
             key: Value::Null,
         };
@@ -117,7 +117,7 @@ impl ListPage {
                     serde_json::from_slice(&bytes).map_err(|_| invalid("cursor"))?;
                 if decoded.v != 1
                     || decoded.operation != expected.operation
-                    || decoded.scope != expected.scope
+                    || decoded.binding != expected.binding
                     || decoded.order != order
                     || !valid_key(order, &decoded.key)
                     || URL_SAFE_NO_PAD.encode(canonical_json_bytes(
@@ -143,8 +143,8 @@ impl ListPage {
         self.cursor.key.get(index).and_then(Value::as_str)
     }
 
-    /// The audience kind, or none on the first page.
-    pub fn after_kind(&self) -> Option<u64> {
+    /// The audience type, or none on the first page.
+    pub fn after_type(&self) -> Option<u64> {
         self.cursor.key.get(0).and_then(Value::as_u64)
     }
 
@@ -163,7 +163,7 @@ impl ListPage {
             let cursor = Cursor {
                 v: 1,
                 operation: self.cursor.operation.clone(),
-                scope: self.cursor.scope.clone(),
+                binding: self.cursor.binding.clone(),
                 order: self.cursor.order,
                 key: key(rows.last().expect("a nonempty page precedes lookahead")),
             };

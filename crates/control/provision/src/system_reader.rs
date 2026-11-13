@@ -1,15 +1,15 @@
-//! Scoped T1 system-database READER credential contract
+//! Targeted T1 system-database READER credential contract
 //! (`wamn-0h0g.12.116`, `wamn-0h0g.12.67`).
 //!
-//! The CDC reader, identity reader and connection reader each hold a scoped
+//! The CDC reader, identity reader and connection reader each hold a targeted
 //! login for a distinct stable role. Their grant sets stay separate.
 //! The connection reader accesses immutable credentials and encrypted OAuth rows in the system database.
 //! [`SystemReader`] accepts only families with a defined read surface.
 //!
 //! Everything here is pure. [`parse_system_reader_url`] is what lets a consumer
-//! refuse a mis-scoped connection input **before it opens a socket** — including
+//! refuse a mis-targeted connection input **before it opens a socket** — including
 //! the wide owner credential, which cannot present a role name derived from any
-//! scope.
+//! target.
 
 use std::fmt;
 
@@ -18,7 +18,7 @@ use url::Url;
 use wamn_run_state::CredentialGeneration;
 
 use crate::workload_role::{
-    WorkloadRoleFamily, WorkloadRoleScope, workload_generation_role, workload_role_scope_hash,
+    WorkloadRoleFamily, WorkloadRoleIdentity, workload_generation_role, workload_role_identity_hash,
 };
 
 /// The closed set of control-database read consumers.
@@ -57,27 +57,27 @@ impl fmt::Display for SystemReader {
     }
 }
 
-/// Deterministic 160-bit suffix for one system-reader scope.
-pub fn system_reader_scope_hash(
+/// Deterministic 160-bit suffix for one system-reader target.
+pub fn system_reader_identity_hash(
     reader: SystemReader,
     org: &str,
     project: &str,
     environment: &str,
     database: &str,
 ) -> String {
-    workload_role_scope_hash(
+    workload_role_identity_hash(
         reader.family(),
-        WorkloadRoleScope::Control {
+        WorkloadRoleIdentity::Control {
             org,
             project,
             environment,
             database,
         },
     )
-    .expect("a system reader always uses control scope")
+    .expect("a system reader always uses control target")
 }
 
-/// Scoped PostgreSQL LOGIN role for one system-reader generation slot.
+/// Targeted PostgreSQL LOGIN role for one system-reader generation slot.
 pub fn system_reader_generation_role(
     reader: SystemReader,
     org: &str,
@@ -88,7 +88,7 @@ pub fn system_reader_generation_role(
 ) -> String {
     workload_generation_role(
         reader.family(),
-        WorkloadRoleScope::Control {
+        WorkloadRoleIdentity::Control {
             org,
             project,
             environment,
@@ -96,7 +96,7 @@ pub fn system_reader_generation_role(
         },
         generation,
     )
-    .expect("a system reader always uses control scope")
+    .expect("a system reader always uses control target")
 }
 
 /// Which predicate refused a system-reader connection input.
@@ -110,7 +110,7 @@ pub enum SystemReaderUrlErrorType {
     Scheme,
     /// The path does not name exactly one database.
     Database,
-    /// The user is not this scope's A or B reader generation.
+    /// The user is not this target's A or B reader generation.
     Role,
     /// The input carries a query or fragment, which a connection input must not.
     Extra,
@@ -162,7 +162,7 @@ impl fmt::Display for SystemReaderUrlError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             formatter,
-            "WAMN_SYSTEM_URL is out of scope for the {} ({}): {}",
+            "WAMN_SYSTEM_URL is out of target for the {} ({}): {}",
             self.reader,
             self.type_.as_str(),
             self.reason
@@ -184,7 +184,7 @@ fn refuse(
     }
 }
 
-/// The scoped control-database read connection one consumer process holds.
+/// The targeted control-database read connection one consumer process holds.
 ///
 /// Deliberately does not retain the URL, so its derived `Debug` cannot leak the
 /// password the URL carries.
@@ -207,7 +207,7 @@ impl SystemReaderConnection {
         &self.database
     }
 
-    /// The exact scoped generation role the input authenticates as.
+    /// The exact targeted generation role the input authenticates as.
     pub fn role(&self) -> &str {
         &self.role
     }
@@ -218,9 +218,9 @@ impl SystemReaderConnection {
     }
 }
 
-/// Refuse an absent or out-of-scope `WAMN_SYSTEM_URL`, purely.
+/// Refuse an absent or out-of-target `WAMN_SYSTEM_URL`, purely.
 ///
-/// The fail-closed gate a reading consumer runs **before any network, database,
+/// The fail-closed condition a reading consumer runs **before any network, database,
 /// or filesystem I/O**, with the same strict URL tests:
 ///
 /// * the input exists, parses, names a host, and carries no query or fragment;
@@ -230,7 +230,7 @@ impl SystemReaderConnection {
 ///   and the database the input itself names.
 ///
 /// The last predicate is what refuses the wide owner credential offline: no
-/// scope derives the name `wamn_system`, so a `WAMN_SYSTEM_URL` carrying the
+/// target derives the name `wamn_system`, so a `WAMN_SYSTEM_URL` carrying the
 /// unconfined owner crash-loops the consumer instead of serving from it. It is
 /// also what keeps the two readers' Secrets from being swapped — the family's
 /// domain separator is inside the digest, so the identity reader's login cannot
@@ -293,13 +293,13 @@ pub fn parse_system_reader_url(
         ));
     }
     let presented = parsed.username();
-    let scoped = [CredentialGeneration::A, CredentialGeneration::B].map(|generation| {
+    let targeted = [CredentialGeneration::A, CredentialGeneration::B].map(|generation| {
         (
             generation,
             system_reader_generation_role(reader, org, project, environment, database, generation),
         )
     });
-    let Some((generation, role)) = scoped
+    let Some((generation, role)) = targeted
         .into_iter()
         .find(|(_, role)| role.as_str() == presented)
     else {
@@ -347,7 +347,7 @@ mod tests {
     /// `wamn-system-db` authenticates as `wamn_system`, which owns
     /// `identity.pats` and `identity.project_roles` under no row-level security
     /// — so whoever reads that Secret can mint a PAT for any principal and
-    /// self-grant any project role. No scope derives that name, so the consumer
+    /// self-grant any project role. No target derives that name, so the consumer
     /// refuses it before it opens a socket rather than serving from it.
     #[test]
     fn the_unconfined_system_owner_credential_is_refused_by_both_readers() {
@@ -379,7 +379,7 @@ mod tests {
 
     /// THE SWAP GUARD. The two grant sets are disjoint, so handing one reader
     /// the other's Secret would hand it the other's authority. The family's
-    /// domain separator is inside the scope digest, so the swap is refused on
+    /// domain separator is inside the target digest, so the swap is refused on
     /// the role predicate — offline, before either credential is used.
     #[test]
     fn neither_reader_accepts_the_other_readers_credential() {
@@ -400,7 +400,7 @@ mod tests {
     /// A credential for another environment presents a role derived from that
     /// environment's digest, so it cannot satisfy this process's test.
     #[test]
-    fn a_credential_scoped_to_another_environment_is_refused() {
+    fn a_credential_targeted_to_another_environment_is_refused() {
         let foreign = system_reader_generation_role(
             SystemReader::Identity,
             ORG,
@@ -432,7 +432,7 @@ mod tests {
     #[test]
     fn the_shape_predicates_refuse_before_the_role_predicate_is_reached() {
         let good = role(SystemReader::Registry, CredentialGeneration::A);
-        for (input, kind) in [
+        for (input, type_) in [
             (String::new(), SystemReaderUrlErrorType::Absent),
             ("not a url".to_owned(), SystemReaderUrlErrorType::Malformed),
             (
@@ -454,7 +454,7 @@ mod tests {
         ] {
             let error = parse(SystemReader::Registry, &input)
                 .expect_err("an out-of-shape connection input was accepted");
-            assert_eq!(error.error_type(), kind, "{input:?}");
+            assert_eq!(error.error_type(), type_, "{input:?}");
         }
     }
 
@@ -478,7 +478,7 @@ mod tests {
                 role(reader, CredentialGeneration::B),
             );
             assert_eq!(
-                system_reader_scope_hash(reader, ORG, PROJECT, ENVIRONMENT, DATABASE).len(),
+                system_reader_identity_hash(reader, ORG, PROJECT, ENVIRONMENT, DATABASE).len(),
                 40,
             );
         }

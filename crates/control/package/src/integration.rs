@@ -40,15 +40,15 @@ fn source_files(
         if matches!(entry.file_name().to_str(), Some("target" | ".git")) {
             continue;
         }
-        let kind = entry.file_type()?;
+        let type_ = entry.file_type()?;
         ensure!(
-            !kind.is_symlink(),
+            !type_.is_symlink(),
             "integration source contains a symbolic link: {}",
             path.display()
         );
-        if kind.is_dir() {
+        if type_.is_dir() {
             source_files(root, &path, files)?;
-        } else if kind.is_file() {
+        } else if type_.is_file() {
             files.insert(
                 path.strip_prefix(root)?.to_string_lossy().into_owned(),
                 bytes_sha256(&std::fs::read(path)?),
@@ -139,7 +139,7 @@ pub async fn build(repository: &Path, code: &str) -> anyhow::Result<BuiltIntegra
                 .is_some_and(|path| Path::new(path) == manifest_path)
             && message["target"]["crate_types"]
                 .as_array()
-                .is_some_and(|types| types.iter().any(|kind| kind == "cdylib"))
+                .is_some_and(|types| types.iter().any(|type_| type_ == "cdylib"))
         {
             component_path = message["filenames"]
                 .as_array()

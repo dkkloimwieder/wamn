@@ -50,7 +50,7 @@ impl Template {
     }
 
     /// The pre-contract tier (old T3): every env shares the pool cluster; the
-    /// RLS floor is load-bearing there. Policies still matter for identity,
+    /// RLS base grants are load-bearing there. Policies still matter for identity,
     /// promotion order, and a later move to a dedicated template.
     pub fn trials() -> Template {
         Template {
@@ -210,7 +210,7 @@ mod tests {
 
     /// `stamp` produces the org placement + its per-org policy rows in one step.
     #[test]
-    fn stamp_yields_the_placement_and_the_org_scoped_rows() {
+    fn stamp_yields_the_placement_and_the_org_targeted_rows() {
         let (org, rows) = Template::standard().stamp("acme", "wamn-pg");
         assert_eq!(org.id, "acme");
         assert_eq!(org.placement, Placement::Dedicated);

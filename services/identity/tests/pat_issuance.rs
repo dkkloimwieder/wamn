@@ -23,8 +23,10 @@ use wamn_control_provision::identity_issuer::{
     prepare_identity_issuer_generation_sql,
 };
 use wamn_control_provision::session_target::SessionTarget;
-use wamn_control_provision::sql::{ensure_db_owner_role_sql, revoke_public_connect_floor_sql};
-use wamn_control_provision::workload_role::{WorkloadRoleScope, workload_generation_role};
+use wamn_control_provision::sql::{
+    ensure_db_owner_role_sql, revoke_public_connect_base_grants_sql,
+};
+use wamn_control_provision::workload_role::{WorkloadRoleIdentity, workload_generation_role};
 use wamn_control_provision::{
     CredentialGeneration, PlatformComponent, SYSTEM_SCHEMA_SQL, WorkloadRoleFamily,
     project_env_database_name,
@@ -168,13 +170,13 @@ async fn operator_pat_issuance_over_https() {
         .await
         .expect_redacted("restore fixture admin");
     system
-        .batch_execute(revoke_public_connect_floor_sql())
+        .batch_execute(revoke_public_connect_base_grants_sql())
         .await
-        .expect_redacted("production CONNECT floor");
+        .expect_redacted("production CONNECT minimum");
     system
         .batch_execute("REVOKE TEMPORARY ON DATABASE wamn_system FROM PUBLIC")
         .await
-        .expect_redacted("production TEMPORARY floor");
+        .expect_redacted("production TEMPORARY minimum");
     system
         .batch_execute(
             &prepare_identity_issuer_generation_sql(
@@ -183,18 +185,20 @@ async fn operator_pat_issuance_over_https() {
                 PASSWORD,
                 "2100-01-01T00:00:00Z",
             )
-            .expect_redacted("scoped credential SQL"),
+            .expect_redacted("targeted credential SQL"),
         )
         .await
         .expect_redacted("provision issuer credential");
-    let mut scoped = parsed.clone();
-    scoped.set_username(&role).expect_redacted("scoped login");
-    scoped
+    let mut targeted = parsed.clone();
+    targeted
+        .set_username(&role)
+        .expect_redacted("targeted login");
+    targeted
         .set_password(Some(PASSWORD))
-        .expect_redacted("scoped password");
-    scoped.set_query(None);
-    scoped.set_fragment(None);
-    let scoped = scoped.to_string();
+        .expect_redacted("targeted password");
+    targeted.set_query(None);
+    targeted.set_fragment(None);
+    let targeted = targeted.to_string();
 
     // The fixture is platform setup, so it writes as wamn:provisioning.
     system
@@ -281,7 +285,14 @@ async fn operator_pat_issuance_over_https() {
     let anonymous = https_client(&server_ca, None);
     let authorized = https_client(&server_ca, Some(&operator));
     let before = snapshots(&system, false).await;
-    let process = start(&scoped, &cert_path, &key_path, Some(&ca_path), &target_path).await;
+    let process = start(
+        &targeted,
+        &cert_path,
+        &key_path,
+        Some(&ca_path),
+        &target_path,
+    )
+    .await;
 
     public_routes(&process.endpoint, &anonymous).await;
     for material in [&foreign, &expired, &wrong_usage] {
@@ -472,10 +483,10 @@ async fn operator_pat_issuance_over_https() {
 
     stop(
         process,
-        &[token, machine_token, jwt.token(), PASSWORD, &scoped],
+        &[token, machine_token, jwt.token(), PASSWORD, &targeted],
     )
     .await;
-    let no_ca = start(&scoped, &cert_path, &key_path, None, &target_path).await;
+    let no_ca = start(&targeted, &cert_path, &key_path, None, &target_path).await;
     public_routes(&no_ca.endpoint, &anonymous).await;
     assert_failure(
         request(
@@ -494,7 +505,7 @@ async fn operator_pat_issuance_over_https() {
     .await;
     stop(
         no_ca,
-        &[token, machine_token, jwt.token(), PASSWORD, &scoped],
+        &[token, machine_token, jwt.token(), PASSWORD, &targeted],
     )
     .await;
 
@@ -757,7 +768,7 @@ fn unused_target(admin: &url::Url) -> SessionTarget {
     let database = project_env_database_name("acme", "pattest", "dev", "pattest1");
     let role = workload_generation_role(
         WorkloadRoleFamily::SessionRoleReader,
-        WorkloadRoleScope::ProjectEnvironment {
+        WorkloadRoleIdentity::ProjectEnvironment {
             org: "acme",
             project: "pattest",
             environment: "dev",
@@ -765,7 +776,7 @@ fn unused_target(admin: &url::Url) -> SessionTarget {
         },
         CredentialGeneration::A,
     )
-    .expect_redacted("unused reader scope");
+    .expect_redacted("unused reader target");
     let mut url = admin.clone();
     url.set_username(&role)
         .expect_redacted("unused reader login");
@@ -774,7 +785,7 @@ fn unused_target(admin: &url::Url) -> SessionTarget {
     url.set_path(&database);
     url.set_query(None);
     url.set_fragment(None);
-    SessionTarget::new(&triple, "pattest1", "pat-tenant", url.as_str())
+    SessionTarget::new(&triple, "pattest1", "pat-project", url.as_str())
         .expect_redacted("unused configured audience")
 }
 

@@ -34,16 +34,16 @@ fn copy_package_tree(source: &Path, destination: &Path) -> anyhow::Result<()> {
     std::fs::create_dir(destination)?;
     for entry in std::fs::read_dir(source)? {
         let entry = entry?;
-        let kind = entry.file_type()?;
+        let type_ = entry.file_type()?;
         let target = destination.join(entry.file_name());
         // Installed web packages are not package sources, and pnpm links them.
-        if kind.is_dir() && entry.file_name() == "node_modules" {
+        if type_.is_dir() && entry.file_name() == "node_modules" {
             continue;
         }
-        if kind.is_dir() {
+        if type_.is_dir() {
             copy_package_tree(&entry.path(), &target)?;
         } else {
-            anyhow::ensure!(kind.is_file(), "package sources must be regular files");
+            anyhow::ensure!(type_.is_file(), "package sources must be regular files");
             std::fs::copy(entry.path(), target)?;
         }
     }

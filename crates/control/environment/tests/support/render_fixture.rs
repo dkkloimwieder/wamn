@@ -494,7 +494,7 @@ fn mounted_secret_key(
     anyhow::bail!("events binding {path} has no Secret mount")
 }
 
-/// Project fixture roles without the Wasm artifact that kind composes.
+/// Project fixture roles without the Wasm artifact that type composes.
 /// The entry reference is only chart input. Helm never pulls it.
 pub fn fixture_roles(
     manifest: &wamn_catalog::ServingManifest,
@@ -558,9 +558,9 @@ pub fn credential_secrets(triple: &wamn_control_registry::Triple, namespace: &st
         .map(|credential| credential.family)
         .map(|family| {
             let body = if family == WorkloadRoleFamily::App {
-                WorkloadSecretBody::EnvKeyUrl {
-                    env_key: "render",
-                    tenant_key: "render",
+                WorkloadSecretBody::ProjectEnvKeyUrl {
+                    project_env_key: "render",
+                    project_key: "render",
                     url: "postgresql://render:render@database:5432/render",
                 }
             } else {

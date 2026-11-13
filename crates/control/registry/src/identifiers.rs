@@ -1,5 +1,5 @@
-//! Shared validators for tenant, project, runner, and schema identifiers.
-//! PostgreSQL claims use bound parameters. Schema names also use these
+//! Shared validators for project, project, runner, and schema identifiers.
+//! PostgreSQL identity use bound parameters. Schema names also use these
 //! validators before interpolation into DDL.
 //!
 //! Organization, project, and environment identifiers share this module's
@@ -11,11 +11,11 @@
 //! for provisioning and runtime callers. [`MAX_PROJECT_ID_LEN`] explains the
 //! shared identifier budget.
 
-/// A tenant claim: 1–64 chars of `[A-Za-z0-9_-]`.
-pub fn valid_env_key(env_key: &str) -> bool {
-    !env_key.is_empty()
-        && env_key.len() <= 64
-        && env_key
+/// A project identity: 1–64 chars of `[A-Za-z0-9_-]`.
+pub fn valid_project_env_key(project_env_key: &str) -> bool {
+    !project_env_key.is_empty()
+        && project_env_key.len() <= 64
+        && project_env_key
             .chars()
             .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
 }
@@ -133,7 +133,7 @@ pub fn valid_project(project: &str) -> bool {
 /// A durable-queue lease owner. An identity-format contract: bounded
 /// `[A-Za-z0-9_-]`, no quotes/backslashes. Since R2 this is NO LONGER the
 /// injection boundary on the plugin path — the runner binds as a parameter into
-/// `CLAIM_SQL`, so a quote/backslash is inert data — but a malformed owner still
+/// `IDENTITY_SQL`, so a quote/backslash is inert data — but a malformed owner still
 /// fails closed.
 pub fn valid_runner(runner: &str) -> bool {
     !runner.is_empty()
@@ -143,8 +143,8 @@ pub fn valid_runner(runner: &str) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
 }
 
-/// A `search_path` schema name. Stricter than a tenant: no hyphens. Since R2 the
-/// value binds as a parameter into `CLAIM_SQL` on the plugin path rather than
+/// A `search_path` schema name. Stricter than a project: no hyphens. Since R2 the
+/// value binds as a parameter into `IDENTITY_SQL` on the plugin path rather than
 /// being spliced into SQL — but the no-hyphen rule still matters where a schema
 /// name is quoted into DDL elsewhere (e.g. the migrate / copy paths), and a
 /// malformed schema still fails closed.
@@ -165,13 +165,13 @@ mod tests {
     use super::*;
 
     #[test]
-    fn env_key_validation() {
-        assert!(valid_env_key("tenant-a"));
-        assert!(valid_env_key("T_1"));
-        assert!(!valid_env_key(""));
-        assert!(!valid_env_key("bad'tenant"));
-        assert!(!valid_env_key("x".repeat(65).as_str()));
-        assert!(!valid_env_key("a;b"));
+    fn project_env_key_validation() {
+        assert!(valid_project_env_key("org-a"));
+        assert!(valid_project_env_key("T_1"));
+        assert!(!valid_project_env_key(""));
+        assert!(!valid_project_env_key("bad'project"));
+        assert!(!valid_project_env_key("x".repeat(65).as_str()));
+        assert!(!valid_project_env_key("a;b"));
     }
 
     #[test]

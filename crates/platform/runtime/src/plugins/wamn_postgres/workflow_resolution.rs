@@ -3,19 +3,20 @@
 //!
 //! A workflow is a row of `catalog.workflows`, not a member of the release.
 //! The host reads the enabled version of a workflow when `workflow.start`
-//! admits a run, and the queue resolves a claimed run from its row: the graph
+//! admits a run, and the queue resolves a bound run from its row: the graph
 //! from `catalog.workflows` under the run's workflow id and version, and each
 //! node from the component digest admission froze on the run, validated against
 //! the descriptors of the release the run pins. Nodes come from that release
 //! only in this epic.
 //!
-//! A workflow run resolves its pinned version on every claim.
+//! A workflow run resolves its pinned version on every identity.
 
 use std::collections::{BTreeMap, BTreeSet};
 
 use anyhow::Context as _;
 use wamn_catalog::{
-    ComponentPackageScope, ServingManifest, WiringDocument, validate_resolved_wiring_compatibility,
+    ComponentPackageCoordinate, ServingManifest, WiringDocument,
+    validate_resolved_wiring_compatibility,
 };
 use wamn_run_state::AuthorityClass;
 
@@ -23,28 +24,28 @@ use super::WamnPostgres;
 use super::wiring_resolution::{DecodedWiring, ResolvedActiveWiring, resolved_wiring};
 
 /// The enabled version of one manual workflow. A schedule workflow is not
-/// started through `workflow.start`. Binds: `$1` `env_key`, `$2` environment,
+/// started through `workflow.start`. Binds: `$1` `project_env_key`, `$2` environment,
 /// `$3` application, `$4` workflow id.
 const ENABLED_WORKFLOW_SQL: &str = "\
 SELECT version, graph_json::text, wiring_hash, execution_type, execution_role \
   FROM catalog.workflows \
- WHERE env_key = $1 AND environment = $2 AND application = $3 \
+ WHERE project_env_key = $1 AND environment = $2 AND application = $3 \
    AND workflow_id = $4 AND enabled AND trigger = 'manual'";
 
 /// One workflow version, enabled or not: a run finishes under the version it
-/// pinned. Binds: `$1` `env_key`, `$2` environment, `$3` application, `$4`
+/// pinned. Binds: `$1` `project_env_key`, `$2` environment, `$3` application, `$4`
 /// workflow id, `$5` version.
 const WORKFLOW_VERSION_SQL: &str = "\
 SELECT graph_json::text, wiring_hash \
   FROM catalog.workflows \
- WHERE env_key = $1 AND environment = $2 AND application = $3 \
+ WHERE project_env_key = $1 AND environment = $2 AND application = $3 \
    AND workflow_id = $4 AND version = $5";
 
 /// The verified manifest bytes of the release a run pins. Binds: `$1`
-/// tenant, `$2` manifest digest.
+/// project, `$2` manifest digest.
 pub(super) const PINNED_RELEASE_SQL: &str = "\
 SELECT canonical_bytes FROM catalog.releases \
- WHERE env_key = $1 AND manifest_digest = $2";
+ WHERE project_env_key = $1 AND manifest_digest = $2";
 
 /// The enabled version of one workflow, as the host admits a run of it.
 #[derive(Debug, Clone)]
@@ -61,7 +62,7 @@ pub struct EnabledWorkflow {
 /// The facts a manual run row carries, which key its resolution.
 #[derive(Debug, Clone, Copy)]
 pub struct WorkflowRunKey<'a> {
-    pub env_key: &'a str,
+    pub project_env_key: &'a str,
     pub environment: &'a str,
     /// The application, by the name the environment declares: the run's
     /// package id.
@@ -184,8 +185,8 @@ pub fn resolve_workflow_in_release(
         component
             .descriptor
             .clone()
-            .into_admitted(ComponentPackageScope {
-                env_key: run.env_key.to_owned(),
+            .into_admitted(ComponentPackageCoordinate {
+                project_env_key: run.project_env_key.to_owned(),
                 package_id: component.package_id.clone(),
                 package_version: versions
                     .get(component.package_id.as_str())
@@ -284,16 +285,16 @@ impl WamnPostgres {
     pub async fn enabled_workflow(
         &self,
         project: &str,
-        env_key: &str,
+        project_env_key: &str,
         environment: &str,
         application: &str,
         workflow_id: &str,
     ) -> anyhow::Result<Option<EnabledWorkflow>> {
-        self.executor_read(project, env_key, async |connection| {
+        self.executor_read(project, project_env_key, async |connection| {
             let Some(row) = connection
                 .query_opt(
                     ENABLED_WORKFLOW_SQL,
-                    &[&env_key, &environment, &application, &workflow_id],
+                    &[&project_env_key, &environment, &application, &workflow_id],
                 )
                 .await
                 .context("read the enabled workflow version")?
@@ -312,7 +313,7 @@ impl WamnPostgres {
         .await
     }
 
-    /// Resolve one claimed workflow run from its row
+    /// Resolve one bound workflow run from its row
     /// ([`resolve_workflow_in_release`]).
     pub async fn resolve_workflow(
         &self,
@@ -322,12 +323,12 @@ impl WamnPostgres {
         let version = i32::try_from(run.version).context("workflow version exceeds int")?;
         let local = self.local_application.as_ref();
         let (graph_json, stored_hash, manifest) = self
-            .executor_read(project, run.env_key, async |connection| {
+            .executor_read(project, run.project_env_key, async |connection| {
                 let row = connection
                     .query_opt(
                         WORKFLOW_VERSION_SQL,
                         &[
-                            &run.env_key,
+                            &run.project_env_key,
                             &run.environment,
                             &run.application,
                             &run.workflow_id,
@@ -350,15 +351,18 @@ impl WamnPostgres {
                 let manifest = if let Some(local) = local {
                     local.require_instance(connection).await?;
                     anyhow::ensure!(
-                        local.scope.env_key == run.env_key
-                            && local.scope.environment == run.environment
+                        local.target.project_env_key == run.project_env_key
+                            && local.target.environment == run.environment
                             && local.facts.manifest_digest.as_str() == run.manifest_digest,
-                        "local release scope mismatch"
+                        "local release target mismatch"
                     );
                     local.manifest.clone()
                 } else {
                     let bytes: Vec<u8> = connection
-                        .query_opt(PINNED_RELEASE_SQL, &[&run.env_key, &run.manifest_digest])
+                        .query_opt(
+                            PINNED_RELEASE_SQL,
+                            &[&run.project_env_key, &run.manifest_digest],
+                        )
                         .await
                         .context("read the pinned release")?
                         .ok_or_else(|| {
@@ -392,7 +396,7 @@ impl WamnPostgres {
     pub(super) async fn executor_read<T>(
         &self,
         project: &str,
-        env_key: &str,
+        project_env_key: &str,
         read: impl AsyncFnOnce(&tokio_postgres::Client) -> anyhow::Result<T>,
     ) -> anyhow::Result<T> {
         let (connection, policy) = self
@@ -400,11 +404,11 @@ impl WamnPostgres {
             .await
             .map_err(|error| anyhow::anyhow!(error.to_string()))?;
         if let Err(error) = self
-            .begin_with_claims(
+            .begin_with_identity(
                 &connection,
                 AuthorityClass::ExecutorPlatform,
                 true,
-                env_key,
+                project_env_key,
                 None,
                 None,
                 None,
@@ -447,8 +451,8 @@ mod tests {
 
     fn manifest() -> ServingManifest {
         let fact = AdmittedComponent {
-            scope: ComponentPackageScope {
-                env_key: "t1".to_owned(),
+            target: ComponentPackageCoordinate {
+                project_env_key: "t1".to_owned(),
                 package_id: APPLICATION.to_owned(),
                 package_version: "1.0.0".to_owned(),
             },
@@ -507,7 +511,7 @@ mod tests {
         static PACKAGES: std::sync::LazyLock<BTreeSet<String>> =
             std::sync::LazyLock::new(|| BTreeSet::from([APPLICATION.to_owned()]));
         WorkflowRunKey {
-            env_key: "t1",
+            project_env_key: "t1",
             environment: "dev",
             application: "erp",
             application_packages: &PACKAGES,

@@ -471,8 +471,8 @@ fn http_input(project: &str, catalog: &str) -> HttpWorkloadInput {
         namespace: "warehouse-eu-3".into(),
         image: "registry.test.invalid:5000/flow-http@sha256:abc123".into(),
         route_host: "route.test.invalid".into(),
-        claims: HttpClaims {
-            env_key: format!("{project}-route-auth"),
+        identity: HttpIdentity {
+            project_env_key: format!("{project}-route-auth"),
             catalog: catalog.into(),
             environment: "dev".into(),
             project: project.into(),
@@ -487,7 +487,7 @@ fn http_documents(yaml: &str) -> Vec<HttpDocument> {
 }
 
 #[test]
-fn http_workload_renders_both_namespaces_all_claims_and_one_route() {
+fn http_workload_renders_both_namespaces_all_identity_and_one_route() {
     for (project, catalog) in [(FIXTURE, "default"), (OVERLAY, "overlay-catalog")] {
         let input = http_input(project, catalog);
         let rendered = render_http_workload(HTTP, &input).unwrap();
@@ -508,7 +508,7 @@ fn http_workload_renders_both_namespaces_all_claims_and_one_route() {
         assert_eq!(workload.spec.template.spec.environment, input.namespace);
         let component = &workload.spec.template.spec.components[0];
         assert_eq!(component.image, input.image);
-        assert_eq!(component.local_resources.config, input.claims);
+        assert_eq!(component.local_resources.config, input.identity);
         let interfaces = &workload.spec.template.spec.host_interfaces;
         assert_eq!(
             interfaces
@@ -528,10 +528,10 @@ fn http_workload_renders_both_namespaces_all_claims_and_one_route() {
 }
 
 #[test]
-fn http_workload_refuses_incomplete_claims_unknown_claims_and_duplicate_fields() {
+fn http_workload_refuses_incomplete_identity_unknown_identity_and_duplicate_fields() {
     let input = http_input(FIXTURE, "default");
     for field in [
-        "wamn.env_key",
+        "wamn.project_env_key",
         "wamn.catalog",
         "wamn.environment",
         "wamn.project",
@@ -604,7 +604,7 @@ fn http_workload_requires_the_service_workload_and_http_handler_once() {
 fn yaml_serialization_keeps_caller_values_as_single_values() {
     let mut input = http_input(FIXTURE, "default");
     input.route_host = "host: quoted\nsecond-line".into();
-    input.claims.catalog = "catalog: \"quoted\" # value".into();
+    input.identity.catalog = "catalog: \"quoted\" # value".into();
     let documents = http_documents(&render_http_workload(HTTP, &input).unwrap());
     let HttpDocument::WorkloadDeployment(workload) = &documents[1] else {
         panic!("workload")
@@ -622,7 +622,7 @@ fn yaml_serialization_keeps_caller_values_as_single_values() {
             .local_resources
             .config
             .catalog,
-        input.claims.catalog
+        input.identity.catalog
     );
 }
 
@@ -714,18 +714,18 @@ fn host_identity_accepts_matching_apps_and_refuses_crossed_declarations() {
         assert_rendered_identity(&host_template(FIXTURE), &overlay)
             .unwrap_err()
             .to_string()
-            .contains(&format!("claims WAMN_PROJECT={FIXTURE}"))
+            .contains(&format!("identity WAMN_PROJECT={FIXTURE}"))
     );
     assert!(
         assert_rendered_identity(&host_template(OVERLAY), &fixture)
             .unwrap_err()
             .to_string()
-            .contains(&format!("claims WAMN_PROJECT={OVERLAY}"))
+            .contains(&format!("identity WAMN_PROJECT={OVERLAY}"))
     );
 }
 
 #[test]
-fn host_identity_reports_each_missing_repeated_or_wrong_claim() {
+fn host_identity_reports_each_missing_repeated_or_wrong_identity() {
     let identity = HostIdentity {
         org: ORG.into(),
         project: FIXTURE.into(),
@@ -768,7 +768,7 @@ fn host_identity_reports_each_missing_repeated_or_wrong_claim() {
             assert_rendered_identity(&serde_yaml::to_string(&wrong).unwrap(), &identity)
                 .unwrap_err()
                 .to_string()
-                .contains(&format!("claims {name}=wrong"))
+                .contains(&format!("identity {name}=wrong"))
         );
     }
 }

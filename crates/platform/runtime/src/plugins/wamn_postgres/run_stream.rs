@@ -14,13 +14,13 @@ use wash_runtime::wasmtime::component::{
     Accessor, Destination, FutureReader, StreamProducer, StreamReader, StreamResult, VecBuffer,
 };
 
-use super::claims::reject_claim_mutation;
-use super::claims::transactions::{
-    bind_session_settings, prepare_session_settings, read_wal_position,
-};
 use super::resources::{
     StatementConnectionGuard, admit_transaction_statement, db_span_for_project, plugin_of,
     record_query_ms,
+};
+use super::session_identity::reject_identity_mutation;
+use super::session_identity::transactions::{
+    bind_session_settings, prepare_session_settings, read_wal_position,
 };
 use super::statements::{
     VerifiedStatement, validate_prepared_statement, validate_statement_result,
@@ -135,7 +135,7 @@ fn into_guest_stream<T: 'static + Send>(
     })
 }
 
-/// Execute once. Claims keep their transaction when they carry caller authority.
+/// Execute once. Identity keep their transaction when they carry caller authority.
 pub(super) async fn open_stream(
     plugin: &WamnPostgres,
     component_id: &str,
@@ -146,29 +146,29 @@ pub(super) async fn open_stream(
     want_wal: bool,
 ) -> Result<OpenedStream, StatementError> {
     // See run_verified_query: admission parses, and this text guard stays.
-    reject_claim_mutation(&statement.exact_sql).map_err(StatementError::Postgres)?;
-    let env_key = plugin
-        .require_env_key(component_id)
+    reject_identity_mutation(&statement.exact_sql).map_err(StatementError::Postgres)?;
+    let project_env_key = plugin
+        .require_project_env_key(component_id)
         .map_err(StatementError::Postgres)?;
     let schema = plugin.schema_for(component_id);
     let runner = plugin.runner_for(component_id);
     let role = plugin.role_for(component_id);
     let (connection, policy, authority) = plugin
-        .checkout_workload(component_id, project, &env_key)
+        .checkout_workload(component_id, project, &project_env_key)
         .await
         .map_err(StatementError::Postgres)?;
     let connection = StatementConnectionGuard::new(connection, Arc::clone(&plugin.destroyed));
     let postgres = |error: tokio_postgres::Error| StatementError::Postgres(map_pg_error(&error));
-    let mut claims = None;
+    let mut identity = None;
     let mut settings = None;
     let completion = if statement.transactional || role.is_some() {
-        claims = Some(
+        identity = Some(
             plugin
-                .prepare_claims(
+                .prepare_identity(
                     connection.connection(),
                     authority,
                     plugin.active_read(component_id),
-                    &env_key,
+                    &project_env_key,
                     schema.as_deref(),
                     runner.as_deref(),
                     role.as_deref(),
@@ -210,7 +210,7 @@ pub(super) async fn open_stream(
     } else {
         None
     };
-    // A cold Parse follows claims. COMMIT must wait until Execute was queued,
+    // A cold Parse follows identity. COMMIT must wait until Execute was queued,
     // rather than overtaking a Parse that is still waiting for its description.
     let (mut queued, completion) = match completion {
         Some(commit) => {
@@ -229,8 +229,8 @@ pub(super) async fn open_stream(
             let read = async {
                 let read = async {
                     let bind = async {
-                        if let Some(claims) = claims {
-                            claims.bind(conn).await
+                        if let Some(identity) = identity {
+                            identity.bind(conn).await
                         } else {
                             bind_session_settings(conn, &policy, settings.as_ref(), schema, runner).await
                         }.map_err(StatementError::Postgres)

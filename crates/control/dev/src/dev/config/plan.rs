@@ -1,8 +1,8 @@
 use super::{
-    ADMINISTRATION_DATABASE_URL, CATALOG, CDC_READER, CdcReader, DOCUMENT_KEY, DUP_WINDOW_SECS,
-    DatabaseIdentity, DevActivationIdentity, DevConfig, DevConfigDocument, DevConfigError,
-    DevConfigErrorType, DevPackageError, DevPackageErrorType, ENVIRONMENT,
-    EVENT_MATERIALIZER_DATABASE_URL, EXECUTOR_PLATFORM_DATABASE_URL, GATE_BEARER_TOKEN,
+    ADMINISTRATION_DATABASE_URL, CATALOG, CDC_READER, CONDITION_BEARER_TOKEN, CdcReader,
+    DOCUMENT_KEY, DUP_WINDOW_SECS, DatabaseIdentity, DevActivationIdentity, DevConfig,
+    DevConfigDocument, DevConfigError, DevConfigErrorType, DevPackageError, DevPackageErrorType,
+    ENVIRONMENT, EVENT_MATERIALIZER_DATABASE_URL, EXECUTOR_PLATFORM_DATABASE_URL,
     GUEST_DATABASE_URL, HOST_BINARY, HOST_CONFIG_FILE, HOST_GROUP, HOST_NAME,
     HTTP_ADMITTER_DATABASE_URL, IDENTITY_DATABASE_URL, LOCAL_ARTIFACTS, LocalArtifacts,
     NATS_TLS_CA, NATS_TLS_CERT, NATS_TLS_KEY, ORG, OTEL_EXPORTER_OTLP_ENDPOINT, PACKAGE_SOURCES,
@@ -256,7 +256,7 @@ pub(super) fn parse_config(bytes: &[u8]) -> Result<DevConfig, DevConfigError> {
         dup_window_secs,
         otel_exporter_otlp_endpoint,
         local_artifacts,
-        gate_bearer_token,
+        condition_bearer_token,
         route_host,
         platform_domain,
         package_sources,
@@ -342,7 +342,7 @@ pub(super) fn parse_config(bytes: &[u8]) -> Result<DevConfig, DevConfigError> {
         nonempty_string(target_template_database, TARGET_TEMPLATE_DATABASE)?;
     let target_database_acl_file =
         nonempty_path(target_database_acl_file, TARGET_DATABASE_ACL_FILE)?;
-    let gate_bearer_token = nonempty_string(gate_bearer_token, GATE_BEARER_TOKEN)?;
+    let condition_bearer_token = nonempty_string(condition_bearer_token, CONDITION_BEARER_TOKEN)?;
     let route_host = nonempty_string(route_host, ROUTE_HOST)?;
     wamn_control_provision::validate_platform_domain(&platform_domain).map_err(|source| {
         DevConfigError::new(
@@ -368,8 +368,8 @@ pub(super) fn parse_config(bytes: &[u8]) -> Result<DevConfig, DevConfigError> {
     ] {
         validate_nonempty_string(value, key)?;
     }
-    // The tenant is the environment coordinate's (owner ruling of 2026-10-09
-    // on `wamn-snz0`): the host derives the same value from its own scope.
+    // The project is the environment coordinate's (owner ruling of 2026-10-09
+    // on `wamn-snz0`): the host derives the same value from its own target.
     let activation_identity = DevActivationIdentity {
         catalog,
         environment,
@@ -427,7 +427,7 @@ pub(super) fn parse_config(bytes: &[u8]) -> Result<DevConfig, DevConfigError> {
         dup_window_secs,
         otel_exporter_otlp_endpoint,
         local_artifacts,
-        gate_bearer_token,
+        condition_bearer_token,
         route_host,
         platform_domain: platform_domain.into_boxed_str(),
         package_sources,

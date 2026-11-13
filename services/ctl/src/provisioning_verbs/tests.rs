@@ -666,7 +666,7 @@ mod enable_cdc {
     /// default minted a `LOGIN REPLICATION` role with a publicly known
     /// password, and `REPLICATION` authority is cluster-wide — a stolen
     /// credential can open a replication session against any database on the
-    /// cluster and decode co-tenant WAL, which slot/publication naming does not
+    /// cluster and decode co-project WAL, which slot/publication naming does not
     /// constrain. This test exists so the argument cannot quietly re-acquire
     /// one.
     #[test]

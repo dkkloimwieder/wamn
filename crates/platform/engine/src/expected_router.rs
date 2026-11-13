@@ -246,7 +246,7 @@ mod tests {
         assert_eq!(
             dispatched.load(Ordering::SeqCst),
             3,
-            "shutdown gate refuses before bound service dispatch"
+            "shutdown condition refuses before bound service dispatch"
         );
         ingress
             .on_service_http_unbind("replacement")

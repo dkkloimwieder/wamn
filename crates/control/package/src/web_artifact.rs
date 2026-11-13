@@ -24,7 +24,7 @@ use wamn_package_artifact::{Repository, ensure_digest, ensure_tag, registry_auth
 use wamn_schema_generator::build_record::{self, BuildRecord};
 
 use crate::package_artifact::PackageRegistry;
-use crate::web_scope::{SCOPE_CACHE, SCOPE_CONTENT_TYPE, SCOPE_FILE};
+use crate::web_config::{CONFIG_CACHE, CONFIG_CONTENT_TYPE, CONFIG_FILE};
 
 /// Standalone output below a package's build directory.
 const ARTIFACT_DIRECTORY: &str = "web-artifact";
@@ -58,7 +58,7 @@ impl WebManifest {
 }
 
 #[derive(Debug)]
-enum WebArtifactErrorKind {
+enum WebArtifactErrorType {
     Build,
     Pack,
     Push,
@@ -69,7 +69,7 @@ enum WebArtifactErrorKind {
 /// A web artifact failure with its action, path or reference, and source.
 #[derive(Debug)]
 pub struct WebArtifactError {
-    kind: WebArtifactErrorKind,
+    type_: WebArtifactErrorType,
     context: String,
     source: anyhow::Error,
 }
@@ -79,7 +79,7 @@ impl std::fmt::Display for WebArtifactError {
         write!(
             f,
             "web artifact {:?} {}: {:#}",
-            self.kind, self.context, self.source
+            self.type_, self.context, self.source
         )
     }
 }
@@ -134,7 +134,7 @@ pub async fn build_web_artifact(package_root: &Path) -> Result<PathBuf, WebArtif
     }
     .await
     .map_err(|source| WebArtifactError {
-        kind: WebArtifactErrorKind::Build,
+        type_: WebArtifactErrorType::Build,
         context: package_root.display().to_string(),
         source,
     })
@@ -156,7 +156,7 @@ pub struct PackedWebArtifact {
 /// Refuses invalid metadata, a missing index, links, special files, or unreadable files.
 pub fn pack_web_artifact(root: &Path) -> Result<PackedWebArtifact, WebArtifactError> {
     pack_web(root).map_err(|source| WebArtifactError {
-        kind: WebArtifactErrorKind::Pack,
+        type_: WebArtifactErrorType::Pack,
         context: root.display().to_string(),
         source,
     })
@@ -241,13 +241,13 @@ fn artifact_files(
     files: &mut std::collections::BTreeMap<PathBuf, Vec<u8>>,
 ) -> anyhow::Result<()> {
     let path = root.join(relative);
-    let kind = std::fs::symlink_metadata(&path)?.file_type();
+    let type_ = std::fs::symlink_metadata(&path)?.file_type();
     ensure!(
-        kind.is_dir() || kind.is_file(),
+        type_.is_dir() || type_.is_file(),
         "web artifact path {} is not a regular file or directory",
         path.display()
     );
-    if kind.is_dir() {
+    if type_.is_dir() {
         for entry in std::fs::read_dir(&path)? {
             artifact_files(root, &relative.join(entry?.file_name()), files)?;
         }
@@ -294,7 +294,7 @@ pub async fn push_web_artifact(
         Repository::with_auth(registry, &packed.tag, registry_auth(credentials.as_ref()))
     })()
     .map_err(|source| WebArtifactError {
-        kind: WebArtifactErrorKind::Push,
+        type_: WebArtifactErrorType::Push,
         context: format!("{}:{}", registry.artifact_base, packed.tag),
         source,
     })?;
@@ -349,13 +349,13 @@ pub async fn push_archive(
             disposition,
         })
     }.await.map_err(|source| WebArtifactError {
-        kind: WebArtifactErrorKind::Push,
+        type_: WebArtifactErrorType::Push,
         context: repository.reference.to_string(),
         source,
     })
 }
 
-/// Pull a pinned web artifact and read its canonical metadata without claiming it.
+/// Pull a pinned web artifact and read its canonical metadata without taking ownership.
 ///
 /// # Errors
 ///
@@ -379,7 +379,7 @@ async fn pull_web(
     }
     .await
     .map_err(|source| WebArtifactError {
-        kind: WebArtifactErrorKind::Pull,
+        type_: WebArtifactErrorType::Pull,
         context: format!("{}@{digest}", registry.artifact_base),
         source,
     })
@@ -462,7 +462,7 @@ pub async fn upload_web_artifact(
     }
     .await
     .map_err(|source| WebArtifactError {
-        kind: WebArtifactErrorKind::Upload,
+        type_: WebArtifactErrorType::Upload,
         context: format!("{}@{digest} to {bucket}", registry.artifact_base),
         source,
     })
@@ -509,10 +509,10 @@ pub async fn upload_web_to_store(
     put(
         store,
         &root,
-        SCOPE_FILE,
-        crate::web_scope::scope_file_bytes(org, project),
-        SCOPE_CACHE,
-        SCOPE_CONTENT_TYPE,
+        CONFIG_FILE,
+        crate::web_config::config_file_bytes(org, project),
+        CONFIG_CACHE,
+        CONFIG_CONTENT_TYPE,
     )
     .await?;
     put(
@@ -1037,8 +1037,8 @@ fs.copyFileSync('index.html', dist + '/index.html');
         assert!(written);
         let asset = object_store::path::Path::from(format!("{root}/assets/app.js"));
         store.delete(&asset).await.unwrap();
-        let scope = object_store::path::Path::from(format!("{root}/config.json"));
-        store.put(&scope, "sentinel".into()).await.unwrap();
+        let target = object_store::path::Path::from(format!("{root}/config.json"));
+        store.put(&target, "sentinel".into()).await.unwrap();
         let (_, _, written) =
             super::upload_web_to_store(&registry, &packed.digest, "acme", "", &store)
                 .await
@@ -1047,7 +1047,7 @@ fs.copyFileSync('index.html', dist + '/index.html');
         assert!(store.head(&asset).await.is_err());
         assert_eq!(
             store
-                .get(&scope)
+                .get(&target)
                 .await
                 .unwrap()
                 .bytes()

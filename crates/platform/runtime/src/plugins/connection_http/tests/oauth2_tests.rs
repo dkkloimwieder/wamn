@@ -244,7 +244,7 @@ impl Fixture {
         use crate::plugins::wamn_postgres::{
             ClassCredentials, ProjectConfig, StaticCredentialProvider,
         };
-        use wamn_engine::release_manifest::ReleaseScope;
+        use wamn_engine::release_manifest::ReleaseTarget;
         use wamn_run_state::AuthorityClass;
 
         for name in ["handle", "other-handle"] {
@@ -283,21 +283,21 @@ impl Fixture {
             LoadedRelease::load_canonical_bytes(
                 &bytes,
                 "oauth2-test",
-                ReleaseScope::new("acme--project-a--dev", "dev"),
+                ReleaseTarget::new("acme--project-a--dev", "dev"),
             )
             .unwrap(),
         );
         let manifest_digest = release.release().manifest_digest.as_str();
         let mut projects = HashMap::new();
         for project in ["project-a", "project-b"] {
-            let database = wamn_platform_identity::test_database::tenant_platform();
+            let database = wamn_platform_identity::test_database::project_platform();
             let (admin, driver) = tokio_postgres::connect(database.url(), tokio_postgres::NoTls)
                 .await
                 .unwrap();
             tokio::spawn(driver);
             admin.batch_execute("BEGIN; SELECT set_config('app.user_id','770df186-ac15-579e-b46b-c297cae2011b',true),set_config('app.operation','admin:seed-oauth2',true)").await.unwrap();
-            let env_key = format!("acme--{project}--dev");
-            admin.execute("INSERT INTO catalog.releases(env_key,manifest_digest,canonical_bytes) VALUES($1,$2,$3)", &[&env_key,&manifest_digest,&bytes]).await.unwrap();
+            let project_env_key = format!("acme--{project}--dev");
+            admin.execute("INSERT INTO catalog.releases(project_env_key,manifest_digest,canonical_bytes) VALUES($1,$2,$3)", &[&project_env_key,&manifest_digest,&bytes]).await.unwrap();
             let rows = self.credentials.admin.query("SELECT c.id,i.id,i.name FROM registry.connection c JOIN registry.integration i ON i.id=c.integration_id WHERE c.project=$1 AND c.env='dev'", &[&project]).await.unwrap();
             for row in rows {
                 let connection: uuid::Uuid = row.get(0);
@@ -305,9 +305,9 @@ impl Fixture {
                 let name: String = row.get(2);
                 admin.execute("INSERT INTO platform.integration(id,integration_type,name,status) VALUES($1,'http',$2,'active')", &[&integration,&name]).await.unwrap();
                 admin.execute("INSERT INTO platform.connection(id,integration_id,integration_type,status) VALUES($1,$2,'http','active')", &[&connection,&integration]).await.unwrap();
-                admin.execute("INSERT INTO catalog.connection_requirement(env_key,component_digest,package_id,name,interface,mode) VALUES($1,$2,'package_a',$3,'wamn:connection/http@0.1.0','write')", &[&env_key,&invocation.component_digest,&name]).await.unwrap();
-                admin.execute("INSERT INTO catalog.release_connection(env_key,manifest_digest,connection_id,version) VALUES($1,$2,$3,1)", &[&env_key,&manifest_digest,&connection]).await.unwrap();
-                admin.execute("INSERT INTO catalog.connection_binding(env_key,manifest_digest,component_digest,package_id,name,connection_id) VALUES($1,$2,$3,'package_a',$4,$5)", &[&env_key,&manifest_digest,&invocation.component_digest,&name,&connection]).await.unwrap();
+                admin.execute("INSERT INTO catalog.connection_requirement(project_env_key,component_digest,package_id,name,interface,mode) VALUES($1,$2,'package_a',$3,'wamn:connection/http@0.1.0','write')", &[&project_env_key,&invocation.component_digest,&name]).await.unwrap();
+                admin.execute("INSERT INTO catalog.release_connection(project_env_key,manifest_digest,connection_id,version) VALUES($1,$2,$3,1)", &[&project_env_key,&manifest_digest,&connection]).await.unwrap();
+                admin.execute("INSERT INTO catalog.connection_binding(project_env_key,manifest_digest,component_digest,package_id,name,connection_id) VALUES($1,$2,$3,'package_a',$4,$5)", &[&project_env_key,&manifest_digest,&invocation.component_digest,&name,&connection]).await.unwrap();
             }
             admin.batch_execute("COMMIT").await.unwrap();
             admin.batch_execute("CREATE SCHEMA wamn_run").await.unwrap();
@@ -361,7 +361,7 @@ impl Fixture {
             ))),
         );
         postgres
-            .set_env_key("instance", "acme--project-a--dev")
+            .set_project_env_key("instance", "acme--project-a--dev")
             .unwrap();
         let plugin = ConnectionHttp::new(
             postgres,
@@ -441,8 +441,8 @@ impl Fixture {
     }
 
     async fn use_project(&self, plugin: &mut ConnectionHttp, project: &str) {
-        use wamn_engine::release_manifest::ReleaseScope;
-        let env_key = format!("acme--{project}--dev");
+        use wamn_engine::release_manifest::ReleaseTarget;
+        let project_env_key = format!("acme--{project}--dev");
         plugin.release = Some(Arc::new(
             LoadedRelease::load_canonical_bytes(
                 &plugin
@@ -452,7 +452,7 @@ impl Fixture {
                     .manifest()
                     .canonical_bytes(),
                 "oauth2-test",
-                ReleaseScope::new(&env_key, "dev"),
+                ReleaseTarget::new(&project_env_key, "dev"),
             )
             .unwrap(),
         ));
@@ -462,7 +462,7 @@ impl Fixture {
                 Publisher::default(),
                 Arc::new(self.credentials.reader(project).await),
                 Arc::clone(&plugin.postgres),
-                &env_key,
+                &project_env_key,
                 project,
                 "dev",
             )
@@ -471,8 +471,11 @@ impl Fixture {
             ))),
         );
         plugin.oauth2 = plugin.facts.oauth_tokens();
-        plugin.postgres.set_env_key("instance", &env_key).unwrap();
-        plugin.env_key = env_key.into();
+        plugin
+            .postgres
+            .set_project_env_key("instance", &project_env_key)
+            .unwrap();
+        plugin.project_env_key = project_env_key.into();
         plugin.project = project.into();
     }
 

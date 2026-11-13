@@ -25,7 +25,7 @@ END $platform_group$;
 
 -- Stable ACL role for record history retention (`wamn-emtx.13`). apply-package
 -- grants it privileges on the history tables of this database, and
--- provisioning owns its scoped A/B LOGIN generations. It is not a wamn_platform
+-- provisioning owns its targeted A/B LOGIN generations. It is not a wamn_platform
 -- member.
 DO $audit_retention$ BEGIN
   PERFORM pg_advisory_xact_lock(hashtext('wamn_role_bootstrap'));
@@ -40,13 +40,13 @@ END $audit_retention$;
 GRANT USAGE ON SCHEMA catalog TO wamn_app;
 
 -- GENERATED authority-derivation bootstrap. The database name is embedded so
--- tenant_key stays IMMUTABLE and remains legal in expression indexes.
+-- project_key stays IMMUTABLE and remains legal in expression indexes.
 DO $wamn_authority_bootstrap$
 BEGIN
     EXECUTE replace(replace($wamn_authority_derivations$CREATE SCHEMA IF NOT EXISTS "wamn_authority" AUTHORIZATION CURRENT_USER;
 REVOKE ALL ON SCHEMA "wamn_authority" FROM PUBLIC;
 GRANT USAGE ON SCHEMA "wamn_authority" TO "wamn_app";
-CREATE OR REPLACE FUNCTION "wamn_authority".tenant_key(env_key text)
+CREATE OR REPLACE FUNCTION "wamn_authority".project_key(project_env_key text)
 RETURNS text
 LANGUAGE sql
 IMMUTABLE
@@ -55,17 +55,17 @@ STRICT
 SET search_path = pg_catalog
 AS $$
     SELECT substr(encode(sha256(
-           int8send(19::bigint) || convert_to('wamn.app.scope.v0.1', 'UTF8')
-        || int8send(7::bigint) || convert_to('env_key', 'UTF8')
-        || int8send(octet_length(convert_to(env_key, 'UTF8'))::bigint) || convert_to(env_key, 'UTF8')
+           int8send(22::bigint) || convert_to('wamn.app.identity.v0.1', 'UTF8')
+        || int8send(15::bigint) || convert_to('project_env_key', 'UTF8')
+        || int8send(octet_length(convert_to(project_env_key, 'UTF8'))::bigint) || convert_to(project_env_key, 'UTF8')
         || int8send(8::bigint) || convert_to('database', 'UTF8')
         || int8send(@wamn_database_octets@::bigint) || convert_to(@wamn_database_literal@, 'UTF8')
        ), 'hex'), 1, 40)
 $$;
-ALTER FUNCTION "wamn_authority".tenant_key(text) OWNER TO CURRENT_USER;
-REVOKE ALL ON FUNCTION "wamn_authority".tenant_key(text) FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION "wamn_authority".tenant_key(text) TO "wamn_app";
-CREATE OR REPLACE FUNCTION "wamn_authority".current_tenant_key()
+ALTER FUNCTION "wamn_authority".project_key(text) OWNER TO CURRENT_USER;
+REVOKE ALL ON FUNCTION "wamn_authority".project_key(text) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION "wamn_authority".project_key(text) TO "wamn_app";
+CREATE OR REPLACE FUNCTION "wamn_authority".current_project_key()
 RETURNS text
 LANGUAGE sql
 STABLE
@@ -74,9 +74,9 @@ SET search_path = pg_catalog
 AS $$
     SELECT substring(current_user::text from '^wamn_app_([0-9a-f]{40})_[ab]$')
 $$;
-ALTER FUNCTION "wamn_authority".current_tenant_key() OWNER TO CURRENT_USER;
-REVOKE ALL ON FUNCTION "wamn_authority".current_tenant_key() FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION "wamn_authority".current_tenant_key() TO "wamn_app";$wamn_authority_derivations$,
+ALTER FUNCTION "wamn_authority".current_project_key() OWNER TO CURRENT_USER;
+REVOKE ALL ON FUNCTION "wamn_authority".current_project_key() FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION "wamn_authority".current_project_key() TO "wamn_app";$wamn_authority_derivations$,
         '@wamn_database_literal@', quote_literal(current_database())),
         '@wamn_database_octets@', octet_length(convert_to(current_database(), 'UTF8'))::text);
 END

@@ -1,7 +1,7 @@
 //! Exact fixed-profile tests; these are not route-admission or cache tests.
 
 use crate::keys::{PublicSessionKey, SessionJwks, decode_public_key};
-use crate::test_util::{Scope as SessionScope, verify};
+use crate::test_util::{Audience as SessionAudience, verify};
 use crate::token::SessionClaims;
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use ring::signature::{Ed25519KeyPair, KeyPair as _};
@@ -49,8 +49,8 @@ fn signed(pair: &Ed25519KeyPair, header: &Value, claims: &Value) -> String {
     )
 }
 
-fn scope() -> SessionScope<'static> {
-    SessionScope {
+fn audience() -> SessionAudience<'static> {
+    SessionAudience {
         issuer: "https://identity.internal",
         org: "org-a",
         audience: "environment-id-a-dev",
@@ -126,42 +126,50 @@ async fn public_key_decoding_pins_every_algorithm_field_and_canonical_bytes() {
 }
 
 #[tokio::test]
-async fn fixed_ed25519_token_verifies_exact_scope_and_signature() {
+async fn fixed_ed25519_token_verifies_exact_audience_and_signature() {
     let (pair, key, header, claims) = fixture();
     let token = signed(&pair, &header, &claims);
-    let verified = verify(&token, &key, scope(), 1000).await.unwrap();
+    let verified = verify(&token, &key, audience(), 1000).await.unwrap();
     assert_eq!(serde_json::to_value(verified).unwrap(), claims);
-    for wrong_scope in [
-        SessionScope {
+    for wrong_audience in [
+        SessionAudience {
             issuer: "https://other.internal",
-            ..scope()
+            ..audience()
         },
-        SessionScope {
+        SessionAudience {
             org: "org-b",
-            ..scope()
+            ..audience()
         },
-        SessionScope {
+        SessionAudience {
             audience: "environment-id-a-prod",
-            ..scope()
+            ..audience()
         },
-        SessionScope {
+        SessionAudience {
             org: "org-b",
             audience: "environment-id-b-dev",
-            ..scope()
+            ..audience()
         },
     ] {
-        assert!(verify(&token, &key, wrong_scope, 1000).await.is_err());
+        assert!(verify(&token, &key, wrong_audience, 1000).await.is_err());
     }
     let different_key = PublicSessionKey {
         x: URL_SAFE_NO_PAD.encode([3; 32]),
         ..key.clone()
     };
-    assert!(verify(&token, &different_key, scope(), 1000).await.is_err());
+    assert!(
+        verify(&token, &different_key, audience(), 1000)
+            .await
+            .is_err()
+    );
     let different_kid = PublicSessionKey {
         kid: "key-two".into(),
         ..key.clone()
     };
-    assert!(verify(&token, &different_kid, scope(), 1000).await.is_err());
+    assert!(
+        verify(&token, &different_kid, audience(), 1000)
+            .await
+            .is_err()
+    );
     let mut tampered = token.into_bytes();
     let final_byte = tampered.len() - 2;
     tampered[final_byte] = if tampered[final_byte] == b'A' {
@@ -170,9 +178,14 @@ async fn fixed_ed25519_token_verifies_exact_scope_and_signature() {
         b'A'
     };
     assert!(
-        verify(&String::from_utf8(tampered).unwrap(), &key, scope(), 1000)
-            .await
-            .is_err()
+        verify(
+            &String::from_utf8(tampered).unwrap(),
+            &key,
+            audience(),
+            1000
+        )
+        .await
+        .is_err()
     );
 }
 
@@ -187,7 +200,7 @@ async fn authenticated_header_and_claim_variants_refuse_indistinguishably() {
     ] {
         let mut malformed = header.clone();
         malformed[field] = json!(value);
-        verify(&signed(&pair, &malformed, &claims), &key, scope(), 1000)
+        verify(&signed(&pair, &malformed, &claims), &key, audience(), 1000)
             .await
             .unwrap_err();
     }
@@ -195,7 +208,7 @@ async fn authenticated_header_and_claim_variants_refuse_indistinguishably() {
         let mut malformed = header.clone();
         malformed[field] = json!(false);
         assert!(
-            verify(&signed(&pair, &malformed, &claims), &key, scope(), 1000)
+            verify(&signed(&pair, &malformed, &claims), &key, audience(), 1000)
                 .await
                 .is_err()
         );
@@ -214,7 +227,7 @@ async fn authenticated_header_and_claim_variants_refuse_indistinguishably() {
         let mut malformed = claims.clone();
         malformed.as_object_mut().unwrap().remove(field);
         assert!(
-            verify(&signed(&pair, &header, &malformed), &key, scope(), 1000)
+            verify(&signed(&pair, &header, &malformed), &key, audience(), 1000)
                 .await
                 .is_err(),
             "missing {field}"
@@ -242,7 +255,7 @@ async fn authenticated_header_and_claim_variants_refuse_indistinguishably() {
         let mut malformed = claims.clone();
         malformed[field] = value;
         assert!(
-            verify(&signed(&pair, &header, &malformed), &key, scope(), 1000)
+            verify(&signed(&pair, &header, &malformed), &key, audience(), 1000)
                 .await
                 .is_err(),
             "invalid {field}"
@@ -253,7 +266,7 @@ async fn authenticated_header_and_claim_variants_refuse_indistinguishably() {
         verify(
             &signed_bytes(&pair, duplicate, &serde_json::to_vec(&claims).unwrap()),
             &key,
-            scope(),
+            audience(),
             1000
         )
         .await
@@ -261,7 +274,7 @@ async fn authenticated_header_and_claim_variants_refuse_indistinguishably() {
     );
     let mut no_roles = claims;
     no_roles["roles"] = json!([]);
-    let verified = verify(&signed(&pair, &header, &no_roles), &key, scope(), 1000)
+    let verified = verify(&signed(&pair, &header, &no_roles), &key, audience(), 1000)
         .await
         .unwrap();
     assert!(
@@ -281,7 +294,7 @@ async fn age_rules_cover_exact_boundaries_and_overflow() {
     ] {
         claims["iat"] = json!(iat);
         claims["exp"] = json!(exp);
-        verify(&signed(&pair, &header, &claims), &key, scope(), now)
+        verify(&signed(&pair, &header, &claims), &key, audience(), now)
             .await
             .unwrap();
     }
@@ -304,7 +317,7 @@ async fn age_rules_cover_exact_boundaries_and_overflow() {
                     claims.clone()
                 }),
                 &key,
-                scope(),
+                audience(),
                 now
             )
             .await
@@ -327,9 +340,9 @@ async fn token_serialization_has_all_required_claims_and_rejects_duplicate_claim
         &serde_json::to_vec(&header).unwrap(),
         duplicated.as_bytes(),
     );
-    assert!(verify(&token, &key, scope(), 1000).await.is_err());
+    assert!(verify(&token, &key, audience(), 1000).await.is_err());
     for token in ["", "a.b", "a.b.c.d", ".b.c", "a..c", "a.b."] {
-        assert!(verify(token, &key, scope(), 1000).await.is_err());
+        assert!(verify(token, &key, audience(), 1000).await.is_err());
     }
 }
 
@@ -339,7 +352,7 @@ async fn csrf_claim_is_optional_and_refuses_anything_but_a_sha256_hex_digest() {
     let digest = "a".repeat(64);
     claims["csrf"] = json!(digest);
     let token = signed(&pair, &header, &claims);
-    let verified = verify(&token, &key, scope(), 1000).await.unwrap();
+    let verified = verify(&token, &key, audience(), 1000).await.unwrap();
     assert_eq!(verified.csrf.as_deref(), Some(digest.as_str()));
     assert_eq!(serde_json::to_value(verified).unwrap(), claims);
     for malformed in [
@@ -351,6 +364,6 @@ async fn csrf_claim_is_optional_and_refuses_anything_but_a_sha256_hex_digest() {
     ] {
         claims["csrf"] = json!(malformed);
         let token = signed(&pair, &header, &claims);
-        assert!(verify(&token, &key, scope(), 1000).await.is_err());
+        assert!(verify(&token, &key, audience(), 1000).await.is_err());
     }
 }

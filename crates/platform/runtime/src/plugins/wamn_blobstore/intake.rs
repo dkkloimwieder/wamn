@@ -5,7 +5,7 @@
 //! Upstream drains a guest's `stream<u8>` with `usize::MAX` and commits what
 //! it got. Two things go wrong under WAMN's rules.
 //!
-//! **Unbounded buffering.** A tenant-facing effect that will hold an entire
+//! **Unbounded buffering.** A project-facing effect that will hold an entire
 //! object in host memory needs a stated ceiling, not the absence of one.
 //!
 //! **Silent truncation — the sharper half.** A stream that ends early is

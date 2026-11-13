@@ -357,7 +357,7 @@ impl Column {
 /// under the validator.
 ///
 /// The allowlist therefore closes over forms. What it still refuses is
-/// unchanged in kind: an expression, a function call other than the two named
+/// unchanged in type: an expression, a function call other than the two named
 /// here, and a literal whose type is not the column's.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -444,7 +444,7 @@ pub enum IdentityMode {
 pub struct Constraint {
     name: Box<str>,
     #[serde(flatten)]
-    kind: ConstraintType,
+    type_: ConstraintType,
 }
 
 /// Semantic constraint shape, excluding its authored name.
@@ -541,16 +541,16 @@ impl Constraint {
 
     /// Semantic constraint shape.
     pub const fn constraint_type(&self) -> &ConstraintType {
-        &self.kind
+        &self.type_
     }
 
     fn new(
         name: impl Into<Box<str>>,
         object: &'static str,
-        kind: ConstraintType,
+        type_: ConstraintType,
     ) -> Result<Self, IrError> {
         let name = nonempty_name(name, object)?;
-        Ok(Self { name, kind })
+        Ok(Self { name, type_ })
     }
 }
 

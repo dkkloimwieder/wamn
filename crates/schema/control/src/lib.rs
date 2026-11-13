@@ -16,8 +16,8 @@ mod run_plane;
 pub mod sql;
 
 pub use environment::{
-    ENVIRONMENT_INSTANCE_WITHOUT_PROJECTION, EnvironmentInstanceClaimError,
-    claim_environment_instance_sql, require_environment_instance_claim,
+    ENVIRONMENT_INSTANCE_WITHOUT_PROJECTION, EnvironmentInstanceAssignmentError,
+    assign_environment_instance_sql, require_environment_instance_assignment,
 };
 pub use exposure::{ExposureError, HttpRoute, canonical_http_route_template, normalize_http_route};
 pub use model::{SqlStatement, Value};
@@ -35,7 +35,7 @@ pub use replica_identity::{
 };
 pub use run_plane::{
     BareSchemaName, InvalidBareSchemaName, RowPolicyObservation, RowSecurityObservation,
-    RunPlaneAction, RunPlaneActionKind, RunPlaneObservation, RunPlanePlan,
+    RunPlaneAction, RunPlaneActionType, RunPlaneObservation, RunPlanePlan,
     catalog_schema_present_sql, plan_run_plane, rewrite_schema, select_app_run_queue_authority_sql,
     select_authoring_effective_column_privileges_sql,
     select_authoring_effective_table_privileges_sql, select_authoring_table_owners_sql,

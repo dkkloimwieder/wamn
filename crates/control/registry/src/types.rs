@@ -123,7 +123,7 @@ pub enum RecoveryDomain {
 /// A named, self-contained environment policy — the D18 replacement for the
 /// closed `Tier` sizing/backup semantics. The policy `name` **is** the env slug
 /// ([`Env`]); a project-env's `env` both identifies it in the [`Triple`] and
-/// resolves this policy. Standalone (no inheritance). Policies are **org-scoped**
+/// resolves this policy. Standalone (no inheritance). Policies are **org-targeted**
 /// (wamn-8df.4): each org owns its policy set ([`OrgEnvPolicy`]), stamped from a
 /// [`Template`](crate::Template) and then customized per-env — this value type
 /// stays org-free so templates can carry it.
@@ -253,7 +253,7 @@ pub enum Placement {
 
 impl Placement {
     /// The `placement_type` storage literal (`pooled` / `dedicated`).
-    pub fn kind_str(&self) -> &'static str {
+    pub fn type_str(&self) -> &'static str {
         match self {
             Placement::Pooled { .. } => "pooled",
             Placement::Dedicated => "dedicated",
@@ -357,17 +357,17 @@ impl Triple {
 
 /// The key of a project environment: `<org>--<project>--<env>` (owner
 /// ruling of 2026-10-09 on `wamn-snz0`). The first apply, the analysis of
-/// `env apply` and the host scope all derive it here, so neither the
+/// `env apply` and the host target all derive it here, so neither the
 /// environment document nor the serving manifest repeats the composed key.
 pub fn project_env_key(org: &str, project: &str, env: &str) -> String {
     format!("{org}--{project}--{env}")
 }
 
-/// The NATS user of the environment `env_key`. Its client certificate
+/// The NATS user of the environment `project_env_key`. Its client certificate
 /// carries this DNS name, and its replies use the inbox `_INBOX_<user>`
 /// (docs/plan/alignment.md R5).
-pub fn environment_nats_user(env_key: &str) -> String {
-    format!("wamn-env-{env_key}")
+pub fn environment_nats_user(project_env_key: &str) -> String {
+    format!("wamn-env-{project_env_key}")
 }
 
 /// The NATS user of the control host of `org`, which covers every
@@ -496,7 +496,7 @@ impl Registry {
     }
 
     /// The policy named `name` in org `org`'s set, if defined (policies are
-    /// org-scoped — wamn-8df.4).
+    /// org-targeted — wamn-8df.4).
     pub fn env_policy(&self, org: &str, name: &Env) -> Option<&EnvPolicy> {
         self.env_policies
             .iter()
@@ -570,7 +570,7 @@ mod tests {
     #[test]
     fn cluster_of_collapses_a_pooled_org_onto_its_pool() {
         let org = Org::pooled("try", "wamn-pg");
-        assert_eq!(org.placement.kind_str(), "pooled");
+        assert_eq!(org.placement.type_str(), "pooled");
         assert_eq!(org.placement.pool(), Some("wamn-pg"));
         for policy in [EnvPolicy::dev(), EnvPolicy::prod()] {
             assert_eq!(cluster_of(&org, &policy).name, "wamn-pg");
@@ -581,7 +581,7 @@ mod tests {
     #[test]
     fn dedicated_placement_has_no_pool() {
         let org = Org::dedicated("acme");
-        assert_eq!(org.placement.kind_str(), "dedicated");
+        assert_eq!(org.placement.type_str(), "dedicated");
         assert_eq!(org.placement.pool(), None);
     }
 
@@ -647,7 +647,7 @@ mod tests {
         assert!(json.contains("\"type\": \"pooled\""));
         assert!(json.contains("\"pool\": \"wamn-pg\""));
         assert!(json.contains("\"type\": \"dedicated\""));
-        // env-policies are org-scoped rows with kebab-case wire keys.
+        // env-policies are org-targeted rows with kebab-case wire keys.
         assert!(json.contains("\"env-policies\""));
         assert!(json.contains("\"org\": \"acme\""));
         assert!(json.contains("\"promotion-rank\""));

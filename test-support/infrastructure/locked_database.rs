@@ -12,11 +12,11 @@ pub struct LockedDatabase {
     _lock: wamn_test_postgres::ProcessLock,
 }
 
-/// Take the process lock, then create a database with `floor`.
-pub fn database(floor: fn() -> wamn_test_postgres::Database) -> LockedDatabase {
+/// Take the process lock, then create a database with `minimum`.
+pub fn database(minimum: fn() -> wamn_test_postgres::Database) -> LockedDatabase {
     let lock = wamn_test_postgres::lock();
     LockedDatabase {
-        database: floor(),
+        database: minimum(),
         _lock: lock,
     }
 }

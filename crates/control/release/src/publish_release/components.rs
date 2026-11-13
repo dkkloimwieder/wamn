@@ -19,8 +19,8 @@ pub(super) fn resolve_component_dependency_closure(
         insert_closure_component(&mut closure, component)?;
         visit_base_dependencies(
             (
-                &component.scope.package_id,
-                &component.scope.package_version,
+                &component.target.package_id,
+                &component.target.package_version,
             ),
             component_facts,
             package_manifests,
@@ -38,8 +38,8 @@ fn insert_closure_component(
     component: &AdmittedComponent,
 ) -> Result<(), PublishManifestError> {
     let key = (
-        component.scope.package_id.clone(),
-        component.scope.package_version.clone(),
+        component.target.package_id.clone(),
+        component.target.package_version.clone(),
         component.component_digest.clone(),
     );
     match closure.get(&key) {

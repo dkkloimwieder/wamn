@@ -2,8 +2,8 @@
 //! (docs/architecture/execution.md#host-run-routes, wamn-a40n.2, wamn-a40n.7).
 //!
 //! The test starts its own PostgreSQL 18 server. A real session token is
-//! verified against local HTTPS keys, the scoped session permission reader
-//! admits the caller, and the host answers the route under the scoped
+//! verified against local HTTPS keys, the targeted session permission reader
+//! admits the caller, and the host answers the route under the targeted
 //! administration login.
 
 use std::sync::Arc;
@@ -13,7 +13,7 @@ use serde_json::{Value, json};
 use sha2::{Digest as _, Sha256};
 use wamn_catalog::HostRouteSet;
 use wamn_control_provision::{
-    CredentialGeneration, WorkloadRoleFamily, WorkloadRoleScope, sql, workload_generation_role,
+    CredentialGeneration, WorkloadRoleFamily, WorkloadRoleIdentity, sql, workload_generation_role,
 };
 use wamn_engine::flow_http_routing::{AuthenticatedCaller, FlowHttpRouting, RouteInFlightLimit};
 use wamn_engine::release_manifest::LoadedRelease;
@@ -118,8 +118,8 @@ async fn permission_mine_answers_the_held_grants_of_the_session_caller() -> anyh
 
     // The administration login writes the authorization relations and
     // appends their history entries, and reads nothing on the run plane.
-    let scoped = connect(&login(admin_url, &administration)?).await?;
-    let identity = scoped
+    let targeted = connect(&login(admin_url, &administration)?).await?;
+    let identity = targeted
         .query_one(
             "SELECT rolsuper OR rolbypassrls, \
                     has_schema_privilege(current_user, 'wamn_run', 'USAGE') \
@@ -128,7 +128,7 @@ async fn permission_mine_answers_the_held_grants_of_the_session_caller() -> anyh
         )
         .await?;
     assert!(!identity.get::<_, bool>(0) && !identity.get::<_, bool>(1));
-    scoped
+    targeted
         .batch_execute(&format!(
             "BEGIN; \
              SELECT set_config('app.user_id', '{MEMBER}', true), \
@@ -150,7 +150,7 @@ async fn permission_mine_answers_the_held_grants_of_the_session_caller() -> anyh
         entries, 2,
         "each administration write appends its history entry"
     );
-    drop(scoped);
+    drop(targeted);
 
     let mut server = Server::start().await;
     let (verifier, _token_clock, _key_clock) = server.verifier();
@@ -256,7 +256,7 @@ async fn permission_mine_answers_the_held_grants_of_the_session_caller() -> anyh
         json!({"admin": false, "permissions": ["session-test:purchase/read"]})
     );
 
-    // A read route by cookie needs the CSRF claim and no header.
+    // A read route by cookie needs the CSRF JWT claim and no header.
     let csrf = "fixture-csrf-token";
     let mut carried = member.clone();
     carried["csrf"] = json!(hex::encode(Sha256::digest(csrf.as_bytes())));
@@ -273,7 +273,7 @@ async fn permission_mine_answers_the_held_grants_of_the_session_caller() -> anyh
         routing
             .authenticate_headers_for_test(&route, &[("cookie", &bare)])
             .await
-            .expect_err("a cookie without the CSRF claim is refused")
+            .expect_err("a cookie without the CSRF JWT claim is refused")
             .0,
         401
     );
@@ -787,7 +787,7 @@ async fn control_mine_admits_only_a_current_project_admin_or_org_admin_session()
         .await?;
     let role = workload_generation_role(
         WorkloadRoleFamily::Control,
-        WorkloadRoleScope::Org {
+        WorkloadRoleIdentity::Org {
             org: ORG,
             database: &database,
         },
@@ -856,7 +856,7 @@ async fn control_mine_admits_only_a_current_project_admin_or_org_admin_session()
         json!({"next_cursor": null, "total": 1, "org_admin": false, "projects": [{"project": PROJECT, "project_admin": true}]})
     );
 
-    // A cookie read needs the CSRF claim. A PAT is never a control credential.
+    // A cookie read needs the CSRF JWT claim. A PAT is never a control credential.
     let mut carried = session.clone();
     carried["csrf"] = json!(hex::encode(Sha256::digest(b"control-csrf")));
     let cookie = format!("__Host-wamn-session={}", signed(&header(), &carried));
@@ -864,7 +864,7 @@ async fn control_mine_admits_only_a_current_project_admin_or_org_admin_session()
         routing
             .authenticate_headers_for_test(&route, &[("cookie", &cookie)])
             .await
-            .expect("a cookie read with the claim is admitted")
+            .expect("a cookie read with the JWT claim is admitted")
             .is_some()
     );
     let bare = format!("__Host-wamn-session={}", signed(&header(), &session));

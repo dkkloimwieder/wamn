@@ -13,22 +13,22 @@ use crate::IntentStore;
 use crate::intent_store::{Begun, Intent, IntentId, StoreErrorType, StoredOutcome};
 use crate::operator_action::OperatorActionBasis;
 
-/// The stores of one case: a store for a tenant that no other case uses, and
-/// a store for a second such tenant. A store that serves every tenant gives
+/// The stores of one case: a store for a partition that no other case uses, and
+/// a store for a second such partition. A store that serves every partition gives
 /// the same store twice.
 pub struct CaseStores {
     pub store: Arc<dyn IntentStore>,
-    pub tenant: String,
+    pub partition: String,
     pub other: Arc<dyn IntentStore>,
-    pub other_tenant: String,
+    pub other_partition: String,
 }
 
 impl std::fmt::Debug for CaseStores {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
             .debug_struct("CaseStores")
-            .field("tenant", &self.tenant)
-            .field("other_tenant", &self.other_tenant)
+            .field("partition", &self.partition)
+            .field("other_partition", &self.other_partition)
             .finish_non_exhaustive()
     }
 }
@@ -45,7 +45,7 @@ pub const CASES: [&str; 9] = [
     "a_released_key_is_new_again",
     "a_begun_key_is_uncertain_and_never_new_again",
     "a_repeated_key_with_another_input_conflicts",
-    "keys_belong_to_their_tenant",
+    "keys_belong_to_their_partition",
     "finish_closes_an_intent_once",
     "uncertain_lists_open_intents_oldest_first_up_to_the_limit",
     "a_resolved_intent_leaves_the_list_and_answers_its_basis",
@@ -65,7 +65,7 @@ pub async fn run(fixture: &dyn IntentStoreFixture, case: &'static str) {
         "a_repeated_key_with_another_input_conflicts" => {
             a_repeated_key_with_another_input_conflicts(fixture).await;
         }
-        "keys_belong_to_their_tenant" => keys_belong_to_their_tenant(fixture).await,
+        "keys_belong_to_their_partition" => keys_belong_to_their_partition(fixture).await,
         "finish_closes_an_intent_once" => finish_closes_an_intent_once(fixture).await,
         "uncertain_lists_open_intents_oldest_first_up_to_the_limit" => {
             uncertain_lists_open_intents_oldest_first_up_to_the_limit(fixture).await;
@@ -78,9 +78,9 @@ pub async fn run(fixture: &dyn IntentStoreFixture, case: &'static str) {
     }
 }
 
-fn intent<'a>(tenant: &'a str, key: &'a str, input_hash: &'a str) -> Intent<'a> {
+fn intent<'a>(partition: &'a str, key: &'a str, input_hash: &'a str) -> Intent<'a> {
     Intent {
-        tenant,
+        partition,
         release: "release-1",
         package: "scale",
         operation: "record_sample",
@@ -98,20 +98,22 @@ fn new_id(begun: Begun) -> IntentId {
 }
 
 pub async fn a_finished_key_returns_its_stored_outcome(fixture: &dyn IntentStoreFixture) {
-    let CaseStores { store, tenant, .. } = fixture
+    let CaseStores {
+        store, partition, ..
+    } = fixture
         .stores("a_finished_key_returns_its_stored_outcome")
         .await;
     let outcome = StoredOutcome(json!({"grams": 1250}));
     let id = new_id(
         store
-            .begin(&intent(&tenant, "k1", "h1"))
+            .begin(&intent(&partition, "k1", "h1"))
             .await
             .expect("begin"),
     );
     store.finish(&id, &outcome).await.expect("finish");
     assert_eq!(
         store
-            .begin(&intent(&tenant, "k1", "h1"))
+            .begin(&intent(&partition, "k1", "h1"))
             .await
             .expect("begin again"),
         Begun::Finished(outcome)
@@ -122,10 +124,12 @@ pub async fn a_finished_key_returns_its_stored_outcome(fixture: &dyn IntentStore
 /// A refused request element frees its key: the record goes, and the key is new again,
 /// with any input.
 pub async fn a_released_key_is_new_again(fixture: &dyn IntentStoreFixture) {
-    let CaseStores { store, tenant, .. } = fixture.stores("a_released_key_is_new_again").await;
+    let CaseStores {
+        store, partition, ..
+    } = fixture.stores("a_released_key_is_new_again").await;
     let id = new_id(
         store
-            .begin(&intent(&tenant, "k1", "h1"))
+            .begin(&intent(&partition, "k1", "h1"))
             .await
             .expect("begin"),
     );
@@ -138,7 +142,7 @@ pub async fn a_released_key_is_new_again(fixture: &dyn IntentStoreFixture) {
     assert_eq!(error.error_type(), StoreErrorType::Contract);
     let again = new_id(
         store
-            .begin(&intent(&tenant, "k1", "h2"))
+            .begin(&intent(&partition, "k1", "h2"))
             .await
             .expect("begin again"),
     );
@@ -154,18 +158,20 @@ pub async fn a_released_key_is_new_again(fixture: &dyn IntentStoreFixture) {
 }
 
 pub async fn a_begun_key_is_uncertain_and_never_new_again(fixture: &dyn IntentStoreFixture) {
-    let CaseStores { store, tenant, .. } = fixture
+    let CaseStores {
+        store, partition, ..
+    } = fixture
         .stores("a_begun_key_is_uncertain_and_never_new_again")
         .await;
     let id = new_id(
         store
-            .begin(&intent(&tenant, "k1", "h1"))
+            .begin(&intent(&partition, "k1", "h1"))
             .await
             .expect("begin"),
     );
     assert_eq!(
         store
-            .begin(&intent(&tenant, "k1", "h1"))
+            .begin(&intent(&partition, "k1", "h1"))
             .await
             .expect("begin again"),
         Begun::Uncertain(id)
@@ -173,25 +179,27 @@ pub async fn a_begun_key_is_uncertain_and_never_new_again(fixture: &dyn IntentSt
 }
 
 pub async fn a_repeated_key_with_another_input_conflicts(fixture: &dyn IntentStoreFixture) {
-    let CaseStores { store, tenant, .. } = fixture
+    let CaseStores {
+        store, partition, ..
+    } = fixture
         .stores("a_repeated_key_with_another_input_conflicts")
         .await;
     let id = new_id(
         store
-            .begin(&intent(&tenant, "k1", "h1"))
+            .begin(&intent(&partition, "k1", "h1"))
             .await
             .expect("begin"),
     );
     assert_eq!(
         store
-            .begin(&intent(&tenant, "k1", "h2"))
+            .begin(&intent(&partition, "k1", "h2"))
             .await
             .expect("begin again"),
         Begun::Conflict(id.clone())
     );
     assert_eq!(
         store
-            .begin(&intent(&tenant, "k1", "h1"))
+            .begin(&intent(&partition, "k1", "h1"))
             .await
             .expect("begin a third time"),
         Begun::Uncertain(id),
@@ -199,30 +207,32 @@ pub async fn a_repeated_key_with_another_input_conflicts(fixture: &dyn IntentSto
     );
 }
 
-pub async fn keys_belong_to_their_tenant(fixture: &dyn IntentStoreFixture) {
+pub async fn keys_belong_to_their_partition(fixture: &dyn IntentStoreFixture) {
     let CaseStores {
         store,
-        tenant,
+        partition,
         other,
-        other_tenant,
-    } = fixture.stores("keys_belong_to_their_tenant").await;
+        other_partition,
+    } = fixture.stores("keys_belong_to_their_partition").await;
     store
-        .begin(&intent(&tenant, "k1", "h1"))
+        .begin(&intent(&partition, "k1", "h1"))
         .await
         .expect("begin");
     new_id(
         other
-            .begin(&intent(&other_tenant, "k1", "h2"))
+            .begin(&intent(&other_partition, "k1", "h2"))
             .await
-            .expect("another tenant's key is new"),
+            .expect("another partition's key is new"),
     );
 }
 
 pub async fn finish_closes_an_intent_once(fixture: &dyn IntentStoreFixture) {
-    let CaseStores { store, tenant, .. } = fixture.stores("finish_closes_an_intent_once").await;
+    let CaseStores {
+        store, partition, ..
+    } = fixture.stores("finish_closes_an_intent_once").await;
     let id = new_id(
         store
-            .begin(&intent(&tenant, "k1", "h1"))
+            .begin(&intent(&partition, "k1", "h1"))
             .await
             .expect("begin"),
     );
@@ -243,24 +253,26 @@ pub async fn finish_closes_an_intent_once(fixture: &dyn IntentStoreFixture) {
 pub async fn uncertain_lists_open_intents_oldest_first_up_to_the_limit(
     fixture: &dyn IntentStoreFixture,
 ) {
-    let CaseStores { store, tenant, .. } = fixture
+    let CaseStores {
+        store, partition, ..
+    } = fixture
         .stores("uncertain_lists_open_intents_oldest_first_up_to_the_limit")
         .await;
     let first = new_id(
         store
-            .begin(&intent(&tenant, "k1", "h1"))
+            .begin(&intent(&partition, "k1", "h1"))
             .await
             .expect("begin"),
     );
     let finished = new_id(
         store
-            .begin(&intent(&tenant, "k2", "h2"))
+            .begin(&intent(&partition, "k2", "h2"))
             .await
             .expect("begin"),
     );
     let third = new_id(
         store
-            .begin(&intent(&tenant, "k3", "h3"))
+            .begin(&intent(&partition, "k3", "h3"))
             .await
             .expect("begin"),
     );
@@ -281,7 +293,7 @@ pub async fn uncertain_lists_open_intents_oldest_first_up_to_the_limit(
     let limited = store.uncertain(1).await.expect("uncertain");
     assert_eq!(limited.len(), 1);
     assert_eq!(limited[0].id, first);
-    assert_eq!(limited[0].tenant, tenant);
+    assert_eq!(limited[0].partition, partition);
     assert_eq!(limited[0].idempotency_key, "k1");
     assert_eq!(limited[0].operation, "record_sample");
 }
@@ -289,12 +301,14 @@ pub async fn uncertain_lists_open_intents_oldest_first_up_to_the_limit(
 pub async fn a_resolved_intent_leaves_the_list_and_answers_its_basis(
     fixture: &dyn IntentStoreFixture,
 ) {
-    let CaseStores { store, tenant, .. } = fixture
+    let CaseStores {
+        store, partition, ..
+    } = fixture
         .stores("a_resolved_intent_leaves_the_list_and_answers_its_basis")
         .await;
     let id = new_id(
         store
-            .begin(&intent(&tenant, "k1", "h1"))
+            .begin(&intent(&partition, "k1", "h1"))
             .await
             .expect("begin"),
     );
@@ -305,7 +319,7 @@ pub async fn a_resolved_intent_leaves_the_list_and_answers_its_basis(
     assert!(store.uncertain(10).await.expect("uncertain").is_empty());
     assert_eq!(
         store
-            .begin(&intent(&tenant, "k1", "h1"))
+            .begin(&intent(&partition, "k1", "h1"))
             .await
             .expect("begin again"),
         Begun::Resolved {
@@ -326,11 +340,12 @@ pub async fn a_resolved_intent_leaves_the_list_and_answers_its_basis(
 }
 
 pub async fn a_finished_intent_does_not_resolve(fixture: &dyn IntentStoreFixture) {
-    let CaseStores { store, tenant, .. } =
-        fixture.stores("a_finished_intent_does_not_resolve").await;
+    let CaseStores {
+        store, partition, ..
+    } = fixture.stores("a_finished_intent_does_not_resolve").await;
     let id = new_id(
         store
-            .begin(&intent(&tenant, "k1", "h1"))
+            .begin(&intent(&partition, "k1", "h1"))
             .await
             .expect("begin"),
     );

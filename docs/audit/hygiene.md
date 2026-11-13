@@ -68,9 +68,9 @@ Owner review 2026-10-31: Group 4 Do, small. Delete the diagnostic and keep its t
 
 Severity: medium  
 Effort: S  
-Area: `tools/kubernetes-gate-run`
+Area: `tools/kubernetes-acceptance-test-run`
 
-Evidence: `tools/kubernetes-gate-run:11`, `tools/kubernetes-gate-run:32`, `tools/kubernetes-gate-run:34`.
+Evidence: `tools/kubernetes-acceptance-test-run:11`, `tools/kubernetes-acceptance-test-run:32`, `tools/kubernetes-acceptance-test-run:34`.
 
 Problem: Value-taking arguments call `shift 2` without first requiring a second argument. The script disables automatic exit on command failure, so an incomplete argument such as `--manifest` leaves the loop on the same argument indefinitely.
 
@@ -78,7 +78,7 @@ Proposal: Require each argument value before advancing the parser. During the id
 
 Deletes: The unverified argument branches, followed by the shell parser when its owner moves.
 
-Risk: Invalid invocations consume a worker instead of returning an error. Extend `tests/conformance/tests/kubernetes_gate_runner.rs` with bounded missing-value cases for every value-taking flag.
+Risk: Invalid invocations consume a worker instead of returning an error. Extend `tests/conformance/tests/kubernetes_acceptance_test_runner.rs` with bounded missing-value cases for every value-taking flag.
 
 Owner review 2026-10-31: In passing with H1-5. The parser goes when the shell runner goes.
 
@@ -86,7 +86,7 @@ Owner review 2026-10-31: In passing with H1-5. The parser goes when the shell ru
 
 Severity: medium  
 Effort: M  
-Area: `tools/identity-jwks-journey-run`, `tools/kubernetes-gate-run`
+Area: `tools/identity-jwks-journey-run`, `tools/kubernetes-acceptance-test-run`
 
 Evidence: `tools/identity-jwks-journey-run:58`, `tools/identity-jwks-journey-run:183`, `tools/identity-jwks-journey-run:303`, `tools/identity-jwks-journey-run:424`, `tests/orchestrator/src/main.rs:40`.
 
@@ -96,17 +96,17 @@ Proposal: Merge the journey into the existing identity test owner and shared tes
 
 Deletes: Both shell runners after their callers move, plus the test that extracts the identity cleanup function with `sed`.
 
-Risk: Consolidation can lose negative authentication cases or expose fixture secrets. Preserve the verdict cases in `kubernetes_gate_runner.rs` and run the complete disposable identity journey at its required acceptance boundary.
+Risk: Consolidation can lose negative authentication cases or expose fixture secrets. Preserve the verdict cases in `kubernetes_acceptance_test_runner.rs` and run the complete disposable identity journey at its required acceptance boundary.
 
-Owner review 2026-10-31: Group 1 In passing with deployment D3-6. `identity-jwks-journey-run` and `kubernetes-gate-run` merge into the Rust identity tests and the one fixture. Question 3 is answered: yes, the repository `evidence/` requirement goes.
+Owner review 2026-10-31: Group 1 In passing with deployment D3-6. `identity-jwks-journey-run` and `kubernetes-acceptance-test-run` merge into the Rust identity tests and the one fixture. Question 3 is answered: yes, the repository `evidence/` requirement goes.
 
 ## Finding H1-6: Application lifecycle adapters duplicate resource management
 
 Severity: medium  
 Effort: M  
-Area: `tools/receiving-cluster-journey-run`, `tools/wms-cluster-journey-run`, `tools/rc-gate-run`
+Area: `tools/receiving-cluster-journey-run`, `tools/wms-cluster-journey-run`, `tools/rc-acceptance-test-run`
 
-Evidence: `tools/receiving-cluster-journey-run:14`, `tools/wms-cluster-journey-run:14`, `tools/rc-gate-run:19`, `tools/delivery-owned:85`. `measurements.md section 7` records 78 duplicated lines between the Receiving and WMS scripts.
+Evidence: `tools/receiving-cluster-journey-run:14`, `tools/wms-cluster-journey-run:14`, `tools/rc-acceptance-test-run:19`, `tools/delivery-owned:85`. `measurements.md section 7` records 78 duplicated lines between the Receiving and WMS scripts.
 
 Problem: These adapters repeat cluster creation, image import, operator installation, inspection, and cleanup. Their Rust callers already own the test lifecycle, but delegate shared infrastructure behavior to separate shell interfaces.
 
@@ -130,25 +130,25 @@ Risk: Existing baseline readers depend on the current format. Use saved results 
 
 Owner review 2026-10-31: In passing. One result writer keeps identity, workload, conflicts and errors, and summaries derive from it. Question 2 is answered: no, raw results are retained beside the summary.
 
-## Finding H1-8: The cloud floor runner leaves work active after failure
+## Finding H1-8: The cloud minimum runner leaves work active after failure
 
 Severity: medium  
 Effort: M  
-Area: `tools/bench/pg-floor/gcp.sh`
+Area: `tools/bench/pg-minimum/gcp.sh`
 
-Evidence: `tools/bench/pg-floor/gcp.sh:59`, `tools/bench/pg-floor/gcp.sh:116`, `tools/bench/pg-floor/gcp.sh:149`, `tools/bench/pg-floor/gcp.sh:155`, `tools/bench/db-profile.sh:7`.
+Evidence: `tools/bench/pg-minimum/gcp.sh:59`, `tools/bench/pg-minimum/gcp.sh:116`, `tools/bench/pg-minimum/gcp.sh:149`, `tools/bench/pg-minimum/gcp.sh:155`, `tools/bench/db-profile.sh:7`.
 
-Problem: The exit handler deletes only the client Job, although the runner starts a background PostgreSQL sampler. A failure during the replay can also bypass trigger restoration in `wamn_pg_floor`. The initial Pod-discovery loop has no deadline.
+Problem: The exit handler deletes only the client Job, although the runner starts a background PostgreSQL sampler. A failure during the replay can also bypass trigger restoration in `wamn_pg_minimum`. The initial Pod-discovery loop has no deadline.
 
-Proposal: Give the floor run one cleanup owner that stops sampling, restores altered triggers, and removes its client. Bound Pod discovery and use a distinct run identity for the disposable resources.
+Proposal: Give the minimum run one cleanup owner that stops sampling, restores altered triggers, and removes its client. Bound Pod discovery and use a distinct run identity for the disposable resources.
 
 Deletes: The Job-only cleanup handler and unbounded discovery loop.
 
-Risk: Failed runs can leave a sampler active or alter the next experiment’s conditions. Inject a replay failure against a disposable floor database and prove cleanup and trigger restoration.
+Risk: Failed runs can leave a sampler active or alter the next experiment’s conditions. Inject a replay failure against a disposable minimum database and prove cleanup and trigger restoration.
 
 Owner review 2026-10-31: In passing, when `gcp.sh` is next touched. The `COMMIT_DELAY` switch there stays by ruling.
 
-## Finding H1-9: The train runner omits its documented submodule gate
+## Finding H1-9: The train runner omits its documented submodule condition
 
 Severity: medium  
 Effort: S  
@@ -194,13 +194,13 @@ Merged into code-quality A2-14 (owner review 2026-10-31). In passing, one source
 
 Severity: low  
 Effort: S  
-Area: `tools/rename-app-system-to-platform`, `tools/kind-gate-build`, `tools/kind-gate-image-remove`
+Area: `tools/rename-app-system-to-platform`, `tools/kind-acceptance-test-build`, `tools/kind-acceptance-test-image-remove`
 
-Evidence: `tools/rename-app-system-to-platform:4`, `tools/rename-app-system-to-platform:70`, `tools/kind-gate-build:93`, `tools/kind-gate-build:109`, `tools/kind-gate-image-remove:8`.
+Evidence: `tools/rename-app-system-to-platform:4`, `tools/rename-app-system-to-platform:70`, `tools/kind-acceptance-test-build:93`, `tools/kind-acceptance-test-build:109`, `tools/kind-acceptance-test-image-remove:8`.
 
-Problem: The rename tool preserves an applied one-time transformation and defaults to rewriting the checkout. The gate builder has no tracked caller, while the image remover’s tracked operational reference comes from that builder. Together these scripts retain 653 lines outside the documented delivery path.
+Problem: The rename tool preserves an applied one-time transformation and defaults to rewriting the checkout. The condition builder has no tracked caller, while the image remover’s tracked operational reference comes from that builder. Together these scripts retain 653 lines outside the documented delivery path.
 
-Proposal: Delete the rename tool and the manual gate build/removal pair. Use the existing platform build and owned disposable cluster lifecycle.
+Proposal: Delete the rename tool and the manual condition build/removal pair. Use the existing platform build and owned disposable cluster lifecycle.
 
 Deletes: All three scripts and tests whose sole subject is the removed command surface.
 
@@ -226,14 +226,14 @@ Paths in this table are relative to `tools/`. “No caller” means no tracked e
 | `journey-image-cache` | 222 | Cache, relabel, lease, and retain images. Upgrade operation and registry tests. | Merge production behavior into `wamn-control`. |
 | `kind-cluster-delete` | 33 | Bounded deletion and leftover inspection. Lifecycle adapters and Rust tests. | Keep one implementation until shared Rust infrastructure replaces it. |
 | `kind-cluster-delete-test` | 153 | Fake-command teardown tests. No tracked caller. | Merge into discoverable conformance tests. |
-| `kind-gate-build` | 114 | Build and load a gates image. No caller. | Delete. |
-| `kind-gate-image-remove` | 434 | Plan and remove retired node images. Gate builder and conformance tests. | Delete with the retired builder. |
+| `kind-acceptance-test-build` | 114 | Build and load a acceptance test image. No caller. | Delete. |
+| `kind-acceptance-test-image-remove` | 434 | Plan and remove retired node images. Condition builder and conformance tests. | Delete with the retired builder. |
 | `kind-kept-delete` | 25 | Remove resources named by `kept.json`. Environment tests and test instructions. | Merge into shared test infrastructure. |
-| `kubernetes-gate-run` | 367 | Run Jobs and produce verdict records. Identity runner and conformance tests. | Merge into the Rust test owner. |
+| `kubernetes-acceptance-test-run` | 367 | Run Jobs and produce verdict records. Identity runner and conformance tests. | Merge into the Rust test owner. |
 | `lane-start` | 90 | Prepare checkout, binaries, dependencies, and packages. Build and test instructions. | Cut down and renamed under F2-7 (banned word). |
 | `local-registry` | 41 | Start or reuse a labeled host registry. Build instructions. | Merge into control-side local platform preparation. |
 | `native-descriptor-limit-probe` | 178 | Exercise descriptor limits in host processes. No caller. | Merge into host tests. |
-| `rc-gate-run` | 63 | RC test lifecycle adapter. `tests/integration/src/rc/resources.rs`. | Merge into shared test infrastructure. |
+| `rc-acceptance-test-run` | 63 | RC test lifecycle adapter. `tests/integration/src/rc/resources.rs`. | Merge into shared test infrastructure. |
 | `receiving-cluster-journey-run` | 133 | Receiving lifecycle adapter. Receiving cluster fixtures. | Merge into shared test infrastructure. |
 | `rename-app-system-to-platform` | 105 | Apply a one-time schema spelling change. No caller. | Delete. |
 | `repo-lint` | 326 | Run formatting, Clippy, and repository rules. Change runner and test instructions. | Keep, share shell helpers. |
@@ -250,20 +250,20 @@ Paths below are relative to `tools/bench/`.
 
 | Script or Rust source | Lines | Purpose and referrers | Decision |
 | --- | ---: | --- | --- |
-| `local.sh` | 541 | Run local application, floor, and profile experiments. Benchmark instructions. | Keep benchmark ownership, reuse development lifecycle. |
+| `local.sh` | 541 | Run local application, minimum, and profile experiments. Benchmark instructions. | Keep benchmark ownership, reuse development lifecycle. |
 | `tier.sh` | 37 | Run deployed get/update measurements. GCP runbook and benchmark instructions. | Keep, retain full results. |
-| `pg-floor/gcp.sh` | 190 | Run floor experiments on GCP. Benchmark instructions and deployment comments. | Keep with owned cleanup and bounded waits. |
-| `pg-floor/run.sh` | 41 | Run the local floor experiment. Sourced by `local.sh`. | Keep beside benchmark runner. |
-| `db-profile.sh` | 35 | Sample database counters and seed Receiving. Local and GCP floor runners. | Keep one helper with an explicit cleanup contract. |
+| `pg-minimum/gcp.sh` | 190 | Run minimum experiments on GCP. Benchmark instructions and deployment comments. | Keep with owned cleanup and bounded waits. |
+| `pg-minimum/run.sh` | 41 | Run the local minimum experiment. Sourced by `local.sh`. | Keep beside benchmark runner. |
+| `db-profile.sh` | 35 | Sample database counters and seed Receiving. Local and GCP minimum runners. | Keep one helper with an explicit cleanup contract. |
 | `database-delta.py` | 28 | Subtract database counters. Profile helper and GCP runner. | Keep. |
-| `result.py` | 49 | Write common compact results. Local, tier, and floor result readers. | Keep one result writer, preserve identity and failure detail. |
-| `pg-floor/result.py` | 68 | Interpret pgbench results and reconcile changed rows. Both floor runners. | Keep. |
+| `result.py` | 49 | Write common compact results. Local, tier, and minimum result readers. | Keep one result writer, preserve identity and failure detail. |
+| `pg-minimum/result.py` | 68 | Interpret pgbench results and reconcile changed rows. Both minimum runners. | Keep. |
 | `app-result.py` | 71 | Attribute sampled application span times. `local.sh`. | Keep as benchmark analysis. |
 | `name-guests.py` | 45 | Restore guest symbol names from matching artifacts. `local.sh`. | Keep as benchmark analysis. |
 | `profile-summary.py` | 90 | Summarize CPU samples. `local.sh`. | Keep as benchmark analysis. |
 | `src/main.rs` | 1,109 | Generate timed Receiving traffic and collect results. Local and tier runners. | Keep as a separate benchmark binary. |
 
-The support files also have live owners. `test-changes-suites.json` (8 lines) is replaced by `tests/selection.toml` under G3-2. Keep `component-virtualization.json` (7 lines) with package building. Keep `database-snapshot.sql` (8 lines) with profiling. Keep floor SQL beside its runner: `get.sql` (21), `update.sql` (83), `receipt.sql` (36), and `receipt-slots.sql` (30). Keep `gcp-client.yaml` (42 lines) with the cloud floor runner.
+The support files also have live owners. `test-changes-suites.json` (8 lines) is replaced by `tests/selection.toml` under G3-2. Keep `component-virtualization.json` (7 lines) with package building. Keep `database-snapshot.sql` (8 lines) with profiling. Keep minimum SQL beside its runner: `get.sql` (21), `update.sql` (83), `receipt.sql` (36), and `receipt-slots.sql` (30). Keep `gcp-client.yaml` (42 lines) with the cloud minimum runner.
 
 Production image preparation, collector rendering, and local registry preparation belong behind `wamn-ctl`, with implementation in `wamn-control`. Repository bootstrap, lint, revision testing, benchmark analysis, and test fixtures retain their existing types of owners. This follows `docs/architecture/overview.md:46` and `docs/architecture/overview.md:53`.
 
@@ -290,13 +290,13 @@ Effort: M
 Area: docs/plan, docs/architecture  
 Evidence: `docs/plan/integrations.md:118`, `docs/plan/integration-schema.md:5`, `docs/architecture/data-access.md:1250`, `docs/plan/write-log.md:7`, `docs/architecture/data-access.md:375`, `docs/operations/observability.md:3`.
 
-Problem: The integration plan declares org-scoped connections, while the schema plan and architecture describe project integrations with environment connections. The write-log plan excludes update and delete, while architecture includes both. These competing rules can lead an agent to implement the wrong credential boundary or retry behavior.
+Problem: The integration plan declares org-targeted connections, while the schema plan and architecture describe project integrations with environment connections. The write-log plan excludes update and delete, while architecture includes both. These competing rules can lead an agent to implement the wrong credential boundary or retry behavior.
 
 Proposal: Assign each implemented topic one reference owner. Plans contain only proposed changes and unresolved decisions.
 
 | Duplicated topic | Pages that repeat it | One reference owner |
 | --- | --- | --- |
-| Integration identity, generations, credentials and bindings | `integrations.md`, `integration-schema.md`, `platform-config.md`, `data-access.md` | `plan/integration-schema.md` until C1 to C3 land, then `architecture/data-access.md#project-integrations-and-credentials`. `plan/integrations.md` is the older, contradicting plan (org-scoped connections) and is deleted now. |
+| Integration identity, generations, credentials and bindings | `integrations.md`, `integration-schema.md`, `platform-config.md`, `data-access.md` | `plan/integration-schema.md` until C1 to C3 land, then `architecture/data-access.md#project-integrations-and-credentials`. `plan/integrations.md` is the older, contradicting plan (org-targeted connections) and is deleted now. |
 | Transactions, composition and write-log retries | `write-log.md`, `trx-pkg-plan.md`, `routes-router.md`, `data-access.md` | `architecture/data-access.md#inputs-queries-and-transactions`. The write-log plan closed (`wamn-z7uv`), so `plan/write-log.md` is deleted, not reconciled. |
 | Request authentication and revocation | `request-round-trips.md`, `platform-ui.md`, `platform-config.md`, `execution.md` | `architecture/execution.md#caller-authentication` |
 | Workflow identity and execution | `routes-router.md`, `workflow-feature.md`, `workflows.md`, `execution.md` | `architecture/execution.md#environment-workflows` |
@@ -319,7 +319,7 @@ Effort: M
 Area: docs/plan/README.md  
 Evidence: `docs/README.md:8`, `docs/plan/README.md:4`, `docs/plan/request-round-trips.md:3`, `docs/plan/platform-deploy.md:5`, `.beads/issues.jsonl:625`, `.beads/issues.jsonl:2179`, `.beads/issues.jsonl:3501`.
 
-Problem: The documentation index defines plans as work that is not built, but the plan index includes completed programs. The retained Beads export records the scoped work below as closed. Live status remains unconfirmed because read-only `bd show` cannot open embedded Dolt without creating its lock file.
+Problem: The documentation index defines plans as work that is not built, but the plan index includes completed programs. The retained Beads export records the targeted work below as closed. Live status remains unconfirmed because read-only `bd show` cannot open embedded Dolt without creating its lock file.
 
 Proposal: Delete the eleven completed plans from `docs/plan`. The history index gets one line each: bead and commit.
 
@@ -397,14 +397,14 @@ Effort: S
 Area: docs/plan, docs/history  
 Evidence: `docs/plan/wamn-sync.md:521`, `docs/plan/wamn-sync.md:586`, `docs/plan/wamn-sync.md:863`, `docs/plan/wamn-sync.md:872`, `docs/plan/wamn-sync.md:903`, `docs/plan/integrations.md:20`, `docs/plan/platform-config.md:358`.
 
-Problem: A local scan of 105 scoped Markdown files found 27 links to absent paths and three links to absent headings. Five missing-path occurrences are in the active sync plan. All three missing headings use the retired org-connections anchor.
+Problem: A local scan of 105 targeted Markdown files found 27 links to absent paths and three links to absent headings. Five missing-path occurrences are in the active sync plan. All three missing headings use the retired org-connections anchor.
 
 Proposal: Repair retained links against their actual owners.
 
 | Broken references | Target treatment |
 | --- | --- |
-| Five sync links to `packaging-feed.ts`, `shell-status.ts`, `location-feed.ts`, and `saved-user.ts` | Locate the current implementation owner or remove the obsolete implementation claim |
-| `integrations.md:20`, `integrations.md:124`, `platform-config.md:358` | Use `data-access.md#project-integrations-and-credentials` and correct the associated org-scoped wording |
+| Five sync links to `packaging-feed.ts`, `shell-status.ts`, `location-feed.ts`, and `saved-user.ts` | Locate the current implementation owner or remove the obsolete implementation statement |
+| `integrations.md:20`, `integrations.md:124`, `platform-config.md:358` | Use `data-access.md#project-integrations-and-credentials` and correct the associated org-targeted wording |
 | `history/deterministic-testing-spec.md:5` | The retained file is `history/wamn_testing_spec.md` |
 | `history/operator-ui.md:10` | Use `../plan/platform-ui-app.md` |
 | Three links in `history/wamn_base_application_poc_revised.md`, starting at line 54 | Use the relevant `architecture/naming.md` section, or the historical source revision |
@@ -413,13 +413,13 @@ Proposal: Repair retained links against their actual owners.
 
 The remaining twelve missing paths are evidence artifacts covered by H2-6.
 
-Deletes: Obsolete source claims and links to retired deployment files. Do not recreate removed implementation files to satisfy documentation links.
+Deletes: Obsolete source statements and links to retired deployment files. Do not recreate removed implementation files to satisfy documentation links.
 
 Risk: A replacement link can point to a related but different contract. Repeat the path scan, resolve headings, and inspect each replacement’s meaning. External links were not tested.
 
 Owner review 2026-10-31: the five `wamn-sync.md` links are fixed now, because it is an active plan. The rest die with the H2-2 and H2-7 deletions or are repaired In passing.
 
-## Finding H2-6: Historical proof claims point to absent evidence
+## Finding H2-6: Historical proof statements point to absent evidence
 
 Severity: medium  
 Effort: M  
@@ -428,7 +428,7 @@ Evidence: `docs/history/consolidation-findings.md:139`, `docs/history/consolidat
 
 Problem: Twelve historical links target absent files under `evidence/perf/2026.09`. Their surrounding text presents those files as proof of baselines, authenticated behavior, deployed results, and source decisions. Readers cannot inspect that proof from this checkout.
 
-Proposal: Delete the twelve links and the proof wording. Keep each claim with its bead reference and the note "evidence not retained".
+Proposal: Delete the twelve links and the proof wording. Keep each statement with its bead reference and the note "evidence not retained".
 
 Deletes: Unsupported proof wording and dead artifact links when no retained source exists. Do not add placeholder evidence files.
 
@@ -472,7 +472,7 @@ Effort: S
 Area: docs/README.md, docs/plan/README.md  
 Evidence: `docs/plan/alignment.md:163`, `docs/plan/alignment.md:165`, `docs/plan/README.md:3`, `docs/README.md:9`, measurements.md section 9.
 
-Problem: The plan index omits `alignment.md`, although that page names a scoped epic and later work. History navigation leads to a directory rather than a map from retired documents to current owners. Measurements.md section 9 also records substantial churn in the documentation indexes and operating guides.
+Problem: The plan index omits `alignment.md`, although that page names a targeted epic and later work. History navigation leads to a directory rather than a map from retired documents to current owners. Measurements.md section 9 also records substantial churn in the documentation indexes and operating guides.
 
 Proposal: Keep the existing architecture, operations, and testing split. Use this target structure:
 
@@ -534,7 +534,7 @@ All three questions were answered on 2026-10-31.
 
 1. The agent runs `bd show` live for each candidate before deleting it. The passive export is not a status source (H2-2).
 2. Yes. The untrimmed-plan rule is superseded by the standing rules and is deleted (H2-8).
-3. Nowhere. The twelve links and the proof wording go, and each claim keeps its bead reference with the note "evidence not retained" (H2-6).
+3. Nowhere. The twelve links and the proof wording go, and each statement keeps its bead reference with the note "evidence not retained" (H2-6).
 
 <!-- report H3, bead wamn-lt36n.3 -->
 
@@ -546,7 +546,7 @@ Read-only audit at `8c831349d3116aac27d9ca6f59a499da1c87efc7`. No files changed.
 
 The six first-party Cargo lockfiles have live owners. Keep the native, guest, and isolated `no_std` lockfiles (`Cargo.toml:1`, `apps/Cargo.toml:1`, `apps/platform/no-std/Cargo.toml:3`). Keep the Modbus lockfile and both fixture lockfiles because tests copy or build those independent projects (`crates/control/lib/tests/connector_restart_live.rs:60`, `crates/control/lib/tests/integration_artifact.rs:17`, `crates/control/lib/tests/support/http-fixture/Dockerfile:3`). The seventh tracked lockfile belongs to vendored code (`vendor/pg-walstream/Cargo.lock:1`).
 
-No byte-identical tracked files appeared within the scoped first-party web packages. The duplication consists of near-identical tests, browser support functions, and configuration.
+No byte-identical tracked files appeared within the targeted first-party web packages. The duplication consists of near-identical tests, browser support functions, and configuration.
 
 ## Finding H3-1: The parent install omits wfe dependency repairs
 
@@ -602,7 +602,7 @@ Evidence: `web/shell/vite.ts:122`, `apps/platform_ui/vite.config.ts:5`, `apps/wa
 
 Problem: Three application configurations repeat Solid setup, browser resolution, deduplication, and test environment rules. Platform and Receiving separately implement tests for the bundled Solid version. Receiving and sync-bench separately define worker entry naming. The shared helper supplies an empty deduplication list and makes applications reconstruct the common policy.
 
-Proposal: One shared Vite owner must supply Solid compilation, resolution policy, runtime identity assertions, test defaults, and the worker build recipe. It must retain the existing development proxy, scope response, output handling, and precache support. Applications supply their entries, ports, output locations, public assets, and application-specific middleware.
+Proposal: One shared Vite owner must supply Solid compilation, resolution policy, runtime identity assertions, test defaults, and the worker build recipe. It must retain the existing development proxy, target response, output handling, and precache support. Applications supply their entries, ports, output locations, public assets, and application-specific middleware.
 
 Deletes: Repeated Solid-version plugins, resolution blocks, test defaults, and worker filename callbacks. Replace manually restated Vite interface shapes with Vite’s own types.
 

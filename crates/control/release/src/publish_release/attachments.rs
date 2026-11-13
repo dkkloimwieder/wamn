@@ -13,7 +13,7 @@ use super::{
 use wamn_catalog::AttachmentTarget;
 
 /// The route an author writes: the path alone. The deployment adds the host,
-/// and publish adds the method from the operation kind.
+/// and publish adds the method from the operation type.
 #[derive(serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 struct AuthoredRoute {
@@ -377,7 +377,7 @@ mod tests {
         let mut declaration =
             wamn_package_control::component_declaration::render_declaration_document(
                 &root.join("publication/components/fixture.json.in"),
-                "tenant-a",
+                "org-a",
             )
             .expect("render the fixture declaration");
         for operation in [

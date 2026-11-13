@@ -23,7 +23,7 @@ pub struct VerifiedStatement {
     pub columns: Box<[StatementField]>,
     /// PostgreSQL's build-time verdict: this statement writes or takes a row
     /// lock, so it must run inside a transaction. A statement that does neither
-    /// runs autocommit -- one flight, no claim binding, no COMMIT.
+    /// runs autocommit -- one flight, no identity binding, no COMMIT.
     pub transactional: bool,
 }
 

@@ -20,8 +20,8 @@ mod event_batch {
         let txid = changed_order(&fixture).await;
         event(&fixture, "first", 0, Some("reader")).await;
         fixture.admin.execute(
-            "INSERT INTO catalog.workflows (env_key, environment, application, workflow_id, version, graph_json, wiring_hash, trigger, source_package, entity, ops, enable_sequence, execution_type, execution_role, enabled, created_by) \
-             SELECT env_key, environment, 'billing', workflow_id, version, graph_json, wiring_hash, trigger, source_package, entity, ops, enable_sequence, execution_type, execution_role, enabled, created_by FROM catalog.workflows WHERE application = $1",
+            "INSERT INTO catalog.workflows (project_env_key, environment, application, workflow_id, version, graph_json, wiring_hash, trigger, source_package, entity, ops, enable_sequence, execution_type, execution_role, enabled, created_by) \
+             SELECT project_env_key, environment, 'billing', workflow_id, version, graph_json, wiring_hash, trigger, source_package, entity, ops, enable_sequence, execution_type, execution_role, enabled, created_by FROM catalog.workflows WHERE application = $1",
             &[&APP],
         ).await.unwrap();
         let upgraded = release_variant(&fixture, APP, b"1251").await;
@@ -32,7 +32,7 @@ mod event_batch {
         let retired = LoadedRelease::load_canonical_bytes(
             &retired.canonical_bytes(),
             "retired-component",
-            upgraded.scope().clone(),
+            upgraded.target().clone(),
         )
         .unwrap();
         let client = wamn_broker::nats::PlatformNats::from_env()
@@ -41,14 +41,15 @@ mod event_batch {
             .await
             .unwrap();
         let broker = async_nats::jetstream::new(client.clone());
-        let scope = Triple::new("schedule-live", PROJECT, ENVIRONMENT);
-        let source = wamn_broker::events::source_stream_config(&scope, 1, Duration::from_secs(120));
-        let advisory = wamn_broker::events::advisory_stream_config(&scope, 1);
+        let coordinate = Triple::new("schedule-live", PROJECT, ENVIRONMENT);
+        let source =
+            wamn_broker::events::source_stream_config(&coordinate, 1, Duration::from_secs(120));
+        let advisory = wamn_broker::events::advisory_stream_config(&coordinate, 1);
         let stream = broker.create_stream(source).await.unwrap();
         let advisory = broker.create_stream(advisory).await.unwrap();
         let events = WamnJetstream::new(WamnJetstreamConfig {
             nats: Some(client),
-            event_scope: Some(scope),
+            event_target: Some(coordinate),
             stream_replicas: Some(1),
             dup_window_secs: Some(120),
         });
@@ -239,17 +240,18 @@ async fn reset_discards_only_the_named_environments_backlog() -> anyhow::Result<
     let target = Triple::new("reset", &project, "dev");
     let other = Triple::new("reset", &project, "other");
     let mut streams = Vec::new();
-    for scope in [&target, &other] {
-        wamn_broker::streams::provision(&broker, scope, 1, Duration::from_secs(120), &[]).await?;
+    for coordinate in [&target, &other] {
+        wamn_broker::streams::provision(&broker, coordinate, 1, Duration::from_secs(120), &[])
+            .await?;
         for config in [
-            source_stream_config(scope, 1, Duration::from_secs(120)),
-            advisory_stream_config(scope, 1),
+            source_stream_config(coordinate, 1, Duration::from_secs(120)),
+            advisory_stream_config(coordinate, 1),
         ] {
             let subject = config.subjects[0]
                 .replace('>', "widget.insert")
                 .replace('*', "message");
             broker.publish(subject, "old event".into()).await?.await?;
-            streams.push((scope == &target, config));
+            streams.push((coordinate == &target, config));
         }
     }
     let result = async {

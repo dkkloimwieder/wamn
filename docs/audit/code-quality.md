@@ -20,13 +20,13 @@ Area: `tests/integration/src/startup_burst.rs`
 
 Evidence: `tests/integration/src/lib.rs:27`; `tests/integration/src/startup_burst.rs:461`; `tests/integration/src/startup_burst.rs:757`; `tests/orchestrator/src/main.rs:34`.
 
-Problem: The 826-line module exports a live startup measurement runner, but no repository caller invokes it. The gate command enum exposes no startup command. Its three unit tests exercise a reducer inside the same module, so they cannot establish that the runner works.
+Problem: The 826-line module exports a live startup measurement runner, but no repository caller invokes it. The condition command enum exposes no startup command. Its three unit tests exercise a reducer inside the same module, so they cannot establish that the runner works.
 
 Proposal: Delete the dormant runner and its private reducer tests. Keep startup measurement only when an owned command or journey executes it.
 
 Deletes: Approximately 827 lines, including the module declaration.
 
-Risk: Removes an unavailable measurement capability. Compile every integration target and retain the existing gate command tests. No current live test exercises `assert_startup`.
+Risk: Removes an unavailable measurement capability. Compile every integration target and retain the existing condition command tests. No current live test exercises `assert_startup`.
 
 Owner review 2026-10-31: delete, Group 4 Do, in the per-crate commit.
 
@@ -40,7 +40,7 @@ Area: `crates/execution/workflow/router/src/resolution.rs`
 
 Evidence: `crates/execution/workflow/router/src/resolution.rs:119`; `crates/execution/workflow/router/src/resolution.rs:169`; `crates/execution/workflow/router/tests/resolution.rs:8`; `crates/execution/workflow/src/router_driver.rs:246`; `crates/execution/workflow/src/router_driver.rs:270`.
 
-Problem: `WiringCache`, `VersionKey`, `CacheInsert`, and `WiringCacheSnapshot` have no caller outside the router crate. Their callers are cache tests. The production driver resolves each workflow claim, lowers its graph, and constructs `ActiveWiring` directly.
+Problem: `WiringCache`, `VersionKey`, `CacheInsert`, and `WiringCacheSnapshot` have no caller outside the router crate. Their callers are cache tests. The production driver resolves each workflow statement, lowers its graph, and constructs `ActiveWiring` directly.
 
 Proposal: Delete the cache implementation and its tests. Retain the small `ActiveWiring` carrier separately. Remove the cache-only OpenTelemetry dependency and exports.
 
@@ -74,9 +74,9 @@ Owner review 2026-10-31: delete, Group 4 Do, in the per-crate commit. `connectio
 
 Severity: low  
 Effort: S  
-Area: `crates/platform/runtime/src/plugins/wamn_postgres/claims/pools.rs`
+Area: `crates/platform/runtime/src/plugins/wamn_postgres/session_identity/pools.rs`
 
-Evidence: `crates/platform/runtime/src/plugins/wamn_postgres/claims/pools.rs:151`; `crates/platform/runtime/src/plugins/wamn_postgres/claims/pools.rs:199`; `crates/platform/runtime/src/plugins/wamn_postgres/claims/pools.rs:208`; `crates/platform/runtime/src/plugins/wamn_postgres/claims/pools.rs:214`; `crates/platform/runtime/src/plugins/wamn_postgres/claims/pools.rs:232`.
+Evidence: `crates/platform/runtime/src/plugins/wamn_postgres/session_identity/pools.rs:151`; `crates/platform/runtime/src/plugins/wamn_postgres/session_identity/pools.rs:199`; `crates/platform/runtime/src/plugins/wamn_postgres/session_identity/pools.rs:208`; `crates/platform/runtime/src/plugins/wamn_postgres/session_identity/pools.rs:214`; `crates/platform/runtime/src/plugins/wamn_postgres/session_identity/pools.rs:232`.
 
 Problem: `project_pool_count`, the public pool-status wrappers, and `register_pool_metrics` have no repository callers. The metric registration function therefore registers no production gauges. The private lifecycle view remains useful to a pool-isolation test.
 
@@ -84,7 +84,7 @@ Proposal: Delete the unused public count, aggregation, and registration function
 
 Deletes: Approximately 91 lines.
 
-Risk: Removes an unused metric registration API. Preserve `guest_and_platform_pool_caches_remain_distinct_under_interleaving` at `crates/platform/runtime/src/plugins/wamn_postgres/claims/tests.rs:215`.
+Risk: Removes an unused metric registration API. Preserve `guest_and_platform_pool_caches_remain_distinct_under_interleaving` at `crates/platform/runtime/src/plugins/wamn_postgres/session_identity/tests.rs:215`.
 
 Owner review 2026-10-31: delete, Group 4 Do, in the per-crate commit.
 
@@ -240,11 +240,11 @@ Evidence: `crates/schema/generator/src/generate/wit.rs:1407`; `:1483`; `:1503`; 
 
 Problem: Every shared operation codec receives both envelope decoders, UUID normalization, integer support, and mutation support. A read does not use the keyed decoder, while a keyed operation does not use the read decoder. Operations without relevant fields also receive unused scalar and mutation helpers. Timestamp-column constants appear for every model, although the inspected application caller uses only the purchase-order constant.
 
-Proposal: Emit support from each operation’s declared fields and envelope kind. Emit timestamp-column metadata only for a consumer that needs it.
+Proposal: Emit support from each operation’s declared fields and envelope type. Emit timestamp-column metadata only for a consumer that needs it.
 
 The allowances on generated `run`, `validate`, `decode`, and `map_error` do not establish dead implementations. Export adapters call those functions at `crates/schema/generator/src/generate/wit_adapters.rs:176` and `:181`; generated handlers call the mapper at `crates/schema/generator/src/generate/component.rs:116`. The SQLx compile-only allowance at `crates/schema/generator/src/sqlx_metadata.rs:341` and generated blobstore bindings at `crates/platform/runtime/src/plugins/wamn_blobstore/bindings.rs:33` also have valid purposes.
 
-Deletes: Unused emitted helpers and constants. Generated outputs were unavailable, so no aggregate line count is claimed.
+Deletes: Unused emitted helpers and constants. Generated outputs were unavailable, so no aggregate line count is reported.
 
 Risk: Preserve codec tests for UUID normalization, string-encoded integers, absent/null/value mutations, and keyed versus read envelopes. Preserve the timestamp-history test consumer at `apps/wamn_receiving/data/src/read.rs:60`.
 
@@ -260,13 +260,13 @@ Evidence: `crates/execution/workflow/router/src/lib.rs:51`; `crates/execution/wo
 
 Problem: Router and queue invariant evaluators serve tests but remain ordinary production APIs. Shared intent cases, schema-drift assertions, and database fixtures live behind production-crate test features. These helpers can have test-support ownership without deleting their coverage.
 
-Proposal: Move the portable evaluators, intent cases, schema-drift helpers, database fixtures, and synchronous router test driver into test support. Keep small feature-gated hooks that require private state inside their owning crate. The NATS process launcher can move separately from `watched`, which reads private cache state.
+Proposal: Move the portable evaluators, intent cases, schema-drift helpers, database fixtures, and synchronous router test driver into test support. Keep small hooks that need private state inside their owning crate. Enable those hooks through a feature. The NATS process launcher can move separately from `watched`, which reads private cache state.
 
-Test and benchmark binaries already have explicit consumers or entry points. `wamn-benchmark-gate` belongs to conformance, `wamn-test-postgres` belongs to test support, and the two integration benchmark binaries remain callable tools. Fixture guests are build inputs at `crates/control/lib/src/platform_build/inputs.rs:25`; relocation into test support requires moving their build ownership too.
+Test and benchmark binaries already have explicit consumers or entry points. `wamn-benchmark-acceptance-test` belongs to conformance, `wamn-test-postgres` belongs to test support, and the two integration benchmark binaries remain callable tools. Fixture guests are build inputs at `crates/control/lib/src/platform_build/inputs.rs:25`; relocation into test support requires moving their build ownership too.
 
 Deletes: At least 1,331 lines leave production source directories through relocation: 538 invariant lines, 639 case/drift lines, and 154 database-fixture lines. Net repository deletion is approximately zero.
 
-Risk: Preserve router property tests, queue tests, SQLite and PostgreSQL intent cases, schema-drift tests, and database-fixture installation tests. Keep production features `ops` and `wasm_component_model_implements`; their consumers are explicit. `tenant-key` is the retired tenant feature and is not kept. It goes with the removal of that feature, which is still in progress.
+Risk: Preserve router property tests, queue tests, SQLite and PostgreSQL intent cases, schema-drift tests, and database-fixture installation tests. Keep production features `ops` and `wasm_component_model_implements`; their consumers are explicit. `project-key` is the retired project feature and is not kept. It goes with the removal of that feature, which is still in progress.
 
 Owner review 2026-10-31: In passing. Relocation, zero net deletion.
 
@@ -286,7 +286,7 @@ Make SQLite `finish_text_in` private. Keep `finish_in`, `transact`, text operati
 
 Remove materializer helper re-exports without deleting their implementations. Keep the decision API and workflow types: the guest imports decisions at `apps/platform/execution/materializer/src/main.rs:26`, while native admission imports workflow types at `crates/platform/runtime/src/plugins/wamn_postgres/event_batch.rs:4`.
 
-Deletes: Unused public re-export entries. Most implementations remain, so no substantial line saving is claimed.
+Deletes: Unused public re-export entries. Most implementations remain, so no substantial line saving is reported.
 
 Risk: Preserve workflow lowering, materializer decisions, event admission, SQLite text replay, and close-notification tests. Avoid changing persisted or WIT error vocabularies.
 
@@ -341,7 +341,7 @@ Area: `crates/control/lib/src`
 
 Evidence: `crates/control/lib/src/platform/build.rs:328`; `crates/control/lib/src/platform/provider.rs:189`; `crates/control/lib/src/platform_build.rs:1417`; `crates/control/lib/src/kubectl.rs:55`; `crates/control/lib/src/owned_command.rs:27`.
 
-Problem: Five runner surfaces repeat process execution or result handling. Several use unbounded `output()` calls, while `owned_command` already provides deadlines, cancellation, and descendant cleanup. The scoped count is 37 files containing `Command::new`, including tests; it does not mean 37 interchangeable runners.
+Problem: Five runner surfaces repeat process execution or result handling. Several use unbounded `output()` calls, while `owned_command` already provides deadlines, cancellation, and descendant cleanup. The targeted count is 37 files containing `Command::new`, including tests; it does not mean 37 interchangeable runners.
 
 Merged into deployment D2-4 (owner review 2026-10-31). What survives Group 1 is routed through `owned_command.rs` with a deadline. No separate text.
 
@@ -353,7 +353,7 @@ Area: `crates/catalog/model/src/host_route`
 
 Evidence: `crates/catalog/model/src/host_route/control/contracts/integration/enable.errors.json:1`; `crates/catalog/model/src/host_route/control/contracts/integration/delete.errors.json:1`; `crates/catalog/model/src/host_route/control/contracts/connection/get.result.json:1`; `crates/catalog/model/src/host_route/control/contracts/connection/write.result.json:1`; `crates/schema/generator/src/materialize.rs:755`.
 
-Problem: Current byte comparison finds 71 redundant files among 103 members of duplicate groups, rather than the scoped estimate of 74. Those redundant files contain 3,020 lines. Each route currently needs separate files even when its input, result, or error shape is identical.
+Problem: Current byte comparison finds 71 redundant files among 103 members of duplicate groups, rather than the targeted estimate of 74. Those redundant files contain 3,020 lines. Each route currently needs separate files even when its input, result, or error shape is identical.
 
 Proposal: Keep `wamn-catalog::host_route` as the owner. Author each shared shape once and assign it explicitly to operations. Let the generator consume the resolved contract map and emit per-operation files only as build output.
 
@@ -371,9 +371,9 @@ Severity: medium
 Effort: M  
 Area: `crates/platform/runtime/src/plugins/wamn_postgres`
 
-Evidence: `crates/platform/runtime/src/plugins/wamn_postgres/resources.rs:571`; `crates/platform/runtime/src/plugins/wamn_postgres/resources.rs:680`; `crates/platform/runtime/src/plugins/wamn_postgres/production_claim.rs:172`; `crates/platform/runtime/src/plugins/wamn_postgres/production_claim.rs:279`; measurements.md section 7.
+Evidence: `crates/platform/runtime/src/plugins/wamn_postgres/resources.rs:571`; `crates/platform/runtime/src/plugins/wamn_postgres/resources.rs:680`; `crates/platform/runtime/src/plugins/wamn_postgres/production_lease.rs:172`; `crates/platform/runtime/src/plugins/wamn_postgres/production_lease.rs:279`; measurements.md section 7.
 
-Problem: Named and default database bindings repeat tracing, timing, result conversion, and resource insertion. Production claim operations repeat connection checkout and transaction setup. Measurements report 1,183 duplicated lines within runtime, but that total includes tests and overlapping matches.
+Problem: Named and default database bindings repeat tracing, timing, result conversion, and resource insertion. Production lease operations repeat connection checkout and transaction setup. Measurements report 1,183 duplicated lines within runtime, but that total includes tests and overlapping matches.
 
 Proposal: Keep one implementation inside `WamnPostgres` for each database behavior and transaction lifecycle. Resolve named or default project authority first, then enter that implementation. Leave binding methods as argument and boundary-error adapters.
 
@@ -387,9 +387,9 @@ Owner review 2026-10-31: In passing, after A5. The begin-operation and commit im
 
 Severity: medium  
 Effort: M  
-Area: `deploy/sql`, `crates/control/provision/src/tenant_key.rs`
+Area: `deploy/sql`, `crates/control/provision/src/project_key.rs`
 
-Evidence: `deploy/sql/catalog-schema-prefix.sql:45`; `deploy/sql/run-state.sql:98`; `deploy/sql/postgres-init.sql:170`; `deploy/sql/app-schema.sql:127`; `crates/control/provision/src/tenant_key.rs:208`.
+Evidence: `deploy/sql/catalog-schema-prefix.sql:45`; `deploy/sql/run-state.sql:98`; `deploy/sql/postgres-init.sql:170`; `deploy/sql/app-schema.sql:127`; `crates/control/provision/src/project_key.rs:208`.
 
 Problem: Four schema artifacts embed the same 40-line authority bootstrap. The files already identify a shared builder, so this is repeated distribution content rather than four independent designs. Keeping each schema standalone makes every authority change touch several authored artifacts.
 
@@ -397,9 +397,9 @@ Proposal: One authority SQL file. Provisioning concatenates it with the schema b
 
 Deletes: Approximately 120–150 net lines from the four embedded copies.
 
-Risk: Installation order, function ownership, database-name substitution, and expression indexes must remain correct. Use `the_bootstrap_and_literal_renderings_install_the_same_object` and the live deployment SQL authority suite (`crates/control/provision/tests/tenant_key_live.rs:512`, `crates/control/provision/tests/deploy_sql_authority.rs:16`).
+Risk: Installation order, function ownership, database-name substitution, and expression indexes must remain correct. Use `the_bootstrap_and_literal_renderings_install_the_same_object` and the live deployment SQL authority suite (`crates/control/provision/tests/project_key_live.rs:512`, `crates/control/provision/tests/deploy_sql_authority.rs:16`).
 
-Owner review 2026-10-31: In passing, inside the C1-1 baseline work, which already touches every file in `deploy/sql`. Question 1 is answered: authored SQL stays directly readable and executable. The installer composes, nothing generates. `crates/control/provision/src/tenant_key.rs` is part of the tenant feature removal in progress, not a target here.
+Owner review 2026-10-31: In passing, inside the C1-1 baseline work, which already touches every file in `deploy/sql`. Question 1 is answered: authored SQL stays directly readable and executable. The installer composes, nothing generates. `crates/control/provision/src/project_key.rs` is part of the project feature removal in progress, not a target here.
 
 ## Finding A2-6: Database setup has three homes and repeated schema composition
 
@@ -429,7 +429,7 @@ Evidence: `crates/control/lib/tests/workflow_manual_run_live.rs:90`; `crates/con
 
 Problem: The manual-run and schedule tests repeat a 75-line component fixture and a 45-line credential setup block. Their assertions prove different behavior and must remain separate. Repeating the setup makes authority and component contract changes expensive.
 
-Proposal: Put the common component and scoped credential fixture in `test-support/infrastructure`. Migrate these two tests first, then assess the other test clones from measurements individually.
+Proposal: Put the common component and targeted credential fixture in `test-support/infrastructure`. Migrate these two tests first, then assess the other test clones from measurements individually.
 
 Deletes: Approximately 90–110 net lines from the inspected pair.
 
@@ -602,11 +602,11 @@ Source reviewed at `8c831349d`. Shared measurements describe `788cdadb4`. This r
 Severity: high  
 Effort: M  
 Area: crates/platform/runtime/src/plugins/wamn_postgres  
-Evidence: `crates/platform/runtime/src/plugins/wamn_postgres/operation.rs:340`, `crates/platform/runtime/src/plugins/wamn_postgres/operation.rs:739`, `crates/platform/runtime/src/plugins/wamn_postgres/claims.rs:1800`.
+Evidence: `crates/platform/runtime/src/plugins/wamn_postgres/operation.rs:340`, `crates/platform/runtime/src/plugins/wamn_postgres/operation.rs:739`, `crates/platform/runtime/src/plugins/wamn_postgres/session_identity.rs:1800`.
 
 Problem: `binding_error` translates every binding failure into `PgError::PermissionDenied`. Binding includes a database read that can fail because the connection or table is unavailable. The guest therefore receives an authorization refusal for an infrastructure failure. The checkout path also converts its typed error into display text before this translation.
 
-Proposal: Preserve a contextual claim error with its cause and category. Translate once into the existing `PgError` cases at the operation boundary. Keep actual authorization denials distinct from unavailable infrastructure.
+Proposal: Preserve a contextual identity error with its cause and category. Translate once into the existing `PgError` cases at the operation boundary. Keep actual authorization denials distinct from unavailable infrastructure.
 
 Deletes: The unconditional permission-denied mapping and conversion through `error.to_string()`.
 
@@ -618,18 +618,18 @@ Owner review 2026-10-31: keep, high, Group 3 Do, as written.
 
 Severity: high  
 Effort: L  
-Area: crates/platform/runtime/src/plugins/wamn_postgres/claims.rs, crates/execution/host/src/operation/native_policy.rs  
-Evidence: `crates/platform/runtime/src/plugins/wamn_postgres/claims.rs:223`, `crates/platform/runtime/src/plugins/wamn_postgres/claims.rs:1873`, `crates/execution/host/src/operation/native_policy.rs:549`, `crates/execution/host/src/operation/native_policy.rs:572`.
+Area: crates/platform/runtime/src/plugins/wamn_postgres/session_identity.rs, crates/execution/host/src/operation/native_policy.rs
+Evidence: `crates/platform/runtime/src/plugins/wamn_postgres/session_identity.rs:223`, `crates/platform/runtime/src/plugins/wamn_postgres/session_identity.rs:1873`, `crates/execution/host/src/operation/native_policy.rs:549`, `crates/execution/host/src/operation/native_policy.rs:572`.
 
-Problem: The 57 panic sites in `claims.rs` mostly acquire shared locks with `expect`. Cleanup removes authority from separate registries and can panic before removal finishes. `NativeAuthorityGuard::drop` calls this cleanup, so another panic during unwinding can abort the host. This establishes a containment risk after an internal failure, not a demonstrated guest-controlled trigger.
+Problem: The 57 panic sites in `session_identity.rs` mostly acquire shared locks with `expect`. Cleanup removes authority from separate registries and can panic before removal finishes. `NativeAuthorityGuard::drop` calls this cleanup, so another panic during unwinding can abort the host. This establishes a containment risk after an internal failure, not a demonstrated guest-controlled trigger.
 
-Proposal: Replace the parallel claim maps with one scope record and one removal operation. Split the 2,564-line file into scope ownership, SQL restrictions, principal authorization, and connection-effect snapshots. Make cleanup infallible and prevent reuse of an unhealthy authority owner.
+Proposal: Replace the parallel identity maps with one target record and one removal operation. Split the 2,564-line file into target ownership, SQL restrictions, principal authorization, and connection-effect snapshots. Make cleanup infallible and prevent reuse of an unhealthy authority owner.
 
-Deletes: Parallel claim maps, repeated setters and removals, and lock-poison `expect` calls in cleanup.
+Deletes: Parallel identity maps, repeated setters and removals, and lock-poison `expect` calls in cleanup.
 
-Risk: Claim lifetime and revocation change. Add subprocess tests for poisoned state during binding and unwinding. Extend cancellation tests to prove that later calls inherit no authority.
+Risk: Identity lifetime and revocation change. Add subprocess tests for poisoned state during binding and unwinding. Extend cancellation tests to prove that later calls inherit no authority.
 
-Owner review 2026-10-31: keep, high, owned by A5 ([perf-arch](../plan/perf-arch.md)). The `claims.rs` claim maps are what the begin-operation and commit imports replace, so the one-scope-record fix is written inside that rewrite, not before. Question 1, the reviewer's pick for the owner to confirm: a poisoned authority lock fails the operation and exits the host process, and Kubernetes restarts it. No isolation machinery and no unready-state logic.
+Owner review 2026-10-31: keep, high, owned by A5 ([perf-arch](../plan/perf-arch.md)). The `session_identity.rs` identity maps are what the begin-operation and commit imports replace, so the one-target-record fix is written inside that rewrite, not before. Question 1, the reviewer's pick for the owner to confirm: a poisoned authority lock fails the operation and exits the host process, and Kubernetes restarts it. No isolation machinery and no unready-state logic.
 
 Owner review 2026-10-31 against origin/main 64dcf04: question 1 is answered: a poisoned authority lock fails the operation and exits the host, and Kubernetes restarts it. Recorded under the A5-owned row.
 
@@ -733,7 +733,7 @@ Deletes: Repeated error enums, formatting implementations, and common parser bra
 
 Risk: Consolidation can accidentally accept broader credentials. Run the existing credential refusal matrices and add cross-family credential swaps and redaction cases.
 
-Owner addendum 2026-10-31, re-scoped: [integration-schema](../plan/integration-schema.md) drops the credential import paths, so credentials enter by UI or API only. The five validators here parse database credentials for provisioning. They are the whole scope. No integration-credential parser is added.
+Owner addendum 2026-10-31, re-targeted: [integration-schema](../plan/integration-schema.md) drops the credential import paths, so credentials enter by UI or API only. The five validators here parse database credentials for provisioning. They are the whole target. No integration-credential parser is added.
 
 Owner review 2026-10-31: In passing, when integration-schema C1 to C3 or security E2-2 touch provisioning.
 
@@ -761,7 +761,7 @@ Effort: M
 Area: services/host/src/host.rs, services/cdc-reader/src/lib.rs  
 Evidence: `services/host/src/host.rs:936`, `services/host/src/host.rs:2385`, `services/host/src/host.rs:2486`, `services/cdc-reader/src/lib.rs:733`, `services/cdc-reader/src/lib.rs:1352`, `services/cdc-reader/src/lib.rs:1931`.
 
-Problem: `host.rs` contains 3,669 lines, including a startup function that extends beyond 2,000. The CDC library contains 3,048 lines across replication admission, reconnection, decoding, publication, and monitoring. Both files also contain substantial inline tests. Host and claims are frequent change sites in measurements.md section 9.
+Problem: `host.rs` contains 3,669 lines, including a startup function that extends beyond 2,000. The CDC library contains 3,048 lines across replication admission, reconnection, decoding, publication, and monitoring. Both files also contain substantial inline tests. Host and statements are frequent change sites in measurements.md section 9.
 
 Proposal: Split host into argument admission, resource composition, local workload loading, and shutdown supervision. Split CDC into replication admission, session recovery, transaction decoding, publication acknowledgments, and slot monitoring. Move existing inline tests with their owners.
 

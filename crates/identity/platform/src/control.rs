@@ -1,7 +1,7 @@
 //! Control authority: who may hold a control session of an org
 //! (docs/architecture/execution.md#control-sessions).
 //!
-//! A control session is org-scoped and carries no application roles. Its
+//! A control session is org-targeted and carries no application roles. Its
 //! audience is derived from the org, so nothing is configured per org. The
 //! org role `org-admin`, or the project role `project-admin` in a project of
 //! the org, grants control authority in that org.
@@ -164,7 +164,7 @@ pub async fn is_project_admin(
     if !valid_org(org) {
         return Err(invalid_org());
     }
-    let project = crate::require_scope_segment("project", project)?;
+    let project = crate::require_target_segment("project", project)?;
     client
         .query_one(
             PROJECT_ADMIN_SQL,

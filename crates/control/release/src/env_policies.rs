@@ -1,5 +1,5 @@
-//! Reading the org-scoped `registry.env_policies` rows from the T1 system DB
-//! (D18; org-scoped by wamn-8df.4).
+//! Reading the org-targeted `registry.env_policies` rows from the T1 system DB
+//! (D18; org-targeted by wamn-8df.4).
 //!
 //! `provision-org` (sizes each cluster from the org's policy set) and
 //! `provision-project-env` (reads one of the org's policies to derive the

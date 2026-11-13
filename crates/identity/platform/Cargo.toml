@@ -43,7 +43,7 @@ tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time", "ne
 # The live tests apply the system schema composition and bind platform principals.
 wamn-control-provision = { workspace = true, features = ["test-util"] }
 wamn-test-postgres = { workspace = true }
-# The tenant+platform floor of the application writers in tests/auth_drops_live.rs.
+# The project+platform base grants of the application writers in tests/auth_drops_live.rs.
 wamn-platform-identity = { path = ".", features = ["test-util"] }
 
 [lints]

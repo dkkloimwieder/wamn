@@ -1,4 +1,4 @@
-//! Renewal storage, revocation races and the scoped issuer on real PostgreSQL.
+//! Renewal storage, revocation races and the targeted issuer on real PostgreSQL.
 
 use sha2::{Digest as _, Sha256};
 use tokio_postgres::Client;
@@ -57,7 +57,7 @@ async fn rotate(client: &mut Client, secret: &str) -> Option<Renewal> {
 }
 
 #[tokio::test]
-async fn scoped_rotation_preserves_deadline_and_replay_revokes_successor() {
+async fn targeted_rotation_preserves_deadline_and_replay_revokes_successor() {
     let _lock = wamn_test_postgres::lock();
     let db = test_database::system();
     let owner = connect(db.url(), "wamn_system").await;

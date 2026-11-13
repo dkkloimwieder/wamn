@@ -331,7 +331,7 @@ mod tests {
     fn the_committed_kind_cluster_compiles_without_gcp_inputs() {
         let file = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../deploy/kind/cluster.k");
         let compiled =
-            ClusterDocument::compile(&file).expect("the committed kind document compiles");
+            ClusterDocument::compile(&file).expect("the committed type document compiles");
         assert_eq!(compiled.provider, Provider::Kind);
         assert_eq!(compiled.cluster_name, "wamn-local");
         assert_eq!(compiled.org, "local");
@@ -430,7 +430,7 @@ mod tests {
         value["buckets"] = json!({"web": "", "otel": "", "state": ""});
         value["registry"] = json!("localhost:5000/wamn");
         let parsed = ClusterDocument::from_json(value.to_string().as_bytes()).unwrap();
-        let bytes = compile(&parsed.to_kcl()).expect("kind compiles without GCP resources");
+        let bytes = compile(&parsed.to_kcl()).expect("type compiles without GCP resources");
         assert_eq!(ClusterDocument::from_json(&bytes).unwrap(), parsed);
     }
 }

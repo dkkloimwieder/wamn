@@ -66,7 +66,7 @@ use wamn_identity_client::{PatIssuerConfig, UserRefused, create_user, send_invit
 use wamn_identity_protocol::ADMIN_ROLE;
 use wamn_identity_protocol::PrincipalId;
 use wamn_platform_identity::application::{
-    ApplicationScope, permission_rows, project_authority, require_platform_rows, role_names,
+    ApplicationTarget, permission_rows, project_authority, require_platform_rows, role_names,
     write_environment_status,
 };
 use wamn_platform_identity::control::{
@@ -165,14 +165,14 @@ struct PrincipalRequest {
 
 /// The project that a project route names, read before its own request.
 #[derive(Deserialize)]
-struct ProjectScope {
+struct ProjectTarget {
     project: String,
 }
 
 /// The request of `member.list`, beside its paging. The page refuses an
 /// environment that is not text.
 #[derive(Deserialize)]
-struct MemberListScope {
+struct MemberListTarget {
     project: String,
     #[serde(default)]
     environment: Value,
@@ -245,7 +245,7 @@ impl ControlRoutes<'_> {
         let admitted = match attachment.route.authority {
             HostRouteAuthority::OrgAdmin => self.admits(self.control, caller, None).await?,
             HostRouteAuthority::ProjectAdmin => {
-                let project = parse::<ProjectScope>(payload)?.project;
+                let project = parse::<ProjectTarget>(payload)?.project;
                 self.admits(self.control, caller, Some(&project)).await?
             }
             // A read for every control caller: `org-admin`, or `project-admin`
@@ -351,7 +351,7 @@ impl ControlRoutes<'_> {
                 Ok(json!({ "principal_id": principal.to_string().as_str(), "org_admin": false }))
             }
             HostHandler::EnvironmentList => {
-                let request: ProjectScope = parse(payload)?;
+                let request: ProjectTarget = parse(payload)?;
                 let page = control_page(
                     payload,
                     attachment,
@@ -449,7 +449,7 @@ impl ControlRoutes<'_> {
                 }
             }
             HostHandler::MemberList => {
-                let request: MemberListScope = parse(payload)?;
+                let request: MemberListTarget = parse(payload)?;
                 let page = control_page(
                     payload,
                     attachment,
@@ -684,7 +684,7 @@ impl ControlRoutes<'_> {
         self.changes.publish(drops).await;
         let mut environments: std::collections::BTreeSet<(String, String)> =
             grants.memberships.into_iter().collect();
-        let admin_scopes: Vec<Option<&str>> = if grants.org_admin {
+        let admin_targets: Vec<Option<&str>> = if grants.org_admin {
             vec![None]
         } else {
             grants
@@ -693,7 +693,7 @@ impl ControlRoutes<'_> {
                 .map(|p| Some(p.as_str()))
                 .collect()
         };
-        for project in admin_scopes {
+        for project in admin_targets {
             environments.extend(self.environments(project).await?);
         }
         let environments: Vec<_> = environments.into_iter().collect();
@@ -767,8 +767,8 @@ impl ControlRoutes<'_> {
         let logins = self.logins(environments)?;
         let mut completed: Vec<String> = Vec::new();
         for ((project, env), url) in environments.iter().zip(logins) {
-            let env_key = project_env_key(self.org, project, env);
-            match write_status(&url, &env_key, attachment, caller, status).await {
+            let project_env_key = project_env_key(self.org, project, env);
+            match write_status(&url, &project_env_key, attachment, caller, status).await {
                 Ok(drops) => self.changes.publish(drops).await,
                 Err(error) => {
                     tracing::warn!(
@@ -811,7 +811,7 @@ impl ControlRoutes<'_> {
         Ok(logins)
     }
 
-    /// Every current environment of the selected scope.
+    /// Every current environment of the selected target.
     async fn environments(&self, project: Option<&str>) -> Result<Vec<(String, String)>, Refusal> {
         Ok(org_environments(self.control, self.org, project).await?)
     }
@@ -838,14 +838,14 @@ impl ControlRoutes<'_> {
         }
         let mut completed = Vec::new();
         for ((project, env), url) in environments.iter().zip(logins) {
-            let env_key = project_env_key(self.org, project, env);
-            let scope = ApplicationScope {
+            let project_env_key = project_env_key(self.org, project, env);
+            let target = ApplicationTarget {
                 org: self.org,
                 project,
                 env,
-                env_key: &env_key,
+                project_env_key: &project_env_key,
             };
-            match write_application(&system, &url, scope, attachment, caller, principal).await {
+            match write_application(&system, &url, target, attachment, caller, principal).await {
                 Ok(drops) => self.changes.publish(drops).await,
                 Err(error) => {
                     tracing::warn!(
@@ -996,7 +996,7 @@ async fn status_with_counts(
 async fn write_application(
     system: &Transaction<'_>,
     url: &str,
-    scope: ApplicationScope<'_>,
+    target: ApplicationTarget<'_>,
     attachment: &HostAttachment,
     caller: &PrincipalId,
     principal: &PrincipalId,
@@ -1011,7 +1011,7 @@ async fn write_application(
         ).await?;
         require_platform_rows(&transaction).await?;
         let mut drops = AuthDrops::default();
-        project_authority(system, &transaction, scope, principal, &mut drops).await?;
+        project_authority(system, &transaction, target, principal, &mut drops).await?;
         transaction.commit().await?;
         anyhow::Ok(drops)
     }.await;
@@ -1129,7 +1129,7 @@ async fn release_profile(
 /// administration login. It returns the drops of the write.
 async fn write_status(
     url: &str,
-    env_key: &str,
+    project_env_key: &str,
     attachment: &HostAttachment,
     caller: &PrincipalId,
     status: EnvironmentStatus,
@@ -1149,7 +1149,7 @@ async fn write_status(
             .await?;
         require_platform_rows(&transaction).await?;
         let mut drops = AuthDrops::default();
-        write_environment_status(&transaction, env_key, status, &mut drops).await?;
+        write_environment_status(&transaction, project_env_key, status, &mut drops).await?;
         transaction.commit().await?;
         anyhow::Ok(drops)
     }
@@ -1159,7 +1159,7 @@ async fn write_status(
     result
 }
 
-/// Bind a list cursor to this operation and the current authorization scope.
+/// Bind a list cursor to this operation and the current authorization target.
 pub(crate) fn control_page(
     payload: &str,
     attachment: &HostAttachment,
@@ -1181,7 +1181,7 @@ pub(crate) fn control_page(
     }) {
         return Err(Refusal::Delivery(DeliveryError::InvalidPayload));
     }
-    let mut scope =
+    let mut target =
         json!({"principal": caller.to_string().as_str(), "org": org, "project": project});
     if filtered {
         let environment = match fields.get("environment") {
@@ -1194,9 +1194,9 @@ pub(crate) fn control_page(
                 });
             }
         };
-        scope["environment"] = environment;
+        target["environment"] = environment;
     }
-    Ok(ListPage::new(&input, &attachment.operation, scope, order)?)
+    Ok(ListPage::new(&input, &attachment.operation, target, order)?)
 }
 
 /// The request of a route, or the delivery refusal of a payload that is not

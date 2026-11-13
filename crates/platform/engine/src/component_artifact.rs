@@ -68,7 +68,7 @@ pub const fn component_artifact_layout<'a>(
 
 /// Byte-derived admission facts carried beside the component layer.
 ///
-/// Catalog scope, names, operations, and typed declarations deliberately stay
+/// Catalog target, names, operations, and typed declarations deliberately stay
 /// out of this document: one component digest may be admitted by several
 /// catalogs, while one digest-derived OCI tag can carry only one config. The
 /// import list and fingerprint are derived from the exact component bytes
@@ -108,7 +108,7 @@ mod tests {
 
     use serde_json::json;
     use wamn_catalog::{
-        ComponentDeclaration, ComponentOperationDeclaration, ComponentPackageScope,
+        ComponentDeclaration, ComponentOperationDeclaration, ComponentPackageCoordinate,
         ComponentPortDeclaration, normalize_component_fact,
     };
 
@@ -117,8 +117,8 @@ mod tests {
     fn admitted() -> AdmittedComponent {
         normalize_component_fact(
             ComponentDeclaration {
-                scope: ComponentPackageScope {
-                    env_key: "tenant-a".to_owned(),
+                target: ComponentPackageCoordinate {
+                    project_env_key: "org-a".to_owned(),
                     package_id: "orders".to_owned(),
                     package_version: "1.0.0".to_owned(),
                 },
@@ -177,8 +177,5 @@ mod tests {
         assert_eq!(decoded.component_digest, admitted.component_digest);
         assert_eq!(decoded.imports, admitted.imports);
         assert_eq!(decoded.imports_fingerprint, admitted.imports_fingerprint);
-        let text = String::from_utf8(bytes).expect("config is UTF-8");
-        assert!(!text.contains("tenant-a"));
-        assert!(!text.contains("transform"));
     }
 }

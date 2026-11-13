@@ -17,9 +17,11 @@ use crate::plugins::effect_span::{
     EffectIdentity, EffectRun, effect_span, record_effect_ms, record_wiring,
 };
 
-use super::claims::{OneShotResult, refuse_unattributed_statement, reject_claim_mutation};
 use super::numbering::{NumberCall, statement_number};
 use super::pool::destroy_connection;
+use super::session_identity::{
+    OneShotResult, refuse_unattributed_statement, reject_identity_mutation,
+};
 use super::statements::{
     BoundStatementSet, VerifiedStatement, resolve_statement, validate_prepared_statement,
     validate_statement_result,
@@ -47,7 +49,7 @@ pub(super) type SharedTxnState = Arc<std::sync::Mutex<TxnState>>;
 /// Owns a acquired connection across an await.
 ///
 /// Dropping an armed guard destroys the connection, so cancellation cannot
-/// fast-repool a session whose claim transaction may still be open.
+/// fast-repool a session whose identity transaction may still be open.
 pub(super) struct StatementConnectionGuard {
     connection: Option<Object>,
     destroyed: Arc<AtomicU64>,
@@ -241,7 +243,7 @@ pub(super) async fn run_query(
     row_limit: u64,
 ) -> Result<RowSet, PgError> {
     async {
-        reject_claim_mutation(sql)?;
+        reject_identity_mutation(sql)?;
         let stmt = conn
             .prepare_cached(sql)
             .await
@@ -286,7 +288,7 @@ pub(super) async fn run_execute(
     params: &[SqlValue],
 ) -> Result<u64, PgError> {
     async {
-        reject_claim_mutation(sql)?;
+        reject_identity_mutation(sql)?;
         let stmt = conn
             .prepare_cached(sql)
             .await
@@ -315,7 +317,7 @@ pub(super) async fn run_verified_query(
         // parse tree (`wamn_package_control::component_admission`, `declared_sql`).
         // This text guard stays as a second layer: a release admitted before
         // that test, or a forged descriptor, was never parsed.
-        reject_claim_mutation(&statement.exact_sql).map_err(StatementError::Postgres)?;
+        reject_identity_mutation(&statement.exact_sql).map_err(StatementError::Postgres)?;
         let prepared = conn
             .prepare_cached(&statement.exact_sql)
             .await
@@ -374,10 +376,10 @@ pub(super) fn plugin_of(ctx: &ActiveCtx<'_>) -> wash_runtime::wasmtime::Result<A
 ///
 /// PUBLISHED, AND FROZEN. `tests/integration/src/metricbench.rs` polls
 /// `wamn_postgres_query_duration_ms_count` against the running collector and
-/// blocks the in-cluster gate on it, and asserts it again over pinned fixture
+/// blocks the in-cluster acceptance test on it, and asserts it again over pinned fixture
 /// text; `docs/archive/observability/dashboards.md` slices a deployed Grafana
 /// panel by `db_operation`. Renaming either the instrument or the label breaks
-/// the gate loudly and the dashboards silently.
+/// the condition loudly and the dashboards silently.
 static QUERY_DURATION_MS: std::sync::LazyLock<opentelemetry::metrics::Histogram<f64>> =
     std::sync::LazyLock::new(|| {
         opentelemetry::global::meter("wamn-postgres")
@@ -396,12 +398,12 @@ pub(super) fn record_query_ms(op: &'static str, project: &str, elapsed: std::tim
 }
 
 /// [9.1] A `wamn.postgres` span over one guest DB call, enriched host-side with
-/// the executing component's tenant/project (the same claim maps that inject
-/// `app.env_key`; the guest cannot spoof them). The name and the `db.*` fields are
+/// the executing component's project/project (the same identity maps that inject
+/// `app.project_env_key`; the guest cannot spoof them). The name and the `db.*` fields are
 /// this surface's own, while the `wamn.*` identity block is [`effect_span`]'s, shared with
 /// every other effect surface.
 ///
-/// The run and the wiring position come from the two claim registries the
+/// The run and the wiring position come from the two identity registries the
 /// router driver binds before the pooled instance runs: `set_current_run` for
 /// the run, `bind_invocation` for the node (`wamn-0h0g.7.9`). Both are
 /// host-attested, so this span says which run and which node raised the call
@@ -411,7 +413,7 @@ pub(super) fn record_query_ms(op: &'static str, project: &str, elapsed: std::tim
 /// invocations — holds neither, and records the keys empty. `wamn.requirement`
 /// is empty on every postgres span: it names the connection requirement an
 /// HTTP effect was admitted under, and a DB call is admitted by its statement
-/// set instead, so this surface holds no such claim.
+/// set instead, so this surface holds no such identity.
 fn db_span(plugin: &WamnPostgres, component_id: &str, op: &'static str) -> tracing::Span {
     let project = plugin.project_for(component_id);
     db_span_for_project(plugin, component_id, &project, op)
@@ -423,12 +425,12 @@ pub(super) fn db_span_for_project(
     project: &str,
     op: &'static str,
 ) -> tracing::Span {
-    let env_key = plugin.env_key_for(component_id).unwrap_or_default();
+    let project_env_key = plugin.project_env_key_for(component_id).unwrap_or_default();
     let run = plugin.current_run_for(component_id);
     let span = effect_span!(
         "wamn.postgres",
         EffectIdentity {
-            env_key: &env_key,
+            project_env_key: &project_env_key,
             project,
             component: component_id,
         },
@@ -454,7 +456,7 @@ async fn begin_transaction(
     component_id: &str,
     project: &str,
 ) -> Result<PgTransaction, PgError> {
-    let env_key = plugin.require_env_key(component_id)?;
+    let project_env_key = plugin.require_project_env_key(component_id)?;
     let schema = plugin.schema_for(component_id);
     let runner = plugin.runner_for(component_id);
     let role = plugin.role_for(component_id);
@@ -463,15 +465,15 @@ async fn begin_transaction(
     let application = plugin.application_for(component_id);
     let run = plugin.current_run_for(component_id);
     let (connection, pp, authority) = plugin
-        .checkout_workload(component_id, project, &env_key)
+        .checkout_workload(component_id, project, &project_env_key)
         .await?;
     let connection = StatementConnectionGuard::new(connection, Arc::clone(&plugin.destroyed));
     plugin
-        .begin_with_claims(
+        .begin_with_identity(
             connection.connection(),
             authority,
             plugin.active_read(component_id),
-            &env_key,
+            &project_env_key,
             schema.as_deref(),
             runner.as_deref(),
             role.as_deref(),
@@ -499,20 +501,20 @@ pub(super) async fn begin_statement_transaction(
     component_id: &str,
     project: &str,
 ) -> Result<PgTransaction, PgError> {
-    let (transaction, mut claims) =
+    let (transaction, mut identity) =
         prepare_statement_transaction(plugin, component_id, project).await?;
     let connection = StatementConnectionGuard::new(
         take_conn(&transaction.state)?,
         Arc::clone(&transaction.destroyed),
     );
     if let Some(run) = plugin.current_run_for(component_id) {
-        claims.causation = Some(
-            super::claims::transactions::prepare_causation(connection.connection(), &run)
+        identity.causation = Some(
+            super::session_identity::transactions::prepare_causation(connection.connection(), &run)
                 .await
                 .map_err(|error| map_pg_error(&error))?,
         );
     }
-    claims.bind(connection.connection()).await?;
+    identity.bind(connection.connection()).await?;
     connection.restore(&transaction.state);
     Ok(transaction)
 }
@@ -521,8 +523,14 @@ pub(super) async fn prepare_statement_transaction(
     plugin: &WamnPostgres,
     component_id: &str,
     project: &str,
-) -> Result<(PgTransaction, super::claims::transactions::BoundClaims), PgError> {
-    let env_key = plugin.require_env_key(component_id)?;
+) -> Result<
+    (
+        PgTransaction,
+        super::session_identity::transactions::BoundIdentity,
+    ),
+    PgError,
+> {
+    let project_env_key = plugin.require_project_env_key(component_id)?;
     let schema = plugin.schema_for(component_id);
     let runner = plugin.runner_for(component_id);
     let role = plugin.role_for(component_id);
@@ -531,15 +539,15 @@ pub(super) async fn prepare_statement_transaction(
     let application = plugin.application_for(component_id);
 
     let (connection, policy, authority) = plugin
-        .checkout_workload(component_id, project, &env_key)
+        .checkout_workload(component_id, project, &project_env_key)
         .await?;
     let connection = StatementConnectionGuard::new(connection, Arc::clone(&plugin.destroyed));
-    let claims = plugin
-        .prepare_claims(
+    let identity = plugin
+        .prepare_identity(
             connection.connection(),
             authority,
             plugin.active_read(component_id),
-            &env_key,
+            &project_env_key,
             schema.as_deref(),
             runner.as_deref(),
             role.as_deref(),
@@ -561,7 +569,7 @@ pub(super) async fn prepare_statement_transaction(
             row_limit: policy.row_limit,
             lent: false,
         },
-        claims,
+        identity,
     ))
 }
 
@@ -654,7 +662,7 @@ impl<T: 'static + Send> client::HostWithStore<T> for SharedCtx {
                 let span = db_span(&plugin, &component_id, "begin");
                 let t0 = std::time::Instant::now();
 
-                // Both round trips — the pool checkout and the claim-stamping BEGIN —
+                // Both round trips — the pool checkout and the identity-stamping BEGIN —
                 // are the one effect, so one span covers both.
                 let opened = begin_transaction(&plugin, &component_id, &project)
                     .instrument(span)
@@ -884,9 +892,9 @@ async fn txn_open_cursor<T: 'static>(
     })?;
     trace
         .run(async move {
-            // A cursor over `SELECT set_config('app.env_key', …)` would execute the
+            // A cursor over `SELECT set_config('app.project_env_key', …)` would execute the
             // override on fetch; guard the same surface as query/execute (wamn-cjv.2).
-            if let Err(e) = reject_claim_mutation(&sql) {
+            if let Err(e) = reject_identity_mutation(&sql) {
                 return Ok(Err(e));
             }
             let span = db_span_for_project(&plugin, &component_id, project, "txn.open_cursor");
@@ -1173,7 +1181,9 @@ async fn finish_txn(
     verb: &str,
 ) -> Result<(), PgError> {
     let connection = StatementConnectionGuard::new(take_conn(state)?, Arc::clone(destroyed));
-    match super::claims::transactions::finish_transaction(connection.connection(), verb).await {
+    match super::session_identity::transactions::finish_transaction(connection.connection(), verb)
+        .await
+    {
         Ok(()) => {
             if let Ok(mut st) = state.lock() {
                 st.finished = true;
@@ -1652,7 +1662,9 @@ pub(super) async fn finish_statement_txn(
     verb: &str,
 ) -> Result<(), PgError> {
     let connection = StatementConnectionGuard::new(take_conn(state)?, Arc::clone(destroyed));
-    match super::claims::transactions::finish_transaction(connection.connection(), verb).await {
+    match super::session_identity::transactions::finish_transaction(connection.connection(), verb)
+        .await
+    {
         Ok(()) => {
             if let Ok(mut transaction) = state.lock() {
                 transaction.finished = true;
@@ -1849,8 +1861,8 @@ mod tests {
         })
         .expect("an offline postgres plugin opens no connection");
         plugin
-            .set_env_key(COMPONENT_ID, "tenant-a")
-            .expect("the tenant claim is valid");
+            .set_project_env_key(COMPONENT_ID, "org-a")
+            .expect("the project identity is valid");
         plugin
     }
 
@@ -1993,7 +2005,7 @@ mod tests {
         assert_eq!(
             harness.attributes("wamn.postgres"),
             expected_attributes(
-                ["tenant-a", "project-a", COMPONENT_ID],
+                ["org-a", "project-a", COMPONENT_ID],
                 [
                     "package_a",
                     "orders",
@@ -2015,7 +2027,7 @@ mod tests {
         );
     }
 
-    /// A call outside a node walk holds neither claim. The wiring keys are
+    /// A call outside a node walk holds neither identity. The wiring keys are
     /// still emitted, empty, so "raised outside a walk" never reads as "the
     /// enrichment was dropped".
     #[test]
@@ -2033,7 +2045,7 @@ mod tests {
         assert_eq!(
             harness.attributes("wamn.postgres"),
             expected_attributes(
-                ["tenant-a", "project-a", COMPONENT_ID],
+                ["org-a", "project-a", COMPONENT_ID],
                 ["", "", "0", "", "0", "", "", ""],
                 &[("db.system", "postgresql"), ("db.operation", "query")],
             ),

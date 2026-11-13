@@ -50,7 +50,7 @@ async fn the_packaging_screen_follows_a_write_and_a_delete() -> anyhow::Result<(
         scratch: scratch.path(),
         component_directory: &components,
         flow_http_wasm: &flow_http,
-        env_key: crate::environment::identity().env_key().as_str(),
+        project_env_key: crate::environment::identity().project_env_key().as_str(),
         org: crate::environment::identity().org.as_str(),
         project: crate::environment::identity().project.as_str(),
         environment: crate::environment::identity().environment.as_str(),
@@ -70,11 +70,11 @@ async fn the_packaging_screen_follows_a_write_and_a_delete() -> anyhow::Result<(
         tokio_postgres::connect(system.url(), tokio_postgres::NoTls).await?;
     let identity_connection = tokio::spawn(identity_connection);
     let result = async {
-        let scope = crate::environment::identity();
+        let target = crate::environment::identity();
         let subject = wamn_platform_identity::operator_subject(
-            &scope.org,
-            &scope.project,
-            &scope.environment,
+            &target.org,
+            &target.project,
+            &target.environment,
         )?;
         let user = wamn_platform_identity::resolve_subject(
             &identity,
@@ -87,9 +87,9 @@ async fn the_packaging_screen_follows_a_write_and_a_delete() -> anyhow::Result<(
         // The browser's mocked session uses this test-only instance suffix.
         let audience = wamn_control_provision::session_target::session_audience(
             &wamn_control_registry::Triple::new(
-                scope.org.clone(),
-                scope.project.clone(),
-                scope.environment.as_str(),
+                target.org.clone(),
+                target.project.clone(),
+                target.environment.as_str(),
             ),
             "localapp",
         )?;

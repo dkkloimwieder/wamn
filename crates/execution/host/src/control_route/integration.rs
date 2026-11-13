@@ -10,7 +10,7 @@ use wamn_broker::connection_changes::ConnectionDrops;
 use wamn_catalog::HostAttachment;
 use wamn_identity_protocol::PrincipalId;
 
-use super::{ControlRoutes, ProjectScope, Refusal, incomplete, parse};
+use super::{ControlRoutes, ProjectTarget, Refusal, incomplete, parse};
 use wamn_platform_identity::connections::{ConnectionError, administration, references};
 
 impl From<ConnectionError> for Refusal {
@@ -53,7 +53,7 @@ impl ControlRoutes<'_> {
         caller: &PrincipalId,
         payload: &str,
     ) -> Result<Value, Refusal> {
-        let project = parse::<ProjectScope>(payload)?.project;
+        let project = parse::<ProjectTarget>(payload)?.project;
         let operation = attachment.route.operation;
         let request: Value = serde_json::from_str(payload).map_err(|_| Refusal::Declared {
             code: "invalid_input",

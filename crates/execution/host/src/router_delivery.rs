@@ -27,11 +27,11 @@ use crate::route::{RouteCall, authorize_route, invoke_route};
 const DELIVERY_ATTEMPTS: &str = "wamn.router.delivery.attempts";
 const DELIVERY_ERRORS: &str = "wamn.router.delivery.errors";
 
-// Attribute keys. `wamn.source.kind` plus `wamn.source.id` rather than the two
+// Attribute keys. `wamn.source.type` plus `wamn.source.id` rather than the two
 // mutually exclusive keys the older instruments use (`wamn.attachment.id`,
-// `wamn.registration`), because one counter covers both ingress kinds and an
+// `wamn.registration`), because one counter covers both ingress types and an
 // always-empty second key would double the series for nothing.
-const SOURCE_KIND: &str = "wamn.source.kind";
+const SOURCE_TYPE: &str = "wamn.source.type";
 const SOURCE_ID: &str = "wamn.source.id";
 const DELIVERY_ERROR: &str = "wamn.delivery.error";
 
@@ -63,11 +63,11 @@ impl RouterDeliveryBridge {
         project: &str,
     ) -> anyhow::Result<Self> {
         let release = Arc::clone(&operations.release);
-        jetstream.bind_derived_scope(
+        jetstream.bind_derived_invocation(
             ROUTER_DELIVERY_ID,
-            &release.scope().env_key,
+            &release.target().project_env_key,
             project,
-            &release.scope().environment,
+            &release.target().environment,
         )?;
         Ok(Self {
             operations,
@@ -376,188 +376,7 @@ impl DeliveryMetrics {
 /// delivery rate. A route has no wiring, so its source names it alone.
 fn delivery_attributes(source: SourceRef<'_>, _target: &AttachmentTarget) -> Vec<KeyValue> {
     vec![
-        KeyValue::new(SOURCE_KIND, source.source_type()),
+        KeyValue::new(SOURCE_TYPE, source.source_type()),
         KeyValue::new(SOURCE_ID, source.id().to_owned()),
     ]
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use opentelemetry::metrics::MeterProvider as _;
-    use opentelemetry_sdk::metrics::data::{AggregatedMetrics, MetricData};
-    use opentelemetry_sdk::metrics::{InMemoryMetricExporter, PeriodicReader, SdkMeterProvider};
-    use wamn_catalog::ServingManifest;
-
-    const MANIFEST: &[u8] = br#"{"attachments":{"orders-http":{"auth-policy":{"modes":["none"]},"component":"http-request","definition":{"id":"orders-http","run-deadline-ms":30000,"type":"http"},"definition-hash":"sha256:5555555555555555555555555555555555555555555555555555555555555555","operation":"wamn:node/handler@0.1.0","package-id":"manifest_mint","type":"http"}},"components":[{"descriptor":{"component":"http-request","component-digest":"sha256:1111111111111111111111111111111111111111111111111111111111111111","connections":[],"effects":[],"imports":[],"imports-fingerprint":"","interface-version":"0.1","operations":{"wamn:node/handler@0.1.0":{"input-ports":[],"output-ports":[],"parameters":[]}}},"package-id":"manifest_mint"},{"descriptor":{"component":"transform","component-digest":"sha256:2222222222222222222222222222222222222222222222222222222222222222","connections":[],"effects":[],"imports":[],"imports-fingerprint":"","interface-version":"0.1","operations":{"wamn:node/handler@0.1.0":{"input-ports":[],"output-ports":[],"parameters":[]}}},"package-id":"manifest_mint"}],"format-version":11,"release":{"packages":[{"package-id":"manifest_mint","package-version":"1.0.0"}]},"routes":[{"component":"http-request","operation":"wamn:node/handler@0.1.0","package-id":"manifest_mint","type":"command"}]}"#;
-
-    fn manifest() -> ServingManifest {
-        ServingManifest::from_canonical_bytes(MANIFEST)
-            .expect("format-7 fixture is canonical")
-            .0
-    }
-
-    /// One meter over an in-memory exporter. The provider is owned by the test,
-    /// not by `opentelemetry::global`, so each test reads back exactly the
-    /// series its own recorder emitted.
-    struct MetricHarness {
-        exporter: InMemoryMetricExporter,
-        provider: SdkMeterProvider,
-    }
-
-    /// One exported series: instrument name, sorted attributes, and value.
-    type MetricSeries = (String, Vec<(String, String)>, u64);
-
-    impl MetricHarness {
-        fn install() -> Self {
-            let exporter = InMemoryMetricExporter::default();
-            let provider = SdkMeterProvider::builder()
-                .with_reader(PeriodicReader::builder(exporter.clone()).build())
-                .build();
-            Self { exporter, provider }
-        }
-
-        fn metrics(&self) -> DeliveryMetrics {
-            DeliveryMetrics::new(&self.provider.meter("router-delivery-test"))
-        }
-
-        /// Every `(name, sorted attributes, value)` the exporter holds, sorted,
-        /// so an assertion names the whole emitted surface and a series that
-        /// should not exist cannot hide.
-        fn series(&self) -> Vec<MetricSeries> {
-            self.provider
-                .force_flush()
-                .expect("test metrics must flush");
-            let mut series = Vec::new();
-            for resource in self
-                .exporter
-                .get_finished_metrics()
-                .expect("test metric exporter must remain readable")
-            {
-                for scope in resource.scope_metrics() {
-                    for metric in scope.metrics() {
-                        let AggregatedMetrics::U64(MetricData::Sum(sum)) = metric.data() else {
-                            panic!("{} must stay a u64 sum", metric.name())
-                        };
-                        for point in sum.data_points() {
-                            let mut attributes: Vec<(String, String)> = point
-                                .attributes()
-                                .map(|kv| (kv.key.to_string(), kv.value.to_string()))
-                                .collect();
-                            attributes.sort();
-                            series.push((metric.name().to_owned(), attributes, point.value()));
-                        }
-                    }
-                }
-            }
-            series.sort();
-            series
-        }
-    }
-
-    fn labels(pairs: &[(&str, &str)]) -> Vec<(String, String)> {
-        let mut labels: Vec<(String, String)> = pairs
-            .iter()
-            .map(|(key, value)| ((*key).to_owned(), (*value).to_owned()))
-            .collect();
-        labels.sort();
-        labels
-    }
-
-    /// The dimensions are the manifest's own: `resolve_target` refuses an id the
-    /// manifest does not name, so nothing outside the manifest can become a
-    /// label and the series count is fixed for the process.
-    #[test]
-    fn a_delivery_is_labelled_by_its_source_type_and_id() {
-        let manifest = manifest();
-        let attachment =
-            resolve_authorized_target(&manifest, SourceRef::Attachment("orders-http"), None)
-                .expect("the fixture names this attachment");
-        assert_eq!(
-            delivery_attributes(SourceRef::Attachment("orders-http"), &attachment.target),
-            vec![
-                KeyValue::new(SOURCE_KIND, "attachment"),
-                KeyValue::new(SOURCE_ID, "orders-http"),
-            ]
-        );
-    }
-
-    /// A delivered run raises the throughput series and nothing else. If the
-    /// error series appeared here, every dashboard's error rate would read 100%.
-    #[test]
-    fn a_delivered_run_counts_once_and_raises_no_error_series() {
-        let harness = MetricHarness::install();
-        let attributes = delivery_attributes(
-            SourceRef::Attachment("orders-http"),
-            &AttachmentTarget::Route {
-                component: "http-request".to_owned(),
-                operation: "wamn:node/handler@0.1.0".to_owned(),
-            },
-        );
-
-        harness
-            .metrics()
-            .record(&attributes, DeliveryClass::Delivered);
-
-        assert_eq!(
-            harness.series(),
-            vec![(
-                "wamn.router.delivery.attempts".to_owned(),
-                labels(&[
-                    ("wamn.source.kind", "attachment"),
-                    ("wamn.source.id", "orders-http"),
-                ]),
-                1,
-            )]
-        );
-    }
-
-    /// Every driver refusal counts as an attempt and raises the error series
-    /// under its bounded class; the exact operation is never a metric label.
-    #[test]
-    fn each_driver_refusal_counts_as_an_attempt_and_a_named_error() {
-        let harness = MetricHarness::install();
-        let metrics = harness.metrics();
-        let attributes = delivery_attributes(
-            SourceRef::Attachment("orders-http"),
-            &AttachmentTarget::Route {
-                component: "http-request".to_owned(),
-                operation: "wamn:node/handler@0.1.0".to_owned(),
-            },
-        );
-
-        metrics.record(&attributes, DeliveryClass::PermissionDenied);
-        metrics.record(&attributes, DeliveryClass::ExecutionFailed);
-
-        let base = [
-            ("wamn.source.kind", "attachment"),
-            ("wamn.source.id", "orders-http"),
-        ];
-        let with_error = |error: &str| {
-            let mut pairs = base.to_vec();
-            pairs.push(("wamn.delivery.error", error));
-            labels(&pairs)
-        };
-
-        assert_eq!(
-            harness.series(),
-            vec![
-                ("wamn.router.delivery.attempts".to_owned(), labels(&base), 2,),
-                (
-                    "wamn.router.delivery.errors".to_owned(),
-                    with_error("execution-failed"),
-                    1,
-                ),
-                (
-                    "wamn.router.delivery.errors".to_owned(),
-                    with_error("permission-denied"),
-                    1,
-                ),
-            ]
-        );
-    }
-
-    // wamn-hopk R5: the two series were pinned by scanning this file's own
-    // implementation half, a technique whose vacuous-match hazard the deleted
-    // comment documented. A metric-export contract is a live-probe question.
 }

@@ -189,7 +189,7 @@ pub async fn serve(config: EdgeConfig) -> anyhow::Result<EdgeHost> {
         EdgeRelease::load(
             &config.release.dir,
             &config.release.digest,
-            config.scope.release_scope(),
+            config.target.release_target(),
         )
         .await
         .context("load the release bundle")?,
@@ -198,7 +198,7 @@ pub async fn serve(config: EdgeConfig) -> anyhow::Result<EdgeHost> {
     let keys = FileKeys::load(&config.session.keys, &config.session.issuer)
         .context("load the session key file")?;
     let verifier = SessionVerifier::new(keys, &config.session.org, &config.session.audience)
-        .context("bind the session scope")?;
+        .context("bind the session target")?;
     let intents = SqliteIntentStore::open(&config.store.db).context("open the run-state file")?;
     let closed = intents.closed();
     let samples = SampleStore::open(intents.clone())
@@ -330,7 +330,7 @@ fn ingress_workload(release: &EdgeRelease, route_host: &str) -> WorkloadStartReq
     WorkloadStartRequest {
         workload_id: INGRESS_WORKLOAD.to_owned(),
         workload: Workload {
-            namespace: release.release().scope().environment.clone(),
+            namespace: release.release().target().environment.clone(),
             name: INGRESS_WORKLOAD.to_owned(),
             annotations: HashMap::new(),
             service: None,

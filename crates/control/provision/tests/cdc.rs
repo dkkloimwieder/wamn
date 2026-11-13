@@ -1,4 +1,4 @@
-//! Live-apply gate for the CDC capture builders (wamn-l5i9.9, D19 v3 §4).
+//! Live-apply condition for the CDC capture builders (wamn-l5i9.9, D19 v3 §4).
 //!
 //! Each test starts its own PostgreSQL server with `wal_level=logical` and
 //! connects with its superuser URL. Applies the REAL builders
@@ -171,7 +171,7 @@ fn cdc_substrate_applies_and_is_idempotent_on_postgres() {
     // Maintenance DB: fresh database + the cluster-global replication role.
     // The role is dropped first so every run exercises the CURRENT builder —
     // a leftover healthy role would satisfy the IF NOT EXISTS guard and mask a
-    // mutated builder (the M2 gate-blind-spot lesson).
+    // mutated builder (the M2 condition-blind-spot lesson).
     run_ok(
         &url,
         &format!(
@@ -209,7 +209,7 @@ DO $$ BEGIN
   ASSERT (SELECT count(*) FROM pg_publication WHERE pubname = '{cdc}') = 1,
     'the publication exists exactly once (idempotent re-apply)';
   ASSERT (SELECT puballtables FROM pg_publication WHERE pubname = '{cdc}') = false,
-    'the publication is schema-scoped, never FOR ALL TABLES';
+    'the publication is schema-targeted, never FOR ALL TABLES';
   ASSERT (SELECT pubinsert AND pubupdate AND pubdelete AND NOT pubtruncate
             FROM pg_publication WHERE pubname = '{cdc}'),
     'the publication carries insert/update/delete and EXCLUDES truncate';
@@ -260,18 +260,18 @@ END $$;
 }
 
 /// The CDC role's table reads are the two classification maps and nothing else, and the
-/// narrowing is SAFE: a tenant table it cannot `SELECT` still decodes.
+/// narrowing is SAFE: a project table it cannot `SELECT` still decodes.
 ///
 /// The blanket `GRANT SELECT ON ALL TABLES IN SCHEMA` the old builder emitted
-/// handed the same credential a plain-SQL read of every tenant table, with none
-/// of the gates gating the replication path (the `REPLICATION` attribute, the
+/// handed the same credential a plain-SQL read of every project table, with none
+/// of the conditions gating the replication path (the `REPLICATION` attribute, the
 /// walsender protocol, slot ownership). This seeds an environment provisioned
 /// UNDER that old builder and then applies the current one, so the retroactive
 /// `REVOKE` is what the test turns on — a narrowed grant alone would leave the
 /// already-executed blanket grant standing, and every assertion below would pass
 /// on new environments while production stayed wide open.
 #[test]
-fn cdc_role_reads_only_the_classification_maps_and_still_decodes_env_key_tables() {
+fn cdc_role_reads_only_the_classification_maps_and_still_decodes_project_env_key_tables() {
     let (_server, url) = logical_server();
 
     let (org, project, env) = ("acme", "narrowing", "dev");
@@ -291,7 +291,7 @@ fn cdc_role_reads_only_the_classification_maps_and_still_decodes_env_key_tables(
 
     let db_url = swap_db(&url, &db);
 
-    // An environment provisioned BEFORE the narrowing: a tenant table, the
+    // An environment provisioned BEFORE the narrowing: a project table, the
     // entity map, and the blanket read the old builder granted. Asserted, so a
     // future refactor that silently stops seeding it turns the retroactive
     // REVOKE test below vacuous rather than green.
@@ -299,7 +299,7 @@ fn cdc_role_reads_only_the_classification_maps_and_still_decodes_env_key_tables(
         &db_url,
         &format!(
             "{schema_guard};\n\
-             CREATE TABLE {schema_ident}.widgets (id int PRIMARY KEY, tenant_secret text);\n\
+             CREATE TABLE {schema_ident}.widgets (id int PRIMARY KEY, project_secret text);\n\
              {entity_map};\n\
              {exclusion_map};\n\
              GRANT USAGE ON SCHEMA {schema_ident} TO \"{cdc}\";\n\
@@ -329,7 +329,7 @@ fn cdc_role_reads_only_the_classification_maps_and_still_decodes_env_key_tables(
     // Changes to decode, on the table the role must NOT be able to read.
     run_ok(
         &db_url,
-        &format!("INSERT INTO {schema}.widgets VALUES (1, 'tenant-secret');\n"),
+        &format!("INSERT INTO {schema}.widgets VALUES (1, 'project-secret');\n"),
     );
 
     run_ok(
@@ -348,14 +348,14 @@ DO $$ BEGIN
   ASSERT has_database_privilege('{cdc}', '{db}', 'CONNECT'),
     'the builder still grants database CONNECT — only the table read narrowed';
   ASSERT (SELECT rolreplication FROM pg_roles WHERE rolname = '{cdc}'),
-    'the role still carries REPLICATION (the gate the narrowing leaves in place)';
+    'the role still carries REPLICATION (the condition the narrowing leaves in place)';
 END $$;
 
 SET ROLE "{cdc}";
 DO $$ BEGIN
   BEGIN
     PERFORM count(*) FROM {schema}.widgets;
-    RAISE EXCEPTION 'the CDC credential must not be able to plain-SQL read a tenant table';
+    RAISE EXCEPTION 'the CDC credential must not be able to plain-SQL read a project table';
   EXCEPTION WHEN insufficient_privilege THEN NULL;
   END;
   PERFORM count(*) FROM {schema}.wamn_entities;

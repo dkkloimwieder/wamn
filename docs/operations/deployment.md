@@ -292,7 +292,7 @@ An adopted application record does not prove that SQL ran.
 Matching records remain unchanged. New or changed asserted files receive `adopted` with no `applied_at` timestamp.
 Resolve an uncertain `started` record before adoption.
 
-### Reset scope and recovery
+### Reset target and recovery
 
 If selected physical SQL changes in authorized `reset` mode, schema apply replaces the whole project-environment database.
 Every application in that database loses its data, including stopped applications with retained schemas.
@@ -304,7 +304,7 @@ Before stopping writers, WAMN resolves every retained schema, permission, and re
 Missing sources, omitted installed applications, or conflicting definitions stop preparation before destruction.
 The executing SQL image must contain every recorded project file with its original checksum.
 Resolve any project file with a `started` outcome before reset:
-`wamn platform schema apply --scope project --env FILE --chart DIR --resolve <path>=applied|retry`.
+`wamn platform schema apply --target project --env FILE --chart DIR --resolve <path>=applied|retry`.
 Inspect the file's database effects before choosing its resolution.
 The environment lock excludes application deployment during reset.
 `registry.project_envs.pending_database` pins the complete inputs and a new initialization identity outside the database being replaced.
@@ -517,12 +517,12 @@ wamn-ctl env apply <document> --application <application>
 Different applications can deploy concurrently. A whole-environment reset takes the exclusive environment lock.
 A CI completion order does not set deployment precedence.
 
-The deployed capture owner sets replica identity from the installed published package artifacts.
+The deployed capture owner sets replican identity from the installed published package artifacts.
 The development loop reconciles it directly from local source on each activation.
 Captured tables use REPLICA IDENTITY FULL so that events include the old row.
 
 Provisioning owns database schema, privileges, environment bindings, and broker stream configuration.
-Runtime uses credentials scoped to that environment.
+Runtime uses credentials bound to that environment.
 Declare stream replicas and the duplicate window in the environment configuration.
 Activation compares declared configuration with the provisioned resources and refuses disagreement.
 It does not grant runtime credentials permission to reconfigure streams.
@@ -573,7 +573,7 @@ The credential of `--registry-auth-file` must pull the packages and push to the 
 Each component of the release carries its admitted descriptor from the package artifact.
 Set `RELEASE_DIGEST` to it.
 The manifest names no environment key and no environment, so one release has one digest in every environment.
-The composed `env_key` is `<org>--<project>--<environment>`.
+The composed `project_env_key` is `<org>--<project>--<environment>`.
 The separate `environment` field keeps the short name.
 The release also names no route host.
 The route host is only the `host` of the http workload config. The router matches routes under it.
@@ -694,9 +694,9 @@ The route bodies and limits are in [password enrollment](../architecture/executi
 
 ## User roles
 
-`apply-package` writes the built-in role `admin` in each tenant.
+`apply-package` writes the built-in role `admin` in each project.
 `admin` has no permission rows and holds every operation that the serving release serves.
-Every other role is authored in the tenant, and it holds the stable operation references `<package>:<interface>/<operation>` granted to it.
+Every other role is authored in the project, and it holds the stable operation references `<package>:<interface>/<operation>` granted to it.
 A user or a service reaches no route and no environment at sign-in until it holds a role.
 
 Give a role with `wamn-ctl grant-role`, and take it away with `wamn-ctl revoke-role`.
@@ -744,7 +744,7 @@ The user then uses normal password recovery at the replacement address.
 
 Use an authorized administrative connection to the identity service's `wamn_system` database.
 The connection must permit `SET ROLE wamn_system`.
-Do not use the scoped identity issuer credential, which cannot edit principals.
+Do not use the targeted identity issuer credential, which cannot edit principals.
 Use the administrator's existing principal UUID as the audit actor.
 Use the affected user's existing principal UUID as the target.
 Do not create another principal or change its subject, memberships, or roles.
@@ -761,13 +761,13 @@ SET LOCAL ROLE wamn_system;
 SELECT set_config('app.user_id', :'administrator_id', true);
 SELECT EXISTS (
     SELECT 1 FROM identity.principals
-    WHERE id = :'principal_id'::uuid AND kind = 'user'
+    WHERE id = :'principal_id'::uuid AND type = 'user'
     FOR UPDATE
 ) AS account_found \gset
 \if :account_found
 UPDATE identity.principals
 SET email = lower(btrim(:'replacement_email'))
-WHERE id = :'principal_id'::uuid AND kind = 'user';
+WHERE id = :'principal_id'::uuid AND type = 'user';
 UPDATE identity.password_tokens
 SET consumed_at = clock_timestamp()
 WHERE principal_id = :'principal_id'::uuid AND consumed_at IS NULL;
@@ -805,12 +805,12 @@ Use the environment's identity Deployment and require its readiness before issui
 Select the prepared chart explicitly for each platform SQL operation.
 Set `KUBECONFIG` to the target cluster file and select its current context first.
 Without `KUBECONFIG`, the command uses `$HOME/.kube/config`.
-System scope reads the existing `platform/wamn-pg-superuser` Secret.
-Both scopes execute SQL in a bounded Job in `platform`.
+System target reads the existing `platform/wamn-pg-superuser` Secret.
+Both targets execute SQL in a bounded Job in `platform`.
 
 ```bash
-wamn platform schema diff --scope system --chart /prepared/platform
-wamn platform schema apply --scope system --chart /prepared/platform
+wamn platform schema diff --target system --chart /prepared/platform
+wamn platform schema apply --target system --chart /prepared/platform
 ```
 
 Both commands run the selected chart's immutable `ctl` image and print its digest.
@@ -835,30 +835,30 @@ Use `applied` to record that the statement completed.
 After any manual cleanup, use `retry` to run the same bytes again.
 
 ```bash
-wamn platform schema apply --scope system --chart /prepared/platform \
+wamn platform schema apply --target system --chart /prepared/platform \
   --resolve migrations/system/0001_example.sql=applied
-wamn platform schema apply --scope system --chart /prepared/platform \
+wamn platform schema apply --target system --chart /prepared/platform \
   --resolve migrations/system/0001_example.sql=retry
 ```
 
 Fresh platform installation initializes an empty system database, then runs every embedded system migration.
-If migration execution stops, resume with `platform schema apply --scope system` and the same `--chart`.
+If migration execution stops, resume with `platform schema apply --target system` and the same `--chart`.
 Repeated installation preserves initialization and runs no pending migration.
 Ordinary platform reapply also runs no migration.
 
 System schema apply changes only system SQL objects and migration records.
 It changes no service release, application selection, credential, or Helm release.
 Deploy compatible control code separately with `platform deploy ... --only control`.
-For one environment, select project scope and its environment document.
-Project scope requires `--env`, and system scope refuses it.
+For one environment, select project target and its environment document.
+Project target requires `--env`, and system target refuses it.
 Set `WAMN_APPLY_DATABASE_URL` to the installed system registry before project operations.
 The command reads the environment's recorded database instance and PostgreSQL cluster from that registry.
 The SQL Job uses the existing CNPG administrator and `platform/wamn-apply` credentials.
 
 ```bash
-wamn platform schema diff --scope project --env environments/dev/environment.k --chart /prepared/platform
-wamn platform schema apply --scope project --env environments/dev/environment.k --chart /prepared/platform
-wamn platform schema apply --scope project --env environments/dev/environment.k --chart /prepared/platform \
+wamn platform schema diff --target project --env environments/dev/environment.k --chart /prepared/platform
+wamn platform schema apply --target project --env environments/dev/environment.k --chart /prepared/platform
+wamn platform schema apply --target project --env environments/dev/environment.k --chart /prepared/platform \
   --resolve migrations/project/0001_example.sql=retry
 ```
 
@@ -871,7 +871,7 @@ The operation runs no environment provisioning or application activation.
 Fresh environment provisioning installs the catalog and project substrate, then runs every embedded project migration.
 Repeated provisioning runs no pending migration.
 If execution stops, the error reports completed and remaining files.
-Resume with `wamn platform schema apply --scope project --env FILE --chart DIR` and the same chart.
+Resume with `wamn platform schema apply --target project --env FILE --chart DIR` and the same chart.
 Application package migrations keep their own streams.
 
 ## Rollback and maintenance

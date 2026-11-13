@@ -32,14 +32,14 @@ The managed Beads block is task-tracking guidance, not permission to override re
 
 - **Conservative (default)**: Use `bd` for task tracking. Do not run git commits, git pushes, or Dolt remote sync unless explicitly asked. At handoff, report changed files, validation, and suggested next commands.
 - **Minimal**: Keep tool instruction files as pointers to `bd prime`; use the same conservative git policy unless active instructions say otherwise.
-- **Team-maintainer**: Only when the repository explicitly opts in, agents may close beads, run quality gates, commit, and push as part of session close. A current "do not commit" or "do not push" instruction still wins.
+- **Team-maintainer**: Only when the repository explicitly opts in, agents may close beads, run quality tests, commit, and push as part of session close. A current "do not commit" or "do not push" instruction still wins.
 
 ## Session Completion
 
 This protocol applies when ending a Beads implementation workflow. It is subordinate to explicit user, repository, and orchestrator instructions.
 
 1. **File issues for remaining work** - Create beads for anything that needs follow-up
-2. **Run quality gates** (if code changed) - Tests, linters, builds
+2. **Run quality tests** (if code changed) - Tests, linters, builds
 3. **Update issue status** - Close finished work, update in-progress items
 4. **Handle git/sync by active profile**:
    ```bash
@@ -104,7 +104,7 @@ A finding **closes on a commit that removes or fixes code — never on a decisio
 Close findings in the commit that carries the finding ID (`fix(R13): ...`).
 
 ### Rust
-Almost all code here is Rust — consult the `rust-guidelines` skill when writing, reviewing, or refactoring it. At public, persisted, and WIT/wire boundaries, repository-defined WIT-shaped error enums and frozen serialized literals are the controlling contract. Inside implementations, use contextual error structs carrying a kind, source, and relevant context, then translate exactly once at the owning boundary. Do not create a parallel wire taxonomy or mechanically retrofit unrelated errors; retrofit existing code only when a named boundary leak requires it or when that owner is already being changed. This scoped project convention overrides conflicting skill guidance.
+Almost all code here is Rust — consult the `rust-guidelines` skill when writing, reviewing, or refactoring it. At public, persisted, and WIT/wire boundaries, repository-defined WIT-shaped error enums and frozen serialized literals are the controlling contract. Inside implementations, use contextual error structs carrying a type, source, and relevant context, then translate exactly once at the owning boundary. Do not create a parallel wire taxonomy or mechanically retrofit unrelated errors; retrofit existing code only when a named boundary leak requires it or when that owner is already being changed. This targeted project convention overrides conflicting skill guidance.
 
 Memory beats CPU on this platform, and a clone is never free (owner rule 2026-11-03, `wamn-inmae`). Borrow or move a value before you clone it. Spell every reference-count increment as `Arc::clone(&x)`.
 
@@ -137,7 +137,7 @@ Owner ruling 2026-11-04 (`wamn-inmae`, docs/audit/test-practice.md Part C). Make
 
 ## Standing repository rules
 
-Epics may run in parallel when they share no files and no migration (owner ruling 2026-10-09). Each running epic is scoped into issues; the epics not yet started in the owning plan are direction, not work, and have no issues. Merges to `main` are serial. Migration numbers are assigned at merge, not in the lane. Before merge, a lane runs every live test target that touches its files. The per-merge live-target list comes from tools/test-changes against the branch diff, never from a hand-written list. Exception for a rebase (owner ruling 2026-11-04): if the full selection of a branch ran at one head, every failure has an open bead, and the branch is then rebased with no new commits of its own, the pre-merge run is the delta selection. The delta selection is the test targets of the crates that changed between the old and the new base, plus each target that a conflict resolution touched. It never reruns the full selection. If the branch gains new commits after the run, it selects from its whole diff as usual. The test of the owning plan is that scoping: an epic must be scopable into fully specified issues from the owning plan alone, each issue naming its files, the owning plan’s invariants it makes true and the owning plan’s tests it runs. If it cannot be, the owning plan is insufficient; the gap is reported with the section that fails to answer, and nothing is guessed.
+Epics may run in parallel when they share no files and no migration (owner ruling 2026-10-09). Each running epic is targeted into issues; the epics not yet started in the owning plan are direction, not work, and have no issues. Merges to `main` are serial. Migration numbers are assigned at merge, not in the lane. Before merge, a lane runs every live test target that touches its files. The per-merge live-target list comes from tools/test-changes against the branch diff, never from a hand-written list. Exception for a rebase (owner ruling 2026-11-04): if the full selection of a branch ran at one head, every failure has an open bead, and the branch is then rebased with no new commits of its own, the pre-merge run is the delta selection. The delta selection is the test targets of the crates that changed between the old and the new base, plus each target that a conflict resolution touched. It never reruns the full selection. If the branch gains new commits after the run, it selects from its whole diff as usual. The test of the owning plan is that scoping: an epic must be scopable into fully specified issues from the owning plan alone, each issue naming its files, the owning plan’s invariants it makes true and the owning plan’s tests it runs. If it cannot be, the owning plan is insufficient; the gap is reported with the section that fails to answer, and nothing is guessed.
 
 1. Decide, do not ask. The orchestrator decides any question that does not change a plan invariant, with these defaults: delete over add; one owner per fact; greenfield (refuse old rows, bump formats, no compatibility paths); no new table, column, flag or environment variable unless a rule names it; NULL for dev-only state; literals without a versioned contract change freely. The decision is recorded on the issue. Only a change to an invariant goes to the owner.
 2. Findings first. A lane with open review findings starts nothing else.

@@ -2,7 +2,7 @@
 
 use anyhow::{Context as _, ensure};
 use tokio_postgres::{Client, GenericClient, Transaction};
-use wamn_control_provision::schema_migrations::{self, MigrationScope};
+use wamn_control_provision::schema_migrations::{self, MigrationDatabase};
 use wamn_package_control::migrations::{self, MigrationHooks, MigrationResolution, MigrationTable};
 use wamn_schema_control::{MigrationSource, SqlStatement, Value};
 
@@ -14,10 +14,10 @@ pub enum MigrationTarget<'a> {
 }
 
 impl MigrationTarget<'_> {
-    fn scope(self) -> MigrationScope {
+    fn database(self) -> MigrationDatabase {
         match self {
-            Self::System => MigrationScope::System,
-            Self::Project(_) => MigrationScope::Project,
+            Self::System => MigrationDatabase::System,
+            Self::Project(_) => MigrationDatabase::Project,
         }
     }
 }
@@ -27,29 +27,29 @@ pub use wamn_package_control::schema_baseline::{
 };
 
 fn report(
-    scope: MigrationScope,
+    database: MigrationDatabase,
     planned: &PlatformMigrationPlan,
     sources: &[MigrationSource],
 ) -> String {
     format!(
         "migration history adoption: {}\n{}",
         if planned.adoption { "required" } else { "none" },
-        wamn_package_control::schema_baseline::report(scope, planned, sources)
+        wamn_package_control::schema_baseline::report(database, planned, sources)
     )
 }
 
-/// Describe known SQL consumers without imposing a compatibility gate.
+/// Describe known SQL consumers without imposing a compatibility condition.
 async fn warnings(
     client: &impl GenericClient,
     planned: &PlatformMigrationPlan,
-    scope: MigrationScope,
+    database: MigrationDatabase,
 ) -> anyhow::Result<Vec<String>> {
     use wamn_schema_introspection::migration_policy::{
         DefinitionAction, DefinitionType, inspect_migration_definition_mutations,
     };
-    let consumers = match scope {
-        MigrationScope::System => "control and identity",
-        MigrationScope::Project => "platform and application",
+    let consumers = match database {
+        MigrationDatabase::System => "control and identity",
+        MigrationDatabase::Project => "platform and application",
     };
     let namespaces = client
         .query("SELECT nspname::text FROM pg_namespace", &[])
@@ -87,7 +87,7 @@ async fn warnings(
             );
             let column = (mutation.definition_type() == DefinitionType::Field)
                 .then_some(mutation.definition());
-            let (kind, member) = match mutation.definition_type() {
+            let (type_, member) = match mutation.definition_type() {
                 DefinitionType::Relation => ("table", String::new()),
                 DefinitionType::Field => (
                     "column",
@@ -105,7 +105,7 @@ async fn warnings(
                 ),
             };
             warnings.push(format!(
-                "{} removes {kind} {relation}{member}. Inspect {consumers} consumers.",
+                "{} removes {type_} {relation}{member}. Inspect {consumers} consumers.",
                 file.relative_path
             ));
             for row in client
@@ -136,28 +136,28 @@ pub async fn apply_reported(
     resolution: Option<&MigrationResolution>,
 ) -> anyhow::Result<usize> {
     let result = apply(client, target, sources, resolution).await;
-    report_result(client, target.scope(), sources, result).await
+    report_result(client, target.database(), sources, result).await
 }
 
 async fn report_result(
     client: &Client,
-    scope: MigrationScope,
+    database: MigrationDatabase,
     sources: &[MigrationSource],
     result: anyhow::Result<usize>,
 ) -> anyhow::Result<usize> {
     match result {
         Ok(count) => Ok(count),
         Err(error) => {
-            let report = match plan(client, scope, sources).await {
-                Ok(planned) => report(scope, &planned, sources),
+            let report = match plan(client, database, sources).await {
+                Ok(planned) => report(database, &planned, sources),
                 Err(error) => format!("cannot read completed and remaining files: {error:#}\n"),
             };
-            let selection = match scope {
-                MigrationScope::System => "system --chart <prepared-chart>",
-                MigrationScope::Project => "project --env FILE --chart DIR",
+            let selection = match database {
+                MigrationDatabase::System => "system --chart <prepared-chart>",
+                MigrationDatabase::Project => "project --env FILE --chart DIR",
             };
             Err(error.context(format!(
-                "{report}next: wamn platform schema apply --scope {selection}"
+                "{report}next: wamn platform schema apply --target {selection}"
             )))
         }
     }
@@ -181,8 +181,8 @@ pub async fn restore_project(
     client: &mut Client,
     sources: &[MigrationSource],
 ) -> anyhow::Result<usize> {
-    let result = apply_scope(client, MigrationScope::Project, sources, None).await;
-    report_result(client, MigrationScope::Project, sources, result).await
+    let result = apply_target(client, MigrationDatabase::Project, sources, None).await;
+    report_result(client, MigrationDatabase::Project, sources, result).await
 }
 
 /// Inspect or execute one image's SQL using an already selected database and exclusion.
@@ -194,25 +194,25 @@ pub async fn run(
     resolution: Option<&MigrationResolution>,
     mut output: impl std::io::Write,
 ) -> anyhow::Result<()> {
-    let scope = target.scope();
-    let (label, _, _) = scope_names(scope);
-    let consumers = match scope {
-        MigrationScope::System => "Control and identity",
-        MigrationScope::Project => "Platform and application",
+    let database = target.database();
+    let (label, _, _) = target_names(database);
+    let consumers = match database {
+        MigrationDatabase::System => "Control and identity",
+        MigrationDatabase::Project => "Platform and application",
     };
     if !apply {
         client
             .batch_execute("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY")
             .await?;
     }
-    let planned = plan(client, scope, sources).await?;
-    write!(output, "{}", report(scope, &planned, sources))?;
+    let planned = plan(client, database, sources).await?;
+    write!(output, "{}", report(database, &planned, sources))?;
     if !planned.migrations.pending.is_empty() {
         writeln!(
             output,
             "warning: selected image has pending {label} SQL. {consumers} code can require different SQL objects."
         )?;
-        match warnings(client, &planned, scope).await {
+        match warnings(client, &planned, database).await {
             Ok(warnings) => {
                 for warning in warnings {
                     writeln!(output, "warning: {warning}")?;
@@ -245,8 +245,8 @@ pub async fn run(
     output.flush()?;
     if apply {
         apply_reported(client, target, sources, resolution).await?;
-        let completed = plan(client, scope, sources).await?;
-        write!(output, "{}", report(scope, &completed, sources))?;
+        let completed = plan(client, database, sources).await?;
+        write!(output, "{}", report(database, &completed, sources))?;
     } else {
         client.batch_execute("ROLLBACK").await?;
     }
@@ -254,40 +254,40 @@ pub async fn run(
     Ok(())
 }
 
-fn scope_names(scope: MigrationScope) -> (&'static str, &'static str, &'static str) {
-    match scope {
-        MigrationScope::System => ("system", "registry", "migrations/system/"),
-        MigrationScope::Project => ("project", "platform", "migrations/project/"),
+fn target_names(database: MigrationDatabase) -> (&'static str, &'static str, &'static str) {
+    match database {
+        MigrationDatabase::System => ("system", "registry", "migrations/system/"),
+        MigrationDatabase::Project => ("project", "platform", "migrations/project/"),
     }
 }
 
 /// Apply exact files without initialization, package authority, or release changes.
 ///
 /// Use a dedicated connection. Close it on cancellation to release session locks.
-/// Project scope shares the application/reset schema exclusion.
+/// Project database shares the application/reset schema exclusion.
 pub async fn apply(
     client: &mut Client,
     target: MigrationTarget<'_>,
     sources: &[MigrationSource],
     resolution: Option<&MigrationResolution>,
 ) -> anyhow::Result<usize> {
-    apply_scope(client, target.scope(), sources, resolution).await
+    apply_target(client, target.database(), sources, resolution).await
 }
 
-async fn apply_scope(
+async fn apply_target(
     client: &mut Client,
-    scope: MigrationScope,
+    database: MigrationDatabase,
     sources: &[MigrationSource],
     resolution: Option<&MigrationResolution>,
 ) -> anyhow::Result<usize> {
-    let lock_sql = match scope {
-        MigrationScope::System => {
+    let lock_sql = match database {
+        MigrationDatabase::System => {
             "SELECT pg_advisory_xact_lock(hashtextextended('wamn.platform.system-schema:' || current_database(), 0))"
         }
-        MigrationScope::Project => wamn_package_control::apply_package::LOCK_SQL,
+        MigrationDatabase::Project => wamn_package_control::apply_package::LOCK_SQL,
     };
     let key = migrations::lock_session(client, lock_sql, &[]).await?;
-    let result = apply_locked(client, scope, sources, resolution).await;
+    let result = apply_locked(client, database, sources, resolution).await;
     let unlock = client
         .query_one("SELECT pg_advisory_unlock($1)", &[&key])
         .await;
@@ -303,21 +303,21 @@ async fn apply_scope(
 
 async fn apply_locked(
     client: &mut Client,
-    scope: MigrationScope,
+    database: MigrationDatabase,
     sources: &[MigrationSource],
     resolution: Option<&MigrationResolution>,
 ) -> anyhow::Result<usize> {
-    let planned = plan(client, scope, sources).await?;
+    let planned = plan(client, database, sources).await?;
     if let Some(error) = planned.missing {
         return Err(error.into());
     }
-    let (label, schema, _) = scope_names(scope);
+    let (label, schema, _) = target_names(database);
     let table_name = format!("{schema}.schema_migration");
     let table = MigrationTable {
         name: &table_name,
         keys: &[],
         recorded: &planned.recorded,
-        scope: migrations::ResolutionScope::Platform(label),
+        target: migrations::ResolutionTarget::Platform(label),
     };
     let mut statements = Vec::with_capacity(planned.migrations.pending.len() * 2);
     for (file, sql) in planned
@@ -335,7 +335,7 @@ async fn apply_locked(
         });
     }
     let mut hooks = PlatformHooks {
-        scope,
+        database,
         adoption: planned.adoption,
     };
     let count = migrations::execute_migrations(
@@ -351,7 +351,7 @@ async fn apply_locked(
 }
 
 struct PlatformHooks {
-    scope: MigrationScope,
+    database: MigrationDatabase,
     adoption: bool,
 }
 
@@ -362,7 +362,7 @@ impl MigrationHooks for PlatformHooks {
 
     async fn initialize(&mut self, tx: &Transaction<'_>) -> anyhow::Result<()> {
         if self.adoption {
-            tx.batch_execute(&schema_migrations::history_sql(self.scope))
+            tx.batch_execute(&schema_migrations::history_sql(self.database))
                 .await
                 .context("adopt initialization with empty migration history")?;
         }
@@ -403,7 +403,7 @@ impl ProjectReset {
         client: &impl GenericClient,
         sources: &[MigrationSource],
     ) -> anyhow::Result<Self> {
-        let planned = plan(client, MigrationScope::Project, sources).await?;
+        let planned = plan(client, MigrationDatabase::Project, sources).await?;
         if let Some(error) = planned.missing {
             return Err(error.into());
         }
@@ -413,7 +413,7 @@ impl ProjectReset {
             .find(|file| file.outcome == wamn_schema_control::MigrationOutcome::Started)
         {
             anyhow::bail!(
-                "project migration {} is uncertain (started); inspect its effects and run wamn platform schema apply --scope project --env FILE --chart DIR --resolve {}=applied|retry before reset",
+                "project migration {} is uncertain (started); inspect its effects and run wamn platform schema apply --target project --env FILE --chart DIR --resolve {}=applied|retry before reset",
                 file.relative_path,
                 file.relative_path
             );

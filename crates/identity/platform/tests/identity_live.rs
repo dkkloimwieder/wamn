@@ -717,18 +717,18 @@ async fn unbound_identity_writes_refuse(client: &tokio_postgres::Client) {
 }
 
 /// `principals_platform_principal_check` admits only the pinned
-/// wamn:provisioning row for kind platform, and the other kinds refuse a
+/// wamn:provisioning row for type platform, and the other types refuse a
 /// `wamn:` name.
 ///
 /// The last two rows pin `principals_email_check` instead (`wamn-0h0g.9.18`):
-/// a user needs an email, and no other kind carries one. Every other row here
+/// a user needs an email, and no other type carries one. Every other row here
 /// gets a valid email, so it still fails on the platform test alone.
 async fn platform_principal_constraint_refuses_other_rows(client: &tokio_postgres::Client) {
     const OTHER: &str = "00000000-0000-4000-8000-0000000000f2";
     const ADDRESS: Option<&str> = Some("refused@example.invalid");
     let provisioning = PlatformComponent::Provisioning;
     let executor = PlatformComponent::Executor;
-    for (kind, id, subject, email, display_name) in [
+    for (type_, id, subject, email, display_name) in [
         (
             "platform",
             OTHER.to_owned(),
@@ -773,14 +773,14 @@ async fn platform_principal_constraint_refuses_other_rows(client: &tokio_postgre
             .execute(
                 "INSERT INTO identity.principals (id, type, subject, email, display_name) \
                  VALUES ($1::text::uuid, $2, $3, $4, $5)",
-                &[&id, &kind, &subject, &email, &display_name],
+                &[&id, &type_, &subject, &email, &display_name],
             )
             .await
             .expect_err("the principal CHECKs must refuse this row");
         assert_eq!(
             error.code(),
             Some(&SqlState::CHECK_VIOLATION),
-            "{kind} {id} {subject} {display_name}"
+            "{type_} {id} {subject} {display_name}"
         );
     }
 }
@@ -796,6 +796,6 @@ async fn route_principal_id(
     reads
         .authenticate_route_pat(client, token, org, project, &["operator", "admin"])
         .await
-        .expect("read route PAT and scope in one statement")
+        .expect("read route PAT and target in one statement")
         .map(|authenticated| authenticated.principal().id().to_string())
 }

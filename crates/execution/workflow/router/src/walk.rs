@@ -53,7 +53,7 @@ impl WalkStatus {
 
 /// Why a walk ended in [`WalkStatus::Failed`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum FailureKind {
+pub enum FailureType {
     /// A node returned `terminal` and no error edge caught it.
     Terminal,
     /// A node kept returning `retryable`/`rate-limited` past its budget.
@@ -87,7 +87,7 @@ pub enum FailureKind {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Failure {
     pub node: String,
-    pub kind: FailureKind,
+    pub type_: FailureType,
     pub detail: ErrorDetail,
 }
 
@@ -261,13 +261,13 @@ impl ApplyError {
     /// The other three describe a driver feeding back an outcome the walk never
     /// handed out — a defect in the driver, which no wiring can recover from
     /// and which [`route`](crate::route) therefore still panics on.
-    fn node_data_failure(&self) -> Option<(FailureKind, &'static str)> {
+    fn node_data_failure(&self) -> Option<(FailureType, &'static str)> {
         match &self.type_ {
             ApplyErrorType::RespondWithoutCaller(_) => {
-                Some((FailureKind::RespondWithoutCaller, "respond-without-caller"))
+                Some((FailureType::RespondWithoutCaller, "respond-without-caller"))
             }
             ApplyErrorType::SecondVerdict(_) => {
-                Some((FailureKind::SecondVerdict, "second-verdict"))
+                Some((FailureType::SecondVerdict, "second-verdict"))
             }
             ApplyErrorType::Terminal(_)
             | ApplyErrorType::NoActiveNode
@@ -324,7 +324,7 @@ impl Wiring {
     /// slot when idle; a due active node is invoked, a not-yet-due retry waits,
     /// an empty frontier completes the walk. Each invocation handed out counts
     /// against the hop limit ([`Wiring::set_hop_limit`]); once spent, the walk
-    /// fails [`FailureKind::HopLimit`] — the runtime bound that keeps a
+    /// fails [`FailureType::HopLimit`] — the runtime bound that keeps a
     /// permitted cycle from running forever.
     pub fn next(&self, walk: &mut Walk, now_ms: u64) -> Step {
         if walk.status.is_terminal() {
@@ -363,7 +363,7 @@ impl Wiring {
             walk.status = WalkStatus::Failed;
             walk.failure = Some(Failure {
                 node,
-                kind: FailureKind::HopLimit,
+                type_: FailureType::HopLimit,
                 detail: ErrorDetail::coded(
                     "hop-limit",
                     format!("hop limit of {} spent without terminating", self.hop_limit),
@@ -378,7 +378,7 @@ impl Wiring {
 
     /// End a walk whose frontier emptied. A verdict already recorded by a
     /// terminal node stands; otherwise this is [`Verdict::Discard`] — unless a
-    /// caller is still waiting, which is [`FailureKind::UnreleasedCaller`]. A
+    /// caller is still waiting, which is [`FailureType::UnreleasedCaller`]. A
     /// cancelled walk never reaches settlement.
     fn settle(&self, walk: &mut Walk) -> WalkStatus {
         if walk.verdict.is_none() {
@@ -386,7 +386,7 @@ impl Wiring {
                 walk.status = WalkStatus::Failed;
                 walk.failure = Some(Failure {
                     node: self.entry().to_string(),
-                    kind: FailureKind::UnreleasedCaller,
+                    type_: FailureType::UnreleasedCaller,
                     detail: ErrorDetail::coded(
                         "unreleased-caller",
                         "frontier emptied with a caller attached and no respond",
@@ -471,7 +471,7 @@ impl Wiring {
                                     "missing-dedup-id",
                                     format!("emit node emitted no {DEDUP_ID_FIELD} string"),
                                 ),
-                                FailureKind::MissingDedupId,
+                                FailureType::MissingDedupId,
                             );
                             return Ok(());
                         };
@@ -492,7 +492,7 @@ impl Wiring {
                 if policy.may_retry(attempt) {
                     schedule_retry(walk, now_ms + policy.backoff_ms(attempt), None);
                 } else {
-                    self.error_or_fail(walk, &call.node, detail, FailureKind::RetryExhausted);
+                    self.error_or_fail(walk, &call.node, detail, FailureType::RetryExhausted);
                 }
             }
             NodeOutcome::Error(NodeError::RateLimited(rl)) => {
@@ -508,15 +508,15 @@ impl Wiring {
                     );
                     schedule_retry(walk, now_ms + delay, Some(key));
                 } else {
-                    self.error_or_fail(walk, &call.node, rl.detail, FailureKind::RetryExhausted);
+                    self.error_or_fail(walk, &call.node, rl.detail, FailureType::RetryExhausted);
                 }
             }
             NodeOutcome::Error(NodeError::Terminal(detail)) => {
-                self.error_or_fail(walk, &call.node, detail, FailureKind::Terminal);
+                self.error_or_fail(walk, &call.node, detail, FailureType::Terminal);
             }
             NodeOutcome::Error(NodeError::InvalidInput(detail)) => {
                 // Never retried, regardless of budget.
-                self.error_or_fail(walk, &call.node, detail, FailureKind::InvalidInput);
+                self.error_or_fail(walk, &call.node, detail, FailureType::InvalidInput);
             }
             NodeOutcome::Cancelled => {
                 walk.current = None;
@@ -528,7 +528,7 @@ impl Wiring {
 
     /// Fold an [`ApplyError`] that DATA caused into the walk: `node`'s error
     /// edge if it has one, otherwise a failed walk carrying the matching
-    /// [`FailureKind`]. Gives the error back unchanged when it instead describes
+    /// [`FailureType`]. Gives the error back unchanged when it instead describes
     /// a driver feeding back an outcome the walk never handed out, which no
     /// wiring can recover from.
     ///
@@ -543,14 +543,14 @@ impl Wiring {
         node: &str,
         error: ApplyError,
     ) -> Result<(), ApplyError> {
-        let Some((kind, code)) = error.node_data_failure() else {
+        let Some((type_, code)) = error.node_data_failure() else {
             return Err(error);
         };
         self.error_or_fail(
             walk,
             node,
             ErrorDetail::coded(code, error.to_string()),
-            kind,
+            type_,
         );
         Ok(())
     }
@@ -579,14 +579,14 @@ impl Wiring {
     }
 
     /// Route the failed node to its error edge if one exists; otherwise end the
-    /// walk as failed with the given `kind`.
-    fn error_or_fail(&self, walk: &mut Walk, node: &str, detail: ErrorDetail, kind: FailureKind) {
+    /// walk as failed with the given `type`.
+    fn error_or_fail(&self, walk: &mut Walk, node: &str, detail: ErrorDetail, type_: FailureType) {
         walk.current = None;
         if self.successors(node, ERROR_PORT).next().is_none() {
             walk.status = WalkStatus::Failed;
             walk.failure = Some(Failure {
                 node: node.to_string(),
-                kind,
+                type_,
                 detail,
             });
         } else {

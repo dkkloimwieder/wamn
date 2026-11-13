@@ -1,12 +1,12 @@
 //! Provisioned session audiences bind registry coordinates to one read credential.
 //!
 //! Documents contain a database credential and belong only in mounted Secrets.
-//! HTTP requests select the derived audience, never a database URL or tenant.
+//! HTTP requests select the derived audience, never a database URL or project.
 
 use std::fmt;
 
 use serde::{Deserialize, Serialize};
-use wamn_control_registry::{Triple, identifiers::valid_env_key};
+use wamn_control_registry::{Triple, identifiers::valid_project_env_key};
 
 use crate::name::{project_env_database_name, validate_instance_suffix, validate_project_env};
 use crate::session_role_reader::{SessionRoleReaderConnection, parse_session_role_reader_url};
@@ -32,10 +32,10 @@ fn refused(context: &'static str) -> SessionTargetError {
     SessionTargetError { context }
 }
 
-/// Apply the existing tenant-claim spelling, without creating another identity format.
-pub fn validate_session_env_key(env_key: &str) -> Result<(), SessionTargetError> {
-    if !valid_env_key(env_key) {
-        return Err(refused("session target tenant refused"));
+/// Apply the existing project-identity spelling, without creating another identity format.
+pub fn validate_session_project_env_key(project_env_key: &str) -> Result<(), SessionTargetError> {
+    if !valid_project_env_key(project_env_key) {
+        return Err(refused("session target project refused"));
     }
     Ok(())
 }
@@ -63,12 +63,12 @@ struct TargetDocument {
     project: String,
     env: String,
     instance_suffix: String,
-    env_key: String,
+    project_env_key: String,
     database: String,
     database_url: String,
 }
 
-/// One validated target; cloning preserves its exact scope and redacted diagnostics.
+/// One validated target; cloning preserves its exact target and redacted diagnostics.
 #[derive(Clone)]
 pub struct SessionTarget {
     document: TargetDocument,
@@ -87,15 +87,15 @@ impl fmt::Debug for SessionTarget {
 }
 
 impl SessionTarget {
-    /// Bind a provisioned instance and trusted tenant to its exact reader credential.
+    /// Bind a provisioned instance and trusted project to its exact reader credential.
     pub fn new(
         triple: &Triple,
         instance_suffix: &str,
-        env_key: &str,
+        project_env_key: &str,
         database_url: &str,
     ) -> Result<Self, SessionTargetError> {
         let audience = session_audience(triple, instance_suffix)?;
-        validate_session_env_key(env_key)?;
+        validate_session_project_env_key(project_env_key)?;
         let database = project_env_database_name(
             &triple.org,
             &triple.project,
@@ -117,7 +117,7 @@ impl SessionTarget {
                 project: triple.project.clone(),
                 env: triple.env.to_string(),
                 instance_suffix: instance_suffix.to_owned(),
-                env_key: env_key.to_owned(),
+                project_env_key: project_env_key.to_owned(),
                 database,
                 database_url: database_url.to_owned(),
             },
@@ -138,13 +138,13 @@ impl SessionTarget {
         let target = Self::new(
             &triple,
             &document.instance_suffix,
-            &document.env_key,
+            &document.project_env_key,
             &document.database_url,
         )?;
         if target.document.audience != document.audience
             || target.document.database != document.database
         {
-            return Err(refused("session target scope mismatch"));
+            return Err(refused("session target target mismatch"));
         }
         Ok(target)
     }
@@ -166,9 +166,9 @@ impl SessionTarget {
     pub fn instance_suffix(&self) -> &str {
         &self.document.instance_suffix
     }
-    /// Borrow the trusted tenant claim used in every role predicate.
-    pub fn env_key(&self) -> &str {
-        &self.document.env_key
+    /// Borrow the trusted project identity used in every role predicate.
+    pub fn project_env_key(&self) -> &str {
+        &self.document.project_env_key
     }
     /// Borrow the validated reader capability for the database driver only.
     pub fn connection(&self) -> &SessionRoleReaderConnection {

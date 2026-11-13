@@ -18,7 +18,7 @@ use session_fixture::{AUDIENCE, ISSUER, ORG, Server, claims, header, signed};
 async fn exact_org_and_environment_matrix_uses_one_configured_issuer_cache() {
     let server = Server::start().await;
     let (keys, _) = server.cache();
-    let scopes = [
+    let audiences = [
         (
             "org-a",
             "urn:wamn:project-env:org-a:project:dev:instance-one",
@@ -40,11 +40,11 @@ async fn exact_org_and_environment_matrix_uses_one_configured_issuer_cache() {
             "urn:wamn:project-env:org-a:project:dev:instance-two",
         ),
     ];
-    for (host_org, host_audience) in scopes {
+    for (host_org, host_audience) in audiences {
         let (verifier, _) =
             SessionVerifier::with_test_clock(keys.clone(), host_org, host_audience, 1000)
-                .expect("configured host scope");
-        for (token_org, token_audience) in scopes {
+                .expect("configured host audience");
+        for (token_org, token_audience) in audiences {
             let mut body = claims();
             body["org"] = json!(token_org);
             body["aud"] = json!(token_audience);
@@ -77,7 +77,7 @@ async fn exact_org_and_environment_matrix_uses_one_configured_issuer_cache() {
     assert_eq!(
         server.count(),
         1,
-        "configured scopes share one issuer budget"
+        "configured audiences share one issuer budget"
     );
     assert!(SessionVerifier::new(keys.clone(), "", AUDIENCE).is_err());
     assert!(SessionVerifier::new(keys, ORG, " ").is_err());
@@ -108,7 +108,10 @@ async fn pinned_profile_refuses_before_fetch_and_claim_misses_never_gain_authori
     assert_eq!(server.count(), 0, "invalid profiles never discover keys");
     for field in ["iss", "sub", "org", "aud", "roles", "iat", "exp", "jti"] {
         let mut missing = claims();
-        missing.as_object_mut().expect("claim object").remove(field);
+        missing
+            .as_object_mut()
+            .expect("JWT claim object")
+            .remove(field);
         assert!(verifier.verify(&signed(&header(), &missing)).await.is_err());
     }
     let mut token = signed(&header(), &claims());

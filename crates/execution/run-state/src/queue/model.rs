@@ -1,7 +1,7 @@
-//! The run-queue record model — the durable, claimable unit of work. A `runs`
+//! The run-queue record model — the durable, leasable unit of work. A `runs`
 //! row (5.7) is the immutable run-state history; a `run_queue` row is the
-//! high-churn claim/lease machinery that co-transacts with it and is deleted when
-//! the run is done. This is the *decision view* the pure claim/lease/janitor
+//! high-churn lease/lease machinery that co-transacts with it and is deleted when
+//! the run is done. This is the *decision view* the pure lease/lease/janitor
 //! logic reasons over, not every column of `deploy/sql/run-queue.sql` (the DB row
 //! also carries `enqueued_at`).
 
@@ -16,17 +16,17 @@ pub type Millis = i64;
 pub const MAX_RETRY_BACKOFF_MS: Millis = 300_000;
 
 /// One row of `run_queue`: a run waiting to be (or being) dispatched. `available_at`
-/// is when the row becomes claimable — future for a queue-parked/backed-off run;
+/// is when the row becomes leasable — future for a queue-parked/backed-off run;
 /// a live lease (`lease_expires_at` in the future) marks a row a runner currently
-/// owns. `attempts` counts expired lease reclaims and releases for unavailable
+/// owns. `attempts` counts expired lease recovers and releases for unavailable
 /// credentials or pools. Operator parks and wakes do not spend this budget.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub struct QueueEntry {
-    #[serde(flatten, with = "env_key")]
-    pub env_key: String,
+    #[serde(flatten, with = "project_env_key")]
+    pub project_env_key: String,
     pub run_id: String,
-    /// When this row becomes claimable. Future = queue-parked (for example,
+    /// When this row becomes leasable. Future = queue-parked (for example,
     /// bounded-retry backoff).
     pub available_at: Millis,
     /// When this row was enqueued — stamped **once** and never updated, unlike
@@ -38,11 +38,11 @@ pub struct QueueEntry {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub lease_owner: Option<String>,
     /// The lease visibility timeout. A row with `lease_expires_at > now` is owned;
-    /// past that it is reclaimable by another replica (crash-safe failover).
+    /// past that it is recoverable by another replica (crash-safe failover).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub lease_expires_at: Option<Millis>,
-    /// Shared count of expired lease reclaims and credential or pool releases.
-    /// First claims and operator parks and wakes do not count.
+    /// Shared count of expired lease recovers and credential or pool releases.
+    /// First leases and operator parks and wakes do not count.
     #[serde(default)]
     pub attempts: i32,
     /// The shared retry budget. A release at the limit fails with
@@ -51,7 +51,7 @@ pub struct QueueEntry {
 }
 
 // Keep the composed key's exact spelling beside the queue's kebab-case fields.
-mod env_key {
+mod project_env_key {
     use serde::{Deserialize, Deserializer, Serializer, ser::SerializeMap as _};
 
     pub fn serialize<S>(value: &str, serializer: S) -> Result<S::Ok, S::Error>
@@ -59,7 +59,7 @@ mod env_key {
         S: Serializer,
     {
         let mut map = serializer.serialize_map(Some(1))?;
-        map.serialize_entry("env_key", value)?;
+        map.serialize_entry("project_env_key", value)?;
         map.end()
     }
 
@@ -69,25 +69,25 @@ mod env_key {
     {
         #[derive(Deserialize)]
         struct Key {
-            env_key: String,
+            project_env_key: String,
         }
-        Ok(Key::deserialize(deserializer)?.env_key)
+        Ok(Key::deserialize(deserializer)?.project_env_key)
     }
 }
 
 impl QueueEntry {
-    /// A fresh, immediately-claimable queue entry (no lease, first attempt).
+    /// A fresh, immediately-leasable queue entry (no lease, first attempt).
     pub fn ready(
-        env_key: impl Into<String>,
+        project_env_key: impl Into<String>,
         run_id: impl Into<String>,
         available_at: Millis,
         max_attempts: i32,
     ) -> QueueEntry {
         QueueEntry {
-            env_key: env_key.into(),
+            project_env_key: project_env_key.into(),
             run_id: run_id.into(),
             available_at,
-            // An immediately-claimable row was enqueued when it became
+            // An immediately-leasable row was enqueued when it became
             // available; a delayed enqueue's `enqueued_at` precedes it (the DB
             // stamps `now()` while `available_at` = `now() + delay`).
             enqueued_at: available_at,

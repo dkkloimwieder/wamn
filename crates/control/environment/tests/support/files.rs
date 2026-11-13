@@ -3,7 +3,7 @@
 use anyhow::Context as _;
 use tokio_postgres::{Client, NoTls};
 use wamn_control_provision::{
-    CredentialGeneration, WorkloadRoleFamily, WorkloadRoleScope, sql, workload_generation_role,
+    CredentialGeneration, WorkloadRoleFamily, WorkloadRoleIdentity, sql, workload_generation_role,
 };
 
 pub const CALLER: &str = "a0000000-0000-4000-8000-0000000000c4";
@@ -37,7 +37,7 @@ fn login(url: &str, role: &str) -> anyhow::Result<String> {
     Ok(url.into())
 }
 
-/// Install schema as bootstrap, then use scoped logins for every fixture write.
+/// Install schema as bootstrap, then use targeted logins for every fixture write.
 pub async fn fixture(name: &str) -> anyhow::Result<Fixture> {
     let mut postgres = wamn_test_postgres::start(&[])?;
     let database = postgres.create_database(name)?;
@@ -56,10 +56,10 @@ pub async fn fixture(name: &str) -> anyhow::Result<Fixture> {
         .batch_execute(wamn_control_provision::APP_SCHEMA_SQL)
         .await?;
     let mut logins = Vec::new();
-    for (family, scope) in [
+    for (family, target) in [
         (
             WorkloadRoleFamily::Administration,
-            WorkloadRoleScope::ProjectEnvironment {
+            WorkloadRoleIdentity::ProjectEnvironment {
                 org: "file-fixture",
                 project: "files",
                 environment: "dev",
@@ -68,13 +68,13 @@ pub async fn fixture(name: &str) -> anyhow::Result<Fixture> {
         ),
         (
             WorkloadRoleFamily::App,
-            WorkloadRoleScope::EnvKey {
-                env_key: "files",
+            WorkloadRoleIdentity::ProjectEnvKey {
+                project_env_key: "files",
                 database: name,
             },
         ),
     ] {
-        let role = workload_generation_role(family, scope, CredentialGeneration::A)?;
+        let role = workload_generation_role(family, target, CredentialGeneration::A)?;
         observer
             .batch_execute(&sql::prepare_workload_generation_sql(
                 family,
@@ -119,7 +119,7 @@ pub async fn fixture(name: &str) -> anyhow::Result<Fixture> {
             .await?;
         anyhow::ensure!(
             !row.get::<_, bool>(0) && !row.get::<_, bool>(1),
-            "scoped fixture login"
+            "targeted fixture login"
         );
     }
     writer
@@ -152,7 +152,7 @@ pub async fn fixture(name: &str) -> anyhow::Result<Fixture> {
     })
 }
 
-/// Seed metadata for schema tests, without claiming that an object was uploaded.
+/// Seed metadata for schema tests, without asserting that an object was uploaded.
 pub async fn metadata(writer: &Client) -> anyhow::Result<()> {
     writer
         .execute(
@@ -301,7 +301,7 @@ pub async fn registry(
     let control = connect(&login(database.url(), "file_fixture_control")?).await?;
     control.batch_execute(&bind_actor).await?;
     let mut clients = Vec::new();
-    for (scope_project, generation, mapped) in [
+    for (target_project, generation, mapped) in [
         (project, CredentialGeneration::A, true),
         (project, CredentialGeneration::B, false),
         ("unenabled", CredentialGeneration::A, true),
@@ -309,7 +309,7 @@ pub async fn registry(
         let role = system_reader_generation_role(
             SystemReader::Connection,
             org,
-            scope_project,
+            target_project,
             "dev",
             "file_registry",
             generation,
@@ -326,13 +326,13 @@ pub async fn registry(
         if mapped {
             owner
                 .execute(
-                    "INSERT INTO wamn_authority.author_login_tenants \
-                 (login_identity,env_key,org_id,project_id,environment) VALUES ($1,$2,$3,$4,'dev')",
+                    "INSERT INTO wamn_authority.author_login_projects \
+                 (login_identity,project_env_key,org_id,project_id,environment) VALUES ($1,$2,$3,$4,'dev')",
                     &[
                         &role,
-                        &format!("{org}--{scope_project}--dev"),
+                        &format!("{org}--{target_project}--dev"),
                         &org,
-                        &scope_project,
+                        &target_project,
                     ],
                 )
                 .await?;
@@ -351,7 +351,7 @@ pub async fn registry(
             .await?;
         anyhow::ensure!(
             !row.get::<_, bool>(0) && !row.get::<_, bool>(1),
-            "file registry uses scoped logins"
+            "file registry uses targeted logins"
         );
     }
     let mut fixture = Registry {

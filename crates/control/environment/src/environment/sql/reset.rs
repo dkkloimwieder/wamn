@@ -53,7 +53,7 @@ pub async fn prepare(
                 platform,
                 document,
                 &crate::platform_migrations::embedded_sources(
-                    wamn_control_provision::schema_migrations::MigrationScope::Project,
+                    wamn_control_provision::schema_migrations::MigrationDatabase::Project,
                 ),
             )
             .await?,
@@ -76,7 +76,7 @@ pub async fn prepare_retained(
         document,
         admin_url,
         &crate::platform_migrations::embedded_sources(
-            wamn_control_provision::schema_migrations::MigrationScope::Project,
+            wamn_control_provision::schema_migrations::MigrationDatabase::Project,
         ),
     )
     .await
@@ -285,7 +285,7 @@ pub async fn validate_pending_substrate(
         .inputs
         .substrate
         .validate(&crate::platform_migrations::embedded_sources(
-            wamn_control_provision::schema_migrations::MigrationScope::Project,
+            wamn_control_provision::schema_migrations::MigrationDatabase::Project,
         ))?;
     Ok(())
 }
@@ -302,7 +302,7 @@ pub async fn initialize(
         document,
         admin_url,
         &crate::platform_migrations::embedded_sources(
-            wamn_control_provision::schema_migrations::MigrationScope::Project,
+            wamn_control_provision::schema_migrations::MigrationDatabase::Project,
         ),
     )
     .await
@@ -414,13 +414,13 @@ pub async fn initialize_with_migrations(
         )?);
     }
     stage::create_number_sequences(&project_url, &defaults).await?;
-    let env_key =
+    let project_env_key =
         wamn_control_provision::project_env_key(&document.org, &document.project, &document.env);
     for (application, digest, manifest, code_packages) in releases {
         stage::materialize_application_principals(
             &platform.system_database_url,
             &project_url,
-            &env_key,
+            &project_env_key,
             &manifest,
             &code_packages,
             &changes,

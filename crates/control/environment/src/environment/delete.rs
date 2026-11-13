@@ -30,7 +30,7 @@ use async_nats::jetstream;
 use postgres_protocol::escape::escape_identifier;
 use wamn_control_provision::sql::drop_replication_slot_sql;
 use wamn_control_provision::workload_role::{
-    WorkloadRoleFamily, WorkloadRoleScope, WorkloadRoleScopeKind, workload_generation_role,
+    WorkloadRoleFamily, WorkloadRoleIdentity, WorkloadRoleIdentityType, workload_generation_role,
 };
 use wamn_control_provision::{
     CredentialGeneration, cdc_object_name, control_administration_secret_name,
@@ -110,7 +110,7 @@ async fn delete_locked(
     };
     let instance: String = row.get(0);
     let database = project_env_database_name(org, project, env, &instance);
-    let env_key = wamn_control_provision::project_env_key(org, project, env);
+    let project_env_key = wamn_control_provision::project_env_key(org, project, env);
 
     resources::require_ownership(platform, triple, &database).await?;
     let applications = application_releases(platform, triple).await?;
@@ -147,7 +147,7 @@ async fn delete_locked(
     if cr_present && !data {
         let url = project_url(platform, triple).await?;
         let live = wamn_kubernetes::environment_state::live_set(&observed.pods);
-        let stranded = super::drain::stranded(&url, &env_key, env, None, &live).await?;
+        let stranded = super::drain::stranded(&url, &project_env_key, env, None, &live).await?;
         anyhow::ensure!(
             stranded.is_empty(),
             "{}; apply a document that names their release to recover them, or delete \
@@ -175,7 +175,7 @@ async fn delete_locked(
     // Runtime state can change during the drain, outside lifecycle exclusion.
     if cr_present {
         let url = project_url(platform, triple).await?;
-        match super::drain::stranded(&url, &env_key, env, None, &live).await {
+        match super::drain::stranded(&url, &project_env_key, env, None, &live).await {
             Ok(stranded) if !stranded.is_empty() && !data => bail!(
                 "{}; apply a document that names their release to recover them, or delete \
                  with --data; shared resources were retained",
@@ -334,7 +334,7 @@ async fn delete_locked(
             lines.push(format!("deleted stream {stream}"));
         }
     }
-    resources::delete_event_certificate(platform, &env_key).await?;
+    resources::delete_event_certificate(platform, &project_env_key).await?;
     lines.push(format!(
         "deleted the event certificate and Secret of {triple} (or they were gone)"
     ));
@@ -411,7 +411,7 @@ async fn delete_locked(
     let mut removed_roles = roles::delete_control_roles(admin_url, triple).await?;
     lines.push("deleted the environment's control logins (or they were gone)".into());
     if data {
-        let roles = instance_roles(triple, &instance, &env_key)?;
+        let roles = instance_roles(triple, &instance, &project_env_key)?;
         for role in &roles {
             admin
                 .batch_execute(&format!("DROP ROLE IF EXISTS {}", escape_identifier(role)))
@@ -467,7 +467,7 @@ async fn delete_locked(
     }
     lines.extend(delete_registry_rows(&mut system, triple, &instance).await?);
     let mut drops = wamn_broker::connection_changes::ConnectionDrops::default();
-    drops.env_key(&env_key);
+    drops.project_env_key(&project_env_key);
     changes.publish(drops).await;
     Ok(lines)
 }

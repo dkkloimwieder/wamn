@@ -2,7 +2,7 @@
 $ROW_ALIAS;
 
 /** List arguments without paging. */
-export type $ROWScope = Omit<$STEMRequest, "cursor" | "limit" | "sort" | "feed">;
+export type $ROWFilter = Omit<$STEMRequest, "cursor" | "limit" | "sort" | "feed">;
 
 /** The default row cap for a collection. */
 export const $CAP = 1000;
@@ -15,9 +15,9 @@ function $TO_CHANGE(change: $STEMChange): Change<$ROWRow> {
 }
 
 /** Read pages up to the cap and follow changes from the first page's cursor. */
-export function $PREFIXFeed(transport: Transport, cap: number = $CAP): Feed<$ROWRow, $ROWScope> {
+export function $PREFIXFeed(transport: Transport, cap: number = $CAP): Feed<$ROWRow, $ROWFilter> {
   return {
-    async list(scope, signal) {
+    async list(filter, signal) {
       const rows: $ROWRow[] = [];
       let complete: boolean;
       let cursor: string | undefined;
@@ -40,8 +40,8 @@ $PAGE_ADVANCE
       if (cursor === undefined) throw new Error("$MODEL $QUERY returned no feed cursor");
       return { rows, cursor, complete };
     },
-    async changes(scope, cursor, limit, signal) {
-      const outcome = await $CHANGES(transport, scope, cursor, limit, signal === undefined ? undefined : { signal });
+    async changes(filter, cursor, limit, signal) {
+      const outcome = await $CHANGES(transport, filter, cursor, limit, signal === undefined ? undefined : { signal });
       if (outcome.status === "refused" && outcome.code === "cursor_expired") throw new CursorExpired();
       if (outcome.status !== "completed") throw new Error(`$MODEL changes ${outcome.status}`);
       return {
@@ -53,7 +53,7 @@ $PAGE_ADVANCE
   };
 }
 
-/** Sort object keys so equal scopes produce equal text. */
+/** Sort object keys so equal filters produce equal text. */
 export function $CANONICAL(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map($CANONICAL).join(",")}]`;
   if (value !== null && typeof value === "object") {
@@ -65,19 +65,19 @@ export function $CANONICAL(value: unknown): string {
   return JSON.stringify(value);
 }
 
-/** The key includes the model, row shape and canonical scope. */
-export function $PREFIXKey(scope: $ROWScope): string {
-  return collectionKey("$COLLECTION", $DIGEST, $CANONICAL(scope));
+/** The key includes the model, row shape and canonical filter. */
+export function $PREFIXKey(filter: $ROWFilter): string {
+  return collectionKey("$COLLECTION", $DIGEST, $CANONICAL(filter));
 }
 
-/** Follow a scope with the binding's row version accessor. */
+/** Follow a filter with the binding's row version accessor. */
 export function $PREFIXCollection(
-  feed: Feed<$ROWRow, $ROWScope>,
-  scope: $ROWScope,
+  feed: Feed<$ROWRow, $ROWFilter>,
+  filter: $ROWFilter,
   follow: { readonly pollMs?: number; readonly persistence?: Persistence } = {},
 ) {
-  return collection(feed, scope, {
-    key: $PREFIXKey(scope),
+  return collection(feed, filter, {
+    key: $PREFIXKey(filter),
     $GET_KEYversion: (row) => Number(row.rowVersion),
     ...follow,
   });

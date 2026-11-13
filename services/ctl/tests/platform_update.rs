@@ -531,7 +531,9 @@ fn platform_schema_runs_only_the_selected_ctl_job() -> anyhow::Result<()> {
         std::fs::write(fixture.bin.join("calls.jsonl"), "")?;
         let mut command = Command::new(env!("CARGO_BIN_EXE_wamn"));
         command
-            .args(["platform", "schema", action, "--scope", "system", "--chart"])
+            .args([
+                "platform", "schema", action, "--target", "system", "--chart",
+            ])
             .arg(&fixture.chart.0)
             .env("PATH", &fixture.path)
             .env("KUBECONFIG", fixture.bin.join("current-kubeconfig"));
@@ -654,7 +656,7 @@ async fn platform_project_schema_runs_only_the_selected_environment_sql_job() ->
         std::fs::write(fixture.bin.join("calls.jsonl"), "")?;
         let mut command = Command::new(env!("CARGO_BIN_EXE_wamn"));
         command
-            .args(["platform", "schema", action, "--scope", "project", "--env"])
+            .args(["platform", "schema", action, "--target", "project", "--env"])
             .arg(&file)
             .arg("--chart")
             .arg(&fixture.chart.0)
@@ -1471,7 +1473,7 @@ fn platform_installation_reports_the_supplied_charts() -> anyhow::Result<()> {
 fn platform_reapply_initializes_only_without_the_org_control_release() -> anyhow::Result<()> {
     use wamn_control_provision::identity_issuer::identity_issuer_generation_role;
     use wamn_control_provision::{
-        CredentialGeneration, WorkloadRoleFamily, WorkloadRoleScope, workload_generation_role,
+        CredentialGeneration, WorkloadRoleFamily, WorkloadRoleIdentity, workload_generation_role,
     };
 
     let fixture = Fixture::new()?;
@@ -1500,7 +1502,7 @@ fn platform_reapply_initializes_only_without_the_org_control_release() -> anyhow
             state["owners"].as_object_mut().unwrap().remove(&control);
             let control_role = workload_generation_role(
                 WorkloadRoleFamily::Control,
-                WorkloadRoleScope::Org {
+                WorkloadRoleIdentity::Org {
                     org: &fixture.document.org,
                     database: "wamn_system",
                 },
@@ -1994,12 +1996,12 @@ fn platform_deploy_cleans_only_successful_unmounted_work_directories() -> anyhow
         state["org"] = fixture.document.org.as_str().into();
         if fresh {
             use wamn_control_provision::{
-                CredentialGeneration, WorkloadRoleFamily, WorkloadRoleScope,
+                CredentialGeneration, WorkloadRoleFamily, WorkloadRoleIdentity,
                 workload_generation_role,
             };
             let control = workload_generation_role(
                 WorkloadRoleFamily::Control,
-                WorkloadRoleScope::Org {
+                WorkloadRoleIdentity::Org {
                     org: &fixture.document.org,
                     database: "wamn_system",
                 },

@@ -4,7 +4,7 @@
 //! the host route `workflow.start`, and park, release and list workflow runs
 //! through the workflow contract of `wamn-workflow`.
 //!
-//! `author` and `enable` gate the graph against the release the environment
+//! `author` and `enable` condition the graph against the release the environment
 //! serves, derived as `env show` derives it. `enable` and `disable` take the
 //! lifecycle lock of the coordinate, as `env apply` does. These three read the
 //! platform inputs of `env` ([`Platform::from_env`]).
@@ -23,12 +23,12 @@ use wamn_workflow::{PostgresWorkflows, Workflows as _};
 
 use crate::env_verbs::parse_coordinate;
 
-/// Params: `$1` `env_key`, `$2` environment.
+/// Params: `$1` `project_env_key`, `$2` environment.
 const LIST_WORKFLOWS_SQL: &str = "\
 SELECT application, workflow_id, version, wiring_hash, trigger, execution_type, \
        execution_role, enabled, created_by::text, created_at::text, schedule, source_package, entity, ops, condition, enable_sequence \
   FROM catalog.workflows \
- WHERE env_key = $1 AND environment = $2 \
+ WHERE project_env_key = $1 AND environment = $2 \
  ORDER BY application, workflow_id, version";
 
 /// One workflow verb.
@@ -44,7 +44,7 @@ pub enum WorkflowCommand {
     List(WorkflowTarget),
     /// Start the enabled version of a workflow through the host, and print its run id.
     Start(StartArgs),
-    /// Hold a queued run, so no claim takes it.
+    /// Hold a queued run, so no lease takes it.
     Park(RunArgs),
     /// Return a parked run to the queue.
     Release(RunArgs),
@@ -54,7 +54,7 @@ pub enum WorkflowCommand {
 
 /// The database and environment every workflow verb acts in.
 #[derive(Debug, Args)]
-pub struct WorkflowScope {
+pub struct WorkflowDatabase {
     /// Project-admin PostgreSQL URL for the project database.
     #[arg(long, env = "WAMN_PG_ADMIN_URL", hide_env_values = true)]
     pub admin_database_url: String,
@@ -69,7 +69,7 @@ pub struct WorkflowScope {
 #[derive(Debug, Args)]
 pub struct WorkflowTarget {
     #[command(flatten)]
-    pub scope: WorkflowScope,
+    pub target: WorkflowDatabase,
     #[arg(long)]
     pub org: String,
     /// Project whose environment owns the workflow or run.
@@ -78,8 +78,8 @@ pub struct WorkflowTarget {
 }
 
 impl WorkflowTarget {
-    fn env_key(&self) -> String {
-        wamn_control_registry::project_env_key(&self.org, &self.project, &self.scope.environment)
+    fn project_env_key(&self) -> String {
+        wamn_control_registry::project_env_key(&self.org, &self.project, &self.target.environment)
     }
 }
 
@@ -98,8 +98,8 @@ pub struct AuthorArgs {
     #[arg(long)]
     pub dev_root: Option<PathBuf>,
     #[command(flatten)]
-    pub scope: WorkflowScope,
-    /// The coordinate, `org/project/env`, whose serving release gates the graph.
+    pub target: WorkflowDatabase,
+    /// The coordinate, `org/project/env`, whose serving release evaluates the graph conditions.
     #[arg(long)]
     pub coordinate: String,
     /// The application of the workflow, as the environment declares it.
@@ -137,7 +137,7 @@ pub struct AuthorArgs {
 #[derive(Debug, Args)]
 pub struct VersionArgs {
     #[command(flatten)]
-    pub scope: WorkflowScope,
+    pub target: WorkflowDatabase,
     /// The coordinate, `org/project/env`, whose lifecycle lock the verb takes.
     #[arg(long)]
     pub coordinate: String,
@@ -169,7 +169,7 @@ impl VersionArgs {
         WorkflowVersion {
             org: &coordinate.org,
             project: &coordinate.project,
-            environment: &self.scope.environment,
+            environment: &self.target.environment,
             application: &self.application,
             workflow_id: &self.workflow_id,
             version: self.version,
@@ -201,7 +201,7 @@ pub struct StartArgs {
 #[derive(Debug, Args)]
 pub struct RunArgs {
     #[command(flatten)]
-    pub scope: WorkflowTarget,
+    pub target: WorkflowTarget,
     #[arg(long)]
     pub run_id: String,
 }
@@ -209,28 +209,28 @@ pub struct RunArgs {
 #[derive(Debug, Args)]
 pub struct ListArgs {
     #[command(flatten)]
-    pub scope: WorkflowTarget,
+    pub target: WorkflowTarget,
     /// The most runs to print.
     #[arg(long, default_value_t = 50)]
     pub limit: u32,
 }
 
-async fn workflows(scope: &WorkflowTarget) -> anyhow::Result<PostgresWorkflows> {
-    let (client, connection) = tokio_postgres::connect(&scope.scope.admin_database_url, NoTls)
+async fn workflows(target: &WorkflowTarget) -> anyhow::Result<PostgresWorkflows> {
+    let (client, connection) = tokio_postgres::connect(&target.target.admin_database_url, NoTls)
         .await
         .context("connect to the project database")?;
     tokio::spawn(connection);
     Ok(PostgresWorkflows::new(
         client,
-        &scope.scope.schema,
-        scope.env_key(),
-        &scope.scope.environment,
+        &target.target.schema,
+        target.project_env_key(),
+        &target.target.environment,
     ))
 }
 
 /// Connect to the project database with project-admin authority.
-async fn project(scope: &WorkflowScope) -> anyhow::Result<tokio_postgres::Client> {
-    let (client, connection) = tokio_postgres::connect(&scope.admin_database_url, NoTls)
+async fn project(target: &WorkflowDatabase) -> anyhow::Result<tokio_postgres::Client> {
+    let (client, connection) = tokio_postgres::connect(&target.admin_database_url, NoTls)
         .await
         .context("connect to the project database")?;
     tokio::spawn(connection);
@@ -292,11 +292,11 @@ pub async fn run(command: WorkflowCommand) -> anyhow::Result<()> {
             let (digest, declared) =
                 serving_facts(&triple, args.dev_root.as_deref(), &args.application).await?;
             let hash = wamn_environment_control::author_workflow::author_workflow_in_databases(
-                &args.scope.admin_database_url,
+                &args.target.admin_database_url,
                 &AuthorWorkflowRequest {
                     org: &triple.org,
                     project: &triple.project,
-                    environment: &args.scope.environment,
+                    environment: &args.target.environment,
                     application: &args.application,
                     declared: &declared,
                     document: &document,
@@ -323,7 +323,7 @@ pub async fn run(command: WorkflowCommand) -> anyhow::Result<()> {
             let triple = parse_coordinate(&args.version.coordinate)?;
             let (digest, declared) =
                 serving_facts(&triple, args.dev_root.as_deref(), &args.version.application).await?;
-            let mut client = project(&args.version.scope).await?;
+            let mut client = project(&args.version.target).await?;
             wamn_environment_control::workflow_lifecycle::enable_workflow(
                 &system_database_url,
                 &triple,
@@ -343,7 +343,7 @@ pub async fn run(command: WorkflowCommand) -> anyhow::Result<()> {
         WorkflowCommand::Disable(args) => {
             let platform = Platform::from_env()?;
             let triple = parse_coordinate(&args.coordinate)?;
-            let mut client = project(&args.scope).await?;
+            let mut client = project(&args.target).await?;
             wamn_environment_control::workflow_lifecycle::disable_workflow(
                 &platform.system_database_url,
                 &triple,
@@ -353,16 +353,22 @@ pub async fn run(command: WorkflowCommand) -> anyhow::Result<()> {
             .await?;
             println!("disabled {} version {}", args.workflow_id, args.version);
         }
-        WorkflowCommand::List(scope) => {
-            let mut client = project(&scope.scope).await?;
-            let env_key = scope.env_key();
+        WorkflowCommand::List(target) => {
+            let mut client = project(&target.target).await?;
+            let project_env_key = target.project_env_key();
             let transaction = client.transaction().await?;
             transaction
-                .query_one("SELECT set_config('app.env_key', $1, true)", &[&env_key])
+                .query_one(
+                    "SELECT set_config('app.project_env_key', $1, true)",
+                    &[&project_env_key],
+                )
                 .await
-                .context("claim the workflow tenant")?;
+                .context("bind the workflow project identity")?;
             for row in transaction
-                .query(LIST_WORKFLOWS_SQL, &[&env_key, &scope.scope.environment])
+                .query(
+                    LIST_WORKFLOWS_SQL,
+                    &[&project_env_key, &target.target.environment],
+                )
                 .await
                 .context("read the workflow versions")?
             {
@@ -395,15 +401,15 @@ pub async fn run(command: WorkflowCommand) -> anyhow::Result<()> {
             println!("{}", start(&args).await?);
         }
         WorkflowCommand::Park(args) => {
-            workflows(&args.scope).await?.park(&args.run_id).await?;
+            workflows(&args.target).await?.park(&args.run_id).await?;
             println!("parked {}", args.run_id);
         }
         WorkflowCommand::Release(args) => {
-            workflows(&args.scope).await?.release(&args.run_id).await?;
+            workflows(&args.target).await?.release(&args.run_id).await?;
             println!("released {}", args.run_id);
         }
         WorkflowCommand::Runs(args) => {
-            for run in workflows(&args.scope).await?.list(args.limit).await? {
+            for run in workflows(&args.target).await?.list(args.limit).await? {
                 println!("{}", serde_json::to_string(&run)?);
             }
         }

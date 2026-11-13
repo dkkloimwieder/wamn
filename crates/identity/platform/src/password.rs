@@ -106,7 +106,7 @@ impl fmt::Display for PasswordError {
 impl fmt::Debug for PasswordError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("PasswordError")
-            .field("kind", &self.type_)
+            .field("type", &self.type_)
             .field("operation", &self.operation)
             .field("cause", &self.cause)
             .field("reason", &self.reason)
@@ -120,9 +120,9 @@ impl Error for PasswordError {
             .map(|source| source as &(dyn Error + 'static))
     }
 }
-fn failure(kind: PasswordErrorType, operation: &'static str) -> PasswordError {
+fn failure(type_: PasswordErrorType, operation: &'static str) -> PasswordError {
     PasswordError {
-        type_: kind,
+        type_,
         operation,
         cause: None,
         reason: None,
@@ -137,13 +137,13 @@ fn refused_because(
     cause: RefusalCause,
     reason: Option<&'static str>,
 ) -> PasswordError {
-    let kind = if cause == RefusalCause::PasswordRule {
+    let type_ = if cause == RefusalCause::PasswordRule {
         PasswordErrorType::Policy
     } else {
         PasswordErrorType::Refused
     };
     PasswordError {
-        type_: kind,
+        type_,
         operation,
         cause: Some(cause),
         reason,

@@ -187,8 +187,8 @@ fn publication_records_the_exact_entry_and_members() {
     let manifest = ServingManifest::new(
         ServingRelease {
             packages: BTreeSet::from([PackageCoordinate::new(
-                &fact.scope.package_id,
-                &fact.scope.package_version,
+                &fact.target.package_id,
+                &fact.target.package_version,
             )
             .unwrap()]),
         },
@@ -208,7 +208,7 @@ fn publication_records_the_exact_entry_and_members() {
     let recorded = published.manifest.composed_entry.as_ref().unwrap();
     assert_eq!(recorded.reference, reference);
     assert_eq!(recorded.route_digest, pin);
-    assert_eq!(recorded.application.package_id, fact.scope.package_id);
+    assert_eq!(recorded.application.package_id, fact.target.package_id);
     assert_eq!(recorded.application.component, fact.component);
     assert_eq!(recorded.application.digest, fact.component_digest);
     assert_ne!(before, published.digest);
@@ -252,14 +252,14 @@ fn publication_composes_only_the_application_that_covers_the_routes() {
     let manifest = ServingManifest::new(
         ServingRelease {
             packages: BTreeSet::from([PackageCoordinate::new(
-                &fact.scope.package_id,
-                &fact.scope.package_version,
+                &fact.target.package_id,
+                &fact.target.package_version,
             )
             .unwrap()]),
         },
         BTreeSet::from([ServingComponent::project(fact, Vec::new()).unwrap()]),
         BTreeSet::from([serde_json::from_value(serde_json::json!({
-            "package-id": fact.scope.package_id.as_str(),
+            "package-id": fact.target.package_id.as_str(),
             "component": fact.component.as_str(),
             "operation": OPERATION,
             "type": "get",
@@ -277,7 +277,7 @@ fn publication_composes_only_the_application_that_covers_the_routes() {
         "fixture".into(),
         wamn_catalog::ApplicationDefinition {
             connections: std::collections::BTreeMap::new(),
-            packages: [fact.scope.package_id.clone()].into(),
+            packages: [fact.target.package_id.clone()].into(),
         },
     )]
     .into();

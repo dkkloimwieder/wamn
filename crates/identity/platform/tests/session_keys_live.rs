@@ -10,7 +10,7 @@ use tokio_postgres::config::{Host, SslMode};
 use tokio_postgres::{Client, NoTls};
 use wamn_control_provision::SYSTEM_SCHEMA_SQL;
 use wamn_identity_protocol::keys::PublicSessionKey;
-use wamn_identity_protocol::test_util::{Scope, verify};
+use wamn_identity_protocol::test_util::{Audience, verify};
 use wamn_identity_protocol::token::SessionClaims;
 use wamn_platform_identity::session_keys::{
     activate_session_key, publish_session_key, remove_compromised_session_key, retire_session_keys,
@@ -380,7 +380,7 @@ async fn relay_until_commit(
     upstream.write_u32(length).await?;
     upstream.write_all(&payload).await?;
     loop {
-        let kind = frontend.read_u8().await?;
+        let type_ = frontend.read_u8().await?;
         let length = frontend.read_u32().await?;
         assert!(
             (4..=65_536).contains(&length),
@@ -388,15 +388,15 @@ async fn relay_until_commit(
         );
         payload.resize(length as usize - 4, 0);
         frontend.read_exact(&mut payload).await?;
-        if kind == b'Q' && payload == b"COMMIT\0" {
+        if type_ == b'Q' && payload == b"COMMIT\0" {
             held.send(()).expect("test stopped observing COMMIT");
             release.await.expect("test did not release COMMIT");
-            upstream.write_u8(kind).await?;
+            upstream.write_u8(type_).await?;
             upstream.write_u32(length).await?;
             upstream.write_all(&payload).await?;
             return Ok(());
         }
-        upstream.write_u8(kind).await?;
+        upstream.write_u8(type_).await?;
         upstream.write_u32(length).await?;
         upstream.write_all(&payload).await?;
     }
@@ -606,7 +606,7 @@ async fn assert_token(token: &IssuedSessionToken, key: &PublicSessionKey) {
     let verified = verify(
         token.token(),
         key,
-        Scope {
+        Audience {
             issuer: ISSUER,
             org: "org-a",
             audience: "environment-id-a-dev",

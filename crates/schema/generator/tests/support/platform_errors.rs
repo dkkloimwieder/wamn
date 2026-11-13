@@ -70,7 +70,7 @@ fn custom_error_details_preserve_business_and_constraint_meanings() {
 }
 
 #[test]
-fn custom_constraints_follow_catalog_identity_and_kind() {
+fn custom_constraints_follow_catalog_identity_and_type() {
     let manifest = mapped_manifest();
     let catalog = fixture::catalog();
     let widget = catalog
@@ -143,7 +143,7 @@ fn custom_constraints_follow_catalog_identity_and_kind() {
 
 #[test]
 fn custom_visibility_permissions_and_components_remain_closed() {
-    for (field, value, kind) in [
+    for (field, value, type_) in [
         ("component", json!(""), GenerateErrorType::InvalidComponent),
         (
             "permission",
@@ -162,7 +162,7 @@ fn custom_visibility_permissions_and_components_remain_closed() {
             validate_operation_vocabulary(&parsed(&manifest))
                 .expect_err(field)
                 .error_type(),
-            kind
+            type_
         );
     }
     let mut projection = fixture::manifest();

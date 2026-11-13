@@ -4,7 +4,7 @@ use tokio_postgres::{Client, NoTls};
 use wamn_broker::auth_changes::AuthDrops;
 use wamn_control_provision::{PlatformComponent, platform_principals_sql, test_database};
 use wamn_identity_protocol::PrincipalId;
-use wamn_platform_identity::application::{ApplicationScope, project_authority};
+use wamn_platform_identity::application::{ApplicationTarget, project_authority};
 use wamn_platform_identity::org::{
     activate_org_membership, deactivate_org_membership, grant_project_admin, lock_membership,
 };
@@ -141,7 +141,7 @@ async fn service_admin_projects_without_user_membership_and_stale_admin_is_remov
 -> anyhow::Result<()> {
     let _lock = wamn_test_postgres::lock();
     let system_database = test_database::system();
-    let target_database = wamn_platform_identity::test_database::tenant_platform();
+    let target_database = wamn_platform_identity::test_database::project_platform();
     let mut system = connect(system_database.url()).await?;
     let mut target = connect(target_database.url()).await?;
     system
@@ -163,11 +163,11 @@ async fn service_admin_projects_without_user_membership_and_stale_admin_is_remov
     )
     .await?;
     let principal: PrincipalId = *service.id();
-    let scope = ApplicationScope {
+    let coordinate = ApplicationTarget {
         org: "acme",
         project: "billing",
         env: "dev",
-        env_key: "acme--billing--dev",
+        project_env_key: "acme--billing--dev",
     };
     for expected in [true, false] {
         let tx = system.transaction().await?;
@@ -194,7 +194,7 @@ async fn service_admin_projects_without_user_membership_and_stale_admin_is_remov
         project_authority(
             &authority,
             &application,
-            scope,
+            coordinate,
             &principal,
             &mut AuthDrops::default(),
         )
@@ -229,7 +229,7 @@ async fn authored_mutations_refuse_direct_admin_and_escalation() -> anyhow::Resu
         ApplicationUser, GrantAuthority, GrantChange, create_role, mutate_grant, write_user,
     };
     let _lock = wamn_test_postgres::lock();
-    let database = wamn_platform_identity::test_database::tenant_platform();
+    let database = wamn_platform_identity::test_database::project_platform();
     let mut client = connect(database.url()).await?;
     client
         .batch_execute(&platform_principals_sql("example.test")?)

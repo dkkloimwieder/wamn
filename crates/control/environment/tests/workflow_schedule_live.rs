@@ -10,7 +10,7 @@
 //! `wamn-ctl workflow author --schedule`, enabled, and admitted with
 //! `WamnPostgres::admit_schedule_run` as the host's schedule task will admit
 //! it. The real queue service of the release drains it through the router,
-//! under the scoped executor and application logins.
+//! under the targeted executor and application logins.
 
 #[path = "support/schedule_fixture.rs"]
 pub mod support;
@@ -579,8 +579,8 @@ async fn applications_schedule_independently_across_upgrade_and_rollback() {
         .unwrap();
     fixture.enable("nightly", READER).await.unwrap();
     fixture.admin.execute(
-        "INSERT INTO catalog.workflows (env_key, environment, application, workflow_id, version, graph_json, wiring_hash, trigger, schedule, execution_type, execution_role, enabled, created_by) \
-         SELECT env_key, environment, 'billing', workflow_id, version, graph_json, wiring_hash, trigger, schedule, execution_type, execution_role, enabled, created_by FROM catalog.workflows WHERE application=$1",
+        "INSERT INTO catalog.workflows (project_env_key, environment, application, workflow_id, version, graph_json, wiring_hash, trigger, schedule, execution_type, execution_role, enabled, created_by) \
+         SELECT project_env_key, environment, 'billing', workflow_id, version, graph_json, wiring_hash, trigger, schedule, execution_type, execution_role, enabled, created_by FROM catalog.workflows WHERE application=$1",
         &[&APP],
     ).await.unwrap();
     let upgraded = Arc::new(release_variant(&fixture, APP, b"1251").await);

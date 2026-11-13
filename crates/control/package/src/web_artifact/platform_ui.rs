@@ -11,10 +11,12 @@ use wamn_package_artifact::{PackageRegistry, ensure_tag};
 
 use super::{
     INDEX_CACHE, PackedWebArtifact, Sink, UploadedClient, WEB_MANIFEST_FILE, WebArtifactError,
-    WebArtifactErrorKind, artifact_files, cache_control, content_type, pack_archive, pull_archive,
+    WebArtifactErrorType, artifact_files, cache_control, content_type, pack_archive, pull_archive,
     put, web_dist_files,
 };
-use crate::web_scope::{SCOPE_CACHE, SCOPE_CONTENT_TYPE, SCOPE_FILE, platform_scope_file_bytes};
+use crate::web_config::{
+    CONFIG_CACHE, CONFIG_CONTENT_TYPE, CONFIG_FILE, platform_config_file_bytes,
+};
 
 const ARTIFACT_TYPE: &str = "application/vnd.wamn.platform-ui.v1";
 
@@ -53,7 +55,7 @@ pub fn pack(dist: &Path, version: &str) -> Result<PackedWebArtifact, WebArtifact
         pack_archive(version.into(), archive, ARTIFACT_TYPE)
     })()
     .map_err(|source| WebArtifactError {
-        kind: WebArtifactErrorKind::Pack,
+        type_: WebArtifactErrorType::Pack,
         context: dist.display().to_string(),
         source,
     })
@@ -108,7 +110,7 @@ pub async fn upload(
     }
     .await
     .map_err(|source| WebArtifactError {
-        kind: WebArtifactErrorKind::Upload,
+        type_: WebArtifactErrorType::Upload,
         context: format!("{}@{digest} to {bucket}", registry.artifact_base),
         source,
     })
@@ -143,10 +145,10 @@ pub async fn upload_to_store(
     put(
         store,
         &config_root,
-        SCOPE_FILE,
-        platform_scope_file_bytes(org),
-        SCOPE_CACHE,
-        SCOPE_CONTENT_TYPE,
+        CONFIG_FILE,
+        platform_config_file_bytes(org),
+        CONFIG_CACHE,
+        CONFIG_CONTENT_TYPE,
     )
     .await?;
     match store.head(&format!("{root}/index.html").into()).await {
@@ -299,14 +301,14 @@ mod tests {
                     .unwrap();
             assert_eq!(same_root, root);
             assert!(!written);
-            let scope = store
+            let target = store
                 .get(&format!("prefix/platform-ui/orgs/{org}/config.json").into())
                 .await
                 .unwrap()
                 .bytes()
                 .await
                 .unwrap();
-            assert_eq!(scope.as_ref(), platform_scope_file_bytes(org));
+            assert_eq!(target.as_ref(), platform_config_file_bytes(org));
         }
         // Derive the expected browser objects from the artifact, including new assets.
         let files = web_dist_files(&first.tar).unwrap();

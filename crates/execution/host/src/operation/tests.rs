@@ -62,8 +62,8 @@ fn acquisition_binds_its_executing_principal_operation_and_application() {
         depth: 2,
     };
     let acquisition = NodeAcquisition {
-        claims: SessionClaims {
-            env_key: "tenant-a".to_owned(),
+        identity: SessionIdentity {
+            project_env_key: "org-a".to_owned(),
             project: Some("project-a".to_owned()),
             schema: Some("app".to_owned()),
             runner: Some("executor-a".to_owned()),
@@ -123,12 +123,12 @@ fn acquisition_binds_its_executing_principal_operation_and_application() {
     // The call binds the token of the operation that it executes and the
     // declared application that its policy names.
     assert_eq!(
-        original.executing_claims(None, "receiving"),
-        SessionClaims {
+        original.executing_identity(None, "receiving"),
+        SessionIdentity {
             user_id: Some(materializer),
             operation: Some("platform-fixture-overlay:widget/record-batch@2.1.0".to_owned()),
             application: Some("receiving".to_owned()),
-            ..original.claims
+            ..original.identity
         }
     );
 }

@@ -8,13 +8,13 @@
 //!
 //! Entry point: `RouterDriver::execute`. `RouterDeliveryBridge::deliver` is
 //! private to `wamn-execution-host` and reachable only by a guest importing
-//! `wamn:router-delivery`, and `execute_candidate` needs a frozen gate report
+//! `wamn:router-delivery`, and `execute_candidate` needs a frozen condition report
 //! and binding world on top of everything `execute` needs — so `execute` is the
 //! cheapest entry that still exercises the whole chain from
 //! `remote_trace_context` to `inject_trace_context`.
 //!
-//! Hot route only. The queue leg is a ratified host-scoped re-root
-//! (`queue_delivery_span_is_an_explicit_host_scoped_root`) and the stream leg
+//! Hot route only. The queue leg is a ratified host-targeted re-root
+//! (`queue_delivery_span_is_an_explicit_host_targeted_root`) and the stream leg
 //! sends no trace at all, so "all under the incoming trace" is true of this leg
 //! and of no other.
 //!
@@ -34,7 +34,7 @@ mod tests {
     use wamn_workflow::RouterDriverRequest;
 
     use crate::trusted_http_route::{
-        self, ENV_KEY, ENVIRONMENT, PACKAGE, RouteOptions, WIRING_ID, WIRING_VERSION,
+        self, ENVIRONMENT, PACKAGE, PROJECT_ENV_KEY, RouteOptions, WIRING_ID, WIRING_VERSION,
     };
 
     const TRACE_ID: &str = "4bf92f3577b34da6a3ce929d0e0e4736";
@@ -195,7 +195,7 @@ mod tests {
 
         let delivery = route
             .execute(RouterDriverRequest {
-                env_key: ENV_KEY.to_owned(),
+                project_env_key: PROJECT_ENV_KEY.to_owned(),
                 package_id: PACKAGE.to_owned(),
                 environment: ENVIRONMENT.to_owned(),
                 wiring_id: WIRING_ID.to_owned(),

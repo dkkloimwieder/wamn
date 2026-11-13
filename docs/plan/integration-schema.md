@@ -2,7 +2,7 @@
 
 ## Model
 
-Integrations are configured per project, connections per project environment, and an application uses a connection through a release-scoped binding.
+Integrations are configured per project, connections per project environment, and an application uses a connection through a release-targeted binding.
 
 - **integration\_type** is the platform catalog of integration code (`http`, `s3`, `gcs`, `disk`, `modbus`, `netsuite_rest`, …). Every build or parameter-shape change is an **integration\_type\_version**.
 - **auth\_type** is a seeded platform catalog: exactly the schemes the host implements (`http_basic`, `api_key`, `hmac`, `oauth2_client_credentials`, `oauth2_client_credentials_jwt`, `oauth2_authorization_code`, `aws_sigv4`, `custom`, `none`). Which auth types a type supports is a bridge table.
@@ -208,38 +208,38 @@ CREATE TABLE platform.connection (
 
 -- catalog: what a component declares, materialized at package install (today catalog.connection_requirements)
 CREATE TABLE catalog.connection_requirement (
-    env_key          text NOT NULL,
+    project_env_key          text NOT NULL,
     component_digest text NOT NULL CHECK (component_digest ~ '^sha256:[0-9a-f]{64}$'),
     package_id       text NOT NULL,          -- name, interface and mode come from the package's wamn.k
     name             text NOT NULL CHECK (name ~ '^[a-z][a-z0-9-]{0,62}$'),  -- declared in wamn.k; a WIT label
     interface        text NOT NULL,          -- install makes sure of the component imports it under the label name
     mode             text NOT NULL CHECK (mode IN ('read', 'write')),
-    PRIMARY KEY (env_key, component_digest, package_id, name)
+    PRIMARY KEY (project_env_key, component_digest, package_id, name)
 );
 
 -- catalog: the version one release uses of one connection
 CREATE TABLE catalog.release_connection (
-    env_key          text NOT NULL,
+    project_env_key          text NOT NULL,
     manifest_digest  text NOT NULL,          -- the release
     connection_id    uuid NOT NULL REFERENCES platform.connection (id),
     version          integer NOT NULL,       -- from environment.k; validated at apply against the system catalog
-    PRIMARY KEY (env_key, manifest_digest, connection_id),
-    FOREIGN KEY (env_key, manifest_digest) REFERENCES catalog.releases (env_key, manifest_digest)
+    PRIMARY KEY (project_env_key, manifest_digest, connection_id),
+    FOREIGN KEY (project_env_key, manifest_digest) REFERENCES catalog.releases (project_env_key, manifest_digest)
 );
 
 -- catalog: name to connection, per release (today catalog.connection_bindings)
 CREATE TABLE catalog.connection_binding (
-    env_key          text NOT NULL,
+    project_env_key          text NOT NULL,
     manifest_digest  text NOT NULL,
     component_digest text NOT NULL,
     package_id       text NOT NULL,
     name             text NOT NULL,
     connection_id    uuid NOT NULL,
-    PRIMARY KEY (env_key, manifest_digest, component_digest, package_id, name),
-    FOREIGN KEY (env_key, manifest_digest, connection_id)
-        REFERENCES catalog.release_connection (env_key, manifest_digest, connection_id),
-    FOREIGN KEY (env_key, component_digest, package_id, name)
-        REFERENCES catalog.connection_requirement (env_key, component_digest, package_id, name)
+    PRIMARY KEY (project_env_key, manifest_digest, component_digest, package_id, name),
+    FOREIGN KEY (project_env_key, manifest_digest, connection_id)
+        REFERENCES catalog.release_connection (project_env_key, manifest_digest, connection_id),
+    FOREIGN KEY (project_env_key, component_digest, package_id, name)
+        REFERENCES catalog.connection_requirement (project_env_key, component_digest, package_id, name)
 );
 -- apply refuses a binding whose connection's version does not export the interface the requirement declares
 ```
@@ -259,7 +259,7 @@ Releases coexist during a rollout and drain per release digest; each release rea
 - A connection-only apply writes no Helm revision, so `release_connection` and `connection_binding` carry record history (stamp and log triggers).
 - The version belongs to a release's use of a connection. In steady state an env has one live release, so one version per connection; during a rollout the old release keeps its version and the new one uses its own. The host loads both builds side by side (it caches `InstancePre` per digest).
 - The live release's versions and bindings can change in place. A compatible version change updates its `release_connection.version`: live, no rollout. A breaking change ships with a new application release.
-- Runtime refresh: the host keeps connection facts in a connection memory, the local replica of the NATS KV bucket `wamn-connection` on the NATS the auth memory uses, under the auth memory's rules. A writer records the keys its commit changed and deletes them after the commit; a host that reads a fact puts it with the key's revision from before the read; a value lives at most 60 s in the bucket and in the replica; while the watch is broken the host keeps no fact and reads Postgres. Key `<env_key>.connection.<connection id>` holds the active generation, the effective status and the credential id. Key `<env_key>.release.<manifest digest hex>` holds that release's map (component, package, name) to (connection, version). Key `<env_key>.connections` holds the env's map from integration name to connection id. Immutable rows (a generation's parameters, a version's digest and exports, a credential's secret) stay in host memory under their own ids and never enter the bucket; a secret never leaves the host. A wasm or native version's component is compiled once per digest; its instance is linked per (connection, generation, credential), so a new generation links again but never compiles again. Calls in flight finish on what they started with; the host loads a new version's artifact and builds its `InstancePre` before switching.
+- Runtime refresh: the host keeps connection facts in a connection memory, the local replica of the NATS KV bucket `wamn-connection` on the NATS the auth memory uses, under the auth memory's rules. A writer records the keys its commit changed and deletes them after the commit; a host that reads a fact puts it with the key's revision from before the read; a value lives at most 60 s in the bucket and in the replica; while the watch is broken the host keeps no fact and reads Postgres. Key `<project_env_key>.connection.<connection id>` holds the active generation, the effective status and the credential id. Key `<project_env_key>.release.<manifest digest hex>` holds that release's map (component, package, name) to (connection, version). Key `<project_env_key>.connections` holds the env's map from integration name to connection id. Immutable rows (a generation's parameters, a version's digest and exports, a credential's secret) stay in host memory under their own ids and never enter the bucket; a secret never leaves the host. A wasm or native version's component is compiled once per digest; its instance is linked per (connection, generation, credential), so a new generation links again but never compiles again. Calls in flight finish on what they started with; the host loads a new version's artifact and builds its `InstancePre` before switching.
 - A live version change may cross a running workflow run. Integration code holds no state between calls; any token it returns (a cursor, a page token) is the external system's.
 
 | Change | Mechanism | Rollout | Application rebuilt |
@@ -285,7 +285,7 @@ A resource is a physical thing one holder may use at a time on a target, such as
 - Static condition: the unique index on active connections per (target, resource\_key). Disabling a connection frees the resource; re-enabling it is refused while an active replacement holds the same key.
 - Runtime lease: a Postgres session advisory lock in the system database (two envs may share a target, and advisory locks are per database), taken on a dedicated session on a 64-bit `hashtextextended` of (target, resource\_key). The holder is the host process. It serializes calls on the connection, so several components (for example a reader and a writer) may share one exclusive connection; whether the resource stays open between calls is the integration code's choice (a wasm guest with a fresh store per call reopens it). A call on an exclusive connection waits for the lease up to 30 s, then fails with unavailable. If the lease session drops, calls fail with unavailable until the host holds the lease again. A crashed or killed pod drops its session and the lock. On a local box the lease is in-process, because one host serves every env there.
 - Lease key: hashtextextended('resource:' || target_id || ':' || resource_key, 0), in the system database, on one dedicated session per host shared by every lease the host holds. Local targets use an in-process lease with the same key.
-- One replica: an env that binds an exclusive connection runs one host replica. Replicas share the run queue (fact: `run-queue.sql`), so a second replica would claim runs it cannot serve while the first holds the lease. Apply reads the count from the host group body it takes from `WAMN_RELEASE_HOST_GROUP` (fact: `environment/mod.rs` `host_group`, `release_chart.rs`); with an exclusive binding it refuses unless that body names `replicas: 1`, and it never falls back to the chart default. No per-call locking and no routing to the holder.
+- One replica: an env that binds an exclusive connection runs one host replica. Replicas share the run queue (fact: `run-queue.sql`), so a second replica would lease runs it cannot serve while the first holds the lease. Apply reads the count from the host group body it takes from `WAMN_RELEASE_HOST_GROUP` (fact: `environment/mod.rs` `host_group`, `release_chart.rs`); with an exclusive binding it refuses unless that body names `replicas: 1`, and it never falls back to the chart default. No per-call locking and no routing to the holder.
 - During a rollout the new pod waits for the lease until the draining pod exits. A pod's readiness never depends on acquiring a lease, so the wait cannot block the rollout.
 - Disabling a connection releases the lease: on the connection key delete each host stops new calls, lets calls in flight finish, closes the resource and drops the lock. A replacement waits for the lock; it never takes it over.
 
@@ -318,7 +318,7 @@ world client {
 
 ## Parameters
 
-Every parameter is connection-scoped, set per env on the connection generation. A change in one env never reaches another. The copy action copies parameters from another env as a new generation in the target env; it never copies credentials.
+Every parameter is connection-targeted, set per env on the connection generation. A change in one env never reaches another. The copy action copies parameters from another env as a new generation in the target env; it never copies credentials.
 
 - An edit appends a generation and makes it active; every bound release sees it on its next request. No deployment, no restart.
 - Validation is wamn's own. The schema is a flat object, with custom keywords on top-level properties only. Values must validate against every version a live release uses of the connection (both, during a rollout). Fields declared only by other published versions are accepted as staged; fields unknown to every published version are refused. Per-version `additionalProperties: false` is not used, because staging validates against the union.
@@ -394,13 +394,13 @@ applications = {
 
 Everything has a headless interface. Every live action is a control host route; the UI, `wamn-ctl` and scripts call the same routes, in main's `noun.verb` style (`crates/catalog/model/src/host_route.rs`). Authority moves from org admin to project admin (org admins hold it implicitly).
 
-On main (fact): five control routes (`external_system.write`, `connection.write`, `project_connection.enable`, `project_connection.disable`, `integration_allow.allow`), all org-admin and write-only; `connection rotate` and `import-credentials` exist only as `wamn-ctl` verbs over SQL functions; `wamn-ctl bind-connection` writes a release-scoped binding; `wamn-ctl integration build` and `publish` handle wasm artifacts.
+On main (fact): five control routes (`external_system.write`, `connection.write`, `project_connection.enable`, `project_connection.disable`, `integration_allow.allow`), all org-admin and write-only; `connection rotate` and `import-credentials` exist only as `wamn-ctl` verbs over SQL functions; `wamn-ctl bind-connection` writes a release-targeted binding; `wamn-ctl integration build` and `publish` handle wasm artifacts.
 
 | Operation | `wamn-ctl` | On main |
 | --- | --- | --- |
 | `integration_type.list` (get) | `integration-type list` | new |
 | `integration_type.publish` (platform) | `integration publish` | exists; now records a version with its schema and world |
-| `external_system.write`, `.list`, `.delete` | `external-system …` | write exists (becomes project-scoped, identity only); list, delete new |
+| `external_system.write`, `.list`, `.delete` | `external-system …` | write exists (becomes project-targeted, identity only); list, delete new |
 | `integration.write`, `.list`, `.get` | `integration …` | new; replaces org `connection.write` |
 | `integration.disable`, `.enable`, `.delete` | `integration …` | new |
 | `connection.write` | `connection write` | reshaped: per env, all parameters; the first write carries the credential and creates the principal |
@@ -456,7 +456,7 @@ Plaintext secrets never sit in Postgres. A credential row holds a reference (`st
 ### Auth runs in the host
 
 - The host applies auth on the outbound call, as it handles application auth today; integration code never holds the secret, except with `custom`, which hands it over through `bound.credential()`.
-- `http_basic`, `api_key`, `hmac`, the three OAuth types and `aws_sigv4` are `http_only`. Non-HTTP types (Modbus, serial, raw TCP) use `none` or `custom`. `oauth2_client_credentials_jwt` authenticates to the token endpoint with a signed JWT (RFC 7523 client assertion, the NetSuite machine-to-machine form) instead of a client secret. Its parameters.auth names the algorithm (PS256, ES256 or RS256) and the scope separator (space by default, comma for NetSuite).
+- `http_basic`, `api_key`, `hmac`, the three OAuth types and `aws_sigv4` are `http_only`. Non-HTTP types (Modbus, serial, raw TCP) use `none` or `custom`. `oauth2_client_credentials_jwt` authenticates to the token endpoint with a signed JWT (RFC 7523 client assertion, the NetSuite machine-to-machine form) instead of a client secret. Its parameters.auth names the algorithm (PS256, ES256 or RS256) and the target separator (space by default, comma for NetSuite).
 - Auth type sits on the integration, so every env of an integration uses the same auth; a different auth is a different integration.
 - The host keeps each credential's secret under its credential id. A rotation makes a new credential id, so the new generation's key delete is enough. A 401 or 403 drops the secret and the connection fact and reads both again; the host sends once more only when the fact names a new generation or credential, so a repeated send never carries the credential that was just refused. No strict emergency revocation.
 - The token endpoint's origin is the connection's authority or parameters.auth.token_authority; any other origin is refused. OAuth refresh runs before expiry, once across all pods: a host locks the connection row (`FOR NO KEY UPDATE`), re-reads the token row, and calls the provider only if the token is missing or due. The same lock covers the first client-credentials fetch and serializes refresh with rotation. A failed refresh sets `refresh_status` to `failing`; calls fail with `credential-unavailable`, and the next call tries again once `updated_at` is 30 s old; `connection.get` shows `refresh_status`. The host keeps the decrypted token in memory under (connection, generation) until 60 s before it expires; the connection key delete for a new generation drops it.
@@ -477,7 +477,7 @@ Plaintext secrets never sit in Postgres. A credential row holds a reference (`st
 | --- | --- |
 | `registry.integrations` | `integration_type` + `integration_type_version` |
 | `registry.integration_digest` | `integration_type_version.digest` |
-| `registry.external_system`, `platform.external_system` | kept, identity only, project-scoped |
+| `registry.external_system`, `platform.external_system` | kept, identity only, project-targeted |
 | `registry.connection` (org-level) | `integration` (identity and type) + `connection` (env instance, all configuration) |
 | `registry.connection_generation`, `catalog.connection_generations` | `connection_generation` (parameters and credential reference; no version) |
 | `catalog.connection_instances` | `connection` |

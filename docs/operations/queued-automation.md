@@ -3,7 +3,7 @@
 `wamn-ctl workflow start` starts one run of an environment workflow through the host route `workflow.start`.
 The route is an operation of the application's ACL: `admin` holds it, and another role holds it through a stored permission row of `wamn-control:workflow/start`.
 The other `workflow` commands call the workflow contract in `wamn-workflow`, and they use project-admin database authority.
-The host's queue worker uses its existing database roles to claim and execute the run.
+The host's queue worker uses its existing database roles to lease and execute the run.
 
 Author and enable the workflow first with `wamn-ctl workflow author` and `wamn-ctl workflow enable`.
 Every `workflow` command except `start` needs `--environment` and the project-admin database URL.
@@ -51,7 +51,7 @@ The command prints the stored run id.
 `--application` names an application that the environment document declares under `applications`.
 The host refuses another name with `application_not_declared`.
 The host admits the enabled version against the release it serves.
-It gates the graph against that release and refuses `workflow_not_served` when the graph does not gate or its hash differs from the stored hash.
+It evaluates the graph conditions against that release and refuses `workflow_not_served` when the graph fails its conditions or its hash differs from the stored hash.
 A workflow with no enabled version refuses `workflow_not_enabled`.
 The run records the release, the graph hash, the component digest of each node, the principal and role it executes as, and the caller as its invoker.
 An identical retry by the same caller returns that id and creates no second queue row.
@@ -76,7 +76,7 @@ wamn-ctl workflow release --org acme --project orders --environment dev --run-id
 wamn-ctl workflow runs --org acme --project orders --environment dev --limit 20
 ```
 
-A park holds a queued run that no worker holds, so no worker claims it.
+A park holds a queued run that no worker holds, so no worker leases it.
 The run keeps the status `dispatched`, and a park of a parked run changes nothing.
 A running or finished run refuses the park.
 A release returns a parked run to the queue, and a run that is not parked refuses it.

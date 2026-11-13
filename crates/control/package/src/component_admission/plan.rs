@@ -20,7 +20,7 @@ pub(super) fn bind_signed_file_results(
             detail,
         )
     };
-    // Re-run the same vocabulary gate for callers that construct a manifest.
+    // Re-run the same vocabulary condition for callers that construct a manifest.
     wamn_catalog::manifest::validate_operation_vocabulary(manifest)
         .map_err(|error| invalid(error.to_string()))?;
     for (export, operation) in &mut component.operations {
@@ -53,7 +53,7 @@ pub(super) fn bind_signed_file_results(
                             .fields
                             .iter()
                             .find(|field| field.path == *path)
-                            .expect("the package gate requires the signed result field")
+                            .expect("the package condition requires the signed result field")
                             .nullable,
                         read: read.clone(),
                     })
@@ -139,14 +139,14 @@ pub(super) fn host_transaction_exports<T>(
 /// node (`label-render`, `blob-put`: one `wamn:node` handler, no registered
 /// operation) is not the package's to declare, so a component ABSENT from the
 /// manifest is admitted iff it registers no manifest operation, with an empty
-/// expected set (RULED `wamn-362o.40`). A component that claims a registered
+/// expected set (RULED `wamn-362o.40`). A component that declares a registered
 /// operation must be a manifest member, as before: that is the fence against
 /// a stranger serving the package's operations.
 ///
 /// ABSENT FROM THE MANIFEST DOES NOT MEAN UNEXAMINED. The palette node's
 /// identity and posture are governed on the same push: its imports pass the
-/// tenant allowlist and the capability registry's posture
-/// (`wamn_component_policy::analyze_tenant`), and its declared exports are
+/// project allowlist and the capability registry's posture
+/// (`wamn_component_policy::analyze_project`), and its declared exports are
 /// validated against the component bytes (`wamn_engine::component_admission`)
 /// before this function runs. This branch only
 /// declines to look for manifest operations that, by construction, it does
@@ -369,14 +369,14 @@ pub(super) fn validate_generated_statement_shape(
             format!("operation {operation:?} carries an empty or non-canonical statement name"),
         ));
     }
-    for (kind, fields) in [("bind", &statement.binds), ("column", &statement.columns)] {
+    for (type_, fields) in [("bind", &statement.binds), ("column", &statement.columns)] {
         let mut names = BTreeSet::new();
         for field in fields {
             if !canonical_text(&field.name) || !names.insert(field.name.as_str()) {
                 return Err(ComponentProjectionError::new(
                     ComponentProjectionErrorType::StatementContractInvalid,
                     format!(
-                        "operation {operation:?} statement {:?} carries an empty, non-canonical, or duplicate {kind}",
+                        "operation {operation:?} statement {:?} carries an empty, non-canonical, or duplicate {type_}",
                         statement.name
                     ),
                 ));
@@ -394,15 +394,15 @@ pub(super) fn ensure_component_package_matches(
     component: &AdmittedComponent,
     package: &wamn_catalog::PackageCoordinate,
 ) -> anyhow::Result<()> {
-    if component.scope.package_id != package.package_id()
-        || component.scope.package_version != package.package_version()
+    if component.target.package_id != package.package_id()
+        || component.target.package_version != package.package_version()
     {
         return Err(ComponentProjectionError::new(
             ComponentProjectionErrorType::PackageCoordinateMismatch,
             format!(
                 "declaration names {}@{} but package directory names {}@{}",
-                component.scope.package_id,
-                component.scope.package_version,
+                component.target.package_id,
+                component.target.package_version,
                 package.package_id(),
                 package.package_version()
             ),

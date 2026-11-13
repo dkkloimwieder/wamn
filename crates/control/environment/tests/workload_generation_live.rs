@@ -6,10 +6,10 @@ use std::path::{Path, PathBuf};
 use tokio_postgres::{Client, NoTls};
 use url::Url;
 
-use wamn_control_provision::tenant_key::{authority_derivations_bootstrap_sql, tenant_key};
+use wamn_control_provision::project_key::{authority_derivations_bootstrap_sql, project_key};
 use wamn_control_provision::{
-    APP_ROLE, CredentialGeneration, DB_OWNER_ROLE, WorkloadRoleFamily, WorkloadRoleScope,
-    WorkloadRoleScopeKind, project_env_database_name, project_env_guest_secret_name, sql,
+    APP_ROLE, CredentialGeneration, DB_OWNER_ROLE, WorkloadRoleFamily, WorkloadRoleIdentity,
+    WorkloadRoleIdentityType, project_env_database_name, project_env_guest_secret_name, sql,
     workload_generation_role,
 };
 use wamn_environment_control::provision_project_env::{
@@ -21,7 +21,7 @@ use wamn_test_infrastructure::scratch::ScratchRoot;
 const ORG: &str = "pg18order";
 const PROJECT: &str = "inventory";
 const ENVIRONMENT: &str = "dev";
-const ENV_KEY: &str = "pg18order--inventory--dev";
+const PROJECT_ENV_KEY: &str = "pg18order--inventory--dev";
 const INSTANCE: &str = "k3m9x2p7";
 
 struct Fixture {
@@ -56,20 +56,20 @@ fn generation_role(
     database: &str,
     generation: CredentialGeneration,
 ) -> String {
-    let scope = if family == WorkloadRoleFamily::App {
-        WorkloadRoleScope::EnvKey {
-            env_key: ENV_KEY,
+    let target = if family == WorkloadRoleFamily::App {
+        WorkloadRoleIdentity::ProjectEnvKey {
+            project_env_key: PROJECT_ENV_KEY,
             database,
         }
     } else {
-        WorkloadRoleScope::ProjectEnvironment {
+        WorkloadRoleIdentity::ProjectEnvironment {
             org: ORG,
             project: PROJECT,
             environment: ENVIRONMENT,
             database,
         }
     };
-    workload_generation_role(family, scope, generation).unwrap()
+    workload_generation_role(family, target, generation).unwrap()
 }
 
 async fn fixture() -> Fixture {
@@ -130,7 +130,7 @@ async fn fixture() -> Fixture {
              INSERT INTO registry.env_policies \
                (org, name, recovery_domain, promotion_rank, instances, storage, cpu, memory, \
                 image, backup_cadence, wal_retention, hibernation) \
-             VALUES ('{ORG}', '{ENVIRONMENT}', '{{\"kind\":\"own\"}}', 1, 1, '1Gi', '250m', \
+             VALUES ('{ORG}', '{ENVIRONMENT}', '{{\"type\":\"own\"}}', 1, 1, '1Gi', '250m', \
                      '256Mi', 'postgres:18', '', '', 'off') \
              ON CONFLICT (org, name) DO NOTHING; \
              INSERT INTO registry.projects (org, id) VALUES ('{ORG}', '{PROJECT}') \
@@ -143,7 +143,7 @@ async fn fixture() -> Fixture {
         .await
         .expect("install stored project-env instance");
     catalog
-        .batch_execute(sql::revoke_public_connect_floor_sql())
+        .batch_execute(sql::revoke_public_connect_base_grants_sql())
         .await
         .unwrap();
     apply_documented_order(&catalog, &database).await;
@@ -388,7 +388,8 @@ async fn prepare_verifies_grants_against_applied_system_and_project_schemas() {
             env: ENVIRONMENT.into(),
             system_database_url: Some(system.url().into()),
             namespace: format!("wamn-{ORG}--{PROJECT}--{ENVIRONMENT}--{INSTANCE}"),
-            target_admin_database_url: (family.scope_kind() != WorkloadRoleScopeKind::Control)
+            target_admin_database_url: (family.identity_type()
+                != WorkloadRoleIdentityType::Control)
                 .then(|| target.url().into()),
             cluster: None,
             cluster_namespace: format!("wamn-{ORG}--{PROJECT}--{ENVIRONMENT}--{INSTANCE}"),
@@ -438,7 +439,7 @@ async fn prepare_rotate_retire_and_abort_preserve_family_authority() {
         let acl = APP_ROLE;
         let parents: &[&str] = &[];
         assert_ne!(role_a, role_b);
-        assert!(!role_a.contains(ENV_KEY));
+        assert!(!role_a.contains(PROJECT_ENV_KEY));
         provision_project_env::run_workload_action(&request(
             &fixture,
             family,
@@ -472,7 +473,7 @@ async fn prepare_rotate_retire_and_abort_preserve_family_authority() {
                 &actor,
             )
             .await;
-            let key = tenant_key(ENV_KEY, &fixture.database);
+            let key = project_key(PROJECT_ENV_KEY, &fixture.database);
             assert!(role_a.contains(&key) && role_b.contains(&key));
             assert!(role_a.len() <= 63 && role_b.len() <= 63);
             let secret = secret_json(&secret_path(&fixture, family, CredentialGeneration::A));
@@ -480,10 +481,10 @@ async fn prepare_rotate_retire_and_abort_preserve_family_authority() {
                 secret["metadata"]["name"],
                 project_env_guest_secret_name(ORG, PROJECT, ENVIRONMENT)
             );
-            assert_eq!(secret["metadata"]["labels"]["wamn.tenant-key"], key);
+            assert_eq!(secret["metadata"]["labels"]["wamn.project-key"], key);
             assert_eq!(
-                secret["metadata"]["annotations"]["wamn.io/env_key"],
-                ENV_KEY
+                secret["metadata"]["annotations"]["wamn.io/project_env_key"],
+                PROJECT_ENV_KEY
             );
             target
                 .batch_execute(&authority_derivations_bootstrap_sql())
@@ -491,13 +492,13 @@ async fn prepare_rotate_retire_and_abort_preserve_family_authority() {
                 .unwrap();
             let guest = login(&url_a, &role_a).await;
             let derived: Option<String> = guest
-                .query_one("SELECT wamn_authority.current_tenant_key()", &[])
+                .query_one("SELECT wamn_authority.current_project_key()", &[])
                 .await
                 .unwrap()
                 .get(0);
             assert_eq!(derived.as_deref(), Some(key.as_str()));
             let matches_row: bool = guest.query_one(
-                "SELECT wamn_authority.tenant_key($1::text) = wamn_authority.current_tenant_key()", &[&ENV_KEY],
+                "SELECT wamn_authority.project_key($1::text) = wamn_authority.current_project_key()", &[&PROJECT_ENV_KEY],
             ).await.unwrap().get(0);
             assert!(matches_row);
         }

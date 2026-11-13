@@ -19,7 +19,7 @@ pub(super) async fn capture_mode_security_leg(su: &Client, url: &str) {
     seed_run_admission_facts(su, "t1", "capture", "dev").await;
     su.batch_execute(&format!(
         "INSERT INTO {SCHEMA}.runs \
-           (env_key,run_id,wiring_id,wiring_version,wiring_hash,binding_world_json,package_id,environment, \
+           (project_env_key,run_id,wiring_id,wiring_version,wiring_hash,binding_world_json,package_id,environment, \
             status) \
          VALUES ('t1','capture-off','fixture-wiring',1,'sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd','[]'::jsonb,'capture','dev', \
                  'completed');"
@@ -49,7 +49,7 @@ pub(super) async fn capture_mode_security_leg(su: &Client, url: &str) {
         .execute(
             &format!(
                 "INSERT INTO {SCHEMA}.runs \
-                   (env_key,run_id,wiring_id,wiring_version,wiring_hash,binding_world_json,package_id,environment, \
+                   (project_env_key,run_id,wiring_id,wiring_version,wiring_hash,binding_world_json,package_id,environment, \
                     status,trigger_source,capture_mode) \
                  VALUES ('t1','published-full','fixture-wiring',1,'sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd','[]'::jsonb,'capture','dev', \
                          'completed','http','full')"
@@ -62,7 +62,7 @@ pub(super) async fn capture_mode_security_leg(su: &Client, url: &str) {
     su.execute(
         &format!(
             "INSERT INTO {SCHEMA}.runs \
-               (env_key,run_id,wiring_id,wiring_version,wiring_hash,binding_world_json,package_id,environment, \
+               (project_env_key,run_id,wiring_id,wiring_version,wiring_hash,binding_world_json,package_id,environment, \
                 status,trigger_source,capture_mode) \
              VALUES ('t1','draft-full','fixture-wiring',1,'sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd','[]'::jsonb,'capture','dev', \
                      'completed','scenario-draft','full')"
@@ -103,7 +103,7 @@ pub(super) async fn capture_mode_security_leg(su: &Client, url: &str) {
             "admission",
             format!(
                 "INSERT INTO {SCHEMA}.runs \
-                   (env_key,run_id,wiring_id,wiring_version,wiring_hash,binding_world_json,package_id,environment, \
+                   (project_env_key,run_id,wiring_id,wiring_version,wiring_hash,binding_world_json,package_id,environment, \
                     status,trigger_source) \
                  VALUES ('t1','app-forged','fixture-wiring',1,'sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd','[]'::jsonb,'capture','dev','dispatched','test')"
             ),
@@ -129,7 +129,7 @@ pub(super) async fn capture_mode_security_leg(su: &Client, url: &str) {
             &[],
         )
         .await
-        .expect("the application role retains its tenant read")
+        .expect("the application role retains its project read")
         .get(0);
     assert_eq!(readable, 1);
     drop(app);

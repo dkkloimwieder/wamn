@@ -1,4 +1,4 @@
-//! Tests upstream release identity, gate execution, and isolated Git settings.
+//! Tests upstream release identity, acceptance test execution, and isolated Git settings.
 
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
@@ -117,18 +117,18 @@ fn changed_release_identity_or_source_refuses_before_cargo() {
         let output = command(&fixture)
             .env(key, value)
             .output()
-            .expect("run negative release gate");
+            .expect("run negative release acceptance test");
         assert_eq!(output.status.code(), Some(65), "{key}: {output:?}");
     }
 }
 
 #[test]
-fn failed_gate_legs_keep_their_exit_codes_and_do_not_hide_later_legs() {
+fn failed_acceptance_test_legs_keep_their_exit_codes_and_do_not_hide_later_legs() {
     let fixture = fixture();
     let output = command(&fixture)
         .env("WAMN_TEST_CARGO_EXIT", "23")
         .output()
-        .expect("run failed gate fixtures");
+        .expect("run failed acceptance test fixtures");
     assert_eq!(output.status.code(), Some(23));
 }
 
@@ -153,12 +153,12 @@ fn fixture_build_cannot_change_its_tracked_lockfile_and_continue() {
 }
 
 #[test]
-fn a_gate_leg_cannot_change_upstream_source_and_continue() {
+fn an_acceptance_test_leg_cannot_change_upstream_source_and_continue() {
     let fixture = fixture();
     let output = command(&fixture)
         .env("WAMN_TEST_MUTATE", "yes")
         .output()
-        .expect("run mutating gate fixture");
+        .expect("run mutating acceptance test fixture");
     assert_eq!(output.status.code(), Some(65));
 }
 

@@ -10,25 +10,25 @@ use wamn_run_state::AuthorityClass;
 
 use super::WamnPostgres;
 
-/// The component descriptors of the release. Binds: `env_key` and manifest digest.
+/// The component descriptors of the release. Binds: `project_env_key` and manifest digest.
 pub const RELEASE_COMPONENTS_SQL: &str = "\
-WITH release_scope AS MATERIALIZED ( \
+WITH release_target AS MATERIALIZED ( \
     SELECT convert_from(release.canonical_bytes, 'UTF8')::jsonb AS manifest \
       FROM catalog.releases AS release \
-     WHERE release.env_key = $1 \
+     WHERE release.project_env_key = $1 \
        AND release.manifest_digest = $2 \
 ), release_package AS MATERIALIZED ( \
     SELECT package.value ->> 'package-id' AS package_id, \
            package.value ->> 'package-version' AS package_version \
-      FROM release_scope \
-     CROSS JOIN LATERAL jsonb_array_elements(release_scope.manifest #> '{release,packages}') \
+      FROM release_target \
+     CROSS JOIN LATERAL jsonb_array_elements(release_target.manifest #> '{release,packages}') \
            AS package(value) \
 ) \
 SELECT COALESCE( \
            (SELECT jsonb_agg( \
                jsonb_build_object( \
-                   'scope', jsonb_build_object( \
-                       'env_key', $1::text, \
+                   'target', jsonb_build_object( \
+                       'project_env_key', $1::text, \
                        'package-id', release_package.package_id, \
                        'package-version', release_package.package_version \
                    ), \
@@ -41,28 +41,28 @@ SELECT COALESCE( \
                    'effects', descriptor.value -> 'effects' \
                ) ORDER BY projected.ordinality \
             ) \
-              FROM jsonb_array_elements(release_scope.manifest -> 'components') \
+              FROM jsonb_array_elements(release_target.manifest -> 'components') \
                    WITH ORDINALITY AS projected(definition, ordinality) \
              CROSS JOIN LATERAL (SELECT projected.definition -> 'descriptor') AS descriptor(value) \
               JOIN release_package \
                 ON release_package.package_id = projected.definition ->> 'package-id'), \
            '[]'::jsonb \
        )::text AS components, \
-       jsonb_array_length(release_scope.manifest -> 'components') AS manifest_component_count \
-  FROM release_scope";
+       jsonb_array_length(release_target.manifest -> 'components') AS manifest_component_count \
+  FROM release_target";
 
 /// Make sure that every component-grain requirement in the synchronous release
 /// closure has one exact usable environment binding.
 pub(crate) const RELEASE_COMPONENT_BINDINGS_READY_SQL: &str = "\
 SELECT NOT EXISTS ( \
     SELECT FROM catalog.connection_requirement requirement \
-     WHERE requirement.env_key=$1 AND requirement.component_digest=ANY($3::text[]) \
+     WHERE requirement.project_env_key=$1 AND requirement.component_digest=ANY($3::text[]) \
        AND NOT EXISTS ( \
         SELECT FROM catalog.connection_binding binding \
-        JOIN catalog.release_connection selected USING(env_key,manifest_digest,connection_id) \
+        JOIN catalog.release_connection selected USING(project_env_key,manifest_digest,connection_id) \
         JOIN platform.connection connection ON connection.id=selected.connection_id \
         JOIN platform.integration integration ON integration.id=connection.integration_id \
-        WHERE binding.env_key=requirement.env_key AND binding.manifest_digest=$2 \
+        WHERE binding.project_env_key=requirement.project_env_key AND binding.manifest_digest=$2 \
           AND binding.component_digest=requirement.component_digest AND binding.package_id=requirement.package_id \
           AND binding.name=requirement.name AND connection.status='active' AND integration.status='active' \
        ) \
@@ -89,7 +89,7 @@ impl WamnPostgres {
     pub async fn declared_connection_interfaces(
         &self,
         project: &str,
-        env_key: &str,
+        project_env_key: &str,
         package: &str,
         digest: &str,
     ) -> anyhow::Result<Vec<(String, String)>> {
@@ -97,14 +97,14 @@ impl WamnPostgres {
             .checkout_platform(project, AuthorityClass::ExecutorPlatform)
             .await
             .map_err(|error| anyhow::anyhow!(error.to_string()))?;
-        Ok(connection.query("SELECT name,interface FROM catalog.connection_requirement WHERE env_key=$1 AND package_id=$2 AND component_digest=$3", &[&env_key,&package,&digest]).await?.into_iter().map(|row| (row.get(0),row.get(1))).collect())
+        Ok(connection.query("SELECT name,interface FROM catalog.connection_requirement WHERE project_env_key=$1 AND package_id=$2 AND component_digest=$3", &[&project_env_key,&package,&digest]).await?.into_iter().map(|row| (row.get(0),row.get(1))).collect())
     }
 
     /// Read only names declared by the selected package and component closure.
     pub async fn declared_connection_names(
         &self,
         project: &str,
-        env_key: &str,
+        project_env_key: &str,
         package: &str,
         digest: &str,
     ) -> anyhow::Result<std::collections::HashSet<String>> {
@@ -112,7 +112,7 @@ impl WamnPostgres {
             .checkout_platform(project, AuthorityClass::ExecutorPlatform)
             .await
             .map_err(|error| anyhow::anyhow!(error.to_string()))?;
-        Ok(connection.query("SELECT name FROM catalog.connection_requirement WHERE env_key=$1 AND package_id=$2 AND component_digest=$3",&[&env_key,&package,&digest]).await?.into_iter().map(|row|row.get(0)).collect())
+        Ok(connection.query("SELECT name FROM catalog.connection_requirement WHERE project_env_key=$1 AND package_id=$2 AND component_digest=$3",&[&project_env_key,&package,&digest]).await?.into_iter().map(|row|row.get(0)).collect())
     }
 
     /// Read the connection map of release `digest` for the connection
@@ -120,7 +120,7 @@ impl WamnPostgres {
     pub async fn release_fact(
         &self,
         project: &str,
-        env_key: &str,
+        project_env_key: &str,
         digest: &str,
     ) -> anyhow::Result<crate::connection_memory::ReleaseFact> {
         let (connection, _) = self
@@ -128,12 +128,12 @@ impl WamnPostgres {
             .await
             .map_err(|error| anyhow::anyhow!(error.to_string()))?;
         let rows = connection.query(
-            "SELECT b.component_digest,b.package_id,b.name,b.connection_id,r.version,q.mode FROM catalog.connection_binding b JOIN catalog.release_connection r USING(env_key,manifest_digest,connection_id) JOIN catalog.connection_requirement q USING(env_key,component_digest,package_id,name) WHERE b.env_key=$1 AND b.manifest_digest=$2 ORDER BY 1,2,3",
-            &[&env_key,&digest],
+            "SELECT b.component_digest,b.package_id,b.name,b.connection_id,r.version,q.mode FROM catalog.connection_binding b JOIN catalog.release_connection r USING(project_env_key,manifest_digest,connection_id) JOIN catalog.connection_requirement q USING(project_env_key,component_digest,package_id,name) WHERE b.project_env_key=$1 AND b.manifest_digest=$2 ORDER BY 1,2,3",
+            &[&project_env_key,&digest],
         ).await.context("read the release connection map")?;
         let versions = connection.query(
-            "SELECT connection_id,version FROM catalog.release_connection WHERE env_key=$1 AND manifest_digest=$2",
-            &[&env_key,&digest],
+            "SELECT connection_id,version FROM catalog.release_connection WHERE project_env_key=$1 AND manifest_digest=$2",
+            &[&project_env_key,&digest],
         ).await.context("read the release connection versions")?;
         Ok(crate::connection_memory::ReleaseFact {
             versions: versions
@@ -157,7 +157,7 @@ impl WamnPostgres {
     pub async fn resolve_release_components(
         &self,
         project: &str,
-        env_key: &str,
+        project_env_key: &str,
         environment: &str,
         manifest_digest: &str,
     ) -> anyhow::Result<Vec<AdmittedComponent>> {
@@ -166,11 +166,11 @@ impl WamnPostgres {
             .await
             .map_err(|error| anyhow::anyhow!(error.to_string()))?;
         if let Err(error) = self
-            .begin_with_claims(
+            .begin_with_identity(
                 &connection,
                 AuthorityClass::ExecutorPlatform,
                 false,
-                env_key,
+                project_env_key,
                 None,
                 None,
                 None,
@@ -190,10 +190,10 @@ impl WamnPostgres {
             async {
                 local.require_instance(&connection).await?;
                 anyhow::ensure!(
-                    local.scope.env_key == env_key
-                        && local.scope.environment == environment
+                    local.target.project_env_key == project_env_key
+                        && local.target.environment == environment
                         && local.facts.manifest_digest.as_str() == manifest_digest,
-                    "local release scope mismatch"
+                    "local release target mismatch"
                 );
                 Ok(local.facts.components.clone())
             }
@@ -201,7 +201,10 @@ impl WamnPostgres {
         } else {
             async {
                 let row = connection
-                    .query_opt(RELEASE_COMPONENTS_SQL, &[&env_key, &manifest_digest])
+                    .query_opt(
+                        RELEASE_COMPONENTS_SQL,
+                        &[&project_env_key, &manifest_digest],
+                    )
                     .await
                     .context("query release components")?
                     .ok_or_else(|| anyhow::anyhow!("release-snapshot-not-found"))?;
@@ -235,12 +238,12 @@ impl WamnPostgres {
     ///
     /// An empty digest set is a background-only release and performs no store
     /// call. Otherwise the test shares the driver's existing platform pool and
-    /// tenant claim; missing rows, unavailable storage and malformed results are
+    /// project identity; missing rows, unavailable storage and malformed results are
     /// errors, while an ordinary unbound requirement is `Ok(false)`.
     pub async fn release_component_bindings_ready(
         &self,
         project: &str,
-        env_key: &str,
+        project_env_key: &str,
         manifest_digest: &str,
         environment: &str,
         component_digests: &[String],
@@ -254,11 +257,11 @@ impl WamnPostgres {
             .await
             .map_err(|error| anyhow::anyhow!(error.to_string()))?;
         if let Err(error) = self
-            .begin_with_claims(
+            .begin_with_identity(
                 &connection,
                 AuthorityClass::ExecutorPlatform,
                 false,
-                env_key,
+                project_env_key,
                 None,
                 None,
                 None,
@@ -274,13 +277,14 @@ impl WamnPostgres {
             return Err(anyhow::anyhow!(error.to_string()));
         }
 
-        let params: [&(dyn ToSql + Sync); 3] = [&env_key, &manifest_digest, &component_digests];
+        let params: [&(dyn ToSql + Sync); 3] =
+            [&project_env_key, &manifest_digest, &component_digests];
         let result = if let Some(local) = &self.local_application {
-            if local.scope.env_key != env_key
-                || local.scope.environment != environment
+            if local.target.project_env_key != project_env_key
+                || local.target.environment != environment
                 || local.facts.manifest_digest.as_str() != manifest_digest
             {
-                Err(anyhow::anyhow!("local readiness release scope mismatch"))
+                Err(anyhow::anyhow!("local readiness release target mismatch"))
             } else {
                 local.bindings_ready(&connection, &component_digests).await
             }
@@ -380,7 +384,7 @@ pub(super) fn resolved_wiring(
 /// This is the DELIVERY path. The ctl readers refuse the same row at
 /// publication time, where an operator sees the failure and can act on it; here
 /// a fabricated projection would simply be trusted. `wamn-0h0g.21.10` defaulted
-/// every pre-migration row to `'[]'` — the positive claim of purity — so the
+/// every pre-migration row to `'[]'` — the positive identity of purity — so the
 /// projection is re-derived from the row's own attested imports rather than
 /// believed.
 fn verify_served_effect_projections(components: &[AdmittedComponent]) -> anyhow::Result<()> {
@@ -401,7 +405,7 @@ mod tests {
     use serde_json::json;
     use wamn_catalog::{
         AdmittedComponentOperation, ComponentDeclaration, ComponentOperationDeclaration,
-        ComponentPackageScope, ComponentPortDeclaration, normalize_component_fact,
+        ComponentPackageCoordinate, ComponentPortDeclaration, normalize_component_fact,
     };
 
     use super::*;
@@ -409,8 +413,8 @@ mod tests {
     fn component(name: &str, operation: &str, digest_byte: char) -> AdmittedComponent {
         normalize_component_fact(
             ComponentDeclaration {
-                scope: ComponentPackageScope {
-                    env_key: "tenant-a".to_owned(),
+                target: ComponentPackageCoordinate {
+                    project_env_key: "org-a".to_owned(),
                     package_id: "orders".to_owned(),
                     package_version: "1.2.0".to_owned(),
                 },
@@ -496,7 +500,7 @@ mod tests {
             "binding.name=requirement.name",
             "connection.status='active'",
             "integration.status='active'",
-            "JOIN catalog.release_connection selected USING(env_key,manifest_digest,connection_id)",
+            "JOIN catalog.release_connection selected USING(project_env_key,manifest_digest,connection_id)",
         ] {
             assert!(
                 RELEASE_COMPONENT_BINDINGS_READY_SQL.contains(predicate),
@@ -511,8 +515,8 @@ mod tests {
     /// refuses this shape.
     fn migration_defaulted(imports: &[&str]) -> AdmittedComponent {
         AdmittedComponent {
-            scope: ComponentPackageScope {
-                env_key: "tenant-a".to_owned(),
+            target: ComponentPackageCoordinate {
+                project_env_key: "org-a".to_owned(),
                 package_id: "orders".to_owned(),
                 package_version: "1.2.0".to_owned(),
             },
@@ -538,14 +542,14 @@ mod tests {
     }
 
     /// wamn-0h0g.21.11. The delivery path must refuse the fabricated purity
-    /// claim, not merely the publication path. Deleting the call in
+    /// identity, not merely the publication path. Deleting the call in
     /// `resolved_wiring` leaves this failing.
     #[test]
     fn the_serving_path_refuses_an_effect_projection_no_validator_derived() {
         let served = vec![migration_defaulted(&["wamn:postgres/client@0.1.0"])];
 
         let error = verify_served_effect_projections(&served)
-            .expect_err("an underived purity claim is refused before it is served");
+            .expect_err("an underived purity identity is refused before it is served");
 
         assert!(
             error
@@ -556,7 +560,7 @@ mod tests {
     }
 
     /// The other half: a row whose `'[]'` is the value its own imports derive
-    /// is not fabricated, and must keep serving. This is what scopes the
+    /// is not fabricated, and must keep serving. This is what restricts the
     /// refusal to exactly the rows a validator never produced.
     #[test]
     fn the_serving_path_admits_a_projection_its_imports_derive() {

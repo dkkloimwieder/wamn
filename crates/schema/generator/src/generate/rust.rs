@@ -280,7 +280,7 @@ pub(super) fn wamn_api(
                     .map_or_else(|| model_row.clone(), |row| row.name.clone());
                 for (index, (field, direction)) in query_variants(operation).into_iter().enumerate()
                 {
-                    let mut binds = scope_binds(operation);
+                    let mut binds = filter_binds(operation);
                     binds.push(bind_for_column(table, field, "cursor_key", true));
                     let tie_breaker = &operation
                         .pagination
@@ -306,7 +306,7 @@ pub(super) fn wamn_api(
                     });
                 }
                 if let Some(changes_row) = feed_rows.get(1) {
-                    let mut binds = scope_binds(operation);
+                    let mut binds = filter_binds(operation);
                     binds.push(accessor_bind(
                         "cursor_transaction",
                         SqlValueType::Int64,
@@ -533,7 +533,7 @@ fn native_inert_value(bind: &AccessorBind) -> String {
 }
 
 /// The binds of a list read's filters and search, in statement order.
-fn scope_binds(operation: &OperationDeclaration) -> Vec<AccessorBind> {
+fn filter_binds(operation: &OperationDeclaration) -> Vec<AccessorBind> {
     let mut binds = operation
         .filters
         .iter()

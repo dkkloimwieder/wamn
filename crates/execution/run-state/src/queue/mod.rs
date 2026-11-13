@@ -1,32 +1,32 @@
-//! Durable global FIFO queue, lease, timer, and reclaim state.
+//! Durable global FIFO queue, lease, timer, and recover state.
 //!
-//! Postgres stores queued work. The host claims due rows with
+//! Postgres stores queued work. The host leases due rows with
 //! `FOR UPDATE SKIP LOCKED`; leases allow another replica to recover abandoned work.
-//! This module supplies claim, lease renewal, and exhausted-run decisions.
+//! This module supplies lease, lease renewal, and exhausted-run decisions.
 //!
 //! This crate has no database, broker, or clock. Decisions consume explicit
 //! rows and time, and SQL builders return parameterized statements.
-//! The host supplies database effects, the clock, and the replica identity.
+//! The host supplies database effects, the clock, and the replican identity.
 //!
 //! ```
-//! use wamn_run_state::queue::{claim_state, ClaimState, QueueEntry};
+//! use wamn_run_state::queue::{lease_state, LeaseState, QueueEntry};
 //!
-//! // `now = 100`, a row visible since 50 with no lease -> a claim would take it.
+//! // `now = 100`, a row visible since 50 with no lease -> a lease would take it.
 //! let e = QueueEntry::ready("t1", "run-1", 50, 20);
-//! assert_eq!(claim_state(&e, 100), ClaimState::Ready);
+//! assert_eq!(lease_state(&e, 100), LeaseState::Ready);
 //!
 //! // The same row leased until 500 is skipped until the lease expires.
 //! let leased = QueueEntry { lease_owner: Some("A".into()), lease_expires_at: Some(500), ..e };
-//! assert_eq!(claim_state(&leased, 100), ClaimState::Leased);
-//! assert_eq!(claim_state(&leased, 600), ClaimState::Ready); // lease expired -> reclaimable
+//! assert_eq!(lease_state(&leased, 100), LeaseState::Leased);
+//! assert_eq!(lease_state(&leased, 600), LeaseState::Ready); // lease expired -> recoverable
 //! ```
 //!
-//! ## Scope vs siblings
-//! Owns the global `run_queue`, FIFO claim decision, lease recovery, and janitor.
+//! ## Target vs siblings
+//! Owns the global `run_queue`, FIFO lease decision, lease recovery, and janitor.
 //! The host polls due work. CDC and the materializer deliver row events.
 //! The host-only Postgres adapter composes the transaction and hands the exact
 //! frozen wiring identity plus payload to the router driver.
-//! Does **not** own: the router walk / retry (the claimed run drives it);
+//! Does **not** own: the router walk / retry (the acquired run drives it);
 //! the `runs` schema (5.7 — 5.14 co-transacts
 //! and reuses the reserved `dispatched`/`infrastructure-failure` statuses via
 //! [`crate::RunStatus`]); the payload byte store (5.10).
@@ -36,15 +36,15 @@
 //! This crate's tests exercise the **decision** (which statement, what shape,
 //! which binds); they cannot exercise the **statement** — the pure model has no
 //! planner, isolation level, lock manager, or RLS. A statement can be modelled
-//! correctly here and still misbehave live: a prior batch claim passed every
-//! pure test while the real statement over-claimed on a
+//! correctly here and still misbehave live: a prior batch lease passed every
+//! pure test while the real statement over-acquired on a
 //! plan-dependent `SKIP LOCKED` re-scan — the `AS MATERIALIZED` fix is a
 //! property of the emitted SQL no pure test can observe. Convention (SR12a):
 //! every composed or plan-sensitive statement carries a comment naming what the
-//! pure tests do NOT cover; the live half is the throwaway-PG gates over the
+//! pure tests do NOT cover; the live half is the throwaway-PG acceptance tests over the
 //! real prepared-statement path (SR12b).
 
-mod claim;
+mod acquire;
 mod janitor;
 mod lease;
 mod model;
@@ -52,17 +52,17 @@ mod sql;
 /// The workflow contract's statements: admit, park, release, and list.
 mod workflow;
 
-pub use claim::{
-    ClaimPlan, ClaimState, Claimed, ProductionClaimClass, claim_state, classify_production_claim,
-    is_claimable, plan_claim,
+pub use acquire::{
+    LeasePlan, LeaseState, Leased, ProductionLeaseClass, classify_production_lease, is_leasable,
+    lease_state, plan_lease,
 };
 pub use janitor::{JanitorVerdict, janitor_verdict, orphans};
 pub use lease::{lease_deadline, lease_live, should_renew};
 pub use model::{MAX_RETRY_BACKOFF_MS, Millis, QueueEntry};
 pub use sql::{
-    advance_claim_attempts_sql, clear_pre_effect_state_sql, grant_production_claim_sql,
-    release_production_claim_sql, renew_production_lease_sql, select_exhausted_production_sql,
-    select_production_claim_sql, terminalize_exhausted_production_sql,
+    advance_lease_attempts_sql, clear_pre_effect_state_sql, grant_production_lease_sql,
+    release_production_lease_sql, renew_production_lease_sql, select_exhausted_production_sql,
+    select_production_lease_sql, terminalize_exhausted_production_sql,
     terminalize_released_production_sql,
 };
 pub use workflow::{

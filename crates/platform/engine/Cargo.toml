@@ -23,7 +23,7 @@ wamn-run-state = { workspace = true }
 # platform component that runs it. Both crates are pure.
 wamn-event-wire = { workspace = true }
 wamn-identity-protocol = { workspace = true }
-# A route request's credential kind reads the PAT prefix. The crate is pure.
+# A route request's credential type reads the PAT prefix. The crate is pure.
 anyhow = { workspace = true }
 async-trait = { workspace = true }
 # Route input schemas. A pure schema test with no I/O.
@@ -53,7 +53,7 @@ wat = "=1.254.2"
 wit-component = { workspace = true, features = ["dummy-module"] }
 wit-parser = { workspace = true }
 # The release-manifest tests build manifests from parts, which wamn-catalog
-# gates behind `test-util`. Never add this feature to the normal dependency.
+# conditions behind `test-util`. Never add this feature to the normal dependency.
 wamn-catalog = { workspace = true, features = ["test-util"] }
 
 [lints]

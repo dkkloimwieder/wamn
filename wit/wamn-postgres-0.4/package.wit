@@ -6,21 +6,21 @@ package wamn:postgres@0.4.0;
 /// `transaction-view` resource. A component built against 0.3.0 does not fit.
 /// This is the one version in the tree, and the host serves only it.
 
-/// Host-plugin interface for tenant-scoped Postgres access.
+/// Host-plugin interface for project-targeted Postgres access.
 /// Security invariants (enforced by the HOST, invisible to the guest):
-/// - The guest NEVER holds a socket. It holds resources or scoped views. Connections
+/// - The guest NEVER holds a socket. It holds resources or targeted views. Connections
 ///   live in the plugin's pool.
-/// - RLS claims (tenant/user/role) are derived from the executing
+/// - RLS identity (project/user/role) are derived from the executing
 ///   workload's identity and injected by the plugin via SET LOCAL inside
 ///   the plugin-managed transaction. There is deliberately NO way for a
-///   guest to set or override its own claims through this interface.
+///   guest to set or override its own identity through this interface.
 /// - Statement timeout and row limits are applied host-side per project
 ///   policy; guests cannot raise them.
 /// - Abnormal instance death destroys the underlying connection (never
 ///   returned to the pool). See plan 2.2.
 /// - No LISTEN/NOTIFY surface (event delivery is outbox + dispatcher).
 /// - Schema selection is host-injected per-workload config (`wamn.schema`),
-///   like the tenant claim: the guest names tables unqualified and cannot
+///   like the project identity: the guest names tables unqualified and cannot
 ///   choose its own schema. It is NOT part of this interface (validated in
 ///   S6, where a test host swapped in an ephemeral schema with zero guest
 ///   change).
@@ -85,7 +85,7 @@ interface types {
     /// 23P01 with constraint name.
     exclusion-violation(string),
     /// RLS or privilege denial. Deliberately carries no detail about
-    /// which policy denied (no cross-tenant reconnaissance).
+    /// which policy denied (no cross-project reconnaissance).
     permission-denied,
     /// Anything else: sqlstate + message.
     query-error(tuple<string, string>),
@@ -95,7 +95,7 @@ interface types {
 interface client {
   use types.{sql-value, row-set, pg-error};
 
-  /// Single statement in an implicit transaction (claims injected,
+  /// Single statement in an implicit transaction (identity injected,
   /// committed on success). Parameterized ONLY -- there is no string
   /// interpolation path; $1..$n binding is the sole way to pass data.
   query: async func(sql: string, params: list<sql-value>) -> result<row-set, pg-error>;
@@ -128,7 +128,7 @@ interface client {
 /// The guest supplies a statement, by its package-relative SQL path, and
 /// values, never SQL bytes. The host resolves the statement inside the active
 /// operation's verified statement set, validates the value and result shapes,
-/// and executes the admitted exact bytes through the same claim-aware runner
+/// and executes the admitted exact bytes through the same identity-aware runner
 /// as `client`.
 interface statements {
   use types.{sql-value, column, row-set, pg-error};
@@ -170,8 +170,8 @@ interface statements {
 
   /// Run one admitted statement and return its rows as the server sends them.
   ///
-  /// The host executes the exact prepared statement once, with the same claims
-  /// as `run`. Caller claims keep their transaction. Every row reads the
+  /// The host executes the exact prepared statement once, with the same identity
+  /// as `run`. Caller identity keep their transaction. Every row reads the
   /// snapshot the statement took when it started. The result names the columns,
   /// then the optional WAL position, then carries each row on the stream. The future resolves after the last row: ok when the
   /// statement read to its end, the error otherwise.
@@ -208,7 +208,7 @@ interface statements {
   /// not a record: any command can call this, with values of its choice.
   /// The application comes from host state: the operation transaction holds
   /// the application it was begun for. It is never an argument and never
-  /// the `app.application` claim, which guest SQL can rewrite. Outside an
+  /// the `app.application` identity, which guest SQL can rewrite. Outside an
   /// open operation transaction the host refuses. Added to 0.4.0 in place,
   /// with no version bump (docs/plan/platform-config.md, "Issues for C2").
   ///

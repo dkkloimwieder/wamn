@@ -55,7 +55,7 @@ impl Control<'_> {
             &value,
         )?;
         drop(session);
-        // Only the kind port-forward URL needs the route host. The GKE URL
+        // Only the type port-forward URL needs the route host. The GKE URL
         // already names it, and the load balancer refuses a second Host over HTTP/2.
         if self.journey.run.document.provider == Provider::Kind {
             request.headers_mut().insert(

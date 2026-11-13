@@ -386,7 +386,7 @@ The generator runs the script itself, so you do not install KCL by hand.
 If the repository is absent, set `WAMN_KCL` to a `kcl` binary of the pinned version.
 The schema module that `wamn.k` imports as `manifest` is [`crates/schema/generator/kcl/manifest`](../../crates/schema/generator/kcl/manifest/manifest.k).
 
-- Plain English names in the schema module; `type` never `kind`; no plurals that the manifest does not already use.
+- Plain English names in the schema module; use `type` for variant names; no plurals that the manifest does not already use.
 
 An overlay's `wamn.k` imports nothing from its base; `base_dependencies` stays a declaration (package, version, digest, operations) as today, because the pin is the contract and a language-level import would let the overlay drift from the sealed base. The language adds comments and defaults to the overlay; it does not compose the two packages.
 
@@ -438,7 +438,7 @@ A digest identifies content through its SHA-256 hash.
 Both digests cover the manifest, authored SQL, migrations, generator identity, and every other build input.
 The development loop reads the physical SQL fingerprint from `physical-schema.json` after preparing generation.
 It uses the same schema planner and installed SQL records as deployment.
-The build record stores no installed schema identity.
+The build record stores no installed scheman identity.
 A query edit reruns Generate and keeps Migrate and existing introspection results.
 The input files include the package's own files and `apps/Cargo.lock`.
 They also include `apps/platform/data`, `crates/platform/digest`, `crates/platform/scalar`, and `apps/platform/execution/jsonata`.
@@ -524,7 +524,7 @@ A web source or output edit leaves the packed package digest unchanged.
 
 The `generated/` paths of layer 3 are logical paths. `wamn build` writes those files below `apps/target/wamn/<package>/` without the `generated/` prefix, and pack reads them from there.
 
-A tar has GNU headers, sorted package-relative paths, mode 0644, uid and gid 0 and mtime 0. A descriptor is the canonical JSON of `ComponentDescriptor` (`crates/catalog/model/src/component_facts.rs`, `deny_unknown_fields`): `{component, interface-version, component-digest, operations, imports, imports-fingerprint, effects, connections: [{store-alias, requirement-type}]}`, which is `AdmittedComponent` without its scope plus its connections. The reader supplies the scope. A palette component's store alias comes from the `params.store_alias` of the wiring nodes that name it, and two aliases refuse. The manifest annotations are `wamn.package.id`, `wamn.package.version` and one `wamn.component.<name>` = `sha256:...` per component. Nothing carries a timestamp. The manifest is canonical JSON.
+A tar has GNU headers, sorted package-relative paths, mode 0644, uid and gid 0 and mtime 0. A descriptor is the canonical JSON of `ComponentDescriptor` (`crates/catalog/model/src/component_facts.rs`, `deny_unknown_fields`): `{component, interface-version, component-digest, operations, imports, imports-fingerprint, effects, connections: [{store-alias, requirement-type}]}`, which is `AdmittedComponent` without its target plus its connections. The reader supplies the target. A palette component's store alias comes from the `params.store_alias` of the wiring nodes that name it, and two aliases refuse. The manifest annotations are `wamn.package.id`, `wamn.package.version` and one `wamn.component.<name>` = `sha256:...` per component. Nothing carries a timestamp. The manifest is canonical JSON.
 
 The artifact digest is the SHA-256 of the image manifest bytes. The registry records it, and it is what `artifact_digest` means. An unpacked artifact is not build output. The three tars keep their logical paths. Layer 0 goes to `generated/wamn.json`. Each descriptor goes to `descriptors/<name>.json`. It packs again offline to the pushed digest. `package_artifact_digest(root)` is that offline digest of a tree as it is. A source tree has no `descriptors/`, so its digest differs from the pushed digest. Only an unpacked tree packs to it.
 

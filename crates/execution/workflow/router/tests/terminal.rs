@@ -10,7 +10,7 @@
 use serde_json::{Value, json};
 use wamn_event_wire::Op;
 use wamn_router::{
-    ApplyErrorType, DEDUP_ID_FIELD, Delivery, ErrorDetail, FailureKind, NodeError, NodeOutcome,
+    ApplyErrorType, DEDUP_ID_FIELD, Delivery, ErrorDetail, FailureType, NodeError, NodeOutcome,
     Step, Terminal, Verdict, Walk, WalkStatus, Wiring, WiringEdge, WiringNode,
 };
 
@@ -286,8 +286,8 @@ fn emit_without_a_dedup_id_and_no_error_edge_fails_the_walk() {
 
     assert_eq!(status, WalkStatus::Failed);
     assert_eq!(
-        walk.failure().map(|failure| failure.kind),
-        Some(FailureKind::MissingDedupId)
+        walk.failure().map(|failure| failure.type_),
+        Some(FailureType::MissingDedupId)
     );
     assert_eq!(walk.verdict(), None, "a failed walk reached no verdict");
 }
@@ -322,8 +322,8 @@ fn an_exhausted_frontier_with_a_caller_still_attached_fails() {
 
     assert_eq!(status, WalkStatus::Failed);
     assert_eq!(
-        walk.failure().map(|failure| failure.kind),
-        Some(FailureKind::UnreleasedCaller)
+        walk.failure().map(|failure| failure.type_),
+        Some(FailureType::UnreleasedCaller)
     );
     assert_eq!(walk.verdict(), None);
 }

@@ -4,7 +4,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, waitFor } from "@solidjs/testing-library";
 import { Loading, createSignal, flush } from "solid-js";
 import { outbox, type Persistence } from "@wfe/sync";
-import { packagingOffline, packagingScope } from "../src/packaging-offline.js";
+import { packagingOffline, packagingFilter } from "../src/packaging-offline.js";
 import { PackagingScreen } from "../src/packaging-screen.js";
 import { fakeFeed, makeRows } from "../src/fake.js";
 import { locationKey, type LocationRow } from "../src/generated/wamn_wms/location.js";
@@ -38,7 +38,7 @@ function mounted(online: boolean, locations: LocationRow[] = [], saved?: Persist
   const locationList = vi.fn(async () => ({ rows: locations, cursor: "l" }));
   const model = packagingOffline({
     packaging: fakeFeed(() => rows),
-    scope: packagingScope("held"),
+    filter: packagingFilter("held"),
     persistence,
     location: { list: locationList, changes: async () => ({ rows: [], next_cursor: "l", complete: true }) },
     estimate: async () => ({ quota: 1_000_000, usage: 0 }),
@@ -78,7 +78,7 @@ it("shows counts and as-of time after take-offline and preserves the status line
   expect(view.getByLabelText("Sync status").textContent).toContain("Sign in to upload");
 });
 
-it("shows needs a connection for a scope with no local collection", async () => {
+it("shows needs a connection for a filter with no local collection", async () => {
   const view = mounted(false);
   await waitFor(() => expect(view.getByText("needs a connection")).toBeTruthy(), { timeout: 3000 });
   expect(view.queryByRole("form", { name: "Create packaging" })).toBeNull();
@@ -165,7 +165,7 @@ it.each([false, true])(
     const model = packagingOffline({
       packaging: { list: packagingList, changes: async () => ({ rows: [], next_cursor: "p", complete: true }) },
       location: { list: locationList, changes: async () => ({ rows: [], next_cursor: "l", complete: true }) },
-      scope: packagingScope("held"),
+      filter: packagingFilter("held"),
       persistence,
     });
     close.push(model.close, () => o.close());
@@ -244,7 +244,7 @@ it.each([true, false])("records the selected local location when online=%s", asy
       const rows =
         key === locationKey({})
           ? locations
-          : key === packagingKey(packagingScope("held"))
+          : key === packagingKey(packagingFilter("held"))
             ? makeRows(1).map((row) => ({ ...row, status: "held" }))
             : undefined;
       return rows && { rows, cursor: "saved", saved_at: "2026-01-01T00:00:00Z" };

@@ -32,7 +32,7 @@ use serde_json::Value;
 
 /// Why a declared statement is refused.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum RefusalKind {
+pub(super) enum RefusalType {
     /// The SQL does not parse with PostgreSQL's grammar.
     Unparsed,
     /// The SQL holds no statement or more than one.
@@ -58,27 +58,27 @@ pub(super) enum RefusalKind {
 /// A declared statement that admission refuses.
 #[derive(Debug)]
 pub(super) struct DeclaredStatementRefusal {
-    kind: RefusalKind,
+    type_: RefusalType,
     detail: String,
 }
 
 impl DeclaredStatementRefusal {
-    fn new(kind: RefusalKind, detail: impl Into<String>) -> Self {
+    fn new(type_: RefusalType, detail: impl Into<String>) -> Self {
         Self {
-            kind,
+            type_,
             detail: detail.into(),
         }
     }
 
     #[cfg(test)]
-    pub(super) const fn kind(&self) -> RefusalKind {
-        self.kind
+    pub(super) const fn type_(&self) -> RefusalType {
+        self.type_
     }
 }
 
 impl fmt::Display for DeclaredStatementRefusal {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(formatter, "{:?}: {}", self.kind, self.detail)
+        write!(formatter, "{:?}: {}", self.type_, self.detail)
     }
 }
 
@@ -87,11 +87,11 @@ impl fmt::Display for DeclaredStatementRefusal {
 const COUNTER_FUNCTIONS: [&str; 3] = ["bump_counter", "assign_counter", "set_counter"];
 
 /// Statement nodes refused wherever they occur in the tree.
-const REFUSED_NODES: [(&str, RefusalKind); 4] = [
-    ("DoStmt", RefusalKind::CodeBlock),
-    ("CreateFunctionStmt", RefusalKind::CodeBlock),
-    ("ExecuteStmt", RefusalKind::DynamicExecute),
-    ("VariableSetStmt", RefusalKind::SessionWrite),
+const REFUSED_NODES: [(&str, RefusalType); 4] = [
+    ("DoStmt", RefusalType::CodeBlock),
+    ("CreateFunctionStmt", RefusalType::CodeBlock),
+    ("ExecuteStmt", RefusalType::DynamicExecute),
+    ("VariableSetStmt", RefusalType::SessionWrite),
 ];
 
 /// Write nodes and the field that holds the relation each one writes.
@@ -107,7 +107,7 @@ const WRITE_NODES: [(&str, &str); 6] = [
 /// Refuse `sql` unless it is one statement that passes every test above.
 pub(super) fn require_declared_statement(sql: &str) -> Result<(), DeclaredStatementRefusal> {
     let unparsed = |error: pg_query::Error| {
-        DeclaredStatementRefusal::new(RefusalKind::Unparsed, error.to_string())
+        DeclaredStatementRefusal::new(RefusalType::Unparsed, error.to_string())
     };
     let scanned = pg_query::scan(sql).map_err(unparsed)?;
     for token in &scanned.tokens {
@@ -116,7 +116,7 @@ pub(super) fn require_declared_statement(sql: &str) -> Result<(), DeclaredStatem
             Ok(Token::Uident | Token::Usconst | Token::Uescape)
         ) {
             return Err(DeclaredStatementRefusal::new(
-                RefusalKind::UnicodeEscape,
+                RefusalType::UnicodeEscape,
                 format!("a U& identifier or string at byte {}", token.start),
             ));
         }
@@ -124,12 +124,12 @@ pub(super) fn require_declared_statement(sql: &str) -> Result<(), DeclaredStatem
     let parsed = pg_query::parse(sql).map_err(unparsed)?;
     if parsed.protobuf.stmts.len() != 1 {
         return Err(DeclaredStatementRefusal::new(
-            RefusalKind::NotOneStatement,
+            RefusalType::NotOneStatement,
             format!("{} statements, not one", parsed.protobuf.stmts.len()),
         ));
     }
     let tree = serde_json::to_value(&parsed.protobuf)
-        .map_err(|error| DeclaredStatementRefusal::new(RefusalKind::Unparsed, error.to_string()))?;
+        .map_err(|error| DeclaredStatementRefusal::new(RefusalType::Unparsed, error.to_string()))?;
     require_value(&tree)
 }
 
@@ -140,8 +140,8 @@ fn require_value(value: &Value) -> Result<(), DeclaredStatementRefusal> {
         Value::Array(items) => items.iter().try_for_each(require_value),
         Value::Object(fields) => {
             for (key, field) in fields {
-                if let Some((node, kind)) = REFUSED_NODES.iter().find(|(node, _)| node == key) {
-                    return Err(DeclaredStatementRefusal::new(*kind, format!("a {node}")));
+                if let Some((node, type_)) = REFUSED_NODES.iter().find(|(node, _)| node == key) {
+                    return Err(DeclaredStatementRefusal::new(*type_, format!("a {node}")));
                 }
                 if let Some((node, relation)) = WRITE_NODES.iter().find(|(node, _)| node == key) {
                     require_write(node, field.get(*relation))?;
@@ -170,7 +170,7 @@ fn require_write(node: &str, relation: Option<&Value>) -> Result<(), DeclaredSta
         let schema = target.get("schemaname").and_then(Value::as_str);
         if schema.is_some_and(|schema| schema.eq_ignore_ascii_case("platform")) {
             return Err(DeclaredStatementRefusal::new(
-                RefusalKind::PlatformWrite,
+                RefusalType::PlatformWrite,
                 format!("a {node} of a platform.* relation"),
             ));
         }
@@ -182,25 +182,28 @@ fn require_write(node: &str, relation: Option<&Value>) -> Result<(), DeclaredSta
 fn require_text(text: &str) -> Result<(), DeclaredStatementRefusal> {
     let lower = text.to_ascii_lowercase();
     let refused = [
-        (&COUNTER_FUNCTIONS[..], false, RefusalKind::CounterFunction),
-        (&["set_config"][..], false, RefusalKind::SessionWrite),
+        (&COUNTER_FUNCTIONS[..], false, RefusalType::CounterFunction),
+        (&["set_config"][..], false, RefusalType::SessionWrite),
         (
             &["pg_logical_emit_message"][..],
             true,
-            RefusalKind::LogicalMessage,
+            RefusalType::LogicalMessage,
         ),
         (
             &["query_to_xml", "cursor_to_xml"][..],
             true,
-            RefusalKind::XmlQuery,
+            RefusalType::XmlQuery,
         ),
     ];
-    for (names, prefix, kind) in refused {
+    for (names, prefix, type_) in refused {
         if let Some(name) = names
             .iter()
             .find(|name| names_identifier(&lower, name, prefix))
         {
-            return Err(DeclaredStatementRefusal::new(kind, format!("names {name}")));
+            return Err(DeclaredStatementRefusal::new(
+                type_,
+                format!("names {name}"),
+            ));
         }
     }
     Ok(())

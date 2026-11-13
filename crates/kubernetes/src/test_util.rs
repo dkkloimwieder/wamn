@@ -8,11 +8,11 @@ pub struct MemoryStore(Mutex<BTreeMap<(String, String), Vec<u8>>>);
 impl Store for MemoryStore {
     async fn put(
         &self,
-        scope: &Triple,
+        target: &Triple,
         id: uuid::Uuid,
         value: &[u8],
     ) -> Result<StoreVersion, Error> {
-        let reference = credential_secret_name(&scope.org, &scope.project, scope.env.as_str());
+        let reference = credential_secret_name(&target.org, &target.project, target.env.as_str());
         let version = id.to_string();
         self.0
             .lock()

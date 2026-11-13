@@ -83,7 +83,7 @@ mod tests {
             other => panic!("{name} must be a record, found {other:?}"),
         };
         // Occurrence keeps merge/loop visits distinct while retries retain one
-        // visit identity; the wiring pair scopes it to the graph revision that
+        // visit identity; the wiring pair targets it to the graph revision that
         // asked for the effect. The trace pair carries the only evidence, and
         // the deadline makes `cancelled` reachable without a cancellation import.
         // No operation (it selects the admitted digest) and no mutable delivery

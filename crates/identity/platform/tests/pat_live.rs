@@ -369,7 +369,7 @@ async fn pat_stamps(client: &Client, prefix: &str) -> PatStamps {
     }
 }
 
-/// The pats foreign key carries the principal kind, so no token names the
+/// The pats foreign key carries the principal type, so no token names the
 /// platform principal, through the library or through direct SQL.
 async fn platform_principal_cannot_hold_a_token(client: &Client, provisioning: &str) {
     let principal: PrincipalId = provisioning
@@ -382,7 +382,7 @@ async fn platform_principal_cannot_hold_a_token(client: &Client, provisioning: &
             .error_type(),
         IdentityErrorType::NotFound
     );
-    for (kind, code) in [
+    for (type_, code) in [
         ("platform", SqlState::CHECK_VIOLATION),
         ("user", SqlState::CHECK_VIOLATION),
         ("service", SqlState::FOREIGN_KEY_VIOLATION),
@@ -392,11 +392,11 @@ async fn platform_principal_cannot_hold_a_token(client: &Client, provisioning: &
                 "INSERT INTO identity.pats \
                    (principal_id, principal_type, token_prefix, token_hash, label, expires_at) \
                  VALUES ($1::text::uuid, $2, $3, $4, 'platform', now() + interval '1 hour')",
-                &[&provisioning, &kind, &"e".repeat(16), &"e".repeat(64)],
+                &[&provisioning, &type_, &"e".repeat(16), &"e".repeat(64)],
             )
             .await
             .expect_err("direct SQL must not bind a token to the platform principal");
-        assert_eq!(error.code(), Some(&code), "{kind}");
+        assert_eq!(error.code(), Some(&code), "{type_}");
     }
 }
 

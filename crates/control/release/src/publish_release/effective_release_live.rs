@@ -12,7 +12,7 @@ use super::{
     read_package_attachments, read_package_manifests, resolve_route_methods,
 };
 
-const ENV_KEY: &str = "effective-release-poc--fixture--dev";
+const PROJECT_ENV_KEY: &str = "effective-release-poc--fixture--dev";
 const ENVIRONMENT: &str = "dev";
 const BASE_WASM_ENV: &str = "WAMN_EFFECTIVE_RELEASE_BASE_COMPONENT_WASM";
 const OVERLAY_WASM_ENV: &str = "WAMN_EFFECTIVE_RELEASE_OVERLAY_COMPONENT_WASM";
@@ -95,7 +95,7 @@ fn admit_components(inputs: &[PackageInput]) -> (BTreeMap<String, String>, Relea
                 });
         let declaration = wamn_package_control::component_declaration::render_declaration_document(
             &input.component_declaration,
-            ENV_KEY,
+            PROJECT_ENV_KEY,
         )
         .unwrap_or_else(|error| {
             panic!("render {}: {error}", input.component_declaration.display())
@@ -158,7 +158,7 @@ fn base_and_overlay_project_admitted_routes() {
         .iter()
         .map(|input| input.root.clone())
         .collect::<Vec<_>>();
-    let (manifests, kinds) = read_package_manifests(&roots)
+    let (manifests, types) = read_package_manifests(&roots)
         .expect("consume exact package manifests and package contracts");
     let manifest_paths = inputs
         .iter()
@@ -180,7 +180,7 @@ fn base_and_overlay_project_admitted_routes() {
     let mut authored_attachments = read(&inputs[0]);
     authored_attachments.extend(read(&inputs[1]));
     let attachments =
-        resolve_route_methods(&authored_attachments, &kinds).expect("resolve the route methods");
+        resolve_route_methods(&authored_attachments, &types).expect("resolve the route methods");
     let request = PublishReleaseManifest {
         org: "effective-release-poc",
         project: "fixture",
@@ -191,7 +191,7 @@ fn base_and_overlay_project_admitted_routes() {
     };
 
     let first =
-        publish_release_with_package_manifests(&request, &components, &manifests, &kinds).unwrap();
+        publish_release_with_package_manifests(&request, &components, &manifests, &types).unwrap();
     // Every attachment names a route. Released operation contracts can also
     // have route records without attachments, which open no HTTP endpoint.
     assert!(
@@ -231,14 +231,14 @@ fn base_and_overlay_project_admitted_routes() {
                     .operations
                     .contains_key(&route.operation)
         }));
-        let contract = &kinds[&(route.package_id.clone(), route.operation.clone())];
-        assert_ne!(contract.kind, OperationType::EventHandler);
-        assert_eq!(route.type_, contract.kind);
+        let contract = &types[&(route.package_id.clone(), route.operation.clone())];
+        assert_ne!(contract.type_, OperationType::EventHandler);
+        assert_eq!(route.type_, contract.type_);
         assert_eq!(route.reads, contract.reads);
         assert_eq!(route.revision, contract.revision);
         assert_eq!(route.idempotency, contract.idempotency);
     }
-    let kind_of = |operation: &str| {
+    let type_of = |operation: &str| {
         first
             .manifest
             .routes
@@ -247,21 +247,21 @@ fn base_and_overlay_project_admitted_routes() {
             .map(|route| route.type_)
     };
     assert_eq!(
-        kind_of(&format!(
+        type_of(&format!(
             "platform-fixture-overlay:widget/get@{}",
             package_version()
         )),
         Some(OperationType::Get)
     );
     assert_eq!(
-        kind_of(&format!(
+        type_of(&format!(
             "platform-fixture:widget/query@{}",
             package_version()
         )),
         Some(OperationType::Query)
     );
     assert_eq!(
-        kind_of(&format!(
+        type_of(&format!(
             "platform-fixture:widget/record-batch@{}",
             package_version()
         )),

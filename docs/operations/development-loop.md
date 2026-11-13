@@ -46,7 +46,7 @@ It replaces the GCS exporters with OTLP JSON file exporters under `<dev-root>/lo
 The collector keeps the deployed batch timeout, so small batches take up to 60 seconds to arrive.
 An individual request can have no sampled trace.
 The observation reader follows complete records in `<local_artifacts.directory>/otel/traces.jsonl` once per second.
-It groups spans by trace ID and filters them by `env_key`, project, and environment.
+It groups spans by trace ID and filters them by `project_env_key`, project, and environment.
 It keeps bounded summaries and accepts an empty sample without blocking activation.
 Supply the published collector address through `--otel-exporter-otlp-endpoint`.
 The benchmark renders and starts this collector.
@@ -220,7 +220,7 @@ Its `--no-edge` flag uses the direct host URL for comparison.
 
 ## Saved changes and target state
 
-The running loop holds a lease, an exclusive claim on its application database.
+The running loop holds a lease, an exclusive hold on its application database.
 A second loop or reset command cannot take that target while the lease remains active.
 The loop starts from the target that `dev up` stamps.
 After successful introspection, the loop caches the physical fingerprints and catalogs beside its local artifacts.
@@ -301,7 +301,7 @@ The printed line names the refusal that stopped the stage.
 The loop replaces the host only after the candidate passes preparation.
 A wiring can name a palette component, which is a platform component with a `declaration.json.in` under `apps/platform/*/*/`.
 The `wamn build` of a package builds each palette component that a wiring of the package names.
-The loop admits it into the scope of that package, with the platform packages that its declaration states.
+The loop admits it into the target of that package, with the platform packages that its declaration states.
 A `__STORE_ALIAS__` connection takes the `store-alias` of the component's selection in `--local-bindings`.
 The environment document binds that declared name to a project integration.
 The runtime still enforces operation grants, connection bindings, and credentials for each database role.

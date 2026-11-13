@@ -196,7 +196,7 @@ export function SyncReceipts(props: {
   const base = liveRows(c);
   const status = syncStatus(c);
   const currentAt = syncCurrentAt(c);
-  // The overlay can restore entries of lines outside this scope, so the scope's own rows decide what shows.
+  // The overlay can restore entries of lines outside this target, so the target's own rows decide what shows.
   const shown = createMemo(() =>
     Object.keys(base)
       .map((id) => rows[id] ?? base[id]!)

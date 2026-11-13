@@ -15,7 +15,7 @@ pub const LOCK_PACKAGE_SQL: &str = "SELECT pg_advisory_xact_lock(hashtextextende
 /// artifact reconstructs this schema even when its application stops running.
 pub(super) async fn record_package_schema(
     tx: &Transaction<'_>,
-    env_key: &str,
+    project_env_key: &str,
     coordinate: &wamn_catalog::PackageCoordinate,
     artifact_digest: Option<&str>,
     physical_schema_fingerprint: &str,
@@ -24,16 +24,16 @@ pub(super) async fn record_package_schema(
     Ok(tx
         .execute(
             "INSERT INTO catalog.packages \
-         (env_key, package_id, package_version, artifact_digest, physical_schema_fingerprint) \
+         (project_env_key, package_id, package_version, artifact_digest, physical_schema_fingerprint) \
          VALUES ($1, $2, $3, $4, $5) \
-         ON CONFLICT (env_key, package_id) DO UPDATE \
+         ON CONFLICT (project_env_key, package_id) DO UPDATE \
          SET package_version = EXCLUDED.package_version, \
              artifact_digest = EXCLUDED.artifact_digest, \
              physical_schema_fingerprint = EXCLUDED.physical_schema_fingerprint \
          WHERE catalog.packages.physical_schema_fingerprint IS DISTINCT FROM \
                EXCLUDED.physical_schema_fingerprint",
             &[
-                &env_key,
+                &project_env_key,
                 &package_id,
                 &coordinate.package_version(),
                 &artifact_digest,
@@ -47,12 +47,12 @@ pub(super) async fn record_package_schema(
 
 pub async fn load_applied_package(
     tx: &Transaction<'_>,
-    env_key: &str,
+    project_env_key: &str,
     package_id: &str,
 ) -> anyhow::Result<Option<AppliedPackage>> {
     read_package(
         tx,
-        env_key,
+        project_env_key,
         package_id,
         &wamn_schema_control::sql::select_package_sql(),
     )
@@ -62,12 +62,12 @@ pub async fn load_applied_package(
 /// Observe installed SQL in a read-only transaction without locking a package row.
 pub async fn read_applied_package(
     tx: &Transaction<'_>,
-    env_key: &str,
+    project_env_key: &str,
     package_id: &str,
 ) -> anyhow::Result<Option<AppliedPackage>> {
     read_package(
         tx,
-        env_key,
+        project_env_key,
         package_id,
         wamn_schema_control::sql::select_package_snapshot_sql(),
     )
@@ -76,18 +76,18 @@ pub async fn read_applied_package(
 
 async fn read_package(
     tx: &Transaction<'_>,
-    env_key: &str,
+    project_env_key: &str,
     package_id: &str,
     query: &str,
 ) -> anyhow::Result<Option<AppliedPackage>> {
     let Some(package) = tx
-        .query_opt(query, &[&env_key, &package_id])
+        .query_opt(query, &[&project_env_key, &package_id])
         .await
         .context("read installed package schema")?
     else {
         return Ok(None);
     };
-    let migrations = read_package_migrations(tx, env_key, package_id).await?;
+    let migrations = read_package_migrations(tx, project_env_key, package_id).await?;
     Ok(Some(AppliedPackage {
         coordinate: wamn_catalog::PackageCoordinate::new(package_id, package.get::<_, &str>(1))
             .expect("stored package coordinates passed database constraints"),
@@ -101,13 +101,13 @@ async fn read_package(
 /// Read committed files even when the first package installation is unfinished.
 pub async fn read_package_migrations(
     tx: &impl GenericClient,
-    env_key: &str,
+    project_env_key: &str,
     package_id: &str,
 ) -> anyhow::Result<Vec<RecordedMigration>> {
     Ok(tx
         .query(
             wamn_schema_control::sql::select_package_migrations_sql(),
-            &[&env_key, &package_id],
+            &[&project_env_key, &package_id],
         )
         .await
         .context("read immutable package migration prefix")?
@@ -130,11 +130,11 @@ pub async fn read_package_migrations(
 /// Derive installed SQL identity from this database's project baseline and current package records.
 pub async fn installed_environment_fingerprint(
     tx: &impl GenericClient,
-    env_key: &str,
+    project_env_key: &str,
 ) -> anyhow::Result<Option<String>> {
     if tx.query_one(
-        "SELECT EXISTS (SELECT FROM catalog.package_migrations m WHERE m.env_key=$1 AND (m.outcome='started' OR NOT EXISTS (SELECT FROM catalog.packages p WHERE p.env_key=m.env_key AND p.package_id=m.package_id)))",
-        &[&env_key],
+        "SELECT EXISTS (SELECT FROM catalog.package_migrations m WHERE m.project_env_key=$1 AND (m.outcome='started' OR NOT EXISTS (SELECT FROM catalog.packages p WHERE p.project_env_key=m.project_env_key AND p.package_id=m.package_id)))",
+        &[&project_env_key],
     ).await.context("read unfinished package SQL")?.get::<_, bool>(0) {
         return Ok(None);
     }
@@ -147,7 +147,7 @@ pub async fn installed_environment_fingerprint(
         .context("read the installed project baseline")?
         .get(0);
     let rows = tx.query(
-        "SELECT package_id, physical_schema_fingerprint FROM catalog.packages WHERE env_key = $1", &[&env_key]
+        "SELECT package_id, physical_schema_fingerprint FROM catalog.packages WHERE project_env_key = $1", &[&project_env_key]
     ).await.context("read installed package fingerprints")?;
     let packages = rows
         .iter()

@@ -1,4 +1,4 @@
-//! Password enrollment uses the real system floor under its non-superuser owner.
+//! Password enrollment uses the real system base grants under its non-superuser owner.
 
 use sha2::{Digest as _, Sha256};
 use tokio_postgres::{Client, error::SqlState};
@@ -207,7 +207,7 @@ async fn enrollment_preserves_identity_and_pat_and_consumes_all_invitations() {
 }
 
 #[tokio::test]
-async fn invitation_expiry_kind_purpose_and_transaction_rollback_refuse() {
+async fn invitation_expiry_type_purpose_and_transaction_rollback_refuse() {
     let _lock = wamn_test_postgres::lock();
     let database = test_database::system();
     let mut client = connect(database.url()).await;

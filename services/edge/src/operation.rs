@@ -45,21 +45,21 @@ pub struct EdgeOperation {
     release: Arc<EdgeRelease>,
     /// The intent log of every claimed key.
     intents: SqliteIntentStore,
-    /// The tenant of every intent: the organization the box serves.
-    tenant: String,
+    /// The organization the box serves.
+    org: String,
     /// The manifest digest of `release`, the release of every intent.
     release_digest: String,
 }
 
 impl EdgeOperation {
     /// Serve the operation import for the operations of `release`, and claim
-    /// the keys of `tenant` in `intents`.
-    pub fn new(release: Arc<EdgeRelease>, intents: SqliteIntentStore, tenant: String) -> Self {
+    /// the keys of `org` in `intents`.
+    pub fn new(release: Arc<EdgeRelease>, intents: SqliteIntentStore, org: String) -> Self {
         let release_digest = release.release().release().manifest_digest.to_string();
         Self {
             release,
             intents,
-            tenant,
+            org,
             release_digest,
         }
     }
@@ -255,7 +255,7 @@ impl Drop for Claim {
 /// The owned fields of one [`Intent`], built from the loaded release.
 #[derive(Debug)]
 struct ClaimRequest {
-    tenant: String,
+    org: String,
     release: String,
     package: String,
     operation: String,
@@ -271,7 +271,7 @@ async fn claim(
 ) -> Result<(Option<Claim>, Begun), Refusal> {
     let begun = intents
         .begin_text(&Intent {
-            tenant: &request.tenant,
+            partition: &request.org,
             release: &request.release,
             package: &request.package,
             operation: &request.operation,
@@ -359,7 +359,7 @@ fn enter<T: 'static + Send>(
         let input_hash = String::from_utf8(request_hash)
             .map_err(|_| wash_runtime::wasmtime::Error::msg("the request hash is not text"))?;
         let request = ClaimRequest {
-            tenant: plugin.tenant.clone(),
+            org: plugin.org.clone(),
             release: plugin.release_digest.clone(),
             package,
             operation: operation.to_owned(),
@@ -485,7 +485,7 @@ mod tests {
 
     fn request(key: &str, input_hash: &str) -> ClaimRequest {
         ClaimRequest {
-            tenant: "org-a".to_owned(),
+            org: "org-a".to_owned(),
             release: "release".to_owned(),
             package: "edge_device".to_owned(),
             operation: "edge-device:sample/read@2.1.0".to_owned(),

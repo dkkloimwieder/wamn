@@ -84,8 +84,8 @@ pub fn configuration(project: &str) -> PlatformConfiguration {
             pattern: "RC-{yyyy}-{seq:5}".to_owned(),
         }],
         settings: vec![Setting {
-            scope_type: "project".to_owned(),
-            scope_id: project.to_owned(),
+            target_type: "project".to_owned(),
+            target_id: project.to_owned(),
             key: "date_format".to_owned(),
             value: json!("yyyy-MM-dd"),
             locked: false,
@@ -112,7 +112,7 @@ pub fn expected(project: &str) -> Vec<Value> {
         ),
         stamped(
             "setting",
-            json!({"scope_type": "project", "scope_id": project, "key": "date_format",
+            json!({"target_type": "project", "target_id": project, "key": "date_format",
                    "value": "yyyy-MM-dd", "locked": false}),
         ),
     ]

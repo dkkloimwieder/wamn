@@ -23,7 +23,7 @@ The host makes sure that the original caller holds the entry, once, before the e
 Component membership alone grants no permission to call an operation.
 
 An application host makes sure of the status of its environment for each request, before the auth policy of the route.
-It reads its row of `platform.environment` through the guest login of its tenant, as `wamn_app`, and no row means active.
+It reads its row of `platform.environment` through the guest login of its project, as `wamn_app`, and no row means active.
 The host keeps the answer in its [auth memory](#auth-memory).
 While the status is `inactive`, every route answers 503 with the code `environment-inactive`, and an anonymous route does too.
 A failed read answers 503 `authentication-unavailable`.
@@ -46,7 +46,7 @@ A missing, malformed, or incorrect signature or credential returns 401 with an e
 After verification, delivery follows the same JSON mapping and intent rules as a `none` route with the same body.
 Signature authentication adds no timestamp or replay window.
 
-The method of a route follows from the kind of its operation, and no author writes it.
+The method of a route follows from the type of its operation, and no author writes it.
 Publish writes GET for a route to a `get`, `query` or `projection` operation, and POST for every other route and every wiring.
 A GET carries exactly one request item in its query string.
 The router reads its bounded body for authentication, but takes the operation input from the query string.
@@ -56,7 +56,7 @@ The parser accepts any parameter order and valid escaping, and parses each value
 The router refuses malformed JSON and targets longer than 8 KiB with HTTP 400 and `invalid-target`.
 The [CLI encoder](../../services/ctl/src/read_query.rs) writes the query. The [HTTP parser](../../apps/platform/ingress/http-route/src/read_query.rs) reads it.
 
-The host derives the `Cache-Control` value of each read route from its operation kind and auth policy when it serves the route, and the router only writes it.
+The host derives the `Cache-Control` value of each read route from its operation type and auth policy when it serves the route, and the router only writes it.
 A `get` sends `no-cache`, and a `query` or `projection` sends `max-age=10, stale-while-revalidate=60`.
 A `query` with its feed part (the [change feed](#change-feed)) sends `no-cache`.
 Each is `private`, unless the auth policy of the route is `none`, and then it is `public`.
@@ -68,7 +68,7 @@ Every other response sends `Cache-Control: no-store`: a write, any status other 
 
 A package marks a custom operation's UUID result field with `result.signed_reads`.
 For example, `"signed_reads": {"document": {"lifetime_seconds": 60}}` marks the declared result field `document`.
-Omitting `lifetime_seconds` selects 900 seconds. The package gate refuses zero, longer lifetimes, unknown fields, and fields with another type.
+Omitting `lifetime_seconds` selects 900 seconds. The package condition refuses zero, longer lifetimes, unknown fields, and fields with another type.
 Only an operation with a permission can declare a signed read.
 
 Admission carries the marking in the main output schema under `x-wamn-signed-reads`.
@@ -119,7 +119,7 @@ Any other payload answers 400 `delivery-invalid-payload`.
 | --- | --- |
 | `wamn-control:permission/mine@0.9.0` | `admin`, and the stable references the caller holds. An `admin` holds every operation the release serves. |
 | `wamn-control:user/list@0.9.0` (application) | `users`: each application user with `id`, `email`, `display_name`, `roles` and `admin_covered`, which is true when `project-admin` or `org-admin` covers the user's `admin`. |
-| `wamn-control:role/list@0.9.0` | `roles`: every role of the tenant, `admin` included. |
+| `wamn-control:role/list@0.9.0` | `roles`: every role of the project, `admin` included. |
 | `wamn-control:role/create@0.9.0` | Takes `role` and creates the empty authored role. Answers `created`. |
 | `wamn-control:role/delete@0.9.0` | Takes `role` and deletes the authored role with its assignments and permissions. Answers `deleted`. |
 | `wamn-control:permission/list@0.9.0` | Takes `role`. Answers `operations`: each operation the release serves and each stored row of the role, with `served`, `grantable`, `admin_only` and `selected`. |
@@ -168,7 +168,7 @@ Both sources return the same digest, rollout, workloads, and live set.
 
 An application route runs under the administration credential, in a host-owned READ COMMITTED transaction that binds the caller and the sealed operation id.
 A host-run write stamps that sealed operation id in its history entries.
-A role or permission write first takes the tenant lock that `wamn-ctl` and release reconciliation take.
+A role or permission write first takes the project lock that `wamn-ctl` and release reconciliation take.
 The writes are the functions of [`wamn_platform_identity::application`](../../crates/identity/platform/src/application.rs), which the role verbs of `wamn-ctl` also call.
 `user_role.revoke` reads `project-admin` through the identity reader of the host, because `org-admin` writes `project-admin` in every project of the org.
 `permission.grant` writes one permission row. A row the serving release does not serve grants nothing.
@@ -224,7 +224,7 @@ The six start routes return a Kubernetes Job name.
 `operation.status` compares that Job's target and reads its state and bounded log tail.
 The host links no deployment library and keeps no operation history.
 The protected `WAMN_DEPLOY_ACTOR` input carries the authenticated principal to the worker.
-[Deployment routes](../operations/deployment.md#application-and-schema-operations) defines inputs, credential scope, deadlines, and result bounds.
+[Deployment routes](../operations/deployment.md#application-and-schema-operations) defines inputs, credential target, deadlines, and result bounds.
 
 The contracts of the control routes live in [`host_route/control/contracts`](../../crates/catalog/model/src/host_route/control/contracts), and the generator projects them into the TypeScript client `@wamn/control-org-client` in `apps/target/wamn/wamn_control/control/client-ts`.
 The control set has its own client because both sets serve `user.list`.
@@ -258,7 +258,7 @@ The delivery bridge retains this behavior for wiring attachments.
 The routing provider also projects the ETag inputs from the loaded release.
 Those inputs declare the release digest and either the result's revision field or the sorted relations for a list.
 A get without a revision field and a list without relations carry no ETag inputs.
-The guest receives the kind and fields as data, without application-specific names in the route code.
+The guest receives the type and fields as data, without application-specific names in the route code.
 
 The entry holds the platform ceiling of 50,000 rows for one base read.
 It refuses a read whose limit is above the ceiling before it authorizes the operation.
@@ -291,8 +291,8 @@ The router driver and the edge pass that context for each write operation.
 Composed base routes claim through `begin-operation`, with the same item keys and canonical request hashes.
 In the cloud the store is the [write log](data-access.md#the-write-log).
 On the edge it is the SQLite intent store of `wamn-run-state-sqlite`, one file with one writer.
-Its `intents` table holds one row for each operation call, unique by `tenant` and idempotency key.
-Here, `tenant` holds the edge organization ID.
+Its `intents` table holds one row for each operation call, unique by `project` and idempotency key.
+Here, `project` holds the edge organization ID.
 A begin with a known key and another input hash is a conflict.
 A begin with a finished key answers the stored outcome, and an open intent with no outcome is uncertain until an operator resolves it.
 A retry that the write log answers commits nothing, so change capture publishes no event for it and no post-commit work runs a second time.
@@ -349,7 +349,7 @@ No two applications share a store, and wash-runtime links no application to anot
 Applications in one release can use different lifetimes.
 A call across applications is a workflow call through the host.
 
-Each call receives a new host-owned authority scope.
+Each call receives a new host-owned invocation scope.
 Capability calls use that scope, and cancellation revokes it independently of native store teardown.
 A retained guest context cannot select the next call's permissions.
 A call that leaves host resource handles open discards those resources and retires its instance while preserving its completed result.
@@ -382,7 +382,7 @@ Caller authority ends immediately. Physical teardown follows native cancellation
 Successful calls can reuse an eligible instance only when no host resource handles remain.
 A full pool serves overflow from fresh stores.
 Native idle reclamation and a 1,000-call instance limit bound retention.
-Pools belong to one immutable release or candidate and never cross tenant or environment boundaries.
+Pools belong to one immutable release or candidate and never cross project or environment boundaries.
 A replacement release or deployment trust configuration uses new pools.
 Credential tests retain the exact pinned generation rules above.
 
@@ -418,19 +418,19 @@ It refuses store-owned resources at these boundaries.
 A composed call inside an application uses the typed entrypoint.
 JSON adapters serve HTTP and dynamic routing.
 The pure router, `wamn-router`, owns deterministic graph decisions.
-After initialization, the host records caller, SQL, claims, causation, and effect authority in an invocation scope.
-Native callbacks restore the trace context from that scope.
-Cleanup revokes the scope and clears bindings after success, failure, cancellation, or owner shutdown.
-The [queue](../../crates/execution/workflow/src/queue.rs) in `wamn-workflow` owns durable queue claims and settlement through the `RunStore` trait of `wamn-run-state`.
+After initialization, the host records caller, SQL, identity, causation, and effect authority in an invocation scope.
+Native callbacks restore the trace context from that target.
+Cleanup revokes the target and clears bindings after success, failure, cancellation, or owner shutdown.
+The [queue](../../crates/execution/workflow/src/queue.rs) in `wamn-workflow` owns durable queue leases and settlement through the `RunStore` trait of `wamn-run-state`.
 The queue owner binds these transactions to `wamn_run`, independently of the application data schema and database default search path.
 HTTP admission and queue delivery use separate concurrency bounds, so one workload cannot consume the other's capacity.
-Each host replica polls the durable queue and claims work through database leases. Replicas need no wake service or process-local handoff.
-Claims and exhausted-run reaping ignore effect-attempt records.
+Each host replica polls the durable queue and leases work through database leases. Replicas need no wake service or process-local handoff.
+Leases and exhausted-run reaping ignore effect-attempt records.
 Workflow runs have no event ordering guarantee.
 
-The host opens each claims transaction with `BEGIN ISOLATION LEVEL READ COMMITTED`, so a session default cannot change the level that the [write log](data-access.md#the-write-log) retry depends on.
+The host opens each identity transaction with `BEGIN ISOLATION LEVEL READ COMMITTED`, so a session default cannot change the level that the [write log](data-access.md#the-write-log) retry depends on.
 The guest transaction of a read (get, query or projection) opens with `BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY`, so its statements read one snapshot.
-For a new logged update, the host sends `BEGIN`, local claims, and the write-log claim together, then waits before it runs the guest.
+For a new logged update, the host sends `BEGIN`, local identity, and the write-log claim together, then waits before it runs the guest.
 A duplicate reads the stored claim and never runs the guest.
 The guest waits for its SQL result before it returns the value that the write log stores.
 The host then sends the write-log finish, the transactional causation message when present, and `COMMIT` together.
@@ -440,7 +440,7 @@ Without causation it takes six statements. Preparation on a cold connection and 
 The guest return value prevents the guest statement and finish from sharing one trip.
 No counter trigger, changed-relation read, or counter reset runs on the write path.
 
-The host binds the executing principal as `app.user_id` in each claims transaction that it opens.
+The host binds the executing principal as `app.user_id` in each identity transaction that it opens.
 [Record history](data-access.md#record-history) stamps that principal on every write.
 
 - An authenticated caller of a route binds its principal id.
@@ -453,7 +453,7 @@ The host binds the executing principal as `app.user_id` in each claims transacti
 The same transaction binds the executing operation as `app.operation`.
 A node binds the operation token of the entry that it runs. A composed callee runs under that token.
 A registration delivery binds the token of its handler.
-A host queue claim, reap, renew, or complete transaction binds the `wamn:executor` credential-class identity.
+A host queue lease, reap, renew, or complete transaction binds the `wamn:executor` credential-class identity.
 An absent operation binds an empty value, so a pooled connection keeps no earlier operation.
 The [record history log](data-access.md#history-tables-and-the-log-trigger) records the operation in each entry.
 
@@ -464,18 +464,18 @@ The `number_counter.set` route binds the requested application after it finds th
 Other host routes, host queue transactions, and platform reads bind no application.
 
 An absent application binds an empty value, so a pooled connection keeps no earlier application.
-The claim is for logs only. [Numbering](data-access.md#numbering) takes the application from host state, not from this claim.
+The identity is for logs only. [Numbering](data-access.md#numbering) takes the application from host state, not from this identity.
 
-A platform claims transaction that only reads binds no principal and no operation.
+A platform identity transaction that only reads binds no principal and no operation.
 A bound principal alone does not move a read out of the autocommit path.
 
 For that path, each pooled connection remembers its last schema and runner.
 If these values match, the read executes only its application statement.
 If either value changes, the host pipelines the session configuration before the read.
 An absent schema restores the server default, and an absent runner clears the prior runner.
-This reuse stores no principal, role, operation, or application claim. Those claims stay local to each transaction.
+This reuse stores no principal, role, operation, or application identity. Those identity fields stay local to each transaction.
 
-The [claims owner](../../crates/platform/runtime/src/plugins/wamn_postgres/claims.rs) refuses a transactional statement with no executing principal before it reaches PostgreSQL.
+The [session identity owner](../../crates/platform/runtime/src/plugins/wamn_postgres/session_identity.rs) refuses a transactional statement with no executing principal before it reaches PostgreSQL.
 That refusal carries SQLSTATE `55000` and the message `actor-required`, as the stamp trigger does.
 
 ## Workflows
@@ -484,13 +484,13 @@ A workflow is a released wiring that runs off the request path.
 The [workflow contract](../../crates/execution/workflow/src/contract.rs) in `wamn-workflow` is the trait `Workflows`, with four operations.
 
 - `start` admits one released wiring under a service principal. It writes the run and queue row together. A repeated key returns the first run.
-- `park` moves the `available_at` of a queued run to `infinity`, so no claim takes it. The run keeps the status `dispatched`, and a running or finished run refuses.
+- `park` moves the `available_at` of a queued run to `infinity`, so no lease takes it. The run keeps the status `dispatched`, and a running or finished run refuses.
 - `release` returns a parked run to the queue.
 - `list` returns the runs of one environment, newest first, with their status and their queued and parked flags.
 
 `PostgresWorkflows` admits automation with project-admin authority.
 The `wamn-ctl workflow park`, `release` and `runs` commands call it ([queued automation](../operations/queued-automation.md)).
-Its SQL lives in `wamn-run-state` beside the claim SQL.
+Its SQL lives in `wamn-run-state` beside the lease SQL.
 
 An event workflow is an enabled row of `catalog.workflows` in an environment application.
 Its trigger names the source package, entity, operations, and an optional JMESPath condition over the old and new images.
@@ -519,7 +519,7 @@ The environment document declares its applications: each name with the packages 
 The release chart passes the map to the host as canonical JSON in `--applications`, beside `--environment`, and keeps it in the Helm revision's values, where `env show` and `wamn-ctl workflow author` read it.
 A host that serves a release from the registry refuses to start without `--applications`. A local candidate host takes the map when it is given and otherwise declares none.
 A workflow belongs to one declared application, by name: `workflow author` and `workflow.start` refuse a name that the environment does not declare.
-An application is a name, never a package. The workflow gate resolves each node within the application's packages first, then within any package of the release. A workflow run carries the application name as its package id: the queue claims the release's packages and the declared application names, and the executor resolves the run's nodes within that application's packages.
+An application is a name, never a package. The workflow condition resolves each node within the application's packages first, then within any package of the release. A workflow run carries the application name as its package id: the queue leases the release's packages and the declared application names, and the executor resolves the run's nodes within that application's packages.
 
 Every application host runs one schedule task, which wakes at each minute boundary.
 Its first tick is strictly after startup.
@@ -533,7 +533,7 @@ The run executes as the `workflow` user with its execution role, or with `admin`
 
 Apply creates one service principal per application that composes `wamn_integration`, in each environment.
 Its subject is `wamn-app-<org>--<project>--<env>--<package id>`.
-The tenant service row uses `<subject>@<platform-domain>` as its email.
+The project service row uses `<subject>@<platform-domain>` as its email.
 Repeated applies retain its identity and grants.
 
 Publish authorizes the operations that the application declares as dependencies.
@@ -559,7 +559,7 @@ It stores one packaging label for each move, keyed by `{packaging_id}/{row_versi
 
 | Operation | Behavior |
 | --- | --- |
-| `list` | Returns the runs of one tenant and environment, newest first, with a limit. Each row gives the run id, the wiring, the trigger, the status, and whether the run is parked. |
+| `list` | Returns the runs of one project and environment, newest first, with a limit. Each row gives the run id, the wiring, the trigger, the status, and whether the run is parked. |
 
 The owner ruled on 2026-09-26 that the host admits event runs (`wamn-upl3.6`). The executor role gains a column-exact INSERT on `runs` and `run_queue` for the event run grain, and the run-plane grain SQL `CHECK` constraint gains an event arm. `list` shows the run, and `park` and `release` act on it.
 
@@ -570,13 +570,13 @@ Its trigger is `manual`.
 Each version is one row of `catalog.workflows` in the project database.
 The row holds the application, the workflow id, the version, the graph, the wiring hash, the execution type, the execution role and `enabled`.
 
-`wamn-ctl workflow author` gates the graph against the release that the environment serves, and stores the version disabled.
+`wamn-ctl workflow author` evaluates the graph conditions against the release that the environment serves, and stores the version disabled.
 The same bytes under the same version converge. Other bytes under that version refuse.
 A stored version never changes except `enabled`, and at most one version of a workflow is enabled.
 
 `enable` and `disable` take the lifecycle lock of the coordinate, as `env apply` does.
 While another verb holds the lock, they refuse with `apply in progress`.
-`enable` gates the graph again, then disables the enabled version and enables this one in one transaction.
+`enable` evaluates the graph conditions again, then disables the enabled version and enables this one in one transaction.
 `disable` sets only `enabled` to false. Queued and running runs finish under the version they pinned.
 
 The execution type decides who a run executes as.
@@ -586,16 +586,16 @@ An `invoker` workflow executes as the caller with the active role of the caller.
 Every environment holds one `service` user named `workflow`, and the platform grants it no role.
 
 The route `workflow.start` admits a run.
-It reads the enabled version and gates the graph against the release that the host serves.
-It refuses `workflow_not_served` when the graph does not gate or its hash differs from the stored hash.
+It reads the enabled version and evaluates the graph conditions against the release that the host serves.
+It refuses `workflow_not_served` when the graph fails its conditions or its hash differs from the stored hash.
 The active role of the caller is `admin` for a holder of `admin`, else the one role that the caller holds.
 Any other caller refuses `active_role_required`.
 The run records the release, the wiring hash, the component digest of each node, the principal and role it executes as, and the caller as its invoker.
-The idempotency key is scoped to the caller and the workflow.
+The idempotency key is bound to the caller and the workflow.
 A repeated start with the same key and input answers the first run, and another input refuses `idempotency_conflict`.
 The run and its queue row commit in one transaction.
 
-When the queue claims the run, `queued_run_caller` resolves its principal.
+When the queue leases the run, `queued_run_caller` resolves its principal.
 The principal must be an active `service` or `user` that holds the run's role.
 The caller holds the permissions of that role only, and holds `admin` only when the role is `admin`.
 The host reads these grants again before each node, so a role revoked during a run refuses the next node.
@@ -604,9 +604,9 @@ Its principal must be an active `service`, and it holds the permissions of every
 
 Every workflow is a graph run by the router and the run queue under a run row. A single-operation workflow is a one-node graph. The in-process walk with no row (`RegistrationDelivery::Walk`) is removed.
 
-A workflow is keyed `(env_key, environment, application, workflow_id, version)`; a package version is not part of its identity. A version row is immutable (graph, hash, trigger, `execution_type`, `execution_role`); `enabled` is its one mutable field, and at most one version of a workflow is enabled at a time — a partial unique index on `(env_key, environment, application, workflow_id) WHERE enabled`; enabling a version disables the previous one in the same transaction. A start selects the enabled version. Disabling stops new starts only; queued and running runs finish under the version they pinned. Its graph names operations as `package.operation`; admission resolves them against the release the run pins. A package upgrade that keeps those operations does not touch the workflow; one that drops or changes them is refused at `env apply` by workflow and node.
+A workflow is keyed `(project_env_key, environment, application, workflow_id, version)`; a package version is not part of its identity. A version row is immutable (graph, hash, trigger, `execution_type`, `execution_role`); `enabled` is its one mutable field, and at most one version of a workflow is enabled at a time — a partial unique index on `(project_env_key, environment, application, workflow_id) WHERE enabled`; enabling a version disables the previous one in the same transaction. A start selects the enabled version. Disabling stops new starts only; queued and running runs finish under the version they pinned. Its graph names operations as `package.operation`; admission resolves them against the release the run pins. A package upgrade that keeps those operations does not touch the workflow; one that drops or changes them is refused at `env apply` by workflow and node.
 
-Enable, disable and change of a workflow take the environment's lifecycle lock (`environment/lock.rs::LifecycleLock`, `pg_try_advisory_lock`, shared with `env apply`): while an apply holds it, enable is refused with "apply in progress" and the caller retries; the lock does not queue. So no workflow becomes enabled between the apply's test and its Helm write. Authority lifetime: the enabler's authority is validated at enable and change. An enabled workflow belongs to the environment, not to a session. Revoking the execution role's permission refuses the next protected call under the existing per-operation test. No author query on every start. Deploying logic that runs on every record change is an admin act; a tenant that wants a narrower publisher makes a role holding the enable operation.
+Enable, disable and change of a workflow take the environment's lifecycle lock (`environment/lock.rs::LifecycleLock`, `pg_try_advisory_lock`, shared with `env apply`): while an apply holds it, enable is refused with "apply in progress" and the caller retries; the lock does not queue. So no workflow becomes enabled between the apply's test and its Helm write. Authority lifetime: the enabler's authority is validated at enable and change. An enabled workflow belongs to the environment, not to a session. Revoking the execution role's permission refuses the next protected call under the existing per-operation test. No author query on every start. Deploying logic that runs on every record change is an admin act; a project that wants a narrower publisher makes a role holding the enable operation.
 
 - One invocation function serves both. The route calls it once. The router calls it per node.
 
@@ -628,7 +628,7 @@ Every layer exposes an interface and depends only on layers below it: base platf
 
 - The base platform and the edge do not link the workflow crate. The dependency tests keep this rule.
 
-Park acts on the queue row only. The run status stays `dispatched`, so the retired run-level `parked` status does not come back. A park inside a walk needs a saved walk and is part of approvals, which are out of scope.
+Park acts on the queue row only. The run status stays `dispatched`, so the retired run-level `parked` status does not come back. A park inside a walk needs a saved walk and is part of approvals, which are out of target.
 
 The node is a std guest at `apps/platform/execution/jsonata`. It exports `wamn:node/handler@0.1.0`, like `label-render`. Its one parameter, `expression`, holds the JSONata text. The node evaluates the expression on the input and emits the result. An input that is not JSON is an `invalid-input` error. An expression that does not parse, or an evaluation that fails, is a `terminal` error, because a retry gives the same result.
 
@@ -674,14 +674,14 @@ The route declares PAT authentication, session authentication, or both.
 Receiving and Acme publish both modes on their existing authenticated application routes.
 Both modes use the same operation permissions. Private event handlers remain private.
 A personal access token, or PAT, is an opaque bearer credential.
-PAT authentication reads the current principal, credential, organization scope, and applicable membership before admitting the request.
+PAT authentication reads the current principal, credential, organization target, and applicable membership before admitting the request.
 Authorization reads the operation permissions of the principal.
 The host keeps both answers in its [auth memory](#auth-memory).
-Service credentials retain their declared scope and cannot mint a user session.
+Service credentials retain their declared target and cannot mint a user session.
 
 A session token carries the user roles selected at minting and its revocable authority.
 For each new request, the host makes sure of the principal, environment membership, and password login.
-It intersects signed roles with the held roles and their permissions for the active tenant user.
+It intersects signed roles with the held roles and their permissions for the active project user.
 A caller that holds `admin` holds every operation of the serving release. Any other role holds its stored stable references `<package>:<interface>/<operation>`, and the host matches each sealed operation of the release by its reference.
 Missing, revoked, expired, or mismatched authority returns 401.
 An unavailable identity read refuses admission with 503. The read has a five-second timeout.
@@ -694,18 +694,18 @@ Already admitted work retains its caller. Revocation does not cancel that work o
 
 The host answers the auth facts of a repeated caller from its memory, so they cost no Postgres round-trip.
 The [memory](../../crates/platform/runtime/src/auth_cache.rs) is the local replica of the NATS KV bucket `wamn-auth` on the one NATS.
-The key `<env_key>.<principal>` holds the grants of a principal and whether the tenant has its user row.
-The key `<env_key>.environment` holds the environment status.
+The key `<project_env_key>.<principal>` holds the grants of a principal and whether the project has its user row.
+The key `<project_env_key>.environment` holds the environment status.
 One read of `platform."user"`, `platform.user_role` and `platform.permission` answers the permission test and the user-row test of the invocation bind.
 A host that reads a fact puts it with the revision of the key from before the read, so a delete during the read refuses the put.
-Each host watches the keys of its tenant and keeps each value it sees, so a fact one host reads serves every host of the tenant.
-The control host serves every tenant, so it watches every key.
+Each host watches the keys of its project and keeps each value it sees, so a fact one host reads serves every host of the project.
+The control host serves every project, so it watches every key.
 The bucket keeps a value for at most 60 seconds, and so does the replica.
 
 An admitted PAT and an active session stay in the host that read them, because a token answer never leaves the host.
 The host keeps only a positive identity answer, so a new PAT or a new login works on its first request.
 A delete of the key `=identity.<principal>` drops the PATs and sessions of the principal on every host.
-An `env_key` holds only `[A-Za-z0-9_-]`, so that key never meets an environment cache key.
+An `project_env_key` holds only `[A-Za-z0-9_-]`, so that key never meets an environment cache key.
 A host does not keep a token answer when any identity key changed during its read.
 While the watch is broken, the host keeps no fact and opens the bucket again.
 If the stream ends or the NATS client loses its connection, the watch breaks.
@@ -716,7 +716,7 @@ Every function that writes one of these facts takes an [`AuthDrops`](../../crate
 Its caller deletes the keys of the list after the commit. `wamn-broker::Publisher` publishes both authorization and connection changes through one client.
 [`auth_drops_live`](../../crates/identity/platform/tests/auth_drops_live.rs) runs each writer once and makes sure of the drop it records.
 A change of a user row or a user role deletes the key of the principal.
-A change of a role, a permission or the environment status deletes every key of the tenant.
+A change of a role, a permission or the environment status deletes every key of the project.
 A PAT revoke, a logout, a reset, a replayed renewal, a membership revoke and a disabled principal delete the identity key of the principal.
 The writers are the application host, the control host, the identity service and `wamn-ctl`.
 The identity service and `wamn-ctl` read the connection from `WAMN_NATS_URL`, `WAMN_NATS_TLS_CA`, `WAMN_NATS_TLS_CERT` and `WAMN_NATS_TLS_KEY`, with a client certificate of the wasmCloud CA.
@@ -730,7 +730,7 @@ Identity offers and mints no audience of an environment whose `registry.project_
 Session tokens use Ed25519 keys with `alg=EdDSA` and `typ=wamn-session+jwt`.
 They require `iss`, `sub`, `org`, `aud`, `roles`, `exp`, `iat`, `jti`, and `authority`.
 `authority` is the object `{"login":"<login UUID>"}`.
-The optional `csrf` claim is the lowercase SHA-256 hex of a CSRF token. Only the cookie carrier sets it.
+The optional `csrf` JWT claim is the lowercase SHA-256 hex of a CSRF token. Only the cookie carrier sets it.
 The password issuer binds the existing login record.
 The `kid` selects a key only within the configured issuer.
 Wrong issuer, organization, audience, algorithm, signature, or time bounds returns 401.
@@ -740,10 +740,10 @@ A browser presents the session token in the `__Host-wamn-session` cookie instead
 The host reads that cookie only when the request has no `Authorization` header and the route admits a session.
 A request that carries both refuses with 401, and so does a repeated session cookie.
 The host verifies a cookie token as it verifies a bearer token, and then applies the CSRF test.
-A cookie token without the `csrf` claim refuses with 401.
-The CSRF test needs one `x-wamn-csrf` header whose SHA-256 hex equals the claim.
-A read route (kind `get`, `query` or `projection`) needs no header, because a read changes nothing.
-Every other route and every attachment to a wiring requires the header. The cookie carries the `csrf` claim on every route.
+A cookie token without the `csrf` JWT claim refuses with 401.
+The CSRF test needs one `x-wamn-csrf` header whose SHA-256 hex equals the JWT claim.
+A read route (type `get`, `query` or `projection`) needs no header, because a read changes nothing.
+Every other route and every attachment to a wiring requires the header. The cookie carries the `csrf` JWT claim on every route.
 
 The token lifetime is at most 900 seconds, with 30 seconds of time tolerance.
 Minting anchors expiry to the start of credential validation and records the actual signing time in `iat`.
@@ -766,13 +766,13 @@ The host answers the connection facts of a call from its memory, so a repeated c
 The [memory](../../crates/platform/runtime/src/connection_memory.rs) is the local replica of the NATS KV bucket `wamn-connection` on the NATS of the auth memory.
 It follows the rules of the [auth memory](#auth-memory): the revision rule of a put, the watch, the 60 second limit and the broken watch.
 The [shared replica](../../crates/platform/runtime/src/kv_memory.rs) holds these rules for both memories.
-The key `<env_key>.connection.<connection id>` holds the active generation, effective status, credential id, and service principal id.
+The key `<project_env_key>.connection.<connection id>` holds the active generation, effective status, credential id, and service principal id.
 It also holds exclusivity, target id, resource key, and target type.
 The effective status is active only when the integration and the connection are both active.
-The key `<env_key>.release.<manifest digest hex>` holds the map of a release from (component digest, package, name) to (connection, version).
+The key `<project_env_key>.release.<manifest digest hex>` holds the map of a release from (component digest, package, name) to (connection, version).
 The key carries the hex part of the digest only, because a key token holds no `:`.
-The key `<env_key>.connections` holds the map of the environment from integration name to connection id.
-Each host watches the keys of its `env_key`, and the control host watches every key.
+The key `<project_env_key>.connections` holds the map of the environment from integration name to connection id.
+Each host watches the keys of its `project_env_key`, and the control host watches every key.
 
 Immutable rows stay in the host under their own ids and never enter the bucket.
 These rows are the parameters of a generation, the artifact and exports of a version, and the secret of a credential.
@@ -920,7 +920,7 @@ Every user session receives the same current authority tests without operation-s
 Renewal stays automatic during active use and never extends the absolute login deadline.
 
 The identity reader needs SELECT on `identity.password_logins` in addition to its existing identity tables.
-Session-only hosts also require their scoped `WAMN_SYSTEM_URL` identity reader.
+Session-only hosts also require their targeted `WAMN_SYSTEM_URL` identity reader.
 
 Server authorization is authoritative. The UI may hide unavailable actions, but the router or host handler always enforces authority.
 
@@ -963,7 +963,7 @@ A session with an unknown or unheld signed role, or a disabled principal, receiv
 
 Every other role:
 
-- is authored per tenant;
+- is authored per project;
 - starts empty;
 - is identified by a role slug;
 - contains stable operation references, not package-version-sealed operation ids;
@@ -994,7 +994,7 @@ Successful renewal extends the inactivity deadline by 30 minutes, capped at the 
 The database stores only hashes of random, single-use renewal credentials.
 Reusing a consumed credential revokes its login family, the sequence of replacement credentials for one login.
 The caller commits that refusal so revocation persists.
-Every login and renewal repeats the current membership, environment instance, tenant-user status, and assigned-role tests.
+Every login and renewal repeats the current membership, environment instance, project-user status, and assigned-role tests.
 Credential rotation and access-token signing share one transaction after those tests.
 The service delivers credentials only after that transaction commits.
 Access-token expiry cannot exceed the login's absolute deadline.
@@ -1093,8 +1093,8 @@ It uses the control lists' paging rules above: limits 1 through 100, default 100
 After password authentication, it returns authorized control audiences, then authorized application audiences, each ordered by audience.
 Its response retains `environments` and adds nullable `next_cursor` and `total` members with the same meaning as the control lists.
 A control entry carries only `aud` and `org`. The project filter does not exclude control entries.
-The cursor key contains the kind (control 0, application 1) and audience.
-Its scope binds the authenticated principal and the exact optional org and project filters.
+The cursor key contains the type (control 0, application 1) and audience.
+Its cursor binding identifies the authenticated principal and the exact optional org and project filters.
 Invalid limits or cursors return HTTP 400 with `{"error":"password request refused"}`.
 
 Discovery stops after enough authorized candidates establish the page and continuation.
@@ -1146,7 +1146,7 @@ The [key cache](../../crates/platform/runtime/src/session_keys.rs) and [key owne
 ## Operator clients
 
 Generated screens use the [client contract](../../crates/schema/generator/src/client_ir.rs), derived from admitted declarations.
-Operation kinds come from the manifest.
+Operation types come from the manifest.
 Record links come from declared relations, keys, and compatible reads.
 The generator never guesses a record from a field name ending in `_id`.
 
@@ -1245,7 +1245,7 @@ The [table screen style](../../apps/platform_ui/src/page.css) fills the availabl
 [Records](../../apps/platform_ui/src/records.tsx) supplies wfe `TableView` with toolbar actions and pagination, the controls that select a page of rows.
 The project, user, environment, member, control-project, and audience lists request `limit: 25` from their servers.
 The application keeps prior cursors for Previous and replaces rows only after a successful request.
-A scope change or reload starts a new traversal. Pending requests disable the page controls.
+A filter change or reload starts a new traversal. Pending requests disable the page controls.
 The UI passes `totalRows` only when the server supplies a non-null total. Unknown totals show only the current page number.
 Whole-result reference tables retain local paging over their complete arrays.
 The shell bootstrap keeps a whole `control.mine` call, and environment lookups by name keep whole calls.
@@ -1274,7 +1274,7 @@ The application owns addresses, permission filtering, and page actions.
 
 The shell calls the release under `/api` through its [transport](../../apps/platform_ui/src/shell.tsx).
 The platform UI calls the control host through `/api/wamn_control` at `control.wamn.dev`.
-Its [deployment](../operations/deployment.md#platform-ui-files) owns the edge routing and the org-only scope.
+Its [deployment](../operations/deployment.md#platform-ui-files) owns the edge routing and the org-only configuration.
 
 A revision-bearing operation needs a declared compatible record read and revision mapping.
 Without that mapping, the screen requires ordinary Rust composition and blocks submission.
@@ -1341,7 +1341,7 @@ Queue liveness follows durable polls and successful lease renewals in each host 
 No timer creates a synthetic beat.
 An absent first beat fails through the normal silence budget.
 
-The host drains readiness, stops queue claims, and starts native HTTP shutdown together.
+The host drains readiness, stops queue leases, and starts native HTTP shutdown together.
 The same admission signal refuses further HTTP requests on existing connections.
 One shutdown signal stops HTTP admission and queue polling, bounds active work in both paths, and then performs shared cleanup.
 Ingress failure, probe failure, or command-task failure follows the failure cleanup path.

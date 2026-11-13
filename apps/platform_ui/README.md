@@ -43,7 +43,7 @@ The left pane follows the address through organization, project, and environment
 SidebarContextSwitcher shows the current context, searches sibling choices, and returns to the parent.
 At the organization level, Projects expands to held projects from `control.mine`. Only org admins see Users.
 Project context shows expandable Environments and Members. Environment context shows Workloads, Live releases, Operations, Roles, and Members.
-Environment membership screens filter members and scope grants and revocations to the current environment.
+Environment membership screens filter members and view grants and revocations to the current environment.
 In an application audience, the environment pane shows Roles and Users when `permission.mine` grants access.
 Breadcrumbs name the organization, project, and environment in uppercase.
 The Roles grid reads served operations from `permission.list` for each role.

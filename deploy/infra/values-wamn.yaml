@@ -1,11 +1,11 @@
 # Helm values for the CLUSTER-SINGLETON runtime-operator release (S1).
 #
-# TWO KINDS OF RELEASE COME OUT OF THIS ONE CHART, and this file is only the
+# TWO TYPES OF RELEASE COME OUT OF THIS ONE CHART, and this file is only the
 # first of them (rulings wamn-0h0g.13.49 + .13.50, bead wamn-0h0g.15.15):
 #
 #   1. THIS FILE — the operator and its five CRDs.
 #      ONE PER CLUSTER, in `wamn-system`, installed once: the CRDs are
-#      cluster-scoped, so every environment in the cluster shares this one
+#      cluster-wide, so every environment in the cluster shares this one
 #      operator version. It carries NO host groups.
 #   2. THE HOST TIER — the release chart (`deploy/platform/release`) with the
 #      install values that environment apply renders, ONE HELM RELEASE PER
@@ -40,7 +40,7 @@
 # the seam re-verification below when you do.
 #
 # [wamn-0h0g.15.54] CHART SEAM RECORD — reinspect on every upstream release change.
-# Install commands pull the distributed OCI chart. The conformance gate also
+# Install commands pull the distributed OCI chart. The conformance acceptance test also
 # renders it and checks the resources below. Reinspect the source when the pin
 # changes, then compare the distributed chart before deployment.
 #
@@ -87,7 +87,7 @@ operator:
   # (templates/operator/clusterrole.yaml:1, clusterrolebinding.yaml:1) and binds
   # the same grants as per-namespace Roles instead (workload-crd-role.yaml,
   # workload-namespace-role.yaml, endpointslice-role.yaml), while the operator
-  # scopes its workload informer cache to the same set
+  # limits its workload informer cache to the same set
   # (runtime-operator/cmd/main.go:252-255). A WorkloadDeployment in any other
   # namespace is then not seen at all. Chart default is `[]` = watch every
   # namespace (chart values.yaml:182-183).
@@ -106,7 +106,7 @@ operator:
   hostNamespaces:
     - wamn-system
   # -- THE WRONG-TARGET LOCK. This ships TRUE, and the chart's own values file
-  # calls that default "permissive across tenants" (chart values.yaml:190-205):
+  # describes that default as permissive across projects (chart values.yaml:190-205):
   # with it on, a WorkloadDeployment in one namespace can schedule onto hosts in
   # another just by naming `spec.template.spec.environment`. False locks
   # scheduling to the workload's own namespace and refuses any other environment

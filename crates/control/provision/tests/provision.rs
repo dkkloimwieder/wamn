@@ -1,4 +1,4 @@
-//! Live-apply gate for the platform extension builder, against a test database
+//! Live-apply condition for the platform extension builder, against a test database
 //! on the test PostgreSQL server, through its superuser URL (the administrator
 //! connection the extension builder documents). Shells out to `psql` so the
 //! crate retains no database dependency.
@@ -11,7 +11,7 @@ use wamn_control_provision::sql;
 /// wamn-yk9l. The platform installs `btree_gist`, so an `EXCLUDE USING gist`
 /// overlap constraint is expressible from a package's own `CREATE TABLE`.
 ///
-/// The negative control is the point of this gate. Without the extension the
+/// The negative control is the point of this acceptance test. Without the extension the
 /// same statement refuses with `data type uuid has no default operator class
 /// for access method "gist"`, which is what three pilot agents met, so this
 /// asserts BOTH directions in one throwaway database.

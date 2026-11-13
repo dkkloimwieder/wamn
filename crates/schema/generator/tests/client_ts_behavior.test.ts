@@ -10,7 +10,7 @@ import { collection, recordWrite } from "@wfe/sync";
 
 vi.mock("@wfe/sync", async (original) => ({
   ...(await original()),
-  collection: vi.fn((_feed, _scope, options) => ({ options })),
+  collection: vi.fn((_feed, _target, options) => ({ options })),
   recordWrite: vi.fn(() => ({ write: "outbox write" })),
 }));
 
@@ -171,12 +171,12 @@ it("preserves integer keys and refuses offline creates before dispatch", async (
     [int32, 7],
     [int64, "9007199254740993"],
   ]) {
-    const scope = { filter: { code: ["priority"] } };
+    const target = { filter: { code: ["priority"] } };
     const feed = module.widgetFeed({
       invoke: async () => completed({ item: [{ ...wire, id }], next_cursor: null, cursor: "c1" }),
     });
-    expect((await feed.list(scope)).rows[0].id).toBe(id);
-    const c = module.widgetCollection(feed, scope);
+    expect((await feed.list(target)).rows[0].id).toBe(id);
+    const c = module.widgetCollection(feed, target);
     const configuration = vi.mocked(collection).mock.lastCall[2];
     expect(configuration.getKey({ id })).toBe(id);
     expect(configuration.version({ rowVersion: "8" })).toBe(8);
@@ -200,7 +200,7 @@ it("preserves integer keys and refuses offline creates before dispatch", async (
   }
 });
 
-it("omits unserved bindings and opt-out feeds while keeping scope keys stable", () => {
+it("omits unserved bindings and opt-out feeds while keeping target keys stable", () => {
   for (const name of ["get", "WIDGET_GET_ROUTE", "widgetArchived", "WIDGET_WIDGET_ARCHIVED_ROUTE"]) {
     expect(hidden).not.toHaveProperty(name);
   }

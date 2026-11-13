@@ -2,7 +2,7 @@ use super::{Duration, Triple, ensure, materializer_consumer_config, pull};
 use anyhow::Context as _;
 
 pub fn validate_inputs(
-    scope: &Triple,
+    target: &Triple,
     replicas: usize,
     duplicate_window: Duration,
     consumers: &[pull::Config],
@@ -15,9 +15,9 @@ pub fn validate_inputs(
     };
     ensure!(
         [
-            scope.org.as_str(),
-            scope.project.as_str(),
-            scope.env.as_str()
+            target.org.as_str(),
+            target.project.as_str(),
+            target.env.as_str()
         ]
         .into_iter()
         .all(&token),
@@ -31,7 +31,7 @@ pub fn validate_inputs(
         !duplicate_window.is_zero(),
         "event duplicate window must be positive"
     );
-    let prefix = format!("evt.{}.{}.{}.", scope.org, scope.project, scope.env);
+    let prefix = format!("evt.{}.{}.{}.", target.org, target.project, target.env);
     let mut names = std::collections::BTreeSet::new();
     for config in consumers {
         let durable = config

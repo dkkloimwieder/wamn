@@ -272,14 +272,14 @@ impl OperationTransaction {
                 .prepare_cached(sql)
                 .await
                 .map_err(|error| super::types::map_pg_error(&error))?;
-            let claims = self
-                .claims
+            let identity = self
+                .identity
                 .lock()
-                .expect("request element claims lock poisoned")
+                .expect("request element identity lock poisoned")
                 .take();
-            if let Some(claims) = claims {
+            if let Some(identity) = identity {
                 let (bound, rows) = tokio::join!(biased;
-                    claims.bind(connection.connection()),
+                    identity.bind(connection.connection()),
                     connection.connection().query(&prepared, &params));
                 bound?;
                 rows.map_err(|error| super::types::map_pg_error(&error))
@@ -378,16 +378,16 @@ impl IntentStore for OperationTransaction {
 pub struct WriteLogStore {
     postgres: Arc<WamnPostgres>,
     project: String,
-    env_key: String,
+    project_env_key: String,
 }
 
 impl WriteLogStore {
-    /// The write log of `env_key`'s database in `project`.
-    pub fn new(postgres: Arc<WamnPostgres>, project: String, env_key: String) -> Self {
+    /// The write log of `project_env_key`'s database in `project`.
+    pub fn new(postgres: Arc<WamnPostgres>, project: String, project_env_key: String) -> Self {
         Self {
             postgres,
             project,
-            env_key,
+            project_env_key,
         }
     }
 
@@ -399,7 +399,7 @@ impl WriteLogStore {
     ) -> Result<Vec<Row>, PgError> {
         let (connection, _pool) = self
             .postgres
-            .checkout_guest(&self.project, &self.env_key)
+            .checkout_guest(&self.project, &self.project_env_key)
             .await?;
         let params: Vec<&(dyn ToSql + Sync)> = params
             .iter()
@@ -423,12 +423,12 @@ impl WriteLogStore {
 #[async_trait]
 impl IntentStore for WriteLogStore {
     async fn begin(&self, intent: &Intent<'_>) -> Result<Begun, StoreError> {
-        if intent.tenant != self.env_key {
+        if intent.partition != self.project_env_key {
             return Err(contract(
                 "begin",
                 format!(
                     "the write log of {} holds no key of {}",
-                    self.env_key, intent.tenant
+                    self.project_env_key, intent.partition
                 ),
             ));
         }
@@ -466,7 +466,7 @@ impl IntentStore for WriteLogStore {
                 let key: String = row.get(1);
                 UncertainIntent {
                     id: intent_id(&operation, &key),
-                    tenant: self.env_key.clone(),
+                    partition: self.project_env_key.clone(),
                     // The write log keeps neither: its key is the operation.
                     release: String::new(),
                     package: operation

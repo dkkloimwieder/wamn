@@ -11,7 +11,7 @@
 //! # What is and is not distinguishable
 //!
 //! Being exact about this matters, because the guarantee is narrower than
-//! "we detect truncation" and claiming the wider one would be false:
+//! "we detect truncation" and asserting the wider one would be false:
 //!
 //! * **Over the ceiling** — distinguishable. The excess is refused without
 //!   buffering and reported as an error, not as a short body.

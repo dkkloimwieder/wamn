@@ -70,7 +70,7 @@ impl fmt::Display for BareSchemaName {
 /// A present index is STALE when the record definition names a record column of
 /// its table that the live definition does not (word-boundary token match, so
 /// `run_id` never matches inside `event_root_run_id`). This is deliberately the
-/// narrow, real drift class — notably the pre-E4 `run_queue_claimable` without
+/// narrow, real drift class — notably the pre-E4 `run_queue_leasable` without
 /// the ordering columns. It does not compare other definition differences.
 pub(super) fn index_definition_stale(
     file: &str,
@@ -145,7 +145,7 @@ pub fn rewrite_schema(ddl: &str, schema: &BareSchemaName) -> String {
     // missing it left `CREATE SCHEMA IF NOT EXISTS wamn_run` unrewritten (the
     // pre-wamn-1wdq bug: publish --runstate silently created a stray
     // `wamn_run` schema on the target DB while publish pre-created the real
-    // target — caught by this verb's from-zero gate leg).
+    // target — caught by this verb's from-zero condition leg).
     .replace(
         "SCHEMA IF NOT EXISTS wamn_run",
         &format!("SCHEMA IF NOT EXISTS {schema}"),

@@ -33,7 +33,7 @@ export function createServerPage<Row>(load: (input: { limit: number; cursor?: st
     setError(undefined);
     setPending(false);
   };
-  /** A new scope shows none of the old scope's rows. */
+  /** A new filter shows none of the old filter's rows. */
   const reset = () => {
     restart();
     setRows([]);

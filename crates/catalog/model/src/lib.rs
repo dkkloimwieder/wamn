@@ -1,6 +1,6 @@
 //! Canonical immutable catalog identities and definition hashing.
 //!
-//! MVP outcome: provisioning · publish · additive schema · tenant isolation (T1 minting).
+//! MVP outcome: provisioning · publish · additive schema · project isolation (T1 minting).
 //!
 //! This crate owns the pure definition plane, and — since wamn-0h0g.18.2 — the
 //! statement text of the wiring-activation verb over it. The pointer's write and
@@ -29,9 +29,9 @@ mod signed_file_read;
 pub mod sql_lex;
 mod wiring;
 mod wiring_compatibility;
-mod workflow_gate;
+mod workflow_condition;
 
-/// Test databases with the tenant catalog floor.
+/// Test databases with the project catalog minimum.
 #[cfg(feature = "test-util")]
 pub mod test_database;
 
@@ -47,7 +47,7 @@ pub use component_facts::{
     AdmittedComponentParameter, AdmittedComponentPort, ComponentConnection,
     ComponentConnectionType, ComponentDeclaration, ComponentDescriptor, ComponentEffectProvenance,
     ComponentFactError, ComponentFactErrorType, ComponentOperationDeclaration,
-    ComponentPackageScope, ComponentParameterDeclaration, ComponentPortDeclaration,
+    ComponentPackageCoordinate, ComponentParameterDeclaration, ComponentPortDeclaration,
     ComponentSchema, ComponentSqlField, ComponentSqlStatement, bind_component_statement_facts,
     normalize_component_fact, verify_stored_effect_projection,
 };
@@ -95,7 +95,9 @@ pub use wiring_compatibility::{
     WiringCompatibilityError, WiringCompatibilityErrorType, validate_resolved_wiring_compatibility,
     validate_wiring_compatibility,
 };
-pub use workflow_gate::{WorkflowGateError, gate_workflow_document, resolve_workflow_components};
+pub use workflow_condition::{
+    WorkflowConditionError, condition_workflow_document, resolve_workflow_components,
+};
 
 use std::fmt;
 
@@ -334,7 +336,7 @@ impl fmt::Display for ArtifactHash {
 /// This is the one *derived* identity in the family: it is never asserted by a
 /// carrier and never read from an object name, only computed from verified
 /// content by [`ServingManifest::from_canonical_bytes`]. From there it travels
-/// further than any other hash in the system — through the claim-time run
+/// further than any other hash in the system — through the lease-time run
 /// recording, effect-authority equality, and the deployment attestation, across
 /// two host processes and four manifest readers. Its distinct type keeps it
 /// apart from the manifest's [`ArtifactHash`] and [`DefinitionHash`] members.
@@ -381,10 +383,10 @@ fn validate_digest(value: &str, field: &'static str) -> Result<(), CatalogIdenti
     }
 }
 
-/// An attachment exposure kind.
+/// An attachment exposure type.
 ///
 /// `Deserialize` is derived so the frozen [`ServingAttachment`] wire shape can
-/// name this kind instead of re-declaring one; the enum is fieldless, so the
+/// name this type instead of re-declaring one; the enum is fieldless, so the
 /// derive adds no unvalidated construction path.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -404,7 +406,7 @@ pub const ERROR_PORT: &str = "error";
 mod tests {
     use super::ManifestDigest;
 
-    /// The invariant that retired `valid_manifest_digest` in the claim path: the
+    /// The invariant that retired `valid_manifest_digest` in the lease path: the
     /// newtype admits exactly the `sha256:<64 lowercase hex>` shape the run
     /// plane's `runs_release_record_check` admits, so a parsed value can never
     /// die on that CHECK inside a lease grant.

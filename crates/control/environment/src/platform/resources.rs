@@ -235,12 +235,12 @@ pub(super) async fn require_inputs(target: &Target, entry: &Value) -> anyhow::Re
     crate::environment::runtime::require_references(
         entry["namespace"].as_str().context("service namespace")?,
         &objects,
-        async |namespace, kind, name| {
+        async |namespace, type_, name| {
             kubectl::get(
                 &target.kubeconfig,
                 &target.context,
                 namespace,
-                &kind.to_ascii_lowercase(),
+                &type_.to_ascii_lowercase(),
                 name,
             )
             .await
@@ -313,14 +313,14 @@ pub async fn apply_object(target: &Target, object: &Value) -> anyhow::Result<()>
     let name = object["metadata"]["name"]
         .as_str()
         .context("manifest object has no metadata.name")?;
-    let kind = object["kind"]
+    let type_ = object["kind"]
         .as_str()
-        .context("manifest object has no kind")?;
+        .context("manifest object has no type")?;
     apply_with_webhook_retry(|| {
         kubectl::apply(&target.kubeconfig, &target.context, namespace, object)
     })
     .await
-    .with_context(|| format!("apply {kind} {namespace}/{name}"))
+    .with_context(|| format!("apply {type_} {namespace}/{name}"))
 }
 
 /// Render operator values from the selected chart's resource payload.
@@ -385,7 +385,7 @@ mod tests {
     use super::*;
     const WEBHOOK_REFUSED: &str = "failed calling webhook \"webhook.cert-manager.io\" ... dial tcp 10.96.164.197:443: connect: connection refused";
     #[test]
-    fn operator_archive_owns_only_the_operator_and_its_scoped_permissions() {
+    fn operator_archive_owns_only_the_operator_and_its_targeted_permissions() {
         let repository = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
         let values = super::super::manifests::operator_base_values(&repository).unwrap();
         let entry = operator_entry(

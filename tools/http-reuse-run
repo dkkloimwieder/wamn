@@ -143,5 +143,5 @@ rg --quiet '^test result: ok\. 1 passed; 0 failed; 0 ignored; 0 measured;' "$pri
     fail 'expected one passing test with none ignored'
 skip_scan=0
 rg --quiet --ignore-case 'skipping|self.skip' "$private_dir/test.log" || skip_scan=$?
-[[ $skip_scan == 1 ]] || fail 'self-skip scan did not pass; no pass is claimed'
+[[ $skip_scan == 1 ]] || fail 'self-skip scan did not pass; no pass is reported'
 printf 'PASS exact named live test: %s\n' "$test_name"

@@ -2,13 +2,13 @@
 //! (docs/architecture/data-access.md#rendering).
 //!
 //! `next-number` and `peek-number` render the pattern of one sequence of the
-//! declared application, never an argument and never a claim. The plugin
+//! declared application, never an argument and never an identity. The plugin
 //! reads the environment map name from host state: the operation transaction holds
 //! the application it was begun for. The plugin resolves (application,
 //! sequence name) to the sequence id, so a sequence of another application is
-//! not found. The `app.application` claim stays set for logging only; guest
+//! not found. The `app.application` identity stays set for logging only; guest
 //! SQL can rewrite it, so it decides nothing here. Both calls run only in an
-//! open operation transaction, on its connection and under its claims, so a
+//! open operation transaction, on its connection and under its identity, so a
 //! counter that `next-number` advances is consumed on commit and given back
 //! on rollback.
 //!
@@ -33,7 +33,7 @@ use std::collections::BTreeMap;
 use deadpool_postgres::Object;
 use tokio_postgres::error::SqlState;
 use tracing::Instrument as _;
-use wamn_number_pattern::{Counter, DateFormat, Key, Part, Pattern, Scope};
+use wamn_number_pattern::{Counter, DateFormat, Key, Part, Pattern, Policy};
 use wash_runtime::engine::ctx::SharedCtx;
 use wash_runtime::wasmtime::component::Accessor;
 
@@ -72,7 +72,7 @@ const INVALID_INPUT: &str = "22023";
 const NULL_FIELD: &str = "22004";
 
 /// The sequence id and pattern of sequence `$2` of application `$1`, and the
-/// text and JSON type of the `timezone` setting at the scope of `$1`. The
+/// text and JSON type of the `timezone` setting for the target of `$1`. The
 /// host binds `$1` from host state. A sequence that `$1` does not own reads
 /// as null, and so does a setting row that does not exist.
 const SEQUENCE_SQL: &str = "SELECT s.id::text, s.pattern, t.value #>> '{}', jsonb_typeof(t.value) \
@@ -80,7 +80,7 @@ const SEQUENCE_SQL: &str = "SELECT s.id::text, s.pattern, t.value #>> '{}', json
     LEFT JOIN platform.number_sequence AS s \
       ON s.application = c.application AND s.name = $2 \
     LEFT JOIN platform.setting AS t \
-      ON t.scope_type = 'application' AND t.scope_id = c.application \
+      ON t.target_type = 'application' AND t.target_id = c.application \
         AND t.key = 'timezone'";
 /// The transaction time in time zone `$1`, in every format of the renderer,
 /// in the order of [`DateFormat::ALL`]. When `$2` is true, `YYYY` and `YY`
@@ -157,7 +157,7 @@ async fn render_number(
                 match render(connection.connection(), &application, &name, &keys, call).await {
                     Ok(number) => Ok(Ok(number)),
                     Err(Failure {
-                        kind: FailureKind::Postgres(error),
+                        type_: FailureType::Postgres(error),
                         ..
                     }) => Err(error),
                     Err(refused) => Ok(Err(statement_failure(refused))),
@@ -175,12 +175,12 @@ async fn render_number(
 /// Why one render did not produce a number.
 #[derive(Debug)]
 struct Failure {
-    kind: FailureKind,
+    type_: FailureType,
     context: String,
 }
 
 #[derive(Debug)]
-enum FailureKind {
+enum FailureType {
     /// The renderer refused. Only the boundary constructs a WIT error.
     Refused {
         code: &'static str,
@@ -202,19 +202,19 @@ impl std::fmt::Display for Failure {
 
 impl std::error::Error for Failure {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match &self.kind {
-            FailureKind::Refused { source, .. } => source.as_deref().map(|source| source as _),
-            FailureKind::Postgres(error) => Some(error),
+        match &self.type_ {
+            FailureType::Refused { source, .. } => source.as_deref().map(|source| source as _),
+            FailureType::Postgres(error) => Some(error),
         }
     }
 }
 
 fn statement_failure(failure: Failure) -> StatementError {
-    match failure.kind {
-        FailureKind::Refused { code, .. } => {
+    match failure.type_ {
+        FailureType::Refused { code, .. } => {
             StatementError::Postgres(PgError::QueryError((code.to_owned(), failure.context)))
         }
-        FailureKind::Postgres(error) => {
+        FailureType::Postgres(error) => {
             StatementError::Postgres(super::types::map_pg_error(&error))
         }
     }
@@ -222,7 +222,7 @@ fn statement_failure(failure: Failure) -> StatementError {
 
 fn refusal(code: &'static str, context: String) -> Failure {
     Failure {
-        kind: FailureKind::Refused { code, source: None },
+        type_: FailureType::Refused { code, source: None },
         context,
     }
 }
@@ -233,7 +233,7 @@ fn caused_refusal(
     source: impl Into<anyhow::Error>,
 ) -> Failure {
     Failure {
-        kind: FailureKind::Refused {
+        type_: FailureType::Refused {
             code,
             source: Some(source.into()),
         },
@@ -249,7 +249,7 @@ async fn render(
     call: NumberCall,
 ) -> Result<String, Failure> {
     let failed = |error| Failure {
-        kind: FailureKind::Postgres(error),
+        type_: FailureType::Postgres(error),
         context: format!("render number sequence {name} of application {application}"),
     };
     let statement = connection
@@ -298,13 +298,13 @@ async fn render(
 
     let mut counters = BTreeMap::<&str, String>::new();
     for counter in counter_order(&pattern) {
-        let key = match counter.scope().key() {
+        let key = match counter.policy().key() {
             None => String::new(),
             Some(Key::Field(field)) => fields[&**field].to_owned(),
             Some(Key::Counter(other)) => counters[&**other].clone(),
             Some(Key::Date(format)) => date(*format),
         };
-        let per = matches!(counter.scope(), Scope::Per(_));
+        let per = matches!(counter.policy(), Policy::Per(_));
         let value = counter_value(connection, &sequence, counter, &key, per, call)
             .await
             .map_err(|error| {
@@ -313,7 +313,7 @@ async fn render(
                     call.operation(),
                     counter.name()
                 );
-                Failure { kind: FailureKind::Postgres(error), context }
+                Failure { type_: FailureType::Postgres(error), context }
             })?;
         let Some(value) = value else {
             return Err(refusal(
@@ -359,7 +359,7 @@ async fn read_dates(
     iso_year: bool,
 ) -> Result<Vec<String>, Failure> {
     let failed = |error| Failure {
-        kind: FailureKind::Postgres(error),
+        type_: FailureType::Postgres(error),
         context: format!("read numbering dates for application {application}"),
     };
     let split = |text: String| text.split('|').map(str::to_owned).collect::<Vec<_>>();
@@ -482,7 +482,7 @@ fn key_values<'a>(
 fn date_formats(pattern: &Pattern) -> impl Iterator<Item = DateFormat> + '_ {
     pattern.parts().iter().filter_map(|part| match part {
         Part::Date(format) => Some(*format),
-        Part::Counter(counter) => match counter.scope().key() {
+        Part::Counter(counter) => match counter.policy().key() {
             Some(Key::Date(format)) => Some(*format),
             _ => None,
         },
@@ -499,7 +499,7 @@ fn counter_order(pattern: &Pattern) -> Vec<&Counter> {
     while !pending.is_empty() {
         let ready = pending
             .iter()
-            .position(|counter| match counter.scope().key() {
+            .position(|counter| match counter.policy().key() {
                 Some(Key::Counter(other)) => ordered.iter().any(|done| done.name() == &**other),
                 _ => true,
             })

@@ -72,13 +72,13 @@ impl PhysicalSchema {
 
 #[derive(Debug)]
 pub struct PhysicalSchemaError {
-    kind: PhysicalSchemaErrorKind,
+    type_: PhysicalSchemaErrorType,
     detail: String,
     source: Option<Box<dyn std::error::Error + Send + Sync>>,
 }
 
 #[derive(Debug)]
-enum PhysicalSchemaErrorKind {
+enum PhysicalSchemaErrorType {
     InvalidSql,
     InvalidDefinition,
 }
@@ -86,14 +86,14 @@ enum PhysicalSchemaErrorKind {
 impl PhysicalSchemaError {
     fn invalid(detail: String) -> Self {
         Self {
-            kind: PhysicalSchemaErrorKind::InvalidDefinition,
+            type_: PhysicalSchemaErrorType::InvalidDefinition,
             detail,
             source: None,
         }
     }
     fn parse(source: pg_query::Error) -> Self {
         Self {
-            kind: PhysicalSchemaErrorKind::InvalidSql,
+            type_: PhysicalSchemaErrorType::InvalidSql,
             detail: "parse physical SQL".into(),
             source: Some(Box::new(source)),
         }
@@ -101,7 +101,7 @@ impl PhysicalSchemaError {
 }
 impl fmt::Display for PhysicalSchemaError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "physical-schema {:?}: {}", self.kind, self.detail)
+        write!(f, "physical-schema {:?}: {}", self.type_, self.detail)
     }
 }
 impl std::error::Error for PhysicalSchemaError {
@@ -258,7 +258,7 @@ pub fn render(
     ordered.sort_by(|a, b| a.relative_path.cmp(&b.relative_path));
     for migration in ordered {
         let sql = std::str::from_utf8(&migration.bytes).map_err(|source| PhysicalSchemaError {
-            kind: PhysicalSchemaErrorKind::InvalidSql,
+            type_: PhysicalSchemaErrorType::InvalidSql,
             detail: format!("{} is not UTF-8 SQL", migration.relative_path),
             source: Some(Box::new(source)),
         })?;

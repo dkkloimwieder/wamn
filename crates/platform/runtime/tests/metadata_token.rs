@@ -12,8 +12,8 @@ use base64::Engine as _;
 use docker_credential::{CredentialRetrievalError, DockerCredential, get_credential_from_reader};
 use serde_json::json;
 use wamn_catalog::{
-    AdmittedComponent, ComponentDeclaration, ComponentOperationDeclaration, ComponentPackageScope,
-    ComponentPortDeclaration, normalize_component_fact,
+    AdmittedComponent, ComponentDeclaration, ComponentOperationDeclaration,
+    ComponentPackageCoordinate, ComponentPortDeclaration, normalize_component_fact,
 };
 use wamn_digest::bytes_sha256;
 use wamn_engine::artifact_source::{ArtifactSource as _, ComponentArtifactFetchErrorType};
@@ -161,8 +161,8 @@ fn basic(token: &str) -> String {
 fn admitted(bytes: &[u8]) -> AdmittedComponent {
     normalize_component_fact(
         ComponentDeclaration {
-            scope: ComponentPackageScope {
-                env_key: "tenant-a".to_owned(),
+            target: ComponentPackageCoordinate {
+                project_env_key: "org-a".to_owned(),
                 package_id: "orders".to_owned(),
                 package_version: "1.0.0".to_owned(),
             },
@@ -258,7 +258,7 @@ async fn the_token_is_the_password_of_oauth2accesstoken(script: &Script) {
 }
 
 async fn an_unusable_answer_refuses_by_name_without_the_token(script: &Script) {
-    for (status, body, kind, refusal) in [
+    for (status, body, type_, refusal) in [
         (
             500,
             "{}",
@@ -282,7 +282,7 @@ async fn an_unusable_answer_refuses_by_name_without_the_token(script: &Script) {
         let error = read_metadata_registry_credentials(REGISTRY)
             .await
             .expect_err("an unusable answer refuses");
-        assert_eq!((error.error_type(), error.refusal()), (kind, refusal));
+        assert_eq!((error.error_type(), error.refusal()), (type_, refusal));
         let rendered = format!("{error:?} {error}");
         assert!(rendered.contains(REGISTRY));
         assert!(!rendered.contains("private-value"));

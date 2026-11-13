@@ -40,13 +40,13 @@ impl EdgeApplication {
             .collect();
         let plugins: HashMap<&'static str, Arc<dyn HostPlugin>> =
             HashMap::from([(EDGE_POLICY_ID, Arc::clone(&policy) as Arc<dyn HostPlugin>)]);
-        let scope = release.release().scope();
+        let target = release.release().target();
         let application = load_native_application(
             engine,
             NativeWorkloadSpec {
                 id: next_scope("wamn-edge-application").into(),
-                namespace: scope.env_key.clone(),
-                name: scope.environment.clone(),
+                namespace: target.project_env_key.clone(),
+                name: target.environment.clone(),
                 components: release.native_components(),
                 entry: None,
                 warm_reuse: WarmReuse::default(),

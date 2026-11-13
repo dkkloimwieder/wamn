@@ -1,7 +1,7 @@
 -- This DDL is outside the frozen initialization digest.
 CREATE TABLE @schema@.schema_migration (
     ordinal int PRIMARY KEY CHECK (ordinal > 0),
-    relative_path text NOT NULL UNIQUE CHECK (relative_path ~ '^migrations/@scope@/[0-9]{4}_[a-z0-9_]+\.sql$'),
+    relative_path text NOT NULL UNIQUE CHECK (relative_path ~ '^migrations/@target@/[0-9]{4}_[a-z0-9_]+\.sql$'),
     sha256 text NOT NULL CHECK (sha256 ~ '^sha256:[0-9a-f]{64}$'),
     outcome text NOT NULL CHECK (outcome IN ('started', 'applied')),
     applied_at timestamptz,

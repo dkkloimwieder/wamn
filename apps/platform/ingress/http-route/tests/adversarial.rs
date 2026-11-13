@@ -9,7 +9,7 @@ use serde_json::{Value, json};
 
 use http_route::{
     AdapterLimits, AuthRejection, Backend, BodyReadError, BodyReader, Cardinality,
-    DeadlineAdjustment, DeliveryError, DeliveryFailure, DeliveryFailureKind, DeliveryOutcome,
+    DeadlineAdjustment, DeliveryError, DeliveryFailure, DeliveryFailureType, DeliveryOutcome,
     DeliveryReport, DeliveryRequest, Emission, Header, Mapping, MappingSource, ProviderError,
     RequestHead, RouteDefinition, SchemaInvalid, handle_request,
 };
@@ -693,7 +693,7 @@ fn every_router_outcome_is_mapped_exhaustively() {
         ),
         (
             DeliveryOutcome::Failed(DeliveryFailure {
-                kind: DeliveryFailureKind::InvalidInput,
+                type_: DeliveryFailureType::InvalidInput,
                 code: Some("authored-invalid".to_string()),
                 message: "bad input".to_string(),
             }),
@@ -702,7 +702,7 @@ fn every_router_outcome_is_mapped_exhaustively() {
         ),
         (
             DeliveryOutcome::Failed(DeliveryFailure {
-                kind: DeliveryFailureKind::UnreleasedCaller,
+                type_: DeliveryFailureType::UnreleasedCaller,
                 code: None,
                 message: "no response terminal".to_string(),
             }),
@@ -839,7 +839,7 @@ fn partial_completion_preserves_only_committed_result_and_existing_failure() {
         backend.delivery = Ok(DeliveryOutcome::PartiallyCompleted(PartialCompletion {
             committed_result: committed.to_string(),
             failed_outcome: FailedOutcome::Failed(DeliveryFailure {
-                kind: DeliveryFailureKind::Terminal,
+                type_: DeliveryFailureType::Terminal,
                 code: Some("write_failed".to_owned()),
                 message: "label store failed".to_owned(),
             }),
@@ -882,7 +882,7 @@ fn partial_completion_keeps_nested_authorization_and_cancellation_truth() {
         ),
         (
             FailedOutcome::Failed(DeliveryFailure {
-                kind: DeliveryFailureKind::InvalidInput,
+                type_: DeliveryFailureType::InvalidInput,
                 code: Some("missing_field".to_owned()),
                 message: "label input is missing".to_owned(),
             }),
@@ -1019,7 +1019,7 @@ fn a_query_read_answers_its_page_as_one_body() {
 }
 
 #[test]
-fn a_feed_read_is_revalidated_every_time_under_the_scope_of_its_list() {
+fn a_feed_read_is_revalidated_every_time_under_the_target_of_its_list() {
     let mut read = route();
     read.method = "GET".to_string();
     read.path = "/packaging/query".to_string();

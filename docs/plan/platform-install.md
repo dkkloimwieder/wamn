@@ -14,7 +14,7 @@ wamn-ctl platform apply <cluster.k>
 
 `gcp.md` §4 becomes: owner inputs, `platform apply`, done. The runbook keeps §1 (owner inputs), §2 (project resources, owner-only IAM), §3 (teardown) and §5 (operations). Nothing in §4 stays prose.
 
-One cluster document names one org. Multi-org is out of scope.
+One cluster document names one org. Multi-org is out of target.
 
 ## 2. Rulings (proposed)
 
@@ -89,7 +89,7 @@ The owner inputs of §1 are project-level resources that need IAM. They leave in
 
 1. `deploy/gcp/project.k` declares the project layer: the cluster and its pools (E0), then GSAs, Workload Identity bindings, DNS zone and records, buckets and lifecycle, quota preferences, Artifact Registry. The generator renders it to `.tf.json`, which OpenTofu reads natively; nobody writes HCL. OpenTofu is an execution engine here, as Helm is: it holds the state file in a bucket and computes the diff. CI runs `tofu plan` with its own short-lived identity; the owner approves a diff when one exists, not a run.
 2. Secrets from Secret Manager through External Secrets Operator. The Resend key is one Secret Manager secret; rotation is a new version.
-3. DNS from the cluster through external-dns with a DNS-scoped GSA. The edge Service carries the hostname; the record is derived from `cluster.k`.
+3. DNS from the cluster through external-dns with a DNS-targeted GSA. The edge Service carries the hostname; the record is derived from `cluster.k`.
 4. Teardown by policy: `env_policies.destroy` is `auto` for dev and `never` for prod. Prod data loss stays a human act.
 
 Authored formats stay one: KCL. `wamn.k`, `environment.k`, `cluster.k`, `project.k`. JSON, YAML and `.tf.json` are derived and never committed ([package manifests](../operations/building.md#package-manifests)). Config Connector was considered and set aside: it puts a project-level identity inside the cluster.

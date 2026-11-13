@@ -31,10 +31,10 @@ pub fn workload_name(release_name: &str, role: RoleName) -> String {
 /// The application HTTP role exists when the manifest has an HTTP route attachment.
 /// Each role's configuration derives from the coordinate.
 pub fn roles(manifest: &ServingManifest, org: &str, project: &str, env: &str) -> Vec<Role> {
-    let env_key = wamn_control_provision::project_env_key(org, project, env);
-    let scope = |extra: &[(&str, &str)]| -> Mapping {
+    let project_env_key = wamn_control_provision::project_env_key(org, project, env);
+    let target = |extra: &[(&str, &str)]| -> Mapping {
         [
-            ("wamn.env_key", env_key.as_str()),
+            ("wamn.project_env_key", project_env_key.as_str()),
             ("wamn.project", project),
             ("wamn.environment", env),
         ]
@@ -63,7 +63,7 @@ pub fn roles(manifest: &ServingManifest, org: &str, project: &str, env: &str) ->
                         application.statement_instances.keys().cloned().collect()
                     }
                 }),
-            config: scope(&[]),
+            config: target(&[]),
         });
     }
     roles
@@ -85,15 +85,15 @@ pub(super) fn applications_argument(
 /// `servers`, so it inherits the data connection and its certificate (R5).
 /// `workloadConfig: deny` keeps every connection key and grant here.
 pub fn events_plugin(org: &str, project: &str, env: &str) -> anyhow::Result<Value> {
-    let scope = wamn_control_registry::Triple::new(org, project, env);
-    let source = wamn_broker::events::source_stream_config(&scope, 1, Duration::from_secs(120));
-    let env_key = wamn_control_registry::project_env_key(org, project, env);
+    let target = wamn_control_registry::Triple::new(org, project, env);
+    let source = wamn_broker::events::source_stream_config(&target, 1, Duration::from_secs(120));
+    let project_env_key = wamn_control_registry::project_env_key(org, project, env);
     let config = mapping([
         (
             "inbox-prefix",
             format!(
                 "_INBOX_{}",
-                wamn_control_registry::environment_nats_user(&env_key)
+                wamn_control_registry::environment_nats_user(&project_env_key)
             ),
         ),
         ("stream-allow", source.name),
@@ -148,7 +148,7 @@ pub fn values(input: &ValuesInput) -> anyhow::Result<Value> {
                 .as_str()
                 .is_some_and(|name| REFUSED_VARIABLES.contains(&name))
         }),
-        "the host group body sets a scope variable, which the release chart derives"
+        "the host group body sets a target variable, which the release chart derives"
     );
     // The chart appends the group's env to its runtime defaults without
     // merging by name, and the API server refuses a repeated name.
@@ -292,11 +292,12 @@ pub fn values(input: &ValuesInput) -> anyhow::Result<Value> {
     values.insert("runtime-operator".into(), Value::Mapping(operator));
     // The host's data connection is the environment's NATS user
     // (docs/plan/alignment.md R5).
-    let env_key = wamn_control_registry::project_env_key(&input.org, &input.project, &input.env);
+    let project_env_key =
+        wamn_control_registry::project_env_key(&input.org, &input.project, &input.env);
     let mut global = Mapping::new();
     global.insert(
         "certificates".into(),
-        mapping([("dataCertSecretName", format!("wamn-nats-{env_key}"))]),
+        mapping([("dataCertSecretName", format!("wamn-nats-{project_env_key}"))]),
     );
     values.insert("global".into(), Value::Mapping(global));
     Ok(Value::Mapping(values))
@@ -412,14 +413,14 @@ pub(super) enum Recovery {
 }
 
 /// The host variables that carry the environment coordinate (R1). The host
-/// derives its tenant from the coordinate, because the manifest names none.
+/// derives its project from the coordinate, because the manifest names none.
 /// The route host is not one of them: it lives only on the http workload's
 /// `config.host` (R2). The environment name is not one of them either: the
 /// operator chart sets `WASMCLOUD_HOST_ENVIRONMENT` to the pod namespace,
 /// which every environment shares (R6), and a second entry of one name is
 /// refused by server-side apply. The release passes `--environment` again in
 /// `extraArgs`, after the chart's, and the host keeps the last value as its
-/// release scope. The host reads `WASMCLOUD_HOST_ENVIRONMENT` once, as its
+/// release target. The host reads `WASMCLOUD_HOST_ENVIRONMENT` once, as its
 /// host namespace, which its heartbeat names and where the operator places
 /// the release's workloads; it is never the environment.
 /// `WAMN_DRAIN_BOUND_SECONDS` is the policy's drain bound, the one budget of

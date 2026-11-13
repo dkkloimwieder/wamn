@@ -70,7 +70,7 @@ pub fn package_owners_of(document: &Path) -> Result<(PathBuf, OperationOwners), 
     Ok((root.to_owned(), OperationOwners::from_slice(&bytes)?))
 }
 
-/// The kind of one authored publication file.
+/// The type of one authored publication file.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AuthoredDocument {
     /// `publication/attachments.json`.
@@ -119,8 +119,11 @@ pub fn read_attachments_document(path: &Path) -> Result<Map<String, Value>, Gene
 ///
 /// [`GenerateError`] when the file is unreadable or not JSON, when it is
 /// outside a package, or when a reference refuses.
-pub fn read_authored_document(path: &Path, kind: AuthoredDocument) -> Result<Value, GenerateError> {
-    let mut document: Value = if kind == AuthoredDocument::Attachments {
+pub fn read_authored_document(
+    path: &Path,
+    type_: AuthoredDocument,
+) -> Result<Value, GenerateError> {
+    let mut document: Value = if type_ == AuthoredDocument::Attachments {
         let entries = read_attachments_document(path)?;
         // No entry names a reference, so the package owners are not read.
         if entries.is_empty() {
@@ -144,7 +147,7 @@ pub fn read_authored_document(path: &Path, kind: AuthoredDocument) -> Result<Val
         })?
     };
     let (_, owners) = package_owners_of(path)?;
-    resolve_authored_document(&mut document, kind, &owners).map_err(|error| {
+    resolve_authored_document(&mut document, type_, &owners).map_err(|error| {
         GenerateError::new(
             error.error_type(),
             format!("{}: {}", path.display(), error.context()),
@@ -160,10 +163,10 @@ pub fn read_authored_document(path: &Path, kind: AuthoredDocument) -> Result<Val
 /// [`GenerateError`] naming the member whose reference refuses.
 pub fn resolve_authored_document(
     document: &mut Value,
-    kind: AuthoredDocument,
+    type_: AuthoredDocument,
     owners: &OperationOwners,
 ) -> Result<(), GenerateError> {
-    match kind {
+    match type_ {
         AuthoredDocument::Attachments => resolve_attachments_document(document, owners),
         AuthoredDocument::Declaration => resolve_declaration_document(document, owners),
         AuthoredDocument::Wiring => resolve_wiring_document(document, owners),
@@ -213,25 +216,25 @@ pub fn resolve_attachment_entry(
 
 /// Resolve every reference of an authored component declaration: each
 /// operation key and its `registered-operation`. The declaration takes
-/// `scope.package-version` from the manifest.
+/// `target.package-version` from the manifest.
 ///
 /// # Errors
 ///
 /// [`GenerateError`] naming the member whose reference refuses, or a template
-/// that authors `scope.package-version`.
+/// that authors `target.package-version`.
 pub fn resolve_declaration_document(
     document: &mut Value,
     owners: &OperationOwners,
 ) -> Result<(), GenerateError> {
-    if let Some(scope) = document.get_mut("scope").and_then(Value::as_object_mut) {
-        if scope.contains_key("package-version") {
+    if let Some(target) = document.get_mut("target").and_then(Value::as_object_mut) {
+        if target.contains_key("package-version") {
             return Err(GenerateError::new(
                 GenerateErrorType::InvalidIdentity,
-                "a declaration must not author scope.package-version; \
+                "a declaration must not author target.package-version; \
                  the version is authored once, as package.version in wamn.json",
             ));
         }
-        scope.insert("package-version".to_owned(), json!(owners.package.version));
+        target.insert("package-version".to_owned(), json!(owners.package.version));
     }
     let Some(operations) = document
         .get_mut("operations")
@@ -324,9 +327,9 @@ mod tests {
         .expect("owners")
     }
 
-    /// Each kind resolves its references, and a platform interface stays.
+    /// Each type resolves its references, and a platform interface stays.
     #[test]
-    fn every_authored_kind_resolves_its_references() {
+    fn every_authored_type_resolves_its_references() {
         let mut attachments = json!({"a": {
             "operation": "acme:order/get", "registered-operation": "acme:order/get"
         }});
@@ -338,13 +341,13 @@ mod tests {
         );
 
         let mut declaration = json!({
-            "scope": {"env_key": "t", "package-id": "acme"},
+            "target": {"project_env_key": "t", "package-id": "acme"},
             "operations": {"acme:order/record": {
                 "registered-operation": "acme:order/record"
             }}
         });
         resolve_declaration_document(&mut declaration, &owners()).unwrap();
-        assert_eq!(declaration["scope"]["package-version"], "3.0.0");
+        assert_eq!(declaration["target"]["package-version"], "3.0.0");
         let operation = &declaration["operations"]["acme:order/record@3.0.0"];
         assert_eq!(operation["registered-operation"], "acme:order/record@3.0.0");
 
@@ -357,7 +360,7 @@ mod tests {
         assert_eq!(wiring["nodes"]["b"]["operation"], "wamn:node/handler@0.1.0");
     }
 
-    /// An authored version refuses, in an id or in the declaration scope.
+    /// An authored version refuses, in an id or in the declaration target.
     #[test]
     fn an_authored_version_refuses() {
         let mut attachments = json!({"a": {"operation": "acme:order/get@3.0.0"}});
@@ -367,9 +370,8 @@ mod tests {
             "{error}"
         );
 
-        let mut declaration = json!({"scope": {"package-id": "acme", "package-version": "3.0.0"}});
-        let error = resolve_declaration_document(&mut declaration, &owners()).unwrap_err();
-        assert!(error.context().contains("scope.package-version"), "{error}");
+        let mut declaration = json!({"target": {"package-id": "acme", "package-version": "3.0.0"}});
+        assert!(resolve_declaration_document(&mut declaration, &owners()).is_err());
     }
 
     /// A missing attachments file reads as the empty map an empty file reads

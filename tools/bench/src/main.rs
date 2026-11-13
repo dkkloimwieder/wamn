@@ -114,8 +114,8 @@ struct Measured {
     slow: Vec<SlowRequest>,
     errors: u64,
     conflicts: u64,
-    /// The errors counted by kind: the refusal code or the status.
-    error_kinds: BTreeMap<String, u64>,
+    /// The errors counted by type: the refusal code or the status.
+    error_types: BTreeMap<String, u64>,
 }
 
 #[derive(Debug, Serialize)]
@@ -137,14 +137,14 @@ impl Measured {
         }
     }
 
-    /// Count one error under its kind.
+    /// Count one error under its type.
     fn error(&mut self, error: &anyhow::Error) {
         if error.to_string().contains("concurrency_conflict") {
             self.conflicts += 1;
         } else {
             self.errors += 1;
         }
-        *self.error_kinds.entry(error.to_string()).or_default() += 1;
+        *self.error_types.entry(error.to_string()).or_default() += 1;
     }
 }
 
@@ -168,7 +168,7 @@ struct Summary {
     per_call: BTreeMap<Call, CallSummary>,
     statements_per_request: Option<f64>,
     error_rate: f64,
-    error_kinds: BTreeMap<String, u64>,
+    error_types: BTreeMap<String, u64>,
     throughput_per_sec: f64,
     p50_ms: f64,
     p95_ms: f64,
@@ -332,7 +332,7 @@ async fn main() -> anyhow::Result<()> {
     };
     // Isolated warm calls establish statement counts without attributing shared
     // SQL in a concurrent mix to an invented route. Raw deltas remain in postgres.
-    let kinds = if args.mix {
+    let types = if args.mix {
         MIX_CALLS.to_vec()
     } else if args.contention && args.call == Call::Update {
         vec![Call::Get, args.call]
@@ -343,7 +343,7 @@ async fn main() -> anyhow::Result<()> {
     let mut conflict_statements = None;
     let mut warm = make_worker(0, &orders);
     warm.run = run.saturating_sub(1);
-    for call in kinds {
+    for call in types {
         warm.invoke(call).await?;
         if let Some(database) = &database {
             let before = statement_calls(database).await?;
@@ -417,8 +417,8 @@ async fn main() -> anyhow::Result<()> {
             total.slow.extend(measured.slow);
             total.errors += measured.errors;
             total.conflicts += measured.conflicts;
-            for (kind, count) in measured.error_kinds {
-                *total.error_kinds.entry(kind).or_default() += count;
+            for (type_, count) in measured.error_types {
+                *total.error_types.entry(type_).or_default() += count;
             }
         }
     }
@@ -427,7 +427,7 @@ async fn main() -> anyhow::Result<()> {
     let mut slow = Vec::new();
     let mut errors = 0;
     let mut conflicts = 0;
-    let mut error_kinds = BTreeMap::new();
+    let mut error_types = BTreeMap::new();
     let mut per_call = BTreeMap::new();
     let mut statements = 0.0;
     for (call, mut measured) in combined {
@@ -447,8 +447,8 @@ async fn main() -> anyhow::Result<()> {
         slow.extend(measured.slow);
         errors += measured.errors;
         conflicts += measured.conflicts;
-        for (kind, count) in measured.error_kinds {
-            *error_kinds.entry(kind).or_default() += count;
+        for (type_, count) in measured.error_types {
+            *error_types.entry(type_).or_default() += count;
         }
     }
     let ended_at_unix_nanos = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
@@ -482,7 +482,7 @@ async fn main() -> anyhow::Result<()> {
         per_call,
         statements_per_request: database.as_ref().map(|_| statements / to_f64(calls)),
         error_rate: ratio(errors, calls),
-        error_kinds,
+        error_types,
         throughput_per_sec: to_f64(calls) / elapsed,
         p50_ms: millis(percentile(&latencies, 50)),
         p95_ms: millis(percentile(&latencies, 95)),
@@ -503,11 +503,11 @@ async fn main() -> anyhow::Result<()> {
 async fn seed_app_path(database: &tokio_postgres::Client) -> anyhow::Result<String> {
     let row = database
         .query_one(
-            "WITH claims AS MATERIALIZED (SELECT set_config('app.user_id', $1, true), \
+            "WITH identity AS MATERIALIZED (SELECT set_config('app.user_id', $1, true), \
              set_config('app.operation', 'admin:benchmark-app-path', true)), inserted AS ( \
              INSERT INTO receiving.receipt (purchase_order_id, receipt_reference, occurred_at) \
              SELECT purchase_order.id, gen_random_uuid()::text, now() \
-             FROM receiving.purchase_order CROSS JOIN claims ORDER BY purchase_order.id LIMIT 100 \
+             FROM receiving.purchase_order CROSS JOIN identity ORDER BY purchase_order.id LIMIT 100 \
              RETURNING id::text) SELECT id FROM inserted LIMIT 1",
             &[&SEED_PRINCIPAL],
         )

@@ -98,7 +98,7 @@ pub fn require_prerequisites(names: &[&str]) {
     let names: Vec<String> = names
         .iter()
         .map(|name| {
-            let kind = if name
+            let type_ = if name
                 .chars()
                 .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_')
             {
@@ -106,7 +106,7 @@ pub fn require_prerequisites(names: &[&str]) {
             } else {
                 "bin"
             };
-            format!("{kind}:{name}")
+            format!("{type_}:{name}")
         })
         .collect();
     require_ignored_prerequisites(&format!("requires: {}", names.join(", ")));
@@ -120,10 +120,10 @@ pub fn parse_prerequisites(reason: &str) -> Result<Vec<(&str, &str)>, String> {
     names
         .split(", ")
         .map(|item| {
-            let (kind, name) = item
+            let (type_, name) = item
                 .split_once(':')
                 .ok_or_else(|| format!("invalid prerequisite: {item:?}"))?;
-            let valid = match kind {
+            let valid = match type_ {
                 "env" => {
                     name.starts_with(|c: char| c.is_ascii_uppercase() || c == '_')
                         && name
@@ -139,7 +139,7 @@ pub fn parse_prerequisites(reason: &str) -> Result<Vec<(&str, &str)>, String> {
                 _ => false,
             };
             if valid {
-                Ok((kind, name))
+                Ok((type_, name))
             } else {
                 Err(format!("invalid prerequisite: {item:?}"))
             }
@@ -153,8 +153,8 @@ pub fn require_ignored_prerequisites(reason: &str) {
     let path = std::env::var_os("PATH").unwrap_or_default();
     let missing: Vec<String> = names
         .into_iter()
-        .filter_map(|(kind, name)| {
-            if kind == "env" {
+        .filter_map(|(type_, name)| {
+            if type_ == "env" {
                 std::env::var_os(name)
                     .is_none_or(|value| value.is_empty())
                     .then(|| format!("environment variable {name}"))

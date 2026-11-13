@@ -78,9 +78,9 @@ A fresh install creates the platform schema, including the control database, fro
 Installation records a digest of the full schema SQL. Apply refuses a changed or missing digest and requires a database reset.
 Migrations are deferred until development is stable and return then with a smaller design.
 
-The provisioning owner locks and compares environment identity before refreshing its `env_key` projection.
-That refresh clears the instance claim even when the suffix stays unchanged.
-The developer coordinator claims an instance with one update and refuses a missing projection.
+The provisioning owner locks and compares environment identity before refreshing its `project_env_key` projection.
+That refresh clears the instance assignment even when the suffix stays unchanged.
+The developer coordinator assigns an instance with one update and refuses a missing projection.
 
 Workflow authorship validates the graph against the environment’s serving release.
 The application tests exercise effects through runtime interfaces.
@@ -92,7 +92,7 @@ Sealing prevents later changes to its content.
 Conflicting content refuses, and exact retries retain their original facts.
 
 Publication mints one route for each attachment that targets a route.
-The route carries the contract kind of its operation, which publication reads from the generated `operation.json` of the package.
+The route carries the contract type of its operation, which publication reads from the generated `operation.json` of the package.
 Generation derives the route input schema of each generated CRUD operation from its input contract, and writes it to `generated/routes/<model>/<action>.json`.
 Generation also writes the route entry and the declaration entry of each generated operation, under `generated/publication/`.
 The authored `publication/attachments.json` and component declaration carry only the custom operations, and each reader reads both files, as [data access](data-access.md#generated-operations) states.
@@ -130,7 +130,7 @@ Its optional `client` names a package id and an immutable web artifact digest.
 Analysis makes sure that the artifact matches its digest and its package coordinate appears in the release.
 Without `client`, the host serves no application web client.
 Revision values keep `webClients` for package ids and `webDigests` for web artifact digests.
-Apply reads the web artifact without claiming it, so environments can share one artifact.
+Apply reads the web artifact without owning it, so environments can share one artifact.
 `wamn web upload` copies that artifact’s `dist/` to the shared digest root.
 It writes files create-only, then the org and project configuration, then the index.
 An existing index marks completion, so another upload writes nothing.
@@ -173,7 +173,7 @@ Provisioning writes the apply URL to the `platform/wamn-apply` Secret.
 4. Write: Recover any pending Helm operation. Always run `helm upgrade --install` with `--wait`, the readiness budget of the policy, and `--rollback-on-failure`.
 5. Readiness: Wait until each WorkloadDeployment of the release reports `Ready`.
 6. Drain: Wait until the live set is exactly the declared release. Name each stranded run and stop.
-7. Contract: Remove the bindings of releases outside the live set. Disable instances that the document no longer names. Apply a declared floor.
+7. Contract: Remove the bindings of releases outside the live set. Disable instances that the document no longer names. Apply a declared minimum.
 
 During analysis, apply reads each bound connection's type and the target type from the registry.
 For an exclusive connection on a cloud target, the body from `WAMN_RELEASE_HOST_GROUP` must name `replicas: 1`.
@@ -217,7 +217,7 @@ The platform UI reads status through a control operation with a read-only Servic
 
 - Every step is safe to run twice. A missing object is a finished step, not a refusal.
 
-- The registry rows go last. Until they go, a second run can still read the instance suffix and the tenant.
+- The registry rows go last. Until they go, a second run can still read the instance suffix and the project.
 
 - The database and its CDC objects go before any role. The control rows go before the registry rows.
 
@@ -238,7 +238,7 @@ The platform UI reads status through a control operation with a read-only Servic
 ### Resources kept after deletion
 
 - The org, the project, `identity.project_roles` and every user principal.
-- The control-family generation roles and their `author_login_tenants` rows. They belong to the triple, not the instance, and a new provision of the triple uses the same names.
+- The control-family generation roles and their `author_login_projects` rows. They belong to the triple, not the instance, and a new provision of the triple uses the same names.
 
 ## Organization membership and administration
 
@@ -270,7 +270,7 @@ Revoking `project-admin` removes it in one project.
 Neither revoke removes ordinary memberships or authored roles.
 A revoke of a lower grant refuses while a higher grant covers it. The holder must revoke the higher grant first.
 
-Deactivating a user in an org removes four kinds of access, from the leaves upward.
+Deactivating a user in an org removes four types of access, from the leaves upward.
 They are the application user rows, the environment memberships, the project roles, and the org roles of that org.
 It then marks the membership `inactive`.
 The global principal stays, and access in other orgs does not change.
@@ -294,13 +294,13 @@ The services compose these layers.
 
 A route calls one component export through the route path. A wiring and queued work use the [execution driver](execution.md) in `wamn-workflow`.
 The driver coordinates graph decisions. The engine owns dispatch and workload loading, and the host owns invocation authority.
-The workflow crate owns durable queue claims and settlement through `RunStore`.
+The workflow crate owns durable queue leases and settlement through `RunStore`.
 The [capability owners](capabilities.md) supply database, HTTP, object storage, and event access without guest credentials.
 
 The developer host also loads unpublished components and admitted facts from local files.
-It requires the expected file digests and a database marker tied to the `env_key`, environment, and physical database creation.
+It requires the expected file digests and a database marker tied to the `project_env_key`, environment, and physical database creation.
 Local facts supply released wiring, connection requirements, and binding selections without changing the frozen catalog records.
-The normal runtime still owns tenant authority, run claims, credential generations, and effects.
+The normal runtime still owns project authority, run leases, credential generations, and effects.
 
 ## Cloud providers
 

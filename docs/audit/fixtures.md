@@ -15,7 +15,7 @@ Its cluster execution remains unverified until the owner-approved run.
 | --- | --- |
 | .1 one shared cluster fixture | e5113bf99, b7e0f8472, 54045d4ee, 7841cb622, ebc0f9d16, 7988ead75 |
 | .2 kept snapshot files | 29130418d |
-| .3 fixture upgrade support, floors, environment file loader | abec40b9f |
+| .3 fixture upgrade support, minimums, environment file loader | abec40b9f |
 
 The branch changes 94 files: 3,760 lines added and 4,831 lines removed.
 
@@ -23,7 +23,7 @@ The branch changes 94 files: 3,760 lines added and 4,831 lines removed.
 
 The `Cluster` type in `test-support/infrastructure/cluster.rs` owns kind cluster creation, candidate image import, operator installation, inspection and teardown. The Receiving, WMS, RC and identity JWKS journeys and the Kubernetes Job runner call it from Rust.
 
-These files are deleted: `tools/receiving-cluster-journey-run`, `tools/wms-cluster-journey-run`, `tools/rc-gate-run`, `tests/integration/src/rc/Dockerfile`, `deploy/gates/m1-postgres.Dockerfile` (its only caller was the RC builder), `tools/kubernetes-gate-run`, `tools/identity-jwks-journey-run` and `tools/kind-cluster-delete-test`. `tools/delivery-owned` keeps `build-native`, `receiving`, `wms` and `remove-kept`. `remove-kept` runs the new `wamn-test-cluster` binary.
+These files are deleted: `tools/receiving-cluster-journey-run`, `tools/wms-cluster-journey-run`, `tools/rc-acceptance-test-run`, `tests/integration/src/rc/Dockerfile`, `deploy/acceptance-tests/m1-postgres.Dockerfile` (its only caller was the RC builder), `tools/kubernetes-acceptance-test-run`, `tools/identity-jwks-journey-run` and `tools/kind-cluster-delete-test`. `tools/delivery-owned` keeps `build-native`, `receiving`, `wms` and `remove-kept`. `remove-kept` runs the new `wamn-test-cluster` binary.
 
 The lane mapped every assertion of every deleted script to a Rust test. The map is in /var/tmp/wamn-fixtures/i1-report.txt, section 2. All 14 Job verdict cases stay, and four new cases cover malformed specifications and command failure classes. The teardown cases of `kind-cluster-delete-test` are now unit tests of the fixture with a fake command runner.
 
@@ -56,7 +56,7 @@ Main had already deleted `flow-http.yaml`, `materializer.yaml` and `wms-material
 
 ## Issue 3
 
-`write_upgrade_package` had no caller, so it is deleted. The `floors` field had one writer and no reader. Root decided to delete it everywhere: the Rust field, its test, its render, the KCL declaration and the fixture lines. `ENVIRONMENTS`, `EnvironmentFile::path` and `EnvironmentFile::read` go with their two tests. `EnvironmentFile` stays, because `platform/build.rs` and `platform/packages.rs` read it. `predecessor_version` stays in every `wamn.k`.
+`write_upgrade_package` had no caller, so it is deleted. The `minimums` field had one writer and no reader. Root decided to delete it everywhere: the Rust field, its test, its render, the KCL declaration and the fixture lines. `ENVIRONMENTS`, `EnvironmentFile::path` and `EnvironmentFile::read` go with their two tests. `EnvironmentFile` stays, because `platform/build.rs` and `platform/packages.rs` read it. `predecessor_version` stays in every `wamn.k`.
 
 ## Test results
 

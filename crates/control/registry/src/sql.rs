@@ -12,7 +12,7 @@
 /// `text` — the shared pool for a pooled org, `NULL` for a dedicated org whose
 /// clusters are derived, D18 [`cluster_of`](crate::cluster_of)).
 ///
-/// The placement-kind CHECK and the `pooled ⟺ pool_cluster` structural CHECK are
+/// The placement-type CHECK and the `pooled ⟺ pool_cluster` structural CHECK are
 /// enforced by the schema, not re-validated here — a bad row is rejected by the DB.
 pub fn upsert_org_sql() -> &'static str {
     "INSERT INTO registry.orgs (id, placement_type, pool_cluster) \
@@ -31,7 +31,7 @@ pub fn select_org_placement_sql() -> &'static str {
     "SELECT placement_type, pool_cluster FROM registry.orgs WHERE id = $1"
 }
 
-// --- env policies (wamn-8df.3; org-scoped by wamn-8df.4) --------------------
+// --- env policies (wamn-8df.3; org-targeted by wamn-8df.4) --------------------
 //
 // The per-org [`EnvPolicy`](crate::EnvPolicy) rows (D18): sizing / HA / backup /
 // recovery-domain per (org, env slug). `recovery_domain` is `jsonb`; the reads

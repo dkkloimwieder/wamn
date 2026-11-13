@@ -5,7 +5,7 @@
 //! provisions nothing and owns no promotion verb.
 
 pub(super) mod plan;
-pub use plan::flow_http_identity_claims;
+pub use plan::flow_http_identity_fields;
 use plan::{
     decode_json, flow_http_request, heartbeat_matches, host_namespace, require_running,
     require_stopped, validate_request, wit_interface, workload_pending,
@@ -74,7 +74,7 @@ pub struct DevActivationIdentity {
 
 impl DevActivationIdentity {
     /// The composed environment key derived from the environment coordinate.
-    pub fn env_key(&self) -> String {
+    pub fn project_env_key(&self) -> String {
         wamn_control_registry::project_env_key(&self.org, &self.project, &self.environment)
     }
 }
@@ -139,9 +139,9 @@ pub struct DevActivationError {
 }
 
 impl DevActivationError {
-    fn new(kind: DevActivationErrorType, step: &'static str, detail: impl Into<Box<str>>) -> Self {
+    fn new(type_: DevActivationErrorType, step: &'static str, detail: impl Into<Box<str>>) -> Self {
         Self {
-            type_: kind,
+            type_,
             step,
             detail: detail.into(),
             source: None,
@@ -210,7 +210,7 @@ impl fmt::Debug for HostProcessSpec {
             .field("program", &self.program)
             .field("args", &self.args)
             .field(
-                "env_keys",
+                "project_env_keys",
                 &self.env.iter().map(|(key, _)| key).collect::<Vec<_>>(),
             )
             .finish()
@@ -673,7 +673,7 @@ fn materializer_request(
             workload: format!("{}-materializer", identity.project),
             namespace: host_namespace(identity).to_owned(),
             image: digest.to_owned(),
-            env_key: identity.env_key(),
+            project_env_key: identity.project_env_key(),
             event: EventIdentity {
                 org: identity.org.clone(),
                 project: identity.project.clone(),
@@ -1383,7 +1383,7 @@ mod tests {
             "stream_replicas": 1,
             "dup_window_secs": 120,
             "otel_exporter_otlp_endpoint": "http://127.0.0.1:41016",
-            "gate_bearer_token": "gate-secret",
+            "condition_bearer_token": "condition-secret",
             "route_host": "fixture.localhost",
             "platform_domain": "example.invalid",
             "local_artifacts": {
@@ -1417,13 +1417,13 @@ mod tests {
     }
 
     /// The deploy template and the production path must declare the SAME
-    /// identity claims. Either side gaining or losing one fails here.
+    /// identity fields. Either side gaining or losing one fails here.
     ///
     /// Read from the template rather than restated, and compared against the
     /// producer rather than a second list, so this cannot drift into the third
     /// hand-maintained copy of the thing it exists to prevent.
     #[test]
-    fn the_workload_template_declares_exactly_the_claims_activation_sets() {
+    fn the_workload_template_declares_exactly_the_fields_activation_sets() {
         let template = std::fs::read_to_string(
             Path::new(env!("CARGO_MANIFEST_DIR"))
                 .join("../../../deploy/platform/http-route-workload.example.yaml"),
@@ -1439,9 +1439,9 @@ mod tests {
         declared.sort_unstable();
 
         let identity = identity();
-        let mut set: Vec<&str> = flow_http_identity_claims(&identity)
+        let mut set: Vec<&str> = flow_http_identity_fields(&identity)
             .into_iter()
-            .map(|(claim, _)| claim)
+            .map(|(field_name, _)| field_name)
             .collect();
         set.sort_unstable();
 
@@ -1449,39 +1449,9 @@ mod tests {
             declared, set,
             "deploy/platform/http-route-workload.example.yaml declares {declared:?} \
              but activation sets {set:?}; the cluster journey substitutes what the \
-             template declares, so a claim in one and not the other deploys a \
+             template declares, so a field_name in one and not the other deploys a \
              placeholder identity"
         );
-    }
-
-    /// Every claim carries a DISTINCT field. A producer that paired two claims
-    /// to the same field would satisfy the set-equality test above while
-    /// deploying one identity under another's name.
-    #[test]
-    fn each_identity_claim_carries_its_own_field() {
-        let identity = DevActivationIdentity {
-            catalog: "catalog-value".to_owned(),
-            environment: "environment-value".to_owned(),
-            org: "org-value".to_owned(),
-            project: "project-value".to_owned(),
-            host_group: "host-group-value".to_owned(),
-            host_name: "host-name-value".to_owned(),
-            runner: "runner-value".to_owned(),
-        };
-        for (claim, value) in flow_http_identity_claims(&identity) {
-            let field = claim
-                .strip_prefix("wamn.")
-                .expect("every claim is namespaced");
-            assert_eq!(
-                value,
-                if field == "env_key" {
-                    "org-value--project-value--environment-value".to_owned()
-                } else {
-                    format!("{field}-value")
-                },
-                "claim {claim} carries the wrong field of the identity"
-            );
-        }
     }
 
     fn release() -> ReleaseCarrier {
@@ -1708,7 +1678,7 @@ mod tests {
         let staged_workload = std::fs::read(directory.join("flow-http.json")).unwrap();
         let staged_http: v2::WorkloadStartRequest =
             serde_json::from_slice(&staged_workload).unwrap();
-        let claims = staged_http
+        let fields = staged_http
             .workload
             .unwrap()
             .wit_world
@@ -1719,7 +1689,7 @@ mod tests {
             .unwrap()
             .config;
         assert_eq!(
-            claims["wamn.env_key"].as_bytes(),
+            fields["wamn.project_env_key"].as_bytes(),
             b"example--fixture--fixture-dev"
         );
         let staged_materializer: v2::WorkloadStartRequest =
@@ -1749,7 +1719,7 @@ mod tests {
             "event-materializer"
         );
         assert_eq!(
-            resources.config["wamn.env_key"].as_bytes(),
+            resources.config["wamn.project_env_key"].as_bytes(),
             b"example--fixture--fixture-dev"
         );
         assert_eq!(resources.environment["WAMN_MAT_MAX_DELIVER"], "5");

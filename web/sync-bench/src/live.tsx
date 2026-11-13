@@ -24,14 +24,14 @@ import {
 import { packagingFeed } from "./generated/wamn_wms/packaging.js";
 import { LOCATION_SHAPE_DIGEST } from "./generated/wamn_wms/location.js";
 import { locationFeed } from "./generated/wamn_wms/location.js";
-import { packagingOffline, packagingScope } from "./packaging-offline.js";
+import { packagingOffline, packagingFilter } from "./packaging-offline.js";
 import type { StatusFilter } from "./order.js";
 import { packagingAddress } from "./packaging-writes.js";
 import { PackagingScreen } from "./packaging-screen.js";
 import { canReload } from "./update.js";
 import "./style.css";
 
-/** The audience in the route scopes the session and the user-owned outbox. */
+/** The audience in the route filters the session and the user-owned outbox. */
 const address = packagingAddress(location.pathname);
 const pollMs = Number(new URLSearchParams(location.search).get("poll") ?? 10_000);
 const lastUser = savedUser(address.application, address.environment);
@@ -82,12 +82,12 @@ function SessionPackaging(props: { userId: string; signedIn: boolean; onRenew: (
   const [filter, setFilter] = createSignal<StatusFilter>(
     selected === "available" || selected === "held" || selected === "consumed" ? selected : "all",
   );
-  function ScopedPackaging(props: { filter: StatusFilter }) {
-    const scope = props.filter;
+  function FilteredPackaging(props: { filter: StatusFilter }) {
+    const filter = props.filter;
     const offline = packagingOffline({
       packaging: packagingFeed(transport, Infinity),
       location: locationFeed(transport, Infinity),
-      scope: packagingScope(scope),
+      filter: packagingFilter(filter),
       persistence,
       pollMs,
     });
@@ -96,7 +96,7 @@ function SessionPackaging(props: { userId: string; signedIn: boolean; onRenew: (
       <PackagingScreen
         collection={offline.packaging.c}
         outbox={o}
-        filter={scope}
+        filter={filter}
         offline={offline}
         signedIn={signedIn()}
         updateAvailable={waitingReload() !== undefined}
@@ -136,7 +136,7 @@ function SessionPackaging(props: { userId: string; signedIn: boolean; onRenew: (
       </select>
       <Loading>
         <Show when={filter()} keyed>
-          {(status) => <ScopedPackaging filter={status} />}
+          {(status) => <FilteredPackaging filter={status} />}
         </Show>
       </Loading>
     </div>

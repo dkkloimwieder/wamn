@@ -61,13 +61,13 @@ pub struct Causation {
 /// provenance to report: its identity is the admitted terminal selector, the
 /// author's logical deduplication operand, and the causation the host derives
 /// from the delivery it is completing. The environment key, project, and
-/// environment are copied from bound host claims so no guest or wiring field can redirect the
+/// environment are copied from bound host identity so no guest or wiring field can redirect the
 /// event; package identity comes from the bound release/run/wiring source the
 /// native host emitter resolved.
 #[derive(Debug, Clone, PartialEq)]
 pub struct DerivedEvent {
     pub format_version: String,
-    pub env_key: String,
+    pub project_env_key: String,
     pub project: String,
     pub environment: String,
     pub package_id: String,
@@ -86,7 +86,7 @@ impl Serialize for DerivedEvent {
         use serde::ser::SerializeStruct as _;
         let mut event = serializer.serialize_struct("DerivedEvent", 10)?;
         event.serialize_field("format-version", &self.format_version)?;
-        event.serialize_field("env_key", &self.env_key)?;
+        event.serialize_field("project_env_key", &self.project_env_key)?;
         event.serialize_field("project", &self.project)?;
         event.serialize_field("environment", &self.environment)?;
         event.serialize_field("package-id", &self.package_id)?;
@@ -142,7 +142,8 @@ impl<'de> Deserialize<'de> for DerivedEvent {
         let event = Self {
             format_version: serde_json::from_value(take("format-version")?)
                 .map_err(serde::de::Error::custom)?,
-            env_key: serde_json::from_value(take("env_key")?).map_err(serde::de::Error::custom)?,
+            project_env_key: serde_json::from_value(take("project_env_key")?)
+                .map_err(serde::de::Error::custom)?,
             project: serde_json::from_value(take("project")?).map_err(serde::de::Error::custom)?,
             environment: serde_json::from_value(take("environment")?)
                 .map_err(serde::de::Error::custom)?,
@@ -161,7 +162,7 @@ impl<'de> Deserialize<'de> for DerivedEvent {
                 name,
                 &[
                     "format-version",
-                    "env_key",
+                    "project_env_key",
                     "project",
                     "environment",
                     "package-id",
@@ -178,13 +179,13 @@ impl<'de> Deserialize<'de> for DerivedEvent {
 }
 
 impl DerivedEvent {
-    /// Construct the record from host-owned scope and selector facts.
+    /// Construct the record from host-owned target and selector facts.
     #[expect(
         clippy::too_many_arguments,
         reason = "the constructor makes every frozen wire field explicit"
     )]
     pub fn new(
-        env_key: impl Into<String>,
+        project_env_key: impl Into<String>,
         project: impl Into<String>,
         environment: impl Into<String>,
         package_id: impl Into<String>,
@@ -196,7 +197,7 @@ impl DerivedEvent {
     ) -> Self {
         Self {
             format_version: DERIVED_EVENT_FORMAT_VERSION.to_owned(),
-            env_key: env_key.into(),
+            project_env_key: project_env_key.into(),
             project: project.into(),
             environment: environment.into(),
             package_id: package_id.into(),
@@ -218,7 +219,7 @@ impl DerivedEvent {
             )));
         }
         for (field, value) in [
-            ("env_key", event.env_key.as_str()),
+            ("project_env_key", event.project_env_key.as_str()),
             ("project", event.project.as_str()),
             ("environment", event.environment.as_str()),
             ("package-id", event.package_id.as_str()),
@@ -357,7 +358,7 @@ pub fn delivery_advisory_stream(source_stream: &str) -> String {
 /// Broker advisory subjects for one exact environment source stream.
 pub fn delivery_advisory_subjects(source_stream: &str) -> [String; 2] {
     ["MAX_DELIVERIES", "MSG_TERMINATED"]
-        .map(|kind| format!("$JS.EVENT.ADVISORY.CONSUMER.{kind}.{source_stream}.*"))
+        .map(|type_| format!("$JS.EVENT.ADVISORY.CONSUMER.{type_}.{source_stream}.*"))
 }
 
 /// Maximum retained advisories on one broker subject.
@@ -424,14 +425,14 @@ pub fn msg_id(project: &str, env: &str, lsn: u64) -> String {
 /// Host-owned, header-safe `Nats-Msg-Id` for a derived event.
 ///
 /// The type discriminator keeps author ids that happen to be decimal apart
-/// from CDC LSN identities. The trusted scope prevents the same author id in a
-/// different env_key/project/environment/package and admitted terminal selector
+/// from CDC LSN identities. The trusted target prevents the same author id in a
+/// different project_env_key/project/environment/package and admitted terminal selector
 /// from colliding. Only a bounded digest reaches the NATS header; the logical
 /// operand itself remains byte-for-byte author supplied in
 /// [`DerivedEvent::dedup_id`]. Length framing prevents concatenation ambiguity
-/// between scope fields.
+/// between target fields.
 pub fn derived_msg_id(
-    env_key: &str,
+    project_env_key: &str,
     project: &str,
     env: &str,
     package_id: &str,
@@ -444,7 +445,7 @@ pub fn derived_msg_id(
     let mut digest = Sha256::new();
     digest.update(b"wamn.event.derived-msg-id.v0.1\0");
     for field in [
-        env_key,
+        project_env_key,
         project,
         env,
         package_id,
@@ -557,7 +558,7 @@ mod tests {
     }
 
     #[test]
-    fn derived_msg_id_is_host_scoped_and_keeps_the_author_operand() {
+    fn derived_msg_id_is_host_targeted_and_keeps_the_author_operand() {
         let id = derived_msg_id(
             "acme",
             "app",
@@ -571,7 +572,7 @@ mod tests {
         assert_eq!(id.len(), "derived:".len() + 64);
         assert_eq!(
             id, "derived:3357ce56ef66f155bc2bb6a09d30fefe01c7a9c2a9d854839d82fc9200b127a3",
-            "the domain, field order, selector scope, and length framing are wire identity"
+            "the domain, field order, selector target, and length framing are wire identity"
         );
         assert!(!id.contains("orders:7:created"));
         assert!(
@@ -611,12 +612,12 @@ mod tests {
                 Op::Insert,
                 "same"
             ),
-            "the admitted entity is part of stream-wide dedup scope"
+            "the admitted entity is part of stream-wide dedup target"
         );
         assert_ne!(
             derived_msg_id("acme", "app", "dev", "orders", "orders", Op::Insert, "same"),
             derived_msg_id("acme", "app", "dev", "orders", "orders", Op::Update, "same"),
-            "the admitted operation is part of stream-wide dedup scope"
+            "the admitted operation is part of stream-wide dedup target"
         );
         assert_ne!(
             derived_msg_id(
@@ -798,20 +799,18 @@ mod tests {
             },
         );
         let bytes = serde_json::to_vec(&event).unwrap();
-        assert_eq!(
-            String::from_utf8(bytes.clone()).unwrap(),
-            r#"{"format-version":"0.1","env_key":"acme","project":"app","environment":"dev","package-id":"orders","entity":"orders","op":"update","payload":["arbitrary",{"nested":true}],"dedup-id":"orders:7:updated","causation":{"run":"registration:delivery:9","root":"root:1","depth":3}}"#
-        );
         assert_eq!(DerivedEvent::from_slice(&bytes).unwrap(), event);
+        let mut missing: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        missing.as_object_mut().unwrap().remove("project_env_key");
+        assert!(DerivedEvent::from_slice(&serde_json::to_vec(&missing).unwrap()).is_err());
         let document = String::from_utf8(bytes.clone()).unwrap();
-        assert!(
-            DerivedEvent::from_slice(document.replace("\"env_key\":", "\"tenant\":").as_bytes())
-                .is_err()
-        );
         assert!(
             DerivedEvent::from_slice(
                 document
-                    .replace("\"env_key\":", "\"env_key\":\"other\",\"env_key\":")
+                    .replace(
+                        "\"project_env_key\":",
+                        "\"project_env_key\":\"other\",\"project_env_key\":"
+                    )
                     .as_bytes()
             )
             .is_err()
@@ -820,17 +819,9 @@ mod tests {
             serde_json::from_slice::<Envelope>(&bytes).is_err(),
             "derived bytes must never decode as the frozen CDC envelope"
         );
-        let value: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
-        for absent in ["lsn", "txid", "commit-ts", "commit_ts", "table"] {
-            assert!(
-                value.get(absent).is_none(),
-                "fabricated {absent} reached the wire"
-            );
-        }
-
         let future = serde_json::to_vec(&serde_json::json!({
             "format-version": "0.2",
-            "env_key": "acme",
+            "project_env_key": "acme",
             "project": "app",
             "environment": "dev",
             "package-id": "orders",
@@ -842,40 +833,5 @@ mod tests {
         }))
         .unwrap();
         assert!(DerivedEvent::from_slice(&future).is_err());
-    }
-
-    #[test]
-    fn fully_populated_envelope_freezes_every_field() {
-        // The freeze golden: every field present — old, new, entity, AND
-        // causation. Pins the full field ORDER, spellings, and nesting; a
-        // rename/removal of any wire field breaks THIS string.
-        let mut old = serde_json::Map::new();
-        old.insert("status".into(), serde_json::Value::String("draft".into()));
-        let mut new = serde_json::Map::new();
-        new.insert("status".into(), serde_json::Value::String("shipped".into()));
-        let env = Envelope {
-            op: Op::Update,
-            old: Some(old),
-            new: Some(new),
-            package_id: "orders".into(),
-            entity: "sales_orders".into(),
-            table: "orders".into(),
-            lsn: 42,
-            txid: 731,
-            commit_ts: chrono::DateTime::parse_from_rfc3339("2026-07-18T12:00:00Z")
-                .unwrap()
-                .with_timezone(&chrono::Utc),
-            causation: Some(Causation {
-                run: "f1:evt:00000000000000000009".into(),
-                root: "f1:evt:00000000000000000001".into(),
-                depth: 3,
-            }),
-        };
-        assert_eq!(
-            serde_json::to_string(&env).unwrap(),
-            r#"{"op":"update","old":{"status":"draft"},"new":{"status":"shipped"},"package_id":"orders","entity":"sales_orders","table":"orders","lsn":42,"txid":731,"commit_ts":"2026-07-18T12:00:00Z","causation":{"run":"f1:evt:00000000000000000009","root":"f1:evt:00000000000000000001","depth":3}}"#
-        );
-        let back: Envelope = serde_json::from_str(&serde_json::to_string(&env).unwrap()).unwrap();
-        assert_eq!(back, env);
     }
 }

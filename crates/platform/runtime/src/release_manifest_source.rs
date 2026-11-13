@@ -151,7 +151,7 @@ impl fmt::Debug for ReleaseManifestFetchError {
         // safe to log without emitting response bodies or future auth context.
         formatter
             .debug_struct("ReleaseManifestFetchError")
-            .field("kind", &self.type_)
+            .field("type", &self.type_)
             .field("reference", &self.reference)
             .field("refusal", &self.refusal)
             .finish_non_exhaustive()

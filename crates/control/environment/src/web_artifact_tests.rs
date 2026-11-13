@@ -52,14 +52,14 @@ async fn two_environments_with_the_same_web_digest_share_one_completed_upload() 
     );
     let before = store.list(None).try_collect::<Vec<_>>().await.unwrap();
     assert_eq!(before.len(), 3);
-    let scope = store
+    let target = store
         .get(&object_store::path::Path::from(format!(
             "{root}/config.json"
         )))
         .await
         .unwrap();
     assert_eq!(
-        scope.bytes().await.unwrap().as_ref(),
+        target.bytes().await.unwrap().as_ref(),
         br#"{"org":"acme","project":"web-fixture"}"#
     );
     let (web, org) = upload(&second);
