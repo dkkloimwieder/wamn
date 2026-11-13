@@ -5737,6 +5737,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "wamn-build"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "cargo_metadata",
+ "proc-macro2",
+ "quote",
+ "serde",
+ "serde_json",
+ "syn 3.0.6",
+ "tempfile",
+ "tokio",
+ "toml 1.1.6+spec-1.1.0",
+ "wamn-catalog",
+ "wamn-compiler",
+ "wamn-component-composer",
+ "wamn-digest",
+ "wat",
+]
+
+[[package]]
 name = "wamn-catalog"
 version = "0.1.0"
 dependencies = [
@@ -5789,21 +5810,20 @@ name = "wamn-compiler"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "base64 0.22.1",
  "boon",
  "pg_query",
  "postgres-protocol",
- "proptest",
  "serde",
  "serde_json",
  "serde_yaml",
  "sqlx",
  "syn 3.0.6",
+ "tempfile",
  "tokio",
  "tokio-postgres",
+ "toml 1.1.6+spec-1.1.0",
  "url",
  "wamn-catalog",
- "wamn-component-composer",
  "wamn-digest",
  "wamn-fixture-package",
  "wamn-number-pattern",
@@ -5812,7 +5832,6 @@ dependencies = [
  "wamn-schema-control",
  "wamn-schema-introspection",
  "wamn-test-postgres",
- "wat",
  "wit-parser 0.254.2",
 ]
 
@@ -5821,7 +5840,6 @@ name = "wamn-component-composer"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "clap",
  "serde_json",
  "sha2 0.11.0",
  "wac-graph 0.12.0",
@@ -5868,6 +5886,7 @@ dependencies = [
  "syn 3.0.6",
  "tokio",
  "url",
+ "wamn-build",
  "wamn-catalog",
  "wamn-compiler",
  "wamn-component-policy",
@@ -5934,6 +5953,7 @@ dependencies = [
  "tracing-subscriber",
  "url",
  "wamn-broker",
+ "wamn-build",
  "wamn-catalog",
  "wamn-compiler",
  "wamn-control-provision",
@@ -5984,6 +6004,7 @@ dependencies = [
  "url",
  "uuid",
  "wamn-broker",
+ "wamn-build",
  "wamn-catalog",
  "wamn-compiler",
  "wamn-component-composer",
@@ -6124,6 +6145,7 @@ dependencies = [
  "url",
  "uuid",
  "wamn-broker",
+ "wamn-build",
  "wamn-catalog",
  "wamn-compiler",
  "wamn-control-provision",
@@ -6494,6 +6516,7 @@ dependencies = [
  "tokio-postgres",
  "url",
  "wamn-broker",
+ "wamn-build",
  "wamn-catalog",
  "wamn-compiler",
  "wamn-component-composer",
@@ -8486,6 +8509,7 @@ dependencies = [
  "toml 1.1.6+spec-1.1.0",
  "url",
  "uuid",
+ "wamn-build",
  "wamn-compiler",
  "wamn-component-composer",
  "wamn-dev-control",

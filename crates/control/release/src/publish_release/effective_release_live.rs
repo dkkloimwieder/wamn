@@ -35,7 +35,7 @@ struct PackageInput {
     id: &'static str,
     version: &'static str,
     root: PathBuf,
-    component_declaration: PathBuf,
+    component: &'static str,
     component_bytes: PathBuf,
     expected_component_digest: Option<String>,
 }
@@ -60,7 +60,7 @@ fn packages() -> [PackageInput; 2] {
         PackageInput {
             id: wamn_fixture_package::PACKAGE_ID,
             version: package_version(),
-            component_declaration: base.join("publication/components/fixture.json.in"),
+            component: "fixture",
             root: base,
             component_bytes: std::env::var_os(BASE_WASM_ENV)
                 .map(PathBuf::from)
@@ -70,8 +70,7 @@ fn packages() -> [PackageInput; 2] {
         PackageInput {
             id: wamn_fixture_package::OVERLAY_PACKAGE_ID,
             version: package_version(),
-            component_declaration: overlay
-                .join("publication/components/fixture_overlay.json.in"),
+            component: "fixture_overlay",
             root: overlay,
             component_bytes: std::env::var_os(OVERLAY_WASM_ENV)
                 .map(PathBuf::from)
@@ -93,13 +92,12 @@ fn admit_components(inputs: &[PackageInput]) -> (BTreeMap<String, String>, Relea
                 .unwrap_or_else(|error| {
                     panic!("read {}@{} base pins: {error}", input.id, input.version)
                 });
-        let declaration = wamn_package_control::component_declaration::render_declaration_document(
-            &input.component_declaration,
+        let declaration = wamn_package_control::component_declaration::render_package_declaration(
+            &input.root,
+            input.component,
             PROJECT_ENV_KEY,
         )
-        .unwrap_or_else(|error| {
-            panic!("render {}: {error}", input.component_declaration.display())
-        });
+        .unwrap_or_else(|error| panic!("render {}: {error}", input.component));
         let declaration: ComponentDeclaration = serde_json::from_value(declaration)
             .expect("the package-owned component declaration is strict");
         let bytes = std::fs::read(&input.component_bytes)

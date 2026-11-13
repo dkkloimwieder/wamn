@@ -21,7 +21,6 @@ pub struct DevUpRequest {
     pub route_host: String,
     pub platform_domain: String,
     pub flow_http_component: PathBuf,
-    pub local_bindings: Option<PathBuf>,
     pub host_binary: PathBuf,
     /// The built platform UI directory served beside application bundles.
     pub platform_ui: PathBuf,
@@ -58,11 +57,6 @@ pub async fn provision_environment(mut args: DevUpRequest) -> anyhow::Result<Pat
     }
     let local_artifacts = super::config::LocalArtifacts {
         directory: args.root.canonicalize()?.join("local-artifacts"),
-        bindings: args
-            .local_bindings
-            .as_ref()
-            .map(|path| path.canonicalize())
-            .transpose()?,
         flow_http_component: args.flow_http_component.canonicalize().with_context(|| {
             format!(
                 "resolve local flow-http component {}",

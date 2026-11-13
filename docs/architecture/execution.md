@@ -642,7 +642,7 @@ An event trigger is a row: `source_package` and `entity` (one captured model; th
 
 A package ships no workflows and no triggers; a custom operation's `registration` leaves `wamn.k`, and the operation stays. The two shipped today (WMS label, NetSuite pull) become environment data authored in their environments.
 
-Interim exception: `publication/wirings` selects node build inputs and connection aliases only. Tests read those files to author environment workflows. These files never supply released workflows, catalog wirings, attachments or runs.
+Packages ship only their own components. The platform build owns palette guests. Test workflow examples live under the application test directories; environment authorship owns the running workflows.
 
 ## Results and effects
 

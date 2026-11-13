@@ -35,12 +35,6 @@
       "additionalProperties": false,
       "description": "Explicit local candidate files owned by one disposable development session.",
       "properties": {
-        "bindings": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
         "directory": {
           "type": "string"
         },

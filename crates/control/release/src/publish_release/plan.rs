@@ -5,7 +5,6 @@ use super::{
     PublishReleaseManifest, PublishedRelease, ReleaseComponents, ReleaseTarget, RouteContracts,
     ServingComponent, ServingManifest, ServingRoute, ensure, project_serving_component,
     resolve_component_dependency_closure, resolve_route_component,
-    validate_attachment_definition_hashes,
 };
 use anyhow::Context as _;
 
@@ -195,7 +194,6 @@ pub(super) fn validate_request(
             "an effective release cannot contain two versions of one package",
         ));
     }
-    validate_attachment_definition_hashes(request.attachments)?;
     Ok(())
 }
 

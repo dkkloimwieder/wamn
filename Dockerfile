@@ -54,7 +54,7 @@ RUN --mount=type=cache,id=wamn-root-cargo-registry,target=/usr/local/cargo/regis
     --mount=type=cache,id=wamn-root-cargo-git,target=/usr/local/cargo/git,sharing=locked \
     --mount=type=cache,id=wamn-root-target-native-${WAMN_CHECKOUT_KEY},target=/build/target,sharing=locked \
     test -n "$WAMN_CHECKOUT_KEY" \
- && cargo build --locked --release -p wamn-host -p wamn-runtime -p wamn-ctl -p wamn-cdc-reader -p wamn-identity -p wamn-component-composer \
+ && cargo build --locked --release -p wamn-host -p wamn-runtime -p wamn-ctl -p wamn-cdc-reader -p wamn-identity \
  && cargo build --locked --release -p wamn-ctl --features ops --bin wamn-ctl-ops \
  && install -D -m 0755 target/release/wamn-host /native-output/wamn-host \
  && install -D -m 0755 target/release/docker-credential-wamn /native-output/docker-credential-wamn \
@@ -62,8 +62,7 @@ RUN --mount=type=cache,id=wamn-root-cargo-registry,target=/usr/local/cargo/regis
  && install -D -m 0755 target/release/wamn-ctl-ops /native-output/wamn-ctl-ops \
  && install -D -m 0755 target/release/wamn /native-output/wamn \
  && install -D -m 0755 target/release/wamn-cdc-reader /native-output/wamn-cdc-reader \
- && install -D -m 0755 target/release/wamn-identity /native-output/wamn-identity \
- && install -D -m 0755 target/release/wamn-component-composer /native-output/wamn-component-composer
+ && install -D -m 0755 target/release/wamn-identity /native-output/wamn-identity
 
 # ---- edge box binary: aarch64 release, cross-compiled ----------------------
 # docs/history/edge.md 4.10 option A. The C code in aws-lc-sys and libsqlite3-sys

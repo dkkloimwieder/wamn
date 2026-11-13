@@ -20,6 +20,7 @@ Run `cargo xtask --help` from the repository root. The `justfile` calls these co
 | `bench/local.sh` | `cargo xtask bench-local` |
 | `bench/tier.sh` | `cargo xtask bench-tier` |
 | `bench/pg-minimum/gcp.sh` | `cargo xtask bench-pg-minimum` |
+| Package builds | `cargo xtask build-package`, `cargo xtask host-route-clients`, `cargo xtask install-kcl`, `cargo xtask guest-rustflags` |
 | Benchmark result scripts | `cargo xtask bench-result`, `bench-pg-result`, `bench-app-result`, `bench-database-delta`, `bench-profile-summary`, `bench-name-guests` |
 | Installers for Helm, OpenTofu, and wash | `mise install` |
 
@@ -30,3 +31,7 @@ The package builder owns both role component builds. The HTTP role then uses the
 Benchmark commands retain their workloads and result fields. Run output defaults to a temporary directory.
 The local benchmark keeps the caller's Cargo target directory. It uses the component builder for its guests.
 Tooling tests were removed with the old scripts. Check tasks by using their commands. Live benchmarks and publication need their external resources.
+
+The `wamn-build` library under `xtask/build` owns guest compilation and package orchestration.
+The CLI and dev loop call that library. The compiler returns generated artifacts and build facts.
+Platform builds publish palette components once and write their artifact pins and declarations to `palette.json` beside the chart.

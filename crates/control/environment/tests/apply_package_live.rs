@@ -89,159 +89,6 @@ fn fixture_root() -> PathBuf {
 }
 
 #[tokio::test]
-async fn migrated_view_uses_owner_rights_and_operation_grants() {
-    use serde_json::json;
-    use wamn_compiler::{
-        DATA_ACCESS_OVERLAY_PATH, DataAccessRelationFields,
-        derive_data_access_overlay_from_relation_fields,
-    };
-    use wamn_environment_control::reconcile_package_data_access::{
-        ReconcilePackageDataAccessRequest, reconcile_package_data_access,
-    };
-    use wamn_schema_introspection::postgres::read_catalog_excluding_relations;
-
-    let url = locked_database::database(wamn_test_postgres::database);
-    let client = connect(&url).await;
-    install(&client).await;
-    let package = fixture_root().with_file_name(format!("view-access-{}", std::process::id()));
-    std::fs::create_dir_all(package.join("migrations")).unwrap();
-    std::fs::create_dir_all(package.join("query")).unwrap();
-    let manifest = serde_json::to_vec(&json!({
-        "package": {"id": "view_fixture", "version": "1.0.0"},
-        "required_platform_policy_contract": {"id": "view_access", "state": "satisfied"},
-        "models": {"private_item": {
-            "schema": "inventory", "table": "private_item", "owner": "view_fixture",
-            "operations": {}, "audit_log": {"columns": [], "retention": "none"}
-        }},
-        "components": {"inventory": {"connections": ["postgres"]}}, "connections": {},
-        "custom_operations": {"inventory.report": {
-            "type": "projection", "visibility": "public", "permission": "inventory.report",
-            "connection": "postgres", "input": {"fields": []},
-            "result": {"class": "one", "fields": [{"path": "id", "type": "uuid", "nullable": false}]},
-            "errors": ["invalid_input", "not_found", "retry", "timeout", "permission_denied", "internal_error"],
-            "relations": [{"schema": "inventory", "table": "item_report",
-                "select_fields": ["id", "label"], "insert_fields": [], "update_fields": [],
-                "lock": false, "constraints": []}],
-            "statements": {"report": {"path": "query/report.sql", "fetch": "optional_one",
-                "parameters": [], "row": [{"name": "id", "type": "uuid", "nullable": false}]}}
-        }}
-    })).unwrap();
-    std::fs::write(package.join("wamn.json"), &manifest).unwrap();
-    std::fs::write(
-        package.join("migrations/0001_initial.sql"),
-        "CREATE TABLE inventory.private_item (
-             id uuid CONSTRAINT private_item_id_pkey PRIMARY KEY,
-             label text NOT NULL, private_note text);
-         CREATE VIEW inventory.item_report AS SELECT id, label, private_note FROM inventory.private_item;
-         CREATE VIEW inventory.ungranted_report AS SELECT id FROM inventory.private_item;",
-    ).unwrap();
-    std::fs::write(
-        package.join("query/report.sql"),
-        "SELECT id FROM item_report WHERE label = 'visible'",
-    )
-    .unwrap();
-    let fields = [
-        DataAccessRelationFields::new(
-            "inventory",
-            "private_item",
-            vec!["id".into(), "label".into(), "private_note".into()],
-        ),
-        DataAccessRelationFields::new(
-            "inventory",
-            "item_report",
-            vec!["id".into(), "label".into(), "private_note".into()],
-        ),
-        DataAccessRelationFields::new("inventory", "ungranted_report", vec!["id".into()]),
-    ];
-    let overlay = derive_data_access_overlay_from_relation_fields(&fields, &manifest).unwrap();
-    let evidence = package.join(DATA_ACCESS_OVERLAY_PATH);
-    std::fs::create_dir_all(evidence.parent().unwrap()).unwrap();
-    std::fs::write(evidence, overlay.canonical_bytes()).unwrap();
-    write_build_record(&package);
-    apply(&url, &package)
-        .await
-        .expect("apply the authored view migration");
-    let owner: String = client.query_one(
-        "SELECT pg_get_userbyid(relowner)::text FROM pg_class WHERE oid='inventory.item_report'::regclass",
-        &[],
-    ).await.unwrap().get(0);
-    assert_eq!(
-        owner,
-        wamn_control_provision::package_owner_role("view_fixture")
-    );
-    let no_history: bool = client
-        .query_one(
-            "SELECT to_regclass('inventory.item_report_history') IS NULL",
-            &[],
-        )
-        .await
-        .unwrap()
-        .get(0);
-    assert!(no_history);
-    client.batch_execute(
-        "INSERT INTO inventory.private_item VALUES ('00000000-0000-4000-8000-000000000001', 'visible', 'private');
-         GRANT SELECT ON inventory.ungranted_report TO wamn_app;
-         GRANT SELECT (private_note) ON inventory.item_report TO wamn_app;",
-    ).await.unwrap();
-    let request = || ReconcilePackageDataAccessRequest {
-        packages: vec![apply_package::PackageRoot {
-            path: package.clone(),
-            artifact_digest: Some(
-                wamn_test_infrastructure::fixture_digest::fixture_artifact_digest(&package)
-                    .unwrap(),
-            ),
-        }],
-        database_url: url.to_string(),
-        org: "package-runner-live".into(),
-        project: "fixture".into(),
-        environment: "dev".into(),
-    };
-    assert!(
-        !reconcile_package_data_access(request())
-            .await
-            .unwrap()
-            .is_noop()
-    );
-    let excluded = [
-        ("inventory", "wamn_entities"),
-        ("inventory", "wamn_cdc_exclusions"),
-    ];
-    let reader = sqlx::PgPool::connect(&url).await.unwrap();
-    let catalog = read_catalog_excluding_relations(&reader, &["inventory"], &excluded)
-        .await
-        .expect("platform column grants do not refuse view introspection");
-    assert_eq!(catalog.views().len(), 2);
-    let guest = connect(&url).await;
-    guest.batch_execute("SET ROLE wamn_app").await.unwrap();
-    let rows = guest
-        .query(
-            "SELECT id FROM inventory.item_report WHERE label = 'visible'",
-            &[],
-        )
-        .await
-        .expect("the application reads a view through its owner rights");
-    assert_eq!(rows.len(), 1);
-    for sql in [
-        "SELECT id FROM inventory.private_item",
-        "SELECT private_note FROM inventory.item_report",
-        "SELECT id FROM inventory.ungranted_report",
-    ] {
-        let error = guest
-            .query(sql, &[])
-            .await
-            .expect_err("undeclared access refuses");
-        assert_eq!(error.as_db_error().unwrap().code().code(), "42501", "{sql}");
-    }
-    assert!(
-        reconcile_package_data_access(request())
-            .await
-            .unwrap()
-            .is_noop()
-    );
-    std::fs::remove_dir_all(package).unwrap();
-}
-
-#[tokio::test]
 async fn successor_view_rebuild_applies_atomically_and_rolls_back_failure() {
     use wamn_schema_introspection::postgres::read_views;
 
@@ -336,9 +183,13 @@ fn package_fixture(name: &str) -> PathBuf {
 fn copy_base_fixture(root: &Path) {
     let _ = std::fs::remove_dir_all(root);
     std::fs::create_dir_all(root.join("migrations")).expect("create package fixture directory");
+    std::fs::create_dir_all(root.join("generated")).unwrap();
     let source = package_fixture("base");
-    std::fs::copy(source.join("wamn.json"), root.join("wamn.json"))
-        .expect("copy strict package manifest");
+    std::fs::copy(
+        source.join("generated/wamn.json"),
+        root.join("generated/wamn.json"),
+    )
+    .expect("copy strict package manifest");
     std::fs::copy(
         source.join("migrations/0001_initial.sql"),
         root.join("migrations/0001_initial.sql"),
@@ -351,9 +202,13 @@ fn copy_base_fixture(root: &Path) {
 fn copy_overlay_fixture(root: &Path) {
     let _ = std::fs::remove_dir_all(root);
     std::fs::create_dir_all(root.join("migrations")).expect("create overlay fixture directory");
+    std::fs::create_dir_all(root.join("generated")).unwrap();
     let source = package_fixture("overlay");
-    std::fs::copy(source.join("wamn.json"), root.join("wamn.json"))
-        .expect("copy strict overlay manifest");
+    std::fs::copy(
+        source.join("generated/wamn.json"),
+        root.join("generated/wamn.json"),
+    )
+    .expect("copy strict overlay manifest");
     for entry in std::fs::read_dir(source.join("migrations")).expect("list overlay migrations") {
         let path = entry.expect("read overlay migration entry").path();
         std::fs::copy(
@@ -370,7 +225,7 @@ fn copy_overlay_fixture(root: &Path) {
 /// The fixture then applies before the application declares audit_log, and it
 /// keeps any declaration that the application already has.
 fn declare_missing_audit_logs(root: &Path) {
-    let manifest_path = root.join("wamn.json");
+    let manifest_path = root.join("generated/wamn.json");
     let mut manifest: serde_json::Value = serde_json::from_slice(
         &std::fs::read(&manifest_path).expect("read fixture manifest declarations"),
     )
@@ -398,7 +253,7 @@ fn declare_missing_audit_logs(root: &Path) {
 }
 
 fn set_audit_log_columns(root: &Path, model_id: &str, columns: &[&str]) {
-    let manifest_path = root.join("wamn.json");
+    let manifest_path = root.join("generated/wamn.json");
     let mut manifest: serde_json::Value =
         serde_json::from_slice(&std::fs::read(&manifest_path).expect("read audit_log manifest"))
             .expect("parse audit_log manifest");
@@ -413,7 +268,7 @@ fn set_audit_log_columns(root: &Path, model_id: &str, columns: &[&str]) {
 }
 
 fn set_audit_log_retention(root: &Path, model_id: &str, retention: &str) {
-    let manifest_path = root.join("wamn.json");
+    let manifest_path = root.join("generated/wamn.json");
     let mut manifest: serde_json::Value =
         serde_json::from_slice(&std::fs::read(&manifest_path).expect("read retention manifest"))
             .expect("parse retention manifest");
@@ -457,7 +312,7 @@ fn trigger_definitions(triggers: &[(String, String)]) -> Vec<&str> {
 
 fn copy_base_fixture_as(root: &Path, package_id: &str, schema: &str) {
     copy_base_fixture(root);
-    let manifest_path = root.join("wamn.json");
+    let manifest_path = root.join("generated/wamn.json");
     let mut manifest: serde_json::Value = serde_json::from_slice(
         &std::fs::read(&manifest_path).expect("read copied package manifest"),
     )
@@ -503,7 +358,7 @@ fn copy_mutated_overlay_fixture(
     migration: &str,
 ) {
     copy_base_fixture(root);
-    let manifest_path = root.join("wamn.json");
+    let manifest_path = root.join("generated/wamn.json");
     let mut manifest: serde_json::Value = serde_json::from_slice(
         &std::fs::read(&manifest_path).expect("read copied overlay manifest"),
     )
@@ -577,7 +432,7 @@ fn copy_mutated_overlay_fixture(
 }
 
 fn rename_internal_relation(root: &Path, from: &str, to: &str) {
-    let manifest_path = root.join("wamn.json");
+    let manifest_path = root.join("generated/wamn.json");
     let mut manifest: serde_json::Value = serde_json::from_slice(
         &std::fs::read(&manifest_path).expect("read internal-relation manifest"),
     )
@@ -862,7 +717,7 @@ async fn exact_runner_commits_once_refuses_drift_and_rolls_back_a_failing_file()
         std::process::id()
     ));
     copy_base_fixture(&missing_exclusion);
-    let manifest_path = missing_exclusion.join("wamn.json");
+    let manifest_path = missing_exclusion.join("generated/wamn.json");
     let mut manifest: serde_json::Value = serde_json::from_slice(
         &std::fs::read(&manifest_path).expect("read missing-exclusion manifest"),
     )
@@ -2187,9 +2042,9 @@ async fn explicit_local_schema_applies_pending_sql_and_records_its_source() {
     )
     .expect("append another migration");
     write_build_record(&package);
-    let mut changed = std::fs::read(package.join("wamn.json")).expect("read manifest");
+    let mut changed = std::fs::read(package.join("generated/wamn.json")).expect("read manifest");
     changed.push(b'\n');
-    std::fs::write(package.join("wamn.json"), changed).expect("change manifest bytes");
+    std::fs::write(package.join("generated/wamn.json"), changed).expect("change manifest bytes");
     write_build_record(&package);
     apply_local()
         .await
@@ -2298,7 +2153,7 @@ async fn apply_created_then_added(relation: &str) {
         std::process::id()
     ));
     copy_base_fixture(&package);
-    for file in ["wamn.json", "migrations/0001_initial.sql"] {
+    for file in ["generated/wamn.json", "migrations/0001_initial.sql"] {
         let path = package.join(file);
         let text = std::fs::read_to_string(&path)
             .expect("read copied fixture file")

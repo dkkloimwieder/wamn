@@ -273,5 +273,13 @@ manifest.Package {
     }
     connections = {}
     components = {fixture = {connections = ["postgres"]}}
-    routes = {auth_modes = ["pat"]}
+    routes = {
+        operations = {
+            "widget.archive" = {id = "widget-archive-http", path = "/widget/archive"}
+            "widget.list" = {id = "widget-list-http", path = "/widget/list"}
+            "widget_maker.list" = {id = "widget-maker-list-http", path = "/widget_maker/list"}
+            "widget.record_batch" = {id = "widget-record-batch-http", path = "/widget/record_batch"}
+            "number.issue" = {id = "number-issue-http", path = "/number/issue"}
+            "feed_line.screen" = {id = "feed-line-screen-http", path = "/feed_line/screen"}
+        }auth_modes = ["pat"]}
 }

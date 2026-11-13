@@ -21,8 +21,6 @@ fn fixture() -> wamn_test_infrastructure::scratch::ScratchRoot {
         )
         .unwrap();
     }
-    let script = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../tools/guest-rustflags");
-    std::fs::copy(script, root.join("tools/guest-rustflags")).unwrap();
     // The scratch repository keeps the same pinned Rust toolchain.
     std::fs::copy(
         Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../rust-toolchain.toml"),

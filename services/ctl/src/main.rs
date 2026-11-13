@@ -84,8 +84,6 @@ enum Command {
     ApplyPackage(package_verbs::ApplyPackageArgs),
     /// Push one authored package as a registry artifact and record its digest (wamn-zua8.3)
     PushPackage(package_verbs::PushPackageArgs),
-    /// Reconcile generated package data privileges after apply-package.
-    ReconcilePackageDataAccess(package_verbs::ReconcilePackageDataAccessArgs),
     /// Manage environment connections through control routes.
     Connection(component_verbs::ConnectionArgs),
     /// Manage project external systems through control routes.
@@ -191,9 +189,6 @@ async fn main() -> anyhow::Result<()> {
         Command::ExternalSystem(args) => component_verbs::external_system(args).await,
         Command::IntegrationType(args) => component_verbs::integration_type(args).await,
         Command::Integration(args) => wamn_ctl::integration_verbs::run(args).await,
-        Command::ReconcilePackageDataAccess(args) => {
-            package_verbs::reconcile_data_access(args).await
-        }
         Command::PublishRelease(args) => release_verbs::publish(args).await,
 
         Command::PrintPlatformPrincipals(args) => print_platform_principals::run(&args),

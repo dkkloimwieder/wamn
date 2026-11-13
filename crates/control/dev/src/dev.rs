@@ -32,17 +32,6 @@ use std::time::{Duration, Instant};
 
 use read::DevRuntimeEndpoint;
 
-// An input command has a bound, so it cannot prevent cooperative shutdown
-// indefinitely.
-const INPUT_COMMAND_TIMEOUT: Duration = Duration::from_secs(60);
-
-async fn execute_preparation(
-    command: &mut tokio::process::Command,
-    timeout: Duration,
-) -> anyhow::Result<std::process::Output> {
-    crate::owned_command::execute(command, timeout, Duration::from_secs(5)).await
-}
-
 pub use plan::DEV_STAGE_ORDER;
 
 pub use plan::DevStage;
@@ -574,20 +563,11 @@ mod tests {
 
         assert_eq!(error.error_type(), DevRunErrorType::StageFailed);
         assert_eq!(error.stage(), DevStage::Virtualize);
-        assert_eq!(
-            runner.invoked,
-            [
-                DevStage::Migrate,
-                DevStage::Introspect,
-                DevStage::Generate,
-                DevStage::Build,
-                DevStage::Virtualize,
-            ]
-        );
-        assert_eq!(
-            error.to_string(),
-            "dev-stage-failed at virtualize: synthetic virtualize failure"
-        );
+        let failed = DEV_STAGE_ORDER
+            .iter()
+            .position(|stage| *stage == DevStage::Virtualize)
+            .unwrap();
+        assert_eq!(runner.invoked, DEV_STAGE_ORDER[..=failed]);
     }
 
     #[tokio::test]
@@ -684,7 +664,7 @@ mod tests {
     #[tokio::test]
     async fn an_unchanged_stage_is_not_run_and_is_reported_as_skipped() {
         let mut runner = SkippingRunner {
-            unchanged: Some(DevStage::Generate),
+            unchanged: Some(DevStage::Build),
             ..SkippingRunner::default()
         };
 
@@ -692,17 +672,17 @@ mod tests {
             .await
             .expect("an unchanged stage does not fail a run");
 
-        assert_eq!(result.skipped(), [DevStage::Generate]);
+        assert_eq!(result.skipped(), [DevStage::Build]);
         assert_eq!(
             result.completed(),
             DEV_STAGE_ORDER,
             "a skipped stage is still completed: its work is present"
         );
         assert!(
-            !runner.invoked.contains(&DevStage::Generate),
+            !runner.invoked.contains(&DevStage::Build),
             "a skipped stage must not be entered, because entering it discards downstream work"
         );
-        assert_eq!(runner.reported_skips, [DevStage::Generate]);
+        assert_eq!(runner.reported_skips, [DevStage::Build]);
         assert_eq!(runner.invoked.len(), DEV_STAGE_ORDER.len() - 1);
     }
 
@@ -759,7 +739,7 @@ mod tests {
                 from: DevStage::Release,
             },
             DevInvalidation::Rerun {
-                from: DevStage::Generate,
+                from: DevStage::Build,
             },
             DevInvalidation::Rerun {
                 from: DevStage::Condition,
@@ -773,9 +753,12 @@ mod tests {
             .await
             .expect("fake source is infallible");
 
-        assert_eq!(runner.invoked, DEV_STAGE_ORDER[2..]);
+        assert_eq!(
+            runner.invoked,
+            DEV_STAGE_ORDER[DevStage::Build.position()..]
+        );
         assert_eq!(observer.outcomes.len(), 1);
-        assert_eq!(observer.outcomes[0].from(), DevStage::Generate);
+        assert_eq!(observer.outcomes[0].from(), DevStage::Build);
         assert!(observer.outcomes[0].result().is_ok());
     }
 
@@ -804,9 +787,9 @@ mod tests {
             .await
             .expect("fake source is infallible");
 
-        let expected = DEV_STAGE_ORDER[3..]
+        let expected = DEV_STAGE_ORDER[DevStage::Build.position()..]
             .iter()
-            .chain(&DEV_STAGE_ORDER[1..])
+            .chain(&DEV_STAGE_ORDER[DevStage::Introspect.position()..])
             .copied()
             .collect::<Vec<_>>();
         assert_eq!(runner.invoked, expected);

@@ -130,12 +130,12 @@ Set the coordinate `<org>/<project>/<env>`, its composed environment key, and yo
 
 2. Grant the role to the `workflow` user, whose email is `workflow@<platform domain>`, with `wamn-ctl grant-role --host-url "$WAMN_CONTROL_URL" --token "$WAMN_TOKEN" --user-id <workflow UUID> --role netsuite-pull`.
    The enabler must also hold the role, or hold `admin`.
-3. Build the NetSuite package with `wamn build` first. Author its compiled wiring `apps/target/wamn/netsuite/publication/wirings/netsuite_pull.json` as a schedule workflow of the application `netsuite`:
+3. Build the NetSuite package with `wamn build` first. Copy the example in `apps/netsuite/tests/workflows/netsuite_pull.json` to `netsuite-pull.json` in the environment configuration. Edit its parameters, then author it as a schedule workflow of the application `netsuite`:
 
    ```bash
    wamn-ctl workflow author --environment <env> --coordinate <org>/<project>/<env> \
      --application netsuite \
-     --document apps/target/wamn/netsuite/publication/wirings/netsuite_pull.json \
+     --document netsuite-pull.json \
      --execution-type role --execution-role netsuite-pull --schedule '* * * * *' --principal-id "$ADMIN_ID"
    ```
 

@@ -353,4 +353,13 @@ manifest.Package {
     }
     connections = {labels = {interface = "wasmcloud:blobstore/blobstore@0.1.0", mode = "write"}}
     components = {wms = {connections = ["postgres"]}}
+    routes = {
+        operations = {
+            "inventory.move" = {id = "inventory-move-http", path = "/inventory/move"}
+            "inventory.adjust" = {id = "inventory-adjust-http", path = "/inventory/adjust"}
+            "inventory.merge" = {id = "inventory-merge-http", path = "/inventory/merge"}
+            "inventory.split" = {id = "inventory-split-http", path = "/inventory/split"}
+            "inventory.aggregate" = {id = "inventory-aggregate-http", path = "/inventory/aggregate"}
+        }
+    }
 }

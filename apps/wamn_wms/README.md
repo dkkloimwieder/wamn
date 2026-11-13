@@ -9,7 +9,6 @@ WMS owns package `wamn_wms`, its SQL, guest, generated client, and application t
 Generated output: Derived contracts, SQL, and client code. `wamn build` writes it to `apps/target/wamn/wamn_wms/`, outside Git.
 [Component](component/): Application guest.
 [Publication](publication/): The attachments, the component definition and the wiring `inventory_move_and_label`.
-[Package digest](package.digest): The tag and digest that the built package packs to.
 [Tests](tests/): Application assertions.
 [Running tests](../../docs/operations/running-tests.md): Commands and required inputs.
 [Development loop](../../docs/operations/development-loop.md): Generation during a watch session.

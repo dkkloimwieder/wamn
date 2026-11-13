@@ -40,7 +40,7 @@ impl EnvironmentDocument {
         {
             std::fs::read(file)?
         } else {
-            wamn_compiler::compile_environment(file)?
+            crate::kcl::compile(file, "environment")?
         };
         Self::from_json(&bytes)
             .with_context(|| format!("{} is not a valid environment", file.display()))

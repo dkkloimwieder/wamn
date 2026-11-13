@@ -3,8 +3,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Component, Path, PathBuf};
-#[cfg(test)]
-use wamn_scalar::SqlValueType;
 
 use anyhow::{Context as _, Result, ensure};
 use sqlx::{AssertSqlSafe, Row as _, SqlSafeStr as _};
@@ -12,19 +10,14 @@ use wamn_schema_introspection::ir::CatalogIr;
 use wamn_schema_introspection::postgres::read_catalog_excluding_relations;
 
 use crate::StatementTransactionality;
-use crate::authoring::{
-    COMPILED_MANIFEST, compile_authored_manifest, is_authored, package_manifest_path,
-};
+use crate::authoring::package_manifest_path;
 use crate::client_component::emit_ts_components;
 use crate::client_ir::{ClientContractIr, published_routes};
 use crate::client_plan::ClientPlan;
 use crate::client_ts::{emit_ts_client, emit_ts_package_json};
 use crate::generate::GeneratedFile;
 use crate::manifest::{CONTROL_OWNED_RELATION_TABLES, PackageManifest};
-use crate::{AuthoredSql, GeneratedPackage, GenerationInput};
-
-pub(crate) const GENERATOR_ID: &str = "wamn-compiler/0.1.13";
-pub(crate) const TOOLCHAIN_ID: &str = "rust-1.99.0";
+use crate::{AuthoredSql, GeneratedPackage};
 
 #[derive(Debug)]
 pub(crate) struct SourceFile {
@@ -32,18 +25,10 @@ pub(crate) struct SourceFile {
     pub(crate) bytes: Vec<u8>,
 }
 
-/// Materialize one package from its manifest, authored SQL, and migrated database.
-///
-/// `database_url` names the already-migrated PostgreSQL database to introspect.
-pub async fn materialize_package(database_url: &str, package_root: &Path) -> Result<()> {
-    materialize_after_introspection(package_root, introspect_package(database_url, package_root))
-        .await
-}
-
 /// Introspect the package-owned schemas in one already-migrated PostgreSQL database.
 pub async fn introspect_package(database_url: &str, package_root: &Path) -> Result<CatalogIr> {
     let (_, manifest) = load_manifest(package_root)?;
-    let sources = load_authored_sql(package_root, &manifest)?;
+    let sources = load_authored_sql(&crate::output_root(package_root), &manifest)?;
     let authored = sources
         .iter()
         .map(|source| AuthoredSql::new(&source.path, &source.bytes))
@@ -188,54 +173,6 @@ fn plan_needs_transaction(plan: &serde_json::Value) -> bool {
     }
 }
 
-/// Materialize one package from an already-introspected catalog.
-///
-/// This stage reads the package's manifest and authored SQL, but performs no
-/// database access. The supplied catalog is the sole schema input.
-pub fn materialize_package_from_catalog(catalog: &CatalogIr, package_root: &Path) -> Result<()> {
-    materialize_package_classified(
-        catalog,
-        package_root,
-        &StatementTransactionality::from_paths(BTreeMap::new()),
-    )
-}
-
-/// Materialize with PostgreSQL's verdict on which statements need a transaction.
-///
-/// This entry point shares the SQL preparation path with the package build.
-pub fn materialize_package_classified(
-    catalog: &CatalogIr,
-    package_root: &Path,
-    transactional: &StatementTransactionality,
-) -> Result<()> {
-    let (manifest_bytes, mut manifest) = load_compiled_manifest(package_root, catalog)?;
-    let mut package = generate_from_manifest(
-        catalog,
-        &manifest_bytes,
-        &manifest,
-        package_root,
-        transactional,
-    )?;
-    let output_root = crate::output_root(package_root);
-    crate::publication::complete(package_root, &manifest, &mut package)?;
-    let client = client_bindings(&manifest, &package)?;
-    manifest.compiled_operations = package.take_operations();
-    let mut expected = expected_files(&package)?;
-    let compiled_manifest = serde_json::to_vec(&manifest)?;
-    let relative = Path::new(COMPILED_MANIFEST)
-        .strip_prefix("generated")
-        .context("compiled output path")?;
-    expected.insert(relative.to_owned(), compiled_manifest.as_slice());
-    for file in &client {
-        let relative = Path::new(file.path())
-            .strip_prefix("generated")
-            .with_context(|| format!("client binding escaped output root: {}", file.path()))?;
-        expected.insert(relative.to_owned(), file.bytes());
-    }
-
-    write_files(&output_root, &expected)
-}
-
 /// The TypeScript bindings and components that this package declares.
 ///
 /// Materialization owns these files with the rest of the generated output.
@@ -279,118 +216,10 @@ pub(crate) fn client_bindings(
 }
 
 /// Generate from compiled manifest bytes that the caller holds. `manifest` is
-/// their parse. The authored SQL is read from `package_root`.
-pub(crate) fn generate_from_manifest(
-    catalog: &CatalogIr,
-    manifest_bytes: &[u8],
-    manifest: &PackageManifest,
-    package_root: &Path,
-    transactional: &StatementTransactionality,
-) -> Result<crate::GeneratedPackage> {
-    let source_files = load_authored_sql(package_root, manifest)?;
-    let authored_sql = source_files
-        .iter()
-        .map(|source| AuthoredSql::new(&source.path, &source.bytes))
-        .collect::<Vec<_>>();
-
-    crate::generate::generate_compiled(
-        &GenerationInput::new(catalog, manifest_bytes, &authored_sql, transactional),
-        manifest,
-    )
-    .context("generate package artifacts")
-}
-
-async fn materialize_after_introspection<F>(package_root: &Path, introspection: F) -> Result<()>
-where
-    F: std::future::Future<Output = Result<CatalogIr>>,
-{
-    let catalog = introspection.await?;
-    materialize_package_from_catalog(&catalog, package_root)
-}
-
-/// Materialize against a live migrated database, asking the server which
-/// statements need a transaction.
-pub async fn materialize_package_verified(database_url: &str, package_root: &Path) -> Result<()> {
-    let catalog = introspect_package(database_url, package_root).await?;
-    materialize_package_verified_with_catalog(&catalog, database_url, package_root).await
-}
-
-/// Materialize a catalog the caller already holds, asking the server which
-/// statements need a transaction.
-///
-/// A caller that shares one database across several packages must supply its
-/// own catalog, narrowed to what this package owns. Re-introspecting here would
-/// hand the package every relation and field its neighbours installed, and the
-/// generated artifacts would declare them.
-pub async fn materialize_package_verified_with_catalog(
-    catalog: &CatalogIr,
-    database_url: &str,
-    package_root: &Path,
-) -> Result<()> {
-    let (manifest_bytes, manifest) = load_compiled_manifest(package_root, catalog)?;
-    let sources = load_authored_sql(package_root, &manifest)?;
-    let authored = sources
-        .iter()
-        .map(|source| AuthoredSql::new(&source.path, &source.bytes))
-        .collect::<Vec<_>>();
-    let preliminary = StatementTransactionality::from_paths(BTreeMap::new());
-    let input = GenerationInput::new(catalog, &manifest_bytes, &authored, &preliminary);
-    let corpus = crate::generate::sql_corpus(&input, &manifest)?;
-    let schemas = application_schemas(&manifest)?;
-    let mut verdicts = classify_statements(database_url, &corpus.statements, &schemas).await?;
-    verdicts.described =
-        crate::describe::describe_statements(database_url, &corpus.statements).await?;
-    let input = GenerationInput::new(catalog, &manifest_bytes, &authored, &verdicts);
-    let package = crate::generate::generate_described(&input, &manifest, &corpus)?;
-    write_files(
-        &crate::output_root(package_root),
-        &expected_files(&package)?,
-    )
-}
-
-/// The manifest bytes and their parse. A package authored in `wamn.k` compiles
-/// it here, so generation reads the source and never the committed output.
 fn load_manifest(package_root: &Path) -> Result<(Vec<u8>, PackageManifest)> {
-    let manifest_bytes = if is_authored(package_root) {
-        compile_authored_manifest(package_root)?
-    } else {
-        let manifest_path = package_manifest_path(package_root);
-        fs::read(&manifest_path).with_context(|| format!("read {}", manifest_path.display()))?
-    };
-    let manifest = if is_authored(package_root) {
-        PackageManifest::parse_authored(&manifest_bytes)
-    } else {
-        PackageManifest::from_slice(&manifest_bytes)
-    }
-    .context("parse package manifest")?;
-    Ok((manifest_bytes, manifest))
-}
-
-/// The compiled manifest bytes and their parse. A package authored in `wamn.k`
-/// compiles it here and adds the members that generation derives over this
-/// catalog. Any other package reads its hand-written `wamn.json`.
-fn load_compiled_manifest(
-    package_root: &Path,
-    catalog: &CatalogIr,
-) -> Result<(Vec<u8>, PackageManifest)> {
-    let (bytes, manifest) = load_manifest(package_root)?;
-    if !is_authored(package_root) {
-        return Ok((bytes, manifest));
-    }
-    let sources = load_authored_sql(package_root, &manifest)?;
-    let authored_sql = sources
-        .iter()
-        .map(|source| AuthoredSql::new(&source.path, &source.bytes))
-        .collect::<Vec<_>>();
-    let bases = crate::inheritance::load_base_manifests(
-        &crate::build::default_output_root(package_root),
-        &manifest.base_dependencies,
-    )?;
-    let mut manifest = manifest;
-    crate::generate::derive_model(catalog, &mut manifest, &authored_sql, &bases)
-        .context("derive the compiled manifest")?;
-    let compiled = wamn_digest::canonical_json_bytes(&serde_json::to_value(&manifest)?);
-    Ok((compiled, manifest))
+    let bytes = fs::read(package_manifest_path(package_root))?;
+    let manifest = PackageManifest::from_slice(&bytes)?;
+    Ok((bytes, manifest))
 }
 
 pub(crate) fn load_authored_sql(
@@ -595,11 +424,6 @@ fn materialize_host_route_set(output: &Path, set: wamn_catalog::HostRouteSet) ->
 ///
 /// Names the consumer and application when the requested client is unavailable.
 pub fn materialize_client_consumers(package_root: &Path, app: &str, source: &Path) -> Result<()> {
-    if let Some(output) = source.parent()
-        && crate::output::is_build_output(output)
-    {
-        crate::build_record::read_current(package_root, output)?;
-    }
     copy_to_consumers(package_root, app, source)
 }
 
@@ -712,11 +536,11 @@ fn write_build_output(directory: &Path, expected: &BTreeMap<PathBuf, &[u8]>) -> 
     Ok(())
 }
 
-/// Replace generated output, retaining SQLx metadata prepared after generation.
+/// Replace generated output with the compiler artifacts.
 /// An unchanged file keeps its modification time.
 pub(crate) fn write_files(output_root: &Path, expected: &BTreeMap<PathBuf, &[u8]>) -> Result<()> {
     for stale in existing_files(output_root)? {
-        if !expected.contains_key(&stale) && !stale.starts_with(".sqlx") {
+        if !expected.contains_key(&stale) {
             let path = output_root.join(stale);
             fs::remove_file(&path)
                 .with_context(|| format!("remove stale generated artifact {}", path.display()))?;
@@ -754,7 +578,7 @@ fn remove_empty_directories(root: &Path) -> Result<()> {
     };
     for entry in entries {
         let entry = entry.context("read generated directory entry")?;
-        if !entry.file_type()?.is_dir() || entry.file_name() == ".sqlx" {
+        if !entry.file_type()?.is_dir() {
             continue;
         }
         let path = entry.path();
@@ -814,286 +638,6 @@ pub(crate) fn existing_files(root: &Path) -> Result<Vec<PathBuf>> {
     }
     files.sort();
     Ok(files)
-}
-
-#[cfg(test)]
-mod tests {
-    use std::cell::Cell;
-
-    use wamn_schema_introspection::ir::{Column, Constraint, Table};
-
-    use super::*;
-
-    const MANIFEST: &[u8] = br#"{
-        "package":{"id":"test_package","version":"1.0.0"},
-        "required_platform_policy_contract":{"id":"test_data_access","state":"satisfied"},
-        "models":{
-            "thing":{
-                "schema":"application",
-                "table":"thing",
-                "owner":"test_package",
-                "server_owned_fields":[],
-                "audit_log":{"columns":[],"retention":"none"},
-                "operations":{
-                    "get":{
-                        "permission":"thing.get",
-                        "result":"one"
-                    }
-                }
-            }
-        },
-        "connections":{},
-        "components":{"test_package":{"connections":["postgres"]}}
-    }"#;
-
-    struct TestPackage {
-        root: PathBuf,
-        scratch: PathBuf,
-    }
-
-    impl TestPackage {
-        fn new(name: &str) -> Self {
-            let scratch = std::env::temp_dir().join(format!(
-                "wamn-compiler-materialize-{}-{name}",
-                std::process::id()
-            ));
-            if scratch.exists() {
-                fs::remove_dir_all(&scratch).expect("remove stale test package");
-            }
-            let root = scratch.join("test_package");
-            fs::create_dir_all(&root).expect("create test package");
-            fs::write(root.join("wamn.json"), MANIFEST).expect("write test manifest");
-            fs::write(
-                root.join("Cargo.toml"),
-                "[workspace]\nmembers = [\"generated/*\"]\n",
-            )
-            .expect("write app workspace");
-            Self { root, scratch }
-        }
-
-        fn generated_snapshot(&self) -> BTreeMap<PathBuf, Vec<u8>> {
-            let generated = crate::output_root(&self.root);
-            existing_files(&generated)
-                .expect("enumerate generated files")
-                .into_iter()
-                .map(|relative| {
-                    let bytes = fs::read(generated.join(&relative)).expect("read generated file");
-                    (relative, bytes)
-                })
-                .collect()
-        }
-    }
-
-    impl Drop for TestPackage {
-        fn drop(&mut self) {
-            fs::remove_dir_all(&self.scratch).expect("remove test package");
-        }
-    }
-
-    fn consumer(package: &TestPackage) -> PathBuf {
-        fs::write(
-            package.scratch.join("pnpm-workspace.yaml"),
-            "packages:\n  - web/consumer\n",
-        )
-        .unwrap();
-        let directory = package.scratch.join("web/consumer");
-        fs::create_dir_all(&directory).unwrap();
-        fs::write(
-            directory.join("package.json"),
-            br#"{
-            "name": "@test/consumer", "wamn": {"clients": ["test_package"]}
-        }"#,
-        )
-        .unwrap();
-        directory
-    }
-
-    #[test]
-    fn consumer_gets_plain_sources_and_removes_stale_files() {
-        let package = TestPackage::new("consumer-source");
-        let consumer = consumer(&package);
-        let source = package.scratch.join("client-ts");
-        fs::create_dir_all(&source).unwrap();
-        fs::write(source.join("index.ts"), "export const value = 1;\n").unwrap();
-        fs::write(source.join("package.json"), "{}").unwrap();
-        let output = consumer.join("src/generated/test_package");
-        fs::create_dir_all(&output).unwrap();
-        fs::write(output.join("obsolete.ts"), "old").unwrap();
-        fs::write(output.join("package.json"), "{}").unwrap();
-        materialize_client_consumers(&package.root, "test_package", &source).unwrap();
-        assert_eq!(
-            fs::read(output.join("index.ts")).unwrap(),
-            fs::read(source.join("index.ts")).unwrap()
-        );
-        assert!(!output.join("package.json").exists());
-        assert!(!output.join("obsolete.ts").exists());
-        let modified = fs::metadata(output.join("index.ts"))
-            .unwrap()
-            .modified()
-            .unwrap();
-        materialize_client_consumers(&package.root, "test_package", &source).unwrap();
-        assert_eq!(
-            fs::metadata(output.join("index.ts"))
-                .unwrap()
-                .modified()
-                .unwrap(),
-            modified
-        );
-    }
-
-    #[test]
-    fn unavailable_client_names_the_consumer_and_application() {
-        let package = TestPackage::new("consumer-missing");
-        consumer(&package);
-        let error = materialize_client_consumers(
-            &package.root,
-            "test_package",
-            &package.scratch.join("missing"),
-        )
-        .unwrap_err();
-        let message = error.to_string();
-        assert!(message.contains("@test/consumer"), "{message}");
-        assert!(message.contains("test_package"), "{message}");
-    }
-
-    fn catalog() -> CatalogIr {
-        CatalogIr::new(vec![Table::new(
-            "application",
-            "thing",
-            vec![Column::new("id", SqlValueType::Uuid, false, None, None)],
-            vec![Constraint::primary_key("thing_id_pkey", ["id"]).expect("construct primary key")],
-            Vec::new(),
-        )])
-    }
-
-    #[tokio::test(flavor = "current_thread")]
-    async fn wrapper_and_split_paths_are_identical_without_reintrospection() {
-        let wrapper = TestPackage::new("wrapper");
-        let split = TestPackage::new("split");
-        let catalog = catalog();
-        let introspections = Cell::new(0_u8);
-
-        materialize_after_introspection(&wrapper.root, async {
-            introspections.set(introspections.get() + 1);
-            Ok(catalog.clone())
-        })
-        .await
-        .expect("materialize through wrapper path");
-        assert_eq!(introspections.get(), 1);
-
-        materialize_package_from_catalog(&catalog, &split.root)
-            .expect("materialize split generation path");
-        assert_eq!(
-            introspections.get(),
-            1,
-            "generation unexpectedly repeated database introspection"
-        );
-        assert_eq!(wrapper.generated_snapshot(), split.generated_snapshot());
-    }
-
-    #[test]
-    fn stale_and_clean_materialization_produce_identical_outputs() {
-        let stale = TestPackage::new("stale-output");
-        let clean = TestPackage::new("clean-output");
-        let output = crate::output_root(&stale.root);
-        fs::create_dir_all(output.join("client-ts/components")).expect("create stale output");
-        fs::write(output.join("client-ts/components/obsolete.tsx"), b"stale")
-            .expect("write an obsolete component");
-        fs::write(output.join("build.json"), b"stale").expect("write an obsolete build record");
-        materialize_package_from_catalog(&catalog(), &stale.root).expect("replace stale output");
-        materialize_package_from_catalog(&catalog(), &clean.root).expect("generate clean output");
-        assert_eq!(stale.generated_snapshot(), clean.generated_snapshot());
-    }
-
-    #[test]
-    fn renaming_a_model_removes_its_previous_wit_package_directory() {
-        let package = TestPackage::new("removed-model-wit");
-        let output = crate::output_root(&package.root);
-        assert!(!output.exists());
-        materialize_package_from_catalog(&catalog(), &package.root).expect("generate model WIT");
-        let dependency = output.join("wit/deps/test-package-thing");
-        assert!(dependency.join("package.wit").is_file());
-
-        let mut manifest: serde_json::Value = serde_json::from_slice(MANIFEST).unwrap();
-        let models = manifest["models"].as_object_mut().unwrap();
-        let mut model = models.remove("thing").unwrap();
-        model["operations"]["get"]["permission"] = serde_json::json!("replacement.get");
-        models.insert("replacement".to_owned(), model);
-        fs::write(
-            package.root.join("wamn.json"),
-            serde_json::to_vec(&manifest).unwrap(),
-        )
-        .expect("rename the model");
-        materialize_package_from_catalog(&catalog(), &package.root)
-            .expect("regenerate the renamed model");
-        assert!(
-            !dependency.exists(),
-            "an empty dependency directory makes wit-bindgen reject the package"
-        );
-        assert!(
-            output
-                .join("wit/deps/test-package-replacement/package.wit")
-                .is_file()
-        );
-    }
-
-    #[test]
-    fn materialization_removes_empty_dependencies_and_preserves_sqlx_metadata() {
-        let package = TestPackage::new("empty-wit-dependency");
-        let output = crate::output_root(&package.root);
-        let empty = output.join("wit/deps/obsolete");
-        fs::create_dir_all(&empty).expect("create an already empty WIT dependency");
-        fs::create_dir_all(output.join(".sqlx")).expect("create the SQLx directory");
-        let metadata = output.join(".sqlx/query.json");
-        fs::write(&metadata, b"metadata").expect("write SQLx metadata");
-
-        materialize_package_from_catalog(&catalog(), &package.root)
-            .expect("regenerate the package");
-        assert!(!empty.exists(), "an already empty dependency survives");
-        assert!(
-            output
-                .join("wit/deps/test-package-thing/package.wit")
-                .is_file()
-        );
-        assert_eq!(fs::read(metadata).unwrap(), b"metadata");
-    }
-
-    #[test]
-    fn rewriting_identical_bytes_keeps_the_modification_time_and_a_changed_byte_rewrites() {
-        let package = TestPackage::new("unchanged-mtime");
-        let catalog = catalog();
-        materialize_package_from_catalog(&catalog, &package.root).expect("materialize the package");
-        let generated = package.generated_snapshot();
-        let (relative, original) = generated.iter().next().expect("generated artifact exists");
-        let path = crate::output_root(&package.root).join(relative);
-        let old = std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_hours(24);
-        let set_old_mtime = || {
-            fs::File::options()
-                .write(true)
-                .open(&path)
-                .and_then(|file| file.set_modified(old))
-                .expect("set an old modification time");
-        };
-        let mtime = || {
-            fs::metadata(&path)
-                .and_then(|metadata| metadata.modified())
-                .expect("read the modification time")
-        };
-
-        set_old_mtime();
-        materialize_package_from_catalog(&catalog, &package.root)
-            .expect("materialize the unchanged package");
-        assert_eq!(mtime(), old, "identical bytes were rewritten");
-
-        let mut changed = original.clone();
-        *changed.last_mut().expect("generated artifact is not empty") ^= 1;
-        fs::write(&path, &changed).expect("change one generated byte");
-        set_old_mtime();
-        materialize_package_from_catalog(&catalog, &package.root)
-            .expect("materialize over the changed byte");
-        assert_ne!(mtime(), old, "a changed byte was not rewritten");
-        assert_eq!(&fs::read(&path).expect("read the rewritten file"), original);
-    }
 }
 
 pub(crate) fn application_schemas(

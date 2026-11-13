@@ -163,7 +163,7 @@ impl DevSnapshot {
         self.revision
     }
 
-    /// All ten stages in execution order.
+    /// All stages in execution order.
     pub const fn stages(&self) -> &[DevStageSnapshot; DEV_STAGE_COUNT] {
         &self.stages
     }

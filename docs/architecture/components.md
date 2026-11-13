@@ -19,6 +19,7 @@ Package operations version together even when their implementations occupy separ
 
 The compiler writes final component declarations in `publication/components.json` of the build output.
 Each declaration carries inline input and output schemas from the compiled operation description.
+Its target names the package and version. Admission adds the environment coordinate once.
 Publication readers do not merge authored declarations or resolve schema references.
 A component declaration records its operations, ports, effects, static SQL, and connection requirements.
 Admission derives effects from the actual imports and compares the declared operation facts.

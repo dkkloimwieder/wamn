@@ -216,16 +216,6 @@ impl PackageRoot {
                 source,
             )
         })?;
-        wamn_compiler::build_record::require_current(&root).map_err(|source| {
-            FilesystemInvalidationError {
-                source: Some(source.into()),
-                ..FilesystemInvalidationError::new(
-                    FilesystemInvalidationErrorType::PackageRoot,
-                    &root,
-                    "cannot read current package build",
-                )
-            }
-        })?;
         Ok(Self { root })
     }
 }
@@ -728,13 +718,10 @@ mod tests {
         fn write_fixture(&self) {
             fs::create_dir_all(self.package().join("query")).expect("create package query root");
             fs::create_dir_all(self.package().join("generated")).expect("create generated root");
-            fs::create_dir_all(self.package().join("publication/components"))
-                .expect("create component declarations root");
-            fs::create_dir_all(self.package().join("publication/wirings"))
-                .expect("create wiring declarations root");
             fs::create_dir_all(self.package().join("migrations")).expect("create migrations root");
             fs::create_dir_all(self.component().join("src")).expect("create component source root");
-            fs::write(self.package().join("wamn.json"), "{}").expect("write package manifest");
+            fs::write(self.package().join("generated/wamn.json"), "{}")
+                .expect("write package manifest");
             fs::write(self.package().join("query/widget_list.sql"), "SELECT 1")
                 .expect("write authored SQL");
             fs::write(self.component().join("src/lib.rs"), "pub fn value() {}")
@@ -779,47 +766,6 @@ mod tests {
                 DevInvalidation::Rerun { from } if *from == expected_stage
             )
         })
-    }
-
-    #[test]
-    fn package_source_paths_follow_build_inputs() {
-        let repository = TempRepository::new();
-        repository.write_fixture();
-        let package = PackageRoot::read(&repository.package()).expect("read package watch root");
-        let root = repository.package();
-
-        for input in [
-            "wamn.json",
-            "wamn.k",
-            "migrations/0002.sql",
-            "query/widget_list.sql",
-            "publication/components/fixture.json.in",
-            "publication/wirings/widget_get.json",
-            "publication/attachments.json",
-            "component/src/lib.rs",
-            "data/src/lib.rs",
-            "web/src/main.ts",
-            "query/not-declared.sql",
-            "README.md",
-        ] {
-            assert!(package.is_input(&root.join(input)), "{input} is an input");
-        }
-        for other in [
-            "generated/wamn.rs",
-            "target/debug/component.wasm",
-            "web/dist/index.html",
-            "web/node_modules/module/index.js",
-            "web/src/generated/client.ts",
-        ] {
-            assert!(
-                !package.is_input(&root.join(other)),
-                "{other} is not an input"
-            );
-        }
-        assert!(
-            !package
-                .is_input(&wamn_compiler::output_root(&root).join("components/application.wasm"))
-        );
     }
 
     #[tokio::test]
@@ -1242,18 +1188,6 @@ mod tests {
                 .await
                 .is_err(),
             "generated output must remain unwatched"
-        );
-
-        // The loop writes SQLx metadata into the build output during
-        // Generate, so its own output does not rerun the loop.
-        let metadata = wamn_compiler::output_root(&repository.package()).join(".sqlx");
-        fs::create_dir_all(&metadata).expect("create SQLx metadata root");
-        fs::write(metadata.join("query.json"), "{\"x\":1}").expect("write SQLx metadata");
-        assert!(
-            tokio::time::timeout(Duration::from_millis(500), source.next())
-                .await
-                .is_err(),
-            "SQLx output must remain unwatched"
         );
 
         fs::write(

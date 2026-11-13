@@ -135,13 +135,7 @@ pub(crate) fn client_release_of(package: &GeneratedPackage) -> ClientContractIr 
                     format!("/{model}/{name}")
                 },
                 input_schema: match name {
-                    "screen" if model == "feed-line" => {
-                        let attachments: Value = serde_json::from_slice(&std::fs::read(
-                            wamn_fixture_package::package_root().join("publication/attachments.json"),
-                        ).unwrap()).unwrap();
-                        Some(attachments["feed-line-screen-http"]["definition"]["input-schema"].clone())
-                    }
-                    _ if model == "counter" => {
+                    _ if model == "counter" || name == "screen" => {
                         let attachments: Value = serde_json::from_slice(package.file(wamn_compiler::publication::ATTACHMENTS).unwrap().bytes()).unwrap();
                         attachments.as_object().unwrap().values().find(|attachment| attachment["registered-operation"] == identity).map(|attachment| attachment["definition"]["input-schema"].clone())
                     }
@@ -642,8 +636,6 @@ pub(crate) fn catalog_with_unread_table() -> CatalogIr {
 /// # Panics
 /// Panics when the fixture application's manifest is not valid JSON.
 pub(crate) fn manifest() -> Value {
-    wamn_compiler::build_record::require_current(&wamn_fixture_package::package_root())
-        .unwrap_or_else(|error| panic!("{error:#}"));
     serde_json::from_slice(&wamn_fixture_package::manifest_bytes())
         .expect("the fixture application manifest is JSON")
 }

@@ -96,7 +96,7 @@ It writes routes with inline input schemas and computed definition hashes to `pu
 It writes component declarations with inline request and result schemas to `publication/components.json`.
 The compiled `wamn.json` carries operation types and described statement facts.
 Publication, admission, and clients consume these final documents. They do not merge authored files or resolve schema file references.
-Compiled wiring documents carry sealed operation identities in `publication/wirings/` of the build output.
+Workflows are authored for an environment and name sealed operations from its release.
 Publication refuses a wiring with no edges, because a graph with no edges is a route.
 A registration or schedule can name a one-node wiring.
 
@@ -184,7 +184,7 @@ Local targets are exempt.
 
 The package stage runs in the project database before any Kubernetes write.
 It compares the installed schema digest with this binary and installs each new package from its verified artifact.
-It applies the stage of each successor, writes the release cache row, and reconciles data access.
+It applies the stage of each successor and writes the release cache row.
 It also creates the number sequence row of each package default that the environment lacks.
 With `release = none`, `apply` uninstalls the release chart instead of writing it.
 Every step is an ensure that is judged by observation, so applying again repairs a crash.

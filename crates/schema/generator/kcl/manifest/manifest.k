@@ -328,8 +328,15 @@ schema InternalRelation:
 
 schema Component:
     connections: [str]
+    exports?: {str:any}
+    parameters?: {str:[any]}
+
+schema HttpExposure:
+    id: str
+    path: str
 
 schema Routes:
+    operations?: {str:HttpExposure}
     auth_modes?: [str]
     path_prefix?: str
     id_prefix?: str

@@ -11,8 +11,6 @@ use wamn_environment_control::environment::document::EnvironmentDocument;
 fn package(root: &Path, id: &str, version: &str) -> anyhow::Result<PathBuf> {
     let root = root.join(id);
     std::fs::create_dir_all(root.join("migrations"))?;
-    std::fs::create_dir_all(root.join("publication"))?;
-    std::fs::write(root.join("publication/attachments.json"), "{}")?;
     std::fs::write(
         root.join("wamn.k"),
         format!(
@@ -125,12 +123,12 @@ async fn source_builds_only_selected_outputs_and_keeps_selection_on_failure() ->
         b_record
     );
     // Generation succeeds, but publication refuses the absent component.
-    build_record::read_current(&a, &output)?;
+    build_record::read(&output)?;
     // Source schema apply uses the same builder before publication can fail.
     let schema_version = "3.0.0";
     package(scratch.path(), "appa", schema_version)?;
     deploy(&a, true)?;
-    let schema_build = build_record::read_current(&a, &output)?;
+    let schema_build = build_record::read(&output)?;
     assert_eq!(schema_build.package.version, schema_version);
     let last_build = std::fs::read(output.join(build_record::BUILD_RECORD_FILE))?;
     std::fs::write(a.join("migrations/0001_initial.sql"), "INVALID SQL")?;

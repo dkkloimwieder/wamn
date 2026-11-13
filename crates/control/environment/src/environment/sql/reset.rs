@@ -385,22 +385,6 @@ pub async fn initialize_with_migrations(
         })
         .await?;
     }
-    // An environment with no applications has no package data authority to reconcile.
-    if !candidates.is_empty() {
-        crate::reconcile_package_data_access::reconcile_package_data_access(
-            crate::reconcile_package_data_access::ReconcilePackageDataAccessRequest {
-                packages: candidates
-                    .iter()
-                    .map(|candidate| candidate.root.clone())
-                    .collect(),
-                database_url: project_url.clone(),
-                org: document.org.clone(),
-                project: document.project.clone(),
-                environment: document.env.clone(),
-            },
-        )
-        .await?;
-    }
     let mut defaults = Vec::new();
     for application in document.applications.keys() {
         let selected = analyse::select_application(document, Some(application))?;

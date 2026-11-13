@@ -300,18 +300,11 @@ pub(super) fn insert_expected_operation(
                 format!("operation {local_operation:?} is not canonical: {error}"),
             )
         })?;
-    let (module, action) = local_operation.split_once('.').ok_or_else(|| {
-        ComponentProjectionError::new(
-            ComponentProjectionErrorType::StatementOperationMismatch,
-            format!("operation {local_operation:?} has no module/action boundary"),
-        )
-    })?;
-    let relative_path = format!("generated/contracts/{module}/{action}.operation.json");
     if expected
         .insert(
             operation.clone(),
             ExpectedOperationContract {
-                relative_path,
+                local_operation: local_operation.to_owned(),
                 component: component.to_owned(),
                 public,
             },

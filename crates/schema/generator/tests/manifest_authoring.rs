@@ -2,7 +2,7 @@
 //! (docs/architecture/data-access.md#application-declarations).
 //!
 //! Each test writes a package with a `wamn.k` to its own directory and runs the
-//! pinned `kcl` CLI that `tools/install-kcl` installs.
+//! pinned `kcl` CLI that `cargo xtask install-kcl` installs.
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};

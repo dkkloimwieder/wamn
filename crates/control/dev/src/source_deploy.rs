@@ -2,12 +2,13 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
+use wamn_build::{BuildRequest, build_package};
 
 use anyhow::{Context as _, ensure};
 use wamn_catalog::{ManifestDigest, PackageCoordinate};
 use wamn_compiler::manifest::PackageManifest;
 use wamn_compiler::{
-    build::{BuildRequest, build_package, default_output_root, package_output},
+    build::{default_output_root, package_output},
     build_record,
 };
 use wamn_environment_control::environment::{Platform, document::EnvironmentDocument};
@@ -105,7 +106,6 @@ async fn build(
     let (application, roots) = sources(document, root)?;
     let mut packages = Vec::with_capacity(roots.len());
     for root in &roots {
-        // build_package owns current_build/current_generation and builds only stale inputs.
         let record = build_package(&BuildRequest::new(
             root,
             &default_output_root(root),
@@ -272,7 +272,7 @@ mod tests {
             ("overlay", Some("middle")),
         ] {
             let root = scratch.path().join(id);
-            std::fs::create_dir_all(&root)?;
+            std::fs::create_dir_all(root.join("generated"))?;
             let mut manifest = json!({
                 "package": {"id": id, "version": "1.0.0"},
                 "required_platform_policy_contract": {"id": "fixture", "state": "satisfied"},
@@ -284,7 +284,10 @@ mod tests {
                     "digest": format!("sha256:{}", "a".repeat(64)), "operations": []
                 });
             }
-            std::fs::write(root.join("wamn.json"), serde_json::to_vec(&manifest)?)?;
+            std::fs::write(
+                root.join("generated/wamn.json"),
+                serde_json::to_vec(&manifest)?,
+            )?;
             expected.push(root);
         }
         let members = expected

@@ -10,6 +10,7 @@ default = []
 test-util = []
 
 [dependencies]
+wamn-build.workspace = true
 wamn-broker = { workspace = true }
 wamn-scalar.workspace = true
 wamn-digest.workspace = true

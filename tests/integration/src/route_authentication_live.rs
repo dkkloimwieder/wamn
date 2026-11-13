@@ -200,7 +200,11 @@ async fn install_project_and_reconcile(project: &Client, project_url: &str) -> a
     let package = scratch.path().join("package");
     let source = package_root();
     std::fs::create_dir_all(package.join("migrations"))?;
-    std::fs::copy(source.join("wamn.json"), package.join("wamn.json"))?;
+    std::fs::create_dir_all(package.join("generated"))?;
+    std::fs::copy(
+        source.join("generated/wamn.json"),
+        package.join("generated/wamn.json"),
+    )?;
     for entry in std::fs::read_dir(source.join("migrations"))? {
         let entry = entry?;
         std::fs::copy(

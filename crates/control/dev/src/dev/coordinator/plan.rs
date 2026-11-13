@@ -1,7 +1,6 @@
 use super::{
-    BTreeSet, CatalogIr, ComponentAdmission, ComponentDeclarationError,
-    ComponentDeclarationErrorType, LocalBindingSelection, PackageInput, PackageManifest,
-    ProductionDevStageError, SelectedComponentArtifact,
+    CatalogIr, ComponentAdmission, ComponentDeclarationError, ComponentDeclarationErrorType,
+    PackageInput, PackageManifest, ProductionDevStageError, SelectedComponentArtifact,
 };
 
 pub(super) fn project_catalog_for_package(
@@ -16,60 +15,6 @@ pub(super) fn project_catalog_for_package(
     wamn_compiler::project_package_catalog(catalog, target, &manifests).map_err(|source| {
         ProductionDevStageError::invalid("project package catalog", source.to_string())
     })
-}
-
-/// The store alias that the binding selections give a component: the one name
-/// the operator passes as the environment document in the cluster.
-pub(super) fn selected_store_alias(
-    selections: &[LocalBindingSelection],
-    artifact: &SelectedComponentArtifact,
-) -> anyhow::Result<Option<String>> {
-    let mut aliases = selections
-        .iter()
-        .filter(|selection| {
-            *selection.package_id == *artifact.package_id
-                && *selection.component == *artifact.component
-        })
-        .map(|selection| selection.store_alias.clone())
-        .collect::<BTreeSet<_>>()
-        .into_iter();
-    let alias = aliases.next();
-    anyhow::ensure!(
-        aliases.next().is_none(),
-        "the binding selections give {}::{} more than one store alias",
-        artifact.package_id,
-        artifact.component
-    );
-    Ok(alias)
-}
-
-/// Refuse a binding store alias that differs from the `params.store_alias` a
-/// wiring node of the same package gives the component (wamn-qj68). The wiring
-/// node is the authored source; the binding selection only repeats it.
-pub(super) fn require_wiring_store_alias(
-    components: &std::collections::BTreeMap<String, BTreeSet<String>>,
-    artifact: &SelectedComponentArtifact,
-    store_alias: Option<&str>,
-) -> Result<(), ProductionDevStageError> {
-    let Some(store_alias) = store_alias else {
-        return Ok(());
-    };
-    for wired in components
-        .get(artifact.component.as_ref())
-        .into_iter()
-        .flatten()
-    {
-        if wired != store_alias {
-            return Err(ProductionDevStageError::invalid(
-                "require store alias",
-                format!(
-                    "the binding selections give {}::{} store alias {store_alias:?}, but the build input gives {wired:?}",
-                    artifact.package_id, artifact.component,
-                ),
-            ));
-        }
-    }
-    Ok(())
 }
 
 /// Refuse an admission whose identity differs from the artifact selected for it.
@@ -132,23 +77,4 @@ pub(super) fn declaration_stage_error(
             ProductionDevStageError::invalid("render component declaration", source.to_string())
         }
     }
-}
-
-pub(super) fn require_command_success(
-    operation: &'static str,
-    output: &std::process::Output,
-) -> Result<(), ProductionDevStageError> {
-    if output.status.success() {
-        return Ok(());
-    }
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    let stderr = stderr.trim();
-    Err(ProductionDevStageError::invalid(
-        operation,
-        if stderr.is_empty() {
-            format!("command exited with {}", output.status)
-        } else {
-            format!("command exited with {}: {stderr}", output.status)
-        },
-    ))
 }

@@ -193,5 +193,10 @@ manifest.Package {
     }
     connections = {}
     components = {client_acme_receiving = {connections = ["postgres"]}}
-    routes = {path_prefix = "/acme", id_prefix = "client-acme-receiving"}
+    routes = {
+        operations = {
+            "acme.record_receipt" = {id = "client-acme-receiving-acme-record-receipt-http", path = "/acme/acme/record_receipt"}
+            "quality.load_purchase_order_detail" = {id = "client-acme-receiving-quality-load-purchase-order-detail-http", path = "/acme/quality/load_purchase_order_detail"}
+            "quality.approve_inspection" = {id = "client-acme-receiving-quality-approve-inspection-http", path = "/acme/quality/approve_inspection"}
+        }path_prefix = "/acme", id_prefix = "client-acme-receiving"}
 }

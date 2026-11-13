@@ -9,9 +9,6 @@ mod platform_claim;
 #[path = "support/platform_descriptors.rs"]
 mod platform_descriptors;
 
-#[path = "support/platform_client_ir.rs"]
-mod platform_client_ir;
-
 #[path = "support/platform_protocol.rs"]
 mod platform_protocol;
 

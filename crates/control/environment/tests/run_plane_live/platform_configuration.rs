@@ -213,9 +213,6 @@ async fn env_apply_creates_number_sequences_and_keeps_an_edit_live() {
     use wamn_environment_control::environment::stage::{
         create_number_sequences, sequence_defaults,
     };
-
-    wamn_compiler::build_record::require_current(&wamn_fixture_package::package_root())
-        .unwrap_or_else(|error| panic!("{error:#}"));
     let url = locked_database::database(wamn_test_postgres::database);
     let su = connect(&url).await;
     let database = project_env_database_name(CLI_ORG, CLI_PROJECT, CLI_ENV, CLI_INSTANCE);

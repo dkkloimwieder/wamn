@@ -17,7 +17,6 @@ use anyhow::Context as _;
 ///
 /// When the tree cannot be read.
 pub fn fixture_artifact_digest(root: &Path) -> anyhow::Result<String> {
-    wamn_compiler::build_record::require_current(root)?;
     let mut context = wamn_digest::Hasher::new();
     let mut frame = |bytes: &[u8]| {
         context.update(u64::try_from(bytes.len()).unwrap_or(u64::MAX).to_be_bytes());
@@ -109,11 +108,7 @@ pub fn write_build_record(root: &Path) {
                 .expect("fixture package version")
                 .to_owned(),
         },
-        inputs: build_record::BuildInputs {
-            digest: build_record::input_digest(root).unwrap(),
-            generation_digest: build_record::generation_digest(root).unwrap(),
-            files: std::collections::BTreeMap::new(),
-        },
+
         dependencies: Vec::new(),
         generator: build_record::BuildGenerator {
             id: "test".into(),
@@ -131,23 +126,4 @@ pub fn write_build_record(root: &Path) {
         build_record.to_bytes(),
     )
     .unwrap();
-}
-
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn a_fixture_build_record_matches_its_tree_and_refuses_a_later_edit() {
-        let scratch = crate::scratch::ScratchRoot::create().unwrap();
-        let package = scratch.path().join("package");
-        std::fs::create_dir_all(&package).unwrap();
-        std::fs::write(
-            package.join("wamn.json"),
-            r#"{"package":{"id":"fixture","version":"1.0.0"}}"#,
-        )
-        .unwrap();
-        super::write_build_record(&package);
-        wamn_compiler::build_record::require_current(&package).unwrap();
-        std::fs::write(package.join("statement.sql"), "SELECT 1").unwrap();
-        wamn_compiler::build_record::require_current(&package).unwrap_err();
-    }
 }

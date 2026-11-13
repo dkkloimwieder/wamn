@@ -1,14 +1,11 @@
 //! Arguments and output of the `apply-package`, `push-package`,
-//! and `reconcile-package-data-access` verbs.
+//! verbs.
 
 use std::path::PathBuf;
 
 use anyhow::Context as _;
 use clap::Args;
-use wamn_environment_control::reconcile_package_data_access::{
-    self, ReconcilePackageDataAccessRequest,
-};
-use wamn_package_control::apply_package::{self, ApplyOutcome, ApplyPackageRequest, PackageRoot};
+use wamn_package_control::apply_package::{self, ApplyOutcome, ApplyPackageRequest};
 use wamn_package_control::package_artifact::{
     self, OpenedPackage, PackagePushDisposition, PackageRegistry, PackageSource, PushPackageRequest,
 };
@@ -45,8 +42,7 @@ pub struct ApplyPackageArgs {
     pub environment: String,
 }
 
-/// The registry flags of `apply-package` and
-/// `reconcile-package-data-access`.
+/// Registry access for package artifacts.
 #[derive(Debug, Args)]
 pub struct RegistryArgs {
     /// Explicit `<registry>/<repository>` base for package artifacts.
@@ -86,22 +82,6 @@ async fn open(registry: &PackageRegistry, tag: String) -> anyhow::Result<OpenedP
         registry: registry.clone(),
     })
     .await
-}
-
-/// Open each package artifact of `tags`.
-async fn open_all(
-    registry: &PackageRegistry,
-    tags: Vec<String>,
-) -> anyhow::Result<Vec<OpenedPackage>> {
-    let mut opened = Vec::with_capacity(tags.len());
-    for tag in tags {
-        opened.push(open(registry, tag).await?);
-    }
-    Ok(opened)
-}
-
-fn roots(opened: &[OpenedPackage]) -> Vec<PackageRoot> {
-    opened.iter().map(OpenedPackage::package_root).collect()
 }
 
 /// Push one authored package as a registry artifact.
@@ -159,31 +139,6 @@ pub async fn push(args: PushPackageArgs) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Post-apply generated ACL reconciliation arguments.
-#[derive(Debug, Args)]
-pub struct ReconcilePackageDataAccessArgs {
-    /// Installed package artifacts `<package_id>-<version>`, one for each
-    /// applied package.
-    #[arg(long = "package-artifact", required = true)]
-    pub packages: Vec<String>,
-
-    /// The registry flags of `push-package`.
-    #[command(flatten)]
-    pub registry: RegistryArgs,
-
-    /// Owner connection to the target project-environment database.
-    #[arg(long, env = "WAMN_PG_ADMIN_URL", hide_env_values = true)]
-    pub database_url: String,
-
-    #[arg(long)]
-    pub org: String,
-    /// Project whose environment owns the already-applied package coordinate.
-    #[arg(long)]
-    pub project: String,
-    #[arg(long)]
-    pub environment: String,
-}
-
 /// Apply one package artifact and print the applied line.
 pub async fn apply(args: ApplyPackageArgs) -> anyhow::Result<()> {
     let registry = args.registry.registry();
@@ -229,29 +184,4 @@ pub fn print_applied(outcome: &ApplyOutcome) {
             " (already converged)"
         }
     );
-}
-
-/// Reconcile the exact installed set of generated package contributions.
-pub async fn reconcile_data_access(args: ReconcilePackageDataAccessArgs) -> anyhow::Result<()> {
-    let opened = open_all(&args.registry.registry(), args.packages).await?;
-    let outcome = reconcile_package_data_access::reconcile_package_data_access(
-        ReconcilePackageDataAccessRequest {
-            packages: roots(&opened),
-            database_url: args.database_url,
-            org: args.org.clone(),
-            project: args.project.clone(),
-            environment: args.environment.clone(),
-        },
-    )
-    .await?;
-    println!(
-        "reconciled data access for [{}]{}",
-        outcome.coordinates().join(", "),
-        if outcome.is_noop() {
-            " (already converged)"
-        } else {
-            ""
-        }
-    );
-    Ok(())
 }

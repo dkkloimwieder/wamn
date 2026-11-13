@@ -363,14 +363,14 @@ async fn measure(local: &mut Local<'_>, args: &Args, target: &Path) -> anyhow::R
     )
     .await?;
     let flags = crate::guest_rustflags(root).await?;
-    let route = wamn_compiler::build::build_guest(
+    let route = wamn_build::build_guest(
         root,
         &root.join("apps/Cargo.toml"),
         "http-route",
         Some(target),
     )
     .await?;
-    let materializer = wamn_compiler::build::build_guest(
+    let materializer = wamn_build::build_guest(
         root,
         &root.join("apps/Cargo.toml"),
         "materializer",
@@ -983,11 +983,16 @@ async fn pg_minimum(local: &mut Local<'_>, args: &Args) -> anyhow::Result<()> {
         .sql("CREATE EXTENSION IF NOT EXISTS pg_stat_statements")
         .await?;
     process::run(local.root, "pgbench", &[&local.database, "-i", "-s", "10"]).await?;
-    let contract =
-        data::read(&local.root.join(
-            "apps/target/wamn/wamn_receiving/contracts/purchase_order/update.operation.json",
-        ))?;
-    let operation = contract["operation"].as_str().context("update operation")?;
+    let manifest = wamn_compiler::manifest::PackageManifest::from_slice(&std::fs::read(
+        wamn_compiler::package_manifest_path(&local.root.join("apps/wamn_receiving")),
+    )?)?;
+    let operation = manifest
+        .compiled_operations
+        .get("purchase_order.update")
+        .context("compiled purchase_order.update")?
+        .operation
+        .operation
+        .as_str();
     for call in ["select-only", "simple-update", "get", "update"] {
         local.sql("SELECT pg_stat_statements_reset()").await?;
         local.profile_start(call).await?;

@@ -15,66 +15,22 @@ pub async fn build_fixture(
     PathBuf,
     Vec<wamn_package_control::component_admission::ComponentAdmission>,
 )> {
+    use wamn_compiler::build::generate_package;
     use wamn_compiler::{
-        build::{BuildRequest, build_package},
+        build::BuildRequest,
         build_record::{BUILD_RECORD_FILE, BuildComponent},
     };
     let source = repository.join("crates/control/environment/tests/support/file_package");
     let package = work.join("file-package/file_fixture");
-    for directory in ["publication/components", "publication/wirings"] {
-        std::fs::create_dir_all(package.join(directory))?;
-    }
+    std::fs::create_dir_all(&package)?;
     std::fs::copy(source.join("kind.wamn.k.in"), package.join("wamn.k"))?;
-    // This authored route starts the HTTP role for file.expose metadata calls.
-    // Transfers use the separate native file listener.
-    let definition = json!({
-        "id":"fixture-run-http", "type":"http", "route":{"path":"/fixture/run"},
-        "input-schema":{
-            "type":"array", "minItems":1, "maxItems":100,
-            "items":{"type":"object", "required":["request_id"],
-                "additionalProperties":false,
-                "properties":{"request_id":{"type":"string", "minLength":1}}}
-        },
-        "raw-body-bytes":{"maximum":1_048_576}
-    });
-    std::fs::write(
-        package.join("publication/attachments.json"),
-        serde_json::to_vec(&json!({"fixture-run-http":{
-            "type":"http", "package-id":"file_fixture", "component":"fixture",
-            "operation":"file-fixture:fixture/run",
-            "definition-hash":wamn_digest::canonical_json_sha256(&definition),
-            "definition":definition, "auth-policy":{"modes":["session"]},
-            "registered-operation":"file-fixture:fixture/run"
-        }}))?,
-    )?;
-    std::fs::write(
-        package.join("publication/components/fixture.json.in"),
-        serde_json::to_vec(&json!({
-            "target":{"project_env_key":"__PROJECT_ENV_KEY__", "package-id":"file_fixture"},
-            "component":"fixture", "interface-version":"0.1.0",
-            "operations":{"file-fixture:fixture/run":{
-                "registered-operation":"file-fixture:fixture/run",
-                "input-ports":[], "output-ports":[], "parameters":[]}},
-            "connections":[]
-        }))?,
-    )?;
     let palette = work.join("file-package/platform/execution/blob-put");
     std::fs::create_dir_all(&palette)?;
     std::fs::copy(
         source.join("publication/components/blob-put.json.in"),
         palette.join("declaration.json.in"),
     )?;
-    std::fs::write(
-        package.join("publication/wirings/blob-put.json"),
-        serde_json::to_vec(&json!({
-            "format-version":"0.1", "wiring-id":"blob-put", "version":1, "entry":"put",
-            "nodes":{"put":{"component":"blob-put", "interface-version":"0.1.0",
-                "operation":"wamn:node/async-handler@0.1.0",
-                "params":{"store_alias":"files", "key_field":"/key", "body_field":"/body"}}},
-            "edges":[]
-        }))?,
-    )?;
-    let mut build_record = Box::pin(build_package(&BuildRequest::new(
+    let mut build_record = Box::pin(generate_package(&BuildRequest::new(
         &package,
         &work.join("file-package/target/wamn"),
         database_url,
@@ -138,8 +94,9 @@ pub async fn build_fixture(
     for name in ["fixture", "blob-put"] {
         let (declaration, platform_packages) = if name == "fixture" {
             (
-                wamn_package_control::component_declaration::render_declaration_document(
-                    &package.join("publication/components/fixture.json.in"),
+                wamn_package_control::component_declaration::render_package_declaration(
+                    &package,
+                    "fixture",
                     &coordinate.project_env_key,
                 )?,
                 vec!["wamn:node".into(), "wamn:postgres".into()],

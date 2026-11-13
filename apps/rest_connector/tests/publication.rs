@@ -5,7 +5,6 @@ mod support;
 use serde_json::json;
 use std::collections::BTreeSet;
 use wamn_catalog::{ComponentPackageCoordinate, PackageCoordinate, WiringDocument};
-use wamn_compiler::operation_reference::{AuthoredDocument, read_authored_document};
 use wamn_release_control::publish_release::{PublishReleaseRequest, assemble_local_release};
 
 #[tokio::test]
@@ -53,9 +52,8 @@ async fn both_applications_publish_with_exact_dependencies_and_private_state() -
         .into_iter()
         .map(|name| {
             let document: WiringDocument = serde_json::from_value(
-                read_authored_document(
-                    &connector.join(format!("publication/wirings/{name}.json")),
-                    AuthoredDocument::Wiring,
+                serde_json::from_slice::<serde_json::Value>(
+                    &std::fs::read(connector.join(format!("tests/workflows/{name}.json"))).unwrap(),
                 )
                 .unwrap(),
             )

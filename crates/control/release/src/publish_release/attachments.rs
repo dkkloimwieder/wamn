@@ -1,10 +1,7 @@
 //! Package attachment documents and deployment route preparation.
 
 pub(super) mod plan;
-pub(super) use plan::{
-    merge_package_attachment_documents, resolve_route_methods,
-    validate_attachment_definition_hashes,
-};
+pub(super) use plan::{merge_package_attachment_documents, resolve_route_methods};
 
 use super::{
     AuthoredHttpRoute, BTreeMap, BTreeSet, PathBuf, PublishManifestError, PublishManifestErrorType,
