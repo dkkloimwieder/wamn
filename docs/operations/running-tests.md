@@ -1013,21 +1013,9 @@ The platform owns it, and a platform test takes it instead of an application.
 The crate `wamn-fixture-package` states its paths, so a test reads them without a literal of its own.
 Do not edit generated Rust directly.
 
-The development loop prepares SQLx metadata for every package with SQL declarations in its Generate stage.
-The platform verifier discovers queries and Rust types from generated source maps, and compiles the exact SQL through SQLx macros.
-It writes the metadata to `.sqlx` in the package's build output.
-It prepares an application only when one of these inputs changed:
-
-- the input digest in the package's `build.json`, which covers the package files, the apps workspace `Cargo.lock`, and the generator identity
-- the digest of each base package in the same `build.json`, which for Acme changes with a Receiving change
-
-The loop compares these inputs with the inputs of its last successful preparation in the session.
-A new session prepares once. A failed or interrupted preparation runs again in the next cycle.
-A Rust-only change does not prepare.
-
-The loop calls `wamn_compiler::prepare_sqlx_metadata` in its own process, with the URL of the target database.
-The verifier requires SQLx CLI 0.9.0.
-No separate command prepares the metadata by hand.
+The compiler describes every emitted statement with SQLx before it emits consumers.
+It records parameter types, selected columns, relation access, and transaction requirements in the compiled package document.
+The compiler emits no native verifier rows, bind fixtures, or source maps.
 
 ### wamn build
 

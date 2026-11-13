@@ -890,19 +890,12 @@ mod tests {
                 pg_query::parse(std::str::from_utf8(file.bytes()).unwrap()).unwrap();
             }
         }
-        let text = |path| std::str::from_utf8(output.file(path).unwrap().bytes()).unwrap();
-        let contract: serde_json::Value =
-            serde_json::from_str(text("generated/contracts/line/load.operation.json")).unwrap();
-        assert_eq!(contract["result"], "page");
-        assert_eq!(
-            contract["statements"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .map(|statement| statement["name"].as_str().unwrap())
-                .collect::<Vec<_>>(),
-            ["feed_changes", "feed_page"]
-        );
+        let description = &output.operations()["line.load"];
+        for statement in &description.operation.statements {
+            let path = &statement.path;
+            let sql = output.file(path).expect("declared statement is emitted");
+            pg_query::parse(std::str::from_utf8(sql.bytes()).unwrap()).unwrap();
+        }
     }
 
     #[test]

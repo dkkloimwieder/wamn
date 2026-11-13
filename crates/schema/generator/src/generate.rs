@@ -1,18 +1,16 @@
 use wamn_scalar::SqlValueType;
 mod authored_feed;
 mod component;
-mod contracts;
 mod data;
 mod numbering;
-mod publication;
+mod operations;
+pub(crate) mod publication;
 mod routes;
 mod rust;
 mod validation;
 mod wit;
 mod wit_adapters;
-use contracts::{
-    emit_cursor_contract, emit_custom_operation, emit_model, required_schema_contract,
-};
+use operations::{emit_custom_operation, emit_model, required_schema_contract};
 use validation::{authored_sql_map, validate};
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -165,13 +163,44 @@ impl GeneratedFile {
     }
 }
 
+pub use wamn_catalog::OperationDescription;
+
 /// Generated package files.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GeneratedPackage {
     files: Box<[GeneratedFile]>,
+    operations: BTreeMap<String, OperationDescription>,
 }
 
 impl GeneratedPackage {
+    pub(crate) fn replace_json(
+        &mut self,
+        path: &str,
+        value: &Value,
+    ) -> Result<(), serde_json::Error> {
+        let bytes = serde_json::to_vec(value)?;
+        match self.files.binary_search_by_key(&path, |file| file.path()) {
+            Ok(index) => self.files[index].bytes = bytes.into_boxed_slice(),
+            Err(index) => {
+                let mut files = std::mem::take(&mut self.files).into_vec();
+                files.insert(
+                    index,
+                    GeneratedFile::new(path.into(), bytes.into_boxed_slice()),
+                );
+                self.files = files.into_boxed_slice();
+            }
+        }
+        Ok(())
+    }
+
+    pub(crate) fn take_operations(&mut self) -> BTreeMap<String, OperationDescription> {
+        std::mem::take(&mut self.operations)
+    }
+    /// Compiled descriptions keyed by local operation name.
+    pub fn operations(&self) -> &BTreeMap<String, OperationDescription> {
+        &self.operations
+    }
+
     /// Artifacts ordered by package-relative path.
     pub fn files(&self) -> &[GeneratedFile] {
         &self.files
@@ -331,7 +360,7 @@ pub(crate) fn sql_corpus(
         for (action, operation) in &model.operations {
             operations.insert(
                 action.as_str().to_owned(),
-                contracts::emit_operation_sql(
+                operations::emit_operation_sql(
                     &mut statements,
                     name,
                     table,
@@ -446,12 +475,13 @@ pub(crate) fn generate_described(
             insert_bytes(&mut files, path, bytes.clone())?;
         }
     }
-    emit_cursor_contract(&mut files)?;
+    let mut operations = BTreeMap::new();
 
     for (model_name, model) in &manifest.models {
         let table = relation(input.catalog, model).expect("validation resolved every relation");
         emit_model(
             &mut files,
+            &mut operations,
             corpus,
             input.transactional,
             &corpus.model_paths[model_name],
@@ -462,24 +492,34 @@ pub(crate) fn generate_described(
             table,
         )?;
     }
-    for (operation_name, operation) in &manifest.custom_operations {
-        authored_feed::emit(&mut files, manifest, operation_name, operation)?;
+    let custom = manifest
+        .custom_operations
+        .iter()
+        .map(|(name, operation)| {
+            (
+                name.clone(),
+                operations::compile_custom(
+                    operation,
+                    corpus.custom_operations.get(name).unwrap_or(operation),
+                ),
+            )
+        })
+        .collect::<BTreeMap<_, _>>();
+    for operation_name in custom.keys() {
         emit_custom_operation(
             &mut files,
+            &mut operations,
             corpus,
             input.transactional,
             input.catalog,
             manifest,
             operation_name,
-            corpus
-                .custom_operations
-                .get(operation_name)
-                .unwrap_or(operation),
+            &custom,
         )?;
     }
     data::emit_package_data(&mut files, manifest)?;
     component::emit_package_component(&mut files, manifest)?;
-    publication::emit_package_publication(&mut files, manifest)?;
+    publication::emit_package_publication(&mut files, manifest, &operations)?;
     insert_canonical_json(
         &mut files,
         REQUIRED_SCHEMA_CONTRACT_PATH,
@@ -492,7 +532,7 @@ pub(crate) fn generate_described(
         .collect::<Vec<_>>()
         .into_boxed_slice();
 
-    Ok(GeneratedPackage { files })
+    Ok(GeneratedPackage { files, operations })
 }
 
 /// The schema and history table name of each logged model.
@@ -824,22 +864,7 @@ fn update_can_violate(type_: &ConstraintType, writable_fields: &[String]) -> boo
     }
 }
 
-#[derive(Debug, Clone, Copy)]
-enum Projection {
-    Native,
-    Wamn,
-}
-
-#[derive(Debug, Clone, Copy)]
-enum ProjectionContents<'a> {
-    Native {
-        operation_rows: &'a [RustRow],
-        bind_fixtures: &'a [NativeBindFixture],
-    },
-    Wamn(&'a WamnApi),
-}
-
-#[derive(Debug, Serialize)]
+#[derive(Debug)]
 struct WamnApi {
     statement_visibility: RustVisibility,
     mutation_constraints: Vec<MutationConstraintNames>,
@@ -847,65 +872,57 @@ struct WamnApi {
     accessors: Vec<WamnAccessor>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug)]
 struct MutationConstraintNames {
-    operation: CrudAction,
     unique: ConstraintNameSlice,
     foreign_key: ConstraintNameSlice,
     check: ConstraintNameSlice,
     exclusion: ConstraintNameSlice,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug)]
 struct ConstraintNameSlice {
     constant: String,
     visibility: RustVisibility,
     names: Vec<String>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone)]
 struct RustRow {
     name: String,
     visibility: RustVisibility,
     fields: Vec<RustMember>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone)]
 struct RustMember {
     name: String,
-    #[serde(rename = "type")]
     rust_type: String,
-    #[serde(skip)]
     statement_type: SqlValueType,
-    #[serde(skip)]
     nullable: bool,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone)]
 struct AccessorBind {
     parameter: String,
-    postgres: String,
     nullable: bool,
-    native_rust: String,
     wamn_rust: String,
-    #[serde(skip)]
     statement_type: SqlValueType,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug)]
 struct WamnAccessor {
     name: String,
     visibility: RustVisibility,
     operation: CrudAction,
     statement_constant: String,
-    #[serde(skip)]
     sql_path: String,
     row: String,
     fetch: AccessorFetch,
     binds: Vec<AccessorBind>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug)]
 struct StaticSqlAccessor {
     name: String,
     statement_constant: String,
@@ -914,42 +931,11 @@ struct StaticSqlAccessor {
     binds: Vec<AccessorBind>,
 }
 
-#[derive(Debug, Serialize)]
-struct NativeBindFixture {
-    accessor: String,
-    parameter: String,
-    function: String,
-    visibility: RustVisibility,
-    #[serde(rename = "type")]
-    rust_type: String,
-    #[serde(skip)]
-    value: String,
-}
+type StatementContract = wamn_catalog::StatementDescription;
 
-#[derive(Debug, Serialize)]
-struct StatementContract {
-    name: String,
-    path: String,
-    binds: Vec<StatementValueContract>,
-    columns: Vec<StatementValueContract>,
-    relations: Vec<wamn_catalog::profile::RelationProfile>,
-    /// PostgreSQL's own verdict, from the statement's generic plan against the
-    /// migrated database: a `ModifyTable` node (it writes, data-modifying CTEs
-    /// included) or a `LockRows` node (it takes a row lock, which autocommit
-    /// would drop the instant the statement returned). Never read off the text.
-    transactional: bool,
-}
+pub(crate) type StatementValueContract = wamn_catalog::StatementValue;
 
-#[derive(Debug, Clone, Serialize)]
-pub(crate) struct StatementValueContract {
-    pub(crate) name: String,
-    #[serde(rename = "type")]
-    pub(crate) ty: SqlValueType,
-    pub(crate) nullable: bool,
-}
-
-#[derive(Debug, Clone, Copy, Serialize)]
-#[serde(rename_all = "snake_case")]
+#[derive(Debug, Clone, Copy)]
 enum AccessorFetch {
     Optional,
     /// Every row: a query's page and the row past it.
@@ -957,8 +943,7 @@ enum AccessorFetch {
     One,
 }
 
-#[derive(Debug, Clone, Copy, Serialize)]
-#[serde(rename_all = "snake_case")]
+#[derive(Debug, Clone, Copy)]
 enum RustVisibility {
     Public,
     Crate,
@@ -1211,18 +1196,6 @@ fn server_owned_fields<'a>(model: &'a ModelDeclaration, table: &'a Table) -> Vec
     fields
 }
 
-fn insert_json(
-    files: &mut BTreeMap<String, Vec<u8>>,
-    path: &str,
-    value: &impl Serialize,
-) -> Result<(), GenerateError> {
-    insert_bytes(
-        files,
-        path,
-        serde_json::to_vec(value).expect("generated JSON values always serialize"),
-    )
-}
-
 fn insert_json_line(
     files: &mut BTreeMap<String, Vec<u8>>,
     path: &str,
@@ -1329,15 +1302,9 @@ mod tests {
             &super::StatementTransactionality::from_paths(std::collections::BTreeMap::new()),
         ))
         .unwrap();
-        let contract: serde_json::Value = serde_json::from_slice(
-            generated
-                .file("generated/contracts/record/get.operation.json")
-                .unwrap()
-                .bytes(),
-        )
-        .unwrap();
+        let contract = &generated.operations()["record.get"].operation;
         let relations: Vec<wamn_catalog::profile::RelationProfile> =
-            serde_json::from_value(contract["statements"][0]["relations"].clone()).unwrap();
+            contract.statements[0].relations.clone();
         assert_eq!(
             relations[0]
                 .reads

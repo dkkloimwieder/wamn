@@ -54,6 +54,9 @@ wit_bindgen::generate!({
 
 struct Component;
 
+impl generated::purchase_order::get::Action for Component {}
+impl generated::purchase_order::update::Action for Component {}
+
 quality::detail_codec::export_operation!(
     Component,
     exports::client_acme_receiving::quality::load_purchase_order_detail,

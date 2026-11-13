@@ -105,9 +105,9 @@ pub struct AuthorArgs {
     /// The application of the workflow, as the environment declares it.
     #[arg(long)]
     pub application: String,
-    /// The wiring document. Its `wiring-id` and `version` name the workflow version.
-    #[arg(long)]
-    pub document: PathBuf,
+    /// Compiled publication wiring from a package build. Operations must carry their sealed versions.
+    #[arg(long = "document")]
+    pub compiled_document: PathBuf,
     #[arg(long, value_enum)]
     pub execution_type: ExecutionType,
     /// The active role of a run. Required with `--execution-type role`.
@@ -284,7 +284,9 @@ pub async fn run(command: WorkflowCommand) -> anyhow::Result<()> {
                     .map_or(WorkflowTrigger::Manual, WorkflowTrigger::Schedule)
             };
             let document =
-                wamn_environment_control::author_workflow::read_wiring_document(&args.document)?;
+                wamn_environment_control::author_workflow::read_compiled_wiring_document(
+                    &args.compiled_document,
+                )?;
             let triple = parse_coordinate(&args.coordinate)?;
             let (digest, declared) =
                 serving_facts(&triple, args.dev_root.as_deref(), &args.application).await?;

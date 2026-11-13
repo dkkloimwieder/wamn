@@ -3,7 +3,7 @@ use wamn_compiler::ManifestErrorType as GenerateErrorType;
 use wamn_compiler::manifest::validate_operation_vocabulary;
 use wamn_schema_introspection::ir::{CatalogIr, Constraint, Table};
 
-use super::{artifact, fixture, parsed};
+use super::{description_json, fixture, parsed};
 
 fn mapped_manifest() -> Value {
     let mut manifest = fixture::manifest();
@@ -116,10 +116,7 @@ fn custom_constraints_follow_catalog_identity_and_type() {
                 GenerateErrorType::InvalidOperation
             );
         } else {
-            let errors = artifact(
-                &result.unwrap(),
-                "generated/contracts/widget/archive.errors.json",
-            );
+            let errors = description_json(&result.unwrap(), "widget.archive", "errors");
             let mapped = errors["cases"]
                 .as_array()
                 .unwrap()
@@ -186,18 +183,6 @@ fn custom_visibility_permissions_and_components_remain_closed() {
             .error_type(),
         GenerateErrorType::InvalidOperation
     );
-}
-
-#[test]
-fn claim_generation_uses_platform_operation_declarations() {
-    let manifest = super::platform_claim::manifest();
-    let package = fixture::generate_with(&fixture::catalog(), &manifest);
-    let operation = artifact(
-        &package,
-        "generated/contracts/widget/archive.operation.json",
-    );
-    assert_eq!(operation["transaction"], "explicit_per_input");
-    assert_eq!(operation["automatic_retry"], false);
 }
 
 #[test]

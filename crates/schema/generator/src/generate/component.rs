@@ -48,15 +48,10 @@ fn member_name(field: &str) -> String {
 /// Emit `generated/component/<model>.rs`.
 pub(super) fn emit_model_component(
     files: &mut BTreeMap<String, Vec<u8>>,
-    manifest: &PackageManifest,
-    model_name: &str,
-    model: &ModelDeclaration,
-    table: &wamn_schema_introspection::ir::Table,
+    compiled: &super::operations::ModelDescription<'_>,
 ) -> Result<(), GenerateError> {
-    if model.operations.is_empty() {
-        return Ok(());
-    }
-    let namespace = module_name(&manifest.package.id);
+    let model_name = compiled.name;
+    let namespace = module_name(&compiled.package.id);
     let package = module_name(model_name);
     let mut source = String::from(HEADER);
     writeln!(
@@ -70,16 +65,22 @@ pub(super) fn emit_model_component(
          use wamn_postgres_statements::{{Connection, Transaction}};\n"
     )
     .expect("writing to a String cannot fail");
-    for (action, operation) in &model.operations {
+    for (action, facts) in &compiled.operations {
+        let operation = facts.request;
         let name = action.as_str();
         let contract = rust_type_identifier(name);
         let (state, body) = handler(
             *action,
             &contract,
             operation,
-            model.feed_enabled(),
-            crate::key::key_type(table)?,
+            compiled.feed,
+            compiled.shape.key,
         );
+        let state_argument = if action.changes_records() {
+            "transaction"
+        } else {
+            "connection"
+        };
         // A change works in the host's operation transaction, so its export
         // takes no state.
         let export_state = if action.changes_records() {
@@ -89,7 +90,7 @@ pub(super) fn emit_model_component(
         };
         writeln!(
             source,
-            "pub(crate) mod {name} {{\n\
+            "pub mod {name} {{\n\
              #[allow(unused_imports)]\n\
              use super::{{Connection, Error, Transaction, model}};\n\
              use crate::exports::{namespace}::{package}::{name} as contract;\n\
@@ -97,8 +98,18 @@ pub(super) fn emit_model_component(
              use super::contract;\n\
              include!(\"../wit/{model_name}_{name}_codec.rs\");\n\
              }}\n\n\
-             pub(crate) async fn handle({state}, request: contract::{contract}Request) -> Result<contract::{contract}Result, contract::{contract}Error> {{\n\
+             /// Override this action or call `default_handle` from the override.\n\
+             pub trait Action {{\n\
+             fn run({state}, request: contract::{contract}Request) -> impl std::future::Future<Output = Result<contract::{contract}Result, contract::{contract}Error>> {{\n\
+             default_handle({state_argument}, request)\n\
+             }}\n\
+             }}\n\
+             /// The generated implementation, available to an override and eject.\n\
+             pub async fn default_handle({state}, request: contract::{contract}Request) -> Result<contract::{contract}Result, contract::{contract}Error> {{\n\
              {body}\
+             }}\n\
+             pub(crate) async fn handle({state}, request: contract::{contract}Request) -> Result<contract::{contract}Result, contract::{contract}Error> {{\n\
+             <crate::Component as Action>::run({state_argument}, request).await\n\
              }}\n\
              codec::export_operation!(crate::Component, contract, crate::wamn::node::types,{export_state} handle, codec);\n\
              }}\n"

@@ -45,4 +45,7 @@ wit_bindgen::generate!({
 
 struct Component;
 
+impl generated::numbered_label::create::Action for Component {}
+impl generated::widget::get::Action for Component {}
+
 export!(Component);

@@ -3,7 +3,6 @@
 //! With no arguments, emit the fixture used by the TypeScript runtime test.
 //! Otherwise, pass application directories whose contracts already exist.
 
-use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context as _, Result};
@@ -40,44 +39,13 @@ fn main() -> Result<()> {
         let output = wamn_compiler::output_root(&package);
         let manifest: serde_json::Value =
             serde_json::from_slice(&std::fs::read(output.join("wamn.json"))?)?;
-        let mut contracts = BTreeMap::new();
-        for model in std::fs::read_dir(output.join("contracts"))? {
-            let model = model?.path();
-            if !model.is_dir() {
-                continue;
-            }
-            for entry in std::fs::read_dir(model)? {
-                let path = entry?.path();
-                let name = path
-                    .strip_prefix(output.join("contracts"))?
-                    .to_str()
-                    .context("contract path")?
-                    .to_owned();
-                contracts.insert(name, std::fs::read(path)?);
-            }
-        }
-        let read = |name: &str| {
-            let path = output.join(name.strip_prefix("generated/").unwrap_or(name));
-            let bytes = std::fs::read(&path)
-                .map_err(|_| wamn_compiler::route_schema::RouteSchemaError::unknown(name))?;
-            wamn_compiler::route_schema::parse(name, &bytes)
-        };
-        let routes = published_routes(
-            &package.join("publication/attachments.json"),
-            &mut |name| {
-                if output
-                    .join(name.strip_prefix("generated/").unwrap_or(name))
-                    .exists()
-                {
-                    read(name).map(Some)
-                } else {
-                    Ok(None)
-                }
-            },
-            &mut |name| read(name),
-        )?;
+        let descriptions = serde_json::from_value(manifest["compiled_operations"].clone())?;
+        let attachments = wamn_compiler::publication::read_package_attachments(&package)?;
+        let declarations =
+            wamn_compiler::publication::read(&package, wamn_compiler::publication::COMPONENTS)?;
+        let routes = published_routes(attachments, &declarations)?;
         let id = manifest["package"]["id"].as_str().context("package id")?;
-        let ir = ClientContractIr::from_release_contracts(id, &contracts, &routes)?;
+        let ir = ClientContractIr::from_operations(id, &descriptions, &routes)?;
         emit(
             &ir,
             manifest["client_package"]["name"]

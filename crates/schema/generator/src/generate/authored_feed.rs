@@ -5,7 +5,7 @@ use std::fmt::Write as _;
 use wamn_scalar::SqlValueType;
 
 use super::rust::projected_rust_type;
-use super::{CatalogIr, Projection, insert_bytes, sql};
+use super::{CatalogIr, insert_bytes, sql};
 use crate::ManifestError as GenerateError;
 use crate::manifest::{CustomOperationDeclaration, rust_identifier, rust_type_identifier};
 use crate::manifest::{
@@ -75,7 +75,7 @@ pub(super) fn prepare_sql(
     ] {
         corpus.insert(path.clone(), text.into_bytes());
     }
-    let mut prepared = contract(operation);
+    let mut prepared = operation.clone();
     prepared.statements.clear();
     let nullable = statement
         .row
@@ -127,24 +127,15 @@ pub(super) fn emit(
     files: &mut BTreeMap<String, Vec<u8>>,
     manifest: &crate::manifest::PackageManifest,
     name: &str,
-    operation: &CustomOperationDeclaration,
+    compiled: &super::operations::CustomDescription<'_>,
 ) -> Result<(), GenerateError> {
+    let operation = compiled.declaration;
     if operation.feed != Some(true) {
         return Ok(());
     }
-    let key = &operation.lists.as_ref().expect("validated list").key_field[0];
-    let key_type = operation
-        .statements
-        .values()
-        .next()
-        .expect("validated statement")
-        .row
-        .iter()
-        .find(|field| &field.name == key)
-        .expect("validated key")
-        .ty;
-    emit_data(files, &manifest.package, name, operation, key_type)?;
-    emit_component(files, &manifest.package.id, name, operation, key_type)
+    let key_type = compiled.feed_key.expect("compiled feed key");
+    emit_data(files, &manifest.package, name, compiled, key_type)?;
+    emit_component(files, &manifest.package.id, name, compiled, key_type)
 }
 
 fn member(name: &str) -> String {
@@ -155,9 +146,10 @@ fn emit_data(
     files: &mut BTreeMap<String, Vec<u8>>,
     package: &crate::manifest::PackageIdentity,
     name: &str,
-    operation: &CustomOperationDeclaration,
+    compiled: &super::operations::CustomDescription<'_>,
     key_type: SqlValueType,
 ) -> Result<(), GenerateError> {
+    let operation = compiled.declaration;
     let stem = custom_artifact_stem(name);
     let statement = operation
         .statements
@@ -167,7 +159,7 @@ fn emit_data(
     let key = member(&operation.lists.as_ref().expect("validated list").key_field[0]);
     let id_type = super::data::cursor_key_type(key_type);
     let permission = crate::manifest::canonical_operation_identity(package, name)?;
-    let result = operation.result.as_ref().expect("validated feed result");
+    let result = compiled.result.as_ref().expect("compiled feed result");
     let row_fields = result
         .fields
         .iter()
@@ -176,7 +168,7 @@ fn emit_data(
                 fields,
                 "pub {}: {},",
                 member(&field.path),
-                projected_rust_type(field.ty, Projection::Wamn, field.nullable)
+                projected_rust_type(field.ty, field.nullable)
             )
             .expect("writing to a String cannot fail");
             fields
@@ -328,9 +320,10 @@ fn emit_component(
     files: &mut BTreeMap<String, Vec<u8>>,
     namespace: &str,
     name: &str,
-    operation: &CustomOperationDeclaration,
+    compiled: &super::operations::CustomDescription<'_>,
     key_type: SqlValueType,
 ) -> Result<(), GenerateError> {
+    let operation = compiled.declaration;
     let stem = custom_artifact_stem(name);
     let (group, local) = name.split_once('.').expect("validated operation");
     let namespace = namespace.replace('-', "_");
@@ -383,28 +376,4 @@ codec::export_operation!(crate::Component, contract, crate::wamn::node::types, C
         &format!("generated/component/{stem}.rs"),
         text.into_bytes(),
     )
-}
-
-/// WIT and codecs see the same derived snapshot field and expiry refusal.
-pub(super) fn contract(operation: &CustomOperationDeclaration) -> CustomOperationDeclaration {
-    let mut result = operation.clone();
-    if operation.feed == Some(true) {
-        if !result.errors.iter().any(|error| error == "cursor_expired") {
-            result.errors.push("cursor_expired".to_owned());
-        }
-        let fields = &mut result
-            .result
-            .as_mut()
-            .expect("validated feed result")
-            .fields;
-        if !fields.iter().any(|field| field.path == "row_version") {
-            fields.push(
-                serde_json::from_value(
-                    serde_json::json!({"path": "row_version", "type": "int64", "nullable": false}),
-                )
-                .expect("snapshot field"),
-            );
-        }
-    }
-    result
 }

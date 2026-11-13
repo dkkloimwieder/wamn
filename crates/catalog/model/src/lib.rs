@@ -54,8 +54,9 @@ pub use host_route::{
 };
 pub use package::PackageCoordinate;
 pub use route_identity::{
-    operation_token, route_attachment_id, route_path, sealed_operation_reference,
-    split_sealed_operation,
+    OperationContract, OperationDescription, StatementDescription, StatementValue,
+    operation_contract, operation_token, route_attachment_id, route_path,
+    sealed_operation_reference, split_sealed_operation,
 };
 pub use serving_manifest::{
     AttachmentAuthPolicy, AttachmentRef, AttachmentTarget, INVALID_ATTACHMENT_AUTH_POLICY_REFUSAL,

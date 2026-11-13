@@ -1,13 +1,14 @@
 # Naming
 
 A package is the unit of ownership, versioning, and compatibility.
-Its source identifier is singular `snake_case`, and its application home is `apps/<exact-package-id>/`.
+Its source identifier determines its application home, `apps/<exact-package-id>/`.
+Package and model names have no singular naming rule.
 Module and domain names organize implementation inside that package.
 They do not create separate package versions or authority.
 
 ## Source and wire identifiers
 
-WAMN-owned model, domain, route, event, JSON, SQL, and generated function identifiers use singular `snake_case`.
+WAMN-owned source identifiers use `snake_case` where their language or wire contract requires it.
 Generated language types use the language's naming convention.
 Third-party protocol fields retain their required spelling.
 Persisted identifiers and generated artifact names retain their declared contracts.
@@ -21,7 +22,7 @@ Local operations use these forms:
 ```
 
 The generated CRUD actions are `get`, `query`, `create`, `update`, and `delete`.
-Custom actions use singular `verb_noun` names.
+Custom actions use the names that the package declares.
 A model declares which generated actions it exposes.
 
 ## Operation identity

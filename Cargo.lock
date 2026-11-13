@@ -5789,6 +5789,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
+ "boon",
  "pg_query",
  "postgres-protocol",
  "proptest",

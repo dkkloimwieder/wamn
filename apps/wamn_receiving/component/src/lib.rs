@@ -43,6 +43,15 @@ wit_bindgen::generate!({
 
 struct Component;
 
+impl generated::purchase_order::create::Action for Component {}
+impl generated::purchase_order::get::Action for Component {}
+impl generated::purchase_order::query::Action for Component {}
+impl generated::purchase_order::update::Action for Component {}
+impl generated::receipt::get::Action for Component {}
+impl generated::receipt::query::Action for Component {}
+impl generated::supplier::create::Action for Component {}
+impl generated::supplier::query::Action for Component {}
+
 mod receipt_codec {
     use super::contract;
 

@@ -208,24 +208,24 @@ pub fn materialize_package_classified(
     package_root: &Path,
     transactional: &StatementTransactionality,
 ) -> Result<()> {
-    let package = generate_package(catalog, package_root, transactional)?;
+    let (manifest_bytes, mut manifest) = load_compiled_manifest(package_root, catalog)?;
+    let mut package = generate_from_manifest(
+        catalog,
+        &manifest_bytes,
+        &manifest,
+        package_root,
+        transactional,
+    )?;
     let output_root = crate::output_root(package_root);
-    let (_, manifest) = load_manifest(package_root)?;
-    let client = client_bindings(package_root, &manifest, &package)?;
+    crate::publication::complete(package_root, &manifest, &mut package)?;
+    let client = client_bindings(&manifest, &package)?;
+    manifest.compiled_operations = package.take_operations();
     let mut expected = expected_files(&package)?;
-    // The compiled manifest is one more file of the owned set.
-    let compiled_manifest = if is_authored(package_root) {
-        let (bytes, _) = load_compiled_manifest(package_root, catalog)?;
-        Some(bytes)
-    } else {
-        None
-    };
-    if let Some(bytes) = &compiled_manifest {
-        let relative = Path::new(COMPILED_MANIFEST)
-            .strip_prefix("generated")
-            .context("the compiled manifest lies under generated/")?;
-        expected.insert(relative.to_owned(), bytes.as_slice());
-    }
+    let compiled_manifest = serde_json::to_vec(&manifest)?;
+    let relative = Path::new(COMPILED_MANIFEST)
+        .strip_prefix("generated")
+        .context("compiled output path")?;
+    expected.insert(relative.to_owned(), compiled_manifest.as_slice());
     for file in &client {
         let relative = Path::new(file.path())
             .strip_prefix("generated")
@@ -244,41 +244,24 @@ pub fn materialize_package_classified(
 /// Authored routes come from `publication/attachments.json`.
 /// Route templates are release facts, so bindings use them directly.
 pub(crate) fn client_bindings(
-    package_root: &Path,
     manifest: &PackageManifest,
     package: &GeneratedPackage,
 ) -> Result<Vec<GeneratedFile>> {
-    const CONTRACTS: &str = "generated/contracts/";
-
-    let contracts = package
-        .files()
-        .iter()
-        .filter_map(|file| {
-            file.path()
-                .strip_prefix(CONTRACTS)
-                .map(|relative| (relative.to_owned(), file.bytes().to_vec()))
-        })
-        .collect::<BTreeMap<_, _>>();
-    // A route names its generated input schema, which this run produced and
-    // has not written yet, so the reference resolves against these bytes.
-    let routes = published_routes(
-        &package_root.join("publication/attachments.json"),
-        &mut |path| {
-            package
-                .file(path)
-                .map(|file| crate::route_schema::parse(path, file.bytes()))
-                .transpose()
-        },
-        &mut |reference| {
-            let file = package
-                .file(reference)
-                .ok_or_else(|| crate::route_schema::RouteSchemaError::unknown(reference))?;
-            crate::route_schema::parse(reference, file.bytes())
-        },
-    )
-    .context("read the release's published routes")?;
-    let ir = ClientContractIr::from_release_contracts(&manifest.package.id, &contracts, &routes)
-        .context("project the client-contract IR")?;
+    let attachments = serde_json::from_slice(
+        package
+            .file(crate::publication::ATTACHMENTS)
+            .context("missing final attachments")?
+            .bytes(),
+    )?;
+    let declarations = serde_json::from_slice(
+        package
+            .file(crate::publication::COMPONENTS)
+            .context("missing final components")?
+            .bytes(),
+    )?;
+    let routes = published_routes(attachments, &declarations).context("read final routes")?;
+    let ir = ClientContractIr::from_operations(&manifest.package.id, package.operations(), &routes)
+        .context("project client fields")?;
     let mut files = Vec::new();
     // A package opts in to TypeScript by declaring the package name that a
     // browser application imports. Generation never infers one.
@@ -293,21 +276,6 @@ pub(crate) fn client_bindings(
         ));
     }
     Ok(files)
-}
-
-fn generate_package(
-    catalog: &CatalogIr,
-    package_root: &Path,
-    transactional: &StatementTransactionality,
-) -> Result<crate::GeneratedPackage> {
-    let (manifest_bytes, manifest) = load_compiled_manifest(package_root, catalog)?;
-    generate_from_manifest(
-        catalog,
-        &manifest_bytes,
-        &manifest,
-        package_root,
-        transactional,
-    )
 }
 
 /// Generate from compiled manifest bytes that the caller holds. `manifest` is
@@ -523,7 +491,7 @@ pub(crate) fn expected_files(package: &GeneratedPackage) -> Result<BTreeMap<Path
 /// for the web packages. The application client goes to
 /// `<output_root>/wamn_control/client-ts` and the control client to
 /// `<output_root>/wamn_control/control/client-ts`. The resolved per-operation
-/// contract files go beside each client in `contracts/`. A file there that the
+/// client files go below `client-ts/`. A file there that the
 /// contracts no longer generate is removed. When `output_root` lies in a pnpm
 /// workspace, each client is then copied to the packages that name it,
 /// `wamn_control` or `wamn_control_org`, in `"wamn": { "clients": [...] }`.
@@ -546,13 +514,6 @@ fn materialize_host_route_set(output: &Path, set: wamn_catalog::HostRouteSet) ->
     let contracts = set
         .contract_files()
         .context("resolve the host route contracts")?;
-    write_build_output(
-        &output.join("contracts"),
-        &contracts
-            .iter()
-            .map(|(key, bytes)| (PathBuf::from(key), bytes.as_slice()))
-            .collect(),
-    )?;
     let routes = set
         .attachments()
         .map(|(_, attachment)| {
@@ -574,12 +535,34 @@ fn materialize_host_route_set(output: &Path, set: wamn_catalog::HostRouteSet) ->
             ))
         })
         .collect::<Result<BTreeMap<_, _>>>()?;
-    let ir = ClientContractIr::from_release_contracts(
+    let mut parts = BTreeMap::<String, BTreeMap<String, serde_json::Value>>::new();
+    for (path, bytes) in contracts {
+        let Some((module, file)) = path.split_once('/') else {
+            continue;
+        };
+        let Some((name, part)) = file
+            .strip_suffix(".json")
+            .and_then(|file| file.rsplit_once('.'))
+        else {
+            continue;
+        };
+        parts
+            .entry(format!("{module}.{name}"))
+            .or_default()
+            .insert(part.to_owned(), serde_json::from_slice(&bytes)?);
+    }
+    let descriptions = parts
+        .into_iter()
+        .map(|(name, parts)| {
+            serde_json::from_value(serde_json::to_value(parts)?)
+                .map(|description| (name, description))
+        })
+        .collect::<Result<BTreeMap<String, crate::OperationDescription>, _>>()?;
+    let ir = ClientContractIr::from_operations(
         wamn_catalog::host_route_package(),
-        &contracts,
+        &descriptions,
         &routes,
-    )
-    .context("project the client-contract IR of the host routes")?;
+    )?;
     for route in routes.keys() {
         ensure!(
             ir.models
@@ -597,11 +580,11 @@ fn materialize_host_route_set(output: &Path, set: wamn_catalog::HostRouteSet) ->
     let mut expected = BTreeMap::new();
     for file in &files {
         let relative = Path::new(file.path())
-            .strip_prefix("generated/client-ts")
+            .strip_prefix("generated")
             .with_context(|| format!("client binding escaped output root: {}", file.path()))?;
         expected.insert(relative.to_owned(), file.bytes());
     }
-    write_build_output(&output.join("client-ts"), &expected)
+    write_build_output(output, &expected)
 }
 
 /// Copy an application's generated client into its declared workspace consumers.

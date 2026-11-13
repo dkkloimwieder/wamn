@@ -1,21 +1,18 @@
 //! Operation contracts, schema contracts, and their SQL output.
 
-use super::rust::{
-    emit_projection, emit_static_sql_projection, native_bind_fixtures, operation_result_rows,
-    static_sql_accessors, static_sql_native_bind_fixtures, static_sql_rows, wamn_api,
-};
+use super::rust::{emit_projection, emit_static_sql_projection, static_sql_rows, wamn_api};
 use super::wit::{emit_custom_operation_wit, emit_model_wit};
 use super::{
     BTreeMap, BTreeSet, CHANGES_STATEMENT, CREATE_KEY_FIELD, CREATE_STATEMENT, CURSOR_VERSION,
-    CatalogIr, ConstraintType, Projection, ProjectionContents, RequiredConstraint, RequiredField,
-    RequiredSchemaContract, RequiredTable, StatementContract, StatementTransactionality,
-    StatementValueContract, Table, Value, WamnApi, column, constraint_error_code, constraint_field,
-    custom_operation_constraint_origin, insert_json, insert_json_line, json, operation_constraints,
-    operation_exclusions, query_variants, relation, server_owned_fields, sql, writable_path,
+    CatalogIr, ConstraintType, RequiredConstraint, RequiredField, RequiredSchemaContract,
+    RequiredTable, StatementContract, StatementTransactionality, StatementValueContract, Table,
+    Value, WamnApi, column, constraint_error_code, constraint_field,
+    custom_operation_constraint_origin, json, operation_constraints, operation_exclusions,
+    query_variants, relation, server_owned_fields, sql, writable_path,
 };
 use crate::manifest::{
-    AccessOperationErrorLiteral, ContractFieldDeclaration, CrudAction, CustomOperationDeclaration,
-    CustomOperationResultDeclaration, CustomOperationType, DeleteMode, FieldText, ModelDeclaration,
+    ContractFieldDeclaration, CrudAction, CustomOperationDeclaration,
+    CustomOperationResultDeclaration, DeleteMode, FieldText, ModelDeclaration,
     OperationDeclaration, OperationErrorDetailDeclaration, PackageManifest, ResultClass,
     canonical_operation_identity, custom_artifact_stem, rust_type_identifier,
 };
@@ -27,12 +24,67 @@ use crate::{ManifestError as GenerateError, ManifestErrorType as GenerateErrorTy
 use wamn_record_history::HISTORY_COLUMNS;
 use wamn_scalar::SqlValueType;
 
+/// Request, result and refusal facts compiled once for a model action.
+#[derive(Debug)]
+pub(super) struct ModelOperation<'a> {
+    pub request: &'a OperationDeclaration,
+    pub result: CustomOperationResultDeclaration,
+    pub refusals:
+        BTreeMap<crate::manifest::AccessOperationErrorLiteral, OperationErrorDetailDeclaration>,
+    pub revision: Option<SqlValueType>,
+}
+
+/// Physical request field facts shared by the guest renderers.
+#[derive(Debug)]
+pub(super) struct ModelShape<'a> {
+    pub columns: &'a [super::Column],
+    pub key: crate::key::KeyType,
+    pub generated_id: bool,
+    pub guarded: BTreeMap<CrudAction, Vec<super::wit::GuardedField>>,
+}
+
+impl ModelShape<'_> {
+    pub fn column(&self, name: &str) -> Option<&super::Column> {
+        self.columns.iter().find(|column| column.name() == name)
+    }
+}
+
+/// The shared input of every model guest emitter.
+#[derive(Debug)]
+pub(super) struct ModelDescription<'a> {
+    pub package: &'a crate::manifest::PackageIdentity,
+    pub name: &'a str,
+    pub min_lengths: &'a BTreeMap<String, u32>,
+    pub shape: ModelShape<'a>,
+    pub operations: BTreeMap<CrudAction, ModelOperation<'a>>,
+    pub api: WamnApi,
+    pub paths: &'a BTreeMap<String, Vec<String>>,
+    pub feed: bool,
+    pub number: Option<(&'a str, &'a str, wamn_number_pattern::Pattern)>,
+}
+
+/// The shared input of every authored-operation guest emitter.
+#[derive(Debug)]
+pub(super) struct CustomDescription<'a> {
+    pub declaration: &'a CustomOperationDeclaration,
+    pub statements: &'a BTreeMap<String, crate::manifest::StaticSqlStatementDeclaration>,
+    pub request: Vec<crate::client_ir::FieldIr>,
+    pub request_root: &'static str,
+    pub feed_key: Option<SqlValueType>,
+    pub result: Option<std::borrow::Cow<'a, CustomOperationResultDeclaration>>,
+    pub refusals: BTreeMap<String, OperationErrorDetailDeclaration>,
+    pub revision: Option<SqlValueType>,
+    pub rows: Vec<super::RustRow>,
+    pub accessors: Vec<super::StaticSqlAccessor>,
+}
+
 #[expect(
     clippy::too_many_arguments,
     reason = "model emission owns the complete validated model and catalog context"
 )]
 pub(super) fn emit_model(
     files: &mut BTreeMap<String, Vec<u8>>,
+    operations: &mut BTreeMap<String, super::OperationDescription>,
     sql_corpus: &super::SqlCorpus,
     transactional: &StatementTransactionality,
     operation_sql: &BTreeMap<String, Vec<String>>,
@@ -46,12 +98,11 @@ pub(super) fn emit_model(
         return Ok(());
     }
 
-    let native_operation_rows = operation_result_rows(model_name, model, table, Projection::Native);
-    let wamn_api = wamn_api(catalog, model_name, model, table, operation_sql);
+    let api = wamn_api(catalog, model_name, model, table, operation_sql);
+    let mut compiled = BTreeMap::new();
     for (action, operation) in &model.operations {
-        emit_operation_contracts(
+        let (description, facts) = describe_model_operation(
             catalog,
-            files,
             sql_corpus,
             transactional,
             manifest,
@@ -60,147 +111,193 @@ pub(super) fn emit_model(
             table,
             *action,
             operation,
-            &wamn_api,
+            &api,
         )?;
+        operations.insert(format!("{model_name}.{}", action.as_str()), description);
+        compiled.insert(*action, facts);
     }
-    emit_model_wit(files, catalog, manifest, model_name, model, table)?;
-    super::data::emit_model_data(files, manifest, model_name, model, table, &wamn_api)?;
-    super::component::emit_model_component(files, manifest, model_name, model, table)?;
-    let native_bind_fixtures = native_bind_fixtures(&wamn_api);
-    emit_projection(
-        files,
-        model_name,
-        table,
-        operation_sql,
-        ProjectionContents::Native {
-            operation_rows: &native_operation_rows,
-            bind_fixtures: &native_bind_fixtures,
+    let number = model.number_field().map(|(field, sequence)| {
+        (
+            field,
+            sequence,
+            wamn_number_pattern::parse(&manifest.sequences[sequence].pattern)
+                .expect("validated number pattern"),
+        )
+    });
+    let compiled = ModelDescription {
+        package: &manifest.package,
+        name: model_name,
+        min_lengths: &model.min_lengths,
+        shape: ModelShape {
+            columns: table.columns(),
+            key: crate::key::key_type(table)?,
+            generated_id: crate::key::database_generated(table),
+            guarded: model
+                .operations
+                .iter()
+                .map(|(action, operation)| {
+                    (
+                        *action,
+                        super::wit::guarded_fields(table, *action, operation),
+                    )
+                })
+                .collect(),
         },
-    )?;
-    emit_projection(
-        files,
-        model_name,
-        table,
-        operation_sql,
-        ProjectionContents::Wamn(&wamn_api),
-    )?;
-    insert_json(
-        files,
-        &format!("generated/source-map/{model_name}.json"),
-        &json!({
-            "model": model_name,
-            "relation": format!("catalog-ir://{}.{}", model.schema, model.table),
-            "manifest": format!("wamn.json#/models/{model_name}"),
-            "operations": operation_sql,
-            "native_operation_rows": native_operation_rows,
-            "native_bind_fixtures": native_bind_fixtures,
-            "wamn_api": wamn_api,
-        }),
-    )
+        operations: compiled,
+        api,
+        paths: operation_sql,
+        feed: model.feed_enabled(),
+        number,
+    };
+    emit_model_wit(files, &compiled)?;
+    super::data::emit_model_data(files, &compiled)?;
+    super::component::emit_model_component(files, &compiled)?;
+    emit_projection(files, &compiled)
 }
 
+pub(super) fn compile_custom<'a>(
+    operation: &'a CustomOperationDeclaration,
+    sql: &'a CustomOperationDeclaration,
+) -> CustomDescription<'a> {
+    let mut result = operation.result.as_ref().map(std::borrow::Cow::Borrowed);
+    let mut refusals: BTreeMap<_, _> = operation
+        .errors
+        .iter()
+        .map(|literal| {
+            (
+                literal.clone(),
+                crate::manifest::custom_operation_error_detail(operation, literal),
+            )
+        })
+        .collect();
+    let feed_key = if operation.feed == Some(true) {
+        let result = result.as_mut().expect("validated feed result").to_mut();
+        result.class = ResultClass::Page;
+        if !result
+            .fields
+            .iter()
+            .any(|field| field.path == "row_version")
+        {
+            result.fields.push(ContractFieldDeclaration {
+                path: "row_version".to_owned(),
+                ty: SqlValueType::Int64,
+                nullable: false,
+                revision: crate::manifest::Revision::Flag(false),
+                values: Vec::new(),
+                label: None,
+                visible: None,
+                description: None,
+                references: None,
+            });
+        }
+        refusals
+            .entry("cursor_expired".to_owned())
+            .or_insert_with(|| {
+                crate::manifest::custom_operation_error_detail(operation, "cursor_expired")
+            });
+        let key = &operation
+            .lists
+            .as_ref()
+            .expect("validated feed list")
+            .key_field[0];
+        Some(
+            operation
+                .statements
+                .values()
+                .next()
+                .expect("validated statement")
+                .row
+                .iter()
+                .find(|field| &field.name == key)
+                .expect("validated key")
+                .ty,
+        )
+    } else {
+        None
+    };
+    let revision = result
+        .as_ref()
+        .and_then(|result| {
+            result
+                .fields
+                .iter()
+                .find(|field| field.revision.is_revision())
+        })
+        .map(|field| field.ty);
+    let mut request = crate::client_fields::input_fields_of(
+        &serde_json::to_value(&operation.input).expect("validated request serializes"),
+    );
+    request.retain(|field| field.path != "request_id");
+    let request_root = if operation.result.is_some()
+        && let Some(value) = request.iter().position(|field| field.path == "value")
+    {
+        request = request.remove(value).children;
+        "value."
+    } else {
+        ""
+    };
+    CustomDescription {
+        declaration: operation,
+        statements: &sql.statements,
+        feed_key,
+        request,
+        request_root,
+        result,
+        revision,
+        refusals,
+        rows: static_sql_rows(sql),
+        accessors: super::rust::static_sql_accessors(sql),
+    }
+}
+
+#[expect(
+    clippy::too_many_arguments,
+    reason = "emission shares the compiled SQL corpus and operation descriptions"
+)]
 pub(super) fn emit_custom_operation(
     files: &mut BTreeMap<String, Vec<u8>>,
+    operations: &mut BTreeMap<String, super::OperationDescription>,
     sql_corpus: &super::SqlCorpus,
     transactional: &StatementTransactionality,
     catalog: &CatalogIr,
     manifest: &PackageManifest,
     operation_name: &str,
-    operation: &CustomOperationDeclaration,
+    compiled: &BTreeMap<String, CustomDescription<'_>>,
 ) -> Result<(), GenerateError> {
-    emit_custom_operation_contracts(
-        files,
-        sql_corpus,
-        transactional,
-        catalog,
-        manifest,
-        operation_name,
-        operation,
-    )?;
+    let operation = &compiled[operation_name];
+    operations.insert(
+        operation_name.to_owned(),
+        describe_custom_operation(
+            sql_corpus,
+            transactional,
+            catalog,
+            manifest,
+            operation_name,
+            operation,
+        )?,
+    );
+    emit_custom_operation_wit(files, manifest, operation_name, compiled)?;
+    super::authored_feed::emit(files, manifest, operation_name, operation)?;
     if operation.statements.is_empty() {
         return Ok(());
     }
-
-    let module_name = custom_artifact_stem(operation_name);
-    let native_rows = static_sql_rows(operation, Projection::Native);
-    let wamn_rows = static_sql_rows(operation, Projection::Wamn);
-    let accessors = static_sql_accessors(operation);
-    let bind_fixtures = static_sql_native_bind_fixtures(&accessors);
-
-    emit_static_sql_projection(
-        files,
-        &module_name,
-        operation,
-        &native_rows,
-        &bind_fixtures,
-        Projection::Native,
-    )?;
-    emit_static_sql_projection(
-        files,
-        &module_name,
-        operation,
-        &wamn_rows,
-        &[],
-        Projection::Wamn,
-    )?;
-    let mut source_map = serde_json::Map::from_iter([
-        (
-            "manifest".to_owned(),
-            json!(format!("wamn.json#/custom_operations/{operation_name}")),
-        ),
-        ("relations".to_owned(), json!(operation.relations)),
-        ("statements".to_owned(), json!(operation.statements)),
-        ("native_rows".to_owned(), json!(native_rows)),
-        ("native_bind_fixtures".to_owned(), json!(bind_fixtures)),
-        ("wamn_rows".to_owned(), json!(wamn_rows)),
-        ("wamn_accessors".to_owned(), json!(accessors)),
-    ]);
-    if let Some((alias, dependency)) = operation_dependency(manifest, operation_name) {
-        source_map.insert(
-            "composition".to_owned(),
-            json!({
-                "alias": alias,
-                "package": dependency.package,
-                "version": dependency.version,
-                "digest": dependency.digest,
-                "operation": operation_name,
-            }),
-        );
-    }
-    match operation.type_ {
-        CustomOperationType::Command => {
-            source_map.insert("command".to_owned(), json!(operation_name));
-        }
-        CustomOperationType::Projection | CustomOperationType::EventHandler => {
-            source_map.insert("operation".to_owned(), json!(operation_name));
-            source_map.insert("type".to_owned(), json!(operation.operation_type()));
-        }
-    }
-    insert_json(
-        files,
-        &format!("generated/source-map/{module_name}.json"),
-        &Value::Object(source_map),
-    )
+    emit_static_sql_projection(files, &custom_artifact_stem(operation_name), operation)
 }
 
-fn emit_custom_operation_contracts(
-    files: &mut BTreeMap<String, Vec<u8>>,
+fn describe_custom_operation(
     sql_corpus: &super::SqlCorpus,
     transactional: &StatementTransactionality,
     catalog: &CatalogIr,
     manifest: &PackageManifest,
     operation_name: &str,
-    operation: &CustomOperationDeclaration,
-) -> Result<(), GenerateError> {
-    let (module, local_name) = operation_name
-        .split_once('.')
-        .expect("custom-operation validation requires module.operation");
-    let root = format!("generated/contracts/{module}/{local_name}");
+    compiled: &CustomDescription<'_>,
+) -> Result<super::OperationDescription, GenerateError> {
+    let operation = compiled.declaration;
     let operation_id = canonical_operation_identity(&manifest.package, operation_name)?;
     let grant = (operation.visibility == crate::manifest::OperationVisibility::Public)
         .then(|| operation_id.clone());
     let statements =
-        operation
+        compiled
             .statements
             .iter()
             .map(|(name, statement)| {
@@ -218,72 +315,46 @@ fn emit_custom_operation_contracts(
                 )
             })
             .collect::<Result<Vec<_>, _>>()?;
-    let key = operation.idempotency_key_field();
-    let mut operation_contract = serde_json::Map::from_iter([
-        ("operation".to_owned(), json!(operation_id)),
-        ("type".to_owned(), json!(operation.operation_type())),
-        ("visibility".to_owned(), json!(operation.visibility)),
-        ("permission_token".to_owned(), json!(operation.permission)),
-        ("grant".to_owned(), json!(grant)),
-        ("statements".to_owned(), json!(statements)),
-    ]);
-    insert_operation_text(
-        &mut operation_contract,
-        operation.label.as_deref(),
-        operation.description.as_deref(),
-    );
-    if let Some(lists) = &operation.lists {
-        operation_contract.insert("lists".to_owned(), json!(lists));
-    }
-    if operation.sync == Some(true) {
-        operation_contract.insert("sync".to_owned(), json!(true));
-    }
-    if let Some((alias, dependency)) = operation_dependency(manifest, operation_name) {
-        let dependency_contract = serde_json::Map::from_iter([
-            ("alias".to_owned(), json!(alias)),
-            ("package".to_owned(), json!(dependency.package)),
-            ("version".to_owned(), json!(dependency.version)),
-            ("digest".to_owned(), json!(dependency.digest)),
-            ("operation".to_owned(), json!(operation_name)),
-        ]);
-        operation_contract.insert("dependency".to_owned(), Value::Object(dependency_contract));
-    }
-    if let Some(connection) = &operation.connection {
-        operation_contract.insert("connection".to_owned(), json!(connection));
-    }
-    if let Some(result) = &operation.result {
-        operation_contract.insert(
-            "result".to_owned(),
-            json!(if operation.feed == Some(true) {
-                ResultClass::Page
-            } else {
-                result.class
-            }),
-        );
-    }
-    if let Some(transaction) = operation.transaction {
-        operation_contract.insert("transaction".to_owned(), json!(transaction));
-    }
-    if let Some(automatic_retry) = operation.automatic_retry {
-        operation_contract.insert("automatic_retry".to_owned(), json!(automatic_retry));
-    }
-    if let Some(idempotent_by) = &operation.idempotent_by {
-        operation_contract.insert("idempotent_by".to_owned(), json!(idempotent_by));
-    }
-    if let Some(key) = key {
-        operation_contract.insert(
-            "idempotency".to_owned(),
-            idempotency_contract(key, &operation_id),
-        );
-    }
-    if !operation.relations.is_empty() {
-        operation_contract.insert("relations".to_owned(), json!(operation.relations));
-    }
-    insert_json_line(
-        files,
-        &format!("{root}.operation.json"),
-        &Value::Object(operation_contract),
-    )?;
+    let operation_contract = wamn_catalog::OperationContract {
+        type_: match operation.type_ {
+            crate::manifest::CustomOperationType::Command => wamn_catalog::OperationType::Command,
+            crate::manifest::CustomOperationType::Projection => {
+                wamn_catalog::OperationType::Projection
+            }
+            crate::manifest::CustomOperationType::EventHandler => {
+                wamn_catalog::OperationType::EventHandler
+            }
+        },
+        visibility: Some(
+            match operation.visibility {
+                crate::manifest::OperationVisibility::Public => "public",
+                crate::manifest::OperationVisibility::Private => "private",
+            }
+            .to_owned(),
+        ),
+        permission_token: operation.permission.clone(),
+        grant,
+        statements,
+        label: operation.label.clone(),
+        description: operation.description.clone(),
+        lists: operation.lists.as_ref().map(|lists| json!(lists)),
+        sync: operation.sync == Some(true),
+        result: compiled
+            .result
+            .as_ref()
+            .map(|result| result_class(result.class).to_owned()),
+        transaction: operation
+            .transaction
+            .map(|_| "explicit_per_input".to_owned()),
+        idempotent_by: operation.idempotent_by.as_ref().map(|value| json!(value)),
+        relations: operation
+            .relations
+            .iter()
+            .map(|relation| json!(relation))
+            .collect(),
+        record: None,
+        operation: operation_id,
+    };
     let mut input_contract = serde_json::Map::new();
     if let Some(raw_body_maximum) = operation.input.raw_body_maximum {
         input_contract.insert(
@@ -311,25 +382,12 @@ fn emit_custom_operation_contracts(
         }));
     }
 
-    insert_json(
-        files,
-        &format!("{root}.input.json"),
-        &Value::Object(input_contract),
-    )?;
-    if let Some(result) = &operation.result {
-        let mut result = result.clone();
-        if operation.feed == Some(true) {
-            result.class = ResultClass::Page;
-        }
-        insert_json(files, &format!("{root}.result.json"), &result)?;
-    }
-    insert_json(
-        files,
-        &format!("{root}.errors.json"),
-        &custom_operation_error_contract(catalog, operation),
-    )?;
-    emit_custom_operation_wit(files, manifest, operation_name, operation)?;
-    Ok(())
+    Ok(super::OperationDescription {
+        operation: operation_contract,
+        input: Value::Object(input_contract),
+        result: serde_json::to_value(&compiled.result).expect("result description serializes"),
+        errors: custom_operation_error_contract(catalog, compiled),
+    })
 }
 
 /// The contract of one statement, refusing a statement that takes a different
@@ -376,34 +434,6 @@ fn operation_row_columns(wamn_api: &WamnApi, row: &str) -> Vec<StatementValueCon
         .collect()
 }
 
-/// What a consumer must know about the retry of one claim operation
-/// (`docs/history/host-transaction.md` 4.2).
-///
-/// The host claims the key in the write log, the work runs and the host stores
-/// the result in one transaction. A retry with the same request answers the
-/// stored result and writes nothing. A refused request element rolls its claim back.
-fn idempotency_contract(key: &str, operation_id: &str) -> Value {
-    // The operation without its `@version`, so a retry across a release
-    // answers the stored result.
-    let operation = wamn_catalog::sealed_operation_reference(operation_id);
-    json!({
-        "key": key,
-        "log": {
-            "schema": "platform",
-            "table": "write_log",
-            "operation": operation,
-        },
-        "isolation": "read_committed",
-        "replay": {"writes": "none", "answer": "stored_result"},
-        "conflict": {
-            "on": "changed_request",
-            "refusal": AccessOperationErrorLiteral::IdempotencyConflict,
-        },
-        "refusal": {"log": "none"},
-        "atomicity": "claim_work_and_result_commit_together",
-    })
-}
-
 fn statement_value_contract(
     name: &str,
     ty: SqlValueType,
@@ -416,29 +446,11 @@ fn statement_value_contract(
     }
 }
 
-fn operation_dependency<'a>(
-    manifest: &'a PackageManifest,
-    operation_name: &str,
-) -> Option<(&'a str, &'a crate::manifest::BaseDependencyRequirement)> {
-    manifest
-        .base_dependencies
-        .iter()
-        .find_map(|(alias, dependency)| {
-            dependency
-                .operations
-                .iter()
-                .any(|candidate| candidate == operation_name)
-                .then_some((alias.as_str(), dependency))
-        })
-}
-
-fn custom_operation_error_contract(
-    catalog: &CatalogIr,
-    operation: &CustomOperationDeclaration,
-) -> Value {
-    let cases = operation
-        .errors
-        .iter()
+fn custom_operation_error_contract(catalog: &CatalogIr, compiled: &CustomDescription<'_>) -> Value {
+    let operation = compiled.declaration;
+    let cases = compiled
+        .refusals
+        .keys()
         .map(|literal| {
             let constraint = operation
                 .constraint_errors
@@ -455,11 +467,14 @@ fn custom_operation_error_contract(
             } else {
                 custom_operation_error_origin(operation, literal)
             };
-            let detail = crate::manifest::custom_operation_error_detail(operation, literal);
+            let detail = compiled.refusals[literal].clone();
             let case_members = case
                 .as_object_mut()
                 .expect("error contract case is an object");
-            case_members.insert("detail".to_owned(), error_detail_contract(&detail));
+            case_members.insert(
+                "detail".to_owned(),
+                error_detail_contract(&detail, compiled.revision),
+            );
             // Authored text rides on the case, as a label rides on its field.
             if let Some(text) = detail.text {
                 case_members.insert("text".to_owned(), json!(text));
@@ -510,7 +525,10 @@ fn custom_operation_error_origin(operation: &CustomOperationDeclaration, literal
     }
 }
 
-fn error_detail_contract(detail: &OperationErrorDetailDeclaration) -> Value {
+fn error_detail_contract(
+    detail: &OperationErrorDetailDeclaration,
+    revision: Option<SqlValueType>,
+) -> Value {
     let mut contract = serde_json::Map::new();
     if !detail.required.is_empty() {
         contract.insert("required".to_owned(), json!(detail.required));
@@ -518,35 +536,34 @@ fn error_detail_contract(detail: &OperationErrorDetailDeclaration) -> Value {
     if !detail.optional.is_empty() {
         contract.insert("optional".to_owned(), json!(detail.optional));
     }
+    contract.insert(
+        "types".to_owned(),
+        Value::Object(
+            detail
+                .required
+                .iter()
+                .chain(&detail.optional)
+                .map(|key| {
+                    let ty = match key {
+                        OperationErrorDetailKey::ExpectedRowVersion
+                        | OperationErrorDetailKey::ObservedRowVersion => {
+                            revision.unwrap_or(SqlValueType::Int64)
+                        }
+                        _ => SqlValueType::Text,
+                    };
+                    (
+                        serde_json::to_value(key)
+                            .expect("detail key serializes")
+                            .as_str()
+                            .expect("detail name")
+                            .to_owned(),
+                        json!(ty),
+                    )
+                })
+                .collect(),
+        ),
+    );
     Value::Object(contract)
-}
-
-pub(super) fn emit_cursor_contract(
-    files: &mut BTreeMap<String, Vec<u8>>,
-) -> Result<(), GenerateError> {
-    insert_json(
-        files,
-        "generated/contracts/cursor-v1.json",
-        &json!({
-            "version": CURSOR_VERSION,
-            "payload": "canonical_compact_json",
-            "member_order": ["direction", "field", "id", "key", "v"],
-            "key": "bare_value_typed_by_manifest_ir",
-            "timestamptz": "utc_rfc3339_six_fractional_digits",
-            "numeric": "postgresql_lexical_scale_preserved",
-            "encoding": "base64url_unpadded",
-            "invalid": [
-                "decode_failure",
-                "unknown_version",
-                "field_mismatch",
-                "direction_mismatch",
-                "key_parse_failure",
-                "noncanonical_payload",
-            ],
-            "refusal": "invalid_input",
-            "fallback_to_first_page": false,
-        }),
-    )
 }
 
 pub(super) fn emit_operation_sql(
@@ -633,9 +650,8 @@ pub(super) fn emit_operation_sql(
     clippy::too_many_arguments,
     reason = "operation contract generation owns this complete validated context"
 )]
-fn emit_operation_contracts(
+fn describe_model_operation<'a>(
     catalog: &CatalogIr,
-    files: &mut BTreeMap<String, Vec<u8>>,
     sql_corpus: &super::SqlCorpus,
     transactional: &StatementTransactionality,
     manifest: &PackageManifest,
@@ -643,14 +659,13 @@ fn emit_operation_contracts(
     model: &ModelDeclaration,
     table: &Table,
     action: CrudAction,
-    operation: &OperationDeclaration,
+    operation: &'a OperationDeclaration,
     wamn_api: &WamnApi,
-) -> Result<(), GenerateError> {
+) -> Result<(super::OperationDescription, ModelOperation<'a>), GenerateError> {
     let operation_id = canonical_operation_identity(
         &manifest.package,
         &format!("{model_name}.{}", action.as_str()),
     )?;
-    let root = format!("generated/contracts/{model_name}/{}", action.as_str());
     let accessors = wamn_api
         .accessors
         .iter()
@@ -741,69 +756,52 @@ fn emit_operation_contracts(
             json!(format!("expected_{revision}")),
         );
     }
-    let mut operation_contract = serde_json::Map::from_iter([
-        ("operation".to_owned(), json!(operation_id)),
-        ("type".to_owned(), json!(action.as_str())),
-        ("record".to_owned(), Value::Object(record)),
-        ("permission_token".to_owned(), json!(operation.permission)),
-        ("grant".to_owned(), json!(operation_id)),
-        ("result".to_owned(), json!(operation.result)),
-        ("statements".to_owned(), json!(statements)),
-        (
-            "transaction".to_owned(),
-            json!(if action == CrudAction::Create {
-                "explicit_per_input"
-            } else {
-                "implicit"
-            }),
-        ),
-        ("automatic_retry".to_owned(), json!(false)),
-    ]);
-    insert_operation_text(
-        &mut operation_contract,
-        operation.label.as_deref(),
-        operation.description.as_deref(),
-    );
-    // A read that serves rows states what it lists, whoever wrote it. A
-    // generated action carries the same member an authored one declares, so
-    // every reader downstream applies one rule with no fallback.
-    if matches!(action, CrudAction::Query) {
-        let mut lists = serde_json::Map::from_iter([
-            ("model".to_owned(), json!(model_name)),
-            ("key_field".to_owned(), json!("id")),
-        ]);
-        if let Some(display_field) = &operation.display_field {
-            lists.insert("display_field".to_owned(), json!(display_field));
-        }
-        operation_contract.insert("lists".to_owned(), Value::Object(lists));
-    }
-    // Every operation states the relations it reads and writes, whoever wrote
-    // it, in the member an authored operation declares. The host keys a list
-    // ETag on the relations a read selects, and a client marks stale the reads
-    // whose relations a write changes (docs/architecture/execution.md).
     let fields = table
         .columns()
         .iter()
         .map(|column| column.name().to_owned())
         .collect::<Vec<_>>();
-    operation_contract.insert(
-        "relations".to_owned(),
-        json!([generated_relation_access(
+    let lists = if action == CrudAction::Query {
+        let mut lists = json!({"model": model_name, "key_field": "id"});
+        if let Some(display) = &operation.display_field {
+            lists["display_field"] = json!(display);
+        }
+        Some(lists)
+    } else {
+        None
+    };
+    let operation_contract = wamn_catalog::OperationContract {
+        type_: match action {
+            CrudAction::Get => wamn_catalog::OperationType::Get,
+            CrudAction::Query => wamn_catalog::OperationType::Query,
+            CrudAction::Create => wamn_catalog::OperationType::Create,
+            CrudAction::Update => wamn_catalog::OperationType::Update,
+            CrudAction::Delete => wamn_catalog::OperationType::Delete,
+        },
+        record: Some(Value::Object(record)),
+        visibility: Some("public".to_owned()),
+        permission_token: Some(operation.permission.clone()),
+        grant: Some(operation_id.clone()),
+        result: Some(result_class(operation.result).to_owned()),
+        statements,
+        transaction: Some(
+            if action == CrudAction::Create {
+                "explicit_per_input"
+            } else {
+                "implicit"
+            }
+            .to_owned(),
+        ),
+        label: operation.label.clone(),
+        description: operation.description.clone(),
+        lists,
+        sync: false,
+        relations: vec![json!(generated_relation_access(
             model, action, operation, &fields
-        )?]),
-    );
-    if action == CrudAction::Create {
-        operation_contract.insert("idempotent_by".to_owned(), json!("claim"));
-        operation_contract.insert(
-            "idempotency".to_owned(),
-            idempotency_contract(CREATE_KEY_FIELD, &operation_id),
-        );
-    }
-    insert_json_line(
-        files,
-        &format!("{root}.operation.json"),
-        &Value::Object(operation_contract),
-    )?;
+        )?)],
+        idempotent_by: (action == CrudAction::Create).then(|| json!("claim")),
+        operation: operation_id,
+    };
     let mut input = input_contract(manifest, model, table, action, operation);
     // A list read with a change feed takes the feed part in place of a page
     // request: the cursor a page or a previous feed read returned, and the
@@ -827,61 +825,37 @@ fn emit_operation_contracts(
             },
         });
     }
-    insert_json(files, &format!("{root}.input.json"), &input)?;
-    insert_json(
-        files,
-        &format!(
-            "{}{model_name}/{}.json",
-            crate::route_schema::GENERATED_ROUTES,
-            action.as_str()
-        ),
-        &super::routes::route_input_schema(&input),
-    )?;
-    insert_json(
-        files,
-        &format!("{root}.result.json"),
-        &crud_result_contract(manifest, model, table, action, operation.result, &columns),
-    )?;
-    insert_json(
-        files,
-        &format!("{root}.errors.json"),
-        &error_contract(catalog, table, action, operation, model),
-    )?;
-    Ok(())
+    let result = crud_result_contract(manifest, model, table, action, operation.result, &columns);
+    let refusals = super::operation_error_details(catalog, table, action, operation, model);
+    let revision = operation
+        .revision_field
+        .as_deref()
+        .and_then(|name| column(table, name))
+        .map(super::Column::column_type);
+    let facts = ModelOperation {
+        request: operation,
+        result,
+        refusals,
+        revision,
+    };
+    let description = super::OperationDescription {
+        operation: operation_contract,
+        input,
+        result: serde_json::to_value(&facts.result).expect("compiled result serializes"),
+        errors: error_contract(catalog, table, action, model, &facts),
+    };
+    Ok((description, facts))
 }
 
-/// The generated CRUD result contract, in the shape a custom operation
-/// declares.
-///
-/// A result CLASS in the operation contract says how many rows come back, not
-/// what is in them. Without this the only surviving description of a generated
-/// operation's result is its statement columns — name, type, nullable and
-/// nothing else — so a closed value domain the model declares never reaches a
-/// client, and a control renders a free-text box where a choice belongs.
-///
-/// Model fields use their declared domains. A successful delete exposes only
-/// the SQL-owned deleted outcome; other outcomes become typed refusals.
-/// Write an operation's authored text into its contract, when it states any.
-///
-/// Absent members write nothing, so a package that authors none keeps the
-/// contract bytes it has today.
-fn insert_operation_text(
-    contract: &mut serde_json::Map<String, Value>,
-    label: Option<&str>,
-    description: Option<&str>,
-) {
-    if let Some(label) = label {
-        contract.insert("label".to_owned(), json!(label));
-    }
-    if let Some(description) = description {
-        contract.insert("description".to_owned(), json!(description));
+fn result_class(class: ResultClass) -> &'static str {
+    match class {
+        ResultClass::One => "one",
+        ResultClass::OptionalOne => "optional_one",
+        ResultClass::Page => "page",
+        ResultClass::BoundedList => "bounded_list",
     }
 }
 
-/// The authored text of one model column, or nothing.
-///
-/// A generated action declares no field of its own, so the model is the only
-/// carrier its inputs and results can read.
 fn model_text(model: &ModelDeclaration, column: &str) -> FieldText {
     model.field_text.get(column).cloned().unwrap_or_default()
 }
@@ -1179,10 +1153,13 @@ fn error_contract(
     catalog: &CatalogIr,
     table: &Table,
     action: CrudAction,
-    operation: &OperationDeclaration,
     model: &ModelDeclaration,
+    facts: &ModelOperation<'_>,
 ) -> Value {
     use crate::manifest::AccessOperationErrorLiteral as Code;
+    let operation = facts.request;
+    let refusals = &facts.refusals;
+    let revision = facts.revision;
 
     let mut cases = vec![
         (Code::InvalidInput, json!({"literal": "invalid_input"})),
@@ -1264,16 +1241,24 @@ fn error_contract(
     let cases = cases
         .into_iter()
         .map(|(code, mut case)| {
-            let mut detail = crate::manifest::access_operation_error_detail(action, code);
+            let mut detail = refusals[&code].clone();
             if case["constraint"]
                 .as_str()
                 .is_some_and(|name| guarded.contains(name))
             {
-                detail.required.insert(0, OperationErrorDetailKey::Field);
+                detail
+                    .optional
+                    .retain(|key| *key != OperationErrorDetailKey::Field);
+                if !detail.required.contains(&OperationErrorDetailKey::Field) {
+                    detail.required.insert(0, OperationErrorDetailKey::Field);
+                }
             }
             case.as_object_mut()
                 .expect("error contract case is an object")
-                .insert("detail".to_owned(), error_detail_contract(&detail));
+                .insert(
+                    "detail".to_owned(),
+                    error_detail_contract(&detail, revision),
+                );
             case
         })
         .collect::<Vec<_>>();

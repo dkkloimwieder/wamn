@@ -168,7 +168,27 @@ pub(super) fn emit_export_adapter(
     } else {
         format!("Vec<__contract::{type_name}Outcome>")
     };
-    let run = if direct {
+    let run = if transacted {
+        format!(
+            r#"__codec::validate(&input).map_err(invalid)?;
+                    let output = __codec::run(input, &mut state, async |state, request| {{
+                        if state.1.is_some() {{ return Err(__contract::{type_name}Error::InternalError); }}
+                        if state.0.is_none() {{
+                            match wamn_postgres_statements::operation_transaction().await {{
+                                Ok(transaction) => state.0 = Some(transaction),
+                                Err(error) => {{
+                                    state.1 = Some(__node::NodeError::Terminal(__node::ErrorDetail {{
+                                        message: error.to_string(), code: Some("internal_error".to_owned()),
+                                    }}));
+                                    return Err(__contract::{type_name}Error::InternalError);
+                                }}
+                            }}
+                        }}
+                        $handler(state.0.as_mut().expect("operation transaction was acquired"), request).await
+                    }}).await;
+                    match state.1.take() {{ Some(error) => Err(error), None => Ok(output) }}"#
+        )
+    } else if direct {
         "let mut input = input;
                     __codec::normalize(&mut input).map_err(invalid)?;
                     $handler(&mut state, input).await"
@@ -188,14 +208,7 @@ pub(super) fn emit_export_adapter(
     let (state_parameter, state) = if transacted {
         (
             "",
-            "wamn_postgres_statements::operation_transaction()
-                        .await
-                        .map_err(|error| {
-                            __node::NodeError::Terminal(__node::ErrorDetail {
-                                message: error.to_string(),
-                                code: Some(\"internal_error\".to_owned()),
-                            })
-                        })?",
+            "(None::<wamn_postgres_statements::Transaction>, None::<__node::NodeError>)",
         )
     } else {
         (" $state:expr,", "$state")

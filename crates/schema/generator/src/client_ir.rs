@@ -1,51 +1,18 @@
-//! The canonical client-contract IR.
-//!
-//! ONE generator input: the effective-release contract projection under
-//! `apps/<package>/generated/contracts/`. `wamn.json` is a contributor to
-//! that projection, not the boundary — the IR describes what a release
-//! actually ships, so a client generated from it cannot drift from the
-//! deployed contract by reading the authoring manifest instead.
-//!
-//! # Why an IR at all
-//!
-//! Language emitters consume this, never the contract files directly. Rust is
-//! the only emitter built now; TypeScript is deferred. The IR is what keeps
-//! that honest: without it, the first emitter's implementation details become
-//! the second emitter's contract by accident.
-//!
-//! # Byte stability
-//!
-//! Every collection is ordered deterministically and the whole IR serializes
-//! through the platform's shared canonicalization, so regenerating from an
-//! unchanged release yields identical bytes. That is the property the exit
-//! condition asserts, and it is why nothing here iterates a `HashMap`.
-//!
-//! Canonical means order-independent **only for sets**. Some contract members
-//! are ordered on purpose — `cursor.member_order` IS an ordering — and an IR
-//! that reported identical bytes after reversing one of those would be wrong,
-//! not canonical. The reorder-and-compare condition therefore has to know which
-//! lists are sets; a version of it that reversed every array failed against a
-//! correct IR before that distinction was drawn.
+//! Client fields and calls projected from compiled operation descriptions.
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use std::path::Path;
 use wamn_record_history::{HISTORY_TABLE_SUFFIX, is_history_table_name};
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::client_fields::{fields_of, input_fields_of, schema_fields};
-use crate::operation_reference::AuthoredDocument;
-
-/// IR shape version. A consumer that does not recognise it must refuse rather
-/// than guess at a field's meaning.
-pub const CLIENT_IR_FORMAT_VERSION: u32 = 3;
 
 /// The input path that carries a page cursor.
 ///
 /// This path and the four below it are fixed by the query input contract that
-/// `generate/contracts.rs` writes, so every consumer reads the same spelling.
+/// `generate/operations.rs` writes, so every consumer reads the same spelling.
 pub const CURSOR_INPUT: &str = "cursor";
 
 /// The input path that carries the page size.
@@ -96,16 +63,12 @@ impl std::error::Error for ClientIrError {}
 /// Stable classification for an IR refusal.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ClientIrErrorType {
-    /// The contract directory could not be read.
-    UnreadableProjection,
     /// A contract file was not the JSON the projection declares.
     MalformedContract,
     /// A required contract member was absent.
     MissingMember,
     /// One operation is published at more than one route.
     AmbiguousRoute,
-    /// A route is not in the form publication would normalize it to.
-    UnnormalizedRoute,
 }
 
 impl ClientIrErrorType {
@@ -113,26 +76,18 @@ impl ClientIrErrorType {
     #[must_use]
     pub const fn code(self) -> &'static str {
         match self {
-            Self::UnreadableProjection => "unreadable_projection",
             Self::MalformedContract => "malformed_contract",
             Self::MissingMember => "missing_member",
             Self::AmbiguousRoute => "ambiguous_route",
-            Self::UnnormalizedRoute => "unnormalized_route",
         }
     }
 }
 
-/// One package's client contract, normalized.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+/// One package's client fields, held only in memory.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ClientContractIr {
-    /// IR shape version.
-    pub format_version: u32,
     /// The package this IR was projected from.
     pub package: String,
-    /// The shared cursor contract, when the package pages anything.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub cursor: Option<Value>,
     /// Models, ordered by name.
     pub models: Vec<ModelIr>,
 }
@@ -267,7 +222,7 @@ pub struct FieldIr {
 /// The model whose record one input names.
 ///
 /// Read straight from the contract file, so its members keep the spelling
-/// `generate/contracts.rs` writes, exactly as [`RecordIr`] does.
+/// `generate/operations.rs` writes, exactly as [`RecordIr`] does.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ReferenceIr {
@@ -282,7 +237,7 @@ pub struct ReferenceIr {
 /// records the rows are, so a selector can offer them.
 ///
 /// Read straight from the contract file, so its members keep the spelling
-/// `generate/contracts.rs` writes, exactly as [`RecordIr`] does.
+/// `generate/operations.rs` writes, exactly as [`RecordIr`] does.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ListIr {
@@ -581,188 +536,26 @@ pub struct ErrorCaseIr {
 }
 
 impl ClientContractIr {
-    /// Canonical bytes — the comparable form the byte-stability condition compares.
-    ///
-    /// Goes through the platform's shared canonicalization rather than
-    /// `serde_json::to_vec`, so an IR digest is comparable with every other
-    /// digest in the platform.
-    #[must_use]
-    pub fn canonical_bytes(&self) -> Vec<u8> {
-        wamn_digest::canonical_json_bytes(
-            &serde_json::to_value(self).expect("the IR always serializes"),
-        )
-    }
-
-    /// Project one package's emitted contract directory into an IR.
-    ///
-    /// # Errors
-    ///
-    /// [`ClientIrError`] naming which contract could not be read.
-    /// Project one package's release into an IR: its contracts AND the routes
-    /// its publication attaches them to.
-    ///
-    /// Two inputs, not one. Route templates are RELEASE facts — the base
-    /// package publishes `wamn-receiving:purchase-order/get@2.0.0` at
-    /// `/purchase_order/get` while the overlay publishes its own
-    /// `client-acme-receiving:purchase-order/get@4.0.0` at
-    /// `/acme/purchase_order/get` — so an IR built from contracts alone could
-    /// only guess where an operation lives, and generated code that guessed
-    /// would be wrong the first time it moved.
-    ///
-    /// # Errors
-    ///
-    /// [`ClientIrError`] naming the input that could not be read, the
-    /// attachment whose route is malformed or un-normalized, or the operation
-    /// published at more than one route.
-    pub fn from_release(
+    /// Project compiled descriptions with the routes that serve them.
+    pub fn from_operations(
         package: &str,
-        contracts: &Path,
-        attachments: &Path,
-    ) -> Result<Self, ClientIrError> {
-        // The document sits at `publication/attachments.json`, and the
-        // generated schemas it names resolve against the package root above it.
-        // Generation writes the route entries of the generated operations
-        // beside it, under `generated/publication/`.
-        let root = crate::route_schema::package_root_of(attachments);
-        let files = crate::route_schema::PackageFiles::open(root).map_err(|error| {
-            ClientIrError::new(
-                ClientIrErrorType::UnreadableProjection,
-                format!("{error:#}"),
-            )
-        })?;
-        let routes = route_index(
-            attachments,
-            &mut |file| files.publication(file),
-            &mut |reference| files.schema(reference),
-        )?;
-        Self::project(package, contracts, &routes)
-    }
-
-    /// Project a package with no published routes.
-    ///
-    /// Every operation's route is absent. Separate from [`Self::from_release`]
-    /// rather than an `Option` argument, so "this release publishes nothing"
-    /// and "I forgot to pass the attachments" can never look identical.
-    ///
-    /// # Errors
-    ///
-    /// [`ClientIrError`] naming the contract that could not be read.
-    pub fn from_contract_directory(package: &str, contracts: &Path) -> Result<Self, ClientIrError> {
-        Self::project(package, contracts, &BTreeMap::new())
-    }
-
-    fn project(
-        package: &str,
-        contracts: &Path,
+        operations: &BTreeMap<String, crate::OperationDescription>,
         routes: &BTreeMap<String, RouteIr>,
     ) -> Result<Self, ClientIrError> {
-        if let Some(output) = contracts
-            .parent()
-            .filter(|output| crate::output::is_build_output(output))
-        {
-            crate::build_record::source_root(output)
-                .and_then(|source| crate::build_record::read_current(&source, output))
-                .map_err(|error| {
-                    ClientIrError::new(
-                        ClientIrErrorType::UnreadableProjection,
-                        format!("{error:#}"),
-                    )
-                })?;
+        let mut modules = BTreeMap::<String, BTreeMap<String, &crate::OperationDescription>>::new();
+        for (local, operation) in operations {
+            let (module, name) = local.split_once('.').expect("validated operation name");
+            modules
+                .entry(module.to_owned())
+                .or_default()
+                .insert(name.to_owned(), operation);
         }
-        let mut modules: BTreeMap<String, BTreeMap<String, OperationParts>> = BTreeMap::new();
-        let mut cursor = None;
-
-        let entries = std::fs::read_dir(contracts).map_err(|error| {
-            ClientIrError::new(
-                ClientIrErrorType::UnreadableProjection,
-                format!("read {}: {error}", contracts.display()),
-            )
-        })?;
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.is_dir() {
-                let module = path
-                    .file_name()
-                    .and_then(|name| name.to_str())
-                    .unwrap_or_default()
-                    .to_owned();
-                collect_module(&path, modules.entry(module).or_default())?;
-            } else if path
-                .file_name()
-                .is_some_and(|name| name == "cursor-v1.json")
-            {
-                cursor = Some(read_json(&path)?);
-            }
-        }
-
-        Self::assemble(package, modules, cursor, routes)
-    }
-
-    /// Project a release from contract files that are still in memory.
-    ///
-    /// The same projection as [`Self::from_release`], reading the bytes the
-    /// generator has just produced instead of the copy on disk. Materialization
-    /// emits the client beside the contracts in ONE pass, and it cannot read
-    /// back a directory it has not written yet — nor should it, because the
-    /// bytes it would read back are the ones it is about to overwrite.
-    ///
-    /// `contracts` is keyed by each file's path relative to
-    /// `generated/contracts`, so `purchase_order/get.input.json` and
-    /// `cursor-v1.json` are both addressed the way the directory addresses
-    /// them. A path outside that shape is ignored, exactly as the directory
-    /// walk ignores a file whose name it does not recognise.
-    ///
-    /// # Errors
-    ///
-    /// [`ClientIrError`] naming the contract that could not be read as JSON,
-    /// the attachment whose route is malformed or un-normalized, or the
-    /// operation published at more than one route.
-    pub fn from_release_contracts(
-        package: &str,
-        contracts: &BTreeMap<String, Vec<u8>>,
-        routes: &BTreeMap<String, RouteIr>,
-    ) -> Result<Self, ClientIrError> {
-        let mut modules: BTreeMap<String, BTreeMap<String, OperationParts>> = BTreeMap::new();
-        let mut cursor = None;
-        for (relative, bytes) in contracts {
-            let parse = |bytes: &[u8]| -> Result<Value, ClientIrError> {
-                serde_json::from_slice(bytes).map_err(|error| {
-                    ClientIrError::new(
-                        ClientIrErrorType::MalformedContract,
-                        format!("parse {relative}: {error}"),
-                    )
-                })
-            };
-            match relative.split_once('/') {
-                Some((module, file_name)) => {
-                    let Some((operation, part)) = split_contract_name(file_name) else {
-                        continue;
-                    };
-                    let value = parse(bytes)?;
-                    let slot = modules
-                        .entry(module.to_owned())
-                        .or_default()
-                        .entry(operation.to_owned())
-                        .or_default();
-                    match part {
-                        "operation" => slot.operation = Some(value),
-                        "input" => slot.input = Some(value),
-                        "result" => slot.result = Some(value),
-                        "errors" => slot.errors = Some(value),
-                        _ => {}
-                    }
-                }
-                None if relative == "cursor-v1.json" => cursor = Some(parse(bytes)?),
-                None => {}
-            }
-        }
-        Self::assemble(package, modules, cursor, routes)
+        Self::assemble(package, modules, routes)
     }
 
     fn assemble(
         package: &str,
-        modules: BTreeMap<String, BTreeMap<String, OperationParts>>,
-        cursor: Option<Value>,
+        modules: BTreeMap<String, BTreeMap<String, &crate::OperationDescription>>,
         routes: &BTreeMap<String, RouteIr>,
     ) -> Result<Self, ClientIrError> {
         let mut models = modules
@@ -784,9 +577,7 @@ impl ClientContractIr {
             }
         }
         Ok(Self {
-            format_version: CLIENT_IR_FORMAT_VERSION,
             package: package.to_owned(),
-            cursor,
             models,
         })
     }
@@ -801,299 +592,73 @@ fn default_field_labels(fields: &mut [FieldIr]) {
     }
 }
 
-/// Read one release's published routes, or none when it publishes nothing.
-///
-/// A package with no `publication/attachments.json` authors no attachment
-/// ([`crate::operation_reference::read_attachments_document`]). When
-/// generation wrote none either, it publishes no HTTP route at all, which is
-/// a real state and not a missing input: the emitted client then
-/// carries every operation's types and descriptors and no invoke function,
-/// which is what [`ClientContractIr::from_contract_directory`] already means.
-///
-/// `generated` returns a generated publication file of the package, or `None`
-/// when generation wrote none. `read` returns the generated route schema a
-/// reference names.
-///
-/// # Errors
-///
-/// [`ClientIrError`] when a file exists and is not a serving attachment map,
-/// an attachment id appears in both, or a schema it names cannot be read.
+/// Index final publication documents without resolving references.
 pub fn published_routes(
-    attachments: &Path,
-    generated: &mut GeneratedRead<'_>,
-    read: &mut SchemaRead<'_>,
+    published: BTreeMap<String, wamn_catalog::ServingAttachment>,
+    declarations: &Value,
 ) -> Result<BTreeMap<String, RouteIr>, ClientIrError> {
-    route_index(attachments, generated, read)
-}
-
-/// Reads one generated publication file of a package, or `None` when
-/// generation wrote none.
-pub type GeneratedRead<'a> =
-    dyn FnMut(&str) -> Result<Option<Value>, crate::route_schema::RouteSchemaError> + 'a;
-
-/// Reads the generated route schema that a reference names.
-pub type SchemaRead<'a> =
-    dyn FnMut(&str) -> Result<Value, crate::route_schema::RouteSchemaError> + 'a;
-
-fn unreadable_projection(
-    attachments: &Path,
-    error: &crate::route_schema::RouteSchemaError,
-) -> ClientIrError {
-    let cause = std::error::Error::source(error)
-        .map(|source| format!(": {source}"))
-        .unwrap_or_default();
-    ClientIrError::new(
-        ClientIrErrorType::UnreadableProjection,
-        format!("{}: {error}{cause}", attachments.display()),
-    )
-}
-
-/// Operation identity -> published route, from one release's attachment map.
-///
-/// The join key is the attachment's `registered-operation`, which is the same
-/// string the operation contract carries as `operation` — read verbatim on
-/// both sides, never reconstructed from package, module and action, because a
-/// reconstruction is a second identity that can drift from the first.
-///
-/// # Normalization
-///
-/// This reads the AUTHORED publication input, which publication normalizes on
-/// a copy downstream (`normalize_http_route`, trimming the path). This layer
-/// is a sibling reader of those bytes, not a consumer of the normalized
-/// output, so an authored `/widget/` would reach a generated client as
-/// `/widget/` and call a path the deployment does not serve. Neither side
-/// reads an authored method: both derive it from the operation type.
-///
-/// It cannot simply normalize: `normalize_http_route` lives in
-/// `wamn-schema-control`, which DEPENDS on this crate, so reaching for it
-/// would be a dependency cycle — and re-implementing it here would make a
-/// second normalization authority, which is worse than either. So an
-/// un-normalized route REFUSES by name, and the author is told to write the
-/// form publication would produce. Fail-closed, one authority, no cycle.
-fn route_index(
-    attachments: &Path,
-    generated: &mut GeneratedRead<'_>,
-    read: &mut SchemaRead<'_>,
-) -> Result<BTreeMap<String, RouteIr>, ClientIrError> {
-    let mut published: BTreeMap<String, wamn_catalog::ServingAttachment> =
-        serde_json::from_value(read_authored(attachments, AuthoredDocument::Attachments)?)
-            .map_err(|error| {
-                ClientIrError::new(
-                    ClientIrErrorType::MalformedContract,
-                    format!(
-                        "{} is not a serving attachment map: {error}",
-                        attachments.display()
-                    ),
-                )
-            })?;
-    let unreadable = |error| unreadable_projection(attachments, &error);
-    crate::route_schema::merge_attachments(
-        &mut published,
-        crate::route_schema::generated_attachments(
-            generated(crate::route_schema::GENERATED_ATTACHMENTS).map_err(unreadable)?,
-        )
-        .map_err(unreadable)?,
-    )
-    .map_err(unreadable)?;
-    let operations =
-        generated(crate::route_schema::GENERATED_COMPONENT_OPERATIONS).map_err(unreadable)?;
-    crate::route_schema::resolve_attachments(&mut published, read).map_err(unreadable)?;
-
-    let mut index: BTreeMap<String, RouteIr> = BTreeMap::new();
+    let mut index = BTreeMap::<String, RouteIr>::new();
     for (id, attachment) in published {
-        // Only `http` publishes a route a package client can call. `internal`
-        // carries none by construction, and `studio` is the authoring surface
-        // — a generated package client that acquired a studio path would call
-        // a control-plane route it was never generated for.
         if attachment.type_ != wamn_catalog::AttachmentType::Http {
             continue;
         }
-        // No registered operation means the attachment invokes no package
-        // operation. Nothing to join to, and not an error.
-        let Some(operation) = attachment.registered_operation.clone() else {
+        let Some(operation) = &attachment.registered_operation else {
             continue;
         };
-        let member = |key: &str| -> Result<String, ClientIrError> {
-            attachment
-                .definition
-                .get("route")
-                .and_then(|route| route.get(key))
-                .and_then(Value::as_str)
-                .map(str::to_owned)
-                .ok_or_else(|| {
-                    ClientIrError::new(
-                        ClientIrErrorType::MissingMember,
-                        format!("http attachment {id:?} has no route {key:?}"),
-                    )
+        let evidence = crate::client_route::evidence(&attachment, declarations)?;
+        let template = attachment
+            .definition
+            .pointer("/route/path")
+            .or_else(|| attachment.definition.pointer("/route/template"))
+            .and_then(Value::as_str)
+            .ok_or_else(|| {
+                ClientIrError::new(
+                    ClientIrErrorType::MissingMember,
+                    format!("attachment {id} has no route path"),
+                )
+            })?;
+        let (fields, result_class) = if evidence.direct {
+            (Vec::new(), None)
+        } else {
+            evidence
+                .output_schema
+                .as_ref()
+                .map_or((Vec::new(), None), |schema| {
+                    let value = schema.pointer("/items/properties/value").unwrap_or(schema);
+                    let class = (value["type"] == "object").then(|| "one".to_owned());
+                    (schema_fields(value, &[]), class)
                 })
         };
-        if attachment.definition.pointer("/route/method").is_some() {
-            return Err(ClientIrError::new(
-                ClientIrErrorType::UnnormalizedRoute,
-                format!(
-                    "attachment {id:?} authors route.method; remove it, because the method follows from the operation type"
-                ),
-            ));
-        }
-        let evidence =
-            crate::client_route::evidence(attachments, &attachment, operations.as_ref())?;
         let route = RouteIr {
-            // The join with the operation contract writes the method from its type.
             method: String::new(),
-            template: member("template").or_else(|_| member("path"))?,
+            template: template.to_owned(),
             input_schema: evidence.input_schema,
             terminal_operation: evidence.terminal_operation,
             direct: evidence.direct,
             response: ResponseIr {
-                fields: evidence
-                    .output_schema
-                    .as_ref()
-                    .map(|schema| {
-                        schema_fields(
-                            schema.pointer("/items/properties/value").unwrap_or(schema),
-                            &[],
-                        )
-                    })
-                    .unwrap_or_default(),
-                result_class: evidence
-                    .output_schema
-                    .as_ref()
-                    .and_then(|schema| schema.pointer("/items/properties/value/type"))
-                    .filter(|type_| *type_ == "object")
-                    .map(|_| "one".to_owned()),
                 schema: evidence.output_schema,
                 partial_schema: evidence.partial_schema,
+                fields,
+                result_class,
                 ..ResponseIr::default()
             },
             replay: None,
         };
-        if route.template != normalized_template(&route.template) {
-            return Err(ClientIrError::new(
-                ClientIrErrorType::UnnormalizedRoute,
-                format!(
-                    "attachment {id:?} publishes {:?}; author it as publication would \
-                     normalize it, {:?}",
-                    route.template,
-                    normalized_template(&route.template),
-                ),
-            ));
-        }
         if let Some(existing) = index.insert(operation.clone(), route.clone())
             && existing != route
         {
-            // Publication keys route uniqueness on (template, method), never
-            // on the operation, so one operation at two paths is a shape it
-            // ACCEPTS. A client cannot carry two answers to "where is this",
-            // and picking one silently would drop a published route, so this
-            // refuses and the ambiguity is ruled rather than guessed.
             return Err(ClientIrError::new(
                 ClientIrErrorType::AmbiguousRoute,
-                format!(
-                    "operation {operation:?} is published at both {:?} and {:?}",
-                    existing.template, route.template
-                ),
+                format!("operation {operation} has more than one published route"),
             ));
         }
     }
     Ok(index)
 }
 
-/// The HTTP method of a route to an operation of this contract type.
-fn route_method(type_: &str, module: &str, name: &str) -> Result<&'static str, ClientIrError> {
-    serde_json::from_value::<wamn_catalog::OperationType>(Value::String(type_.to_owned()))
-        .map(wamn_catalog::OperationType::http_method)
-        .map_err(|error| {
-            ClientIrError::new(
-                ClientIrErrorType::MalformedContract,
-                format!("{module}/{name} type {type_:?}: {error}"),
-            )
-        })
-}
-
-/// The path form publication would normalize to: no trailing slash below the
-/// root. Used only to REPORT the expected form in a refusal — never to rewrite
-/// a route, which would make this a second normalization authority.
-fn normalized_template(template: &str) -> String {
-    let trimmed = template.trim_end_matches('/');
-    if trimmed.is_empty() {
-        "/".to_owned()
-    } else {
-        trimmed.to_owned()
-    }
-}
-
-/// The four contract files for one operation, before normalization.
-#[derive(Default)]
-struct OperationParts {
-    operation: Option<Value>,
-    input: Option<Value>,
-    result: Option<Value>,
-    errors: Option<Value>,
-}
-
-fn collect_module(
-    directory: &Path,
-    operations: &mut BTreeMap<String, OperationParts>,
-) -> Result<(), ClientIrError> {
-    let entries = std::fs::read_dir(directory).map_err(|error| {
-        ClientIrError::new(
-            ClientIrErrorType::UnreadableProjection,
-            format!("read {}: {error}", directory.display()),
-        )
-    })?;
-    for entry in entries.flatten() {
-        let path = entry.path();
-        let Some(file_name) = path.file_name().and_then(|name| name.to_str()) else {
-            continue;
-        };
-        let Some((operation, part)) = split_contract_name(file_name) else {
-            continue;
-        };
-        let value = read_json(&path)?;
-        let slot = operations.entry(operation.to_owned()).or_default();
-        match part {
-            "operation" => slot.operation = Some(value),
-            "input" => slot.input = Some(value),
-            "result" => slot.result = Some(value),
-            "errors" => slot.errors = Some(value),
-            _ => {}
-        }
-    }
-    Ok(())
-}
-
-/// `get.input.json` -> (`get`, `input`).
-fn split_contract_name(file_name: &str) -> Option<(&str, &str)> {
-    let stem = file_name.strip_suffix(".json")?;
-    let (operation, part) = stem.rsplit_once('.')?;
-    Some((operation, part))
-}
-
-/// Read one authored publication file with its operation references resolved.
-pub(crate) fn read_authored(path: &Path, type_: AuthoredDocument) -> Result<Value, ClientIrError> {
-    crate::operation_reference::read_authored_document(path, type_).map_err(|error| {
-        ClientIrError::new(ClientIrErrorType::MalformedContract, error.to_string())
-    })
-}
-
-fn read_json(path: &Path) -> Result<Value, ClientIrError> {
-    let source = std::fs::read_to_string(path).map_err(|error| {
-        ClientIrError::new(
-            ClientIrErrorType::UnreadableProjection,
-            format!("read {}: {error}", path.display()),
-        )
-    })?;
-    serde_json::from_str(&source).map_err(|error| {
-        ClientIrError::new(
-            ClientIrErrorType::MalformedContract,
-            format!("{} is not contract JSON: {error}", path.display()),
-        )
-    })
-}
-
 fn build_model(
     name: &str,
-    operations: BTreeMap<String, OperationParts>,
+    operations: BTreeMap<String, &crate::OperationDescription>,
     routes: &BTreeMap<String, RouteIr>,
 ) -> Result<ModelIr, ClientIrError> {
     let mut built = Vec::with_capacity(operations.len());
@@ -1148,76 +713,29 @@ fn build_model(
     })
 }
 
-/// One operation, or `None` when the contract describes something a client
-/// cannot call.
-///
-/// A package's contract directory is not a client surface. It also carries
-/// PRIVATE operations — `client_acme_receiving`'s `quality/create_inspection`
-/// is an `event_handler` with `visibility: private`, a null `grant` and a null
-/// `permission_token` — which the platform invokes internally and no caller
-/// ever addresses. Projecting one would put an operation in a client that has
-/// no grant to present, no route to reach, and no caller.
 fn build_operation(
     module: &str,
     name: &str,
-    parts: OperationParts,
+    parts: &crate::OperationDescription,
     routes: &BTreeMap<String, RouteIr>,
 ) -> Result<Option<OperationIr>, ClientIrError> {
-    let operation = parts.operation.ok_or_else(|| {
-        ClientIrError::new(
-            ClientIrErrorType::MissingMember,
-            format!("{module}/{name} has no operation contract"),
-        )
-    })?;
-    // Excluded by DECLARATION, never by a missing member: a public operation
-    // whose grant is absent is a malformed contract and must still refuse
-    // below, not vanish from the client because a member failed to parse.
-    if operation.get("visibility").and_then(Value::as_str) == Some("private") {
+    let operation = &parts.operation;
+    if operation.visibility.as_deref() == Some("private") {
         return Ok(None);
     }
-    let member = |key: &str| -> Result<String, ClientIrError> {
-        operation
-            .get(key)
-            .and_then(Value::as_str)
-            .map(str::to_owned)
-            .ok_or_else(|| {
-                ClientIrError::new(
-                    ClientIrErrorType::MissingMember,
-                    format!("{module}/{name} operation contract has no {key:?}"),
-                )
-            })
-    };
-
-    // Authored text is optional at every carrier, so an absent member is the
-    // ordinary case and never a malformed contract.
-    let text = |key: &str| {
-        operation
-            .get(key)
-            .and_then(Value::as_str)
-            .map(str::to_owned)
-    };
-
-    let input = parts
-        .input
-        .unwrap_or_else(|| Value::Object(serde_json::Map::new()));
-    let result = parts
-        .result
-        .unwrap_or_else(|| Value::Object(serde_json::Map::new()));
-
-    let identity = member("operation")?;
-    let type_ = member("type")?;
+    let input = &parts.input;
+    let result = &parts.result;
+    let identity = operation.operation.clone();
+    let type_ = operation.type_.as_str().to_owned();
     let record: Option<RecordIr> = operation
-        .get("record")
-        .cloned()
-        .map(serde_json::from_value)
+        .record
+        .as_ref()
+        .map(|record| serde_json::from_value(record.clone()))
         .transpose()
         .map_err(|error| {
-            ClientIrError::new(
-                ClientIrErrorType::MalformedContract,
-                format!("{module}/{name} record: {error}"),
-            )
+            ClientIrError::new(ClientIrErrorType::MalformedContract, error.to_string())
         })?;
-    let declared_fields = input_fields_of(&input);
+    let declared_fields = input_fields_of(input);
     let input_fields = routes
         .get(&identity)
         .and_then(|route| route.input_schema.as_ref())
@@ -1225,8 +743,8 @@ fn build_operation(
             || declared_fields.clone(),
             |schema| schema_fields(schema, &declared_fields),
         );
-    let idempotent_by = operation.get("idempotent_by").cloned();
-    let (reads, writes) = relations_of(&type_, operation.get("relations"));
+    let idempotent_by = operation.idempotent_by.clone();
+    let (reads, writes) = relations_of(&type_, Some(&Value::Array(operation.relations.clone())));
     let requires_composition = matches!(type_.as_str(), "update" | "delete")
         || idempotent_by
             .as_ref()
@@ -1234,13 +752,10 @@ fn build_operation(
         || leaf_fields(&input_fields)
             .iter()
             .any(|field| field.revision.is_revision());
-    let route = match routes.get(&identity) {
-        Some(route) => Some(RouteIr {
-            method: route_method(&type_, module, name)?.to_owned(),
-            ..route.clone()
-        }),
-        None => None,
-    };
+    let route = routes.get(&identity).map(|route| RouteIr {
+        method: operation.type_.http_method().to_owned(),
+        ..route.clone()
+    });
     Ok(Some(OperationIr {
         name: name.to_owned(),
         type_,
@@ -1249,47 +764,47 @@ fn build_operation(
         revision_binding: None,
         requires_composition,
         idempotent_by,
-        transaction: operation
-            .get("transaction")
-            .and_then(Value::as_str)
-            .map(str::to_owned),
+        transaction: operation.transaction.clone(),
         operation: identity,
-        grant: member("grant")?,
-        permission_token: member("permission_token")?,
-        label: text("label"),
-        description: text("description"),
+        grant: operation.grant.clone().ok_or_else(|| {
+            ClientIrError::new(
+                ClientIrErrorType::MissingMember,
+                format!("{module}/{name} has no grant"),
+            )
+        })?,
+        permission_token: operation.permission_token.clone().ok_or_else(|| {
+            ClientIrError::new(
+                ClientIrErrorType::MissingMember,
+                format!("{module}/{name} has no permission token"),
+            )
+        })?,
+        label: operation.label.clone(),
+        description: operation.description.clone(),
         lists: operation
-            .get("lists")
-            .cloned()
-            .map(serde_json::from_value)
+            .lists
+            .as_ref()
+            .map(|lists| serde_json::from_value(lists.clone()))
             .transpose()
             .map_err(|error| {
-                ClientIrError::new(
-                    ClientIrErrorType::MalformedContract,
-                    format!("{module}/{name} lists: {error}"),
-                )
+                ClientIrError::new(ClientIrErrorType::MalformedContract, error.to_string())
             })?,
-        sync: operation
-            .get("sync")
-            .and_then(Value::as_bool)
-            .unwrap_or(false),
+        sync: operation.sync,
         result_class: operation
-            .get("result")
-            .and_then(Value::as_str)
-            .unwrap_or("none")
-            .to_owned(),
+            .result
+            .clone()
+            .unwrap_or_else(|| "none".to_owned()),
         reads,
         writes,
         input_fields,
-        result_fields: fields_of(&result),
+        result_fields: fields_of(result),
         server_owned_fields: string_list(
             input
                 .get("server_owned_fields")
                 .and_then(|owned| owned.get("fields")),
         ),
         envelope: input.get("envelope").cloned(),
-        paging: paging_of(&input),
-        errors: errors_of(parts.errors.as_ref()),
+        paging: paging_of(input),
+        errors: errors_of(Some(&parts.errors)),
     }))
 }
 

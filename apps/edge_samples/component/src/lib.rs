@@ -36,4 +36,6 @@ wit_bindgen::generate!({
 
 struct Component;
 
+impl generated::sample::get::Action for Component {}
+
 export!(Component);

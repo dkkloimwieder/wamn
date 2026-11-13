@@ -25,7 +25,7 @@ async fn operations_and_replay() -> anyhow::Result<()> {
         .context("the WMS test crate has an application parent")?
         .to_owned();
     let mut attachments: BTreeMap<String, ServingAttachment> =
-        wamn_compiler::route_schema::read_package_attachments(&app)?;
+        wamn_compiler::publication::read_package_attachments(&app)?;
     // Business assertions use the authored direct move. Deployed tests retain
     // the composed label/blob boundary and its partial-completion assertions.
     attachments

@@ -177,36 +177,22 @@ pub fn render_declaration_document(
             detail,
         )
     };
-    // The template names each operation by reference, and the version is
-    // authored once, in the wamn.json of the package that holds the template.
-    let (_, owners) = wamn_compiler::operation_reference::package_owners_of(template)
-        .map_err(|error| invalid(error.context().to_owned()))?;
-    plan::render_declaration_document(template, &mut document, project_env_key, &owners)?;
-    // An input port can name its package's generated route schema instead of
-    // copying it (wamn-4omo). The template sits at
-    // `publication/components/<component>.json.in` under its package root,
-    // and generation writes the entries of the generated operations there.
     let package_root = template
         .parent()
         .and_then(Path::parent)
         .and_then(Path::parent)
         .unwrap_or_else(|| Path::new(""));
-    let files = wamn_compiler::route_schema::PackageFiles::open(package_root)
-        .map_err(|error| invalid(format!("cannot read its build: {error:#}")))?;
-    files
-        .publication(wamn_compiler::route_schema::GENERATED_COMPONENT_OPERATIONS)
-        .and_then(|generated| {
-            wamn_compiler::route_schema::merge_operations(&mut document, generated.as_ref())
-        })
-        .map_err(|error| invalid(format!("cannot take its generated operations: {error}")))?;
-    wamn_compiler::route_schema::resolve_declaration(&mut document, &mut |reference| {
-        files.schema(reference)
-    })
-    .map_err(|error| {
-        invalid(format!(
-            "names an input port schema it cannot read: {error}"
-        ))
-    })?;
+    let component = document["component"]
+        .as_str()
+        .ok_or_else(|| invalid("has no component".to_owned()))?;
+    let declarations =
+        wamn_compiler::publication::read(package_root, wamn_compiler::publication::COMPONENTS)
+            .map_err(|error| invalid(format!("read final component declarations: {error:#}")))?;
+    document = declarations
+        .get(component)
+        .cloned()
+        .ok_or_else(|| invalid(format!("component {component} was not compiled")))?;
+    plan::render_declaration_document(template, &mut document, project_env_key)?;
     Ok(document)
 }
 

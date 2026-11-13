@@ -61,9 +61,9 @@ pub(super) fn release(composed: bool) -> ClientContractIr {
         response,
         replay: (!composed).then_some(ReplayIr::Claim),
     };
-    ClientContractIr::from_release_contracts(
+    ClientContractIr::from_operations(
         "platform_fixture",
-        &fixture::contracts(&package),
+        &fixture::descriptions(&package),
         &BTreeMap::from([(identity, route)]),
     )
     .expect("claim release projects")

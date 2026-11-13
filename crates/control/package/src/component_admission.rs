@@ -274,20 +274,8 @@ pub fn admit_component(args: AdmitComponentRequest) -> anyhow::Result<ComponentA
         .context("refuse application-owned entry authority")?;
     let declaration_bytes = std::fs::read(&args.declaration)
         .with_context(|| format!("read component declaration {}", args.declaration.display()))?;
-    let mut document: serde_json::Value = serde_json::from_slice(&declaration_bytes)
+    let document: serde_json::Value = serde_json::from_slice(&declaration_bytes)
         .with_context(|| format!("parse component declaration {}", args.declaration.display()))?;
-    // An input port can name its package's generated route schema instead of
-    // copying it, so the reference resolves against the package it belongs to.
-    let files = wamn_compiler::route_schema::PackageFiles::open(&args.package)?;
-    wamn_compiler::route_schema::resolve_declaration(&mut document, &mut |reference| {
-        files.schema(reference)
-    })
-    .with_context(|| {
-        format!(
-            "resolve the input ports of component declaration {}",
-            args.declaration.display()
-        )
-    })?;
     let declaration: ComponentDeclaration = serde_json::from_value(document)
         .with_context(|| format!("parse component declaration {}", args.declaration.display()))?;
 

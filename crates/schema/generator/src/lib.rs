@@ -40,10 +40,10 @@ pub mod manifest;
 mod manifest_error;
 pub use manifest_error::{ManifestError, ManifestErrorType};
 mod materialize;
-pub mod operation_reference;
+mod operation_reference;
 mod output;
 mod package_catalog;
-pub mod route_schema;
+pub mod publication;
 mod rustfmt;
 mod sql;
 mod sql_analysis;
@@ -60,8 +60,9 @@ pub use cursor::{
     CursorError, CursorErrorType, CursorV1, CursorValue, decode_cursor, encode_cursor,
 };
 pub use generate::{
-    AuthoredSql, GeneratedFile, GeneratedPackage, GenerationInput, PHYSICAL_SCHEMA_PATH,
-    REQUIRED_SCHEMA_CONTRACT_PATH, StatementTransactionality, derive_manifest, generate,
+    AuthoredSql, GeneratedFile, GeneratedPackage, GenerationInput, OperationDescription,
+    PHYSICAL_SCHEMA_PATH, REQUIRED_SCHEMA_CONTRACT_PATH, StatementTransactionality,
+    derive_manifest, generate,
 };
 pub use materialize::{
     introspect_package, materialize_client_consumers, materialize_host_route_client,

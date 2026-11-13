@@ -7,10 +7,9 @@ use crate::manifest::{CustomOperationType, authored_name};
 
 use super::{
     AccessorBind, AccessorFetch, BTreeMap, CHANGES_STATEMENT, CREATE_STATEMENT, CatalogIr, Column,
-    ConstraintNameSlice, ConstraintType, MutationConstraintNames, NativeBindFixture, Projection,
-    ProjectionContents, RustMember, RustRow, RustVisibility, StaticSqlAccessor, Table,
-    WamnAccessor, WamnApi, column, insert_bytes, operation_constraints, operation_exclusions,
-    query_variants, sql,
+    ConstraintNameSlice, ConstraintType, MutationConstraintNames, RustMember, RustRow,
+    RustVisibility, StaticSqlAccessor, Table, WamnAccessor, WamnApi, column, insert_bytes,
+    operation_constraints, operation_exclusions, query_variants, sql,
 };
 use crate::ManifestError as GenerateError;
 use crate::manifest::{
@@ -29,10 +28,7 @@ fn accessor_argument_count(binds: usize) -> usize {
     1 + binds
 }
 
-pub(super) fn static_sql_rows(
-    operation: &CustomOperationDeclaration,
-    projection: Projection,
-) -> Vec<RustRow> {
+pub(super) fn static_sql_rows(operation: &CustomOperationDeclaration) -> Vec<RustRow> {
     // SQLx 0.9 cannot infer non-null for PostgreSQL expressions, so a statement's
     // nullable carrier may be tool-imposed while its public operation remains non-null.
     operation
@@ -47,7 +43,7 @@ pub(super) fn static_sql_rows(
                 .map(|field| RustMember {
                     name: rust_identifier(&field.name)
                         .expect("static SQL value names were validated for Rust"),
-                    rust_type: projected_rust_type(field.ty, projection, field.nullable),
+                    rust_type: projected_rust_type(field.ty, field.nullable),
                     statement_type: field.ty,
                     nullable: field.nullable,
                 })
@@ -76,100 +72,46 @@ pub(super) fn static_sql_accessors(
         .collect()
 }
 
-pub(super) fn static_sql_native_bind_fixtures(
-    accessors: &[StaticSqlAccessor],
-) -> Vec<NativeBindFixture> {
-    accessors
-        .iter()
-        .flat_map(|accessor| {
-            accessor.binds.iter().map(|bind| NativeBindFixture {
-                accessor: accessor.name.clone(),
-                parameter: bind.parameter.clone(),
-                function: format!(
-                    "{}_{}_bind_fixture",
-                    accessor.name,
-                    authored_name(&bind.parameter)
-                ),
-                visibility: RustVisibility::Crate,
-                rust_type: bind.native_rust.clone(),
-                value: native_inert_value(bind),
-            })
-        })
-        .collect()
-}
-
 pub(super) fn emit_static_sql_projection(
     files: &mut BTreeMap<String, Vec<u8>>,
     module_name: &str,
-    operation: &CustomOperationDeclaration,
-    rows: &[RustRow],
-    bind_fixtures: &[NativeBindFixture],
-    projection: Projection,
+    compiled: &super::operations::CustomDescription<'_>,
 ) -> Result<(), GenerateError> {
+    let operation = compiled.declaration;
+    let rows = &compiled.rows;
     let mut source = String::from("// @generated from migration IR; do not edit.\n\n");
-    if matches!(projection, Projection::Wamn) {
-        source.push_str(if operation.type_ == CustomOperationType::Projection {
-            "use wamn_postgres_statements::Connection;\n\n"
-        } else {
-            "use wamn_postgres_statements::Transaction;\n\n"
-        });
-    }
+    source.push_str(if operation.type_ == CustomOperationType::Projection {
+        "use wamn_postgres_statements::Connection;\n\n"
+    } else {
+        "use wamn_postgres_statements::Transaction;\n\n"
+    });
     for row in rows {
-        emit_rust_row(&mut source, row, projection);
+        emit_rust_row(&mut source, row);
     }
-    for (name, statement) in &operation.statements {
-        match projection {
-            Projection::Native => {
-                writeln!(
-                    &mut source,
-                    "pub(crate) const {}_SQL: &str = include_str!(\"../../{}\");",
-                    name.to_ascii_uppercase(),
-                    statement.path,
-                )
-                .expect("writing to a String cannot fail");
-            }
-            Projection::Wamn => {
-                writeln!(
-                    &mut source,
-                    "pub(crate) const {}_STATEMENT: &str = {:?};",
-                    name.to_ascii_uppercase(),
-                    statement.path,
-                )
-                .expect("writing to a String cannot fail");
-            }
-        }
+    for (name, statement) in compiled.statements {
+        writeln!(
+            source,
+            "pub(crate) const {}_STATEMENT: &str = {:?};",
+            name.to_ascii_uppercase(),
+            statement.path
+        )
+        .expect("writing to a String cannot fail");
     }
-    source.push('\n');
-    for fixture in bind_fixtures {
-        emit_native_bind_fixture(&mut source, fixture);
+    for accessor in &compiled.accessors {
+        let row = rows
+            .iter()
+            .find(|row| row.name == accessor.row)
+            .expect("accessor row exists");
+        emit_static_sql_wamn_accessor(
+            &mut source,
+            accessor,
+            row,
+            operation.type_ != CustomOperationType::Projection,
+        );
     }
-    if !bind_fixtures.is_empty() {
-        source.push('\n');
-    }
-    if matches!(projection, Projection::Wamn) {
-        for accessor in static_sql_accessors(operation) {
-            let row = rows
-                .iter()
-                .find(|row| row.name == accessor.row)
-                .expect("static accessor row was generated from the same statement");
-            emit_static_sql_wamn_accessor(
-                &mut source,
-                &accessor,
-                row,
-                operation.type_ != CustomOperationType::Projection,
-            );
-        }
-    }
-    while source.ends_with("\n\n") {
-        source.pop();
-    }
-    let directory = match projection {
-        Projection::Native => "native-verifier",
-        Projection::Wamn => "wamn",
-    };
     insert_bytes(
         files,
-        &format!("generated/{directory}/{module_name}.rs"),
+        &format!("generated/wamn/{module_name}.rs"),
         source.into_bytes(),
     )
 }
@@ -274,7 +216,7 @@ pub(super) fn wamn_api(
                 binds: vec![bind_for_column(table, "id", "id", false)],
             }),
             CrudAction::Query => {
-                let feed_rows = feed_rows(model_name, model, table, Projection::Wamn);
+                let feed_rows = feed_rows(model_name, model, table);
                 let query_row = feed_rows
                     .first()
                     .map_or_else(|| model_row.clone(), |row| row.name.clone());
@@ -370,8 +312,7 @@ pub(super) fn wamn_api(
                     .collect(),
             }),
             CrudAction::Update => {
-                let result_row =
-                    operation_result_row(model_name, table, *action, operation, Projection::Wamn);
+                let result_row = operation_result_row(model_name, table, *action, operation);
                 let mut binds = vec![bind_for_column(table, "id", "id", false)];
                 let revision = operation
                     .revision_field
@@ -409,8 +350,7 @@ pub(super) fn wamn_api(
                 operation_rows.push(result_row);
             }
             CrudAction::Delete => {
-                let result_row =
-                    operation_result_row(model_name, table, *action, operation, Projection::Wamn);
+                let result_row = operation_result_row(model_name, table, *action, operation);
                 let revision = operation
                     .revision_field
                     .as_deref()
@@ -469,7 +409,6 @@ fn mutation_constraint_names(
         .map(|exclusion| exclusion.name().to_owned())
         .collect();
     MutationConstraintNames {
-        operation: action,
         unique: constraint_name_slice(action, "unique", unique),
         foreign_key: constraint_name_slice(action, "foreign_key", foreign_key),
         check: constraint_name_slice(action, "check", check),
@@ -493,46 +432,6 @@ fn constraint_name_slice(
     }
 }
 
-pub(super) fn native_bind_fixtures(api: &WamnApi) -> Vec<NativeBindFixture> {
-    api.accessors
-        .iter()
-        .flat_map(|accessor| {
-            accessor.binds.iter().map(|bind| NativeBindFixture {
-                accessor: accessor.name.clone(),
-                parameter: bind.parameter.clone(),
-                function: format!(
-                    "{}_{}_bind_fixture",
-                    accessor.name,
-                    authored_name(&bind.parameter)
-                ),
-                visibility: RustVisibility::Crate,
-                rust_type: bind.native_rust.clone(),
-                value: native_inert_value(bind),
-            })
-        })
-        .collect()
-}
-
-fn native_inert_value(bind: &AccessorBind) -> String {
-    if bind.nullable {
-        return "None".to_owned();
-    }
-    match bind.postgres.as_str() {
-        "boolean" => "false".to_owned(),
-        "int4" => "0_i32".to_owned(),
-        "int8" => "0_i64".to_owned(),
-        "float8" => "0.0_f64".to_owned(),
-        "text" => "String::new()".to_owned(),
-        "bytea" => "Vec::new()".to_owned(),
-        "numeric" => "rust_decimal::Decimal::ZERO".to_owned(),
-        "timestamptz" => "chrono::DateTime::<chrono::Utc>::UNIX_EPOCH".to_owned(),
-        "jsonb" => "serde_json::Value::Null".to_owned(),
-        "uuid" => "uuid::Uuid::nil()".to_owned(),
-        _ => unreachable!("accessor binds use the closed PostgreSQL vocabulary"),
-    }
-}
-
-/// The binds of a list read's filters and search, in statement order.
 fn filter_binds(operation: &OperationDeclaration) -> Vec<AccessorBind> {
     let mut binds = operation
         .filters
@@ -556,24 +455,19 @@ fn filter_binds(operation: &OperationDeclaration) -> Vec<AccessorBind> {
 ///
 /// Both statements return one outer row even when no model row matched, so
 /// every column is nullable (`crate::sql::query`, `crate::sql::changes`).
-fn feed_rows(
-    model_name: &str,
-    model: &ModelDeclaration,
-    table: &Table,
-    projection: Projection,
-) -> Vec<RustRow> {
+fn feed_rows(model_name: &str, model: &ModelDeclaration, table: &Table) -> Vec<RustRow> {
     if !model.feed_enabled() {
         return Vec::new();
     }
     let member = |name: &str, ty: SqlValueType| RustMember {
         name: name.to_owned(),
-        rust_type: projected_rust_type(ty, projection, true),
+        rust_type: projected_rust_type(ty, true),
         statement_type: ty,
         nullable: true,
     };
     let model_members = table.columns().iter().map(|column| RustMember {
         name: rust_identifier(column.name()).expect("model fields were validated for Rust"),
-        rust_type: optional_rust_type(column, projection),
+        rust_type: optional_rust_type(column),
         statement_type: column.column_type(),
         nullable: true,
     });
@@ -587,7 +481,7 @@ fn feed_rows(
             } else {
                 rust_identifier(column.name()).expect("validated model field")
             },
-            rust_type: rust_type(column, projection),
+            rust_type: rust_type(column),
             statement_type: column.column_type(),
             nullable: column.nullable(),
         })
@@ -633,31 +527,11 @@ fn feed_rows(
     ]
 }
 
-pub(super) fn operation_result_rows(
-    model_name: &str,
-    model: &ModelDeclaration,
-    table: &Table,
-    projection: Projection,
-) -> Vec<RustRow> {
-    model
-        .operations
-        .iter()
-        .flat_map(|(action, operation)| match action {
-            CrudAction::Update | CrudAction::Delete => vec![operation_result_row(
-                model_name, table, *action, operation, projection,
-            )],
-            CrudAction::Query => feed_rows(model_name, model, table, projection),
-            CrudAction::Create | CrudAction::Get => Vec::new(),
-        })
-        .collect()
-}
-
 fn operation_result_row(
     model_name: &str,
     table: &Table,
     action: CrudAction,
     operation: &OperationDeclaration,
-    projection: Projection,
 ) -> RustRow {
     let mut fields = vec![RustMember {
         name: "outcome".to_owned(),
@@ -693,7 +567,7 @@ fn operation_result_row(
     if action == CrudAction::Update {
         fields.extend(table.columns().iter().map(|column| RustMember {
             name: rust_identifier(column.name()).expect("model fields were validated for Rust"),
-            rust_type: optional_rust_type(column, projection),
+            rust_type: optional_rust_type(column),
             statement_type: column.column_type(),
             nullable: true,
         }));
@@ -726,149 +600,79 @@ fn bind_for_column(
 fn accessor_bind(parameter: &str, ty: SqlValueType, nullable: bool) -> AccessorBind {
     AccessorBind {
         parameter: parameter.to_owned(),
-        postgres: sql::postgres_type(ty).to_owned(),
         nullable,
-        native_rust: projected_rust_type(ty, Projection::Native, nullable),
-        wamn_rust: projected_rust_type(ty, Projection::Wamn, nullable),
+        wamn_rust: projected_rust_type(ty, nullable),
         statement_type: ty,
     }
 }
 
 pub(super) fn emit_projection(
     files: &mut BTreeMap<String, Vec<u8>>,
-    model_name: &str,
-    table: &Table,
-    operation_sql: &BTreeMap<String, Vec<String>>,
-    contents: ProjectionContents<'_>,
+    compiled: &super::operations::ModelDescription<'_>,
 ) -> Result<(), GenerateError> {
-    let (projection, operation_rows, native_bind_fixtures, wamn_api) = match contents {
-        ProjectionContents::Native {
-            operation_rows,
-            bind_fixtures,
-        } => (Projection::Native, operation_rows, bind_fixtures, None),
-        ProjectionContents::Wamn(api) => (
-            Projection::Wamn,
-            api.operation_rows.as_slice(),
-            &[][..],
-            Some(api),
-        ),
-    };
+    let model_name = compiled.name;
+    let table = &compiled.shape;
+    let operation_sql = compiled.paths;
+    let api = &compiled.api;
     let mut source = String::from("// @generated from migration IR; do not edit.\n\n");
-    // A read runs on the connection; a change runs in the host's transaction.
-    if wamn_api.is_some_and(|api| {
-        api.accessors
-            .iter()
-            .any(|accessor| !accessor.operation.changes_records())
-    }) {
+    if api
+        .accessors
+        .iter()
+        .any(|accessor| !accessor.operation.changes_records())
+    {
         source.push_str("use wamn_postgres_statements::Connection;\n\n");
     }
     let model_row = RustRow {
         name: format!("{}Row", rust_type_identifier(model_name)),
         visibility: RustVisibility::Public,
         fields: table
-            .columns()
+            .columns
             .iter()
             .map(|column| RustMember {
-                name: rust_identifier(column.name()).expect("model fields were validated for Rust"),
-                rust_type: rust_type(column, projection),
+                name: rust_identifier(column.name()).expect("validated model field"),
+                rust_type: rust_type(column),
                 statement_type: column.column_type(),
                 nullable: column.nullable(),
             })
             .collect(),
     };
-    emit_rust_row(&mut source, &model_row, projection);
-    for row in operation_rows {
-        emit_rust_row(&mut source, row, projection);
+    emit_rust_row(&mut source, &model_row);
+    for row in &api.operation_rows {
+        emit_rust_row(&mut source, row);
     }
-
     for (action, paths) in operation_sql {
         for (index, path) in paths.iter().enumerate() {
-            match projection {
-                Projection::Native => {
-                    let include_path = if path.starts_with("generated/") {
-                        path.strip_prefix("generated/")
-                            .map(|path| format!("../{path}"))
-                            .expect("prefix validated")
-                    } else {
-                        format!("../../{path}")
-                    };
-                    writeln!(
-                        &mut source,
-                        "{} const {}: &str = include_str!(\"{}\");",
-                        RustVisibility::Crate.source(),
-                        sql_constant_name(action, index, paths.len()),
-                        include_path
-                    )
-                    .expect("writing to a String cannot fail");
-                }
-                Projection::Wamn => {
-                    writeln!(
-                        &mut source,
-                        "{} const {}: &str = {path:?};",
-                        wamn_api
-                            .expect("Wamn projection carries its accessor API")
-                            .statement_visibility
-                            .source(),
-                        statement_constant_name(action, index, paths.len()),
-                    )
-                    .expect("writing to a String cannot fail");
-                }
-            }
+            writeln!(
+                source,
+                "{} const {}: &str = {path:?};",
+                api.statement_visibility.source(),
+                statement_constant_name(action, index, paths.len())
+            )
+            .expect("writing to a String cannot fail");
         }
     }
-    source.push('\n');
-    for fixture in native_bind_fixtures {
-        emit_native_bind_fixture(&mut source, fixture);
+    for constraints in &api.mutation_constraints {
+        emit_constraint_name_slice(&mut source, &constraints.unique);
+        emit_constraint_name_slice(&mut source, &constraints.foreign_key);
+        emit_constraint_name_slice(&mut source, &constraints.check);
+        emit_constraint_name_slice(&mut source, &constraints.exclusion);
     }
-    if !native_bind_fixtures.is_empty() {
-        source.push('\n');
+    for accessor in &api.accessors {
+        let row = if accessor.row == model_row.name {
+            &model_row
+        } else {
+            api.operation_rows
+                .iter()
+                .find(|row| row.name == accessor.row)
+                .expect("accessor row exists")
+        };
+        emit_wamn_accessor(&mut source, accessor, row);
     }
-    if let Some(api) = wamn_api {
-        for constraints in &api.mutation_constraints {
-            emit_constraint_name_slice(&mut source, &constraints.unique);
-            emit_constraint_name_slice(&mut source, &constraints.foreign_key);
-            emit_constraint_name_slice(&mut source, &constraints.check);
-            emit_constraint_name_slice(&mut source, &constraints.exclusion);
-        }
-        if !api.mutation_constraints.is_empty() {
-            source.push('\n');
-        }
-        for accessor in &api.accessors {
-            let row = if accessor.row == model_row.name {
-                &model_row
-            } else {
-                operation_rows
-                    .iter()
-                    .find(|row| row.name == accessor.row)
-                    .expect("operation accessor row was generated from the same operation")
-            };
-            emit_wamn_accessor(&mut source, accessor, row);
-        }
-    }
-    while source.ends_with("\n\n") {
-        source.pop();
-    }
-    let directory = match projection {
-        Projection::Native => "native-verifier",
-        Projection::Wamn => "wamn",
-    };
     insert_bytes(
         files,
-        &format!("generated/{directory}/{model_name}.rs"),
+        &format!("generated/wamn/{model_name}.rs"),
         source.into_bytes(),
     )
-}
-
-fn emit_native_bind_fixture(source: &mut String, fixture: &NativeBindFixture) {
-    writeln!(
-        source,
-        "{} fn {}() -> {} {{\n    {}\n}}",
-        fixture.visibility.source(),
-        fixture.function,
-        fixture.rust_type,
-        fixture.value
-    )
-    .expect("writing to a String cannot fail");
 }
 
 fn emit_constraint_name_slice(source: &mut String, constraints: &ConstraintNameSlice) {
@@ -903,24 +707,16 @@ fn emit_argument_count_expectation(source: &mut String, binds: usize) {
     }
 }
 
-fn emit_rust_row(source: &mut String, row: &RustRow, projection: Projection) {
-    match projection {
-        Projection::Native => source.push_str("#[derive(Debug, sqlx::FromRow)]\n"),
-        Projection::Wamn => source.push_str("#[derive(Debug)]\n"),
-    }
-    writeln!(source, "{} struct {} {{", row.visibility.source(), row.name)
-        .expect("writing to a String cannot fail");
+fn emit_rust_row(source: &mut String, row: &RustRow) {
+    writeln!(
+        source,
+        "#[derive(Debug)]\n{} struct {} {{",
+        row.visibility.source(),
+        row.name
+    )
+    .expect("writing to a String cannot fail");
     for field in &row.fields {
-        // `sqlx::query_file_as!` names each field after its column, and it
-        // spells a keyword column as a raw identifier. The native row exists
-        // only for that macro, so it takes the macro's spelling.
-        let column = authored_name(&field.name);
-        let name = if matches!(projection, Projection::Native) && column != field.name {
-            format!("r#{column}")
-        } else {
-            field.name.clone()
-        };
-        writeln!(source, "    pub {name}: {},", field.rust_type)
+        writeln!(source, "    pub {}: {},", field.name, field.rust_type)
             .expect("writing to a String cannot fail");
     }
     source.push_str("}\n\n");
@@ -1013,15 +809,6 @@ fn emit_decode_result(
     source.push_str("        })\n    })\n}\n\n");
 }
 
-fn sql_constant_name(action: &str, index: usize, path_count: usize) -> String {
-    let suffix = if path_count == 1 {
-        String::new()
-    } else {
-        format!("_{index}")
-    };
-    format!("{}{}_SQL", action.to_ascii_uppercase(), suffix)
-}
-
 fn statement_constant_name(action: &str, index: usize, path_count: usize) -> String {
     let suffix = if path_count == 1 {
         String::new()
@@ -1031,34 +818,26 @@ fn statement_constant_name(action: &str, index: usize, path_count: usize) -> Str
     format!("{}{}_STATEMENT", action.to_ascii_uppercase(), suffix)
 }
 
-fn rust_type(column: &Column, projection: Projection) -> String {
-    projected_rust_type(column.column_type(), projection, column.nullable())
+fn rust_type(column: &Column) -> String {
+    projected_rust_type(column.column_type(), column.nullable())
 }
 
-fn optional_rust_type(column: &Column, projection: Projection) -> String {
-    projected_rust_type(column.column_type(), projection, true)
+fn optional_rust_type(column: &Column) -> String {
+    projected_rust_type(column.column_type(), true)
 }
 
-pub(super) fn projected_rust_type(
-    ty: SqlValueType,
-    projection: Projection,
-    optional: bool,
-) -> String {
-    let base = match (projection, ty) {
-        (_, SqlValueType::Boolean) => "bool",
-        (_, SqlValueType::Int32) => "i32",
-        (_, SqlValueType::Int64) => "i64",
-        (_, SqlValueType::Float64) => "f64",
-        (_, SqlValueType::Text) => "String",
-        (_, SqlValueType::Bytes) => "Vec<u8>",
-        (Projection::Native, SqlValueType::Numeric) => "rust_decimal::Decimal",
-        (Projection::Native, SqlValueType::Timestamptz) => "chrono::DateTime<chrono::Utc>",
-        (Projection::Native, SqlValueType::Json) => "serde_json::Value",
-        (Projection::Native, SqlValueType::Uuid) => "uuid::Uuid",
-        (Projection::Wamn, SqlValueType::Numeric) => "wamn_postgres_statements::Numeric",
-        (Projection::Wamn, SqlValueType::Timestamptz) => "wamn_postgres_statements::TimestampTz",
-        (Projection::Wamn, SqlValueType::Json) => "wamn_postgres_statements::Json",
-        (Projection::Wamn, SqlValueType::Uuid) => "wamn_postgres_statements::Uuid",
+pub(super) fn projected_rust_type(ty: SqlValueType, optional: bool) -> String {
+    let base = match ty {
+        SqlValueType::Boolean => "bool",
+        SqlValueType::Int32 => "i32",
+        SqlValueType::Int64 => "i64",
+        SqlValueType::Float64 => "f64",
+        SqlValueType::Text => "String",
+        SqlValueType::Bytes => "Vec<u8>",
+        SqlValueType::Numeric => "wamn_postgres_statements::Numeric",
+        SqlValueType::Timestamptz => "wamn_postgres_statements::TimestampTz",
+        SqlValueType::Json => "wamn_postgres_statements::Json",
+        SqlValueType::Uuid => "wamn_postgres_statements::Uuid",
     };
     if optional {
         format!("Option<{base}>")

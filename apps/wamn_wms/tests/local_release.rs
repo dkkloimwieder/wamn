@@ -31,10 +31,17 @@ async fn an_old_binding_entry_gets_an_ordinary_refusal() -> anyhow::Result<()> {
 
 /// R1 accepts a numeric packaging code. The installed R2 requires text.
 pub(super) fn bindings(app: &Path, directory: &Path) -> anyhow::Result<()> {
-    let r2 = ClientContractIr::from_release(
-        "wamn_wms",
-        &wamn_compiler::output_root(app).join("contracts"),
-        &app.join("publication/attachments.json"),
+    let manifest = wamn_compiler::manifest::PackageManifest::from_slice(&std::fs::read(
+        wamn_compiler::package_manifest_path(app),
+    )?)?;
+    let routes = wamn_compiler::client_ir::published_routes(
+        wamn_compiler::publication::read_package_attachments(app)?,
+        &wamn_compiler::publication::read(app, wamn_compiler::publication::COMPONENTS)?,
+    )?;
+    let r2 = ClientContractIr::from_operations(
+        &manifest.package.id,
+        &manifest.compiled_operations,
+        &routes,
     )?;
     let mut r1 = r2.clone();
     let operation = r1

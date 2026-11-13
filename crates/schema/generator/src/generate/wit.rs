@@ -5,14 +5,12 @@ use wamn_scalar::SqlValueType;
 
 use super::wit_adapters::{emit_error_mapper, emit_export_adapter, emit_row_adapter};
 use super::{BTreeMap, Column, Table, insert_bytes};
-use crate::client_fields::input_fields_of;
 use crate::client_ir::FieldIr;
 use crate::manifest::serde_field;
 use crate::manifest::{
     AccessOperationErrorLiteral, ContractFieldDeclaration, CrudAction, CustomOperationDeclaration,
-    CustomOperationResultDeclaration, ModelDeclaration, OperationDeclaration,
-    OperationErrorDetailDeclaration, PackageManifest, ResultClass, binding_identifier,
-    rust_identifier, rust_type_identifier,
+    OperationDeclaration, OperationErrorDetailDeclaration, PackageManifest, ResultClass,
+    binding_identifier, rust_identifier, rust_type_identifier,
 };
 use crate::manifest::{FilterMatch, OperationErrorDetailKey, authored_name};
 use crate::{ManifestError as GenerateError, ManifestErrorType as GenerateErrorType};
@@ -25,50 +23,24 @@ pub(super) const CRUD_REQUEST_ELEMENTS_MAXIMUM: u32 = 100;
 /// Emit typed boundaries for every declared model operation.
 pub(super) fn emit_model_wit(
     files: &mut BTreeMap<String, Vec<u8>>,
-    catalog: &super::CatalogIr,
-    manifest: &PackageManifest,
-    model_name: &str,
-    model: &ModelDeclaration,
-    table: &Table,
+    compiled: &super::operations::ModelDescription<'_>,
 ) -> Result<(), GenerateError> {
-    if model.operations.is_empty() {
-        return Ok(());
-    }
-    let results: BTreeMap<_, CustomOperationResultDeclaration> = model
-        .operations
-        .keys()
-        .map(|action| {
-            let path = format!(
-                "generated/contracts/{model_name}/{}.result.json",
-                action.as_str()
-            );
-            let result = serde_json::from_slice(
-                files
-                    .get(&path)
-                    .expect("model result contract is emitted first"),
-            )
-            .expect("emitted result follows the declaration schema");
-            (*action, result)
-        })
-        .collect();
     emit_codec_support(files)?;
-    let package = manifest.package.id.replace('_', "-");
+    let package = compiled.package.id.replace('_', "-");
+    let model_name = compiled.name;
     let directory = format!("generated/wit/deps/{package}-{}", wit_name(model_name));
     insert_bytes(
         files,
         &format!("{directory}/package.wit"),
-        emit_model_package_wit(catalog, manifest, model_name, model, table, &results).into_bytes(),
+        emit_model_package_wit(compiled).into_bytes(),
     )?;
-    for (action, operation) in &model.operations {
-        let details = super::operation_error_details(catalog, table, *action, operation, model);
+    for (action, facts) in &compiled.operations {
         let codec = emit_crud_codec(
             *action,
-            table,
-            operation,
-            model.feed_enabled(),
-            &results[action].fields,
-            &model.min_lengths,
-            &details,
+            &compiled.shape,
+            facts,
+            compiled.feed,
+            compiled.min_lengths,
         );
         insert_bytes(
             files,
@@ -79,32 +51,15 @@ pub(super) fn emit_model_wit(
     Ok(())
 }
 
-fn emit_model_package_wit(
-    catalog: &super::CatalogIr,
-    manifest: &PackageManifest,
-    model_name: &str,
-    model: &ModelDeclaration,
-    table: &Table,
-    results: &BTreeMap<CrudAction, CustomOperationResultDeclaration>,
-) -> String {
-    let package = manifest.package.id.replace('_', "-");
+fn emit_model_package_wit(compiled: &super::operations::ModelDescription<'_>) -> String {
+    let package = compiled.package.id.replace('_', "-");
     let mut source = format!(
         "package {package}:{}@{};\n\n",
-        wit_name(model_name),
-        manifest.package.version
+        wit_name(compiled.name),
+        compiled.package.version
     );
-    for action in model.operations.keys() {
-        let operation = &model.operations[action];
-        let details = super::operation_error_details(catalog, table, *action, operation, model);
-        emit_crud_interface(
-            &mut source,
-            *action,
-            table,
-            operation,
-            model.feed_enabled(),
-            &results[action].fields,
-            &details,
-        );
+    for (action, facts) in &compiled.operations {
+        emit_crud_interface(&mut source, *action, &compiled.shape, facts, compiled.feed);
     }
     source
 }
@@ -112,14 +67,16 @@ fn emit_model_package_wit(
 fn emit_crud_interface(
     source: &mut String,
     action: CrudAction,
-    table: &Table,
-    operation: &OperationDeclaration,
+    table: &super::operations::ModelShape<'_>,
+    facts: &super::operations::ModelOperation<'_>,
     feed: bool,
-    fields: &[ContractFieldDeclaration],
-    details: &BTreeMap<AccessOperationErrorLiteral, OperationErrorDetailDeclaration>,
 ) {
+    let operation = facts.request;
+    let fields = &facts.result.fields;
+    let details = &facts.refusals;
+    let revision_type = facts.revision;
     if action == CrudAction::Update {
-        emit_update_interface(source, table, operation, details);
+        emit_update_interface(source, table, operation, fields, details, revision_type);
         return;
     }
     let name = action.as_str();
@@ -147,18 +104,12 @@ fn emit_crud_interface(
     }
     writeln!(source, "  record {name}-request {{").expect("writing to a String cannot fail");
     match action {
-        CrudAction::Get | CrudAction::Delete => writeln!(
-            source,
-            "    id: {},",
-            wit_type(
-                crate::key::key_type(table)
-                    .expect("validated model key")
-                    .column_type()
-            )
-        )
-        .expect("writing to a String cannot fail"),
+        CrudAction::Get | CrudAction::Delete => {
+            writeln!(source, "    id: {},", wit_type(table.key.column_type()))
+                .expect("writing to a String cannot fail");
+        }
         CrudAction::Create => {
-            if !crate::key::database_generated(table) {
+            if !table.generated_id {
                 source.push_str("    id: string,\n");
             }
             source.push_str("    idempotency-key: string,\n");
@@ -212,7 +163,7 @@ fn emit_crud_interface(
         .expect("writing to a String cannot fail");
     }
     source.push_str("  }\n\n");
-    emit_operation_errors(source, name, details, revision_width(table, operation));
+    emit_operation_errors(source, name, details, revision_type);
     if action == CrudAction::Query {
         emit_query_page(source, fields, feed, table);
         return;
@@ -237,7 +188,7 @@ fn emit_query_page(
     source: &mut String,
     fields: &[ContractFieldDeclaration],
     feed: bool,
-    table: &Table,
+    table: &super::operations::ModelShape<'_>,
 ) {
     source.push_str("  record query-row {\n");
     for column in fields {
@@ -253,7 +204,7 @@ fn emit_query_page(
         // A list read with a feed answers a page, with the cursor its feed
         // starts from, or the changes since a cursor
         // (docs/architecture/execution.md#change-feed).
-        source.push_str(&"  /// One page. A next cursor means more rows follow. The cursor starts\n  /// the change feed at this page's snapshot.\n  record query-page {\n    item: list<query-row>,\n    next-cursor: option<string>,\n    cursor: string,\n  }\n\n  /// One changed row. A change with no data is a row that was deleted or\n  /// left the target of the read.\n  record query-change {\n    id: string,\n    row-version: s64,\n    data: option<query-row>,\n  }\n\n  /// The changes since a cursor, one per row. Not complete means more\n  /// changes follow the next cursor.\n  record query-changes {\n    rows: list<query-change>,\n    next-cursor: string,\n    complete: bool,\n  }\n\n  variant query-result {\n    page(query-page),\n    changes(query-changes),\n  }\n\n  record query-outcome {\n    outcome: result<query-result, query-error>,\n  }\n\n".replace("id: string", &format!("id: {}", wit_type(crate::key::key_type(table).expect("validated model key").column_type()))));
+        source.push_str(&"  /// One page. A next cursor means more rows follow. The cursor starts\n  /// the change feed at this page's snapshot.\n  record query-page {\n    item: list<query-row>,\n    next-cursor: option<string>,\n    cursor: string,\n  }\n\n  /// One changed row. A change with no data is a row that was deleted or\n  /// left the target of the read.\n  record query-change {\n    id: string,\n    row-version: s64,\n    data: option<query-row>,\n  }\n\n  /// The changes since a cursor, one per row. Not complete means more\n  /// changes follow the next cursor.\n  record query-changes {\n    rows: list<query-change>,\n    next-cursor: string,\n    complete: bool,\n  }\n\n  variant query-result {\n    page(query-page),\n    changes(query-changes),\n  }\n\n  record query-outcome {\n    outcome: result<query-result, query-error>,\n  }\n\n".replace("id: string", &format!("id: {}", wit_type(table.key.column_type()))));
     } else {
         source.push_str("  /// One page. A cursor means more rows follow.\n  record query-result {\n    item: list<query-row>,\n    next-cursor: option<string>,\n  }\n\n  record query-outcome {\n    outcome: result<query-result, query-error>,\n  }\n\n");
     }
@@ -262,7 +213,11 @@ fn emit_query_page(
     source.push_str("  read-json: async func(ctx: node-context, input: string, want-wal-position: bool) -> result<tuple<emission, option<string>>, node-error>;\n}\n\n");
 }
 
-fn emit_writable_fields(source: &mut String, table: &Table, operation: &OperationDeclaration) {
+fn emit_writable_fields(
+    source: &mut String,
+    table: &super::operations::ModelShape<'_>,
+    operation: &OperationDeclaration,
+) {
     for field in &operation.writable_fields {
         let column = model_column(table, field);
         writeln!(
@@ -339,9 +294,11 @@ fn emit_crud_result(
 
 fn emit_update_interface(
     source: &mut String,
-    table: &Table,
+    table: &super::operations::ModelShape<'_>,
     operation: &OperationDeclaration,
+    fields: &[ContractFieldDeclaration],
     details: &BTreeMap<AccessOperationErrorLiteral, OperationErrorDetailDeclaration>,
+    revision_type: Option<SqlValueType>,
 ) {
     source.push_str("interface update {\n  use wamn:node/types@0.1.0.{emission, node-context, node-error};\n\n  record update-change {\n");
     emit_writable_fields(source, table, operation);
@@ -352,11 +309,7 @@ fn emit_update_interface(
     writeln!(
         source,
         "  }}\n\n  record update-request {{\n    id: {},",
-        wit_type(
-            crate::key::key_type(table)
-                .expect("validated model key")
-                .column_type()
-        )
+        wit_type(table.key.column_type())
     )
     .expect("writing to a String cannot fail");
     writeln!(
@@ -373,7 +326,7 @@ fn emit_update_interface(
                 source,
                 access_error_literal(*literal),
                 detail,
-                revision_width(table, operation),
+                revision_type,
             );
         }
     }
@@ -394,22 +347,20 @@ fn emit_update_interface(
         }
     }
     source.push_str("  }\n\n  record update-item {\n    request-id: string,\n    input: result<update-request, invalid-input-detail>,\n  }\n\n  record update-result {\n");
-    for column in table.columns() {
-        let mut ty = wit_type(column.column_type());
-        if column.nullable() {
+    for field in fields {
+        let mut ty = wit_type(field.ty);
+        if field.nullable {
             ty = format!("option<{ty}>");
         }
-        writeln!(source, "    {}: {ty},", wit_name(column.name()))
+        writeln!(source, "    {}: {ty},", wit_name(&field.path))
             .expect("writing to a String cannot fail");
     }
     source.push_str("  }\n\n  record update-outcome {\n    request-id: string,\n    outcome: result<update-result, update-error>,\n  }\n\n  run: async func(ctx: node-context, input: list<update-item>) -> result<list<update-outcome>, node-error>;\n  run-json: async func(ctx: node-context, input: string) -> result<emission, node-error>;\n}\n");
 }
 
-fn model_column<'a>(table: &'a Table, field: &str) -> &'a Column {
+fn model_column<'a>(table: &'a super::operations::ModelShape<'_>, field: &str) -> &'a Column {
     table
-        .columns()
-        .iter()
-        .find(|column| column.name() == field)
+        .column(field)
         .expect("validated model operation field exists")
 }
 
@@ -432,11 +383,12 @@ pub(super) fn access_error_literal(literal: AccessOperationErrorLiteral) -> &'st
 }
 
 fn emit_update_codec(
-    table: &Table,
+    table: &super::operations::ModelShape<'_>,
     operation: &OperationDeclaration,
     fields: &[ContractFieldDeclaration],
     min_lengths: &BTreeMap<String, u32>,
     details: &BTreeMap<AccessOperationErrorLiteral, OperationErrorDetailDeclaration>,
+    revision_type: Option<SqlValueType>,
 ) -> String {
     let mut source = codec_prelude(
         "UpdateItem",
@@ -464,15 +416,7 @@ fn emit_update_codec(
         &UPDATE_CODEC_HEADER
             .replace(
                 "id: String",
-                &format!(
-                    "id: {}",
-                    codec_rust_type(
-                        crate::key::key_type(table)
-                            .expect("validated model key")
-                            .column_type(),
-                        false
-                    )
-                ),
+                &format!("id: {}", codec_rust_type(table.key.column_type(), false)),
             )
             .replace("REVISION_JSON_TYPE", revision_json_type)
             .replace("expected_revision", &expected_revision),
@@ -493,9 +437,7 @@ fn emit_update_codec(
                 "id: request.id",
                 &format!(
                     "id: {}",
-                    if crate::key::key_type(table).expect("validated model key")
-                        == crate::key::KeyType::Int64
-                    {
+                    if table.key == crate::key::KeyType::Int64 {
                         "request.id.0"
                     } else {
                         "request.id"
@@ -521,24 +463,19 @@ fn emit_update_codec(
     source.push_str(&UPDATE_CODEC_VALIDATE_PREFIX.replace("expected_revision", &expected_revision));
     emit_crud_invalid_detail(&mut source, details);
     source.push_str(UPDATE_CODEC_ENCODE_PREFIX);
-    for column in table.columns() {
-        emit_codec_result_field(
-            &mut source,
-            column.name(),
-            column.column_type(),
-            column.nullable(),
-        );
+    for field in fields {
+        emit_codec_result_field(&mut source, &field.path, field.ty, field.nullable);
     }
     source.push_str(UPDATE_CODEC_ERROR_PREFIX);
-    let guarded = guarded_fields(table, CrudAction::Update, operation);
+    let guarded = &table.guarded[&CrudAction::Update];
     for (literal, detail) in details {
         emit_codec_error_arm(
             &mut source,
             "UpdateError",
             access_error_literal(*literal),
             detail,
-            revision_width(table, operation),
-            &guarded,
+            revision_type,
+            guarded,
         );
     }
     source.push_str(UPDATE_CODEC_FOOTER);
@@ -550,17 +487,16 @@ fn emit_update_codec(
     ));
     source.push_str(&emit_handler("Update", true));
     source.push_str(&emit_row_adapter(
-        table
-            .columns()
+        fields
             .iter()
-            .map(|column| (column.name(), column.column_type(), column.nullable())),
+            .map(|field| (field.path.as_str(), field.ty, field.nullable)),
     ));
     source.push_str(&emit_error_mapper(
         "UpdateError",
         details
             .iter()
             .map(|(literal, detail)| (access_error_literal(*literal), detail)),
-        revision_width(table, operation),
+        revision_type,
     ));
     source.push_str(&emit_export_adapter("Update", false, true, false));
     source
@@ -568,18 +504,27 @@ fn emit_update_codec(
 
 fn emit_crud_codec(
     action: CrudAction,
-    table: &Table,
-    operation: &OperationDeclaration,
+    table: &super::operations::ModelShape<'_>,
+    facts: &super::operations::ModelOperation<'_>,
     feed: bool,
-    fields: &[ContractFieldDeclaration],
     min_lengths: &BTreeMap<String, u32>,
-    details: &BTreeMap<AccessOperationErrorLiteral, OperationErrorDetailDeclaration>,
 ) -> String {
+    let operation = facts.request;
+    let fields = &facts.result.fields;
+    let details = &facts.refusals;
+    let revision_type = facts.revision;
     if action == CrudAction::Update {
-        return emit_update_codec(table, operation, fields, min_lengths, details);
+        return emit_update_codec(
+            table,
+            operation,
+            fields,
+            min_lengths,
+            details,
+            revision_type,
+        );
     }
     if action == CrudAction::Query {
-        return emit_query_codec(table, operation, feed, fields, details);
+        return emit_query_codec(table, operation, feed, fields, details, revision_type);
     }
     let type_name = rust_type_identifier(action.as_str());
     let mut source = codec_prelude(
@@ -589,7 +534,12 @@ fn emit_crud_codec(
         crud_is_keyed(action),
     );
     source.push_str(&emit_crud_json_codec(
-        action, table, operation, fields, details,
+        action,
+        table,
+        operation,
+        fields,
+        details,
+        revision_type,
     ));
     source.push_str(&emit_crud_normalizer(
         action,
@@ -609,7 +559,7 @@ fn emit_crud_codec(
         details
             .iter()
             .map(|(literal, detail)| (access_error_literal(*literal), detail)),
-        revision_width(table, operation),
+        revision_type,
     ));
     source.push_str(&emit_export_adapter(
         &type_name,
@@ -622,11 +572,12 @@ fn emit_crud_codec(
 
 /// The codec of a query: one request, and its page as one result.
 fn emit_query_codec(
-    table: &Table,
+    table: &super::operations::ModelShape<'_>,
     operation: &OperationDeclaration,
     feed: bool,
     fields: &[ContractFieldDeclaration],
     details: &BTreeMap<AccessOperationErrorLiteral, OperationErrorDetailDeclaration>,
+    revision_type: Option<SqlValueType>,
 ) -> String {
     let mut source = String::from(
         "// @generated from operation declarations; do not edit.\n\ninclude!(\"operation_codec.rs\");\nconst MINIMUM: usize = 1;\nconst MAXIMUM: usize = 1;\nconst COUNT_ERROR: &str = \"a query takes exactly one request\";\n\n#[derive(Deserialize)]\n#[serde(deny_unknown_fields)]\n",
@@ -649,7 +600,7 @@ fn emit_query_codec(
     emit_json_row_fields(&mut source, fields, "row");
     source.push_str("    })\n}\n\n");
     if feed {
-        source.push_str(&"fn change_json(change: &contract::QueryChange) -> Value {\n    let mut value = json!({ \"id\": change.id, \"row_version\": change.row_version.to_string(), \"deleted\": change.data.is_none() });\n    if let Some(row) = &change.data {\n        value[\"data\"] = row_json(row);\n    }\n    value\n}\n\n".replace("change.id,", if crate::key::key_type(table).expect("validated model key").column_type() == SqlValueType::Int64 { "change.id.to_string()," } else { "change.id," }));
+        source.push_str(&"fn change_json(change: &contract::QueryChange) -> Value {\n    let mut value = json!({ \"id\": change.id, \"row_version\": change.row_version.to_string(), \"deleted\": change.data.is_none() });\n    if let Some(row) = &change.data {\n        value[\"data\"] = row_json(row);\n    }\n    value\n}\n\n".replace("change.id,", if table.key.column_type() == SqlValueType::Int64 { "change.id.to_string()," } else { "change.id," }));
         source.push_str("/// The page or the changes, or the error, as the outcome list a read reply\n/// carries.\npub(crate) fn encode(outcome: &Result<contract::QueryResult, contract::QueryError>) -> String {\n    match outcome {\n        Ok(contract::QueryResult::Page(page)) => json!([{ \"value\": { \"item\": page.item.iter().map(row_json).collect::<Vec<_>>(), \"next_cursor\": page.next_cursor, \"cursor\": page.cursor } }]),\n        Ok(contract::QueryResult::Changes(changes)) => json!([{ \"value\": { \"rows\": changes.rows.iter().map(change_json).collect::<Vec<_>>(), \"next_cursor\": changes.next_cursor, \"complete\": changes.complete } }]),\n        Err(error) => json!([{ \"error\": error_value(error) }]),\n    }.to_string()\n}\n\n");
     } else {
         source.push_str("/// The page, or the error, as the outcome list a read reply carries.\npub(crate) fn encode(outcome: &Result<contract::QueryResult, contract::QueryError>) -> String {\n    match outcome {\n        Ok(page) => json!([{ \"value\": { \"item\": page.item.iter().map(row_json).collect::<Vec<_>>(), \"next_cursor\": page.next_cursor } }]),\n        Err(error) => json!([{ \"error\": error_value(error) }]),\n    }.to_string()\n}\n\n");
@@ -661,7 +612,7 @@ fn emit_query_codec(
             "QueryError",
             access_error_literal(*literal),
             detail,
-            revision_width(table, operation),
+            revision_type,
             &[],
         );
     }
@@ -685,14 +636,13 @@ fn emit_query_codec(
         details
             .iter()
             .map(|(literal, detail)| (access_error_literal(*literal), detail)),
-        revision_width(table, operation),
+        revision_type,
     ));
     source.push_str(QUERY_EXPORT);
     source
 }
 
-/// The declared default limit, and a refusal below the declared minimum. The
-/// entry holds the maximum: the page's, and the platform ceiling.
+/// Apply the declared default and refuse a page or feed outside its bounds.
 fn emit_query_limit(
     source: &mut String,
     operation: &OperationDeclaration,
@@ -704,8 +654,8 @@ fn emit_query_limit(
         let optional = &details[&AccessOperationErrorLiteral::InvalidInput].optional;
         writeln!(
             source,
-            "    let limit = *request.limit.get_or_insert({});\n    if limit < {} {{\n        #[allow(unused_mut)]\n        let mut detail = invalid(\"limit\");",
-            limit.default, limit.minimum
+            "    let limit = *request.limit.get_or_insert({});\n    if limit < {} || limit > {} {{\n        #[allow(unused_mut)]\n        let mut detail = invalid(\"limit\");",
+            limit.default, limit.minimum, limit.maximum
         )
         .expect("writing to a String cannot fail");
         if optional.contains(&OperationErrorDetailKey::Minimum) {
@@ -716,17 +666,24 @@ fn emit_query_limit(
             )
             .expect("writing to a String cannot fail");
         }
+        if optional.contains(&OperationErrorDetailKey::Maximum) {
+            writeln!(
+                source,
+                "        detail.maximum = Some(\"{}\".to_owned());",
+                limit.maximum
+            )
+            .expect("writing to a String cannot fail");
+        }
         if optional.contains(&OperationErrorDetailKey::Observed) {
             source.push_str("        detail.observed = Some(limit.to_string());\n");
         }
         source.push_str("        return Err(detail);\n    }\n");
-        // The feed part's limit takes the page's default and minimum. The
-        // route schema holds its maximum.
+        // The feed uses the same bounds as a page.
         if feed {
             writeln!(
                 source,
-                "    if let Some(feed) = &mut request.feed {{\n        let limit = *feed.limit.get_or_insert({});\n        if limit < {} {{\n            #[allow(unused_mut)]\n            let mut detail = invalid(\"feed.limit\");",
-                limit.default, limit.minimum
+                "    if let Some(feed) = &mut request.feed {{\n        let limit = *feed.limit.get_or_insert({});\n        if limit < {} || limit > {} {{\n            #[allow(unused_mut)]\n            let mut detail = invalid(\"feed.limit\");",
+                limit.default, limit.minimum, limit.maximum
             )
             .expect("writing to a String cannot fail");
             if optional.contains(&OperationErrorDetailKey::Minimum) {
@@ -734,6 +691,14 @@ fn emit_query_limit(
                     source,
                     "            detail.minimum = Some(\"{}\".to_owned());",
                     limit.minimum
+                )
+                .expect("writing to a String cannot fail");
+            }
+            if optional.contains(&OperationErrorDetailKey::Maximum) {
+                writeln!(
+                    source,
+                    "            detail.maximum = Some(\"{}\".to_owned());",
+                    limit.maximum
                 )
                 .expect("writing to a String cannot fail");
             }
@@ -828,10 +793,11 @@ pub(crate) use export_operation;
 
 fn emit_crud_json_codec(
     action: CrudAction,
-    table: &Table,
+    table: &super::operations::ModelShape<'_>,
     operation: &OperationDeclaration,
     fields: &[ContractFieldDeclaration],
     details: &BTreeMap<AccessOperationErrorLiteral, OperationErrorDetailDeclaration>,
+    revision_type: Option<SqlValueType>,
 ) -> String {
     let type_name = rust_type_identifier(action.as_str());
     let mut source = String::from("#[derive(Deserialize)]\n#[serde(deny_unknown_fields)]\n");
@@ -840,12 +806,7 @@ fn emit_crud_json_codec(
             write!(
                 source,
                 "struct JsonRequest {{ id: {}",
-                codec_rust_type(
-                    crate::key::key_type(table)
-                        .expect("validated model key")
-                        .column_type(),
-                    false
-                )
+                codec_rust_type(table.key.column_type(), false)
             )
             .expect("writing to a String cannot fail");
             if action == CrudAction::Delete {
@@ -875,7 +836,7 @@ fn emit_crud_json_codec(
         }
         CrudAction::Create => {
             source.push_str("struct JsonRequest { ");
-            if !crate::key::database_generated(table) {
+            if !table.generated_id {
                 source.push_str("id: String, ");
             }
             source.push_str("idempotency_key: String,\n");
@@ -903,8 +864,8 @@ fn emit_crud_json_codec(
         fields,
         operation,
         details,
-        revision_width(table, operation),
-        &guarded_fields(table, action, operation),
+        revision_type,
+        &table.guarded[&action],
     );
     source
 }
@@ -920,7 +881,7 @@ fn mutation_value(column: &Column, access: &str) -> String {
 
 fn emit_mutation_validation(
     source: &mut String,
-    table: &Table,
+    table: &super::operations::ModelShape<'_>,
     operation: &OperationDeclaration,
     fields: &[ContractFieldDeclaration],
     min_lengths: &BTreeMap<String, u32>,
@@ -979,7 +940,7 @@ fn emit_mutation_validation(
 }
 
 fn emit_update_normalizer(
-    table: &Table,
+    table: &super::operations::ModelShape<'_>,
     operation: &OperationDeclaration,
     fields: &[ContractFieldDeclaration],
     min_lengths: &BTreeMap<String, u32>,
@@ -991,9 +952,7 @@ fn emit_update_normalizer(
         &mut source,
         "request.id",
         "id",
-        crate::key::key_type(table)
-            .expect("validated model key")
-            .column_type(),
+        table.key.column_type(),
         &[],
         false,
     );
@@ -1012,7 +971,7 @@ fn emit_update_normalizer(
 
 fn emit_crud_normalizer(
     action: CrudAction,
-    table: &Table,
+    table: &super::operations::ModelShape<'_>,
     operation: &OperationDeclaration,
     fields: &[ContractFieldDeclaration],
     min_lengths: &BTreeMap<String, u32>,
@@ -1023,15 +982,13 @@ fn emit_crud_normalizer(
     );
     source.push_str("    let _ = &request;\n");
     if matches!(action, CrudAction::Get | CrudAction::Delete)
-        || (action == CrudAction::Create && !crate::key::database_generated(table))
+        || (action == CrudAction::Create && !table.generated_id)
     {
         emit_scalar_validation(
             &mut source,
             "request.id",
             "id",
-            crate::key::key_type(table)
-                .expect("validated model key")
-                .column_type(),
+            table.key.column_type(),
             &[],
             false,
         );
@@ -1098,7 +1055,11 @@ fn emit_scalar_validation(
     }
 }
 
-fn emit_json_columns(source: &mut String, table: &Table, fields: &[String]) {
+fn emit_json_columns(
+    source: &mut String,
+    table: &super::operations::ModelShape<'_>,
+    fields: &[String],
+) {
     for field in fields {
         let column = model_column(table, field);
         writeln!(
@@ -1113,7 +1074,7 @@ fn emit_json_columns(source: &mut String, table: &Table, fields: &[String]) {
 
 fn emit_query_json_types(
     source: &mut String,
-    table: &Table,
+    table: &super::operations::ModelShape<'_>,
     operation: &OperationDeclaration,
     feed: bool,
 ) {
@@ -1177,16 +1138,14 @@ fn emit_query_json_types(
 fn emit_crud_request_assignments(
     source: &mut String,
     action: CrudAction,
-    table: &Table,
+    table: &super::operations::ModelShape<'_>,
     operation: &OperationDeclaration,
 ) {
     match action {
         CrudAction::Get => writeln!(
             source,
             "            id: {},",
-            if crate::key::key_type(table).expect("validated model key")
-                == crate::key::KeyType::Int64
-            {
+            if table.key == crate::key::KeyType::Int64 {
                 "request.id.0"
             } else {
                 "request.id"
@@ -1197,9 +1156,7 @@ fn emit_crud_request_assignments(
             writeln!(
                 source,
                 "            id: {},",
-                if crate::key::key_type(table).expect("validated model key")
-                    == crate::key::KeyType::Int64
-                {
+                if table.key == crate::key::KeyType::Int64 {
                     "request.id.0"
                 } else {
                     "request.id"
@@ -1234,7 +1191,7 @@ fn emit_crud_request_assignments(
             .expect("writing to a String cannot fail");
         }
         CrudAction::Create => {
-            if !crate::key::database_generated(table) {
+            if !table.generated_id {
                 source.push_str("            id: request.id,\n");
             }
             source.push_str("            idempotency_key: request.idempotency_key,\n");
@@ -1667,7 +1624,7 @@ pub(super) fn emit_custom_operation_wit(
     files: &mut BTreeMap<String, Vec<u8>>,
     manifest: &PackageManifest,
     operation_name: &str,
-    operation: &CustomOperationDeclaration,
+    compiled: &BTreeMap<String, super::operations::CustomDescription<'_>>,
 ) -> Result<(), GenerateError> {
     emit_codec_support(files)?;
     let (group, local_name) = operation_name.split_once('.').ok_or_else(|| {
@@ -1693,7 +1650,7 @@ pub(super) fn emit_custom_operation_wit(
         .get(&package_path)
         .is_some_and(|existing| String::from_utf8_lossy(existing).contains(&group_marker));
     if !group_is_emitted {
-        let source = emit_custom_group(&package, version, group, manifest);
+        let source = emit_custom_group(&package, version, group, manifest, compiled);
         if let Some(existing) = files.get_mut(&package_path) {
             while existing.last().is_some_and(u8::is_ascii_whitespace) {
                 existing.pop();
@@ -1708,7 +1665,7 @@ pub(super) fn emit_custom_operation_wit(
             insert_bytes(files, &package_path, source.into_bytes())?;
         }
     }
-    let codec = emit_custom_codec(local_name, operation);
+    let codec = emit_custom_codec(local_name, &compiled[operation_name]);
     insert_bytes(
         files,
         &format!(
@@ -1726,14 +1683,14 @@ fn emit_custom_group(
     version: &str,
     group: &str,
     manifest: &PackageManifest,
+    compiled: &BTreeMap<String, super::operations::CustomDescription<'_>>,
 ) -> String {
     let mut source = format!("package {package}:{}@{version};\n\n", wit_name(group));
-    for (operation_name, operation) in &manifest.custom_operations {
+    for (operation_name, facts) in compiled {
         let Some(local_name) = operation_name.strip_prefix(&format!("{group}.")) else {
             continue;
         };
-        let feeding = super::authored_feed::contract(operation);
-        let operation = &feeding;
+        let operation = facts.declaration;
         let emitted = if let Some((_, dependency)) =
             manifest.base_dependencies.iter().find(|(_, item)| {
                 item.operations
@@ -1742,7 +1699,7 @@ fn emit_custom_group(
             }) {
             emit_forwarding_interface(package, version, group, local_name, dependency, operation)
         } else {
-            emit_owned_interface(package, version, group, local_name, manifest, operation)
+            emit_owned_interface(package, version, group, local_name, manifest, facts)
         };
         let marker = format!("interface {} {{", wit_name(local_name));
         let start = emitted
@@ -1780,12 +1737,11 @@ fn emit_owned_interface(
     group: &str,
     local_name: &str,
     manifest: &PackageManifest,
-    operation: &CustomOperationDeclaration,
+    compiled: &super::operations::CustomDescription<'_>,
 ) -> String {
-    let result = operation.result.as_ref();
-    let input_tree = input_fields_of(
-        &serde_json::to_value(&operation.input).expect("validated custom input serializes"),
-    );
+    let operation = compiled.declaration;
+    let result = compiled.result.as_ref();
+    let request_fields = &compiled.request;
     let interface = wit_name(local_name);
     let mut source = format!("package {package}:{}@{version};\n\n", wit_name(group));
     for operation_name in manifest.custom_operations.keys() {
@@ -1804,32 +1760,16 @@ fn emit_owned_interface(
     }
     writeln!(source, "interface {interface} {{\n  use wamn:node/types@0.1.0.{{emission, node-context, node-error}};\n").expect("writing to a String cannot fail");
     if operation.input.envelope.is_none() && result.is_none() {
-        let request_fields = input_tree
-            .iter()
-            .filter(|field| field.path != "request_id")
-            .cloned()
-            .collect::<Vec<_>>();
-        emit_nested_wit_records(&mut source, &interface, &request_fields, "");
+        emit_nested_wit_records(&mut source, &interface, request_fields, "");
         writeln!(source, "  record {interface}-request {{")
             .expect("writing to a String cannot fail");
-        emit_wit_tree_fields(&mut source, &interface, &request_fields, "");
+        emit_wit_tree_fields(&mut source, &interface, request_fields, "");
         writeln!(source, "  }}\n\n  run: async func(ctx: node-context, input: {interface}-request) -> result<{interface}-request, node-error>;\n  run-json: async func(ctx: node-context, input: string) -> result<emission, node-error>;\n}}\n")
             .expect("writing to a String cannot fail");
         return source;
     }
-    let value = input_tree.iter().find(|field| field.path == "value");
-    let request_fields = value.map_or_else(
-        || {
-            input_tree
-                .iter()
-                .filter(|field| field.path != "request_id")
-                .cloned()
-                .collect::<Vec<_>>()
-        },
-        |value| value.children.clone(),
-    );
-    let root = if value.is_some() { "value." } else { "" };
-    emit_nested_wit_records(&mut source, &interface, &request_fields, root);
+    let root = compiled.request_root;
+    emit_nested_wit_records(&mut source, &interface, request_fields, root);
     if operation.feed == Some(true) {
         writeln!(source, "  record {interface}-feed {{\n    cursor: option<string>,\n    limit: option<s64>,\n  }}\n").expect("writing to a String cannot fail");
     }
@@ -1839,7 +1779,7 @@ fn emit_owned_interface(
     } else {
         writeln!(source, "  record {interface}-request {{")
             .expect("writing to a String cannot fail");
-        emit_wit_tree_fields(&mut source, &interface, &request_fields, root);
+        emit_wit_tree_fields(&mut source, &interface, request_fields, root);
         if operation.feed == Some(true) {
             writeln!(source, "    feed: option<{interface}-feed>,")
                 .expect("writing to a String cannot fail");
@@ -1847,33 +1787,16 @@ fn emit_owned_interface(
         source.push_str("  }\n\n");
     }
 
-    let details = operation
-        .errors
-        .iter()
-        .map(|literal| {
-            (
-                literal.as_str(),
-                crate::manifest::custom_operation_error_detail(operation, literal),
-            )
-        })
-        .collect::<BTreeMap<_, _>>();
-    // A custom operation reports the revision that its own result declares.
-    let revision = result
-        .and_then(|result| {
-            result
-                .fields
-                .iter()
-                .find(|field| field.revision.is_revision())
-        })
-        .map(|field| field.ty);
-    for (literal, detail) in &details {
+    let details = &compiled.refusals;
+    let revision = compiled.revision;
+    for (literal, detail) in details {
         if !detail.required.is_empty() || !detail.optional.is_empty() {
             emit_error_detail(&mut source, literal, detail, revision);
         }
     }
     writeln!(source, "  variant {interface}-error {{").expect("writing to a String cannot fail");
-    for literal in &operation.errors {
-        let detail = &details[literal.as_str()];
+    for literal in details.keys() {
+        let detail = &details[literal];
         if detail.required.is_empty() && detail.optional.is_empty() {
             writeln!(source, "    {},", wit_name(literal))
                 .expect("writing to a String cannot fail");
@@ -1892,7 +1815,7 @@ fn emit_owned_interface(
     if result.is_some_and(|result| {
         matches!(
             result.class,
-            ResultClass::BoundedList | ResultClass::OptionalOne
+            ResultClass::BoundedList | ResultClass::OptionalOne | ResultClass::Page
         )
     }) {
         writeln!(source, "  record {interface}-row {{").expect("writing to a String cannot fail");
@@ -1903,18 +1826,7 @@ fn emit_owned_interface(
             false,
         );
         if operation.feed == Some(true) {
-            let key = &operation
-                .lists
-                .as_ref()
-                .expect("validated feeding list")
-                .key_field[0];
-            let key_type = result
-                .expect("feeding result")
-                .fields
-                .iter()
-                .find(|field| &field.path == key)
-                .expect("validated key")
-                .ty;
+            let key_type = compiled.feed_key.expect("compiled feed key");
             writeln!(source, "  }}\n\n  record {interface}-page {{\n    item: list<{interface}-row>,\n    next-cursor: option<string>,\n    cursor: string,\n  }}\n\n  record {interface}-change {{\n    id: {},\n    row-version: s64,\n    data: option<{interface}-row>,\n  }}\n\n  record {interface}-changes {{\n    rows: list<{interface}-change>,\n    next-cursor: string,\n    complete: bool,\n  }}\n\n  variant {interface}-result {{\n    page({interface}-page),\n    changes({interface}-changes),", wit_type(key_type)).expect("writing to a String cannot fail");
         } else {
             let carrier = if result.expect("result exists").class == ResultClass::BoundedList {
@@ -2112,13 +2024,6 @@ fn detail_type(key: OperationErrorDetailKey, revision: Option<SqlValueType>) -> 
 }
 
 /// The revision width of a CRUD operation, or none when it declares no revision.
-fn revision_width(table: &Table, operation: &OperationDeclaration) -> Option<SqlValueType> {
-    operation
-        .revision_field
-        .as_deref()
-        .map(|revision| model_column(table, revision).column_type())
-}
-
 fn wit_type(ty: SqlValueType) -> String {
     let value = match ty {
         SqlValueType::Boolean => "bool",
@@ -2171,10 +2076,14 @@ fn artifact_name(value: &str) -> String {
         .to_owned()
 }
 
-fn emit_custom_codec(local_name: &str, operation: &CustomOperationDeclaration) -> String {
-    let Some(result) = operation.result.as_ref() else {
+fn emit_custom_codec(
+    local_name: &str,
+    compiled: &super::operations::CustomDescription<'_>,
+) -> String {
+    let operation = compiled.declaration;
+    let Some(result) = compiled.result.as_ref() else {
         let type_name = rust_type_identifier(local_name);
-        let mut source = emit_direct_custom_codec(&type_name, operation);
+        let mut source = emit_direct_custom_codec(&type_name, compiled);
         source.push_str(&emit_export_adapter(&type_name, true, false, false));
         return source;
     };
@@ -2191,8 +2100,8 @@ fn emit_custom_codec(local_name: &str, operation: &CustomOperationDeclaration) -
     let type_name = rust_type_identifier(local_name);
     let keyed = custom_is_keyed(operation);
     let mut source = codec_prelude(&format!("{type_name}Item"), minimum, maximum, keyed);
-    source.push_str(&emit_custom_decoder(&type_name, operation));
-    emit_invalid_detail(&mut source, operation);
+    source.push_str(&emit_custom_decoder(&type_name, compiled));
+    emit_invalid_detail(&mut source, compiled);
     if operation.feed == Some(true) {
         writeln!(
             source,
@@ -2214,19 +2123,7 @@ fn emit_custom_codec(local_name: &str, operation: &CustomOperationDeclaration) -
     }
     source.push_str("                \"value\": ");
     if operation.feed == Some(true) {
-        let key = &operation
-            .lists
-            .as_ref()
-            .expect("validated feed list")
-            .key_field[0];
-        let id = if result
-            .fields
-            .iter()
-            .find(|field| &field.path == key)
-            .expect("validated key")
-            .ty
-            == SqlValueType::Int64
-        {
+        let id = if compiled.feed_key == Some(SqlValueType::Int64) {
             "change.id.to_string()"
         } else {
             "change.id"
@@ -2266,27 +2163,18 @@ fn emit_custom_codec(local_name: &str, operation: &CustomOperationDeclaration) -
     source.push_str(&type_name);
     source.push_str(CUSTOM_CODEC_ERROR_TAIL);
     let error_type = format!("{type_name}Error");
-    for literal in &operation.errors {
+    for (literal, detail) in &compiled.refusals {
         emit_codec_error_arm(
             &mut source,
             &error_type,
             literal,
-            &crate::manifest::custom_operation_error_detail(operation, literal),
-            operation
-                .result
-                .as_ref()
-                .and_then(|result| {
-                    result
-                        .fields
-                        .iter()
-                        .find(|field| field.revision.is_revision())
-                })
-                .map(|field| field.ty),
+            detail,
+            compiled.revision,
             &[],
         );
     }
     source.push_str(CUSTOM_CODEC_FOOTER);
-    source.push_str(&emit_custom_normalizer(&type_name, operation));
+    source.push_str(&emit_custom_normalizer(&type_name, compiled));
     source.push_str(&emit_handler(&type_name, keyed));
     source.push_str(&emit_row_adapter(
         result
@@ -2294,31 +2182,13 @@ fn emit_custom_codec(local_name: &str, operation: &CustomOperationDeclaration) -
             .iter()
             .map(|field| (field.path.as_str(), field.ty, field.nullable)),
     ));
-    let error_details = operation
-        .errors
-        .iter()
-        .map(|literal| {
-            (
-                literal.as_str(),
-                crate::manifest::custom_operation_error_detail(operation, literal),
-            )
-        })
-        .collect::<Vec<_>>();
     source.push_str(&emit_error_mapper(
         &format!("{type_name}Error"),
-        error_details
+        compiled
+            .refusals
             .iter()
-            .map(|(literal, detail)| (*literal, detail)),
-        operation
-            .result
-            .as_ref()
-            .and_then(|result| {
-                result
-                    .fields
-                    .iter()
-                    .find(|field| field.revision.is_revision())
-            })
-            .map(|field| field.ty),
+            .map(|(literal, detail)| (literal.as_str(), detail)),
+        compiled.revision,
     ));
     source.push_str(&emit_export_adapter(
         &type_name,
@@ -2329,28 +2199,46 @@ fn emit_custom_codec(local_name: &str, operation: &CustomOperationDeclaration) -
     source
 }
 
-fn emit_direct_custom_codec(type_name: &str, operation: &CustomOperationDeclaration) -> String {
-    let tree = input_fields_of(
-        &serde_json::to_value(&operation.input).expect("validated custom input serializes"),
-    );
-    let fields = tree
-        .into_iter()
-        .filter(|field| field.path != "request_id")
-        .collect::<Vec<_>>();
+fn emit_direct_custom_codec(
+    type_name: &str,
+    compiled: &super::operations::CustomDescription<'_>,
+) -> String {
+    let operation = compiled.declaration;
+    let fields = &compiled.request;
     let mut source = String::from(CODEC_HEADER);
     source.push_str("fn invalid(field: &'static str) -> CodecError { CodecError(field) }\n\n");
-    emit_direct_json_tree_records(&mut source, &fields, "");
+    emit_direct_json_tree_records(&mut source, fields, "");
     source
         .push_str("#[derive(Deserialize)]\n#[serde(deny_unknown_fields)]\nstruct JsonRequest {\n");
-    emit_json_tree_fields(&mut source, &fields, "");
+    emit_json_tree_fields(&mut source, fields, "");
     source.push_str("}\n\n");
     writeln!(source, "#[allow(dead_code)]\npub(crate) fn decode(input: &str) -> Result<contract::{type_name}Request, CodecError> {{\n    let request: JsonRequest = serde_json::from_str(input).map_err(|_| CodecError(\"operation input does not match its declared object\"))?;\n    Ok(contract::{type_name}Request {{")
         .expect("writing to a String cannot fail");
-    emit_contract_tree_assignments(&mut source, type_name, &fields, "request", "", 8);
+    emit_contract_tree_assignments(&mut source, type_name, fields, "request", "", 8);
     source.push_str("    })\n}\n\n");
     writeln!(source, "pub(crate) fn normalize(request: &mut contract::{type_name}Request) -> Result<(), CodecError> {{")
         .expect("writing to a String cannot fail");
-    emit_tree_validation(&mut source, &fields, "request", 4);
+    emit_tree_validation(&mut source, fields, "request", 4);
+    if operation.lists.is_some()
+        && let Some(field) = fields
+            .iter()
+            .find(|field| field.path == "limit" || field.path == "value.limit")
+    {
+        let name = binding_identifier("limit").expect("limit is a Rust member");
+        if field.type_name == "int32" || field.type_name == "int64" {
+            let check = if field.required && !field.nullable {
+                format!(
+                    "if !(1..=100).contains(&request.{name}) {{ return Err(invalid(\"limit\")); }}"
+                )
+            } else {
+                format!(
+                    "if request.{name}.is_some_and(|limit| !(1..=100).contains(&limit)) {{ return Err(invalid(\"limit\")); }}"
+                )
+            };
+            writeln!(source, "    {check}").expect("writing to a String cannot fail");
+        }
+    }
+
     source.push_str("    Ok(())\n}\n");
     source
 }
@@ -2369,41 +2257,33 @@ fn emit_direct_json_tree_records(source: &mut String, fields: &[FieldIr], root: 
     }
 }
 
-fn emit_custom_decoder(type_name: &str, operation: &CustomOperationDeclaration) -> String {
-    let tree = input_fields_of(
-        &serde_json::to_value(&operation.input).expect("validated custom input serializes"),
-    );
-    let value = tree.iter().find(|field| field.path == "value");
-    let fields = value.map_or_else(
-        || {
-            tree.iter()
-                .filter(|field| field.path != "request_id")
-                .cloned()
-                .collect()
-        },
-        |value| value.children.clone(),
-    );
-    let root = if value.is_some() { "value." } else { "" };
+fn emit_custom_decoder(
+    type_name: &str,
+    compiled: &super::operations::CustomDescription<'_>,
+) -> String {
+    let operation = compiled.declaration;
+    let fields = &compiled.request;
+    let root = compiled.request_root;
     let mut source = String::new();
     if operation.feed == Some(true) {
         source.push_str("#[derive(Deserialize)]\n#[serde(deny_unknown_fields)]\nstruct JsonFeed { #[serde(default)] cursor: Option<String>, #[serde(default)] limit: Option<i64> }\n");
     }
-    emit_json_tree_records(&mut source, &fields, root);
+    emit_json_tree_records(&mut source, fields, root);
     source
         .push_str("#[derive(Deserialize)]\n#[serde(deny_unknown_fields)]\nstruct JsonRequest {\n");
-    if value.is_some() {
-        source.push_str("    value: JsonRoot,\n");
+    if root.is_empty() {
+        emit_json_tree_fields(&mut source, fields, root);
     } else {
-        emit_json_tree_fields(&mut source, &fields, root);
+        source.push_str("    value: JsonRoot,\n");
     }
     if operation.feed == Some(true) {
         source.push_str("    #[serde(default)] feed: Option<JsonFeed>,\n");
     }
     source.push_str("}\n\n");
-    if value.is_some() {
+    if !root.is_empty() {
         source
             .push_str("#[derive(Deserialize)]\n#[serde(deny_unknown_fields)]\nstruct JsonRoot {\n");
-        emit_json_tree_fields(&mut source, &fields, root);
+        emit_json_tree_fields(&mut source, fields, root);
         source.push_str("}\n\n");
     }
     let (envelope, key) = decode_envelope_parts(custom_is_keyed(operation));
@@ -2416,14 +2296,14 @@ fn emit_custom_decoder(type_name: &str, operation: &CustomOperationDeclaration) 
         )
         .expect("writing to a String cannot fail");
     } else {
-        let access = if value.is_some() {
-            "request.value"
-        } else {
+        let access = if root.is_empty() {
             "request"
+        } else {
+            "request.value"
         };
         writeln!(source, "            contract::{type_name}Request {{")
             .expect("writing to a String cannot fail");
-        emit_contract_tree_assignments(&mut source, type_name, &fields, access, root, 16);
+        emit_contract_tree_assignments(&mut source, type_name, fields, access, root, 16);
         if operation.feed == Some(true) {
             writeln!(source, "feed: request.feed.map(|part| contract::{type_name}Feed {{ cursor: part.cursor, limit: part.limit }}),").expect("writing to a String cannot fail");
         }
@@ -2576,27 +2456,39 @@ fn emit_contract_tree_assignments(
     }
 }
 
-fn emit_custom_normalizer(type_name: &str, operation: &CustomOperationDeclaration) -> String {
-    let tree = input_fields_of(
-        &serde_json::to_value(&operation.input).expect("validated custom input serializes"),
-    );
-    let value = tree.iter().find(|field| field.path == "value");
-    let fields = value.map_or_else(
-        || {
-            tree.iter()
-                .filter(|field| field.path != "request_id")
-                .cloned()
-                .collect::<Vec<_>>()
-        },
-        |value| value.children.clone(),
-    );
+fn emit_custom_normalizer(
+    type_name: &str,
+    compiled: &super::operations::CustomDescription<'_>,
+) -> String {
+    let operation = compiled.declaration;
+    let fields = &compiled.request;
     let mut source = format!(
         "#[allow(clippy::unnecessary_wraps)]\nfn normalize(request: &mut contract::{type_name}Request) -> Result<(), contract::InvalidInputDetail> {{\n"
     );
     source.push_str("    let _ = &request;\n");
-    emit_tree_validation(&mut source, &fields, "request", 4);
+    emit_tree_validation(&mut source, fields, "request", 4);
+    if operation.lists.is_some()
+        && let Some(field) = fields
+            .iter()
+            .find(|field| field.path == "limit" || field.path == "value.limit")
+    {
+        let name = binding_identifier("limit").expect("limit is a Rust member");
+        if field.type_name == "int32" || field.type_name == "int64" {
+            let check = if field.required && !field.nullable {
+                format!(
+                    "if !(1..=100).contains(&request.{name}) {{ return Err(invalid(\"limit\")); }}"
+                )
+            } else {
+                format!(
+                    "if request.{name}.is_some_and(|limit| !(1..=100).contains(&limit)) {{ return Err(invalid(\"limit\")); }}"
+                )
+            };
+            writeln!(source, "    {check}").expect("writing to a String cannot fail");
+        }
+    }
+
     if operation.feed == Some(true) {
-        source.push_str("    if let Some(part) = &mut request.feed { let limit = *part.limit.get_or_insert(100); if limit < 1 { return Err(invalid(\"feed.limit\")); } part.limit = Some(limit.min(100)); }\n");
+        source.push_str("    if let Some(part) = &mut request.feed { let limit = *part.limit.get_or_insert(100); if !(1..=100).contains(&limit) { return Err(invalid(\"feed.limit\")); } }\n");
     }
     source.push_str("    Ok(())\n}\n\n");
     source
@@ -2692,8 +2584,8 @@ fn codec_rust_type(ty: SqlValueType, nullable: bool) -> String {
     }
 }
 
-fn emit_invalid_detail(source: &mut String, operation: &CustomOperationDeclaration) {
-    let detail = crate::manifest::custom_operation_error_detail(operation, "invalid_input");
+fn emit_invalid_detail(source: &mut String, compiled: &super::operations::CustomDescription<'_>) {
+    let detail = &compiled.refusals["invalid_input"];
     source.push_str("fn invalid(field: &str) -> contract::InvalidInputDetail {\n    contract::InvalidInputDetail {\n");
     for key in &detail.required {
         let name = detail_name(*key).replace('-', "_");
@@ -2715,7 +2607,8 @@ fn emit_invalid_detail(source: &mut String, operation: &CustomOperationDeclarati
 
 /// One constraint that guards a field the operation writes: the refusal code
 /// of the constraint, its name, and the input path of the field.
-struct GuardedField {
+#[derive(Debug)]
+pub(super) struct GuardedField {
     code: &'static str,
     constraint: String,
     field: String,
@@ -2723,7 +2616,7 @@ struct GuardedField {
 
 /// Every constraint of the table whose refusal names a field this operation
 /// writes.
-fn guarded_fields(
+pub(super) fn guarded_fields(
     table: &Table,
     action: CrudAction,
     operation: &OperationDeclaration,

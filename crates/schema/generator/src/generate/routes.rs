@@ -2,10 +2,8 @@
 //!
 //! A route states what a caller may send before the operation reads it. For a
 //! generated operation that statement is its input contract, so the schema is
-//! derived here from the contract and written under `generated/routes/`. A
-//! package's `publication/attachments.json` and its component declaration name
-//! that file in place of a schema (wamn-4omo), so no hand-written copy can
-//! disagree with the contract.
+//! derived here from the compiled request facts. Final publication documents
+//! carry that schema inline for routes and component ports.
 
 use serde_json::{Map, Value, json};
 
@@ -193,7 +191,7 @@ fn members<'a>(contract: &'a Value, name: &str) -> impl Iterator<Item = &'a Valu
 }
 
 /// The JSON form of one contract type, as the generated codec reads it.
-fn scalar(ty: &str) -> Value {
+pub(crate) fn scalar(ty: &str) -> Value {
     match ty {
         "uuid" => json!({"type": "string", "pattern": UUID_PATTERN}),
         "int32" => json!({"type": "integer"}),

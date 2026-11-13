@@ -32,6 +32,7 @@ wit-parser = { workspace = true }
 wamn-digest.workspace = true
 
 [dev-dependencies]
+boon.workspace = true
 tokio-postgres = { workspace = true, features = ["with-serde_json-1"] }
 wamn-component-composer = { workspace = true }
 wat = "=1.254.2"

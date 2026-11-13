@@ -4,52 +4,22 @@
 //! one `pub async fn` for each operation. A function takes the request values
 //! the operation's codec already validated, parses each into its one spelling,
 //! runs the generated statement, and answers the contract's row or refusal.
-//! The package gets one refusal type, `generated/data/error.rs`, whose detail
-//! members are the ones the error contracts declare, and one
+//! The shared data support owns the refusal type. The package gets one
 //! `generated/data/mod.rs` that the data crate includes.
 
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
 use wamn_scalar::SqlValueType;
 
-use super::wit::access_error_literal;
-use super::{AccessorBind, Table, WamnApi, column, insert_bytes, query_variants, sql};
+use super::{AccessorBind, WamnApi, insert_bytes, query_variants, sql};
 use crate::ManifestError as GenerateError;
-use crate::key::{KeyType, key_type};
+use crate::key::KeyType;
+use crate::manifest::FilterMatch;
 use crate::manifest::{
-    AccessOperationErrorLiteral, CrudAction, ModelDeclaration, OperationDeclaration,
-    PackageManifest, rust_identifier, rust_type_identifier,
+    CrudAction, OperationDeclaration, PackageManifest, rust_identifier, rust_type_identifier,
 };
-use crate::manifest::{FilterMatch, OperationErrorDetailKey, access_operation_error_detail};
 
 const HEADER: &str = "// @generated from the package manifest and migration IR; do not edit.\n\n";
-
-/// Every operation type, for the detail members its error contract declares.
-const ACTIONS: [CrudAction; 5] = [
-    CrudAction::Get,
-    CrudAction::Query,
-    CrudAction::Create,
-    CrudAction::Update,
-    CrudAction::Delete,
-];
-
-/// The literals a data function can answer. The codec answers
-/// `idempotency_conflict` itself, from the write log, so no data function
-/// produces it.
-const CODES: [AccessOperationErrorLiteral; 12] = [
-    AccessOperationErrorLiteral::InvalidInput,
-    AccessOperationErrorLiteral::NotFound,
-    AccessOperationErrorLiteral::ConcurrencyConflict,
-    AccessOperationErrorLiteral::UniqueViolation,
-    AccessOperationErrorLiteral::ForeignKeyViolation,
-    AccessOperationErrorLiteral::CheckViolation,
-    AccessOperationErrorLiteral::ExclusionViolation,
-    AccessOperationErrorLiteral::Retry,
-    AccessOperationErrorLiteral::Timeout,
-    AccessOperationErrorLiteral::PermissionDenied,
-    AccessOperationErrorLiteral::InternalError,
-    AccessOperationErrorLiteral::CursorExpired,
-];
 
 /// The Rust type a request carries a value of this column type in: the type
 /// of the operation's WIT member.
@@ -129,12 +99,11 @@ fn field_name(field: &str) -> String {
 /// Emit `generated/data/<model>.rs`.
 pub(super) fn emit_model_data(
     files: &mut BTreeMap<String, Vec<u8>>,
-    manifest: &PackageManifest,
-    model_name: &str,
-    model: &ModelDeclaration,
-    table: &Table,
-    api: &WamnApi,
+    compiled: &super::operations::ModelDescription<'_>,
 ) -> Result<(), GenerateError> {
+    let model_name = compiled.name;
+    let table = &compiled.shape;
+    let api = &compiled.api;
     let model_type = rust_type_identifier(model_name);
     // A read runs on the connection; a change runs in the host's transaction.
     let connection = if api
@@ -167,7 +136,7 @@ pub(super) fn emit_model_data(
     // A history read canonicalizes these columns of every image, because an
     // entry keeps the `to_jsonb` spelling (wamn-c8a5v.2).
     let timestamptz = table
-        .columns()
+        .columns
         .iter()
         .filter(|column| column.column_type() == SqlValueType::Timestamptz)
         .map(|column| format!("{:?}", column.name()))
@@ -180,7 +149,8 @@ pub(super) fn emit_model_data(
         timestamptz.join(", ")
     )
     .expect("writing to a String cannot fail");
-    for (action, operation) in &model.operations {
+    for (action, facts) in &compiled.operations {
+        let operation = facts.request;
         writeln!(
             source,
             "const {}: &str = {:?};",
@@ -190,7 +160,8 @@ pub(super) fn emit_model_data(
         .expect("writing to a String cannot fail");
     }
     source.push('\n');
-    for (action, operation) in &model.operations {
+    for (action, facts) in &compiled.operations {
+        let operation = facts.request;
         match action {
             CrudAction::Get => emit_get(&mut source, model_name, &model_type, table),
             CrudAction::Query => emit_query(
@@ -199,15 +170,9 @@ pub(super) fn emit_model_data(
                 &model_type,
                 table,
                 operation,
-                model.feed_enabled(),
+                compiled.feed,
             ),
             CrudAction::Create => {
-                let number = model.number_field().map(|(field, sequence)| {
-                    let pattern = &manifest.sequences[sequence].pattern;
-                    let pattern = wamn_number_pattern::parse(pattern)
-                        .expect("validation parsed every sequence pattern");
-                    (field, sequence, pattern)
-                });
                 emit_create(
                     &mut source,
                     model_name,
@@ -215,7 +180,7 @@ pub(super) fn emit_model_data(
                     table,
                     operation,
                     api,
-                    number.as_ref(),
+                    compiled.number.as_ref(),
                 );
             }
             CrudAction::Update => {
@@ -244,8 +209,10 @@ fn statement_error(action: CrudAction, constraints_expression: &str) -> String {
 }
 
 /// The data layer receives integers already parsed by the codec.
-fn key_request(table: &Table) -> (&'static str, &'static str, &'static str, &'static str) {
-    match key_type(table).expect("validation resolved the model key") {
+fn key_request(
+    table: &super::operations::ModelShape<'_>,
+) -> (&'static str, &'static str, &'static str, &'static str) {
+    match table.key {
         KeyType::Uuid => (
             "&str",
             "let id = scalar::uuid(id).map_err(|Invalid| Error::invalid(\"id\"))?;\n",
@@ -261,7 +228,12 @@ fn key_request(table: &Table) -> (&'static str, &'static str, &'static str, &'st
     }
 }
 
-fn emit_get(source: &mut String, model_name: &str, model_type: &str, table: &Table) {
+fn emit_get(
+    source: &mut String,
+    model_name: &str,
+    model_type: &str,
+    table: &super::operations::ModelShape<'_>,
+) {
     let (id_type, parse_id, id_argument, not_found) = key_request(table);
     let refuse = statement_error(CrudAction::Get, "Constraints::NONE");
     writeln!(
@@ -280,7 +252,7 @@ fn emit_create(
     source: &mut String,
     model_name: &str,
     model_type: &str,
-    table: &Table,
+    table: &super::operations::ModelShape<'_>,
     operation: &OperationDeclaration,
     api: &WamnApi,
     number: Option<&(&str, &str, wamn_number_pattern::Pattern)>,
@@ -294,7 +266,7 @@ fn emit_create(
         .writable_fields
         .iter()
         .map(|field| {
-            let column = column(table, field).expect("validation resolved the column");
+            let column = table.column(field).expect("validation resolved the column");
             format!(
                 "{}: Option<{}>",
                 field_name(field),
@@ -303,7 +275,7 @@ fn emit_create(
         })
         .collect::<Vec<_>>()
         .join(", ");
-    let client_id = !crate::key::database_generated(table);
+    let client_id = !table.generated_id;
     let id_parameter = if client_id { "id: &str, " } else { "" };
     let mut body = if client_id {
         "let id = scalar::uuid(id).map_err(|Invalid| Error::invalid(\"id\"))?;\n".to_owned()
@@ -336,7 +308,9 @@ fn emit_create(
             .fields()
             .into_iter()
             .map(|name| {
-                let column = column(table, name).expect("validation resolved the pattern field");
+                let column = table
+                    .column(name)
+                    .expect("validation resolved the pattern field");
                 format!(
                     "({name:?}, {})",
                     key_text(column.column_type(), &field_name(name), column.nullable())
@@ -419,14 +393,15 @@ fn emit_update(
     source: &mut String,
     model_name: &str,
     model_type: &str,
-    table: &Table,
+    table: &super::operations::ModelShape<'_>,
     operation: &OperationDeclaration,
 ) {
     let revision = operation
         .revision_field
         .as_deref()
         .expect("update validation requires a revision field");
-    let revision_type = column(table, revision)
+    let revision_type = table
+        .column(revision)
         .expect("the revision field is a column")
         .column_type();
     let revision_name = field_name(revision);
@@ -438,7 +413,7 @@ fn emit_update(
     let mut body = String::from(parse_id);
     let mut arguments = format!("{id_argument}, expected_{revision_name}");
     for field in &operation.writable_fields {
-        let column = column(table, field).expect("validation resolved the column");
+        let column = table.column(field).expect("validation resolved the column");
         let name = field_name(field);
         let path = format!("change.{field}");
         write!(
@@ -469,7 +444,7 @@ fn emit_update(
         write!(arguments, ", {name}_present, {name}").expect("writing to a String cannot fail");
     }
     let members = table
-        .columns()
+        .columns
         .iter()
         .map(|column| {
             let name = field_name(column.name());
@@ -510,14 +485,15 @@ fn emit_delete(
     source: &mut String,
     model_name: &str,
     model_type: &str,
-    table: &Table,
+    table: &super::operations::ModelShape<'_>,
     operation: &OperationDeclaration,
 ) {
     let revision = operation
         .revision_field
         .as_deref()
         .expect("delete validation requires a revision field");
-    let revision_type = column(table, revision)
+    let revision_type = table
+        .column(revision)
         .expect("the revision field is a column")
         .column_type();
     let revision_name = field_name(revision);
@@ -551,7 +527,7 @@ fn emit_query(
     source: &mut String,
     model_name: &str,
     model_type: &str,
-    table: &Table,
+    table: &super::operations::ModelShape<'_>,
     operation: &OperationDeclaration,
     feed: bool,
 ) {
@@ -565,7 +541,7 @@ fn emit_query(
         .as_ref()
         .expect("query validation requires pagination");
     let tie_breaker = field_name(&pagination.tie_breaker.field);
-    let id_type = key_type(table).expect("validation resolved the model key");
+    let id_type = table.key;
 
     // The request: one member for each filter, the search, the sort, the
     // cursor, and the limit the codec filled.
@@ -618,7 +594,9 @@ fn emit_query(
             crate::manifest::CursorDirection::Ascending => "Direction::Ascending",
             crate::manifest::CursorDirection::Descending => "Direction::Descending",
         };
-        let key_column = column(table, field).expect("validation resolved the sort field");
+        let key_column = table
+            .column(field)
+            .expect("validation resolved the sort field");
         let key_type = cursor_key_type(key_column.column_type());
         let key_member = if feed && field == "row_version" {
             "model_row_version".to_owned()
@@ -713,11 +691,11 @@ fn emit_feed(
     source: &mut String,
     model_name: &str,
     model_type: &str,
-    table: &Table,
+    table: &super::operations::ModelShape<'_>,
     binds: &str,
     arguments: &str,
 ) {
-    let key = key_type(table).expect("validated model key");
+    let key = table.key;
     let id_type = cursor_key_type(key.column_type());
     let id = if key == KeyType::Uuid {
         "id: id.clone()"
@@ -727,7 +705,7 @@ fn emit_feed(
     // A list with no filters reads nothing from its input.
     let input = if binds.is_empty() { "_input" } else { "input" };
     let members = table
-        .columns()
+        .columns
         .iter()
         .map(|column| {
             let name = field_name(column.name());
@@ -843,35 +821,9 @@ pub(super) fn emit_package_data(
     {
         return Ok(());
     }
-    // The refusal is the closed vocabulary, so every package spells it the
-    // same way. Each literal's members are the ones its error contract
-    // declares: required for every operation type that declares the literal,
-    // or optional.
-    let mut declared =
-        BTreeMap::<AccessOperationErrorLiteral, Vec<(OperationErrorDetailKey, bool)>>::new();
-    for code in CODES {
-        let details = ACTIONS.map(|action| access_operation_error_detail(action, code));
-        let keys = declared.entry(code).or_default();
-        for detail in &details {
-            for key in detail.required.iter().chain(&detail.optional) {
-                if !keys.iter().any(|(known, _)| known == key) {
-                    let always = details.iter().all(|detail| detail.required.contains(key));
-                    keys.push((*key, always));
-                }
-            }
-        }
-    }
-    insert_bytes(
-        files,
-        "generated/data/error.rs",
-        emit_error(&declared).into_bytes(),
-    )?;
-
     let mut source = String::from(HEADER);
     source.push_str("// The generated data functions and their refusal.\n\n");
-    source.push_str(
-        "/// The one refusal of every generated operation.\npub mod error {\n    include!(\"error.rs\");\n}\n",
-    );
+    source.push_str("pub use wamn_data_access::error;\n");
     for (model_name, _) in &models {
         writeln!(
             source,
@@ -973,216 +925,4 @@ fn emit_sequences(sequences: &[(&String, &crate::manifest::SequenceDeclaration)]
         .expect("writing to a String cannot fail");
     }
     source
-}
-
-fn key_name(key: OperationErrorDetailKey) -> &'static str {
-    match key {
-        OperationErrorDetailKey::Field => "field",
-        OperationErrorDetailKey::Id => "id",
-        OperationErrorDetailKey::ExpectedRowVersion => "expected_row_version",
-        OperationErrorDetailKey::ObservedRowVersion => "observed_row_version",
-        OperationErrorDetailKey::Minimum => "minimum",
-        OperationErrorDetailKey::Maximum => "maximum",
-        OperationErrorDetailKey::Observed => "observed",
-        OperationErrorDetailKey::Constraint => "constraint",
-        OperationErrorDetailKey::Operation => "operation",
-    }
-}
-
-const fn revision_key(key: OperationErrorDetailKey) -> bool {
-    matches!(
-        key,
-        OperationErrorDetailKey::ExpectedRowVersion | OperationErrorDetailKey::ObservedRowVersion
-    )
-}
-
-fn emit_error(
-    declared: &BTreeMap<AccessOperationErrorLiteral, Vec<(OperationErrorDetailKey, bool)>>,
-) -> String {
-    let variant =
-        |literal: AccessOperationErrorLiteral| rust_type_identifier(access_error_literal(literal));
-    let mut variants = String::new();
-    let mut literals = String::new();
-    let mut details = String::new();
-    let mut carriers = BTreeMap::<(OperationErrorDetailKey, bool), Vec<String>>::new();
-    for (literal, keys) in declared {
-        let name = variant(*literal);
-        writeln!(
-            literals,
-            "Self::{name}{} => {:?},",
-            if keys.is_empty() { "" } else { " { .. }" },
-            access_error_literal(*literal)
-        )
-        .expect("writing to a String cannot fail");
-        if keys.is_empty() {
-            writeln!(variants, "{name},").expect("writing to a String cannot fail");
-            continue;
-        }
-        let members = keys
-            .iter()
-            .map(|(key, always)| {
-                let ty = if revision_key(*key) { "i64" } else { "String" };
-                if *always {
-                    format!("{}: {ty}", key_name(*key))
-                } else {
-                    format!("{}: Option<{ty}>", key_name(*key))
-                }
-            })
-            .collect::<Vec<_>>()
-            .join(", ");
-        writeln!(variants, "{name} {{ {members} }},").expect("writing to a String cannot fail");
-        for (key, always) in keys {
-            carriers
-                .entry((*key, *always))
-                .or_default()
-                .push(format!("Self::{name} {{ {}, .. }}", key_name(*key)));
-        }
-    }
-    // One arm for each member, over every variant that carries it the same
-    // way.
-    for ((key, always), patterns) in &carriers {
-        let member = key_name(*key);
-        let value = match (revision_key(*key), *always) {
-            (true, true) => format!("Some({member}.to_string())"),
-            (true, false) => format!("{member}.map(|value| value.to_string())"),
-            (false, true) => format!("Some({member}.clone())"),
-            (false, false) => format!("{member}.clone()"),
-        };
-        writeln!(
-            details,
-            "({}, {member:?}) => {value},",
-            patterns.join(" | ")
-        )
-        .expect("writing to a String cannot fail");
-    }
-    let has = |literal| declared.contains_key(&literal);
-    let optional = |literal, key| {
-        declared
-            .get(&literal)
-            .is_some_and(|keys| keys.iter().any(|(known, always)| *known == key && !always))
-    };
-    let mut constructors = String::new();
-    // invalid_input names the refused field, and a data function reports no
-    // bound: the codec validated every bound.
-    let bounds = [
-        OperationErrorDetailKey::Minimum,
-        OperationErrorDetailKey::Maximum,
-        OperationErrorDetailKey::Observed,
-    ]
-    .into_iter()
-    .filter(|key| optional(AccessOperationErrorLiteral::InvalidInput, *key))
-    .fold(String::new(), |mut bounds, key| {
-        write!(bounds, ", {}: None", key_name(key)).expect("writing to a String cannot fail");
-        bounds
-    });
-    writeln!(
-        constructors,
-        "/// Refuse the value at `field`.\n#[must_use]\npub fn invalid(field: &str) -> Self {{ Self::InvalidInput {{ field: field.to_owned(){bounds} }} }}\n"
-    )
-    .expect("writing to a String cannot fail");
-    if has(AccessOperationErrorLiteral::NotFound) {
-        constructors.push_str("/// No row has this id.\n#[must_use]\npub fn not_found(id: &wamn_postgres_statements::Uuid) -> Self { Self::NotFound { field: \"id\".to_owned(), id: id.0.clone() } }\n\n");
-    }
-    if has(AccessOperationErrorLiteral::CursorExpired) {
-        constructors.push_str("/// The change feed no longer holds the history the cursor starts from.\n#[must_use]\npub fn cursor_expired() -> Self { Self::CursorExpired }\n\n");
-    }
-    if has(AccessOperationErrorLiteral::ConcurrencyConflict) {
-        constructors.push_str("/// The row carries another revision than the caller read.\n#[must_use]\npub fn conflict(expected_row_version: i64, observed_row_version: i64) -> Self { Self::ConcurrencyConflict { expected_row_version, observed_row_version } }\n\n");
-    }
-    let violation = |literal, type_: &str, names: &str| {
-        if has(literal) {
-            format!(
-                "StatementErrorType::{type_} => named(constraints.{names}, |constraint| Self::{} {{ constraint }}),\n",
-                variant(literal)
-            )
-        } else {
-            String::new()
-        }
-    };
-    let statement_arms = [
-        violation(
-            AccessOperationErrorLiteral::UniqueViolation,
-            "UniqueViolation",
-            "unique",
-        ),
-        violation(
-            AccessOperationErrorLiteral::ForeignKeyViolation,
-            "ForeignKeyViolation",
-            "foreign_key",
-        ),
-        violation(
-            AccessOperationErrorLiteral::CheckViolation,
-            "CheckViolation",
-            "check",
-        ),
-        violation(
-            AccessOperationErrorLiteral::ExclusionViolation,
-            "ExclusionViolation",
-            "exclusion",
-        ),
-    ]
-    .concat();
-    let named = if statement_arms.is_empty() {
-        "let _ = (constraint, constraints);\n"
-    } else {
-        "let named = |names: &[&str], refusal: fn(String) -> Self| match constraint.filter(|name| names.contains(name)) {\nSome(constraint) => refusal(constraint.to_owned()),\nNone => Self::InternalError,\n};\n"
-    };
-    format!(
-        "{HEADER}\
-         // The one refusal of the generated operations: the contract's literal and\n\
-         // the detail members its error contract declares.\n\n\
-         use std::fmt;\n\n\
-         use wamn_postgres_statements::{{StatementError, StatementErrorType}};\n\n\
-         /// One refusal, with the detail members its literal declares.\n\
-         #[derive(Clone, Debug, Eq, PartialEq)]\n\
-         pub enum Error {{\n{variants}}}\n\n\
-         impl Error {{\n\
-         /// The operation-contract literal.\n\
-         #[must_use]\n\
-         pub const fn literal(&self) -> &'static str {{\n match self {{\n{literals} }}\n }}\n\n\
-         /// One declared detail member, spelled as the codec reads it.\n\
-         #[must_use]\n\
-         pub fn detail(&self, key: &str) -> Option<String> {{\n match (self, key) {{\n{details} _ => None,\n }}\n }}\n\n\
-         {constructors}\
-         /// A fault the contract does not name.\n\
-         #[must_use]\n\
-         pub fn internal() -> Self {{ Self::InternalError }}\n\n\
-         /// The one translation of a statement failure. A constraint the\n\
-         /// operation does not name is an `internal_error`, as is every type the\n\
-         /// contract does not name.\n\
-         #[must_use]\n\
-         pub fn from_statement(error: &StatementError, constraints: &Constraints, operation: &str) -> Self {{\n\
-         Self::from_parts(error.type_(), error.constraint(), constraints, operation)\n\
-         }}\n\n\
-         /// [`Error::from_statement`] over the type and the constraint of a\n\
-         /// statement failure.\n\
-         #[must_use]\n\
-         pub fn from_parts(type_: StatementErrorType, constraint: Option<&str>, constraints: &Constraints, operation: &str) -> Self {{\n\
-         {named}\
-         match type_ {{\n\
-         StatementErrorType::SerializationFailure | StatementErrorType::ConnectionUnavailable => Self::Retry,\n\
-         StatementErrorType::StatementTimeout => Self::Timeout,\n\
-         StatementErrorType::PermissionDenied => Self::PermissionDenied {{ operation: operation.to_owned() }},\n\
-         {statement_arms}\
-         _ => Self::InternalError,\n\
-         }}\n\
-         }}\n\
-         }}\n\n\
-         impl fmt::Display for Error {{\n\
-         fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {{ formatter.write_str(self.literal()) }}\n\
-         }}\n\n\
-         impl std::error::Error for Error {{}}\n\n\
-         /// The constraint names one operation may report to its caller.\n\
-         #[derive(Clone, Copy, Debug)]\n\
-         pub struct Constraints {{\n\
-         pub unique: &'static [&'static str],\n\
-         pub foreign_key: &'static [&'static str],\n\
-         pub check: &'static [&'static str],\n\
-         pub exclusion: &'static [&'static str],\n\
-         }}\n\n\
-         impl Constraints {{\n\
-         /// An operation that names no constraint.\n\
-         pub const NONE: Self = Self {{ unique: &[], foreign_key: &[], check: &[], exclusion: &[] }};\n\
-         }}\n"
-    )
 }

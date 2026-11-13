@@ -1,74 +1,9 @@
-//! Operation references in the authored publication files.
-//!
-//! An authored route entry, component declaration or wiring names an operation
-//! by its reference, `<package>:<interface>/<operation>`. The version is
-//! authored once, as `package.version` in the package manifest. Every reader resolves
-//! the references of an authored document with this module before it uses the
-//! document, so no reader sees a reference and every reader sees the same
-//! sealed ids (docs/history/operation-ids.md).
-
-use std::path::{Path, PathBuf};
-
-use serde_json::{Map, Value, json};
+//! Resolve authored operation references once during publication compilation.
 
 use crate::manifest::{OperationOwners, resolve_operation_reference};
 use crate::{ManifestError as GenerateError, ManifestErrorType as GenerateErrorType};
-
-/// The hand-written package manifest file at a package root. A package
-/// authored in `wamn.k` reads `generated/wamn.json` in its place.
-pub const PACKAGE_MANIFEST: &str = "wamn.json";
-
-/// The prefix of a platform interface. A document names one with its WIT
-/// version, and it is not an operation of a package.
+use serde_json::{Map, Value, json};
 const PLATFORM_PREFIX: &str = "wamn:";
-
-/// Read the operation owners of the package that holds an authored document,
-/// from the current authored manifest of the nearest package root among the
-/// ancestors of the document, and that package root.
-///
-/// # Errors
-///
-/// [`GenerateError`] when no ancestor holds a `wamn.k` or a `wamn.json`, or the
-/// manifest does not parse.
-pub fn package_owners_of(document: &Path) -> Result<(PathBuf, OperationOwners), GenerateError> {
-    let root = document
-        .ancestors()
-        .skip(1)
-        .find(|directory| crate::is_package_root(directory))
-        .ok_or_else(|| {
-            GenerateError::new(
-                GenerateErrorType::InvalidManifest,
-                format!(
-                    "{} is outside a package: no ancestor holds wamn.k or {PACKAGE_MANIFEST}",
-                    document.display()
-                ),
-            )
-        })?;
-    let path = crate::package_manifest_path(root);
-    // `wamn build` reads the publication files before it writes any output, so
-    // an authored package always reads its owners from the current source.
-    // An earlier build can hold a different package version.
-    let bytes = if crate::is_authored(root) {
-        crate::authoring::compile_authored_manifest(root).map_err(|error| {
-            GenerateError::new(
-                GenerateErrorType::InvalidManifest,
-                format!(
-                    "compile {}: {error:#}",
-                    root.join(crate::AUTHORED_MANIFEST).display()
-                ),
-            )
-        })?
-    } else {
-        std::fs::read(&path).map_err(|error| {
-            GenerateError::with_source(
-                GenerateErrorType::InvalidManifest,
-                format!("read {}", path.display()),
-                error,
-            )
-        })?
-    };
-    Ok((root.to_owned(), OperationOwners::from_slice(&bytes)?))
-}
 
 /// The type of one authored publication file.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -90,7 +25,9 @@ pub enum AuthoredDocument {
 ///
 /// [`GenerateError`] when the file exists and is unreadable, is not JSON, or
 /// is not a JSON object.
-pub fn read_attachments_document(path: &Path) -> Result<Map<String, Value>, GenerateError> {
+pub fn read_attachments_document(
+    path: &std::path::Path,
+) -> Result<Map<String, Value>, GenerateError> {
     let bytes = match std::fs::read(path) {
         Ok(bytes) => bytes,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Map::new()),
@@ -109,51 +46,6 @@ pub fn read_attachments_document(path: &Path) -> Result<Map<String, Value>, Gene
             error,
         )
     })
-}
-
-/// Read one authored publication file, with its references resolved against
-/// the current authored manifest of the package that holds it. A missing
-/// attachments file reads as an empty map ([`read_attachments_document`]).
-///
-/// # Errors
-///
-/// [`GenerateError`] when the file is unreadable or not JSON, when it is
-/// outside a package, or when a reference refuses.
-pub fn read_authored_document(
-    path: &Path,
-    type_: AuthoredDocument,
-) -> Result<Value, GenerateError> {
-    let mut document: Value = if type_ == AuthoredDocument::Attachments {
-        let entries = read_attachments_document(path)?;
-        // No entry names a reference, so the package owners are not read.
-        if entries.is_empty() {
-            return Ok(Value::Object(entries));
-        }
-        Value::Object(entries)
-    } else {
-        let bytes = std::fs::read(path).map_err(|error| {
-            GenerateError::with_source(
-                GenerateErrorType::InvalidManifest,
-                format!("read {}", path.display()),
-                error,
-            )
-        })?;
-        serde_json::from_slice(&bytes).map_err(|error| {
-            GenerateError::with_source(
-                GenerateErrorType::InvalidManifest,
-                format!("parse {}", path.display()),
-                error,
-            )
-        })?
-    };
-    let (_, owners) = package_owners_of(path)?;
-    resolve_authored_document(&mut document, type_, &owners).map_err(|error| {
-        GenerateError::new(
-            error.error_type(),
-            format!("{}: {}", path.display(), error.context()),
-        )
-    })?;
-    Ok(document)
 }
 
 /// Resolve the references of one authored publication document.
@@ -372,40 +264,5 @@ mod tests {
 
         let mut declaration = json!({"target": {"package-id": "acme", "package-version": "3.0.0"}});
         assert!(resolve_declaration_document(&mut declaration, &owners()).is_err());
-    }
-
-    /// A missing attachments file reads as the empty map an empty file reads
-    /// as, and malformed JSON or a document that is not an object refuses.
-    #[test]
-    fn a_missing_attachments_file_reads_as_no_attachments() {
-        let root =
-            std::env::temp_dir().join(format!("wamn-attachments-document-{}", std::process::id()));
-        std::fs::create_dir_all(&root).unwrap();
-        let path = root.join("attachments.json");
-
-        let missing = read_attachments_document(&path).unwrap();
-        assert!(missing.is_empty());
-        assert_eq!(
-            read_authored_document(&path, AuthoredDocument::Attachments).unwrap(),
-            json!({})
-        );
-
-        std::fs::write(&path, "{}\n").unwrap();
-        assert_eq!(read_attachments_document(&path).unwrap(), missing);
-        assert_eq!(
-            read_authored_document(&path, AuthoredDocument::Attachments).unwrap(),
-            json!({})
-        );
-
-        for malformed in ["{", "[]"] {
-            std::fs::write(&path, malformed).unwrap();
-            let error = read_attachments_document(&path).unwrap_err();
-            assert!(
-                error.context().starts_with("parse "),
-                "{malformed}: {error}"
-            );
-            read_authored_document(&path, AuthoredDocument::Attachments).unwrap_err();
-        }
-        std::fs::remove_dir_all(&root).unwrap();
     }
 }

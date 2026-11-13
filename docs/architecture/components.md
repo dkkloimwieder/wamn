@@ -17,6 +17,9 @@ Component names are package-local `snake_case` identifiers.
 An empty name refuses, and duplicate connection requirement sets refuse.
 Package operations version together even when their implementations occupy separate components.
 
+The compiler writes final component declarations in `publication/components.json` of the build output.
+Each declaration carries inline input and output schemas from the compiled operation description.
+Publication readers do not merge authored declarations or resolve schema references.
 A component declaration records its operations, ports, effects, static SQL, and connection requirements.
 Admission derives effects from the actual imports and compares the declared operation facts.
 The component's complete admitted facts remain separate from its compiled bytes.

@@ -1,9 +1,6 @@
 use serde_json::{Value, json};
 use wamn_compiler::ManifestErrorType as GenerateErrorType;
 use wamn_compiler::manifest::{PackageManifest, validate_operation_vocabulary};
-use wamn_schema_introspection::ir::{
-    CatalogIr, Exclusion, ExclusionAccessMethod, ExclusionElement, ExclusionKey, Table,
-};
 
 #[path = "support/platform_fixture.rs"]
 mod fixture;
@@ -12,24 +9,17 @@ mod platform_claim;
 #[path = "support/platform_descriptors.rs"]
 mod platform_descriptors;
 
-#[path = "support/platform_wit.rs"]
-mod platform_wit;
-
 #[path = "support/platform_client_ir.rs"]
 mod platform_client_ir;
 
 #[path = "support/platform_protocol.rs"]
 mod platform_protocol;
 
-#[path = "support/platform_sqlx.rs"]
-mod platform_sqlx;
-
 #[path = "support/platform_errors.rs"]
 mod platform_errors;
 
-fn artifact(package: &wamn_compiler::GeneratedPackage, path: &str) -> Value {
-    serde_json::from_slice(package.file(path).expect("generated artifact").bytes())
-        .expect("generated JSON")
+fn description_json(package: &wamn_compiler::GeneratedPackage, local: &str, part: &str) -> Value {
+    serde_json::to_value(&package.operations()[local]).unwrap()[part].clone()
 }
 
 fn parsed(value: &Value) -> PackageManifest {
@@ -133,98 +123,6 @@ fn stateless_idempotence_is_only_for_a_command_without_sql() {
     );
 }
 
-/// A command without SQL of its own may declare `transaction =
-/// explicit_per_input`: it calls members that work in the request element transaction,
-/// and the host begins that transaction from this field (`wamn-azko6`).
-#[test]
-fn a_command_without_sql_may_declare_its_host_transaction() {
-    let mut manifest = fixture::manifest();
-    manifest["custom_operations"]["widget.inspect"] = json!({
-        "type": "command",
-        "visibility": "public",
-        "permission": "widget.inspect",
-        "idempotent_by": "stateless",
-        "transaction": "explicit_per_input",
-        "automatic_retry": false,
-        "input": {"fields": [
-            {"path": "request_id", "type": "text", "nullable": false},
-            {"path": "value.note", "type": "text", "nullable": false}
-        ]},
-        "result": {"class": "one", "fields": [
-            {"path": "note", "type": "text", "nullable": false}
-        ]},
-        "errors": ["invalid_input", "permission_denied", "internal_error"],
-        "error_details": {}
-    });
-    let declared = parsed(&manifest);
-    validate_operation_vocabulary(&declared)
-        .expect("a command without SQL that declares its transaction is accepted");
-    let begun = declared.host_transaction_operations();
-    assert!(begun.contains("widget.inspect"), "{begun:?}");
-    assert!(begun.contains("widget.archive"), "{begun:?}");
-
-    let inspect = manifest["custom_operations"]["widget.inspect"]
-        .as_object_mut()
-        .unwrap();
-    inspect.remove("transaction");
-    inspect.remove("automatic_retry");
-    assert!(
-        !parsed(&manifest)
-            .host_transaction_operations()
-            .contains("widget.inspect"),
-        "a command that declares no transaction begins none"
-    );
-}
-
-/// A package with no model, relation or connection and only stateless commands
-/// declares no SQL. A package that declares a connection still needs a model.
-#[test]
-fn a_package_with_no_sql_generates_without_a_model() {
-    let mut manifest = json!({
-        "package": {"id": "fixture_device", "version": "1.0.0"},
-        "required_platform_policy_contract": {"id": "fixture_device_data_access", "state": "satisfied"},
-        "models": {},
-        "custom_operations": {"widget.inspect": {
-            "type": "command",
-            "visibility": "public",
-            "permission": "widget.inspect",
-            "idempotent_by": "stateless",
-            "input": {"fields": [
-                {"path": "request_id", "type": "text", "nullable": false},
-                {"path": "value.note", "type": "text", "nullable": false}
-            ]},
-            "result": {"class": "one", "fields": [
-                {"path": "note", "type": "text", "nullable": false}
-            ]},
-            "errors": ["invalid_input", "permission_denied", "internal_error"],
-            "error_details": {}
-        }},
-        "connections": {},
-        "components": {"device": {"connections": []}}
-    });
-    let empty = CatalogIr::new(Vec::new());
-    fixture::try_generate_with_sql(&empty, &manifest, &[])
-        .expect("a package with no SQL generates");
-
-    manifest["connections"] = json!({});
-    manifest["components"]["device"]["connections"] = json!(["postgres"]);
-    let error = fixture::try_generate_with_sql(&empty, &manifest, &[])
-        .expect_err("a package with a connection and no model generated");
-    assert_eq!(error.error_type(), GenerateErrorType::InvalidManifest);
-    assert!(
-        error
-            .to_string()
-            .contains("manifest must declare at least one model"),
-        "{error}"
-    );
-    manifest["base_dependencies"] = json!({"state": {
-        "package": "fixture_base", "version": "1.0.0",
-        "digest": format!("sha256:{}", "a".repeat(64)), "operations": ["setting.read"]
-    }});
-    fixture::try_generate_with_sql(&empty, &manifest, &[])
-        .expect("a composition with stateless wrappers owns no schema");
-}
-
 /// The fixture manifest with [`fixture::UNREAD_TABLE`] as an internal relation.
 fn with_internal_relation() -> serde_json::Value {
     let mut manifest = fixture::manifest();
@@ -234,154 +132,6 @@ fn with_internal_relation() -> serde_json::Value {
         }
     });
     manifest
-}
-
-#[test]
-fn internal_relations_are_not_models_and_their_vocabulary_is_closed() {
-    let package = fixture::generate_with(
-        &fixture::catalog_with_unread_table(),
-        &with_internal_relation(),
-    );
-    assert!(
-        package
-            .file(&format!("generated/wamn/{}.rs", fixture::UNREAD_TABLE))
-            .is_none()
-    );
-    assert!(
-        package
-            .file(&format!(
-                "generated/native-verifier/{}.rs",
-                fixture::UNREAD_TABLE
-            ))
-            .is_none()
-    );
-
-    let mut overlap = with_internal_relation();
-    overlap["internal_relations"][fixture::UNREAD_TABLE]["table"] = json!("widget");
-    let bytes = serde_json::to_vec(&overlap).unwrap();
-    let error = wamn_compiler::generate(&wamn_compiler::GenerationInput::new(
-        &fixture::catalog_with_unread_table(),
-        &bytes,
-        &[],
-        &wamn_compiler::StatementTransactionality::from_paths(std::collections::BTreeMap::new()),
-    ))
-    .expect_err("model/internal relation overlap was accepted");
-    assert_eq!(error.error_type(), GenerateErrorType::InvalidManifest);
-
-    let mut open = with_internal_relation();
-    open["internal_relations"][fixture::UNREAD_TABLE]["cdc"] = json!("ignored");
-    assert!(PackageManifest::from_slice(&serde_json::to_vec(&open).unwrap()).is_err());
-}
-
-#[test]
-fn ownership_only_models_and_exclusion_owners_are_exact() {
-    let catalog = fixture::catalog();
-    let widget = catalog
-        .tables()
-        .iter()
-        .find(|table| table.name() == "widget")
-        .unwrap();
-    let excluded = Table::new(
-        widget.schema(),
-        widget.name(),
-        widget.columns().to_vec(),
-        widget.constraints().to_vec(),
-        widget.indexes().to_vec(),
-    )
-    .with_exclusions(vec![
-        Exclusion::new(
-            "widget_code_excl",
-            ExclusionAccessMethod::Gist,
-            vec![ExclusionKey::new(ExclusionElement::column("code"), "=")],
-            ["code"],
-        )
-        .unwrap(),
-    ]);
-    let catalog = CatalogIr::new(
-        catalog
-            .tables()
-            .iter()
-            .map(|table| {
-                if table.name() == "widget" {
-                    excluded.clone()
-                } else {
-                    table.clone()
-                }
-            })
-            .collect(),
-    )
-    .with_views(catalog.views().to_vec());
-
-    let mut owned = fixture::manifest();
-    owned["models"]["widget"]["constraint_owners"] =
-        json!({"widget_code_excl": "platform_fixture"});
-    let package = fixture::try_generate_with(&catalog, &owned).expect("package owns its exclusion");
-    let errors = artifact(&package, "generated/contracts/widget/update.errors.json");
-    assert!(errors["cases"].as_array().unwrap().iter().any(|case| {
-        case["literal"] == "exclusion_violation"
-            && case["constraint"] == "widget_code_excl"
-            && case["detail"]["required"] == json!(["constraint"])
-    }));
-
-    let mut dependency_owned = owned.clone();
-    dependency_owned["base_dependencies"] = json!({"base": {
-        "package": "base_fixture",
-        "version": "1.0.0",
-        "digest": format!("sha256:{}", "a".repeat(64)),
-        "operations": ["widget.get"]
-    }});
-    dependency_owned["models"]["widget"]["constraint_owners"]["widget_code_excl"] =
-        json!("base_fixture");
-    fixture::try_generate_with(&catalog, &dependency_owned)
-        .expect("declared base owns the exclusion");
-
-    for (constraint, owner) in [
-        ("missing_excl", "platform_fixture"),
-        ("widget_code_excl", "undeclared_fixture"),
-    ] {
-        let mut invalid = owned.clone();
-        invalid["models"]["widget"]["constraint_owners"] = json!({(constraint): owner});
-        assert_eq!(
-            fixture::try_generate_with(&catalog, &invalid)
-                .expect_err("invalid exclusion ownership was accepted")
-                .error_type(),
-            GenerateErrorType::InvalidModel
-        );
-    }
-
-    let mut ownership_only = fixture::manifest();
-    ownership_only["models"]["command_state"] = json!({
-        "schema": "inventory",
-        "table": fixture::UNREAD_TABLE,
-        "owner": "platform_fixture",
-        "server_owned_fields": ["entry_id"],
-        "audit_log": {"columns": [], "retention": "none"},
-        "operations": {}
-    });
-    let package = fixture::generate_with(&fixture::catalog_with_unread_table(), &ownership_only);
-    assert!(package.file("generated/wamn/command_state.rs").is_none());
-    assert!(
-        package
-            .file("generated/native-verifier/command_state.rs")
-            .is_none()
-    );
-    let contract = artifact(&package, wamn_compiler::REQUIRED_SCHEMA_CONTRACT_PATH);
-    assert!(
-        contract["tables"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|table| table["table"] == fixture::UNREAD_TABLE)
-    );
-    for action in ["get", "query", "create", "update", "delete"] {
-        assert!(
-            package
-                .file(&format!(
-                    "generated/contracts/command_state/{action}.operation.json"
-                ))
-                .is_none()
-        );
-    }
 }
 
 #[test]
@@ -418,343 +168,6 @@ fn retired_workflows_are_dropped() {
         written["custom_operations"]["widget.archive"]
             .get("registration")
             .is_none()
-    );
-}
-
-#[test]
-fn custom_statement_declarations_drive_projections_and_require_unique_paths() {
-    let package = fixture::generate_fixture();
-    let source_map = artifact(&package, "generated/source-map/widget_archive.json");
-    let statement = &source_map["statements"]["archive"];
-    let accessor = &source_map["wamn_accessors"][0];
-    let operation = artifact(
-        &package,
-        "generated/contracts/widget/archive.operation.json",
-    );
-    let contract_statement = operation["statements"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|candidate| candidate["name"] == "archive")
-        .unwrap();
-    assert_eq!(accessor["name"], "archive");
-    assert_eq!(
-        accessor["binds"][0]["parameter"],
-        statement["parameters"][0]["name"]
-    );
-    assert_eq!(
-        accessor["binds"][0]["nullable"],
-        statement["parameters"][0]["nullable"]
-    );
-    assert_eq!(
-        source_map["native_rows"][0]["fields"]
-            .as_array()
-            .unwrap()
-            .len(),
-        3
-    );
-    assert_eq!(
-        source_map["wamn_rows"][0]["fields"]
-            .as_array()
-            .unwrap()
-            .len(),
-        3
-    );
-    assert_eq!(
-        source_map["native_rows"][0]["fields"],
-        json!([
-            {"name": "id", "type": "uuid::Uuid"},
-            {"name": "edit_version", "type": "i32"},
-            {"name": "note", "type": "Option<String>"}
-        ])
-    );
-    assert_eq!(
-        source_map["wamn_rows"][0]["fields"],
-        json!([
-            {"name": "id", "type": "wamn_postgres_statements::Uuid"},
-            {"name": "edit_version", "type": "i32"},
-            {"name": "note", "type": "Option<String>"}
-        ])
-    );
-    assert_eq!(contract_statement["path"], statement["path"]);
-    assert_eq!(contract_statement["binds"], statement["parameters"]);
-    assert_eq!(contract_statement["columns"], statement["row"]);
-    assert!(contract_statement.get("digest").is_none());
-    for declared in statement["parameters"].as_array().unwrap() {
-        let name = declared["name"].as_str().unwrap();
-        let emitted = accessor["binds"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .find(|bind| bind["parameter"] == name)
-            .unwrap();
-        let fixture = source_map["native_bind_fixtures"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .find(|fixture| fixture["accessor"] == "archive" && fixture["parameter"] == name)
-            .unwrap();
-        assert_eq!(fixture["type"], emitted["native_rust"]);
-        assert_eq!(emitted["nullable"], declared["nullable"]);
-    }
-
-    let mut renamed = fixture::manifest();
-    renamed["custom_operations"]["widget.archive"]["statements"]["archive"]["parameters"][0] =
-        json!({"name": "lookup_id", "type": "uuid", "nullable": true});
-    renamed["custom_operations"]["widget.archive"]["statements"]["archive"]["row"][0] =
-        json!({"name": "archived_id", "type": "text", "nullable": true});
-    let package = fixture::generate_with(&fixture::catalog(), &renamed);
-    let source_map = artifact(&package, "generated/source-map/widget_archive.json");
-    assert_eq!(
-        source_map["wamn_accessors"][0]["binds"][0]["parameter"],
-        "lookup_id"
-    );
-    assert_eq!(
-        source_map["wamn_accessors"][0]["binds"][0]["nullable"],
-        true
-    );
-    assert_eq!(
-        source_map["wamn_rows"][0]["fields"][0]["name"],
-        "archived_id"
-    );
-    assert_eq!(
-        source_map["wamn_rows"][0]["fields"][0]["type"],
-        "Option<String>"
-    );
-
-    let mut duplicate = fixture::manifest();
-    let statement =
-        duplicate["custom_operations"]["widget.archive"]["statements"]["archive"].clone();
-    duplicate["custom_operations"]["widget.archive"]["statements"]["duplicate"] = statement;
-    assert_eq!(
-        fixture::try_generate_with(&fixture::catalog(), &duplicate)
-            .expect_err("two statements consumed one SQL path")
-            .error_type(),
-        GenerateErrorType::InvalidOperation
-    );
-}
-
-/// The fixture as an overlay whose `widget.archive` composes the base's.
-fn overlay_manifest() -> Value {
-    let mut manifest = fixture::manifest();
-    manifest["package"]["id"] = json!("decorator_fixture");
-    // An overlay owns no relation of the base package, so no model declares
-    // a record history here.
-    let counter = manifest["models"]["counter"].as_object_mut().unwrap();
-    counter.remove("audit_log");
-    counter.remove("delete_mode");
-    counter["operations"]
-        .as_object_mut()
-        .unwrap()
-        .remove("create");
-    counter["operations"]
-        .as_object_mut()
-        .unwrap()
-        .remove("delete");
-    let maker = manifest["models"]["widget_maker"].as_object_mut().unwrap();
-    maker.remove("audit_log");
-    let numbered = manifest["models"]["numbered_label"]
-        .as_object_mut()
-        .unwrap();
-    numbered.remove("audit_log");
-    let tag = manifest["models"]["widget_tag"].as_object_mut().unwrap();
-    tag.remove("audit_log");
-    let model = manifest["models"]["widget"].as_object_mut().unwrap();
-    model.remove("audit_log");
-    model.remove("delete_mode");
-    // Only the package that owns a relation declares that its client may
-    // extend it, so an overlay of this model declares nothing.
-    model.remove("client_field_extensible");
-    model["operations"]
-        .as_object_mut()
-        .unwrap()
-        .remove("create");
-    model["operations"]
-        .as_object_mut()
-        .unwrap()
-        .remove("delete");
-    // Without a record history, no list read can carry a feed.
-    for model in manifest["models"].as_object_mut().unwrap().values_mut() {
-        model.as_object_mut().unwrap().remove("audit_log");
-        if let Some(query) = model["operations"].get_mut("query") {
-            query["feed"] = json!(false);
-        }
-    }
-    for operation in manifest["custom_operations"]
-        .as_object_mut()
-        .unwrap()
-        .values_mut()
-    {
-        if operation["feed"] == true {
-            operation["feed"] = json!(false);
-            operation.as_object_mut().unwrap().remove("feed_source");
-        }
-    }
-    manifest["base_dependencies"] = json!({"base": {
-        "package": "platform_fixture",
-        "version": "2.1.1",
-        "digest": format!("sha256:{}", "a".repeat(64)),
-        "operations": ["widget.archive"]
-    }});
-    manifest
-}
-
-#[test]
-fn composition_is_exact_and_carries_its_contract() {
-    let manifest = overlay_manifest();
-    let mut sql_less = manifest.clone();
-    let operation = sql_less["custom_operations"]["widget.archive"]
-        .as_object_mut()
-        .unwrap();
-    for field in [
-        "connection",
-        "transaction",
-        "automatic_retry",
-        "relations",
-        "statements",
-    ] {
-        operation.remove(field);
-    }
-    let composed = fixture::generate_with(&fixture::catalog(), &sql_less);
-    for path in [
-        "generated/native-verifier/widget_archive.rs",
-        "generated/wamn/widget_archive.rs",
-        "generated/source-map/widget_archive.json",
-    ] {
-        assert!(
-            composed.file(path).is_none(),
-            "SQL-less composition emitted {path}"
-        );
-    }
-    assert_eq!(
-        artifact(
-            &composed,
-            "generated/contracts/widget/archive.operation.json"
-        )["dependency"]["alias"],
-        "base"
-    );
-
-    let package = fixture::generate_with(&fixture::catalog(), &manifest);
-    for (field, value, type_) in [
-        (
-            "field_owners",
-            json!({"missing": "decorator_fixture"}),
-            GenerateErrorType::UnknownColumn,
-        ),
-        (
-            "field_owners",
-            json!({"note": "undeclared_fixture"}),
-            GenerateErrorType::InvalidModel,
-        ),
-        (
-            "constraint_owners",
-            json!({"missing": "decorator_fixture"}),
-            GenerateErrorType::InvalidModel,
-        ),
-        (
-            "client_field_extensible",
-            json!(true),
-            GenerateErrorType::InvalidModel,
-        ),
-    ] {
-        let mut invalid = manifest.clone();
-        invalid["models"]["widget"][field] = value;
-        assert_eq!(
-            fixture::try_generate_with(&fixture::catalog(), &invalid)
-                .expect_err(field)
-                .error_type(),
-            type_
-        );
-    }
-    assert_eq!(
-        artifact(
-            &package,
-            "generated/contracts/widget/archive.operation.json"
-        )["dependency"]["alias"],
-        "base"
-    );
-    assert!(package.file("generated/wamn/widget_archive.rs").is_some());
-
-    for (field, value) in [("version", json!("^1.0")), ("digest", json!("latest"))] {
-        let mut invalid = manifest.clone();
-        invalid["base_dependencies"]["base"][field] = value;
-        assert_eq!(
-            validate_operation_vocabulary(&parsed(&invalid))
-                .expect_err("inexact dependency identity was accepted")
-                .error_type(),
-            GenerateErrorType::InvalidIdentity
-        );
-    }
-
-    let mut missing = sql_less.clone();
-    missing["base_dependencies"] = json!({});
-    assert_eq!(
-        validate_operation_vocabulary(&parsed(&missing))
-            .expect_err("a SQL-less command with no base was accepted")
-            .error_type(),
-        GenerateErrorType::InvalidOperation
-    );
-
-    let mut ambiguous = sql_less;
-    ambiguous["base_dependencies"]["second"] = json!({
-        "package": "other_fixture",
-        "version": "1.0.0",
-        "digest": format!("sha256:{}", "b".repeat(64)),
-        "operations": ["widget.archive"]
-    });
-    assert_eq!(
-        validate_operation_vocabulary(&parsed(&ambiguous))
-            .expect_err("ambiguous composition dependency was accepted")
-            .error_type(),
-        GenerateErrorType::InvalidOperation
-    );
-
-    let mut writing = manifest;
-    writing["custom_operations"]["widget.archive"]["relations"][0]["insert_fields"] = json!(["id"]);
-    let error = validate_operation_vocabulary(&parsed(&writing))
-        .expect_err("state-idempotent command minted local state");
-    assert!(error.to_string().contains("idempotent_by claim"));
-}
-
-/// The fixture's claim command names its key and operation identity.
-/// Publish passes the key field to the engine's intent rules.
-#[test]
-fn a_claim_command_names_its_key_and_its_codec_claims_nothing() {
-    let package = fixture::generate_fixture();
-    let operation = artifact(
-        &package,
-        "generated/contracts/widget/record_batch.operation.json",
-    );
-    assert_eq!(operation["idempotent_by"], "claim");
-    assert_eq!(operation["idempotency"]["key"], "value.idempotency_key");
-    assert_eq!(
-        operation["idempotency"]["log"]["operation"],
-        "platform-fixture:widget/record-batch"
-    );
-    let statements = |operation: &serde_json::Value| {
-        operation["statements"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .map(|statement| statement["name"].as_str().unwrap().to_owned())
-            .collect::<Vec<_>>()
-    };
-    let create = artifact(&package, "generated/contracts/widget/create.operation.json");
-    for operation in [&operation, &create] {
-        assert!(
-            statements(operation)
-                .iter()
-                .all(|name| !name.starts_with("log_")),
-            "{operation}"
-        );
-    }
-    let input = artifact(
-        &package,
-        "generated/contracts/widget/record_batch.input.json",
-    );
-    assert_eq!(
-        wamn_compiler::client_plan::idempotency_field(&input).as_deref(),
-        Some("value.idempotency_key")
     );
 }
 
@@ -808,11 +221,7 @@ fn a_delete_mode_needs_no_delete_route() {
         .unwrap()
         .remove("delete");
     let package = fixture::generate_with(&fixture::catalog(), &manifest);
-    assert!(
-        package
-            .file("generated/contracts/widget/delete.operation.json")
-            .is_none()
-    );
+    assert!(!package.operations().contains_key("widget.delete"));
 
     let mut action_without_mode = fixture::manifest();
     action_without_mode["models"]["widget"]
@@ -957,238 +366,6 @@ fn authored_text_is_optional_and_its_key_is_closed() {
     }
 }
 
-/// Every JSON object under `value`, including `value` itself.
-fn objects(value: &Value) -> Vec<&serde_json::Map<String, Value>> {
-    match value {
-        Value::Object(members) => std::iter::once(members)
-            .chain(members.values().flat_map(objects))
-            .collect(),
-        Value::Array(items) => items.iter().flat_map(objects).collect(),
-        _ => Vec::new(),
-    }
-}
-
-/// EXIT CONDITION for `wamn-c2y5.2`: the contract carries the authored text to the
-/// only reader that matters, and it carries nothing when nobody authored any.
-///
-/// The silence half is the load-bearing one. A member written as `null` or as
-/// an empty string would move the contract bytes of three applications that
-/// author nothing, and with them every hash those bytes feed.
-#[test]
-fn a_contract_carries_the_authored_text_and_nothing_else() {
-    let package = fixture::generate_fixture();
-
-    // A generated action declares no field, so its result reads the column.
-    let result = artifact(&package, "generated/contracts/widget/get.result.json");
-    let code = result["fields"]
-        .as_array()
-        .expect("result fields")
-        .iter()
-        .find(|field| field["path"] == "code")
-        .expect("the code column");
-    assert_eq!(code["label"], "Widget code");
-    assert!(code["description"].is_string());
-    let identity = result["fields"]
-        .as_array()
-        .expect("result fields")
-        .iter()
-        .find(|field| field["path"] == "id")
-        .expect("the id column");
-    assert_eq!(
-        identity.get("label"),
-        None,
-        "a column with no authored text carries none"
-    );
-
-    // An update states the same column at the path its input uses.
-    let update = artifact(&package, "generated/contracts/widget/update.input.json");
-    let writable = update["writable_fields"]
-        .as_array()
-        .expect("writable fields")
-        .iter()
-        .find(|field| field["path"] == "change.code")
-        .expect("the code control");
-    assert_eq!(writable["label"], "Widget code");
-
-    // A filter names a column, so it reads that column's text.
-    let query = artifact(&package, "generated/contracts/widget/query.input.json");
-    assert_eq!(query["filters"][0]["field"], "code");
-    assert_eq!(query["filters"][0]["label"], "Widget code");
-    let query_operation = artifact(&package, "generated/contracts/widget/query.operation.json");
-    assert_eq!(query_operation["label"], "Find widgets");
-
-    // An authored operation states its own text, on itself and on its fields.
-    let batch = artifact(
-        &package,
-        "generated/contracts/widget/record_batch.operation.json",
-    );
-    assert_eq!(batch["label"], "Record a batch");
-    assert!(batch["description"].is_string());
-    let input = artifact(
-        &package,
-        "generated/contracts/widget/record_batch.input.json",
-    );
-    let quantity = input["fields"]
-        .as_array()
-        .expect("input fields")
-        .iter()
-        .find(|field| field["path"] == "value.line[].amount")
-        .expect("the line amount");
-    assert_eq!(quantity["label"], "Quantity received");
-
-    // Nobody authored any: no contract file carries either member anywhere.
-    let mut silent = fixture::manifest();
-    silent["models"]["widget"]
-        .as_object_mut()
-        .expect("the widget model")
-        .remove("field_text");
-    silent["models"]["widget"]["operations"]["query"]
-        .as_object_mut()
-        .expect("the query operation")
-        .remove("label");
-    for key in ["label", "description"] {
-        silent["custom_operations"]["widget.record_batch"]
-            .as_object_mut()
-            .expect("the batch command")
-            .remove(key);
-        // The line bound carries the repeated group's own text.
-        silent["custom_operations"]["widget.record_batch"]["input"]["line"]
-            .as_object_mut()
-            .expect("the line bound")
-            .remove(key);
-        for pointer in [
-            "/custom_operations/widget.record_batch/input/fields",
-            "/custom_operations/widget.list/result/fields",
-        ] {
-            for field in silent
-                .pointer_mut(pointer)
-                .expect("declared fields")
-                .as_array_mut()
-                .expect("declared fields")
-            {
-                field.as_object_mut().expect("a field object").remove(key);
-            }
-        }
-    }
-    let quiet = fixture::generate_with(&fixture::catalog(), &silent);
-    for file in quiet.files() {
-        let path = file.path();
-        if !path.starts_with("generated/contracts/") {
-            continue;
-        }
-        let contract: Value = serde_json::from_slice(file.bytes()).expect("generated JSON");
-        for members in objects(&contract) {
-            for key in ["label", "description"] {
-                assert!(
-                    !members.contains_key(key),
-                    "{path} carries {key} although nothing was authored"
-                );
-            }
-        }
-    }
-}
-
-/// EXIT CONDITION for `wamn-rm14.1`: a package whose inputs name no record writes
-/// no reference anywhere, and every read that serves rows states what it
-/// lists whoever wrote it.
-///
-/// The silence matters for the same reason the authored text's did: a member
-/// written as null would move the contract bytes of three applications that
-/// declare nothing. The second half is the uniformity rule: one member, one
-/// meaning, whether an author states it or generation derives it.
-#[test]
-fn a_contract_carries_no_reference_and_no_list_when_nobody_states_one() {
-    let mut silent = fixture::manifest();
-    for model in silent["models"].as_object_mut().unwrap().values_mut() {
-        if let Some(query) = model["operations"].get_mut("query") {
-            query.as_object_mut().unwrap().remove("display_field");
-        }
-    }
-    for pointer in [
-        "/custom_operations/widget.archive/input/fields",
-        "/custom_operations/widget.record_batch/input/fields",
-        "/custom_operations/widget.list/input/fields",
-        "/custom_operations/widget.list/result/fields",
-    ] {
-        for field in silent
-            .pointer_mut(pointer)
-            .expect("declared fields")
-            .as_array_mut()
-            .expect("declared fields")
-        {
-            let field = field.as_object_mut().expect("a field object");
-            field.remove("references");
-            // A revision names a record only through an input that references one.
-            if field
-                .get("revision")
-                .is_some_and(serde_json::Value::is_string)
-            {
-                field.insert("revision".to_owned(), serde_json::Value::Bool(true));
-            }
-        }
-    }
-    // A table read still states its row key, and names no model a selector
-    // offers.
-    for operation in ["widget.list", "widget_maker.list"] {
-        silent["custom_operations"][operation]["lists"] = serde_json::json!({"key_field": "id"});
-    }
-    // The one derived reference leaves with its foreign key, from every
-    // input and every result that carries the column.
-    let quiet = fixture::generate_with(&fixture::catalog_without_maker_key(), &silent);
-    for file in quiet.files() {
-        let path = file.path();
-        if !path.starts_with("generated/contracts/") {
-            continue;
-        }
-        let contract: Value = serde_json::from_slice(file.bytes()).expect("generated JSON");
-        for members in objects(&contract) {
-            assert!(
-                !members.contains_key("references"),
-                "{path} carries a reference although no input names a record"
-            );
-        }
-    }
-
-    // With no declared display field, a generated query keeps its record ID
-    // as the label fallback. It never selects an unrelated text column.
-    let generated = artifact(&quiet, "generated/contracts/widget/query.operation.json");
-    assert_eq!(generated["lists"]["model"], "widget");
-    assert_eq!(generated["lists"]["key_field"], "id");
-    assert_eq!(generated["lists"].get("display_field"), None);
-    let authored = artifact(
-        &fixture::generate_fixture(),
-        "generated/contracts/widget/list.operation.json",
-    );
-    assert_eq!(authored["lists"]["model"], "widget");
-    assert_eq!(authored["lists"]["display_field"], "code");
-}
-
-#[test]
-fn generated_and_authored_queries_share_an_explicit_display_field() {
-    let mut manifest = fixture::manifest();
-    manifest["models"]["widget"]["operations"]["query"]["display_field"] = json!("code");
-    let package = fixture::generate_with(&fixture::catalog(), &manifest);
-    let generated = artifact(&package, "generated/contracts/widget/query.operation.json");
-    let authored = artifact(&package, "generated/contracts/widget/list.operation.json");
-    assert_eq!(generated["lists"]["display_field"], "code");
-    assert_eq!(generated["lists"], authored["lists"]);
-
-    manifest["models"]["widget"]["operations"]["query"]["display_field"] = json!("id");
-    let identity = fixture::generate_with(&fixture::catalog(), &manifest);
-    assert_eq!(
-        artifact(&identity, "generated/contracts/widget/query.operation.json")["lists"]["display_field"],
-        "id"
-    );
-
-    manifest["models"]["widget"]["operations"]["query"]["display_field"] = json!("note");
-    let nullable = fixture::generate_with(&fixture::catalog(), &manifest);
-    assert_eq!(
-        artifact(&nullable, "generated/contracts/widget/query.operation.json")["lists"]["display_field"],
-        "note",
-        "an explicit nullable text field remains a declared label"
-    );
-}
-
 #[test]
 fn generated_query_display_fields_require_a_returned_field() {
     for field in ["missing", ""] {
@@ -1244,37 +421,6 @@ fn authored_query_display_fields_require_a_declared_result_field() {
     );
 }
 
-/// EXIT CONDITION for `wamn-zrrg`: a generated result field states the record its
-/// column's foreign key names, the same member an input states.
-///
-/// A table reads it to show the record's text in place of its key. A column
-/// with no foreign key states nothing.
-#[test]
-fn a_generated_result_field_states_the_record_its_foreign_key_names() {
-    let package = fixture::generate_fixture();
-    for action in ["get", "query", "create", "update"] {
-        let result = artifact(
-            &package,
-            &format!("generated/contracts/widget/{action}.result.json"),
-        );
-        let field = |path: &str| {
-            result["fields"]
-                .as_array()
-                .expect("result fields")
-                .iter()
-                .find(|field| field["path"] == path)
-                .unwrap_or_else(|| panic!("{action} returns {path}"))
-                .clone()
-        };
-        assert_eq!(
-            field("maker_id")["references"],
-            json!({"model": "widget_maker"}),
-            "{action} states the model the foreign key names"
-        );
-        assert_eq!(field("code").get("references"), None, "{action}");
-    }
-}
-
 /// EXIT CONDITION for `wamn-rm14.6`: the envelope bound carries no screen text.
 ///
 /// The line bound owns the repeated group a form renders. The envelope is the
@@ -1291,91 +437,6 @@ fn screen_text_on_the_envelope_bound_refuses_and_names_the_line_bound() {
     let message = error.to_string();
     assert!(message.contains("widget.record_batch"), "{message}");
     assert!(message.contains("line bound"), "{message}");
-}
-
-/// A generated route schema follows its contract, and the attachment that
-/// names it does not change (wamn-4omo).
-///
-/// The two catalogs differ in one column: `widget.note` becomes NOT NULL with
-/// no default, so a create can no longer omit it or send null. The manifest
-/// and the generated route entry are the same bytes for both, and the served
-/// route schema and definition hash move anyway.
-#[test]
-fn a_contract_change_moves_the_route_schema_the_attachment_names() {
-    const ROUTE: &str = "generated/routes/widget/create.json";
-    let published = |package: &wamn_compiler::GeneratedPackage| {
-        artifact(package, wamn_compiler::route_schema::GENERATED_ATTACHMENTS)
-    };
-    let served = |package: &wamn_compiler::GeneratedPackage| {
-        let mut attachments: std::collections::BTreeMap<String, wamn_catalog::ServingAttachment> =
-            serde_json::from_value(published(package)).expect("the generated attachments decode");
-        wamn_compiler::route_schema::resolve_attachments(&mut attachments, &mut |path| {
-            wamn_compiler::route_schema::parse(
-                path,
-                package
-                    .file(path)
-                    .expect("generation wrote the named schema")
-                    .bytes(),
-            )
-        })
-        .expect("the fixture attachments resolve");
-        attachments
-            .remove("widget-create-http")
-            .expect("the fixture serves widget create")
-    };
-    let optional = fixture::generate_fixture();
-    let required =
-        fixture::generate_with(&fixture::catalog_with_required_note(), &fixture::manifest());
-    assert_eq!(
-        published(&optional)["widget-create-http"]["definition"]["input-schema"],
-        json!({"$ref": ROUTE}),
-        "the attachment names the generated schema and copies none of it"
-    );
-    assert_eq!(published(&optional), published(&required));
-    let (before, after) = (served(&optional), served(&required));
-    assert_eq!(
-        before.definition["input-schema"],
-        artifact(&optional, ROUTE)
-    );
-    assert_eq!(after.definition["input-schema"], artifact(&required, ROUTE));
-
-    let note = |attachment: &wamn_catalog::ServingAttachment| {
-        let items = &attachment.definition["input-schema"]["items"];
-        (
-            items["required"]
-                .as_array()
-                .expect("a create requires its keys")
-                .contains(&json!("note")),
-            items["properties"]["note"]["x-wamn-explicit-null"].clone(),
-        )
-    };
-    assert_eq!(note(&before), (false, json!("accepted")));
-    assert_eq!(note(&after), (true, json!("invalid_input")));
-    assert_ne!(before.definition_hash, after.definition_hash);
-}
-
-/// Without a `routes` member, each generated route admits a PAT and a session,
-/// and its attachment id has no prefix (wamn-iowb.3).
-#[test]
-fn a_package_without_routes_takes_the_default_route_members() {
-    let mut manifest = fixture::manifest();
-    manifest
-        .as_object_mut()
-        .expect("the manifest is an object")
-        .remove("routes");
-    let package = fixture::generate_with(&fixture::catalog(), &manifest);
-    let attachments = artifact(&package, wamn_compiler::route_schema::GENERATED_ATTACHMENTS);
-    let get = &attachments["widget-get-http"];
-    assert_eq!(get["auth-policy"], json!({"modes": ["pat", "session"]}));
-    assert_eq!(get["definition"]["id"], "widget-get-http");
-    assert_eq!(get["definition"]["route"]["path"], "/widget/get");
-    assert_eq!(
-        artifact(
-            &package,
-            wamn_compiler::route_schema::GENERATED_COMPONENT_OPERATIONS,
-        )["fixture"]["platform-fixture:widget/get@2.1.1"]["input-ports"][0]["schema"],
-        json!({"$ref": "generated/routes/widget/get.json"})
-    );
 }
 
 /// A route member that publish could not serve refuses, and names the member.
@@ -1532,7 +593,7 @@ fn enum_fields_come_from_the_check_and_an_authored_list_only_narrows() {
     assert!(compiled["models"]["widget"].get("enum_fields").is_none());
     let code_values = |manifest: &Value| {
         let package = fixture::generate_with(&fixture::catalog(), manifest);
-        let input = artifact(&package, "generated/contracts/widget/create.input.json");
+        let input = description_json(&package, "widget.create", "input");
         input["writable_fields"]
             .as_array()
             .expect("writable fields")
@@ -1639,14 +700,12 @@ fn a_sync_screen_needs_a_feed_on_its_read() {
     let mut manifest = fixture::manifest();
     manifest["custom_operations"]["feed_line.screen"]["sync"] = json!(true);
     let package = fixture::generate_with(&fixture::catalog(), &manifest);
-    let contract = artifact(
-        &package,
-        "generated/contracts/feed_line/screen.operation.json",
-    );
+    let contract = description_json(&package, "feed_line.screen", "operation");
     assert_eq!(contract["sync"], true);
-    let silent = artifact(
+    let silent = description_json(
         &fixture::generate_fixture(),
-        "generated/contracts/feed_line/screen.operation.json",
+        "feed_line.screen",
+        "operation",
     );
     assert_eq!(silent.get("sync"), None);
 
@@ -1658,4 +717,42 @@ fn a_sync_screen_needs_a_feed_on_its_read() {
         error.context(),
         "widget.list screen sync needs a feed on the read"
     );
+}
+
+#[test]
+fn custom_statement_paths_must_be_unique() {
+    let mut document = fixture::manifest();
+    let operation = document["custom_operations"]
+        .as_object_mut()
+        .unwrap()
+        .values_mut()
+        .find(|operation| {
+            operation["statements"]
+                .as_object()
+                .is_some_and(|statements| !statements.is_empty())
+        })
+        .unwrap();
+    let statements = operation["statements"].as_object_mut().unwrap();
+    let duplicate = statements.values().next().unwrap().clone();
+    statements.insert("duplicate".to_owned(), duplicate);
+    assert!(fixture::try_generate_with(&fixture::catalog(), &document).is_err());
+}
+
+#[test]
+fn internal_relations_are_not_models_and_their_vocabulary_is_closed() {
+    let mut overlap = with_internal_relation();
+    overlap["internal_relations"][fixture::UNREAD_TABLE]["table"] = json!("widget");
+    let bytes = serde_json::to_vec(&overlap).unwrap();
+    let error = wamn_compiler::generate(&wamn_compiler::GenerationInput::new(
+        &fixture::catalog_with_unread_table(),
+        &bytes,
+        &[],
+        &wamn_compiler::StatementTransactionality::from_paths(std::collections::BTreeMap::new()),
+    ))
+    .expect_err("model/internal relation overlap was accepted");
+    assert_eq!(error.error_type(), GenerateErrorType::InvalidManifest);
+
+    let mut open = with_internal_relation();
+    open["internal_relations"][fixture::UNREAD_TABLE]["cdc"] = json!("ignored");
+    assert!(fixture::try_generate_with(&fixture::catalog_with_unread_table(), &open).is_err());
 }

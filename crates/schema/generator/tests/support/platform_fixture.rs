@@ -64,16 +64,10 @@ pub(crate) fn try_generate_with_sql(
     ))
 }
 
-pub(crate) fn contracts(package: &GeneratedPackage) -> BTreeMap<String, Vec<u8>> {
-    package
-        .files()
-        .iter()
-        .filter_map(|file| {
-            file.path()
-                .strip_prefix("generated/contracts/")
-                .map(|path| (path.to_owned(), file.bytes().to_vec()))
-        })
-        .collect()
+pub(crate) fn descriptions(
+    package: &GeneratedPackage,
+) -> BTreeMap<String, wamn_compiler::OperationDescription> {
+    package.operations().clone()
 }
 
 pub(crate) fn client_release() -> ClientContractIr {
@@ -103,7 +97,7 @@ pub(crate) fn line_key_release() -> ClientContractIr {
 
 /// The release a test's own package publishes, with the fixture's routes.
 pub(crate) fn client_release_of(package: &GeneratedPackage) -> ClientContractIr {
-    let contracts = contracts(package);
+    let descriptions = package.operations();
     let routes = [
         ("counter", "create"),
         ("counter", "get"),
@@ -147,12 +141,10 @@ pub(crate) fn client_release_of(package: &GeneratedPackage) -> ClientContractIr 
                         ).unwrap()).unwrap();
                         Some(attachments["feed-line-screen-http"]["definition"]["input-schema"].clone())
                     }
-                    _ if model == "counter" => Some(serde_json::from_slice(
-                        package.files().iter()
-                            .find(|file| file.path() == format!("generated/routes/counter/{name}.json"))
-                            .expect("the counter publishes its generated input schema")
-                            .bytes(),
-                    ).unwrap()),
+                    _ if model == "counter" => {
+                        let attachments: Value = serde_json::from_slice(package.file(wamn_compiler::publication::ATTACHMENTS).unwrap().bytes()).unwrap();
+                        attachments.as_object().unwrap().values().find(|attachment| attachment["registered-operation"] == identity).map(|attachment| attachment["definition"]["input-schema"].clone())
+                    }
                     // The shape a real release publishes: the record key, the
                     // revision it expects, the request identity, and the change.
                     "update" => Some(json!({
@@ -243,7 +235,7 @@ pub(crate) fn client_release_of(package: &GeneratedPackage) -> ClientContractIr 
         )
     })
     .collect();
-    ClientContractIr::from_release_contracts("platform_fixture", &contracts, &routes)
+    ClientContractIr::from_operations("platform_fixture", descriptions, &routes)
         .expect("platform fixture projects as a release")
 }
 

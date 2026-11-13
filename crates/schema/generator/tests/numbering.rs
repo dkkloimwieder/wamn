@@ -15,8 +15,8 @@ use wamn_schema_introspection::ir::{CatalogIr, Column, Constraint};
 )]
 mod support;
 use support::{
-    QUERY_SOURCES, artifact_json, catalog, manifest, object_named, rebuilt_table, replacing_table,
-    run, run_with_bases, table,
+    QUERY_SOURCES, catalog, manifest, object_named, rebuilt_table, replacing_table, run,
+    run_with_bases, table,
 };
 
 /// The gadget fixture with a numbered `part_code`, keyed per stock, and a

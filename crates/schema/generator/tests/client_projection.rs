@@ -15,7 +15,7 @@ mod platform_claim_release;
 const READ: &str = "example:entry/read-projection@1.0.0";
 const UPDATE: &str = "example:entry/apply-title@1.0.0";
 
-type Contracts = BTreeMap<String, Vec<u8>>;
+type Contracts = BTreeMap<String, wamn_compiler::OperationDescription>;
 
 fn insert_operation(
     contracts: &mut Contracts,
@@ -24,16 +24,15 @@ fn insert_operation(
     input: Value,
     result: Value,
 ) {
-    for (part, value) in [
-        ("operation", operation),
-        ("input", input),
-        ("result", result),
-    ] {
-        contracts.insert(
-            format!("entry/{name}.{part}.json"),
-            serde_json::to_vec(&value).unwrap(),
-        );
-    }
+    contracts.insert(
+        format!("entry.{name}"),
+        wamn_compiler::OperationDescription {
+            operation: serde_json::from_value(operation).unwrap(),
+            input,
+            result,
+            errors: json!({"cases": []}),
+        },
+    );
 }
 
 fn direct_route(operation: &str) -> RouteIr {
@@ -96,7 +95,7 @@ fn records() -> (Contracts, BTreeMap<String, RouteIr>) {
 }
 
 fn project(contracts: &Contracts, routes: &BTreeMap<String, RouteIr>) -> ClientContractIr {
-    ClientContractIr::from_release_contracts("example", contracts, routes)
+    ClientContractIr::from_operations("example", contracts, routes)
         .expect("declared contract projection")
 }
 
@@ -109,9 +108,20 @@ fn operation<'a>(ir: &'a ClientContractIr, name: &str) -> &'a OperationIr {
 }
 
 fn change(contracts: &mut Contracts, path: &str, pointer: &str, value: Value) {
-    let mut document: Value = serde_json::from_slice(&contracts[path]).unwrap();
-    *document.pointer_mut(pointer).expect("fixture member") = value;
-    contracts.insert(path.into(), serde_json::to_vec(&document).unwrap());
+    let (module, file) = path.split_once('/').unwrap();
+    let (name, part) = file
+        .strip_suffix(".json")
+        .unwrap()
+        .rsplit_once('.')
+        .unwrap();
+    let description = contracts.get_mut(&format!("{module}.{name}")).unwrap();
+    let mut document = serde_json::to_value(&*description).unwrap();
+    *document
+        .get_mut(part)
+        .unwrap()
+        .pointer_mut(pointer)
+        .unwrap() = value;
+    *description = serde_json::from_value(document).unwrap();
 }
 
 #[test]
@@ -457,7 +467,7 @@ fn direct_state_replay_and_composed_routes_remain_distinct() {
     }
 
     let package = fixture::generate_fixture();
-    let contracts = fixture::contracts(&package);
+    let contracts = fixture::descriptions(&package);
     let identity = command.operation.clone();
     let routes = BTreeMap::from([(
         identity,
@@ -471,9 +481,8 @@ fn direct_state_replay_and_composed_routes_remain_distinct() {
             replay: None,
         },
     )]);
-    let projected =
-        ClientContractIr::from_release_contracts("platform_fixture", &contracts, &routes)
-            .expect("composed route projects");
+    let projected = ClientContractIr::from_operations("platform_fixture", &contracts, &routes)
+        .expect("composed route projects");
     let route = operation(&projected, "archive").route.as_ref().unwrap();
     assert!(!route.direct);
     assert_eq!(
@@ -768,7 +777,7 @@ fn authored_text_reaches_every_field_the_client_reads() {
 #[test]
 fn a_published_response_takes_its_text_from_the_terminal() {
     let package = fixture::generate_fixture();
-    let contracts = fixture::contracts(&package);
+    let contracts = fixture::descriptions(&package);
     let identity = "platform-fixture:widget/get@2.1.1";
     let served = |path: &str| wamn_compiler::client_ir::FieldIr {
         path: path.to_owned(),
@@ -802,7 +811,7 @@ fn a_published_response_takes_its_text_from_the_terminal() {
             replay: None,
         },
     )]);
-    let ir = ClientContractIr::from_release_contracts("platform_fixture", &contracts, &routes)
+    let ir = ClientContractIr::from_operations("platform_fixture", &contracts, &routes)
         .expect("the fixture projects with a published response");
     let get = ir.models[fixture::widget_index(&ir)]
         .operations

@@ -328,13 +328,8 @@ manifest.Package {
         let transactions = StatementTransactionality::from_paths(std::collections::BTreeMap::new());
         let package =
             generate(&GenerationInput::new(&catalog, &bytes, &[], &transactions)).unwrap();
-        let result: CustomOperationResultDeclaration = serde_json::from_slice(
-            package
-                .file("generated/contracts/file/read.result.json")
-                .unwrap()
-                .bytes(),
-        )
-        .unwrap();
+        let result: CustomOperationResultDeclaration =
+            serde_json::from_value(package.operations()["file.read"].result.clone()).unwrap();
         assert_eq!(
             result.signed_reads["document"].lifetime_seconds().unwrap(),
             300

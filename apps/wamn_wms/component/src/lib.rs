@@ -36,4 +36,20 @@ wit_bindgen::generate!({
 
 struct Component;
 
+impl generated::inventory_transaction::get::Action for Component {}
+impl generated::inventory_transaction::query::Action for Component {}
+impl generated::location::get::Action for Component {}
+impl generated::location::query::Action for Component {}
+impl generated::location::create::Action for Component {}
+impl generated::location::update::Action for Component {}
+impl generated::packaging::get::Action for Component {}
+impl generated::packaging::query::Action for Component {}
+impl generated::packaging::create::Action for Component {}
+impl generated::packaging_quantity::get::Action for Component {}
+impl generated::packaging_quantity::query::Action for Component {}
+impl generated::product::get::Action for Component {}
+impl generated::product::query::Action for Component {}
+impl generated::product::create::Action for Component {}
+impl generated::product::update::Action for Component {}
+
 export!(Component);

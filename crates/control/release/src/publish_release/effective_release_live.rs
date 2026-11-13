@@ -160,10 +160,6 @@ fn base_and_overlay_project_admitted_routes() {
         .collect::<Vec<_>>();
     let (manifests, types) = read_package_manifests(&roots)
         .expect("consume exact package manifests and package contracts");
-    let manifest_paths = inputs
-        .iter()
-        .map(|input| wamn_compiler::package_manifest_path(&input.root))
-        .collect::<Vec<_>>();
     let packages = inputs
         .iter()
         .map(|input| PackageCoordinate::new(input.id, input.version).unwrap())
@@ -171,11 +167,8 @@ fn base_and_overlay_project_admitted_routes() {
     // Both packages name widget-get-http. The overlay's replaces the base's, so
     // the release carries a route to each package's component.
     let read = |input: &PackageInput| {
-        read_package_attachments(
-            &[input.root.join("publication/attachments.json")],
-            &manifest_paths,
-        )
-        .expect("read the package attachment document")
+        read_package_attachments(&[input.root.join("publication/attachments.json")])
+            .expect("read the package attachment document")
     };
     let mut authored_attachments = read(&inputs[0]);
     authored_attachments.extend(read(&inputs[1]));

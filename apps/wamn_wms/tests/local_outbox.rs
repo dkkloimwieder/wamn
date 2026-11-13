@@ -88,7 +88,7 @@ pub(super) async fn run(scenario: &str) -> anyhow::Result<()> {
         .context("the WMS test crate has an application parent")?
         .to_owned();
     let attachments: BTreeMap<String, ServingAttachment> =
-        wamn_compiler::route_schema::read_package_attachments(&app)?;
+        wamn_compiler::publication::read_package_attachments(&app)?;
     let components = PathBuf::from(std::env::var("WAMN_APPLICATION_COMPONENTS")?);
     let flow_http = PathBuf::from(std::env::var("WAMN_FLOW_HTTP_COMPONENT")?);
     std::fs::write(

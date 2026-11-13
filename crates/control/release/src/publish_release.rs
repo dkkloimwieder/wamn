@@ -581,8 +581,8 @@ pub fn assemble_local_release(
     admissions: &[wamn_package_control::component_admission::ComponentAdmission],
 ) -> anyhow::Result<AssembledLocalRelease> {
     use wamn_runtime::local_application::LocalApplicationFacts;
-    let (attachment_paths, manifest_paths) = package_files(package_roots);
-    let authored = read_package_attachments(&attachment_paths, &manifest_paths)?;
+    let (attachment_paths, _) = package_files(package_roots);
+    let authored = read_package_attachments(&attachment_paths)?;
     let (package_manifests, route_contracts) = read_package_manifests(package_roots)?;
     let attachments = resolve_route_methods(&authored, &route_contracts)?;
     let packages = args.packages.iter().cloned().collect::<BTreeSet<_>>();
@@ -701,8 +701,8 @@ async fn publish_candidate(
         .iter()
         .map(|package| package.root().to_owned())
         .collect::<Vec<_>>();
-    let (attachment_paths, manifest_paths) = package_files(&roots);
-    let authored_attachments = read_package_attachments(&attachment_paths, &manifest_paths)?;
+    let (attachment_paths, _) = package_files(&roots);
+    let authored_attachments = read_package_attachments(&attachment_paths)?;
     let (package_manifests, route_contracts) = read_package_manifests(&roots)?;
     let attachments = resolve_route_methods(&authored_attachments, &route_contracts)?;
     let packages = coordinates.into_iter().collect::<BTreeSet<_>>();

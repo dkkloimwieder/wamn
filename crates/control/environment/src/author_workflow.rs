@@ -463,32 +463,69 @@ fn storage(context: &'static str, error: tokio_postgres::Error) -> AuthorWorkflo
     AuthorWorkflowError::with_source(AuthorWorkflowErrorType::Storage, context, error)
 }
 
-pub fn read_wiring_document(path: &Path) -> Result<WiringDocument, AuthorWorkflowError> {
-    // The document names each package operation by reference, and the version
-    // comes from the wamn.json of the package that holds it.
-    let value = wamn_compiler::operation_reference::read_authored_document(
-        path,
-        wamn_compiler::operation_reference::AuthoredDocument::Wiring,
-    )
-    .map_err(|error| {
+pub fn read_compiled_wiring_document(path: &Path) -> Result<WiringDocument, AuthorWorkflowError> {
+    let bytes = std::fs::read(path).map_err(|error| {
         AuthorWorkflowError::with_source(
             AuthorWorkflowErrorType::Document,
-            format!("read wiring document {}", path.display()),
+            format!("read compiled wiring {}", path.display()),
             error,
         )
     })?;
-    WiringDocument::parse(&value).map_err(|error| {
+    let value = serde_json::from_slice(&bytes).map_err(|error| {
+        AuthorWorkflowError::with_source(
+            AuthorWorkflowErrorType::Document,
+            format!("parse compiled wiring {}", path.display()),
+            error,
+        )
+    })?;
+    let document = WiringDocument::parse(&value).map_err(|error| {
         AuthorWorkflowError::with_source(
             AuthorWorkflowErrorType::Document,
             format!("wiring document {} is not a valid wiring", path.display()),
             error,
         )
-    })
+    })?;
+    if document.nodes.values().any(|node| {
+        node.operation
+            .rsplit_once('@')
+            .is_none_or(|(_, version)| version.is_empty())
+    }) {
+        return Err(AuthorWorkflowError::new(
+            AuthorWorkflowErrorType::Document,
+            "workflow author requires compiled wiring output with sealed operation identities"
+                .to_owned(),
+        ));
+    }
+    Ok(document)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn workflow_input_requires_compiled_operation_identities() {
+        let path =
+            std::env::temp_dir().join(format!("workflow-input-{}.json", uuid::Uuid::now_v7()));
+        let mut document = wamn_catalog::fixture_graph("sync", 1);
+        for (operation, accepted) in [
+            ("netsuite:sync/finish@1.0.0", true),
+            ("netsuite:sync/finish", false),
+        ] {
+            document.nodes.values_mut().next().unwrap().operation = operation.to_owned();
+            std::fs::write(&path, serde_json::to_vec(&document).unwrap()).unwrap();
+            let result = read_compiled_wiring_document(&path);
+            std::fs::remove_file(&path).unwrap();
+            if accepted {
+                assert!(result.is_ok());
+            } else {
+                assert!(matches!(
+                    result.unwrap_err().error_type(),
+                    AuthorWorkflowErrorType::Document
+                ));
+            }
+        }
+    }
 
     #[test]
     fn the_execution_maps_to_its_stored_columns() {

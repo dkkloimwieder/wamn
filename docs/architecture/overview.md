@@ -91,15 +91,12 @@ A release fixes package versions, component digests, base pins, SQL, connections
 Sealing prevents later changes to its content.
 Conflicting content refuses, and exact retries retain their original facts.
 
-Publication mints one route for each attachment that targets a route.
-The route carries the contract type of its operation, which publication reads from the generated `operation.json` of the package.
-Generation derives the route input schema of each generated CRUD operation from its input contract, and writes it to `generated/routes/<model>/<action>.json`.
-Generation also writes the route entry and the declaration entry of each generated operation, under `generated/publication/`.
-The authored `publication/attachments.json` and component declaration carry only the custom operations, and each reader reads both files, as [data access](data-access.md#generated-operations) states.
-The route `input-schema` and the operation input port name the route schema file, and hold no copy.
-Each one writes `{"$ref": "generated/routes/<model>/<action>.json"}`.
-Publication, component admission and the client generator resolve the name against the package root, so a contract change moves the served schema and its definition hash.
-An authored operation keeps the input schema that its author writes.
+The compiler creates the final publication documents once from typed operation descriptions.
+It writes routes with inline input schemas and computed definition hashes to `publication/attachments.json` in the build output.
+It writes component declarations with inline request and result schemas to `publication/components.json`.
+The compiled `wamn.json` carries operation types and described statement facts.
+Publication, admission, and clients consume these final documents. They do not merge authored files or resolve schema file references.
+Compiled wiring documents carry sealed operation identities in `publication/wirings/` of the build output.
 Publication refuses a wiring with no edges, because a graph with no edges is a route.
 A registration or schedule can name a one-node wiring.
 

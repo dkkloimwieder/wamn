@@ -324,8 +324,11 @@ async fn pass_one_and_two(
     verdicts.described = described;
     verdicts.described.extend(remaining);
     let input = crate::GenerationInput::new(&catalog, &canonical, &authored_sql, &verdicts);
-    let package = crate::generate::generate_described(&input, &manifest, &corpus)?;
-    let client = client_bindings(package_root, &manifest, &package)?;
+    let mut package = crate::generate::generate_described(&input, &manifest, &corpus)?;
+    crate::publication::complete(package_root, &manifest, &mut package)?;
+    let client = client_bindings(&manifest, &package)?;
+    manifest.compiled_operations = package.take_operations();
+    let canonical = canonical_json_bytes(&serde_json::to_value(&manifest)?);
     let mut files = expected_files(&package)?
         .into_iter()
         .map(|(path, bytes)| (path, bytes.to_vec()))

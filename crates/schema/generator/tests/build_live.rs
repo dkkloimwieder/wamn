@@ -249,10 +249,6 @@ async fn stale_and_clean_builds_give_identical_outputs_and_build_records() {
         build_record_first,
         build_record::read(&output_first).unwrap()
     );
-    assert!(
-        files.keys().any(|path| path.starts_with("native-verifier")),
-        "pass two generated no verifier"
-    );
     assert!(!workspace.package().join("generated").exists());
 
     let manifest = &files[Path::new("wamn.json")];

@@ -172,14 +172,19 @@ Offline creates with integer keys replay by the write log’s `request_id`, not 
 Generation writes these files for each package. A path below is a logical path: the file lies at the same path, without `generated/`, in the package's build output `apps/target/wamn/<package>`, which Git does not hold.
 
 1. `generated/data/<model>.rs` holds one data function for each operation of the model. The function parses the scalars, calls the generated accessor, and returns the one generated refusal type.
-2. `generated/data/error.rs` holds that refusal type. It spells the closed vocabulary of the operation contracts, and its details are the declared detail fields.
-3. `generated/component/<model>.rs` holds one module for each operation, with its codec, its handler, and its export.
+2. `wamn-data-access::error` owns the shared refusal type and statement error translation. Each export translates it into its WIT error.
+3. `generated/component/<model>.rs` holds one module for each operation. Its `Action` trait has a default `run` method. The application implements the trait on its component. It can override `run` and call `default_handle` from the override. The export validates input before it calls the override.
 4. `generated/wit/world.wit` holds the world `<package>:generated/generated`, which exports every operation of the package and imports what those operations call.
-5. `generated/publication/attachments.json` holds one route entry for each generated operation, with its definition hash.
-6. `generated/publication/component-operations.json` holds one declaration entry for each generated operation, keyed by component.
+5. `generated/publication/attachments.json` holds the final routes, inline input schemas, and computed definition hashes.
+6. `generated/publication/components.json` holds the final component declarations with inline input and result schemas.
 7. `generated/data/sequences.rs` holds `sequences::<name>::next` and `sequences::<name>::peek` for each sequence that the package declares `callable`. The package has no such file without a callable sequence.
 
-The shared crate `wamn-data-access` holds the keyset cursor, the query page, and the scalar parsers that the data functions use.
+The shared crate `wamn-data-access` holds the keyset cursor, the query page, scalar parsers, and statement error translation.
+The compiled `wamn.json` carries `compiled_operations`, including described statements and their transaction facts.
+Readers borrow each operation through `wamn_catalog::operation_contract`. The compiler emits no contract files, source maps, or native verifier rows.
+`generated/openapi.json` describes the published HTTP interface with OpenAPI 3.1. GET parameters carry separate JSON values.
+Every list schema has a maximum. Generated exports enforce page and feed limits before they call application code.
+The TypeScript client retains its camelCase field mappings. It reads the compiled operation descriptions in memory.
 A data crate includes `data/mod.rs` of its build output as its public module `generated`, through a path relative to the crate. The generated files include each other by paths relative to themselves.
 A component includes `generated/component/mod.rs` in a module that names that data module `data`.
 The fixture overlay has no data crate, so its component includes the data functions itself.
@@ -204,9 +209,10 @@ A declaration template authors no `target.package-version`.
 A reference to an operation of the package takes `package.version`, and a reference to an operation of a base takes the `version` of that base in `base_dependencies`.
 A platform interface, such as `wamn:node/handler@0.1.0`, is not a package operation and keeps its WIT version.
 
-Every reader of an authored file resolves its references with `wamn_compiler::operation_reference` before it uses the file.
-The readers are the generator, publication, the declaration render, the author-wiring verb, the dev coordinator and the composer.
-An authored id that carries a version, or a template that authors `target.package-version`, refuses.
+The compiler resolves authored operation references once when it builds final publication documents.
+Publication, admission, clients, and workflow authorship read the compiled output.
+The workflow CLI takes a compiled file from the build output's `publication/wirings/` directory.
+An authored id that carries a version, or a template that authors `target.package-version`, refuses during compilation.
 A web page keys `onOpen` and `onFill` by the reference, so one page shows one version of each package.
 A test gets the sealed id and the package version from the compiled `wamn.json` through `wamn_test_infrastructure::operations`.
 A new package version is one line in `wamn.k` and a regeneration.
