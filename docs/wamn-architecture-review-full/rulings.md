@@ -51,3 +51,5 @@ W2. `MAIN_PORT` and `ERROR_PORT` (tab 01, open point): one definition in `wamn-c
 W3. Read query (tab 01): strictness is dropped, as the owner ruled. The decoder accepts any spelling that it can parse, and the encoder writes one canonical form.
 
 W4. S1 runs as two lanes: S1-A (scenario worker, authoring model, `wamn-gates`, `deploy/gates`, `wamn-gate-harness`, `wamn-client`, P27) and S1-C (user PATs, flow columns, `stream_seq`, the `ServingManifest` strip, P15, the unused WIT world and dependencies, `vendor/pg-walstream`). S1b runs inside these two lanes.
+
+W5. Build output and concurrency (owner, 2026-11-12). This ruling replaces I5. Each lane builds in its own Cargo target, `~/.cache/wamn-target/arch-<lane>`, and kache supplies the reuse. Root removes the target, the worktree and the branch of a lane when the lane merges. The S1 lanes keep the shared target `~/.cache/wamn-target/arch`, and root removes it when both S1 lanes merge. At most five Codex agents run at one time, reviews included. S2-A and S2-C start before S1 merges, and root resolves the conflicts at merge.
